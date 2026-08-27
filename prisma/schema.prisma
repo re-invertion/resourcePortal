@@ -1,0 +1,598 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  Pending
+  Active
+  Suspended
+  Deleting
+}
+
+enum TenantStatus {
+  Active
+  Suspended
+  Deleting
+}
+
+enum MembershipStatus {
+  Active
+  Suspended
+}
+
+enum AppGroupStatus {
+  Ready
+  Error
+  Deleting
+}
+
+enum RuntimeState {
+  Running
+  Stopped
+}
+
+enum HealthState {
+  Healthy
+  Degraded
+  Unhealthy
+  Unknown
+}
+
+enum DriftStatus {
+  InSync
+  Drifted
+  Unknown
+}
+
+enum DeploymentStatus {
+  Pending
+  Deploying
+  Succeeded
+  Failed
+  RollingBack
+  RolledBack
+  RollbackFailed
+}
+
+enum DeploymentPhase {
+  Validating
+  PreparingArtifacts
+  GeneratingStack
+  ApplyingStack
+  WaitingForRollout
+  RollingBack
+  Cleanup
+  Completed
+}
+
+enum VolumeStatus {
+  Creating
+  Ready
+  Resizing
+  Deleting
+  Error
+}
+
+enum AttachmentMode {
+  ReadOnly
+  ReadWrite
+}
+
+enum DomainType {
+  Managed
+  Custom
+}
+
+enum DnsStatus {
+  Pending
+  Valid
+  Invalid
+  Error
+}
+
+enum CertificateStatus {
+  Pending
+  Issuing
+  Active
+  Error
+}
+
+enum RegistryTlsMode {
+  TLS
+  NoTLS
+}
+
+enum RegistryAuthType {
+  None
+  UsernamePassword
+  Token
+}
+
+enum RegistryValidationStatus {
+  Unknown
+  Validating
+  Valid
+  Invalid
+  Error
+}
+
+model User {
+  id          String             @id @default(uuid()) @db.Uuid
+  email       String             @unique
+  displayName String
+  status      UserStatus         @default(Pending)
+  memberships TenantMembership[]
+  sessions    PortalSession[]
+  identities  UserIdentity[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+}
+
+model UserIdentity {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  providerType       String
+  identityProviderId String?   @db.Uuid
+  issuer             String
+  externalSubject    String
+  email              String?
+  createdAt          DateTime  @default(now())
+  lastLoginAt        DateTime?
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([issuer, externalSubject])
+}
+
+model PortalSession {
+  id                   String    @id
+  userId               String    @db.Uuid
+  accessToken          String
+  refreshToken         String
+  idToken              String
+  accessTokenExpiresAt DateTime
+  lastSeenAt           DateTime  @default(now())
+  expiresAt            DateTime
+  revokedAt            DateTime?
+  createdAt            DateTime  @default(now())
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Tenant {
+  id           String             @id @default(uuid()) @db.Uuid
+  name         String             @unique
+  displayName  String
+  description  String?
+  status       TenantStatus       @default(Active)
+  contactEmail String
+  billing      BillingAccount?
+  quota        Quota?
+  memberships  TenantMembership[]
+  appGroups    AppGroup[]
+  volumes      Volume[]
+  domains      Domain[]
+  registries   Registry[]
+  auditEntries AuditLogEntry[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+}
+
+model TenantMembership {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  tenantId  String           @db.Uuid
+  status    MembershipStatus @default(Active)
+  createdBy String           @db.Uuid
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles     MembershipRole[]
+
+  @@unique([userId, tenantId])
+}
+
+model Role {
+  id          String           @id
+  name        String
+  permissions String[]
+  memberships MembershipRole[]
+}
+
+model MembershipRole {
+  membershipId String           @db.Uuid
+  roleId       String
+  membership   TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  role         Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([membershipId, roleId])
+}
+
+model BillingAccount {
+  id                   String               @id @default(uuid()) @db.Uuid
+  tenantId             String               @unique @db.Uuid
+  balance              Decimal              @default(0) @db.Decimal(18, 4)
+  currency             String               @default("credits")
+  informationThreshold Decimal              @default(0) @db.Decimal(18, 4)
+  tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  transactions         BillingTransaction[]
+  usageRecords         UsageRecord[]
+}
+
+model BillingTransaction {
+  id               String         @id @default(uuid()) @db.Uuid
+  billingAccountId String         @db.Uuid
+  type             String
+  amount           Decimal        @db.Decimal(18, 4)
+  balanceBefore    Decimal        @db.Decimal(18, 4)
+  balanceAfter     Decimal        @db.Decimal(18, 4)
+  status           String
+  reference        String?
+  createdAt        DateTime       @default(now())
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+}
+
+model UsageRecord {
+  id               String         @id @default(uuid()) @db.Uuid
+  billingAccountId String         @db.Uuid
+  tenantId         String         @db.Uuid
+  resourceType     String
+  resourceId       String         @db.Uuid
+  periodStart      DateTime
+  periodEnd        DateTime
+  usage            Json
+  cost             Decimal        @db.Decimal(18, 4)
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+}
+
+model Quota {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @unique @db.Uuid
+  cpu           Decimal  @db.Decimal(12, 4)
+  memoryBytes   BigInt
+  gpu           Int      @default(0)
+  storageBytes  BigInt
+  maxSingleApps Int
+  maxVolumes    Int
+  createdBy     String   @db.Uuid
+  updatedBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model AppGroup {
+  id                       String               @id @default(uuid()) @db.Uuid
+  tenantId                 String               @db.Uuid
+  name                     String
+  description              String?
+  status                   AppGroupStatus       @default(Ready)
+  runtimeState             RuntimeState         @default(Stopped)
+  health                   HealthState          @default(Unknown)
+  driftStatus              DriftStatus          @default(Unknown)
+  currentDeploymentVersion Int?
+  lastDeploymentAt         DateTime?
+  lastDeploymentBy         String?
+  hasPendingChanges        Boolean              @default(false)
+  runtimeDraftRevision     Int                  @default(0)
+  createdBy                String               @db.Uuid
+  updatedBy                String
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  tenant                   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  singleApps               SingleApp[]
+  variables                Variable[]
+  secrets                  Secret[]
+  configs                  Config[]
+  deployments              AppGroupDeployment[]
+
+  @@unique([tenantId, name])
+}
+
+model SingleApp {
+  id                     String               @id @default(uuid()) @db.Uuid
+  appGroupId             String               @db.Uuid
+  name                   String
+  description            String?
+  image                  String
+  registryId             String?              @db.Uuid
+  desiredReplicas        Int                  @default(1)
+  pendingDeletion        Boolean              @default(false)
+  runtimeState           RuntimeState         @default(Running)
+  actualReplicas         Int                  @default(0)
+  health                 HealthState          @default(Unknown)
+  cpu                    Decimal              @db.Decimal(12, 4)
+  memoryBytes            BigInt
+  gpu                    Int                  @default(0)
+  environment            Json                 @default("{}")
+  healthCheck            Json?
+  entrypoint             String?
+  command                String[]
+  workingDir             String?
+  user                   String?
+  readOnlyRootFilesystem Boolean              @default(false)
+  stopGracePeriodSeconds Int                  @default(30)
+  restartPolicy          Json                 @default("{}")
+  updatePolicy           Json                 @default("{}")
+  createdBy              String               @db.Uuid
+  updatedBy              String
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  appGroup               AppGroup             @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  registry               Registry?            @relation(fields: [registryId], references: [id], onDelete: Restrict)
+  httpEndpoints          HttpEndpoint[]
+  volumeAttachments      VolumeAttachment[]
+  variableAttachments    VariableAttachment[]
+  configAttachments      ConfigAttachment[]
+  secrets                SingleAppSecret[]
+
+  @@unique([appGroupId, name])
+}
+
+model SingleAppSecret {
+  id              String    @id @default(uuid()) @db.Uuid
+  singleAppId     String    @db.Uuid
+  name            String
+  description     String?
+  valueCiphertext String
+  valueVersion    Int       @default(1)
+  createdBy       String    @db.Uuid
+  updatedBy       String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  singleApp       SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([singleAppId, name])
+}
+
+model AppGroupDeployment {
+  id                    String            @id @default(uuid()) @db.Uuid
+  appGroupId            String            @db.Uuid
+  version               Int
+  status                DeploymentStatus  @default(Pending)
+  phase                 DeploymentPhase   @default(Validating)
+  stackConfig           String?
+  renderedStack         String?
+  renderedAt            DateTime?
+  sourceDraftRevision   Int
+  rollbackTargetVersion Int?
+  leaseOwner            String?
+  leaseExpiresAt        DateTime?
+  heartbeatAt           DateTime?
+  correlationId         String            @db.Uuid
+  errorCode             String?
+  errorMessage          String?
+  createdBy             String            @db.Uuid
+  createdAt             DateTime          @default(now())
+  startedAt             DateTime?
+  completedAt           DateTime?
+  appGroup              AppGroup          @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  events                DeploymentEvent[]
+
+  @@unique([appGroupId, version])
+}
+
+model DeploymentEvent {
+  id           String             @id @default(uuid()) @db.Uuid
+  deploymentId String             @db.Uuid
+  timestamp    DateTime           @default(now())
+  phase        String
+  level        String
+  message      String
+  resourceType String?
+  resourceId   String?            @db.Uuid
+  deployment   AppGroupDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+}
+
+model Volume {
+  id               String             @id @default(uuid()) @db.Uuid
+  tenantId         String             @db.Uuid
+  name             String
+  description      String?
+  storagePath      String
+  dockerVolumeName String             @unique
+  sizeBytes        BigInt
+  usedSizeBytes    BigInt?
+  status           VolumeStatus       @default(Creating)
+  createdBy        String             @db.Uuid
+  updatedBy        String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  attachments      VolumeAttachment[]
+
+  @@unique([tenantId, name])
+}
+
+model VolumeAttachment {
+  id          String         @id @default(uuid()) @db.Uuid
+  volumeId    String         @db.Uuid
+  singleAppId String         @db.Uuid
+  mountPath   String
+  mode        AttachmentMode
+  createdBy   String         @db.Uuid
+  createdAt   DateTime       @default(now())
+  volume      Volume         @relation(fields: [volumeId], references: [id], onDelete: Restrict)
+  singleApp   SingleApp      @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([volumeId, singleAppId])
+  @@unique([singleAppId, mountPath])
+}
+
+model Domain {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @db.Uuid
+  type                 DomainType
+  prefix               String?
+  customRootDomainId   String?           @db.Uuid
+  subdomain            String?
+  hostname             String            @unique
+  dnsStatus            DnsStatus         @default(Pending)
+  tlsEnabled           Boolean           @default(true)
+  certificateStatus    CertificateStatus @default(Pending)
+  certificateIssuer    String?
+  certificateExpiresAt DateTime?
+  createdBy            String            @db.Uuid
+  updatedBy            String
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customRootDomain     CustomRootDomain? @relation(fields: [customRootDomainId], references: [id], onDelete: Restrict)
+  httpEndpoint         HttpEndpoint?     @relation(fields: [httpEndpointId], references: [id], onDelete: SetNull)
+  httpEndpointId       String?           @db.Uuid
+
+  @@unique([tenantId, prefix])
+}
+
+model CustomRootDomain {
+  id                    String    @id @default(uuid()) @db.Uuid
+  tenantId              String    @db.Uuid
+  rootDomain            String    @unique
+  verificationStatus    String    @default("Pending")
+  verificationMethod    String    @default("DNS_TXT")
+  verificationToken     String
+  verificationCreatedAt DateTime  @default(now())
+  verifiedAt            DateTime?
+  createdBy             String    @db.Uuid
+  updatedBy             String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  domains               Domain[]
+}
+
+model HttpEndpoint {
+  id            String    @id @default(uuid()) @db.Uuid
+  singleAppId   String    @db.Uuid
+  name          String
+  containerPort Int
+  protocolMode  String    @default("HTTP_REDIRECT_TO_HTTPS")
+  singleApp     SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+  domains       Domain[]
+
+  @@unique([singleAppId, name])
+}
+
+model Registry {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  tenantId            String                   @db.Uuid
+  name                String
+  description         String?
+  host                String
+  tlsMode             RegistryTlsMode          @default(TLS)
+  authType            RegistryAuthType         @default(None)
+  username            String?
+  credentialData      Json?
+  validationStatus    RegistryValidationStatus @default(Unknown)
+  lastValidatedAt     DateTime?
+  lastValidationError String?
+  createdBy           String                   @db.Uuid
+  updatedBy           String
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  tenant              Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  singleApps          SingleApp[]
+
+  @@unique([tenantId, name])
+}
+
+model Variable {
+  id          String               @id @default(uuid()) @db.Uuid
+  appGroupId  String               @db.Uuid
+  name        String
+  description String?
+  value       String
+  createdBy   String               @db.Uuid
+  updatedBy   String
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  appGroup    AppGroup             @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  attachments VariableAttachment[]
+
+  @@unique([appGroupId, name])
+}
+
+model VariableAttachment {
+  id          String    @id @default(uuid()) @db.Uuid
+  variableId  String    @db.Uuid
+  singleAppId String    @db.Uuid
+  targetName  String
+  createdBy   String    @db.Uuid
+  createdAt   DateTime  @default(now())
+  variable    Variable  @relation(fields: [variableId], references: [id], onDelete: Restrict)
+  singleApp   SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([variableId, singleAppId])
+  @@unique([singleAppId, targetName])
+}
+
+model Secret {
+  id           String   @id @default(uuid()) @db.Uuid
+  appGroupId   String   @db.Uuid
+  name         String
+  description  String?
+  type         String
+  fileName     String?
+  valueVersion Int      @default(1)
+  storagePath  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  appGroup     AppGroup @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([appGroupId, name])
+}
+
+model Config {
+  id             String             @id @default(uuid()) @db.Uuid
+  appGroupId     String             @db.Uuid
+  name           String
+  description    String?
+  content        String
+  contentVersion Int                @default(1)
+  createdBy      String             @db.Uuid
+  updatedBy      String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  appGroup       AppGroup           @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  attachments    ConfigAttachment[]
+
+  @@unique([appGroupId, name])
+}
+
+model ConfigAttachment {
+  id          String    @id @default(uuid()) @db.Uuid
+  configId    String    @db.Uuid
+  singleAppId String    @db.Uuid
+  targetPath  String
+  createdBy   String    @db.Uuid
+  createdAt   DateTime  @default(now())
+  config      Config    @relation(fields: [configId], references: [id], onDelete: Restrict)
+  singleApp   SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([configId, singleAppId])
+  @@unique([singleAppId, targetPath])
+}
+
+model AuditLogEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  tenantName    String
+  timestamp     DateTime @default(now())
+  actor         String
+  actorName     String
+  action        String
+  resourceType  String
+  resourceId    String?  @db.Uuid
+  resourceName  String?
+  result        String
+  errorCode     String?
+  errorMessage  String?
+  requestId     String?
+  correlationId String?
+  ipAddress     String?
+  userAgent     String?
+  changes       Json?
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}

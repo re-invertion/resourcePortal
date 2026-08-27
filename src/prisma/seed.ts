@@ -1,0 +1,173 @@
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+
+const roles = [
+  {
+    id: "tenant-owner",
+    name: "Tenant Owner",
+    permissions: ["*"],
+  },
+  {
+    id: "tenant-admin",
+    name: "Tenant Administrator",
+    permissions: [
+      "tenant.read",
+      "tenant.settings.update",
+      "membership.read",
+      "membership.invite",
+      "membership.update",
+      "membership.remove",
+      "group.read",
+      "group.create",
+      "group.update",
+      "group.delete",
+      "group.member.manage",
+      "group.role.manage",
+      "identity_provider.read",
+      "identity_provider.create",
+      "identity_provider.update",
+      "identity_provider.delete",
+      "identity_provider.validate",
+      "appgroup.read",
+      "appgroup.create",
+      "appgroup.update",
+      "appgroup.delete",
+      "appgroup.deploy",
+      "singleapp.read",
+      "singleapp.create",
+      "singleapp.update",
+      "singleapp.delete",
+      "variable.read",
+      "variable.create",
+      "variable.update",
+      "variable.delete",
+      "variable.attach",
+      "secret.read",
+      "secret.create",
+      "secret.update",
+      "secret.delete",
+      "secret.attach",
+      "endpoint.read",
+      "endpoint.create",
+      "endpoint.update",
+      "endpoint.delete",
+      "volume.read",
+      "volume.create",
+      "volume.update",
+      "volume.attach",
+      "volume.detach",
+      "volume.delete",
+      "registry.read",
+      "registry.create",
+      "registry.update",
+      "registry.delete",
+      "registry.validate",
+      "registry.use",
+      "billing.read",
+      "domain.read",
+      "domain.create",
+      "domain.update",
+      "domain.delete",
+      "domain.validate",
+      "audit.read",
+    ],
+  },
+  {
+    id: "resource-admin",
+    name: "Resource Administrator",
+    permissions: [
+      "tenant.read",
+      "appgroup.read",
+      "appgroup.create",
+      "appgroup.update",
+      "appgroup.delete",
+      "appgroup.deploy",
+      "singleapp.read",
+      "singleapp.create",
+      "singleapp.update",
+      "singleapp.delete",
+      "singleapp.scale",
+      "variable.read",
+      "variable.create",
+      "variable.update",
+      "variable.delete",
+      "variable.attach",
+      "secret.read",
+      "secret.create",
+      "secret.update",
+      "secret.delete",
+      "secret.attach",
+      "config.read",
+      "config.create",
+      "config.update",
+      "config.delete",
+      "config.attach",
+      "endpoint.read",
+      "endpoint.create",
+      "endpoint.update",
+      "endpoint.delete",
+      "volume.read",
+      "volume.create",
+      "volume.update",
+      "volume.attach",
+      "volume.detach",
+      "registry.read",
+      "registry.use",
+      "domain.read",
+      "domain.create",
+      "domain.update",
+      "domain.delete",
+      "domain.validate",
+    ],
+  },
+  {
+    id: "billing-admin",
+    name: "Billing Administrator",
+    permissions: [
+      "tenant.read",
+      "billing.read",
+      "billing.topup",
+      "billing.manage",
+    ],
+  },
+  {
+    id: "viewer",
+    name: "Viewer",
+    permissions: [
+      "tenant.read",
+      "membership.read",
+      "appgroup.read",
+      "appgroup.deployment.read",
+      "endpoint.read",
+      "volume.read",
+      "registry.read",
+      "billing.read",
+      "domain.read",
+      "audit.read",
+    ],
+  },
+];
+
+async function main() {
+  for (const role of roles) {
+    await prisma.role.upsert({
+      where: { id: role.id },
+      create: role,
+      update: {
+        name: role.name,
+        permissions: role.permissions,
+      },
+    });
+  }
+}
+
+main()
+  .finally(async () => {
+    await prisma.$disconnect();
+  })
+  .catch(async (error) => {
+    console.error(error);
+    await prisma.$disconnect();
+    process.exit(1);
+  });

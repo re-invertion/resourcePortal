@@ -1,0 +1,2 @@
+ALTER TABLE "SingleApp"
+ADD COLUMN "pendingDeletion" BOOLEAN NOT NULL DEFAULT false;

@@ -1,0 +1,1066 @@
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import {
+  DeploymentPhase,
+  DeploymentStatus,
+  Prisma,
+} from "@prisma/client";
+import { stringify } from "yaml";
+import { PrismaService } from "../prisma/prisma.service";
+import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
+import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
+import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
+import { FailDeploymentDto } from "./dto/fail-deployment.dto";
+import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
+import { StackApplyService } from "./stack-apply.service";
+import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
+import { StackRegistryAuthService } from "./stack-registry-auth.service";
+import { StackRolloutService } from "./stack-rollout.service";
+import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
+import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
+
+const DEFAULT_LEASE_SECONDS = 300;
+
+const ALLOWED_PHASE_TRANSITIONS: Record<DeploymentPhase, DeploymentPhase[]> = {
+  Validating: [DeploymentPhase.PreparingArtifacts],
+  PreparingArtifacts: [DeploymentPhase.GeneratingStack],
+  GeneratingStack: [DeploymentPhase.ApplyingStack],
+  ApplyingStack: [DeploymentPhase.WaitingForRollout],
+  WaitingForRollout: [DeploymentPhase.Cleanup, DeploymentPhase.Completed],
+  RollingBack: [DeploymentPhase.Cleanup],
+  Cleanup: [DeploymentPhase.Completed],
+  Completed: [],
+};
+
+type StackConfigSnapshot = {
+  appGroup: {
+    id: string;
+    tenantId: string;
+    name: string;
+    runtimeState: string;
+    runtimeDraftRevision: number;
+  };
+  note?: string;
+  singleApps: StackConfigSingleApp[];
+};
+
+type StackConfigSingleApp = {
+  id: string;
+  name: string;
+  image: string;
+  registryId: string | null;
+  desiredReplicas: number;
+  runtimeState: string;
+  resources: {
+    cpu: string;
+    memoryBytes: string;
+    gpu: number;
+  };
+  environment: Record<string, string>;
+  variables: Array<{
+    id: string;
+    variableId: string;
+    variableName: string;
+    targetName: string;
+    value: string;
+  }>;
+  secrets: Array<{
+    id: string;
+    name: string;
+    valueVersion: number;
+    dockerSecretName?: string;
+  }>;
+  configs: Array<{
+    id: string;
+    configId: string;
+    configName: string;
+    contentVersion: number;
+    targetPath: string;
+    content: string;
+    dockerConfigName?: string;
+  }>;
+  healthCheck: unknown;
+  entrypoint: string | null;
+  command: string[];
+  workingDir: string | null;
+  user: string | null;
+  readOnlyRootFilesystem: boolean;
+  stopGracePeriodSeconds: number;
+  restartPolicy: Record<string, unknown>;
+  updatePolicy: Record<string, unknown>;
+  httpEndpoints: Array<{
+    id: string;
+    name: string;
+    containerPort: number;
+    protocolMode: string;
+    domains: Array<{
+      id: string;
+      hostname: string;
+      tlsEnabled: boolean;
+      dnsStatus: string;
+      certificateStatus: string;
+    }>;
+  }>;
+  volumes: Array<{
+    id: string;
+    volumeId: string;
+    volumeName: string;
+    storagePath: string;
+    dockerVolumeName?: string;
+    mountPath: string;
+    mode: "ReadOnly" | "ReadWrite";
+  }>;
+};
+
+@Injectable()
+export class DeploymentWorkerService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stackApplyService: StackApplyService,
+    private readonly stackConfigProvisioner: StackConfigProvisionerService,
+    private readonly stackRegistryAuth: StackRegistryAuthService,
+    private readonly stackRolloutService: StackRolloutService,
+    private readonly stackSecretProvisioner: StackSecretProvisionerService,
+    private readonly stackVolumeProvisioner: StackVolumeProvisionerService,
+  ) {}
+
+  async claimNextDeployment(dto: ClaimDeploymentDto) {
+    const now = new Date();
+    const leaseExpiresAt = this.calculateLeaseExpiration(dto.leaseSeconds);
+
+    const deployment = await this.prisma.$transaction(async (tx) => {
+      const candidate = await tx.appGroupDeployment.findFirst({
+        where: {
+          OR: [
+            { status: DeploymentStatus.Pending },
+            {
+              status: DeploymentStatus.Deploying,
+              leaseExpiresAt: { lt: now },
+            },
+          ],
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      if (!candidate) {
+        return null;
+      }
+
+      const claimed = await tx.appGroupDeployment.updateMany({
+        where: {
+          id: candidate.id,
+          OR: [
+            { status: DeploymentStatus.Pending },
+            {
+              status: DeploymentStatus.Deploying,
+              leaseExpiresAt: { lt: now },
+            },
+          ],
+        },
+        data: {
+          status: DeploymentStatus.Deploying,
+          leaseOwner: dto.workerId,
+          leaseExpiresAt,
+          heartbeatAt: now,
+          startedAt: candidate.startedAt ?? now,
+        },
+      });
+
+      if (claimed.count !== 1) {
+        return null;
+      }
+
+      await this.createDeploymentEvent(tx, candidate.id, {
+        phase: candidate.phase,
+        level: "Info",
+        message: `Deployment claimed by ${dto.workerId}`,
+      });
+
+      return tx.appGroupDeployment.findUniqueOrThrow({
+        where: { id: candidate.id },
+      });
+    });
+
+    return deployment ? mapAppGroupDeployment(deployment) : null;
+  }
+
+  async heartbeatDeployment(deploymentId: string, dto: HeartbeatDeploymentDto) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      dto.workerId,
+    );
+
+    this.assertDeploymentIsActive(deployment.status);
+
+    const updated = await this.prisma.appGroupDeployment.update({
+      where: { id: deploymentId },
+      data: {
+        heartbeatAt: new Date(),
+        leaseExpiresAt: this.calculateLeaseExpiration(dto.leaseSeconds),
+      },
+    });
+
+    return mapAppGroupDeployment(updated);
+  }
+
+  async advanceDeployment(deploymentId: string, dto: AdvanceDeploymentDto) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      dto.workerId,
+    );
+
+    this.assertDeploymentIsActive(deployment.status);
+    this.assertPhaseTransition(deployment.phase, dto.phase);
+
+    const completed = dto.phase === DeploymentPhase.Completed;
+    const renderedStack =
+      dto.phase === DeploymentPhase.GeneratingStack
+        ? this.renderStack(deployment.stackConfig)
+        : undefined;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          phase: dto.phase,
+          renderedStack,
+          renderedAt: renderedStack ? new Date() : undefined,
+          status: completed
+            ? DeploymentStatus.Succeeded
+            : DeploymentStatus.Deploying,
+          completedAt: completed ? new Date() : undefined,
+          leaseOwner: completed ? null : deployment.leaseOwner,
+          leaseExpiresAt: completed ? null : deployment.leaseExpiresAt,
+          heartbeatAt: completed ? null : new Date(),
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: dto.phase,
+        level: "Info",
+        message: dto.message ?? `Deployment advanced to ${dto.phase}`,
+      });
+
+      return next;
+    });
+
+    if (dto.phase === DeploymentPhase.PreparingArtifacts) {
+      return this.provisionArtifacts(updated.id, dto.workerId);
+    }
+
+    if (dto.phase === DeploymentPhase.ApplyingStack) {
+      return this.applyRenderedStack(updated.id, dto.workerId);
+    }
+
+    if (dto.phase === DeploymentPhase.WaitingForRollout) {
+      return this.waitForRollout(updated.id, dto.workerId);
+    }
+
+    return mapAppGroupDeployment(updated);
+  }
+
+  private async provisionArtifacts(deploymentId: string, workerId: string) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      workerId,
+    );
+    const snapshot = this.parseStackConfig(deployment.stackConfig);
+
+    const registryAuthResult = await this.provisionRegistryAuth(snapshot);
+
+    if (!registryAuthResult.success) {
+      return this.failProvisioning(
+        deploymentId,
+        "RegistryAuthFailed",
+        registryAuthResult.message,
+        registryAuthResult.details,
+      );
+    }
+
+    const secretsResult = await this.provisionSecrets(snapshot);
+
+    if (!secretsResult.success) {
+      return this.failProvisioning(
+        deploymentId,
+        "SecretProvisioningFailed",
+        secretsResult.message,
+        secretsResult.details,
+      );
+    }
+
+    const configsResult = await this.provisionConfigs(snapshot);
+
+    if (!configsResult.success) {
+      return this.failProvisioning(
+        deploymentId,
+        "ConfigProvisioningFailed",
+        configsResult.message,
+        configsResult.details,
+      );
+    }
+
+    const volumes = snapshot.singleApps.flatMap((singleApp) =>
+      singleApp.volumes.map((volume) => ({
+        dockerVolumeName: volume.dockerVolumeName ?? volume.storagePath,
+        storagePath: volume.storagePath,
+      })),
+    );
+
+    if (volumes.length === 0) {
+      return this.recordProvisioningSuccess(
+        deploymentId,
+        [
+          registryAuthResult.message,
+          registryAuthResult.details,
+          secretsResult.message,
+          secretsResult.details,
+          configsResult.message,
+          configsResult.details,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    }
+
+    const result = await this.stackVolumeProvisioner.provisionVolumes(volumes);
+
+    if (!result.success) {
+      return this.failProvisioning(
+        deploymentId,
+        "VolumeProvisioningFailed",
+        result.message,
+        result.details,
+      );
+    }
+
+    return this.recordProvisioningSuccess(
+      deploymentId,
+      [
+        secretsResult.message,
+        secretsResult.details,
+        registryAuthResult.message,
+        registryAuthResult.details,
+        result.message,
+        result.details,
+        configsResult.message,
+        configsResult.details,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  private async provisionRegistryAuth(snapshot: StackConfigSnapshot) {
+    const registryIds = Array.from(
+      new Set(
+        snapshot.singleApps
+          .map((singleApp) => singleApp.registryId)
+          .filter((registryId): registryId is string => registryId !== null),
+      ),
+    );
+
+    if (registryIds.length === 0) {
+      return {
+        success: true,
+        message: "Authenticated 0 registry(ies)",
+        details: "",
+      };
+    }
+
+    const registries = await this.prisma.registry.findMany({
+      where: {
+        id: { in: registryIds },
+        tenantId: snapshot.appGroup.tenantId,
+      },
+      select: {
+        id: true,
+        host: true,
+        authType: true,
+        username: true,
+        credentialData: true,
+      },
+    });
+    const registriesById = new Map(
+      registries.map((registry) => [registry.id, registry]),
+    );
+    const loginTargets = [];
+
+    for (const registryId of registryIds) {
+      const registry = registriesById.get(registryId);
+
+      if (!registry) {
+        return {
+          success: false,
+          message: `Registry ${registryId} is missing`,
+          details: `Registry ${registryId} was not found for tenant ${snapshot.appGroup.tenantId}`,
+        };
+      }
+
+      loginTargets.push({
+        host: registry.host,
+        authType: registry.authType,
+        username: registry.username,
+        credential: this.registryCredential(registry.credentialData),
+      });
+    }
+
+    return this.stackRegistryAuth.login(loginTargets);
+  }
+
+  private async provisionSecrets(snapshot: StackConfigSnapshot) {
+    const snapshotSecrets = snapshot.singleApps.flatMap((singleApp) =>
+      singleApp.secrets.map((secret) => ({
+        ...secret,
+        dockerSecretName: this.secretName(secret.id, secret.valueVersion),
+      })),
+    );
+
+    if (snapshotSecrets.length === 0) {
+      return {
+        success: true,
+        message: "Provisioned 0 secret(s)",
+        details: "",
+      };
+    }
+
+    const databaseSecrets = await this.prisma.singleAppSecret.findMany({
+      where: {
+        id: { in: snapshotSecrets.map((secret) => secret.id) },
+      },
+      select: {
+        id: true,
+        valueCiphertext: true,
+        valueVersion: true,
+      },
+    });
+    const databaseSecretsById = new Map(
+      databaseSecrets.map((secret) => [secret.id, secret]),
+    );
+    const resolvedSecrets = [];
+
+    for (const snapshotSecret of snapshotSecrets) {
+      const databaseSecret = databaseSecretsById.get(snapshotSecret.id);
+
+      if (!databaseSecret) {
+        return {
+          success: false,
+          message: `Secret ${snapshotSecret.name} is missing`,
+          details: `SingleAppSecret ${snapshotSecret.id} was not found`,
+        };
+      }
+
+      if (databaseSecret.valueVersion !== snapshotSecret.valueVersion) {
+        return {
+          success: false,
+          message: `Secret ${snapshotSecret.name} version mismatch`,
+          details: `Expected version ${snapshotSecret.valueVersion}, found ${databaseSecret.valueVersion}`,
+        };
+      }
+
+      resolvedSecrets.push({
+        dockerSecretName: snapshotSecret.dockerSecretName,
+        value: databaseSecret.valueCiphertext,
+      });
+    }
+
+    return this.stackSecretProvisioner.provisionSecrets(resolvedSecrets);
+  }
+
+  private provisionConfigs(snapshot: StackConfigSnapshot) {
+    const configs = snapshot.singleApps.flatMap((singleApp) =>
+      singleApp.configs.map((config) => ({
+        dockerConfigName:
+          config.dockerConfigName ??
+          this.configName(config.configId, config.contentVersion),
+        content: config.content,
+      })),
+    );
+
+    if (configs.length === 0) {
+      return {
+        success: true,
+        message: "Provisioned 0 config(s)",
+        details: "",
+      };
+    }
+
+    return this.stackConfigProvisioner.provisionConfigs(configs);
+  }
+
+  private registryCredential(credentialData: Prisma.JsonValue) {
+    if (
+      credentialData &&
+      typeof credentialData === "object" &&
+      !Array.isArray(credentialData) &&
+      "valueCiphertext" in credentialData &&
+      typeof credentialData.valueCiphertext === "string"
+    ) {
+      return credentialData.valueCiphertext;
+    }
+
+    return null;
+  }
+
+  private async failProvisioning(
+    deploymentId: string,
+    errorCode: string,
+    message: string,
+    details: string,
+  ) {
+    const failed = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          status: DeploymentStatus.Failed,
+          errorCode,
+          errorMessage: this.truncate(details || message, 2000),
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: DeploymentPhase.PreparingArtifacts,
+        level: "Error",
+        message: this.truncate(`${message}\n${details}`, 2000),
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(failed);
+  }
+
+  private async recordProvisioningSuccess(deploymentId: string, message: string) {
+    const provisioned = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          heartbeatAt: new Date(),
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: DeploymentPhase.PreparingArtifacts,
+        level: "Info",
+        message: this.truncate(message || "Provisioned deployment artifacts", 2000),
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(provisioned);
+  }
+
+  async failDeployment(deploymentId: string, dto: FailDeploymentDto) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      dto.workerId,
+    );
+
+    this.assertDeploymentIsActive(deployment.status);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          status: DeploymentStatus.Failed,
+          errorCode: dto.errorCode,
+          errorMessage: dto.errorMessage,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: deployment.phase,
+        level: "Error",
+        message: dto.errorMessage ?? dto.errorCode,
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(updated);
+  }
+
+  private async findWorkerDeploymentOrThrow(
+    deploymentId: string,
+    workerId: string,
+  ) {
+    const deployment = await this.prisma.appGroupDeployment.findUnique({
+      where: { id: deploymentId },
+    });
+
+    if (!deployment) {
+      throw new NotFoundException("Deployment not found");
+    }
+
+    this.assertDeploymentIsActive(deployment.status);
+
+    if (deployment.leaseOwner !== workerId) {
+      throw new ConflictException("Deployment is leased by another worker");
+    }
+
+    return deployment;
+  }
+
+  private assertDeploymentIsActive(status: DeploymentStatus) {
+    if (status !== DeploymentStatus.Deploying) {
+      throw new ConflictException(`Deployment is not active: ${status}`);
+    }
+  }
+
+  private assertPhaseTransition(
+    currentPhase: DeploymentPhase,
+    nextPhase: DeploymentPhase,
+  ) {
+    const allowed = ALLOWED_PHASE_TRANSITIONS[currentPhase];
+
+    if (!allowed.includes(nextPhase)) {
+      throw new ConflictException(
+        `Invalid deployment phase transition: ${currentPhase} -> ${nextPhase}`,
+      );
+    }
+  }
+
+  private calculateLeaseExpiration(leaseSeconds = DEFAULT_LEASE_SECONDS) {
+    return new Date(Date.now() + leaseSeconds * 1000);
+  }
+
+  private renderStack(stackConfig: string | null) {
+    const snapshot = this.parseStackConfig(stackConfig);
+    const stack = this.withoutUndefined({
+      version: "3.9",
+      services: Object.fromEntries(
+        snapshot.singleApps.map((singleApp) => [
+          this.serviceName(singleApp.name),
+          this.renderService(singleApp),
+        ]),
+      ),
+      volumes: this.renderVolumes(snapshot),
+      secrets: this.renderSecrets(snapshot),
+      configs: this.renderConfigs(snapshot),
+    });
+
+    return stringify(stack, { lineWidth: 0 });
+  }
+
+  private parseStackConfig(stackConfig: string | null) {
+    if (!stackConfig) {
+      throw new ConflictException("Deployment has no stack config");
+    }
+
+    return JSON.parse(stackConfig) as StackConfigSnapshot;
+  }
+
+  private async applyRenderedStack(deploymentId: string, workerId: string) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      workerId,
+    );
+
+    if (!deployment.renderedStack) {
+      throw new ConflictException("Deployment has no rendered stack");
+    }
+
+    const stackName = this.stackName(deployment.appGroupId);
+    const result = await this.stackApplyService.applyStack({
+      stackName,
+      renderedStack: deployment.renderedStack,
+    });
+
+    if (result.exitCode !== 0) {
+      const failed = await this.prisma.$transaction(async (tx) => {
+        const next = await tx.appGroupDeployment.update({
+          where: { id: deploymentId },
+          data: {
+            status: DeploymentStatus.Failed,
+            errorCode: "DockerStackDeployFailed",
+            errorMessage: this.truncate(
+              result.stderr || result.stdout || `Exit code ${result.exitCode}`,
+              2000,
+            ),
+            completedAt: new Date(),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            heartbeatAt: null,
+          },
+        });
+
+        await this.createDeploymentEvent(tx, deploymentId, {
+          phase: DeploymentPhase.ApplyingStack,
+          level: "Error",
+          message: this.truncate(
+            `${result.command}\n${result.stderr || result.stdout}`,
+            2000,
+          ),
+        });
+
+        return next;
+      });
+
+      return mapAppGroupDeployment(failed);
+    }
+
+    const applied = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          heartbeatAt: new Date(),
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: DeploymentPhase.ApplyingStack,
+        level: "Info",
+        message: this.truncate(
+          `${result.command}\n${result.stdout || "Docker stack deploy succeeded"}`,
+          2000,
+        ),
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(applied);
+  }
+
+  private async waitForRollout(deploymentId: string, workerId: string) {
+    const deployment = await this.findWorkerDeploymentOrThrow(
+      deploymentId,
+      workerId,
+    );
+    const snapshot = this.parseStackConfig(deployment.stackConfig);
+    const stackName = this.stackName(deployment.appGroupId);
+    const result = await this.stackRolloutService.waitForRollout({
+      stackName,
+      expectedServices: snapshot.singleApps.map((singleApp) => ({
+        name: `${stackName}_${this.serviceName(singleApp.name)}`,
+        desiredReplicas: singleApp.desiredReplicas,
+      })),
+    });
+
+    if (!result.success) {
+      const failed = await this.prisma.$transaction(async (tx) => {
+        const next = await tx.appGroupDeployment.update({
+          where: { id: deploymentId },
+          data: {
+            status: DeploymentStatus.Failed,
+            errorCode: "RolloutFailed",
+            errorMessage: this.truncate(
+              `${result.message}\n${result.details}`,
+              2000,
+            ),
+            completedAt: new Date(),
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            heartbeatAt: null,
+          },
+        });
+
+        await this.createDeploymentEvent(tx, deploymentId, {
+          phase: DeploymentPhase.WaitingForRollout,
+          level: "Error",
+          message: this.truncate(`${result.message}\n${result.details}`, 2000),
+        });
+
+        return next;
+      });
+
+      return mapAppGroupDeployment(failed);
+    }
+
+    const completed = await this.prisma.$transaction(async (tx) => {
+      for (const singleApp of snapshot.singleApps) {
+        await tx.singleApp.update({
+          where: { id: singleApp.id },
+          data: {
+            actualReplicas: singleApp.desiredReplicas,
+            health: "Healthy",
+          },
+        });
+      }
+
+      const deletedSingleApps = await tx.singleApp.findMany({
+        where: {
+          appGroupId: deployment.appGroupId,
+          pendingDeletion: true,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      if (deletedSingleApps.length > 0) {
+        await tx.singleApp.deleteMany({
+          where: {
+            id: {
+              in: deletedSingleApps.map((singleApp) => singleApp.id),
+            },
+          },
+        });
+      }
+
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          phase: DeploymentPhase.Completed,
+          status: DeploymentStatus.Succeeded,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+          appGroup: {
+            update: {
+              health: "Healthy",
+              driftStatus: "InSync",
+            },
+          },
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: DeploymentPhase.Completed,
+        level: "Info",
+        message: this.truncate(`${result.message}\n${result.details}`, 2000),
+      });
+
+      if (deletedSingleApps.length > 0) {
+        await this.createDeploymentEvent(tx, deploymentId, {
+          phase: DeploymentPhase.Cleanup,
+          level: "Info",
+          message: `Deleted ${deletedSingleApps.length} pending single app(s): ${deletedSingleApps
+            .map((singleApp) => singleApp.name)
+            .join(", ")}`,
+        });
+      }
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(completed);
+  }
+
+  private renderService(singleApp: StackConfigSingleApp) {
+    const environment = this.renderEnvironment(singleApp);
+
+    return this.withoutUndefined({
+      image: singleApp.image,
+      environment: this.isEmptyRecord(environment) ? undefined : environment,
+      command: singleApp.command.length > 0 ? singleApp.command : undefined,
+      entrypoint: singleApp.entrypoint ?? undefined,
+      working_dir: singleApp.workingDir ?? undefined,
+      user: singleApp.user ?? undefined,
+      read_only: singleApp.readOnlyRootFilesystem ? true : undefined,
+      stop_grace_period: `${singleApp.stopGracePeriodSeconds}s`,
+      volumes:
+        singleApp.volumes.length > 0
+          ? singleApp.volumes.map(
+              (volume) =>
+                `${this.volumeName(volume.volumeName)}:${volume.mountPath}:${volume.mode === "ReadOnly" ? "ro" : "rw"}`,
+            )
+          : undefined,
+      secrets:
+        singleApp.secrets.length > 0
+          ? singleApp.secrets.map((secret) => ({
+              source: this.secretAlias(secret),
+              target: secret.name,
+            }))
+          : undefined,
+      configs:
+        singleApp.configs.length > 0
+          ? singleApp.configs.map((config) => ({
+              source: this.configAlias(config),
+              target: config.targetPath,
+            }))
+          : undefined,
+      deploy: {
+        replicas: singleApp.desiredReplicas,
+        resources: {
+          limits: {
+            cpus: singleApp.resources.cpu,
+            memory: `${singleApp.resources.memoryBytes}B`,
+          },
+        },
+        restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
+        update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
+        labels: this.renderTraefikLabels(singleApp),
+      },
+    });
+  }
+
+  private renderRestartPolicy(policy: Record<string, unknown>) {
+    return this.withoutUndefined({
+      condition: policy.condition,
+      delay: this.seconds(policy.delaySeconds),
+      max_attempts: policy.maxAttempts,
+      window: this.seconds(policy.windowSeconds),
+    });
+  }
+
+  private renderUpdatePolicy(policy: Record<string, unknown>) {
+    return this.withoutUndefined({
+      parallelism: policy.parallelism,
+      delay: this.seconds(policy.delaySeconds),
+      order: policy.order,
+    });
+  }
+
+  private renderTraefikLabels(singleApp: StackConfigSingleApp) {
+    const labels: Record<string, string> = {};
+
+    for (const endpoint of singleApp.httpEndpoints) {
+      const routerName = `${singleApp.name}-${endpoint.name}`;
+      labels[`traefik.http.services.${routerName}.loadbalancer.server.port`] =
+        String(endpoint.containerPort);
+
+      const domains = endpoint.domains.map((domain) => domain.hostname);
+      if (domains.length > 0) {
+        labels[`traefik.http.routers.${routerName}.rule`] = domains
+          .map((domain) => `Host(\`${domain}\`)`)
+          .join(" || ");
+        labels[`traefik.http.routers.${routerName}.service`] = routerName;
+      }
+
+      if (endpoint.protocolMode !== "HTTP") {
+        labels[`traefik.http.routers.${routerName}.tls`] = "true";
+      }
+    }
+
+    return Object.keys(labels).length > 0 ? labels : undefined;
+  }
+
+  private renderVolumes(snapshot: StackConfigSnapshot) {
+    const volumes = new Map<string, { external: true; name: string }>();
+
+    for (const singleApp of snapshot.singleApps) {
+      for (const volume of singleApp.volumes) {
+        volumes.set(this.volumeName(volume.volumeName), {
+          external: true,
+          name: volume.dockerVolumeName ?? volume.storagePath,
+        });
+      }
+    }
+
+    return volumes.size > 0 ? Object.fromEntries(volumes) : undefined;
+  }
+
+  private renderSecrets(snapshot: StackConfigSnapshot) {
+    const secrets = new Map<string, { external: true; name: string }>();
+
+    for (const singleApp of snapshot.singleApps) {
+      for (const secret of singleApp.secrets) {
+        secrets.set(this.secretAlias(secret), {
+          external: true,
+          name:
+            secret.dockerSecretName ??
+            this.secretName(secret.id, secret.valueVersion),
+        });
+      }
+    }
+
+    return secrets.size > 0 ? Object.fromEntries(secrets) : undefined;
+  }
+
+  private renderConfigs(snapshot: StackConfigSnapshot) {
+    const configs = new Map<string, { external: true; name: string }>();
+
+    for (const singleApp of snapshot.singleApps) {
+      for (const config of singleApp.configs) {
+        configs.set(this.configAlias(config), {
+          external: true,
+          name:
+            config.dockerConfigName ??
+            this.configName(config.configId, config.contentVersion),
+        });
+      }
+    }
+
+    return configs.size > 0 ? Object.fromEntries(configs) : undefined;
+  }
+
+  private renderEnvironment(singleApp: StackConfigSingleApp) {
+    return {
+      ...Object.fromEntries(
+        singleApp.variables.map((variable) => [
+          variable.targetName,
+          variable.value,
+        ]),
+      ),
+      ...singleApp.environment,
+    };
+  }
+
+  private seconds(value: unknown) {
+    return typeof value === "number" ? `${value}s` : undefined;
+  }
+
+  private serviceName(name: string) {
+    return name.replaceAll("-", "_");
+  }
+
+  private volumeName(name: string) {
+    return `rp_${name.replaceAll("-", "_")}`;
+  }
+
+  private secretAlias(secret: { id: string; valueVersion: number }) {
+    return this.secretName(secret.id, secret.valueVersion);
+  }
+
+  private secretName(secretId: string, valueVersion: number) {
+    return `rp_secret_${secretId.replaceAll("-", "_")}_v${valueVersion}`;
+  }
+
+  private configAlias(config: { configId: string; contentVersion: number }) {
+    return this.configName(config.configId, config.contentVersion);
+  }
+
+  private configName(configId: string, contentVersion: number) {
+    return `rp_config_${configId.replaceAll("-", "_")}_v${contentVersion}`;
+  }
+
+  private stackName(appGroupId: string) {
+    return `rp_${appGroupId.replaceAll("-", "_")}`;
+  }
+
+  private truncate(value: string, maxLength: number) {
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+
+  private isEmptyRecord(value: Record<string, unknown>) {
+    return Object.keys(value).length === 0;
+  }
+
+  private withoutUndefined<T extends Record<string, unknown>>(value: T) {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entry]) => entry !== undefined),
+    );
+  }
+
+  private createDeploymentEvent(
+    tx: Prisma.TransactionClient,
+    deploymentId: string,
+    event: {
+      phase: DeploymentPhase;
+      level: "Info" | "Warning" | "Error";
+      message: string;
+    },
+  ) {
+    return tx.deploymentEvent.create({
+      data: {
+        deploymentId,
+        phase: event.phase,
+        level: event.level,
+        message: event.message,
+      },
+    });
+  }
+}
