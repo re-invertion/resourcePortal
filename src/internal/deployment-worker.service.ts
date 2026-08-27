@@ -1355,6 +1355,7 @@ export class DeploymentWorkerService {
       user: singleApp.user ?? undefined,
       read_only: singleApp.readOnlyRootFilesystem ? true : undefined,
       stop_grace_period: `${singleApp.stopGracePeriodSeconds}s`,
+      healthcheck: this.renderHealthCheck(singleApp.healthCheck),
       volumes:
         singleApp.volumes.length > 0
           ? singleApp.volumes.map(
@@ -1405,6 +1406,32 @@ export class DeploymentWorkerService {
       parallelism: policy.parallelism,
       delay: this.seconds(policy.delaySeconds),
       order: policy.order,
+      failure_action: "pause",
+    });
+  }
+
+  private renderHealthCheck(healthCheck: unknown) {
+    if (
+      !healthCheck ||
+      typeof healthCheck !== "object" ||
+      Array.isArray(healthCheck)
+    ) {
+      return undefined;
+    }
+
+    const value = healthCheck as Record<string, unknown>;
+    const command = value.command;
+
+    if (typeof command !== "string" || command.trim().length === 0) {
+      return undefined;
+    }
+
+    return this.withoutUndefined({
+      test: ["CMD-SHELL", command],
+      interval: this.seconds(value.intervalSeconds),
+      timeout: this.seconds(value.timeoutSeconds),
+      retries: typeof value.retries === "number" ? value.retries : undefined,
+      start_period: this.seconds(value.startPeriodSeconds),
     });
   }
 
