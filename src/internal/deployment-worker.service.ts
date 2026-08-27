@@ -1062,33 +1062,12 @@ export class DeploymentWorkerService {
     });
 
     if (!result.success) {
-      const failed = await this.prisma.$transaction(async (tx) => {
-        const next = await tx.appGroupDeployment.update({
-          where: { id: deploymentId },
-          data: {
-            status: DeploymentStatus.Failed,
-            errorCode: "RolloutFailed",
-            errorMessage: this.truncate(
-              `${result.message}\n${result.details}`,
-              2000,
-            ),
-            completedAt: new Date(),
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            heartbeatAt: null,
-          },
-        });
-
-        await this.createDeploymentEvent(tx, deploymentId, {
-          phase: DeploymentPhase.WaitingForRollout,
-          level: "Error",
-          message: this.truncate(`${result.message}\n${result.details}`, 2000),
-        });
-
-        return next;
-      });
-
-      return mapAppGroupDeployment(failed);
+      return this.rollbackAfterRuntimeFailure(
+        deployment,
+        snapshot,
+        result.message,
+        result.details,
+      );
     }
 
     const completed = await this.prisma.$transaction(async (tx) => {
@@ -1170,6 +1149,195 @@ export class DeploymentWorkerService {
     });
 
     return mapAppGroupDeployment(completed);
+  }
+
+  private async rollbackAfterRuntimeFailure(
+    deployment: {
+      id: string;
+      appGroupId: string;
+      version: number;
+      leaseOwner: string | null;
+      leaseExpiresAt: Date | null;
+      stackConfig: string | null;
+      sourceDraftRevision: number;
+    },
+    failedSnapshot: StackConfigSnapshot,
+    message: string,
+    details: string,
+  ) {
+    const rollbackTarget = await this.prisma.appGroupDeployment.findFirst({
+      where: {
+        appGroupId: deployment.appGroupId,
+        status: DeploymentStatus.Succeeded,
+        version: { lt: deployment.version },
+      },
+      orderBy: { version: "desc" },
+    });
+
+    if (!rollbackTarget?.stackConfig) {
+      return this.failDeploymentWithPhase(deployment.id, {
+        phase: DeploymentPhase.WaitingForRollout,
+        errorCode: "RolloutFailed",
+        errorMessage: this.truncate(`${message}\n${details}`, 2000),
+      });
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.appGroupDeployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: DeploymentStatus.RollingBack,
+          phase: DeploymentPhase.RollingBack,
+          rollbackTargetVersion: rollbackTarget.version,
+          errorCode: "RolloutFailed",
+          errorMessage: this.truncate(`${message}\n${details}`, 2000),
+          heartbeatAt: new Date(),
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deployment.id, {
+        phase: DeploymentPhase.WaitingForRollout,
+        level: "Error",
+        message: this.truncate(`${message}\n${details}`, 2000),
+      });
+
+      await this.createDeploymentEvent(tx, deployment.id, {
+        phase: DeploymentPhase.RollingBack,
+        level: "Info",
+        message: `Rolling back to deployment v${rollbackTarget.version}`,
+      });
+    });
+
+    const rollbackSnapshot = this.parseStackConfig(rollbackTarget.stackConfig);
+    const stackName = this.stackName(deployment.appGroupId);
+    const renderedStack =
+      rollbackTarget.renderedStack ?? this.renderStack(rollbackTarget.stackConfig);
+    const applyResult = await this.stackApplyService.applyStack({
+      stackName,
+      renderedStack,
+    });
+
+    if (applyResult.exitCode !== 0) {
+      return this.markRollbackFailed(
+        deployment.id,
+        rollbackTarget.version,
+        `Rollback stack deploy failed\n${applyResult.command}\n${
+          applyResult.stderr || applyResult.stdout || `Exit code ${applyResult.exitCode}`
+        }`,
+      );
+    }
+
+    const rolloutResult = await this.stackRolloutService.waitForRollout({
+      stackName,
+      expectedServices: rollbackSnapshot.singleApps.map((singleApp) => ({
+        name: `${stackName}_${this.serviceName(singleApp.name)}`,
+        desiredReplicas: this.effectiveReplicas(rollbackSnapshot, singleApp),
+      })),
+    });
+
+    if (!rolloutResult.success) {
+      return this.markRollbackFailed(
+        deployment.id,
+        rollbackTarget.version,
+        `${rolloutResult.message}\n${rolloutResult.details}`,
+      );
+    }
+
+    const rolledBack = await this.prisma.$transaction(async (tx) => {
+      for (const singleApp of failedSnapshot.singleApps) {
+        await tx.singleApp.updateMany({
+          where: { id: singleApp.id },
+          data: {
+            actualReplicas: 0,
+            health: "Unknown",
+          },
+        });
+      }
+
+      for (const singleApp of rollbackSnapshot.singleApps) {
+        await tx.singleApp.updateMany({
+          where: { id: singleApp.id },
+          data: {
+            actualReplicas: this.effectiveReplicas(rollbackSnapshot, singleApp),
+            health: "Healthy",
+          },
+        });
+      }
+
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deployment.id },
+        data: {
+          status: DeploymentStatus.RolledBack,
+          phase: DeploymentPhase.Completed,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        },
+      });
+
+      await tx.appGroup.update({
+        where: { id: deployment.appGroupId },
+        data: {
+          currentDeploymentVersion: rollbackTarget.version,
+          hasPendingChanges: true,
+          health: "Healthy",
+          driftStatus: "InSync",
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deployment.id, {
+        phase: DeploymentPhase.Completed,
+        level: "Info",
+        message: `Rolled back to deployment v${rollbackTarget.version}`,
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(rolledBack);
+  }
+
+  private async markRollbackFailed(
+    deploymentId: string,
+    rollbackTargetVersion: number,
+    message: string,
+  ) {
+    const failed = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          status: DeploymentStatus.RollbackFailed,
+          phase: DeploymentPhase.Completed,
+          errorCode: "RollbackFailed",
+          errorMessage: this.truncate(message, 2000),
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+          appGroup: {
+            update: {
+              status: "Error",
+              health: "Unhealthy",
+              driftStatus: "Unknown",
+            },
+          },
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: DeploymentPhase.Completed,
+        level: "Error",
+        message: this.truncate(
+          `Rollback to deployment v${rollbackTargetVersion} failed\n${message}`,
+          2000,
+        ),
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(failed);
   }
 
   private renderService(
