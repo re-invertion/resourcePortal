@@ -234,6 +234,11 @@ export class AppGroupsService {
       }
 
       const version = await this.nextDeploymentVersion(tx, appGroupId);
+      const tenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { name: true },
+      });
+      const correlationId = dto.correlationId ?? crypto.randomUUID();
 
       const created = await tx.appGroupDeployment.create({
         data: {
@@ -243,7 +248,7 @@ export class AppGroupsService {
           phase: "Validating",
           stackConfig: JSON.stringify(stackConfig),
           sourceDraftRevision: draft.runtimeDraftRevision,
-          correlationId: dto.correlationId ?? crypto.randomUUID(),
+          correlationId,
           idempotencyKey: normalizedIdempotencyKey,
           createdBy: actor.id,
           events: {
@@ -252,6 +257,26 @@ export class AppGroupsService {
               level: "Info",
               message: "Deployment accepted and queued for worker execution",
             },
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "appgroup.deploy.started",
+          resourceType: "AppGroup",
+          resourceId: appGroupId,
+          resourceName: draft.name,
+          result: "Success",
+          correlationId,
+          changes: {
+            deploymentId: created.id,
+            version,
+            sourceDraftRevision: draft.runtimeDraftRevision,
           },
         },
       });
@@ -320,9 +345,14 @@ export class AppGroupsService {
 
       const appGroup = await tx.appGroup.findUniqueOrThrow({
         where: { id: appGroupId },
-        select: { runtimeDraftRevision: true },
+        select: { name: true, runtimeDraftRevision: true },
+      });
+      const tenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { name: true },
       });
       const version = await this.nextDeploymentVersion(tx, appGroupId);
+      const correlationId = dto.correlationId ?? crypto.randomUUID();
       const note = dto.note
         ? `Rollback to v${targetDeployment.version}: ${dto.note}`
         : `Rollback to v${targetDeployment.version}`;
@@ -336,7 +366,7 @@ export class AppGroupsService {
           stackConfig: targetDeployment.stackConfig,
           sourceDraftRevision: appGroup.runtimeDraftRevision,
           rollbackTargetVersion: targetDeployment.version,
-          correlationId: dto.correlationId ?? crypto.randomUUID(),
+          correlationId,
           idempotencyKey: normalizedIdempotencyKey,
           createdBy: actor.id,
           events: {
@@ -345,6 +375,28 @@ export class AppGroupsService {
               level: "Info",
               message: `${note} accepted and queued for worker execution`,
             },
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "appgroup.rollback.started",
+          resourceType: "AppGroupDeployment",
+          resourceId: targetDeployment.id,
+          resourceName: `v${targetDeployment.version}`,
+          result: "Success",
+          correlationId,
+          changes: {
+            deploymentId: created.id,
+            version,
+            rollbackTargetVersion: targetDeployment.version,
+            appGroupId,
+            appGroupName: appGroup.name,
           },
         },
       });

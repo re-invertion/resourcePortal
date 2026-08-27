@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AppGroupsModule } from "./app-groups/app-groups.module";
+import { AuditModule } from "./audit/audit.module";
 import { DevAuthGuard } from "./auth/dev-auth.guard";
 import { PermissionsGuard } from "./auth/permissions.guard";
 import { TenantContextGuard } from "./auth/tenant-context.guard";
@@ -27,6 +28,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     RegistriesModule,
     VolumesModule,
     DomainsModule,
+    AuditModule,
     InternalModule,
   ],
   providers: [
