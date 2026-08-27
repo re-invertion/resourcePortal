@@ -1,7 +1,8 @@
 export function getDockerImageHost(image: string) {
-  const firstPart = image.split("/")[0];
+  const [firstPart, ...rest] = image.split("/");
 
   if (
+    rest.length === 0 ||
     !firstPart ||
     (!firstPart.includes(".") &&
       !firstPart.includes(":") &&
