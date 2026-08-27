@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -100,6 +101,7 @@ export class AppGroupsController {
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
     @Param("deploymentId", ParseUUIDPipe) deploymentId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Body() dto: RollbackDeploymentDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -108,6 +110,7 @@ export class AppGroupsController {
       appGroupId,
       deploymentId,
       dto,
+      idempotencyKey,
       user,
     );
   }
@@ -117,10 +120,17 @@ export class AppGroupsController {
   deployAppGroup(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Body() dto: DeployAppGroupDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.deployAppGroup(tenantId, appGroupId, dto, user);
+    return this.appGroupsService.deployAppGroup(
+      tenantId,
+      appGroupId,
+      dto,
+      idempotencyKey,
+      user,
+    );
   }
 
   @RequirePermissions("variable.read")

@@ -204,14 +204,27 @@ export class AppGroupsService {
     tenantId: string,
     appGroupId: string,
     dto: DeployAppGroupDto,
+    idempotencyKey: string | undefined,
     actor: AuthenticatedUser,
   ) {
+    const normalizedIdempotencyKey =
+      this.normalizeIdempotencyKey(idempotencyKey);
     const draft = await this.getDeployableDraft(tenantId, appGroupId);
     this.assertDraftCanBeDeployed(draft, dto.force ?? false);
 
     const stackConfig = this.buildStackConfigSnapshot(draft, dto.note);
 
     const deployment = await this.prisma.$transaction(async (tx) => {
+      const existingDeployment = await this.findIdempotentDeployment(
+        tx,
+        appGroupId,
+        normalizedIdempotencyKey,
+      );
+
+      if (existingDeployment) {
+        return existingDeployment;
+      }
+
       const activeDeployment = await this.findActiveDeployment(tx, appGroupId);
 
       if (activeDeployment) {
@@ -231,6 +244,7 @@ export class AppGroupsService {
           stackConfig: JSON.stringify(stackConfig),
           sourceDraftRevision: draft.runtimeDraftRevision,
           correlationId: dto.correlationId ?? crypto.randomUUID(),
+          idempotencyKey: normalizedIdempotencyKey,
           createdBy: actor.id,
           events: {
             create: {
@@ -245,8 +259,6 @@ export class AppGroupsService {
       await tx.appGroup.update({
         where: { id: appGroupId },
         data: {
-          currentDeploymentVersion: version,
-          hasPendingChanges: false,
           lastDeploymentAt: new Date(),
           lastDeploymentBy: actor.id,
           updatedBy: actor.id,
@@ -264,11 +276,24 @@ export class AppGroupsService {
     appGroupId: string,
     deploymentId: string,
     dto: RollbackDeploymentDto,
+    idempotencyKey: string | undefined,
     actor: AuthenticatedUser,
   ) {
+    const normalizedIdempotencyKey =
+      this.normalizeIdempotencyKey(idempotencyKey);
     await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
 
     const deployment = await this.prisma.$transaction(async (tx) => {
+      const existingDeployment = await this.findIdempotentDeployment(
+        tx,
+        appGroupId,
+        normalizedIdempotencyKey,
+      );
+
+      if (existingDeployment) {
+        return existingDeployment;
+      }
+
       const targetDeployment = await tx.appGroupDeployment.findFirst({
         where: { id: deploymentId, appGroupId },
       });
@@ -312,6 +337,7 @@ export class AppGroupsService {
           sourceDraftRevision: appGroup.runtimeDraftRevision,
           rollbackTargetVersion: targetDeployment.version,
           correlationId: dto.correlationId ?? crypto.randomUUID(),
+          idempotencyKey: normalizedIdempotencyKey,
           createdBy: actor.id,
           events: {
             create: {
@@ -326,7 +352,6 @@ export class AppGroupsService {
       await tx.appGroup.update({
         where: { id: appGroupId },
         data: {
-          currentDeploymentVersion: version,
           lastDeploymentAt: new Date(),
           lastDeploymentBy: actor.id,
           updatedBy: actor.id,
@@ -1288,11 +1313,35 @@ export class AppGroupsService {
       where: {
         appGroupId,
         status: {
-          in: ["Pending", "Deploying", "RollingBack", "RollbackFailed"],
+          in: ["Pending", "Deploying", "RollingBack"],
         },
       },
       select: { id: true, status: true },
     });
+  }
+
+  private async findIdempotentDeployment(
+    tx: Prisma.TransactionClient,
+    appGroupId: string,
+    idempotencyKey: string | undefined,
+  ) {
+    if (!idempotencyKey) {
+      return null;
+    }
+
+    return tx.appGroupDeployment.findUnique({
+      where: {
+        appGroupId_idempotencyKey: {
+          appGroupId,
+          idempotencyKey,
+        },
+      },
+    });
+  }
+
+  private normalizeIdempotencyKey(idempotencyKey: string | undefined) {
+    const normalized = idempotencyKey?.trim();
+    return normalized && normalized.length > 0 ? normalized.slice(0, 255) : undefined;
   }
 
   private async nextDeploymentVersion(

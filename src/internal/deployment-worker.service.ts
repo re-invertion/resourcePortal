@@ -809,6 +809,10 @@ export class DeploymentWorkerService {
         });
       }
 
+      const appGroup = await tx.appGroup.findUniqueOrThrow({
+        where: { id: deployment.appGroupId },
+        select: { runtimeDraftRevision: true },
+      });
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
         data: {
@@ -818,12 +822,17 @@ export class DeploymentWorkerService {
           leaseOwner: null,
           leaseExpiresAt: null,
           heartbeatAt: null,
-          appGroup: {
-            update: {
-              health: "Healthy",
-              driftStatus: "InSync",
-            },
-          },
+        },
+      });
+
+      await tx.appGroup.update({
+        where: { id: deployment.appGroupId },
+        data: {
+          currentDeploymentVersion: deployment.version,
+          hasPendingChanges:
+            appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
+          health: "Healthy",
+          driftStatus: "InSync",
         },
       });
 

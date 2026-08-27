@@ -363,6 +363,7 @@ model AppGroupDeployment {
   leaseExpiresAt        DateTime?
   heartbeatAt           DateTime?
   correlationId         String            @db.Uuid
+  idempotencyKey        String?
   errorCode             String?
   errorMessage          String?
   createdBy             String            @db.Uuid
@@ -373,6 +374,7 @@ model AppGroupDeployment {
   events                DeploymentEvent[]
 
   @@unique([appGroupId, version])
+  @@unique([appGroupId, idempotencyKey])
 }
 
 model DeploymentEvent {
