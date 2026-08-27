@@ -11,6 +11,7 @@ import {
 import { stringify } from "yaml";
 import { PrismaService } from "../prisma/prisma.service";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
+import { getDockerImageHost } from "../registries/docker-image";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
@@ -214,6 +215,18 @@ export class DeploymentWorkerService {
 
     this.assertDeploymentIsActive(deployment.status);
     this.assertPhaseTransition(deployment.phase, dto.phase);
+
+    if (dto.phase === DeploymentPhase.PreparingArtifacts) {
+      const validation = await this.validateDeploymentSnapshot(deployment);
+
+      if (!validation.success) {
+        return this.failDeploymentWithPhase(deployment.id, {
+          phase: DeploymentPhase.Validating,
+          errorCode: validation.errorCode,
+          errorMessage: validation.message,
+        });
+      }
+    }
 
     const completed = dto.phase === DeploymentPhase.Completed;
     const renderedStack =
@@ -611,6 +624,307 @@ export class DeploymentWorkerService {
     return deployment;
   }
 
+  private async validateDeploymentSnapshot(deployment: {
+    appGroupId: string;
+    stackConfig: string | null;
+  }) {
+    const snapshot = this.parseStackConfig(deployment.stackConfig);
+    const appGroup = await this.prisma.appGroup.findUnique({
+      where: { id: deployment.appGroupId },
+      include: {
+        tenant: {
+          include: { quota: true },
+        },
+      },
+    });
+
+    if (!appGroup) {
+      return this.validationFailure("AppGroupMissing", "App Group not found");
+    }
+
+    if (appGroup.status !== "Ready") {
+      return this.validationFailure(
+        "AppGroupNotReady",
+        `App Group status is ${appGroup.status}`,
+      );
+    }
+
+    if (appGroup.tenant.status !== "Active") {
+      return this.validationFailure(
+        "TenantNotActive",
+        `Tenant status is ${appGroup.tenant.status}`,
+      );
+    }
+
+    if (snapshot.singleApps.length === 0) {
+      return this.validationFailure(
+        "InvalidAppGroupConfiguration",
+        "App Group has no deployable SingleApps",
+      );
+    }
+
+    const registryFailure = await this.validateRegistries(snapshot);
+    if (registryFailure) {
+      return registryFailure;
+    }
+
+    const volumeFailure = await this.validateVolumes(snapshot);
+    if (volumeFailure) {
+      return volumeFailure;
+    }
+
+    const domainFailure = this.validateDomains(snapshot);
+    if (domainFailure) {
+      return domainFailure;
+    }
+
+    const quotaFailure = this.validateQuota(snapshot, appGroup.tenant.quota);
+    if (quotaFailure) {
+      return quotaFailure;
+    }
+
+    return { success: true as const };
+  }
+
+  private async validateRegistries(snapshot: StackConfigSnapshot) {
+    const registryIds = Array.from(
+      new Set(
+        snapshot.singleApps
+          .map((singleApp) => singleApp.registryId)
+          .filter((registryId): registryId is string => registryId !== null),
+      ),
+    );
+
+    if (registryIds.length === 0) {
+      return null;
+    }
+
+    const registries = await this.prisma.registry.findMany({
+      where: {
+        id: { in: registryIds },
+        tenantId: snapshot.appGroup.tenantId,
+      },
+      select: {
+        id: true,
+        host: true,
+        validationStatus: true,
+      },
+    });
+    const registriesById = new Map(
+      registries.map((registry) => [registry.id, registry]),
+    );
+
+    for (const singleApp of snapshot.singleApps) {
+      if (!singleApp.registryId) {
+        continue;
+      }
+
+      const registry = registriesById.get(singleApp.registryId);
+
+      if (!registry) {
+        return this.validationFailure(
+          "RegistryUnavailable",
+          `Registry ${singleApp.registryId} was not found`,
+        );
+      }
+
+      if (registry.validationStatus !== "Valid") {
+        return this.validationFailure(
+          "RegistryUnavailable",
+          `Registry ${registry.host} validation status is ${registry.validationStatus}`,
+        );
+      }
+
+      const imageHost = getDockerImageHost(singleApp.image);
+      if (registry.host !== imageHost) {
+        return this.validationFailure(
+          "RegistryMismatch",
+          `Registry ${registry.host} does not match image host ${imageHost}`,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  private async validateVolumes(snapshot: StackConfigSnapshot) {
+    const volumeIds = Array.from(
+      new Set(
+        snapshot.singleApps.flatMap((singleApp) =>
+          singleApp.volumes.map((volume) => volume.volumeId),
+        ),
+      ),
+    );
+
+    if (volumeIds.length === 0) {
+      return null;
+    }
+
+    const volumes = await this.prisma.volume.findMany({
+      where: {
+        id: { in: volumeIds },
+        tenantId: snapshot.appGroup.tenantId,
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+      },
+    });
+    const volumesById = new Map(volumes.map((volume) => [volume.id, volume]));
+
+    for (const volumeId of volumeIds) {
+      const volume = volumesById.get(volumeId);
+
+      if (!volume) {
+        return this.validationFailure(
+          "VolumeUnavailable",
+          `Volume ${volumeId} was not found`,
+        );
+      }
+
+      if (volume.status !== "Ready") {
+        return this.validationFailure(
+          "VolumeUnavailable",
+          `Volume ${volume.name} status is ${volume.status}`,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  private validateDomains(snapshot: StackConfigSnapshot) {
+    for (const singleApp of snapshot.singleApps) {
+      for (const endpoint of singleApp.httpEndpoints) {
+        if (endpoint.containerPort < 1 || endpoint.containerPort > 65535) {
+          return this.validationFailure(
+            "InvalidAppGroupConfiguration",
+            `Endpoint ${endpoint.name} has invalid container port ${endpoint.containerPort}`,
+          );
+        }
+
+        for (const domain of endpoint.domains) {
+          if (domain.dnsStatus !== "Valid") {
+            return this.validationFailure(
+              "DomainUnavailable",
+              `Domain ${domain.hostname} DNS status is ${domain.dnsStatus}`,
+            );
+          }
+
+          if (domain.tlsEnabled && domain.certificateStatus === "Error") {
+            return this.validationFailure(
+              "DomainUnavailable",
+              `Domain ${domain.hostname} certificate status is ${domain.certificateStatus}`,
+            );
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private validateQuota(
+    snapshot: StackConfigSnapshot,
+    quota: {
+      cpu: Prisma.Decimal;
+      memoryBytes: bigint;
+      gpu: number;
+      storageBytes: bigint;
+      maxSingleApps: number;
+      maxVolumes: number;
+    } | null,
+  ) {
+    if (!quota) {
+      return null;
+    }
+
+    const requested = snapshot.singleApps.reduce(
+      (acc, singleApp) => {
+        const replicas = this.effectiveReplicas(snapshot, singleApp);
+
+        return {
+          cpu: acc.cpu + Number(singleApp.resources.cpu) * replicas,
+          memoryBytes:
+            acc.memoryBytes + Number(singleApp.resources.memoryBytes) * replicas,
+          gpu: acc.gpu + singleApp.resources.gpu * replicas,
+          singleApps: acc.singleApps + 1,
+        };
+      },
+      { cpu: 0, memoryBytes: 0, gpu: 0, singleApps: 0 },
+    );
+    const volumeIds = new Set(
+      snapshot.singleApps.flatMap((singleApp) =>
+        singleApp.volumes.map((volume) => volume.volumeId),
+      ),
+    );
+
+    if (requested.cpu > Number(quota.cpu)) {
+      return this.validationFailure("QuotaExceeded", "CPU quota exceeded");
+    }
+
+    if (requested.memoryBytes > Number(quota.memoryBytes)) {
+      return this.validationFailure("QuotaExceeded", "Memory quota exceeded");
+    }
+
+    if (requested.gpu > quota.gpu) {
+      return this.validationFailure("QuotaExceeded", "GPU quota exceeded");
+    }
+
+    if (requested.singleApps > quota.maxSingleApps) {
+      return this.validationFailure("QuotaExceeded", "SingleApp quota exceeded");
+    }
+
+    if (volumeIds.size > quota.maxVolumes) {
+      return this.validationFailure("QuotaExceeded", "Volume quota exceeded");
+    }
+
+    return null;
+  }
+
+  private validationFailure(errorCode: string, message: string) {
+    return {
+      success: false as const,
+      errorCode,
+      message,
+    };
+  }
+
+  private async failDeploymentWithPhase(
+    deploymentId: string,
+    failure: {
+      phase: DeploymentPhase;
+      errorCode: string;
+      errorMessage: string;
+    },
+  ) {
+    const failed = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.appGroupDeployment.update({
+        where: { id: deploymentId },
+        data: {
+          status: DeploymentStatus.Failed,
+          errorCode: failure.errorCode,
+          errorMessage: failure.errorMessage,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        },
+      });
+
+      await this.createDeploymentEvent(tx, deploymentId, {
+        phase: failure.phase,
+        level: "Error",
+        message: failure.errorMessage,
+      });
+
+      return next;
+    });
+
+    return mapAppGroupDeployment(failed);
+  }
+
   private assertDeploymentIsActive(status: DeploymentStatus) {
     if (status !== DeploymentStatus.Deploying) {
       throw new ConflictException(`Deployment is not active: ${status}`);
@@ -641,7 +955,7 @@ export class DeploymentWorkerService {
       services: Object.fromEntries(
         snapshot.singleApps.map((singleApp) => [
           this.serviceName(singleApp.name),
-          this.renderService(singleApp),
+          this.renderService(snapshot, singleApp),
         ]),
       ),
       volumes: this.renderVolumes(snapshot),
@@ -743,7 +1057,7 @@ export class DeploymentWorkerService {
       stackName,
       expectedServices: snapshot.singleApps.map((singleApp) => ({
         name: `${stackName}_${this.serviceName(singleApp.name)}`,
-        desiredReplicas: singleApp.desiredReplicas,
+        desiredReplicas: this.effectiveReplicas(snapshot, singleApp),
       })),
     });
 
@@ -782,7 +1096,7 @@ export class DeploymentWorkerService {
         await tx.singleApp.update({
           where: { id: singleApp.id },
           data: {
-            actualReplicas: singleApp.desiredReplicas,
+            actualReplicas: this.effectiveReplicas(snapshot, singleApp),
             health: "Healthy",
           },
         });
@@ -858,7 +1172,10 @@ export class DeploymentWorkerService {
     return mapAppGroupDeployment(completed);
   }
 
-  private renderService(singleApp: StackConfigSingleApp) {
+  private renderService(
+    snapshot: StackConfigSnapshot,
+    singleApp: StackConfigSingleApp,
+  ) {
     const environment = this.renderEnvironment(singleApp);
 
     return this.withoutUndefined({
@@ -892,7 +1209,7 @@ export class DeploymentWorkerService {
             }))
           : undefined,
       deploy: {
-        replicas: singleApp.desiredReplicas,
+        replicas: this.effectiveReplicas(snapshot, singleApp),
         resources: {
           limits: {
             cpus: singleApp.resources.cpu,
@@ -1006,6 +1323,20 @@ export class DeploymentWorkerService {
       ),
       ...singleApp.environment,
     };
+  }
+
+  private effectiveReplicas(
+    snapshot: StackConfigSnapshot,
+    singleApp: StackConfigSingleApp,
+  ) {
+    if (
+      snapshot.appGroup.runtimeState !== "Running" ||
+      singleApp.runtimeState !== "Running"
+    ) {
+      return 0;
+    }
+
+    return singleApp.desiredReplicas;
   }
 
   private seconds(value: unknown) {
