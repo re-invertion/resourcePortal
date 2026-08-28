@@ -10,8 +10,16 @@ import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateMembershipDto } from "./dto/create-membership.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { TopUpBillingDto } from "./dto/top-up-billing.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
-import { mapMembership } from "./tenants.view";
+import { UpdateQuotaDto } from "./dto/update-quota.dto";
+import {
+  mapBillingAccount,
+  mapBillingTransaction,
+  mapMembership,
+  mapQuota,
+  mapUsageRecord,
+} from "./tenants.view";
 
 const TENANT_OWNER_ROLE_ID = "tenant-owner";
 
@@ -158,6 +166,200 @@ export class TenantsService {
 
       throw error;
     }
+  }
+
+  async getBilling(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const billing = await this.prisma.billingAccount.findUnique({
+      where: { tenantId },
+      include: {
+        transactions: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        },
+        usageRecords: {
+          orderBy: { periodEnd: "desc" },
+          take: 20,
+        },
+      },
+    });
+
+    if (!billing) {
+      throw new NotFoundException("Billing account not found");
+    }
+
+    return mapBillingAccount(billing);
+  }
+
+  async listBillingTransactions(tenantId: string) {
+    const billing = await this.findBillingOrThrow(tenantId);
+    const transactions = await this.prisma.billingTransaction.findMany({
+      where: { billingAccountId: billing.id },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+
+    return transactions.map(mapBillingTransaction);
+  }
+
+  async listUsageRecords(tenantId: string) {
+    const billing = await this.findBillingOrThrow(tenantId);
+    const usageRecords = await this.prisma.usageRecord.findMany({
+      where: { billingAccountId: billing.id },
+      orderBy: { periodEnd: "desc" },
+      take: 200,
+    });
+
+    return usageRecords.map(mapUsageRecord);
+  }
+
+  async topUpBilling(
+    tenantId: string,
+    dto: TopUpBillingDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const amount = new Prisma.Decimal(dto.amount);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const billing = await tx.billingAccount.findUnique({
+        where: { tenantId },
+      });
+
+      if (!billing) {
+        throw new NotFoundException("Billing account not found");
+      }
+
+      const balanceBefore = billing.balance;
+      const balanceAfter = balanceBefore.plus(amount);
+      const updatedBilling = await tx.billingAccount.update({
+        where: { id: billing.id },
+        data: {
+          balance: balanceAfter,
+        },
+      });
+      const transaction = await tx.billingTransaction.create({
+        data: {
+          billingAccountId: billing.id,
+          type: "TopUp",
+          amount,
+          balanceBefore,
+          balanceAfter,
+          status: "Succeeded",
+          reference: dto.reference,
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "billing.topup",
+          resourceType: "BillingAccount",
+          resourceId: billing.id,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            amount: amount.toString(),
+            balanceBefore: balanceBefore.toString(),
+            balanceAfter: balanceAfter.toString(),
+            reference: dto.reference,
+          },
+        },
+      });
+
+      return { billing: updatedBilling, transaction };
+    });
+
+    return {
+      billing: mapBillingAccount(result.billing),
+      transaction: mapBillingTransaction(result.transaction),
+    };
+  }
+
+  async getQuota(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const quota = await this.prisma.quota.findUnique({
+      where: { tenantId },
+    });
+
+    return quota ? mapQuota(quota) : null;
+  }
+
+  async updateQuota(
+    tenantId: string,
+    dto: UpdateQuotaDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const existing = await this.prisma.quota.findUnique({
+      where: { tenantId },
+    });
+
+    if (!existing) {
+      this.assertQuotaCreatePayload(dto);
+    }
+
+    const quota = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.quota.upsert({
+        where: { tenantId },
+        create: {
+          tenantId,
+          cpu: dto.cpu!,
+          memoryBytes: BigInt(dto.memoryBytes!),
+          gpu: dto.gpu!,
+          storageBytes: BigInt(dto.storageBytes!),
+          maxSingleApps: dto.maxSingleApps!,
+          maxVolumes: dto.maxVolumes!,
+          createdBy: actor.id,
+          updatedBy: actor.id,
+        },
+        update: {
+          cpu: dto.cpu,
+          memoryBytes:
+            dto.memoryBytes === undefined ? undefined : BigInt(dto.memoryBytes),
+          gpu: dto.gpu,
+          storageBytes:
+            dto.storageBytes === undefined ? undefined : BigInt(dto.storageBytes),
+          maxSingleApps: dto.maxSingleApps,
+          maxVolumes: dto.maxVolumes,
+          updatedBy: actor.id,
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: existing ? "quota.update" : "quota.create",
+          resourceType: "Quota",
+          resourceId: updated.id,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            previousQuota: existing
+              ? {
+                  cpu: existing.cpu.toString(),
+                  memoryBytes: existing.memoryBytes.toString(),
+                  gpu: existing.gpu,
+                  storageBytes: existing.storageBytes.toString(),
+                  maxSingleApps: existing.maxSingleApps,
+                  maxVolumes: existing.maxVolumes,
+                }
+              : null,
+            quota: mapQuota(updated),
+          },
+        },
+      });
+
+      return updated;
+    });
+
+    return mapQuota(quota);
   }
 
   async listRoles(tenantId: string) {
@@ -362,6 +564,40 @@ export class TenantsService {
 
     if (!user) {
       throw new NotFoundException("User not found");
+    }
+  }
+
+  private async findBillingOrThrow(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const billing = await this.prisma.billingAccount.findUnique({
+      where: { tenantId },
+      select: { id: true },
+    });
+
+    if (!billing) {
+      throw new NotFoundException("Billing account not found");
+    }
+
+    return billing;
+  }
+
+  private assertQuotaCreatePayload(dto: UpdateQuotaDto) {
+    const missing = [
+      ["cpu", dto.cpu],
+      ["memoryBytes", dto.memoryBytes],
+      ["gpu", dto.gpu],
+      ["storageBytes", dto.storageBytes],
+      ["maxSingleApps", dto.maxSingleApps],
+      ["maxVolumes", dto.maxVolumes],
+    ]
+      .filter(([, value]) => value === undefined)
+      .map(([field]) => field);
+
+    if (missing.length > 0) {
+      throw new BadRequestException({
+        message: "Quota does not exist; all quota fields are required",
+        missing,
+      });
     }
   }
 
