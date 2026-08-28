@@ -290,9 +290,16 @@ async function runWorkerOnce() {
     ...process.env,
     WORKER_ONCE: "true",
   });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+
+  if (output) {
+    console.log(output);
+  }
 
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "Deployment worker failed");
+    throw new Error(output || "Deployment worker failed");
   }
 }
 
@@ -311,8 +318,28 @@ async function expectDeploymentStatus(
   const status = stringField(deployment, "status");
 
   if (status !== expectedStatus) {
+    const events = await api<Array<JsonObject>>(
+      `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/deployments/${deploymentId}/events`,
+      {
+        method: "GET",
+        userId,
+      },
+    );
+    const eventDetails = events
+      .map((event) =>
+        [
+          event.timestamp,
+          event.phase,
+          event.level,
+          event.message,
+        ]
+          .filter((value) => typeof value === "string")
+          .join(" "),
+      )
+      .join("\n");
+
     throw new Error(
-      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}`,
+      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}\n${eventDetails}`,
     );
   }
 }
