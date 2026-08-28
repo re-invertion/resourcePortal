@@ -133,6 +133,36 @@ export class AppGroupsController {
     );
   }
 
+  @RequirePermissions("appgroup.runtime.manage")
+  @Post(":appGroupId/runtime/start")
+  startAppGroup(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.startAppGroup(tenantId, appGroupId, user);
+  }
+
+  @RequirePermissions("appgroup.runtime.manage")
+  @Post(":appGroupId/runtime/stop")
+  stopAppGroup(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.stopAppGroup(tenantId, appGroupId, user);
+  }
+
+  @RequirePermissions("appgroup.runtime.manage")
+  @Post(":appGroupId/runtime/restart")
+  restartAppGroup(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.restartAppGroup(tenantId, appGroupId, user);
+  }
+
   @RequirePermissions("variable.read")
   @Get(":appGroupId/variables")
   listVariables(
@@ -281,6 +311,54 @@ export class AppGroupsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.appGroupsService.markSingleAppPendingDeletion(
+      tenantId,
+      appGroupId,
+      singleAppId,
+      user,
+    );
+  }
+
+  @RequirePermissions("singleapp.runtime.manage")
+  @Post(":appGroupId/single-apps/:singleAppId/runtime/start")
+  startSingleApp(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.startSingleApp(
+      tenantId,
+      appGroupId,
+      singleAppId,
+      user,
+    );
+  }
+
+  @RequirePermissions("singleapp.runtime.manage")
+  @Post(":appGroupId/single-apps/:singleAppId/runtime/stop")
+  stopSingleApp(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.stopSingleApp(
+      tenantId,
+      appGroupId,
+      singleAppId,
+      user,
+    );
+  }
+
+  @RequirePermissions("singleapp.runtime.manage")
+  @Post(":appGroupId/single-apps/:singleAppId/runtime/restart")
+  restartSingleApp(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.restartSingleApp(
       tenantId,
       appGroupId,
       singleAppId,

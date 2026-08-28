@@ -7,6 +7,7 @@ import { StackApplyService } from "./stack-apply.service";
 import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
+import { StackRuntimeService } from "./stack-runtime.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
@@ -20,6 +21,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
     StackConfigProvisionerService,
     StackRegistryAuthService,
     StackRolloutService,
+    StackRuntimeService,
     StackSecretProvisionerService,
     StackVolumeProvisionerService,
   ],
