@@ -12,6 +12,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import { CreateRegistryDto } from "./dto/create-registry.dto";
 import { UpdateRegistryDto } from "./dto/update-registry.dto";
 import { getDockerImageHost } from "./docker-image";
@@ -19,7 +20,10 @@ import { mapRegistry } from "./registries.view";
 
 @Injectable()
 export class RegistriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
 
   async listRegistries(tenantId: string) {
     const registries = await this.prisma.registry.findMany({
@@ -190,9 +194,9 @@ export class RegistriesService {
 
     return {
       id: randomUUID(),
-      algorithm: "dev-sha256-placeholder",
+      algorithm: "aes-256-gcm",
       digest: createHash("sha256").update(credential).digest("hex"),
-      valueCiphertext: credential,
+      valueCiphertext: this.encryption.encrypt(credential),
     };
   }
 

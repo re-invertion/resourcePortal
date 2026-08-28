@@ -12,6 +12,7 @@ import { stringify } from "yaml";
 import { PrismaService } from "../prisma/prisma.service";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
+import { EncryptionService } from "../security/encryption.service";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
@@ -126,6 +127,7 @@ export class DeploymentWorkerService {
     private readonly stackRolloutService: StackRolloutService,
     private readonly stackSecretProvisioner: StackSecretProvisionerService,
     private readonly stackVolumeProvisioner: StackVolumeProvisionerService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   async claimNextDeployment(dto: ClaimDeploymentDto) {
@@ -474,7 +476,7 @@ export class DeploymentWorkerService {
 
       resolvedSecrets.push({
         dockerSecretName: snapshotSecret.dockerSecretName,
-        value: databaseSecret.valueCiphertext,
+        value: this.encryption.decrypt(databaseSecret.valueCiphertext),
       });
     }
 
@@ -510,7 +512,7 @@ export class DeploymentWorkerService {
       "valueCiphertext" in credentialData &&
       typeof credentialData.valueCiphertext === "string"
     ) {
-      return credentialData.valueCiphertext;
+      return this.encryption.decrypt(credentialData.valueCiphertext);
     }
 
     return null;

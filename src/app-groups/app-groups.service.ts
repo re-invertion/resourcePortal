@@ -24,6 +24,7 @@ import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegistriesService } from "../registries/registries.service";
+import { EncryptionService } from "../security/encryption.service";
 import { StackRuntimeService } from "../internal/stack-runtime.service";
 import { VolumesService } from "../volumes/volumes.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
@@ -118,6 +119,7 @@ export class AppGroupsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly registriesService: RegistriesService,
+    private readonly encryption: EncryptionService,
     private readonly stackRuntime: StackRuntimeService,
     private readonly volumesService: VolumesService,
   ) {}
@@ -1372,13 +1374,13 @@ export class AppGroupsService {
             singleAppId,
             name: secret.name,
             description: secret.description,
-            valueCiphertext: secret.value,
+            valueCiphertext: this.encryption.encrypt(secret.value),
             createdBy: actor.id,
             updatedBy: actor.id,
           },
           update: {
             description: secret.description,
-            valueCiphertext: secret.value,
+            valueCiphertext: this.encryption.encrypt(secret.value),
             valueVersion: {
               increment: 1,
             },

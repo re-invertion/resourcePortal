@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../prisma/prisma.module";
+import { SecurityModule } from "../security/security.module";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
@@ -12,7 +13,7 @@ import { StackSecretProvisionerService } from "./stack-secret-provisioner.servic
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, SecurityModule],
   controllers: [DeploymentWorkerController],
   providers: [
     DeploymentWorkerService,
