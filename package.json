@@ -7,13 +7,14 @@
     "build": "nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node src/prisma/seed.ts",
-    "worker:deployments": "ts-node --files src/internal/deployment-worker.runner.ts"
+    "worker:deployments": "ts-node --files src/internal/deployment-worker.runner.ts",
+    "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.3",
