@@ -11,7 +11,9 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
+import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
+import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
 import { UpdateDomainDto } from "./dto/update-domain.dto";
 import { DomainsService } from "./domains.service";
 
@@ -33,6 +35,73 @@ export class DomainsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.domainsService.createDomain(tenantId, dto, user);
+  }
+
+  @RequirePermissions("domain.read")
+  @Get("custom-root-domains")
+  listCustomRootDomains(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
+    return this.domainsService.listCustomRootDomains(tenantId);
+  }
+
+  @RequirePermissions("domain.create")
+  @Post("custom-root-domains")
+  createCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: CreateCustomRootDomainDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.domainsService.createCustomRootDomain(tenantId, dto, user);
+  }
+
+  @RequirePermissions("domain.read")
+  @Get("custom-root-domains/:customRootDomainId")
+  getCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
+  ) {
+    return this.domainsService.getCustomRootDomain(tenantId, customRootDomainId);
+  }
+
+  @RequirePermissions("domain.update")
+  @Patch("custom-root-domains/:customRootDomainId")
+  updateCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
+    @Body() dto: UpdateCustomRootDomainDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.domainsService.updateCustomRootDomain(
+      tenantId,
+      customRootDomainId,
+      dto,
+      user,
+    );
+  }
+
+  @RequirePermissions("domain.validate")
+  @Post("custom-root-domains/:customRootDomainId/validate")
+  validateCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.domainsService.validateCustomRootDomain(
+      tenantId,
+      customRootDomainId,
+      user,
+    );
+  }
+
+  @RequirePermissions("domain.delete")
+  @Delete("custom-root-domains/:customRootDomainId")
+  deleteCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
+  ) {
+    return this.domainsService.deleteCustomRootDomain(
+      tenantId,
+      customRootDomainId,
+    );
   }
 
   @RequirePermissions("domain.read")

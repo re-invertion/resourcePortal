@@ -6,11 +6,14 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DnsStatus, DomainType, Prisma } from "@prisma/client";
+import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
+import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
 import { UpdateDomainDto } from "./dto/update-domain.dto";
-import { mapDomain } from "./domains.view";
+import { mapCustomRootDomain, mapDomain } from "./domains.view";
 
 @Injectable()
 export class DomainsService {
@@ -34,12 +37,121 @@ export class DomainsService {
     return mapDomain(domain);
   }
 
+  async listCustomRootDomains(tenantId: string) {
+    const roots = await this.prisma.customRootDomain.findMany({
+      where: { tenantId },
+      orderBy: { rootDomain: "asc" },
+      include: { domains: true },
+    });
+
+    return roots.map(mapCustomRootDomain);
+  }
+
+  async getCustomRootDomain(tenantId: string, customRootDomainId: string) {
+    const root = await this.findCustomRootDomainOrThrow(
+      tenantId,
+      customRootDomainId,
+    );
+
+    return mapCustomRootDomain(root);
+  }
+
+  async createCustomRootDomain(
+    tenantId: string,
+    dto: CreateCustomRootDomainDto,
+    actor: AuthenticatedUser,
+  ) {
+    const rootDomain = dto.rootDomain.toLowerCase();
+
+    try {
+      const root = await this.prisma.customRootDomain.create({
+        data: {
+          tenantId,
+          rootDomain,
+          verificationToken: this.verificationToken(),
+          createdBy: actor.id,
+          updatedBy: actor.id,
+        },
+        include: { domains: true },
+      });
+
+      return mapCustomRootDomain(root);
+    } catch (error) {
+      this.handleKnownConflict(error, "Custom root domain already exists");
+      throw error;
+    }
+  }
+
+  async updateCustomRootDomain(
+    tenantId: string,
+    customRootDomainId: string,
+    dto: UpdateCustomRootDomainDto,
+    actor: AuthenticatedUser,
+  ) {
+    await this.findCustomRootDomainOrThrow(tenantId, customRootDomainId);
+
+    const verificationStatus = dto.verificationStatus;
+    const root = await this.prisma.customRootDomain.update({
+      where: { id: customRootDomainId },
+      data: {
+        verificationStatus,
+        verifiedAt:
+          verificationStatus === "Verified"
+            ? new Date()
+            : verificationStatus === undefined
+              ? undefined
+              : null,
+        updatedBy: actor.id,
+      },
+      include: { domains: true },
+    });
+
+    return mapCustomRootDomain(root);
+  }
+
+  async validateCustomRootDomain(
+    tenantId: string,
+    customRootDomainId: string,
+    actor: AuthenticatedUser,
+  ) {
+    await this.findCustomRootDomainOrThrow(tenantId, customRootDomainId);
+
+    const root = await this.prisma.customRootDomain.update({
+      where: { id: customRootDomainId },
+      data: {
+        verificationStatus: "Verified",
+        verifiedAt: new Date(),
+        updatedBy: actor.id,
+      },
+      include: { domains: true },
+    });
+
+    return mapCustomRootDomain(root);
+  }
+
+  async deleteCustomRootDomain(tenantId: string, customRootDomainId: string) {
+    const root = await this.findCustomRootDomainOrThrow(
+      tenantId,
+      customRootDomainId,
+    );
+
+    if (root.domains.length > 0) {
+      throw new ConflictException("CustomRootDomainInUse");
+    }
+
+    await this.prisma.customRootDomain.delete({
+      where: { id: customRootDomainId },
+    });
+
+    return { deleted: true };
+  }
+
   async createDomain(
     tenantId: string,
     dto: CreateDomainDto,
     actor: AuthenticatedUser,
   ) {
-    const hostname = this.resolveHostname(dto);
+    const hostname = await this.resolveHostname(tenantId, dto);
     const endpointContext = dto.httpEndpointId
       ? await this.findEndpointContextOrThrow(tenantId, dto.httpEndpointId)
       : undefined;
@@ -51,7 +163,10 @@ export class DomainsService {
             tenantId,
             type: dto.type,
             prefix: dto.type === DomainType.Managed ? dto.prefix : null,
-            subdomain: dto.type === DomainType.Managed ? dto.prefix : null,
+            customRootDomainId:
+              dto.type === DomainType.Custom ? dto.customRootDomainId : null,
+            subdomain:
+              dto.type === DomainType.Managed ? dto.prefix : dto.subdomain,
             hostname,
             dnsStatus:
               dto.type === DomainType.Managed ? DnsStatus.Valid : DnsStatus.Pending,
@@ -164,13 +279,32 @@ export class DomainsService {
     return mapDomain(domain);
   }
 
-  private resolveHostname(dto: CreateDomainDto) {
+  private async resolveHostname(tenantId: string, dto: CreateDomainDto) {
     if (dto.type === DomainType.Managed) {
       if (!dto.prefix) {
         throw new BadRequestException("Managed domain requires prefix");
       }
 
       return `${dto.prefix}.${this.managedBaseDomain()}`;
+    }
+
+    if (dto.customRootDomainId || dto.subdomain) {
+      if (!dto.customRootDomainId || !dto.subdomain) {
+        throw new BadRequestException(
+          "Custom root domain requires customRootDomainId and subdomain",
+        );
+      }
+
+      const root = await this.findCustomRootDomainOrThrow(
+        tenantId,
+        dto.customRootDomainId,
+      );
+
+      if (root.verificationStatus !== "Verified") {
+        throw new ConflictException("CustomRootDomainNotVerified");
+      }
+
+      return `${dto.subdomain}.${root.rootDomain}`;
     }
 
     if (!dto.hostname) {
@@ -198,6 +332,22 @@ export class DomainsService {
     }
 
     return domain;
+  }
+
+  private async findCustomRootDomainOrThrow(
+    tenantId: string,
+    customRootDomainId: string,
+  ) {
+    const root = await this.prisma.customRootDomain.findFirst({
+      where: { id: customRootDomainId, tenantId },
+      include: { domains: true },
+    });
+
+    if (!root) {
+      throw new NotFoundException("Custom root domain not found");
+    }
+
+    return root;
   }
 
   private async findEndpointContextOrThrow(
@@ -252,6 +402,7 @@ export class DomainsService {
 
   private domainIncludes() {
     return {
+      customRootDomain: true,
       httpEndpoint: {
         include: {
           singleApp: {
@@ -273,5 +424,9 @@ export class DomainsService {
     ) {
       throw new ConflictException(message);
     }
+  }
+
+  private verificationToken() {
+    return `rp-domain-verification=${crypto.randomBytes(24).toString("hex")}`;
   }
 }

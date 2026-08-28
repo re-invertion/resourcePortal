@@ -1,4 +1,4 @@
-import { Domain } from "@prisma/client";
+import { CustomRootDomain, Domain } from "@prisma/client";
 
 type DomainWithEndpoint = Domain & {
   httpEndpoint?: {
@@ -42,5 +42,25 @@ export function mapDomain(domain: DomainWithEndpoint) {
     updatedBy: domain.updatedBy,
     createdAt: domain.createdAt,
     updatedAt: domain.updatedAt,
+  };
+}
+
+export function mapCustomRootDomain(
+  customRootDomain: CustomRootDomain & { domains?: Domain[] },
+) {
+  return {
+    id: customRootDomain.id,
+    tenantId: customRootDomain.tenantId,
+    rootDomain: customRootDomain.rootDomain,
+    verificationStatus: customRootDomain.verificationStatus,
+    verificationMethod: customRootDomain.verificationMethod,
+    verificationToken: customRootDomain.verificationToken,
+    verificationCreatedAt: customRootDomain.verificationCreatedAt,
+    verifiedAt: customRootDomain.verifiedAt,
+    domainCount: customRootDomain.domains?.length ?? 0,
+    createdBy: customRootDomain.createdBy,
+    updatedBy: customRootDomain.updatedBy,
+    createdAt: customRootDomain.createdAt,
+    updatedAt: customRootDomain.updatedAt,
   };
 }

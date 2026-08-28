@@ -32,6 +32,17 @@ export class CreateDomainDto {
 
   @IsOptional()
   @IsUUID()
+  customRootDomainId?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(63)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  subdomain?: string;
+
+  @IsOptional()
+  @IsUUID()
   httpEndpointId?: string;
 
   @IsOptional()
