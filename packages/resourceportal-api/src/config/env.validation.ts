@@ -21,10 +21,19 @@ export function validateEnv(config: Env) {
     requireMinLength(config, errors, "AUTH_COOKIE_SECRET", 20);
   }
 
+  requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_TTL_SECONDS");
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "AUTH_SESSION_IDLE_TIMEOUT_SECONDS",
+  );
+
   if (nodeEnv === "production") {
     if (config.AUTH_COOKIE_SECURE !== "true") {
       errors.push("AUTH_COOKIE_SECURE must be true in production");
     }
+
+    requireValue(config, errors, "RESOURCE_ENCRYPTION_KEY");
 
     if (
       (config.INTERNAL_WORKER_TOKEN ?? defaultInternalWorkerToken) ===
@@ -62,5 +71,23 @@ function requireMinLength(
 
   if (value.length < minLength) {
     errors.push(`${key} must be at least ${minLength} characters`);
+  }
+}
+
+function requirePositiveIntegerIfSet(
+  config: Env,
+  errors: string[],
+  key: string,
+) {
+  const value = config[key];
+
+  if (!value) {
+    return;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0 || `${parsed}` !== value.trim()) {
+    errors.push(`${key} must be a positive integer`);
   }
 }

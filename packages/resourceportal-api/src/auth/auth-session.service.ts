@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma, UserStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import { AuthenticatedUser } from "./types";
 import { TokenResponse } from "./auth-flow.service";
 import { OidcAuthService } from "./oidc-auth.service";
@@ -27,6 +28,7 @@ export class AuthSessionService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly oidcAuth: OidcAuthService,
+    private readonly encryption: EncryptionService,
   ) {}
 
   async createSession(userId: string, tokens: TokenResponse) {
@@ -39,9 +41,11 @@ export class AuthSessionService {
       data: {
         id: randomBytes(32).toString("base64url"),
         userId,
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token ?? "",
-        idToken: tokens.id_token,
+        accessToken: this.encryption.encrypt(tokens.access_token),
+        refreshToken: tokens.refresh_token
+          ? this.encryption.encrypt(tokens.refresh_token)
+          : "",
+        idToken: this.encryption.encrypt(tokens.id_token),
         accessTokenExpiresAt: new Date(now + accessTokenTtlSeconds * 1000),
         expiresAt,
       },
@@ -78,6 +82,9 @@ export class AuthSessionService {
     const now = Date.now();
 
     if (!session || !this.isSessionUsable(session, now)) {
+      if (session && !session.revokedAt) {
+        await this.revokeSession(session.id);
+      }
       throw new UnauthorizedException("Session is invalid");
     }
 
@@ -136,11 +143,23 @@ export class AuthSessionService {
   }
 
   async pruneExpiredSessions(now = new Date()) {
+    const idleCutoff = new Date(
+      now.getTime() - this.getIdleTimeoutSeconds() * 1000,
+    );
     const result = await this.prisma.portalSession.updateMany({
       where: {
-        expiresAt: {
-          lte: now,
-        },
+        OR: [
+          {
+            expiresAt: {
+              lte: now,
+            },
+          },
+          {
+            lastSeenAt: {
+              lte: idleCutoff,
+            },
+          },
+        ],
         revokedAt: null,
       },
       data: {
@@ -199,9 +218,12 @@ export class AuthSessionService {
   }
 
   private isSessionUsable(session: PortalSessionWithUser, now: number) {
+    const idleTimeoutMs = this.getIdleTimeoutSeconds() * 1000;
+
     return (
       !session.revokedAt &&
       session.expiresAt.getTime() > now &&
+      session.lastSeenAt.getTime() + idleTimeoutMs > now &&
       session.user.status === UserStatus.Active
     );
   }
@@ -213,7 +235,8 @@ export class AuthSessionService {
     }
 
     try {
-      const tokens = await this.exchangeRefreshToken(session.refreshToken);
+      const refreshToken = this.encryption.decrypt(session.refreshToken);
+      const tokens = await this.exchangeRefreshToken(refreshToken);
       const accessTokenTtlSeconds = tokens.expires_in ?? 3600;
 
       await this.prisma.portalSession.update({
@@ -221,12 +244,20 @@ export class AuthSessionService {
           id: session.id,
         },
         data: {
-          accessToken: tokens.access_token,
+          accessToken: this.encryption.encrypt(tokens.access_token),
           accessTokenExpiresAt: new Date(
             Date.now() + accessTokenTtlSeconds * 1000,
           ),
-          idToken: tokens.id_token ?? session.idToken,
-          refreshToken: tokens.refresh_token ?? session.refreshToken,
+          idToken: this.encryption.encrypt(
+            tokens.id_token
+              ? tokens.id_token
+              : this.encryption.decrypt(session.idToken),
+          ),
+          refreshToken: this.encryption.encrypt(
+            tokens.refresh_token
+              ? tokens.refresh_token
+              : this.encryption.decrypt(session.refreshToken),
+          ),
         },
       });
 
@@ -322,6 +353,22 @@ export class AuthSessionService {
     }
 
     return configuredTtlSeconds;
+  }
+
+  private getIdleTimeoutSeconds() {
+    const configuredIdleTimeoutSeconds = Number.parseInt(
+      this.config.get<string>("AUTH_SESSION_IDLE_TIMEOUT_SECONDS", "1800"),
+      10,
+    );
+
+    if (
+      !Number.isFinite(configuredIdleTimeoutSeconds) ||
+      configuredIdleTimeoutSeconds <= 0
+    ) {
+      return 1800;
+    }
+
+    return configuredIdleTimeoutSeconds;
   }
 
   private async writeSessionAudit(event: {
