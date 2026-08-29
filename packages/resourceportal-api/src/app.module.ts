@@ -10,6 +10,7 @@ import { ConfigModule } from "@nestjs/config";
 import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
 import { HealthModule } from "./health/health.module";
+import { IdentityProvidersModule } from "./identity-providers/identity-providers.module";
 import { InternalModule } from "./internal/internal.module";
 import { ObservabilityModule } from "./observability/observability.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -32,6 +33,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     HealthModule,
     UsersModule,
     TenantsModule,
+    IdentityProvidersModule,
     AppGroupsModule,
     RegistriesModule,
     VolumesModule,

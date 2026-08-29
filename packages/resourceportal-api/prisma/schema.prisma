@@ -127,6 +127,16 @@ enum CustomRootDomainVerificationStatus {
   Failed
 }
 
+enum IdentityProviderScope {
+  Platform
+  Tenant
+}
+
+enum IdentityProviderProtocol {
+  OIDC
+  SAML
+}
+
 model User {
   id          String             @id @default(uuid()) @db.Uuid
   email       String             @unique
@@ -140,16 +150,17 @@ model User {
 }
 
 model UserIdentity {
-  id                 String    @id @default(uuid()) @db.Uuid
-  userId             String    @db.Uuid
+  id                 String            @id @default(uuid()) @db.Uuid
+  userId             String            @db.Uuid
   providerType       String
-  identityProviderId String?   @db.Uuid
+  identityProviderId String?           @db.Uuid
   issuer             String
   externalSubject    String
   email              String?
-  createdAt          DateTime  @default(now())
+  createdAt          DateTime          @default(now())
   lastLoginAt        DateTime?
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityProvider   IdentityProvider? @relation(fields: [identityProviderId], references: [id], onDelete: SetNull)
 
   @@unique([issuer, externalSubject])
 }
@@ -169,26 +180,27 @@ model PortalSession {
 }
 
 model Tenant {
-  id           String             @id @default(uuid()) @db.Uuid
-  name         String             @unique
-  displayName  String
-  description  String?
-  status       TenantStatus       @default(Active)
-  contactEmail String
-  billing      BillingAccount?
-  quota        Quota?
-  authPolicy   TenantAuthPolicy?
-  memberships  TenantMembership[]
-  invitations  TenantInvitation[]
-  groups       TenantGroup[]
-  appGroups    AppGroup[]
-  volumes      Volume[]
-  domains      Domain[]
+  id                String             @id @default(uuid()) @db.Uuid
+  name              String             @unique
+  displayName       String
+  description       String?
+  status            TenantStatus       @default(Active)
+  contactEmail      String
+  billing           BillingAccount?
+  quota             Quota?
+  authPolicy        TenantAuthPolicy?
+  memberships       TenantMembership[]
+  invitations       TenantInvitation[]
+  groups            TenantGroup[]
+  identityProviders IdentityProvider[]
+  appGroups         AppGroup[]
+  volumes           Volume[]
+  domains           Domain[]
   customRootDomains CustomRootDomain[]
-  registries   Registry[]
-  auditEntries AuditLogEntry[]
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  registries        Registry[]
+  auditEntries      AuditLogEntry[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 }
 
 model TenantMembership {
@@ -231,6 +243,28 @@ model TenantAuthPolicy {
   createdAt                      DateTime @default(now())
   updatedAt                      DateTime @updatedAt
   tenant                         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model IdentityProvider {
+  id                         String                   @id @default(uuid()) @db.Uuid
+  scope                      IdentityProviderScope
+  tenantId                   String?                  @db.Uuid
+  name                       String
+  protocol                   IdentityProviderProtocol
+  zitadelIdentityProviderId  String?                  @unique
+  issuer                     String?
+  metadataUrl                String?
+  enabled                    Boolean                  @default(true)
+  createdBy                  String                   @db.Uuid
+  updatedBy                  String
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+  tenant                     Tenant?                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  identities                 UserIdentity[]
+
+  @@unique([tenantId, name])
+  @@index([scope, enabled])
+  @@index([tenantId, enabled])
 }
 
 model TenantInvitation {
