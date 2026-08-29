@@ -38,6 +38,7 @@ services:
     image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-stable}
     container_name: resource-portal-zitadel
     restart: unless-stopped
+    user: "0"
     command:
       - start-from-init
       - --config
