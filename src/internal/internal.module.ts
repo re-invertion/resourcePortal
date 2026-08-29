@@ -1,6 +1,8 @@
 import { Module } from "@nestjs/common";
+import { AuthModule } from "../auth/auth.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
+import { AuthSessionMaintenanceController } from "./auth-session-maintenance.controller";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
@@ -13,8 +15,8 @@ import { StackSecretProvisionerService } from "./stack-secret-provisioner.servic
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
 @Module({
-  imports: [PrismaModule, SecurityModule],
-  controllers: [DeploymentWorkerController],
+  imports: [AuthModule, PrismaModule, SecurityModule],
+  controllers: [AuthSessionMaintenanceController, DeploymentWorkerController],
   providers: [
     DeploymentWorkerService,
     InternalAuthGuard,

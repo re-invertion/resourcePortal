@@ -89,6 +89,24 @@ export class AuthSessionService {
     });
   }
 
+  async pruneExpiredSessions(now = new Date()) {
+    const result = await this.prisma.portalSession.updateMany({
+      where: {
+        expiresAt: {
+          lte: now,
+        },
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: now,
+      },
+    });
+
+    return {
+      revokedSessions: result.count,
+    };
+  }
+
   getSessionCookieName() {
     return this.config.get<string>("AUTH_SESSION_COOKIE_NAME", "rp_session");
   }
