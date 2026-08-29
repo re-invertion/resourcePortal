@@ -14,6 +14,7 @@ import { InternalModule } from "./internal/internal.module";
 import { ObservabilityModule } from "./observability/observability.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
+import { SecurityModule } from "./security/security.module";
 import { TenantsModule } from "./tenants/tenants.module";
 import { UsersModule } from "./users/users.module";
 import { VolumesModule } from "./volumes/volumes.module";
@@ -26,6 +27,7 @@ import { VolumesModule } from "./volumes/volumes.module";
       validate: validateEnv,
     }),
     PrismaModule,
+    SecurityModule,
     AuthModule,
     HealthModule,
     UsersModule,
