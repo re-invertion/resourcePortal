@@ -12,6 +12,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import crypto from "node:crypto";
+import { resolveTxt } from "node:dns/promises";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
@@ -119,13 +120,28 @@ export class DomainsService {
     customRootDomainId: string,
     actor: AuthenticatedUser,
   ) {
-    await this.findCustomRootDomainOrThrow(tenantId, customRootDomainId);
+    const existing = await this.findCustomRootDomainOrThrow(
+      tenantId,
+      customRootDomainId,
+    );
+
+    let verified = false;
+    try {
+      const txtRecords = await resolveTxt(existing.rootDomain);
+      verified = txtRecords
+        .map((parts) => parts.join(""))
+        .some((value) => value.trim() === existing.verificationToken);
+    } catch {
+      verified = false;
+    }
 
     const root = await this.prisma.customRootDomain.update({
       where: { id: customRootDomainId },
       data: {
-        verificationStatus: CustomRootDomainVerificationStatus.Verified,
-        verifiedAt: new Date(),
+        verificationStatus: verified
+          ? CustomRootDomainVerificationStatus.Verified
+          : CustomRootDomainVerificationStatus.Failed,
+        verifiedAt: verified ? new Date() : null,
         updatedBy: actor.id,
       },
       include: { domains: true },
