@@ -232,7 +232,7 @@ export class RegistriesService {
   private registryValidationHeaders(registry: {
     authType: RegistryAuthType;
     username: string | null;
-    credentialData: Prisma.JsonValue;
+    credentialData: Prisma.JsonValue | null;
   }) {
     const headers: Record<string, string> = {
       accept: "application/json",
@@ -256,7 +256,7 @@ export class RegistriesService {
     return headers;
   }
 
-  private readCredential(value: Prisma.JsonValue) {
+  private readCredential(value: Prisma.JsonValue | null) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return undefined;
     }
