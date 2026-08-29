@@ -22,6 +22,8 @@ function createOidcAuth() {
       issuer,
       jwksUri: `${issuer}/oauth/v2/keys`,
       tokenEndpoint: `${issuer}/oauth/v2/token`,
+      revocationEndpoint: `${issuer}/oauth/v2/revoke`,
+      endSessionEndpoint: `${issuer}/oidc/v1/end_session`,
     }),
   } as unknown as OidcAuthService;
 }
@@ -101,7 +103,9 @@ describe("AuthSessionService", () => {
       createEncryption(),
     );
 
-    await expect(service.authenticateSession("session-1")).rejects.toThrow("Session is invalid");
+    await expect(service.authenticateSession("session-1")).rejects.toThrow(
+      "Session is invalid",
+    );
     expect(prisma.portalSession.updateMany).toHaveBeenCalled();
   });
 
@@ -134,7 +138,9 @@ describe("AuthSessionService", () => {
       createEncryption(),
     );
 
-    await expect(service.authenticateSession("session-1")).rejects.toThrow("Session is invalid");
+    await expect(service.authenticateSession("session-1")).rejects.toThrow(
+      "Session is invalid",
+    );
     expect(prisma.portalSession.updateMany).toHaveBeenCalled();
   });
 
@@ -151,7 +157,9 @@ describe("AuthSessionService", () => {
       createEncryption(),
     );
 
-    await expect(service.pruneExpiredSessions(now)).resolves.toEqual({ revokedSessions: 3 });
+    await expect(service.pruneExpiredSessions(now)).resolves.toEqual({
+      revokedSessions: 3,
+    });
     expect(prisma.portalSession.updateMany).toHaveBeenCalledWith({
       where: {
         OR: [
@@ -188,19 +196,30 @@ describe("AuthSessionService", () => {
       },
     };
 
-    vi.stubGlobal("fetch", vi.fn((_input: string | URL | Request, init?: RequestInit) => {
-      const body = new URLSearchParams(init?.body as string);
-      expect(body.get("refresh_token")).toBe("old-refresh-token");
-      return Promise.resolve(new Response(JSON.stringify({
-        access_token: "new-access-token",
-        expires_in: 600,
-        id_token: "new-id-token",
-        refresh_token: "new-refresh-token",
-      }), { status: 200, headers: { "content-type": "application/json" } }));
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        const body = new URLSearchParams(init?.body as string);
+        expect(body.get("refresh_token")).toBe("old-refresh-token");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "new-access-token",
+              expires_in: 600,
+              id_token: "new-id-token",
+              refresh_token: "new-refresh-token",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
 
     const service = new AuthSessionService(
-      createConfig({ OIDC_CLIENT_ID: "resource-portal", OIDC_CLIENT_SECRET: "client-secret" }),
+      createConfig({
+        OIDC_CLIENT_ID: "resource-portal",
+        OIDC_CLIENT_SECRET: "client-secret",
+      }),
       prisma as unknown as PrismaService,
       createOidcAuth(),
       createEncryption(),
@@ -215,6 +234,117 @@ describe("AuthSessionService", () => {
         idToken: "enc:new-id-token",
         refreshToken: "enc:new-refresh-token",
       },
+    });
+  });
+
+  it("lists only active session metadata and marks the current session", async () => {
+    const now = new Date();
+    const prisma = {
+      portalSession: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "session-2",
+            createdAt: now,
+            lastSeenAt: now,
+            expiresAt: new Date(now.getTime() + 3600_000),
+            accessTokenExpiresAt: new Date(now.getTime() + 600_000),
+          },
+          {
+            id: "session-1",
+            createdAt: now,
+            lastSeenAt: now,
+            expiresAt: new Date(now.getTime() + 3600_000),
+            accessTokenExpiresAt: new Date(now.getTime() + 600_000),
+          },
+        ]),
+      },
+    };
+    const service = new AuthSessionService(
+      createConfig({ AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "1800" }),
+      prisma as unknown as PrismaService,
+      createOidcAuth(),
+      createEncryption(),
+    );
+
+    const result = await service.listActiveSessions("user-1", "session-1");
+    expect(result).toEqual([
+      expect.objectContaining({ id: "session-2", isCurrent: false }),
+      expect.objectContaining({ id: "session-1", isCurrent: true }),
+    ]);
+    expect(JSON.stringify(result)).not.toContain("Token");
+    expect(prisma.portalSession.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: "user-1", revokedAt: null }),
+        select: {
+          id: true,
+          createdAt: true,
+          lastSeenAt: true,
+          expiresAt: true,
+          accessTokenExpiresAt: true,
+        },
+      }),
+    );
+  });
+
+  it("revokes the provider refresh token and builds the end-session URL", async () => {
+    const prisma = {
+      auditLogEntry: { create: vi.fn() },
+      portalSession: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({
+            id: "session-1",
+            accessToken: "enc:access-token",
+            refreshToken: "enc:refresh-token",
+            idToken: "enc:id-token",
+            user: {
+              id: "user-1",
+              displayName: "Example User",
+            },
+          })
+          .mockResolvedValueOnce({
+            id: "session-1",
+            user: {
+              id: "user-1",
+              displayName: "Example User",
+            },
+          }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        const body = new URLSearchParams(init?.body as string);
+        expect(body.get("token")).toBe("refresh-token");
+        expect(body.get("client_id")).toBe("resource-portal");
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }),
+    );
+
+    const service = new AuthSessionService(
+      createConfig({
+        OIDC_CLIENT_ID: "resource-portal",
+        OIDC_CLIENT_SECRET: "client-secret",
+        OIDC_POST_LOGOUT_REDIRECT_URI: "https://portal.example.com/logged-out",
+      }),
+      prisma as unknown as PrismaService,
+      createOidcAuth(),
+      createEncryption(),
+    );
+
+    const result = await service.prepareProviderLogout("session-1");
+    expect(result.providerTokenRevoked).toBe(true);
+    expect(result.logoutUrl).toContain(`${issuer}/oidc/v1/end_session`);
+    expect(result.logoutUrl).toContain("id_token_hint=id-token");
+    expect(result.logoutUrl).toContain("client_id=resource-portal");
+    expect(result.logoutUrl).toContain(
+      "post_logout_redirect_uri=https%3A%2F%2Fportal.example.com%2Flogged-out",
+    );
+    expect(prisma.portalSession.updateMany).toHaveBeenCalledWith({
+      where: { id: "session-1", revokedAt: null },
+      data: { revokedAt: expect.any(Date) as Date },
     });
   });
 });
