@@ -41,6 +41,9 @@ Main public resource groups:
 ```text
 /api/auth
 /api/tenants
+/api/tenants/:tenantId/auth-policy
+/api/tenants/:tenantId/invitations
+/api/tenants/:tenantId/groups
 /api/tenants/:tenantId/app-groups
 /api/tenants/:tenantId/volumes
 /api/tenants/:tenantId/domains
@@ -53,6 +56,12 @@ Main public resource groups:
 `AUTH_MODE=dev` accepts `x-dev-user-id` and is intended only for local development.
 
 `AUTH_MODE=oidc` and `AUTH_MODE=zitadel` accept bearer JWTs and session cookies issued through the OIDC login flow.
+
+Tenant auth policy is available at `/api/tenants/:tenantId/auth-policy`. It controls whether platform login and tenant identity providers are allowed or required.
+
+Tenant invitations are available at `/api/tenants/:tenantId/invitations`, with acceptance through `/api/invitations/accept`. The create/resend responses include the raw one-time token; stored invitations keep only a SHA-256 token hash.
+
+Tenant groups are available at `/api/tenants/:tenantId/groups`. Group roles contribute to effective permissions in addition to direct membership roles.
 
 ## Deployment Flow
 

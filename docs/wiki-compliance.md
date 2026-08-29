@@ -27,6 +27,7 @@ Checked wiki documents:
 
 - Tenant ownership, global `User`, tenant membership, direct role-based RBAC, tenant isolation checks.
 - Tenant create flow with owner membership, billing account, and audit entry.
+- Tenant auth policy model/API, tenant invitations with hashed one-time tokens, tenant groups, group role assignment, and group-based effective permissions.
 - Optional tenant quota with hard checks for SingleApps and Volumes.
 - AppGroup as one Docker Swarm stack, with `runtimeState`, `health`, `driftStatus`, deployment history, events, and draft revision.
 - SingleApp as one Swarm service with image, resources, replicas, environment, healthcheck, runtime operations, restart/update policy, and HTTP endpoints.
@@ -41,9 +42,8 @@ Checked wiki documents:
 
 ## Known Gaps Against Wiki
 
-- `TenantAuthPolicy` is documented as created with every tenant, but no Prisma model or public API exists yet.
-- `TenantInvitation` is documented as the MVP path for creating new memberships, but current API creates memberships directly.
-- `TenantGroup`, `TenantGroupMember`, group role assignment, external group mapping, and group-based effective permissions are not implemented.
+- External directory group mapping is not implemented yet.
+- Tenant invitations exist, but the legacy direct membership create endpoint still exists for manual/admin flows.
 - Tenant-scoped `IdentityProvider`, platform `IdentityProvider`, Home Realm Discovery, SSO-only tenant policy, and tenant IdP API are not implemented.
 - `OAuthApplication` and `ServiceIdentity` models/APIs are not implemented. Machine-to-machine auth currently uses internal worker token and normal OIDC/JWT validation, not the documented Resource Portal identity model.
 - AppGroup `Delete` and `Discard Changes` are documented but no public endpoints exist yet.
@@ -67,4 +67,4 @@ Checked wiki documents:
 
 The backend implements the core Resource Portal control-plane MVP for tenants, workloads, storage, domains, registries, deployments, auth, audit, SDK, CLI, and observability.
 
-It is not yet a complete implementation of the full wiki model. The largest missing areas are Resource Portal Identity beyond basic OIDC/ZITADEL login, invitation/group/service-identity models, AppGroup-level secrets, billing automation, and full deployment reconciliation/drift detection.
+It is not yet a complete implementation of the full wiki model. The largest missing areas are Resource Portal Identity beyond basic OIDC/ZITADEL login, service-identity models, AppGroup-level secrets, billing automation, and full deployment reconciliation/drift detection.

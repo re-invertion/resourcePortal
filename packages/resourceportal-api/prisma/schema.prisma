@@ -171,7 +171,10 @@ model Tenant {
   contactEmail String
   billing      BillingAccount?
   quota        Quota?
+  authPolicy   TenantAuthPolicy?
   memberships  TenantMembership[]
+  invitations  TenantInvitation[]
+  groups       TenantGroup[]
   appGroups    AppGroup[]
   volumes      Volume[]
   domains      Domain[]
@@ -192,6 +195,7 @@ model TenantMembership {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   roles     MembershipRole[]
+  groupMemberships TenantGroupMember[]
 
   @@unique([userId, tenantId])
 }
@@ -201,6 +205,7 @@ model Role {
   name        String
   permissions String[]
   memberships MembershipRole[]
+  groups      TenantGroupRole[]
 }
 
 model MembershipRole {
@@ -210,6 +215,68 @@ model MembershipRole {
   role         Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@id([membershipId, roleId])
+}
+
+model TenantAuthPolicy {
+  tenantId                       String   @id @db.Uuid
+  allowPlatformLogin             Boolean  @default(true)
+  allowTenantIdentityProviders   Boolean  @default(true)
+  requireTenantIdentityProvider  Boolean  @default(false)
+  createdAt                      DateTime @default(now())
+  updatedAt                      DateTime @updatedAt
+  tenant                         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model TenantInvitation {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  email      String
+  tokenHash  String   @unique
+  roleIds    String[]
+  expiresAt  DateTime
+  lastSentAt DateTime?
+  createdBy  String   @db.Uuid
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+}
+
+model TenantGroup {
+  id          String              @id @default(uuid()) @db.Uuid
+  tenantId    String              @db.Uuid
+  name        String
+  description String?
+  createdBy   String              @db.Uuid
+  updatedBy   String
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members     TenantGroupMember[]
+  roles       TenantGroupRole[]
+
+  @@unique([tenantId, name])
+}
+
+model TenantGroupMember {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantGroupId String           @db.Uuid
+  membershipId  String           @db.Uuid
+  source        String           @default("Manual")
+  createdAt     DateTime         @default(now())
+  group         TenantGroup      @relation(fields: [tenantGroupId], references: [id], onDelete: Cascade)
+  membership    TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantGroupId, membershipId])
+}
+
+model TenantGroupRole {
+  tenantGroupId String      @db.Uuid
+  roleId        String
+  group         TenantGroup @relation(fields: [tenantGroupId], references: [id], onDelete: Cascade)
+  role          Role        @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([tenantGroupId, roleId])
 }
 
 model BillingAccount {

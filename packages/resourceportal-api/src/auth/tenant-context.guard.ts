@@ -44,6 +44,17 @@ export class TenantContextGuard implements CanActivate {
         roles: {
           include: { role: true },
         },
+        groupMemberships: {
+          include: {
+            group: {
+              include: {
+                roles: {
+                  include: { role: true },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -52,7 +63,12 @@ export class TenantContextGuard implements CanActivate {
     }
 
     const permissions = [
-      ...new Set(membership.roles.flatMap(({ role }) => role.permissions)),
+      ...new Set([
+        ...membership.roles.flatMap(({ role }) => role.permissions),
+        ...membership.groupMemberships.flatMap(({ group }) =>
+          group.roles.flatMap(({ role }) => role.permissions),
+        ),
+      ]),
     ];
 
     request.tenantContext = {

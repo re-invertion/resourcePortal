@@ -14,6 +14,8 @@ const roles = [
     permissions: [
       "tenant.read",
       "tenant.settings.update",
+      "tenant_auth_policy.read",
+      "tenant_auth_policy.update",
       "membership.read",
       "membership.invite",
       "membership.update",
@@ -86,6 +88,7 @@ const roles = [
     name: "Resource Administrator",
     permissions: [
       "tenant.read",
+      "tenant_auth_policy.read",
       "appgroup.read",
       "appgroup.create",
       "appgroup.update",
@@ -148,6 +151,7 @@ const roles = [
     permissions: [
       "tenant.read",
       "membership.read",
+      "group.read",
       "appgroup.read",
       "appgroup.deployment.read",
       "endpoint.read",

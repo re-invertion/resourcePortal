@@ -70,6 +70,13 @@ rp tenant billing TENANT_ID
 rp tenant billing-transactions TENANT_ID
 rp tenant usage-records TENANT_ID
 rp tenant billing-top-up TENANT_ID --amount 25 --reference manual-credit
+rp tenant auth-policy TENANT_ID
+rp tenant auth-policy-update TENANT_ID --require-tenant-identity-provider true
+rp invitation create TENANT_ID --email user@example.com --role-id viewer
+rp invitation accept --token TOKEN
+rp group create TENANT_ID --name operators
+rp group role-add TENANT_ID GROUP_ID --role-id resource-admin
+rp group member-add TENANT_ID GROUP_ID --membership-id MEMBERSHIP_ID
 rp audit list TENANT_ID
 ```
 

@@ -61,6 +61,12 @@ const commands: Command[] = [
   command("tenant", "quota-update", "<tenantId> [quota flags]", "Update tenant quota.", (p, c) =>
     c.tenants.updateQuota(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, [], ["cpu", "memoryBytes", "gpu", "storageBytes", "maxSingleApps", "maxVolumes"])),
   ),
+  command("tenant", "auth-policy", "<tenantId>", "Show tenant auth policy.", (p, c) =>
+    c.tenants.authPolicy(arg(p, 0, "tenantId")),
+  ),
+  command("tenant", "auth-policy-update", "<tenantId> [policy flags]", "Update tenant auth policy.", (p, c) =>
+    c.tenants.updateAuthPolicy(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, [], ["allowPlatformLogin", "allowTenantIdentityProviders", "requireTenantIdentityProvider"])),
+  ),
   command("tenant", "billing", "<tenantId>", "Show tenant billing.", (p, c) =>
     c.tenants.billing(arg(p, 0, "tenantId")),
   ),
@@ -93,6 +99,48 @@ const commands: Command[] = [
   ),
   command("membership", "delete", "<tenantId> <membershipId>", "Delete membership.", (p, c) =>
     c.tenants.deleteMembership(arg(p, 0, "tenantId"), arg(p, 1, "membershipId")),
+  ),
+  command("invitation", "list", "<tenantId>", "List tenant invitations.", (p, c) =>
+    c.tenants.invitations(arg(p, 0, "tenantId")),
+  ),
+  command("invitation", "create", "<tenantId> --email EMAIL --role-id ID", "Create tenant invitation.", (p, c) =>
+    c.tenants.createInvitation(arg(p, 0, "tenantId"), {
+      email: flag(p.flags, "email"),
+      roleIds: arrayFlag(p.flags, "roleId"),
+    }),
+  ),
+  command("invitation", "resend", "<tenantId> <invitationId>", "Resend tenant invitation.", (p, c) =>
+    c.tenants.resendInvitation(arg(p, 0, "tenantId"), arg(p, 1, "invitationId")),
+  ),
+  command("invitation", "delete", "<tenantId> <invitationId>", "Delete tenant invitation.", (p, c) =>
+    c.tenants.deleteInvitation(arg(p, 0, "tenantId"), arg(p, 1, "invitationId")),
+  ),
+  command("invitation", "accept", "--token TOKEN", "Accept tenant invitation.", (p, c) =>
+    c.invitations.accept(bodyFromFlags(p.flags, ["token"], [])),
+  ),
+  command("group", "list", "<tenantId>", "List tenant groups.", (p, c) =>
+    c.tenants.groups(arg(p, 0, "tenantId")),
+  ),
+  command("group", "create", "<tenantId> --name NAME", "Create tenant group.", (p, c) =>
+    c.tenants.createGroup(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, ["name"], ["description"])),
+  ),
+  command("group", "update", "<tenantId> <groupId> [flags]", "Update tenant group.", (p, c) =>
+    c.tenants.updateGroup(arg(p, 0, "tenantId"), arg(p, 1, "groupId"), bodyFromFlags(p.flags, [], ["name", "description"])),
+  ),
+  command("group", "delete", "<tenantId> <groupId>", "Delete tenant group.", (p, c) =>
+    c.tenants.deleteGroup(arg(p, 0, "tenantId"), arg(p, 1, "groupId")),
+  ),
+  command("group", "member-add", "<tenantId> <groupId> --membership-id ID", "Add tenant group member.", (p, c) =>
+    c.tenants.addGroupMember(arg(p, 0, "tenantId"), arg(p, 1, "groupId"), bodyFromFlags(p.flags, ["membershipId"], [])),
+  ),
+  command("group", "member-remove", "<tenantId> <groupId> <membershipId>", "Remove tenant group member.", (p, c) =>
+    c.tenants.removeGroupMember(arg(p, 0, "tenantId"), arg(p, 1, "groupId"), arg(p, 2, "membershipId")),
+  ),
+  command("group", "role-add", "<tenantId> <groupId> --role-id ID", "Assign tenant group role.", (p, c) =>
+    c.tenants.assignGroupRole(arg(p, 0, "tenantId"), arg(p, 1, "groupId"), bodyFromFlags(p.flags, ["roleId"], [])),
+  ),
+  command("group", "role-remove", "<tenantId> <groupId> <roleId>", "Remove tenant group role.", (p, c) =>
+    c.tenants.removeGroupRole(arg(p, 0, "tenantId"), arg(p, 1, "groupId"), arg(p, 2, "roleId")),
   ),
   command("app-group", "list", "<tenantId>", "List app groups.", (p, c) =>
     c.appGroups.list(arg(p, 0, "tenantId")),

@@ -3,6 +3,9 @@ import {
   BillingTransaction,
   Quota,
   Role,
+  TenantAuthPolicy,
+  TenantGroup,
+  TenantInvitation,
   TenantMembership,
   UsageRecord,
   User,
@@ -11,6 +14,11 @@ import {
 type MembershipWithRelations = TenantMembership & {
   user: Pick<User, "id" | "email" | "displayName" | "status">;
   roles: Array<{ role: Role }>;
+  groupMemberships?: Array<{
+    group: Pick<TenantGroup, "id" | "name"> & {
+      roles: Array<{ role: Role }>;
+    };
+  }>;
 };
 
 export function mapMembership(membership: MembershipWithRelations) {
@@ -25,8 +33,74 @@ export function mapMembership(membership: MembershipWithRelations) {
       name: role.name,
       permissions: role.permissions,
     })),
+    groups: membership.groupMemberships?.map(({ group }) => ({
+      id: group.id,
+      name: group.name,
+      roles: group.roles.map(({ role }) => ({
+        id: role.id,
+        name: role.name,
+        permissions: role.permissions,
+      })),
+    })),
     createdBy: membership.createdBy,
     createdAt: membership.createdAt,
+  };
+}
+
+export function mapTenantAuthPolicy(policy: TenantAuthPolicy) {
+  return {
+    tenantId: policy.tenantId,
+    allowPlatformLogin: policy.allowPlatformLogin,
+    allowTenantIdentityProviders: policy.allowTenantIdentityProviders,
+    requireTenantIdentityProvider: policy.requireTenantIdentityProvider,
+    createdAt: policy.createdAt,
+    updatedAt: policy.updatedAt,
+  };
+}
+
+export function mapTenantInvitation(invitation: TenantInvitation) {
+  return {
+    id: invitation.id,
+    tenantId: invitation.tenantId,
+    email: invitation.email,
+    roleIds: invitation.roleIds,
+    expiresAt: invitation.expiresAt,
+    lastSentAt: invitation.lastSentAt,
+    createdBy: invitation.createdBy,
+    createdAt: invitation.createdAt,
+  };
+}
+
+export function mapTenantGroup(
+  group: TenantGroup & {
+    members?: Array<{
+      membership: TenantMembership & {
+        user: Pick<User, "id" | "email" | "displayName" | "status">;
+      };
+    }>;
+    roles?: Array<{ role: Role }>;
+  },
+) {
+  return {
+    id: group.id,
+    tenantId: group.tenantId,
+    name: group.name,
+    description: group.description,
+    roles: group.roles?.map(({ role }) => ({
+      id: role.id,
+      name: role.name,
+      permissions: role.permissions,
+    })),
+    members: group.members?.map(({ membership }) => ({
+      id: membership.id,
+      userId: membership.userId,
+      status: membership.status,
+      user: membership.user,
+    })),
+    createdBy: group.createdBy,
+    updatedBy: group.updatedBy,
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
   };
 }
 

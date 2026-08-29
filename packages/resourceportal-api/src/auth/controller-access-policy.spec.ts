@@ -15,7 +15,10 @@ import { DeploymentWorkerController } from "../internal/deployment-worker.contro
 import { InternalAuthGuard } from "../internal/internal-auth.guard";
 import { ObservabilityController } from "../observability/observability.controller";
 import { RegistriesController } from "../registries/registries.controller";
-import { TenantsController } from "../tenants/tenants.controller";
+import {
+  TenantInvitationsController,
+  TenantsController,
+} from "../tenants/tenants.controller";
 import { UsersController } from "../users/users.controller";
 import { VolumesController } from "../volumes/volumes.controller";
 import {
@@ -35,6 +38,7 @@ const controllers = [
   HealthController,
   ObservabilityController,
   RegistriesController,
+  TenantInvitationsController,
   TenantsController,
   UsersController,
   VolumesController,

@@ -1,23 +1,34 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { MembershipStatus, Prisma } from "@prisma/client";
-import { randomUUID } from "node:crypto";
+import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
+import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
+import { AssignTenantGroupRoleDto } from "./dto/assign-tenant-group-role.dto";
 import { CreateMembershipDto } from "./dto/create-membership.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
+import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
 import { TopUpBillingDto } from "./dto/top-up-billing.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
 import { UpdateQuotaDto } from "./dto/update-quota.dto";
+import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
+import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import {
   mapBillingAccount,
   mapBillingTransaction,
   mapMembership,
   mapQuota,
+  mapTenantAuthPolicy,
+  mapTenantGroup,
+  mapTenantInvitation,
   mapUsageRecord,
 } from "./tenants.view";
 
@@ -40,6 +51,7 @@ export class TenantsService {
       orderBy: { createdAt: "desc" },
       include: {
         billing: true,
+        authPolicy: true,
         memberships: {
           include: {
             user: {
@@ -65,6 +77,7 @@ export class TenantsService {
       include: {
         billing: true,
         quota: true,
+        authPolicy: true,
         memberships: {
           include: {
             user: {
@@ -106,6 +119,13 @@ export class TenantsService {
                 informationThreshold: 0,
               },
             },
+            authPolicy: {
+              create: {
+                allowPlatformLogin: true,
+                allowTenantIdentityProviders: true,
+                requireTenantIdentityProvider: false,
+              },
+            },
             memberships: {
               create: {
                 userId: actor.id,
@@ -136,6 +156,7 @@ export class TenantsService {
           },
           include: {
             billing: true,
+            authPolicy: true,
             memberships: {
               include: {
                 user: {
@@ -166,6 +187,58 @@ export class TenantsService {
 
       throw error;
     }
+  }
+
+  async getAuthPolicy(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const policy = await this.prisma.tenantAuthPolicy.upsert({
+      where: { tenantId },
+      create: { tenantId },
+      update: {},
+    });
+
+    return mapTenantAuthPolicy(policy);
+  }
+
+  async updateAuthPolicy(
+    tenantId: string,
+    dto: UpdateTenantAuthPolicyDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const policy = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenantAuthPolicy.upsert({
+        where: { tenantId },
+        create: {
+          tenantId,
+          allowPlatformLogin: dto.allowPlatformLogin ?? true,
+          allowTenantIdentityProviders:
+            dto.allowTenantIdentityProviders ?? true,
+          requireTenantIdentityProvider:
+            dto.requireTenantIdentityProvider ?? false,
+        },
+        update: dto,
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_auth_policy.update",
+          resourceType: "TenantAuthPolicy",
+          resourceId: tenantId,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: { ...dto },
+        },
+      });
+
+      return updated;
+    });
+
+    return mapTenantAuthPolicy(policy);
   }
 
   async getBilling(tenantId: string) {
@@ -380,6 +453,617 @@ export class TenantsService {
     });
 
     return memberships.map(mapMembership);
+  }
+
+  async listInvitations(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const invitations = await this.prisma.tenantInvitation.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return invitations.map(mapTenantInvitation);
+  }
+
+  async createInvitation(
+    tenantId: string,
+    dto: CreateTenantInvitationDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    await this.ensureRolesExist(dto.roleIds);
+    const email = normalizeEmail(dto.email);
+    const existingMembership = await this.prisma.tenantMembership.findFirst({
+      where: {
+        tenantId,
+        user: { email },
+      },
+    });
+
+    if (existingMembership?.status === MembershipStatus.Active) {
+      throw new ConflictException("AlreadyMember");
+    }
+
+    if (existingMembership) {
+      throw new ConflictException("MembershipAlreadyExists");
+    }
+
+    const token = randomToken();
+    try {
+      const invitation = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.tenantInvitation.create({
+          data: {
+            tenantId,
+            email,
+            roleIds: dto.roleIds,
+            tokenHash: hashToken(token),
+            expiresAt: invitationExpiry(),
+            lastSentAt: new Date(),
+            createdBy: actor.id,
+          },
+        });
+
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "tenant_invitation.create",
+            resourceType: "TenantInvitation",
+            resourceId: created.id,
+            resourceName: email,
+            result: "Success",
+            correlationId: randomUUID(),
+            changes: {
+              email,
+              roleIds: dto.roleIds,
+              expiresAt: created.expiresAt,
+            },
+          },
+        });
+
+        return created;
+      });
+
+      return {
+        ...mapTenantInvitation(invitation),
+        token,
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException("TenantInvitation already exists");
+      }
+
+      throw error;
+    }
+  }
+
+  async resendInvitation(
+    tenantId: string,
+    invitationId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const existing = await this.findInvitationOrThrow(tenantId, invitationId);
+    const token = randomToken();
+
+    const invitation = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenantInvitation.update({
+        where: { id: existing.id },
+        data: {
+          tokenHash: hashToken(token),
+          expiresAt: invitationExpiry(),
+          lastSentAt: new Date(),
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_invitation.resend",
+          resourceType: "TenantInvitation",
+          resourceId: updated.id,
+          resourceName: updated.email,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            email: updated.email,
+            roleIds: updated.roleIds,
+            expiresAt: updated.expiresAt,
+          },
+        },
+      });
+
+      return updated;
+    });
+
+    return {
+      ...mapTenantInvitation(invitation),
+      token,
+    };
+  }
+
+  async deleteInvitation(
+    tenantId: string,
+    invitationId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const existing = await this.findInvitationOrThrow(tenantId, invitationId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantInvitation.delete({
+        where: { id: existing.id },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_invitation.cancel",
+          resourceType: "TenantInvitation",
+          resourceId: existing.id,
+          resourceName: existing.email,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            email: existing.email,
+            roleIds: existing.roleIds,
+          },
+        },
+      });
+    });
+
+    return { deleted: true };
+  }
+
+  async acceptInvitation(
+    dto: AcceptTenantInvitationDto,
+    actor: AuthenticatedUser,
+  ) {
+    if (actor.status !== UserStatus.Active) {
+      throw new BadRequestException("Active user is required");
+    }
+
+    const invitation = await this.prisma.tenantInvitation.findUnique({
+      where: { tokenHash: hashToken(dto.token) },
+      include: { tenant: { select: { id: true, name: true } } },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException("TenantInvitation not found");
+    }
+
+    if (invitation.expiresAt <= new Date()) {
+      throw new BadRequestException("TenantInvitationExpired");
+    }
+
+    if (normalizeEmail(actor.email) !== invitation.email) {
+      throw new ForbiddenException("InvitationEmailMismatch");
+    }
+
+    await this.ensureRolesExist(invitation.roleIds);
+
+    const membership = await this.prisma.$transaction(async (tx) => {
+      const existingMembership = await tx.tenantMembership.findUnique({
+        where: {
+          userId_tenantId: {
+            userId: actor.id,
+            tenantId: invitation.tenantId,
+          },
+        },
+      });
+
+      if (existingMembership) {
+        throw new ConflictException("MembershipAlreadyExists");
+      }
+
+      const created = await tx.tenantMembership.create({
+        data: {
+          tenantId: invitation.tenantId,
+          userId: actor.id,
+          status: MembershipStatus.Active,
+          createdBy: invitation.createdBy,
+          roles: {
+            create: invitation.roleIds.map((roleId) => ({ roleId })),
+          },
+        },
+        include: this.membershipIncludes(),
+      });
+
+      await tx.tenantInvitation.delete({
+        where: { id: invitation.id },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId: invitation.tenantId,
+          tenantName: invitation.tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_invitation.accept",
+          resourceType: "TenantMembership",
+          resourceId: created.id,
+          resourceName: actor.email,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            invitationId: invitation.id,
+            email: invitation.email,
+            roleIds: invitation.roleIds,
+          },
+        },
+      });
+
+      return created;
+    });
+
+    return mapMembership(membership);
+  }
+
+  async listGroups(tenantId: string) {
+    await this.ensureTenantExists(tenantId);
+    const groups = await this.prisma.tenantGroup.findMany({
+      where: { tenantId },
+      orderBy: { name: "asc" },
+      include: this.groupIncludes(),
+    });
+
+    return groups.map(mapTenantGroup);
+  }
+
+  async createGroup(
+    tenantId: string,
+    dto: CreateTenantGroupDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+
+    try {
+      const group = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.tenantGroup.create({
+          data: {
+            tenantId,
+            name: dto.name,
+            description: dto.description,
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+          include: this.groupIncludes(),
+        });
+
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "tenant_group.create",
+            resourceType: "TenantGroup",
+            resourceId: created.id,
+            resourceName: created.name,
+            result: "Success",
+            correlationId: randomUUID(),
+            changes: { ...dto },
+          },
+        });
+
+        return created;
+      });
+
+      return mapTenantGroup(group);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException("TenantGroup name already exists");
+      }
+
+      throw error;
+    }
+  }
+
+  async updateGroup(
+    tenantId: string,
+    groupId: string,
+    dto: UpdateTenantGroupDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    await this.findGroupOrThrow(tenantId, groupId);
+
+    const group = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenantGroup.update({
+        where: { id: groupId },
+        data: {
+          ...dto,
+          updatedBy: actor.id,
+        },
+        include: this.groupIncludes(),
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_group.update",
+          resourceType: "TenantGroup",
+          resourceId: updated.id,
+          resourceName: updated.name,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: { ...dto },
+        },
+      });
+
+      return updated;
+    });
+
+    return mapTenantGroup(group);
+  }
+
+  async deleteGroup(
+    tenantId: string,
+    groupId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const group = await this.findGroupOrThrow(tenantId, groupId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantGroup.delete({ where: { id: groupId } });
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_group.delete",
+          resourceType: "TenantGroup",
+          resourceId: group.id,
+          resourceName: group.name,
+          result: "Success",
+          correlationId: randomUUID(),
+        },
+      });
+    });
+
+    return { deleted: true };
+  }
+
+  async addGroupMember(
+    tenantId: string,
+    groupId: string,
+    dto: AddTenantGroupMemberDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const group = await this.findGroupOrThrow(tenantId, groupId);
+    await this.findMembershipOrThrow(tenantId, dto.membershipId);
+
+    try {
+      const member = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.tenantGroupMember.create({
+          data: {
+            tenantGroupId: groupId,
+            membershipId: dto.membershipId,
+          },
+          include: {
+            membership: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    displayName: true,
+                    status: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "tenant_group.member.add",
+            resourceType: "TenantGroup",
+            resourceId: group.id,
+            resourceName: group.name,
+            result: "Success",
+            correlationId: randomUUID(),
+            changes: {
+              membershipId: dto.membershipId,
+            },
+          },
+        });
+
+        return created;
+      });
+
+      return {
+        id: member.id,
+        tenantGroupId: member.tenantGroupId,
+        membershipId: member.membershipId,
+        source: member.source,
+        createdAt: member.createdAt,
+        membership: {
+          id: member.membership.id,
+          userId: member.membership.userId,
+          status: member.membership.status,
+          user: member.membership.user,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException("TenantGroupMember already exists");
+      }
+
+      throw error;
+    }
+  }
+
+  async removeGroupMember(
+    tenantId: string,
+    groupId: string,
+    membershipId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const group = await this.findGroupOrThrow(tenantId, groupId);
+    await this.findMembershipOrThrow(tenantId, membershipId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantGroupMember.delete({
+        where: {
+          tenantGroupId_membershipId: {
+            tenantGroupId: groupId,
+            membershipId,
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_group.member.remove",
+          resourceType: "TenantGroup",
+          resourceId: group.id,
+          resourceName: group.name,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            membershipId,
+          },
+        },
+      });
+    });
+
+    return { deleted: true };
+  }
+
+  async assignGroupRole(
+    tenantId: string,
+    groupId: string,
+    dto: AssignTenantGroupRoleDto,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const group = await this.findGroupOrThrow(tenantId, groupId);
+    await this.ensureRolesExist([dto.roleId]);
+
+    try {
+      const role = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.tenantGroupRole.create({
+          data: {
+            tenantGroupId: groupId,
+            roleId: dto.roleId,
+          },
+          include: { role: true },
+        });
+
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "tenant_group.role.assign",
+            resourceType: "TenantGroup",
+            resourceId: group.id,
+            resourceName: group.name,
+            result: "Success",
+            correlationId: randomUUID(),
+            changes: {
+              roleId: dto.roleId,
+            },
+          },
+        });
+
+        return created;
+      });
+
+      return {
+        tenantGroupId: role.tenantGroupId,
+        role: {
+          id: role.role.id,
+          name: role.role.name,
+          permissions: role.role.permissions,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException("TenantGroupRole already exists");
+      }
+
+      throw error;
+    }
+  }
+
+  async removeGroupRole(
+    tenantId: string,
+    groupId: string,
+    roleId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const tenant = await this.ensureTenantExists(tenantId);
+    const group = await this.findGroupOrThrow(tenantId, groupId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantGroupRole.delete({
+        where: {
+          tenantGroupId_roleId: {
+            tenantGroupId: groupId,
+            roleId,
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: tenant.name,
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "tenant_group.role.remove",
+          resourceType: "TenantGroup",
+          resourceId: group.id,
+          resourceName: group.name,
+          result: "Success",
+          correlationId: randomUUID(),
+          changes: {
+            roleId,
+          },
+        },
+      });
+    });
+
+    return { deleted: true };
   }
 
   async createMembership(
@@ -634,6 +1318,31 @@ export class TenantsService {
     return membership;
   }
 
+  private async findInvitationOrThrow(tenantId: string, invitationId: string) {
+    const invitation = await this.prisma.tenantInvitation.findFirst({
+      where: { id: invitationId, tenantId },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException("TenantInvitation not found");
+    }
+
+    return invitation;
+  }
+
+  private async findGroupOrThrow(tenantId: string, groupId: string) {
+    const group = await this.prisma.tenantGroup.findFirst({
+      where: { id: groupId, tenantId },
+      include: this.groupIncludes(),
+    });
+
+    if (!group) {
+      throw new NotFoundException("TenantGroup not found");
+    }
+
+    return group;
+  }
+
   private async assertLastOwnerIsPreserved(
     tenantId: string,
     membership: Awaited<ReturnType<TenantsService["findMembershipOrThrow"]>>,
@@ -692,6 +1401,63 @@ export class TenantsService {
         include: { role: true },
         orderBy: { roleId: "asc" as const },
       },
+      groupMemberships: {
+        include: {
+          group: {
+            include: {
+              roles: {
+                include: { role: true },
+                orderBy: { roleId: "asc" as const },
+              },
+            },
+          },
+        },
+        orderBy: { tenantGroupId: "asc" as const },
+      },
     };
   }
+
+  private groupIncludes() {
+    return {
+      members: {
+        include: {
+          membership: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                  displayName: true,
+                  status: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" as const },
+      },
+      roles: {
+        include: { role: true },
+        orderBy: { roleId: "asc" as const },
+      },
+    };
+  }
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function randomToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+function hashToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function invitationExpiry() {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+  return expiresAt;
 }

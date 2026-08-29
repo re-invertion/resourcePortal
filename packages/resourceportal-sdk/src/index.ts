@@ -50,6 +50,13 @@ export class ResourcePortalClient {
         method: "PATCH",
         body,
       }),
+    authPolicy: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/auth-policy`),
+    updateAuthPolicy: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/auth-policy`, {
+        method: "PATCH",
+        body,
+      }),
     roles: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/roles`),
     memberships: (tenantId: string) =>
@@ -69,6 +76,68 @@ export class ResourcePortalClient {
         `/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}`,
         { method: "DELETE" },
       ),
+    invitations: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/invitations`),
+    createInvitation: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/invitations`, {
+        method: "POST",
+        body,
+      }),
+    resendInvitation: (tenantId: string, invitationId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/invitations/${encode(invitationId)}/resend`,
+        { method: "POST" },
+      ),
+    deleteInvitation: (tenantId: string, invitationId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/invitations/${encode(invitationId)}`,
+        { method: "DELETE" },
+      ),
+    groups: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/groups`),
+    createGroup: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/groups`, {
+        method: "POST",
+        body,
+      }),
+    updateGroup: (tenantId: string, groupId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/groups/${encode(groupId)}`, {
+        method: "PATCH",
+        body,
+      }),
+    deleteGroup: (tenantId: string, groupId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/groups/${encode(groupId)}`, {
+        method: "DELETE",
+      }),
+    addGroupMember: (tenantId: string, groupId: string, body: unknown) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/groups/${encode(groupId)}/members`,
+        { method: "POST", body },
+      ),
+    removeGroupMember: (
+      tenantId: string,
+      groupId: string,
+      membershipId: string,
+    ) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/groups/${encode(groupId)}/members/${encode(membershipId)}`,
+        { method: "DELETE" },
+      ),
+    assignGroupRole: (tenantId: string, groupId: string, body: unknown) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/groups/${encode(groupId)}/roles`,
+        { method: "POST", body },
+      ),
+    removeGroupRole: (tenantId: string, groupId: string, roleId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/groups/${encode(groupId)}/roles/${encode(roleId)}`,
+        { method: "DELETE" },
+      ),
+  };
+
+  readonly invitations = {
+    accept: (body: unknown) =>
+      this.request("/invitations/accept", { method: "POST", body }),
   };
 
   readonly appGroups = {
