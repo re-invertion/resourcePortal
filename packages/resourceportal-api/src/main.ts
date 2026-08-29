@@ -11,6 +11,7 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { ObservabilityService } from "./observability/observability.service";
+import { RateLimitService } from "./security/rate-limit.service";
 
 type ObservedRequest = FastifyRequest & {
   requestId?: string;
@@ -26,6 +27,7 @@ async function bootstrap() {
   );
   const config = app.get(ConfigService);
   const observability = app.get(ObservabilityService);
+  const rateLimit = app.get(RateLimitService);
   const port = config.get<number>("PORT", 3000);
   const httpLogger = new Logger("HttpRequest");
 
@@ -48,6 +50,26 @@ async function bootstrap() {
     request.requestStartedAt = Date.now();
     reply.header("x-request-id", requestId);
     applySecurityHeaders(request, reply, config);
+
+    const limit = rateLimit.consume(request.ip);
+    reply.header("x-ratelimit-limit", String(limit.limit));
+    reply.header("x-ratelimit-remaining", String(limit.remaining));
+    reply.header("x-ratelimit-reset", String(Math.ceil(limit.resetAt / 1000)));
+    if (!limit.allowed) {
+      reply.header("retry-after", String(limit.retryAfterSeconds));
+      reply.status(429).send({
+        error: {
+          code: "RATE_LIMIT_EXCEEDED",
+          message: "Too many requests",
+          statusCode: 429,
+          requestId,
+          details: {
+            retryAfterSeconds: limit.retryAfterSeconds,
+          },
+        },
+      });
+      return;
+    }
 
     if (!isCsrfValid(request, config)) {
       reply.status(403).send({
