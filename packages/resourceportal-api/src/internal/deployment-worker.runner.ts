@@ -50,6 +50,19 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function logWorkerEvent(
+  level: "error" | "log" | "warn",
+  event: string,
+  fields: Record<string, unknown> = {},
+) {
+  logger[level](
+    JSON.stringify({
+      event,
+      ...fields,
+    }),
+  );
+}
+
 function isTerminal(deployment: WorkerDeployment) {
   return (
     deployment.status === DeploymentStatus.Succeeded ||
@@ -71,9 +84,11 @@ async function runWithHeartbeat<T>(
     void worker
       .heartbeatDeployment(deploymentId, { workerId, leaseSeconds })
       .catch((error: unknown) => {
-        logger.warn(
-          `Heartbeat failed for deployment ${deploymentId}: ${errorMessage(error)}`,
-        );
+        logWorkerEvent("warn", "deployment.heartbeat.failed", {
+          deploymentId,
+          error: errorMessage(error),
+          workerId,
+        });
       });
   }, heartbeatIntervalMs);
 
@@ -92,13 +107,21 @@ async function processDeployment(
   heartbeatIntervalMs: number,
 ) {
   let deployment = initialDeployment;
-  logger.log(`Processing deployment ${deployment.id}`);
+  logWorkerEvent("log", "deployment.processing.started", {
+    deploymentId: deployment.id,
+    phase: deployment.phase,
+    status: deployment.status,
+    workerId,
+  });
 
   for (const phase of DEPLOYMENT_PHASES) {
     if (isTerminal(deployment)) {
-      logger.log(
-        `Deployment ${deployment.id} stopped in ${deployment.status} during ${deployment.phase}`,
-      );
+      logWorkerEvent("log", "deployment.processing.stopped", {
+        deploymentId: deployment.id,
+        phase: deployment.phase,
+        status: deployment.status,
+        workerId,
+      });
       return deployment;
     }
 
@@ -117,9 +140,12 @@ async function processDeployment(
     );
   }
 
-  logger.log(
-    `Deployment ${deployment.id} finished with ${deployment.status} at ${deployment.phase}`,
-  );
+  logWorkerEvent("log", "deployment.processing.finished", {
+    deploymentId: deployment.id,
+    phase: deployment.phase,
+    status: deployment.status,
+    workerId,
+  });
 
   return deployment;
 }
@@ -142,7 +168,10 @@ async function main() {
   let stopping = false;
 
   const stop = (signal: NodeJS.Signals) => {
-    logger.log(`Received ${signal}; stopping after current cycle`);
+    logWorkerEvent("log", "worker.stopping", {
+      signal,
+      workerId,
+    });
     stopping = true;
   };
 
@@ -150,9 +179,12 @@ async function main() {
   process.once("SIGTERM", stop);
 
   try {
-    logger.log(
-      `Deployment worker ${workerId} started (poll=${pollIntervalMs}ms lease=${leaseSeconds}s once=${once})`,
-    );
+    logWorkerEvent("log", "worker.started", {
+      leaseSeconds,
+      once,
+      pollIntervalMs,
+      workerId,
+    });
 
     while (!stopping) {
       const claimed = (await worker.claimNextDeployment({
@@ -162,7 +194,7 @@ async function main() {
 
       if (!claimed) {
         if (once) {
-          logger.log("No pending deployment found; exiting");
+          logWorkerEvent("log", "worker.no_pending_deployment", { workerId });
           break;
         }
 
@@ -179,9 +211,11 @@ async function main() {
           heartbeatIntervalMs,
         );
       } catch (error: unknown) {
-        logger.error(
-          `Unhandled worker error for deployment ${claimed.id}: ${errorMessage(error)}`,
-        );
+        logWorkerEvent("error", "deployment.processing.error", {
+          deploymentId: claimed.id,
+          error: errorMessage(error),
+          workerId,
+        });
 
         await worker
           .failDeployment(claimed.id, {
@@ -190,9 +224,11 @@ async function main() {
             errorMessage: errorMessage(error),
           })
           .catch((failError: unknown) => {
-            logger.error(
-              `Failed to mark deployment ${claimed.id} as failed: ${errorMessage(failError)}`,
-            );
+            logWorkerEvent("error", "deployment.fail_mark.error", {
+              deploymentId: claimed.id,
+              error: errorMessage(failError),
+              workerId,
+            });
           });
       }
 
@@ -208,6 +244,8 @@ async function main() {
 }
 
 void main().catch((error: unknown) => {
-  logger.error(`Deployment worker crashed: ${errorMessage(error)}`);
+  logWorkerEvent("error", "worker.crashed", {
+    error: errorMessage(error),
+  });
   process.exitCode = 1;
 });

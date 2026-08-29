@@ -27,7 +27,14 @@ Health endpoint:
 
 ```text
 GET /api/health
+GET /api/health/live
+GET /api/health/ready
+GET /api/metrics
 ```
+
+`/api/health/live` potwierdza, że proces API działa. `/api/health/ready` sprawdza zależności wymagane do obsługi ruchu, obecnie PostgreSQL. `/api/metrics` zwraca metryki w formacie Prometheus text exposition.
+
+Every HTTP request receives an `x-request-id` response header. If the caller sends `x-request-id`, the API preserves it; otherwise it generates a UUID. API requests and the deployment worker emit structured JSON log events for easier filtering in log aggregation.
 
 Main public resource groups:
 

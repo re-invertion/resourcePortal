@@ -11,6 +11,7 @@ import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
 import { HealthModule } from "./health/health.module";
 import { InternalModule } from "./internal/internal.module";
+import { ObservabilityModule } from "./observability/observability.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
 import { TenantsModule } from "./tenants/tenants.module";
@@ -35,6 +36,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainsModule,
     AuditModule,
     InternalModule,
+    ObservabilityModule,
   ],
   providers: [
     {

@@ -13,6 +13,7 @@ import { HealthController } from "../health/health.controller";
 import { AuthSessionMaintenanceController } from "../internal/auth-session-maintenance.controller";
 import { DeploymentWorkerController } from "../internal/deployment-worker.controller";
 import { InternalAuthGuard } from "../internal/internal-auth.guard";
+import { ObservabilityController } from "../observability/observability.controller";
 import { RegistriesController } from "../registries/registries.controller";
 import { TenantsController } from "../tenants/tenants.controller";
 import { UsersController } from "../users/users.controller";
@@ -32,6 +33,7 @@ const controllers = [
   DeploymentWorkerController,
   DomainsController,
   HealthController,
+  ObservabilityController,
   RegistriesController,
   TenantsController,
   UsersController,
