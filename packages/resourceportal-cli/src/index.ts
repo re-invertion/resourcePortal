@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { ResourcePortalClient } from "@resource-portal/sdk";
 
 type OutputFormat = "json" | "table";
 
@@ -27,7 +28,7 @@ type Command = {
   group: string;
   name: string;
   summary: string;
-  run: (args: string[], options: GlobalOptions) => Promise<unknown>;
+  run: (args: string[], client: ResourcePortalClient) => Promise<unknown>;
 };
 
 const commands: Command[] = [
@@ -35,87 +36,77 @@ const commands: Command[] = [
     group: "account",
     name: "show",
     summary: "Show current authenticated account.",
-    run: (_args, options) => request(options, "/auth/me"),
+    run: (_args, client) => client.account.me(),
   },
   {
     group: "tenant",
     name: "list",
     summary: "List tenants available to the current account.",
-    run: (_args, options) => request(options, "/tenants"),
+    run: (_args, client) => client.tenants.list(),
   },
   {
     group: "tenant",
     name: "show",
     summary: "Show one tenant by id.",
-    run: (args, options) => request(options, `/tenants/${requiredArg(args, "tenantId")}`),
+    run: (args, client) => client.tenants.get(requiredArg(args, "tenantId")),
   },
   {
     group: "app-group",
     name: "list",
     summary: "List app groups in a tenant.",
-    run: (args, options) =>
-      request(options, `/tenants/${requiredArg(args, "tenantId")}/app-groups`),
+    run: (args, client) => client.appGroups.list(requiredArg(args, "tenantId")),
   },
   {
     group: "app-group",
     name: "show",
     summary: "Show one app group by id.",
-    run: (args, options) => {
+    run: (args, client) => {
       const tenantId = requiredArg(args, "tenantId");
       const appGroupId = requiredArg(args, "appGroupId", 1);
 
-      return request(options, `/tenants/${tenantId}/app-groups/${appGroupId}`);
+      return client.appGroups.get(tenantId, appGroupId);
     },
   },
   {
     group: "deployment",
     name: "list",
     summary: "List deployments for an app group.",
-    run: (args, options) => {
+    run: (args, client) => {
       const tenantId = requiredArg(args, "tenantId");
       const appGroupId = requiredArg(args, "appGroupId", 1);
 
-      return request(
-        options,
-        `/tenants/${tenantId}/app-groups/${appGroupId}/deployments`,
-      );
+      return client.deployments.list(tenantId, appGroupId);
     },
   },
   {
     group: "deployment",
     name: "show",
     summary: "Show one deployment by id.",
-    run: (args, options) => {
+    run: (args, client) => {
       const tenantId = requiredArg(args, "tenantId");
       const appGroupId = requiredArg(args, "appGroupId", 1);
       const deploymentId = requiredArg(args, "deploymentId", 2);
 
-      return request(
-        options,
-        `/tenants/${tenantId}/app-groups/${appGroupId}/deployments/${deploymentId}`,
-      );
+      return client.deployments.get(tenantId, appGroupId, deploymentId);
     },
   },
   {
     group: "volume",
     name: "list",
     summary: "List volumes in a tenant.",
-    run: (args, options) =>
-      request(options, `/tenants/${requiredArg(args, "tenantId")}/volumes`),
+    run: (args, client) => client.volumes.list(requiredArg(args, "tenantId")),
   },
   {
     group: "domain",
     name: "list",
     summary: "List domains in a tenant.",
-    run: (args, options) =>
-      request(options, `/tenants/${requiredArg(args, "tenantId")}/domains`),
+    run: (args, client) => client.domains.list(requiredArg(args, "tenantId")),
   },
   {
     group: "registry",
     name: "list",
     summary: "List registries in a tenant.",
-    run: (args, options) =>
-      request(options, `/tenants/${requiredArg(args, "tenantId")}/registries`),
+    run: (args, client) => client.registries.list(requiredArg(args, "tenantId")),
   },
 ];
 
@@ -146,7 +137,11 @@ async function main() {
     throw new Error(`Unknown command: ${[parsed.group, parsed.command].filter(Boolean).join(" ")}`);
   }
 
-  const result = await command.run(parsed.args, parsed.options);
+  const client = new ResourcePortalClient({
+    apiUrl: parsed.options.apiUrl,
+    token: parsed.options.token,
+  });
+  const result = await command.run(parsed.args, client);
   printResult(result, parsed.options.output);
 }
 
@@ -227,22 +222,6 @@ function logout() {
   return {
     status: "LoggedOut",
   };
-}
-
-async function request(options: GlobalOptions, path: string) {
-  const response = await fetch(`${options.apiUrl.replace(/\/$/, "")}${path}`, {
-    headers: {
-      ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
-    },
-  });
-  const text = await response.text();
-  const payload: unknown = text ? JSON.parse(text) : null;
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${text}`);
-  }
-
-  return payload;
 }
 
 function printResult(result: unknown, output: OutputFormat) {
@@ -356,7 +335,7 @@ function requiredArg(args: string[], name: string, index = 0) {
     throw new Error(`Missing required argument: ${name}`);
   }
 
-  return encodeURIComponent(value);
+  return value;
 }
 
 function requiredOptionValue(argv: string[], index: number, option: string) {

@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
+COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
 RUN npm ci --workspace @resource-portal/api --include-workspace-root=false
 
 FROM node:24-alpine AS production-dependencies
@@ -12,6 +13,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
+COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
 RUN npm ci --omit=dev --ignore-scripts --workspace @resource-portal/api --include-workspace-root=false
 
 FROM node:24-alpine AS build

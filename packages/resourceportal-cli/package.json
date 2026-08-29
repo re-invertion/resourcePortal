@@ -10,8 +10,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node dist/index.js --help",
-    "start": "ts-node --files src/index.ts"
+    "test": "npm run build --workspace @resource-portal/sdk && npm run build && node dist/index.js --help",
+    "start": "npm run build --workspace @resource-portal/sdk && ts-node --files src/index.ts"
+  },
+  "dependencies": {
+    "@resource-portal/sdk": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
