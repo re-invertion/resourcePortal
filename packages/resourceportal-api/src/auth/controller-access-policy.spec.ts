@@ -10,6 +10,7 @@ import { AppGroupsController } from "../app-groups/app-groups.controller";
 import { AuditController } from "../audit/audit.controller";
 import { DomainsController } from "../domains/domains.controller";
 import { HealthController } from "../health/health.controller";
+import { IdentityProvidersController } from "../identity-providers/identity-providers.controller";
 import { AuthSessionMaintenanceController } from "../internal/auth-session-maintenance.controller";
 import { DeploymentWorkerController } from "../internal/deployment-worker.controller";
 import { InternalAuthGuard } from "../internal/internal-auth.guard";
@@ -36,6 +37,7 @@ const controllers = [
   DeploymentWorkerController,
   DomainsController,
   HealthController,
+  IdentityProvidersController,
   ObservabilityController,
   RegistriesController,
   TenantInvitationsController,

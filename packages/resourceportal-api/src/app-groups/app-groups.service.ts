@@ -1166,7 +1166,7 @@ export class AppGroupsService {
       orderBy: { createdAt: "asc" },
     });
 
-    return singleApps.map(mapSingleApp);
+    return singleApps.map((singleApp) => mapSingleApp(singleApp));
   }
 
   async createSingleApp(

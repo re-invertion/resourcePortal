@@ -42,6 +42,7 @@ Main public resource groups:
 /api/auth
 /api/tenants
 /api/tenants/:tenantId/auth-policy
+/api/tenants/:tenantId/identity-providers
 /api/tenants/:tenantId/invitations
 /api/tenants/:tenantId/groups
 /api/tenants/:tenantId/app-groups
@@ -58,6 +59,17 @@ Main public resource groups:
 `AUTH_MODE=oidc` and `AUTH_MODE=zitadel` accept bearer JWTs and session cookies issued through the OIDC login flow.
 
 Tenant auth policy is available at `/api/tenants/:tenantId/auth-policy`. It controls whether platform login and tenant identity providers are allowed or required.
+
+Tenant identity providers are provisioned in the shared Resource Portal ZITADEL organization through `/api/tenants/:tenantId/identity-providers`. OIDC providers require `issuer`, `clientId`, and `clientSecret`; SAML providers require `metadataUrl`. Client secrets are encrypted before storage and never returned by the API. Configure `ZITADEL_ORGANIZATION_ID`, `ZITADEL_MANAGEMENT_URL`, and a dedicated service-account PAT in `ZITADEL_MANAGEMENT_TOKEN` for provisioning. The organization's custom login policy must allow external identity providers (`allowExternalIdp=true`).
+
+Browser login discovery and direct provider selection are available through:
+
+```text
+GET /api/auth/providers?tenantId=TENANT_UUID
+GET /api/auth/login?tenantId=TENANT_UUID&identityProviderId=PROVIDER_UUID
+```
+
+Direct selection adds the ZITADEL organization and identity-provider reserved scopes to the Authorization Code + PKCE request. Tenant auth policy is enforced before redirecting.
 
 Tenant invitations are available at `/api/tenants/:tenantId/invitations`, with acceptance through `/api/invitations/accept`. The create/resend responses include the raw one-time token; stored invitations keep only a SHA-256 token hash.
 

@@ -75,7 +75,7 @@ describe("DomainsService.validateCustomRootDomain", () => {
     const result = await service.validateCustomRootDomain(
       item.tenantId,
       item.id,
-      actor as never,
+      actor,
     );
 
     expect(resolveTxtMock).toHaveBeenCalledWith("example.com");
@@ -93,7 +93,7 @@ describe("DomainsService.validateCustomRootDomain", () => {
     const result = await service.validateCustomRootDomain(
       item.tenantId,
       item.id,
-      actor as never,
+      actor,
     );
 
     expect(result.verificationStatus).toBe(
@@ -110,7 +110,7 @@ describe("DomainsService.validateCustomRootDomain", () => {
     const result = await service.validateCustomRootDomain(
       item.tenantId,
       item.id,
-      actor as never,
+      actor,
     );
 
     expect(result.verificationStatus).toBe(

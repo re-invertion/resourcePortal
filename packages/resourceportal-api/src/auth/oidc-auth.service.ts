@@ -28,7 +28,10 @@ export class OidcAuthService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async authenticateBearerToken(token: string): Promise<AuthenticatedUser> {
+  async authenticateBearerToken(
+    token: string,
+    identityProviderId?: string,
+  ): Promise<AuthenticatedUser> {
     const { jwtVerify } = await import("jose");
     const issuer = this.getIssuer();
     const jwks = await this.getJwks();
@@ -50,12 +53,13 @@ export class OidcAuthService {
       throw new UnauthorizedException("OIDC bearer token is invalid");
     }
 
-    return this.findOrProvisionUser(issuer, payload);
+    return this.findOrProvisionUser(issuer, payload, identityProviderId);
   }
 
   private async findOrProvisionUser(
     issuer: string,
     payload: JWTPayload,
+    identityProviderId?: string,
   ): Promise<AuthenticatedUser> {
     const subject = this.requireStringClaim(payload.sub, "sub");
     const email = this.getEmail(payload);
@@ -112,6 +116,13 @@ export class OidcAuthService {
               data: {
                 email,
                 lastLoginAt: now,
+                ...(identityProviderId
+                  ? {
+                      identityProvider: {
+                        connect: { id: identityProviderId },
+                      },
+                    }
+                  : {}),
               },
             },
           },
@@ -158,6 +169,13 @@ export class OidcAuthService {
             externalSubject: subject,
             email,
             lastLoginAt: now,
+            ...(identityProviderId
+              ? {
+                  identityProvider: {
+                    connect: { id: identityProviderId },
+                  },
+                }
+              : {}),
           },
         },
       },

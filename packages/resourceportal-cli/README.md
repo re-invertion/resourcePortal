@@ -78,6 +78,9 @@ rp invitation accept --token TOKEN
 rp group create TENANT_ID --name operators
 rp group role-add TENANT_ID GROUP_ID --role-id resource-admin
 rp group member-add TENANT_ID GROUP_ID --membership-id MEMBERSHIP_ID
+rp identity-provider list TENANT_ID
+rp identity-provider create TENANT_ID --name "Company OIDC" --protocol OIDC --issuer https://login.example.com --client-id CLIENT_ID --client-secret CLIENT_SECRET --scope profile --scope email
+rp identity-provider create TENANT_ID --name "Company SAML" --protocol SAML --metadata-url https://login.example.com/metadata
 rp app-group discard-changes TENANT_ID APP_GROUP_ID
 rp app-group delete TENANT_ID APP_GROUP_ID
 rp audit list TENANT_ID

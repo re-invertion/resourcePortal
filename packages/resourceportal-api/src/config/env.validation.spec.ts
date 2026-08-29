@@ -65,7 +65,7 @@ describe("validateEnv", () => {
         NODE_ENV: "production",
       }),
     ).toThrow(
-      "AUTH_COOKIE_SECURE must be true in production; INTERNAL_WORKER_TOKEN must be changed in production",
+      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
   });
 
@@ -75,6 +75,8 @@ describe("validateEnv", () => {
       AUTH_COOKIE_SECURE: "true",
       INTERNAL_WORKER_TOKEN: "changed-production-token",
       NODE_ENV: "production",
+      RESOURCE_ENCRYPTION_KEY:
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     };
 
     expect(validateEnv(env)).toBe(env);

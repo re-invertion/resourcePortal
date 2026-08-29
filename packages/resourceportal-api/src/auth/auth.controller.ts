@@ -26,7 +26,12 @@ import { Public } from "./public.decorator";
 import { AuthenticatedUser } from "./types";
 import { AuthFlowService } from "./auth-flow.service";
 import { AuthSessionService } from "./auth-session.service";
+import {
+  LoginProvidersQueryDto,
+  LoginQueryDto,
+} from "./dto/login-query.dto";
 
+const providerCookieName = "rp_oidc_provider";
 const stateCookieName = "rp_oidc_state";
 const verifierCookieName = "rp_oidc_verifier";
 
@@ -39,6 +44,17 @@ export class AuthController {
   ) {}
 
   @Public()
+  @Get("providers")
+  @ApiOperation({ summary: "List enabled identity providers for login" })
+  @ApiOkResponse({
+    description:
+      "Returns platform and tenant identity providers allowed by the selected tenant policy.",
+  })
+  listProviders(@Query() query: LoginProvidersQueryDto) {
+    return this.authFlow.listLoginOptions(query.tenantId);
+  }
+
+  @Public()
   @Get("login")
   @ApiOperation({
     summary: "Start OIDC login",
@@ -48,8 +64,10 @@ export class AuthController {
   @ApiFoundResponse({
     description: "Redirects to the OIDC authorization endpoint.",
   })
-  async login(@Res() reply: FastifyReply) {
-    const login = await this.authFlow.createLoginRequest();
+  @ApiQuery({ name: "tenantId", required: false, type: String })
+  @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  async login(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
+    const login = await this.authFlow.createLoginRequest(query);
 
     reply.setCookie(stateCookieName, login.state, {
       httpOnly: true,
@@ -67,6 +85,18 @@ export class AuthController {
       secure: this.sessions.isCookieSecure(),
       signed: true,
     });
+    if (login.identityProviderId) {
+      reply.setCookie(providerCookieName, login.identityProviderId, {
+        httpOnly: true,
+        maxAge: 600,
+        path: "/api/auth",
+        sameSite: "lax",
+        secure: this.sessions.isCookieSecure(),
+        signed: true,
+      });
+    } else {
+      reply.clearCookie(providerCookieName, { path: "/api/auth" });
+    }
 
     return reply.status(302).redirect(login.authorizationUrl);
   }
@@ -112,12 +142,16 @@ export class AuthController {
       state,
       this.getSignedCookie(request, stateCookieName),
       this.getSignedCookie(request, verifierCookieName),
+      this.getSignedCookie(request, providerCookieName),
     );
 
     reply.clearCookie(stateCookieName, {
       path: "/api/auth",
     });
     reply.clearCookie(verifierCookieName, {
+      path: "/api/auth",
+    });
+    reply.clearCookie(providerCookieName, {
       path: "/api/auth",
     });
     reply.setCookie(this.sessions.getSessionCookieName(), result.session.id, {

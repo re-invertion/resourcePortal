@@ -140,6 +140,30 @@ export class ResourcePortalClient {
       this.request("/invitations/accept", { method: "POST", body }),
   };
 
+  readonly identityProviders = {
+    list: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/identity-providers`),
+    get: (tenantId: string, identityProviderId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/identity-providers/${encode(identityProviderId)}`,
+      ),
+    create: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/identity-providers`, {
+        method: "POST",
+        body,
+      }),
+    update: (tenantId: string, identityProviderId: string, body: unknown) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/identity-providers/${encode(identityProviderId)}`,
+        { method: "PATCH", body },
+      ),
+    delete: (tenantId: string, identityProviderId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/identity-providers/${encode(identityProviderId)}`,
+        { method: "DELETE" },
+      ),
+  };
+
   readonly appGroups = {
     list: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/app-groups`),

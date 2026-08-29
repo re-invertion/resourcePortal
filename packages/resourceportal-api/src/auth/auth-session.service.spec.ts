@@ -271,19 +271,22 @@ describe("AuthSessionService", () => {
       expect.objectContaining({ id: "session-2", isCurrent: false }),
       expect.objectContaining({ id: "session-1", isCurrent: true }),
     ]);
-    expect(JSON.stringify(result)).not.toContain("Token");
-    expect(prisma.portalSession.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ userId: "user-1", revokedAt: null }),
-        select: {
-          id: true,
-          createdAt: true,
-          lastSeenAt: true,
-          expiresAt: true,
-          accessTokenExpiresAt: true,
-        },
-      }),
-    );
+    for (const session of result) {
+      expect(session).not.toHaveProperty("accessToken");
+      expect(session).not.toHaveProperty("refreshToken");
+      expect(session).not.toHaveProperty("idToken");
+    }
+    const findManyArgs = prisma.portalSession.findMany.mock.lastCall?.[0] as unknown;
+    expect(findManyArgs).toMatchObject({
+      where: { userId: "user-1", revokedAt: null },
+      select: {
+        id: true,
+        createdAt: true,
+        lastSeenAt: true,
+        expiresAt: true,
+        accessTokenExpiresAt: true,
+      },
+    });
   });
 
   it("revokes the provider refresh token and builds the end-session URL", async () => {

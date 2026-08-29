@@ -1,8 +1,17 @@
 import { randomBytes, createHash } from "node:crypto";
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { IdentityProviderScope } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
+import { LoginQueryDto } from "./dto/login-query.dto";
 
 export type TokenResponse = {
   access_token: string;
@@ -17,10 +26,12 @@ export class AuthFlowService {
     private readonly config: ConfigService,
     private readonly oidcAuth: OidcAuthService,
     private readonly sessions: AuthSessionService,
+    private readonly prisma: PrismaService,
   ) {}
 
-  async createLoginRequest() {
+  async createLoginRequest(options: LoginQueryDto = {}) {
     const discovery = await this.oidcAuth.getDiscovery();
+    const selection = await this.resolveLoginSelection(options);
     const state = randomToken();
     const codeVerifier = randomToken();
     const url = new URL(discovery.authorizationEndpoint);
@@ -28,7 +39,7 @@ export class AuthFlowService {
     url.searchParams.set("client_id", this.getClientId());
     url.searchParams.set("redirect_uri", this.getRedirectUri());
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", this.getScopes().join(" "));
+    url.searchParams.set("scope", selection.scopes.join(" "));
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", codeChallenge(codeVerifier));
     url.searchParams.set("code_challenge_method", "S256");
@@ -36,6 +47,7 @@ export class AuthFlowService {
     return {
       authorizationUrl: url.toString(),
       codeVerifier,
+      identityProviderId: selection.identityProviderId,
       state,
     };
   }
@@ -45,6 +57,7 @@ export class AuthFlowService {
     state: string,
     expectedState: string | undefined,
     codeVerifier: string | undefined,
+    identityProviderId?: string,
   ) {
     if (!state || state !== expectedState) {
       throw new UnauthorizedException("OIDC state is invalid");
@@ -57,6 +70,7 @@ export class AuthFlowService {
     const tokenResponse = await this.exchangeCode(code, codeVerifier);
     const user = await this.oidcAuth.authenticateBearerToken(
       tokenResponse.id_token,
+      identityProviderId,
     );
     const session = await this.sessions.createSession(user.id, tokenResponse);
 
@@ -64,6 +78,149 @@ export class AuthFlowService {
       session,
       user,
     };
+  }
+
+  async listLoginOptions(tenantId?: string) {
+    if (!tenantId) {
+      return this.prisma.identityProvider.findMany({
+        where: {
+          enabled: true,
+          scope: IdentityProviderScope.Platform,
+          tenantId: null,
+          zitadelIdentityProviderId: { not: null },
+        },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, protocol: true, scope: true },
+      });
+    }
+
+    const policy = await this.getTenantLoginPolicy(tenantId);
+    const scopes = [
+      ...(policy.allowPlatformLogin && !policy.requireTenantIdentityProvider
+        ? [IdentityProviderScope.Platform]
+        : []),
+      ...(policy.allowTenantIdentityProviders
+        ? [IdentityProviderScope.Tenant]
+        : []),
+    ];
+
+    if (scopes.length === 0) {
+      return [];
+    }
+
+    return this.prisma.identityProvider.findMany({
+      where: {
+        enabled: true,
+        zitadelIdentityProviderId: { not: null },
+        OR: scopes.map((scope) =>
+          scope === IdentityProviderScope.Platform
+            ? { scope, tenantId: null }
+            : { scope, tenantId },
+        ),
+      },
+      orderBy: [{ scope: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, protocol: true, scope: true },
+    });
+  }
+
+  private async resolveLoginSelection(options: LoginQueryDto) {
+    const scopes = this.getScopes();
+    const organizationId = this.config.get<string>("ZITADEL_ORGANIZATION_ID");
+
+    if (organizationId) {
+      scopes.push(`urn:zitadel:iam:org:id:${organizationId}`);
+    }
+
+    if (!options.tenantId && !options.identityProviderId) {
+      return { scopes: [...new Set(scopes)] };
+    }
+
+    const policy = options.tenantId
+      ? await this.getTenantLoginPolicy(options.tenantId)
+      : undefined;
+
+    if (!options.identityProviderId) {
+      if (policy?.requireTenantIdentityProvider || policy?.allowPlatformLogin === false) {
+        throw new ForbiddenException(
+          "This tenant requires an enabled tenant identity provider",
+        );
+      }
+
+      return { scopes: [...new Set(scopes)] };
+    }
+
+    const provider = await this.prisma.identityProvider.findFirst({
+      where: {
+        id: options.identityProviderId,
+        enabled: true,
+        zitadelIdentityProviderId: { not: null },
+        OR: options.tenantId
+          ? [
+              { scope: IdentityProviderScope.Platform, tenantId: null },
+              {
+                scope: IdentityProviderScope.Tenant,
+                tenantId: options.tenantId,
+              },
+            ]
+          : [{ scope: IdentityProviderScope.Platform, tenantId: null }],
+      },
+    });
+
+    if (!provider?.zitadelIdentityProviderId) {
+      throw new NotFoundException("Enabled identity provider not found");
+    }
+
+    if (
+      provider.scope === IdentityProviderScope.Platform &&
+      policy &&
+      (!policy.allowPlatformLogin || policy.requireTenantIdentityProvider)
+    ) {
+      throw new ForbiddenException("Platform login is disabled for this tenant");
+    }
+
+    if (
+      provider.scope === IdentityProviderScope.Tenant &&
+      policy &&
+      !policy.allowTenantIdentityProviders
+    ) {
+      throw new ForbiddenException(
+        "Tenant identity providers are disabled for this tenant",
+      );
+    }
+
+    if (!organizationId) {
+      throw new ServiceUnavailableException(
+        "ZITADEL_ORGANIZATION_ID is required for identity provider selection",
+      );
+    }
+
+    scopes.push(
+      `urn:zitadel:iam:org:idp:id:${provider.zitadelIdentityProviderId}`,
+    );
+
+    return {
+      scopes: [...new Set(scopes)],
+      identityProviderId: provider.id,
+    };
+  }
+
+  private async getTenantLoginPolicy(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { authPolicy: true },
+    });
+
+    if (!tenant) {
+      throw new NotFoundException("Tenant not found");
+    }
+
+    return (
+      tenant.authPolicy ?? {
+        allowPlatformLogin: true,
+        allowTenantIdentityProviders: true,
+        requireTenantIdentityProvider: false,
+      }
+    );
   }
 
   private async exchangeCode(code: string, codeVerifier: string) {

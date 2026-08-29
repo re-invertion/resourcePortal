@@ -254,7 +254,12 @@ model IdentityProvider {
   zitadelIdentityProviderId  String?                  @unique
   issuer                     String?
   metadataUrl                String?
+  clientId                   String?
+  clientSecretCiphertext     String?
+  scopes                     String[]                 @default(["openid", "profile", "email"])
+  usePkce                    Boolean                  @default(true)
   enabled                    Boolean                  @default(true)
+  provisionedAt              DateTime?
   createdBy                  String                   @db.Uuid
   updatedBy                  String
   createdAt                  DateTime                 @default(now())
