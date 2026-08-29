@@ -17,7 +17,15 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3000);
 
-  await app.register(fastifyCookie);
+  const cookieSecret = getCookieSecret(config);
+  await app.register(
+    fastifyCookie,
+    cookieSecret
+      ? {
+          secret: cookieSecret,
+        }
+      : undefined,
+  );
 
   app.setGlobalPrefix("api");
   app.useGlobalPipes(
@@ -50,8 +58,20 @@ async function bootstrap() {
       },
       "oidc",
     )
+    .addCookieAuth(
+      "rp_session",
+      {
+        type: "apiKey",
+        in: "cookie",
+        name: "rp_session",
+        description: "Browser session cookie created by the OIDC callback",
+      },
+      "rp_session",
+    )
     .addSecurityRequirements("dev-user")
     .addSecurityRequirements("oidc")
+    .addSecurityRequirements("rp_session")
+    .addTag("auth")
     .addTag("users")
     .addTag("tenants")
     .addTag("app-groups")
@@ -69,6 +89,21 @@ async function bootstrap() {
   await app.listen({ host: "0.0.0.0", port });
   Logger.log(`Resource Portal API listening on http://localhost:${port}/api`);
   Logger.log(`Swagger UI available at http://localhost:${port}/api/docs`);
+}
+
+function getCookieSecret(config: ConfigService) {
+  const secret = config.get<string>("AUTH_COOKIE_SECRET");
+  const authMode = config.get<string>("AUTH_MODE", "dev").toLowerCase();
+
+  if (secret) {
+    return secret;
+  }
+
+  if (authMode === "oidc" || authMode === "zitadel") {
+    throw new Error("AUTH_COOKIE_SECRET is required when AUTH_MODE uses OIDC");
+  }
+
+  return undefined;
 }
 
 void bootstrap();

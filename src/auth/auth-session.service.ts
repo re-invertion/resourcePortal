@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
+import { FastifyRequest } from "fastify";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "./types";
 import { TokenResponse } from "./auth-flow.service";
@@ -90,6 +91,26 @@ export class AuthSessionService {
 
   getSessionCookieName() {
     return this.config.get<string>("AUTH_SESSION_COOKIE_NAME", "rp_session");
+  }
+
+  getSessionIdFromRequest(request: FastifyRequest) {
+    const value = request.cookies[this.getSessionCookieName()];
+
+    if (!value) {
+      return undefined;
+    }
+
+    if (typeof request.unsignCookie !== "function") {
+      return value;
+    }
+
+    const unsigned = request.unsignCookie(value);
+
+    if (!unsigned.valid) {
+      return undefined;
+    }
+
+    return unsigned.value;
   }
 
   getSessionMaxAgeSeconds() {
