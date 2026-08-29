@@ -2,7 +2,9 @@ import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
+import { createServer } from "node:http";
 import { AppModule } from "../app.module";
+import { ObservabilityService } from "../observability/observability.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 
 const logger = new Logger("DeploymentWorkerRunner");
@@ -74,6 +76,7 @@ function isTerminal(deployment: WorkerDeployment) {
 
 async function runWithHeartbeat<T>(
   worker: DeploymentWorkerService,
+  metrics: ObservabilityService,
   deploymentId: string,
   workerId: string,
   leaseSeconds: number,
@@ -83,7 +86,9 @@ async function runWithHeartbeat<T>(
   const interval = setInterval(() => {
     void worker
       .heartbeatDeployment(deploymentId, { workerId, leaseSeconds })
+      .then(() => metrics.recordWorkerEvent("heartbeat", workerId))
       .catch((error: unknown) => {
+        metrics.recordWorkerEvent("heartbeat_failed", workerId);
         logWorkerEvent("warn", "deployment.heartbeat.failed", {
           deploymentId,
           error: errorMessage(error),
@@ -101,6 +106,7 @@ async function runWithHeartbeat<T>(
 
 async function processDeployment(
   worker: DeploymentWorkerService,
+  metrics: ObservabilityService,
   initialDeployment: WorkerDeployment,
   workerId: string,
   leaseSeconds: number,
@@ -127,6 +133,7 @@ async function processDeployment(
 
     deployment = await runWithHeartbeat(
       worker,
+      metrics,
       deployment.id,
       workerId,
       leaseSeconds,
@@ -157,9 +164,11 @@ async function main() {
 
   const config = app.get(ConfigService);
   const worker = app.get(DeploymentWorkerService);
+  const metrics = app.get(ObservabilityService);
   const workerId = config.get<string>("WORKER_ID") ?? "local-worker";
   const pollIntervalMs = readInt(config, "WORKER_POLL_INTERVAL_MS", 5000);
   const leaseSeconds = readInt(config, "WORKER_LEASE_SECONDS", 300, 15);
+  const metricsPort = readInt(config, "WORKER_METRICS_PORT", 9464);
   const once = readBool(config, "WORKER_ONCE");
   const heartbeatIntervalMs = Math.max(
     1000,
@@ -167,11 +176,31 @@ async function main() {
   );
   let stopping = false;
 
+  const metricsServer = createServer((request, response) => {
+    if (request.url !== "/metrics") {
+      response.statusCode = 404;
+      response.end("Not Found\n");
+      return;
+    }
+
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/plain; version=0.0.4; charset=utf-8");
+    response.end(metrics.renderPrometheusMetrics());
+  });
+  await new Promise<void>((resolve, reject) => {
+    metricsServer.once("error", reject);
+    metricsServer.listen(metricsPort, "0.0.0.0", () => {
+      metricsServer.off("error", reject);
+      resolve();
+    });
+  });
+
   const stop = (signal: NodeJS.Signals) => {
     logWorkerEvent("log", "worker.stopping", {
       signal,
       workerId,
     });
+    metrics.recordWorkerEvent("stopping", workerId);
     stopping = true;
   };
 
@@ -179,20 +208,24 @@ async function main() {
   process.once("SIGTERM", stop);
 
   try {
+    metrics.recordWorkerEvent("started", workerId);
     logWorkerEvent("log", "worker.started", {
       leaseSeconds,
+      metricsPort,
       once,
       pollIntervalMs,
       workerId,
     });
 
     while (!stopping) {
+      metrics.recordWorkerEvent("poll", workerId);
       const claimed = (await worker.claimNextDeployment({
         workerId,
         leaseSeconds,
       })) as WorkerDeployment | null;
 
       if (!claimed) {
+        metrics.recordWorkerEvent("poll_empty", workerId);
         if (once) {
           logWorkerEvent("log", "worker.no_pending_deployment", { workerId });
           break;
@@ -202,15 +235,29 @@ async function main() {
         continue;
       }
 
+      metrics.recordWorkerEvent("claimed", workerId);
+      const startedAt = Date.now();
       try {
-        await processDeployment(
+        const completed = await processDeployment(
           worker,
+          metrics,
           claimed,
           workerId,
           leaseSeconds,
           heartbeatIntervalMs,
         );
+        metrics.recordDeploymentOutcome(
+          completed.status,
+          workerId,
+          Date.now() - startedAt,
+        );
       } catch (error: unknown) {
+        metrics.recordWorkerEvent("processing_error", workerId);
+        metrics.recordDeploymentOutcome(
+          "WorkerUnhandledError",
+          workerId,
+          Date.now() - startedAt,
+        );
         logWorkerEvent("error", "deployment.processing.error", {
           deploymentId: claimed.id,
           error: errorMessage(error),
@@ -224,6 +271,7 @@ async function main() {
             errorMessage: errorMessage(error),
           })
           .catch((failError: unknown) => {
+            metrics.recordWorkerEvent("fail_mark_error", workerId);
             logWorkerEvent("error", "deployment.fail_mark.error", {
               deploymentId: claimed.id,
               error: errorMessage(failError),
@@ -239,6 +287,7 @@ async function main() {
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    await new Promise<void>((resolve) => metricsServer.close(() => resolve()));
     await app.close();
   }
 }
