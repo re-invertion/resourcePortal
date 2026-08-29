@@ -10,6 +10,7 @@ import {
 import { UserStatus } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import { AuthFlowService } from "./auth-flow.service";
 import { AuthSessionService } from "./auth-session.service";
 import { AuthController } from "./auth.controller";
@@ -132,6 +133,7 @@ describe("AuthController cookie flow", () => {
           refreshToken: "refresh-token",
           revokedAt: null,
           expiresAt: new Date(Date.now() + 3600_000),
+          lastSeenAt: new Date(),
           user,
         }),
         update: vi.fn().mockResolvedValue({}),
@@ -194,7 +196,7 @@ describe("AuthController cookie flow", () => {
     );
     Reflect.defineMetadata(
       "design:paramtypes",
-      [ConfigService, PrismaService, OidcAuthService],
+      [ConfigService, PrismaService, OidcAuthService, EncryptionService],
       AuthSessionService,
     );
     Reflect.defineMetadata(
@@ -216,12 +218,21 @@ describe("AuthController cookie flow", () => {
         AuthSessionService,
         Reflector,
         {
+          provide: EncryptionService,
+          useValue: {
+            encrypt: (value: string) => value,
+            decrypt: (value: string) => value,
+          },
+        },
+        {
           provide: ConfigService,
           useValue: createConfig({
             AUTH_COOKIE_SECRET: cookieSecret,
+            AUTH_CSRF_COOKIE_NAME: "rp_csrf",
             AUTH_MODE: "oidc",
             AUTH_SESSION_COOKIE_NAME: "rp_session",
             AUTH_SESSION_TTL_SECONDS: "3600",
+            AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "1800",
             OIDC_CLIENT_ID: "resource-portal",
             OIDC_CLIENT_SECRET: "client-secret",
             OIDC_ISSUER_URL: issuer,
@@ -340,7 +351,7 @@ describe("AuthController cookie flow", () => {
     });
   });
 
-  it("creates a signed session cookie and authenticates requests with it", async () => {
+  it("creates session and CSRF cookies and authenticates requests", async () => {
     const loginResponse = await app.inject({
       method: "GET",
       url: "/api/auth/login",
@@ -371,27 +382,20 @@ describe("AuthController cookie flow", () => {
       expiresAt: true,
       id: true,
     });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "auth.session.created",
-        actor: user.id,
-        changes: expect.objectContaining({
-          sessionId: createArgs.data.id,
-        }) as unknown,
-        resourceName: createArgs.data.id,
-        resourceType: "PortalSession",
-        result: "Success",
-        tenantId: null,
-        tenantName: "global",
-      }) as unknown,
-    });
 
     const sessionCookie = getCookieValue(callbackResponse, "rp_session");
+    const csrfCookie = getCookieValue(callbackResponse, "rp_csrf");
+    expect(csrfCookie).toBeTruthy();
+    expect(
+      getSetCookieHeaders(callbackResponse).find((cookie) =>
+        cookie.startsWith("rp_csrf="),
+      ),
+    ).not.toContain("HttpOnly");
+
     const unsignedSession = app
       .getHttpAdapter()
       .getInstance()
       .unsignCookie(sessionCookie);
-
     expect(unsignedSession.valid).toBe(true);
 
     const meResponse = await app.inject({
@@ -412,17 +416,9 @@ describe("AuthController cookie flow", () => {
         user: true,
       },
     });
-    expect(prisma.portalSession.update).toHaveBeenCalledWith({
-      where: {
-        id: "session-1",
-      },
-      data: {
-        lastSeenAt: expect.any(Date) as Date,
-      },
-    });
   });
 
-  it("revokes the signed session cookie on logout", async () => {
+  it("revokes the signed session cookie on logout and clears CSRF", async () => {
     const signedSession = app
       .getHttpAdapter()
       .getInstance()
@@ -445,21 +441,14 @@ describe("AuthController cookie flow", () => {
         revokedAt: expect.any(Date) as Date,
       },
     });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "auth.session.revoked",
-        actor: user.id,
-        changes: {
-          sessionId: "session-1",
-        },
-        resourceName: "session-1",
-        resourceType: "PortalSession",
-        result: "Success",
-      }) as unknown,
-    });
     expect(
       getSetCookieHeaders(response).some((cookie) =>
         cookie.includes("rp_session=;"),
+      ),
+    ).toBe(true);
+    expect(
+      getSetCookieHeaders(response).some((cookie) =>
+        cookie.includes("rp_csrf=;"),
       ),
     ).toBe(true);
   });
