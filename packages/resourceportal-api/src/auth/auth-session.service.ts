@@ -186,6 +186,10 @@ export class AuthSessionService {
     return this.config.get<string>("AUTH_SESSION_COOKIE_NAME", "rp_session");
   }
 
+  getCsrfCookieName() {
+    return this.config.get<string>("AUTH_CSRF_COOKIE_NAME", "rp_csrf");
+  }
+
   getSessionIdFromRequest(request: FastifyRequest) {
     const value = request.cookies[this.getSessionCookieName()];
 
