@@ -22,6 +22,7 @@ import { StackConfigProvisionerService } from "./stack-config-provisioner.servic
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
+import { renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
 const DEFAULT_LEASE_SECONDS = 300;
@@ -1438,27 +1439,7 @@ export class DeploymentWorkerService {
   }
 
   private renderTraefikLabels(singleApp: StackConfigSingleApp) {
-    const labels: Record<string, string> = {};
-
-    for (const endpoint of singleApp.httpEndpoints) {
-      const routerName = `${singleApp.name}-${endpoint.name}`;
-      labels[`traefik.http.services.${routerName}.loadbalancer.server.port`] =
-        String(endpoint.containerPort);
-
-      const domains = endpoint.domains.map((domain) => domain.hostname);
-      if (domains.length > 0) {
-        labels[`traefik.http.routers.${routerName}.rule`] = domains
-          .map((domain) => `Host(\`${domain}\`)`)
-          .join(" || ");
-        labels[`traefik.http.routers.${routerName}.service`] = routerName;
-      }
-
-      if (endpoint.protocolMode !== "HTTP") {
-        labels[`traefik.http.routers.${routerName}.tls`] = "true";
-      }
-    }
-
-    return Object.keys(labels).length > 0 ? labels : undefined;
+    return renderTraefikLabels(singleApp);
   }
 
   private renderVolumes(snapshot: StackConfigSnapshot) {
