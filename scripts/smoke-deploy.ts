@@ -232,11 +232,11 @@ async function main() {
 async function cleanup() {
   if (createdAppGroupId) {
     await docker(["stack", "rm", stackNameFor(createdAppGroupId)], true);
-    await wait(5000);
+    await waitForStackRemoval(stackNameFor(createdAppGroupId));
   }
 
   if (createdVolumeId) {
-    await docker(["volume", "rm", `rp_vol_${createdVolumeId.replaceAll("-", "_")}`], true);
+    await removeDockerVolume(`rp_vol_${createdVolumeId.replaceAll("-", "_")}`);
   }
 
   if (createdTenantId) {
@@ -363,6 +363,39 @@ async function expectServiceReplicas(
     throw new Error(
       `Expected ${stackName}_${serviceName} replicas ${expected}, got ${replicas}`,
     );
+  }
+}
+
+async function waitForStackRemoval(stackName: string) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await docker(
+      [
+        "stack",
+        "services",
+        stackName,
+        "--format",
+        "{{.Name}}",
+      ],
+      true,
+    );
+
+    if (!result.stdout.trim()) {
+      return;
+    }
+
+    await wait(1000);
+  }
+}
+
+async function removeDockerVolume(volumeName: string) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await docker(["volume", "rm", volumeName], true);
+
+    if (result.exitCode === 0 || result.stderr.includes("No such volume")) {
+      return;
+    }
+
+    await wait(1000);
   }
 }
 

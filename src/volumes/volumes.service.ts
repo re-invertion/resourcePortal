@@ -4,8 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Prisma, VolumeStatus } from "@prisma/client";
 import { randomUUID } from "crypto";
+import { join } from "node:path";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
@@ -14,7 +16,10 @@ import { mapVolume } from "./volumes.view";
 
 @Injectable()
 export class VolumesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async listVolumes(tenantId: string) {
     const volumes = await this.prisma.volume.findMany({
@@ -46,7 +51,7 @@ export class VolumesService {
           tenantId,
           name: dto.name,
           description: dto.description,
-          storagePath: `/rp/volumes/${tenantId}/${volumeId}`,
+          storagePath: this.storagePath(tenantId, volumeId),
           dockerVolumeName: this.dockerVolumeName(volumeId),
           sizeBytes: dto.sizeBytes,
           status: VolumeStatus.Ready,
@@ -202,5 +207,14 @@ export class VolumesService {
 
   private dockerVolumeName(volumeId: string) {
     return `rp_vol_${volumeId.replaceAll("-", "_")}`;
+  }
+
+  private storagePath(tenantId: string, volumeId: string) {
+    const storageRoot = this.config.get<string>(
+      "RESOURCE_STORAGE_ROOT",
+      "/rp/volumes",
+    );
+
+    return join(storageRoot, tenantId, volumeId);
   }
 }
