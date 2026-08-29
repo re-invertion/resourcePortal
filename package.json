@@ -4,8 +4,7 @@
   "private": true,
   "description": "Resource Portal monorepo",
   "workspaces": [
-    "apps/api",
-    "packages/resourceportal-cli"
+    "packages/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
