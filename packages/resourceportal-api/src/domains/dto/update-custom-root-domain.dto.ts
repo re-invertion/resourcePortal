@@ -1,8 +1,11 @@
 import { CustomRootDomainVerificationStatus } from "@prisma/client";
-import { IsEnum, IsOptional } from "class-validator";
+import { IsIn, IsOptional } from "class-validator";
 
 export class UpdateCustomRootDomainDto {
   @IsOptional()
-  @IsEnum(CustomRootDomainVerificationStatus)
+  @IsIn([
+    CustomRootDomainVerificationStatus.Pending,
+    CustomRootDomainVerificationStatus.Failed,
+  ])
   verificationStatus?: CustomRootDomainVerificationStatus;
 }
