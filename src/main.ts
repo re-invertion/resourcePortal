@@ -38,7 +38,17 @@ async function bootstrap() {
       },
       "dev-user",
     )
+    .addBearerAuth(
+      {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "OIDC access token",
+      },
+      "oidc",
+    )
     .addSecurityRequirements("dev-user")
+    .addSecurityRequirements("oidc")
     .addTag("users")
     .addTag("tenants")
     .addTag("app-groups")

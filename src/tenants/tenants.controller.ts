@@ -40,7 +40,7 @@ export class TenantsController {
     @CurrentUser() user: AuthenticatedUser | undefined,
   ) {
     if (!user) {
-      throw new UnauthorizedException("x-dev-user-id header is required");
+      throw new UnauthorizedException("Authenticated user is required");
     }
 
     return this.tenantsService.createTenant(dto, user);
