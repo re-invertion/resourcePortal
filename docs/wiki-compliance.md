@@ -30,7 +30,8 @@ Checked wiki documents:
 - Tenant auth policy model/API, tenant invitations with hashed one-time tokens, tenant groups, group role assignment, and group-based effective permissions.
 - Optional tenant quota with hard checks for SingleApps and Volumes.
 - AppGroup as one Docker Swarm stack, with `runtimeState`, `health`, `driftStatus`, deployment history, events, and draft revision.
-- SingleApp as one Swarm service with image, resources, replicas, environment, healthcheck, runtime operations, restart/update policy, and HTTP endpoints.
+- AppGroup draft operations, including stack preview, discard changes, soft delete, effective runtime state, and runtime blockers.
+- SingleApp as one Swarm service with image, resources, replicas, environment, healthcheck, runtime operations, restart/update policy, HTTP endpoints, effective runtime state, effective replicas, and runtime blockers.
 - Volume as tenant-owned filesystem storage under `RESOURCE_STORAGE_ROOT/{tenantId}/{volumeId}`, with attachment constraints and no host bind mounts from user input.
 - Domain and CustomRootDomain resources, including managed/custom hostnames, DNS/TLS state fields, endpoint assignment, and delete protection.
 - Registry resources with TLS/auth modes, encrypted credential metadata, validation, and delete protection when used.
@@ -46,9 +47,7 @@ Checked wiki documents:
 - Tenant invitations exist, but the legacy direct membership create endpoint still exists for manual/admin flows.
 - Tenant-scoped `IdentityProvider`, platform `IdentityProvider`, Home Realm Discovery, SSO-only tenant policy, and tenant IdP API are not implemented.
 - `OAuthApplication` and `ServiceIdentity` models/APIs are not implemented. Machine-to-machine auth currently uses internal worker token and normal OIDC/JWT validation, not the documented Resource Portal identity model.
-- AppGroup `Delete` and `Discard Changes` are documented but no public endpoints exist yet.
-- AppGroup `effectiveRuntimeState` and `runtimeBlockers` are documented as derived API fields. The database stores only `runtimeState`; API views do not yet expose full blocker details.
-- SingleApp `effectiveRuntimeState` and `effectiveReplicas` are documented derived fields but are not exposed in API views yet.
+- AppGroup discard restores the AppGroup and SingleApp runtime draft from the last succeeded deployment snapshot. It does not yet fully restore every related variable/config/secret attachment to historical content.
 - AppGroup-owned `Secret` exists in Prisma, but public API currently manages `SingleAppSecret` through runtime config. This does not match the documented AppGroup Secret plus `SecretAttachment` model.
 - Secret encrypted payload is stored in the database through `SingleAppSecret.valueCiphertext`, not as encrypted envelope files under `/rp/secrets/{tenantId}/{appGroupId}/{secretName}`.
 - CustomRootDomain uniqueness is currently `(tenantId, rootDomain)`, while the wiki requires global `UNIQUE(rootDomain)`.

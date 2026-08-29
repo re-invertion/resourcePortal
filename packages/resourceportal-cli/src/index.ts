@@ -148,8 +148,17 @@ const commands: Command[] = [
   command("app-group", "show", "<tenantId> <appGroupId>", "Show app group.", (p, c) =>
     c.appGroups.get(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
   ),
+  command("app-group", "stack-preview", "<tenantId> <appGroupId>", "Preview app group stack config.", (p, c) =>
+    c.appGroups.previewStack(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
+  ),
   command("app-group", "create", "<tenantId> --name NAME", "Create app group.", (p, c) =>
     c.appGroups.create(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, ["name"], ["description", "runtimeState"])),
+  ),
+  command("app-group", "discard-changes", "<tenantId> <appGroupId>", "Discard app group draft changes.", (p, c) =>
+    c.appGroups.discardChanges(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
+  ),
+  command("app-group", "delete", "<tenantId> <appGroupId>", "Delete app group.", (p, c) =>
+    c.appGroups.delete(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
   ),
   command("app-group", "start", "<tenantId> <appGroupId>", "Start app group.", (p, c) =>
     c.appGroups.start(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),

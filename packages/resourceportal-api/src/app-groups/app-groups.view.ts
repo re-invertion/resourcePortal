@@ -15,17 +15,29 @@ type AppGroupWithRelations = AppGroup & {
 };
 
 export function mapAppGroup(appGroup: AppGroupWithRelations) {
+  const runtimeBlockers = appGroupRuntimeBlockers(appGroup);
+
   return {
     ...appGroup,
+    effectiveRuntimeState:
+      runtimeBlockers.length > 0 ? "Stopped" : appGroup.runtimeState,
+    runtimeBlockers,
     singleApps: appGroup.singleApps?.map(mapSingleApp),
   };
 }
 
 export function mapSingleApp(singleApp: SingleApp) {
+  const runtimeBlockers = singleAppRuntimeBlockers(singleApp);
+
   return {
     ...singleApp,
     cpu: singleApp.cpu.toString(),
     memoryBytes: singleApp.memoryBytes.toString(),
+    effectiveRuntimeState:
+      runtimeBlockers.length > 0 ? "Stopped" : singleApp.runtimeState,
+    effectiveReplicas:
+      runtimeBlockers.length > 0 ? 0 : singleApp.desiredReplicas,
+    runtimeBlockers,
   };
 }
 
@@ -63,4 +75,20 @@ export function mapConfig(config: Config & { attachments?: ConfigAttachment[] })
 
 export function mapConfigAttachment(attachment: ConfigAttachment) {
   return attachment;
+}
+
+function appGroupRuntimeBlockers(appGroup: AppGroup) {
+  return [
+    appGroup.status === "Deleting" ? "AppGroupDeleting" : undefined,
+    appGroup.status === "Error" ? "AppGroupError" : undefined,
+    appGroup.runtimeState === "Stopped" ? "AppGroupStopped" : undefined,
+    appGroup.currentDeploymentVersion === null ? "AppGroupNotDeployed" : undefined,
+  ].filter((blocker): blocker is string => blocker !== undefined);
+}
+
+function singleAppRuntimeBlockers(singleApp: SingleApp) {
+  return [
+    singleApp.pendingDeletion ? "SingleAppPendingDeletion" : undefined,
+    singleApp.runtimeState === "Stopped" ? "SingleAppStopped" : undefined,
+  ].filter((blocker): blocker is string => blocker !== undefined);
 }

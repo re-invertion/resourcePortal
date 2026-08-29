@@ -34,6 +34,7 @@ rp tenant list -o json
 ```bash
 rp tenant create --name demo --display-name Demo --contact-email demo@example.com
 rp app-group create TENANT_ID --name web --runtime-state Running
+rp app-group stack-preview TENANT_ID APP_GROUP_ID
 rp app create TENANT_ID APP_GROUP_ID --name nginx --image nginx:alpine --cpu 0.1 --memory-bytes 134217728 --desired-replicas 1 --runtime-state Running
 rp volume create TENANT_ID --name data --size-bytes 1048576
 rp volume attach TENANT_ID APP_GROUP_ID APP_ID --volume-id VOLUME_ID --mount-path /data --mode ReadWrite
@@ -77,6 +78,8 @@ rp invitation accept --token TOKEN
 rp group create TENANT_ID --name operators
 rp group role-add TENANT_ID GROUP_ID --role-id resource-admin
 rp group member-add TENANT_ID GROUP_ID --membership-id MEMBERSHIP_ID
+rp app-group discard-changes TENANT_ID APP_GROUP_ID
+rp app-group delete TENANT_ID APP_GROUP_ID
 rp audit list TENANT_ID
 ```
 

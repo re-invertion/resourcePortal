@@ -63,6 +63,14 @@ Tenant invitations are available at `/api/tenants/:tenantId/invitations`, with a
 
 Tenant groups are available at `/api/tenants/:tenantId/groups`. Group roles contribute to effective permissions in addition to direct membership roles.
 
+AppGroup responses include derived `effectiveRuntimeState`, `runtimeBlockers`, and SingleApp `effectiveReplicas`. AppGroups also expose draft operations:
+
+```text
+GET /api/tenants/:tenantId/app-groups/:appGroupId/stack-preview
+POST /api/tenants/:tenantId/app-groups/:appGroupId/discard-changes
+DELETE /api/tenants/:tenantId/app-groups/:appGroupId
+```
+
 ## Deployment Flow
 
 1. Create tenant.

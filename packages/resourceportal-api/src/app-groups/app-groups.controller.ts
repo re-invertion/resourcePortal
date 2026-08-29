@@ -59,6 +59,35 @@ export class AppGroupsController {
   }
 
   @RequirePermissions("appgroup.deployment.read")
+  @Get(":appGroupId/stack-preview")
+  previewStack(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+  ) {
+    return this.appGroupsService.previewStack(tenantId, appGroupId);
+  }
+
+  @RequirePermissions("appgroup.update")
+  @Post(":appGroupId/discard-changes")
+  discardDraftChanges(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.discardDraftChanges(tenantId, appGroupId, user);
+  }
+
+  @RequirePermissions("appgroup.delete")
+  @Delete(":appGroupId")
+  deleteAppGroup(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.deleteAppGroup(tenantId, appGroupId, user);
+  }
+
+  @RequirePermissions("appgroup.deployment.read")
   @Get(":appGroupId/deployments")
   listDeployments(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,

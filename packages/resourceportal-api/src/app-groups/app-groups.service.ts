@@ -114,6 +114,35 @@ type RuntimeScaleTarget = {
   replicas: number;
 };
 
+type StackConfigSnapshot = {
+  appGroup: {
+    runtimeState: RuntimeState;
+  };
+  singleApps: Array<{
+    id: string;
+    name: string;
+    image: string;
+    registryId: string | null;
+    desiredReplicas: number;
+    runtimeState: RuntimeState;
+    resources: {
+      cpu: string;
+      memoryBytes: string;
+      gpu: number;
+    };
+    environment: Prisma.InputJsonObject;
+    healthCheck: Prisma.InputJsonValue | null;
+    entrypoint: string | null;
+    command: string[];
+    workingDir: string | null;
+    user: string | null;
+    readOnlyRootFilesystem: boolean;
+    stopGracePeriodSeconds: number;
+    restartPolicy: Prisma.InputJsonValue;
+    updatePolicy: Prisma.InputJsonValue;
+  }>;
+};
+
 @Injectable()
 export class AppGroupsService {
   constructor(
@@ -157,6 +186,184 @@ export class AppGroupsService {
     }
 
     return mapAppGroup(appGroup);
+  }
+
+  async previewStack(tenantId: string, appGroupId: string, note?: string) {
+    const draft = await this.getDeployableDraft(tenantId, appGroupId);
+
+    return this.buildStackConfigSnapshot(draft, note);
+  }
+
+  async discardDraftChanges(
+    tenantId: string,
+    appGroupId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const appGroup = await this.prisma.appGroup.findFirst({
+      where: { id: appGroupId, tenantId },
+    });
+
+    if (!appGroup) {
+      throw new NotFoundException("App Group not found");
+    }
+
+    if (!appGroup.hasPendingChanges) {
+      return this.getAppGroup(tenantId, appGroupId);
+    }
+
+    const deployedSnapshot = await this.findCurrentDeploymentSnapshot(appGroup);
+    const snapshotAppIds = new Set(
+      deployedSnapshot.singleApps
+        .map((singleApp) => singleApp.id)
+        .filter((id): id is string => typeof id === "string"),
+    );
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.assertNoActiveDeployment(tx, appGroupId);
+
+      await tx.singleApp.deleteMany({
+        where: {
+          appGroupId,
+          id: { notIn: [...snapshotAppIds] },
+        },
+      });
+
+      await Promise.all(
+        deployedSnapshot.singleApps.map((singleApp) =>
+          tx.singleApp.update({
+            where: { id: singleApp.id },
+            data: {
+              name: singleApp.name,
+              image: singleApp.image,
+              registryId: singleApp.registryId,
+              desiredReplicas: singleApp.desiredReplicas,
+              runtimeState: singleApp.runtimeState,
+              cpu: singleApp.resources.cpu,
+              memoryBytes: BigInt(singleApp.resources.memoryBytes),
+              gpu: singleApp.resources.gpu,
+              environment: singleApp.environment,
+              healthCheck:
+                singleApp.healthCheck === null
+                  ? Prisma.JsonNull
+                  : singleApp.healthCheck,
+              entrypoint: singleApp.entrypoint,
+              command: singleApp.command,
+              workingDir: singleApp.workingDir,
+              user: singleApp.user,
+              readOnlyRootFilesystem: singleApp.readOnlyRootFilesystem,
+              stopGracePeriodSeconds: singleApp.stopGracePeriodSeconds,
+              restartPolicy: singleApp.restartPolicy,
+              updatePolicy: singleApp.updatePolicy,
+              pendingDeletion: false,
+              updatedBy: actor.id,
+            },
+          }),
+        ),
+      );
+
+      const result = await tx.appGroup.update({
+        where: { id: appGroupId },
+        data: {
+          runtimeState: deployedSnapshot.appGroup.runtimeState,
+          hasPendingChanges: false,
+          runtimeDraftRevision: {
+            increment: 1,
+          },
+          updatedBy: actor.id,
+        },
+        include: {
+          singleApps: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: await this.tenantName(tx, tenantId),
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "appgroup.discard_changes",
+          resourceType: "AppGroup",
+          resourceId: appGroupId,
+          resourceName: appGroup.name,
+          result: "Success",
+          correlationId: crypto.randomUUID(),
+          changes: {
+            restoredDeploymentVersion: appGroup.currentDeploymentVersion,
+          },
+        },
+      });
+
+      return result;
+    });
+
+    return mapAppGroup(updated);
+  }
+
+  async deleteAppGroup(
+    tenantId: string,
+    appGroupId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const appGroup = await this.prisma.appGroup.findFirst({
+      where: { id: appGroupId, tenantId },
+    });
+
+    if (!appGroup) {
+      throw new NotFoundException("App Group not found");
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.assertNoActiveDeployment(tx, appGroupId);
+
+      await tx.singleApp.updateMany({
+        where: { appGroupId },
+        data: {
+          pendingDeletion: true,
+          runtimeState: RuntimeState.Stopped,
+          updatedBy: actor.id,
+        },
+      });
+
+      const result = await tx.appGroup.update({
+        where: { id: appGroupId },
+        data: {
+          status: "Deleting",
+          runtimeState: RuntimeState.Stopped,
+          hasPendingChanges: true,
+          runtimeDraftRevision: {
+            increment: 1,
+          },
+          updatedBy: actor.id,
+        },
+        include: {
+          singleApps: {
+            orderBy: { createdAt: "asc" },
+          },
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId,
+          tenantName: await this.tenantName(tx, tenantId),
+          actor: actor.id,
+          actorName: actor.displayName,
+          action: "appgroup.delete",
+          resourceType: "AppGroup",
+          resourceId: appGroupId,
+          resourceName: appGroup.name,
+          result: "Success",
+          correlationId: crypto.randomUUID(),
+        },
+      });
+
+      return result;
+    });
+
+    return mapAppGroup(updated);
   }
 
   async listDeployments(tenantId: string, appGroupId: string) {
@@ -1872,6 +2079,40 @@ export class AppGroupsService {
       },
       select: { id: true, status: true },
     });
+  }
+
+  private async findCurrentDeploymentSnapshot(appGroup: AppGroup) {
+    if (appGroup.currentDeploymentVersion === null) {
+      throw new ConflictException("AppGroup has no deployed state to restore");
+    }
+
+    const deployment = await this.prisma.appGroupDeployment.findFirst({
+      where: {
+        appGroupId: appGroup.id,
+        version: appGroup.currentDeploymentVersion,
+        status: DeploymentStatus.Succeeded,
+      },
+      select: { stackConfig: true },
+    });
+
+    if (!deployment?.stackConfig) {
+      throw new ConflictException("Current deployment has no stack config");
+    }
+
+    return this.parseStackConfigSnapshot(deployment.stackConfig);
+  }
+
+  private parseStackConfigSnapshot(stackConfig: string) {
+    return JSON.parse(stackConfig) as StackConfigSnapshot;
+  }
+
+  private async tenantName(tx: Prisma.TransactionClient, tenantId: string) {
+    const tenant = await tx.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+
+    return tenant.name;
   }
 
   private async assertNoActiveDeployment(

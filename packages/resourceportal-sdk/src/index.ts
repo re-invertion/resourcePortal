@@ -152,6 +152,20 @@ export class ResourcePortalClient {
       this.request(
         `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}`,
       ),
+    previewStack: (tenantId: string, appGroupId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/stack-preview`,
+      ),
+    discardChanges: (tenantId: string, appGroupId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/discard-changes`,
+        { method: "POST" },
+      ),
+    delete: (tenantId: string, appGroupId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}`,
+        { method: "DELETE" },
+      ),
     start: (tenantId: string, appGroupId: string) =>
       this.postRuntime(tenantId, appGroupId, "start"),
     stop: (tenantId: string, appGroupId: string) =>
