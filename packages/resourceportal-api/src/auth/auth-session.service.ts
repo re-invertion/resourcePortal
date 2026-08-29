@@ -109,6 +109,84 @@ export class AuthSessionService {
     };
   }
 
+  async listActiveSessions(userId: string, currentSessionId?: string) {
+    const now = new Date();
+    const idleCutoff = new Date(
+      now.getTime() - this.getIdleTimeoutSeconds() * 1000,
+    );
+    const sessions = await this.prisma.portalSession.findMany({
+      where: {
+        userId,
+        revokedAt: null,
+        expiresAt: { gt: now },
+        lastSeenAt: { gt: idleCutoff },
+      },
+      orderBy: { lastSeenAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        lastSeenAt: true,
+        expiresAt: true,
+        accessTokenExpiresAt: true,
+      },
+    });
+
+    return sessions.map((session) => ({
+      ...session,
+      isCurrent: session.id === currentSessionId,
+    }));
+  }
+
+  async prepareProviderLogout(sessionId: string | undefined) {
+    if (!sessionId) {
+      return { logoutUrl: null, providerTokenRevoked: false };
+    }
+
+    const session = await this.prisma.portalSession.findUnique({
+      where: { id: sessionId },
+      include: { user: true },
+    });
+
+    if (!session) {
+      return { logoutUrl: null, providerTokenRevoked: false };
+    }
+
+    const discovery = await this.oidcAuth.getDiscovery();
+    const idToken = session.idToken
+      ? this.encryption.decrypt(session.idToken)
+      : undefined;
+    const tokenToRevoke = session.refreshToken
+      ? this.encryption.decrypt(session.refreshToken)
+      : this.encryption.decrypt(session.accessToken);
+    let providerTokenRevoked = false;
+
+    if (discovery.revocationEndpoint && tokenToRevoke) {
+      providerTokenRevoked = await this.revokeProviderToken(
+        discovery.revocationEndpoint,
+        tokenToRevoke,
+      );
+    }
+
+    let logoutUrl: string | null = null;
+    if (discovery.endSessionEndpoint) {
+      const url = new URL(discovery.endSessionEndpoint);
+      url.searchParams.set("client_id", this.getClientId());
+      if (idToken) {
+        url.searchParams.set("id_token_hint", idToken);
+      }
+      const postLogoutRedirectUri = this.config.get<string>(
+        "OIDC_POST_LOGOUT_REDIRECT_URI",
+      );
+      if (postLogoutRedirectUri) {
+        url.searchParams.set("post_logout_redirect_uri", postLogoutRedirectUri);
+      }
+      logoutUrl = url.toString();
+    }
+
+    await this.revokeSession(sessionId);
+    return { logoutUrl, providerTokenRevoked };
+  }
+
   async revokeSession(sessionId: string | undefined) {
     if (!sessionId) {
       return;
@@ -327,6 +405,34 @@ export class AuthSessionService {
     }
 
     return payload;
+  }
+
+  private async revokeProviderToken(endpoint: string, token: string) {
+    const body = new URLSearchParams({
+      token,
+      client_id: this.getClientId(),
+    });
+    const clientSecret = this.getClientSecret();
+    const headers: Record<string, string> = {
+      "content-type": "application/x-www-form-urlencoded",
+    };
+
+    if (clientSecret) {
+      headers.authorization = `Basic ${Buffer.from(
+        `${this.getClientId()}:${clientSecret}`,
+      ).toString("base64")}`;
+    }
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body,
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   private getClientId() {
