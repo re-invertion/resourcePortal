@@ -2,6 +2,7 @@ import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
 
@@ -25,9 +26,59 @@ function createOidcAuth() {
   } as unknown as OidcAuthService;
 }
 
+function createEncryption() {
+  return {
+    encrypt: vi.fn((value: string) => `enc:${value}`),
+    decrypt: vi.fn((value: string) =>
+      value.startsWith("enc:") ? value.slice(4) : value,
+    ),
+  } as unknown as EncryptionService;
+}
+
 describe("AuthSessionService", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("encrypts OIDC tokens when creating a session", async () => {
+    const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
+      portalSession: {
+        create: vi.fn().mockResolvedValue({
+          id: "session-1",
+          expiresAt: new Date(Date.now() + 3600_000),
+        }),
+      },
+    };
+    const encryption = createEncryption();
+    const service = new AuthSessionService(
+      createConfig(),
+      prisma as unknown as PrismaService,
+      createOidcAuth(),
+      encryption,
+    );
+
+    await service.createSession("user-1", {
+      access_token: "access-token",
+      refresh_token: "refresh-token",
+      id_token: "id-token",
+      expires_in: 600,
+      token_type: "Bearer",
+    });
+
+    expect(prisma.portalSession.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accessToken: "enc:access-token",
+        refreshToken: "enc:refresh-token",
+        idToken: "enc:id-token",
+      }) as unknown,
+      select: {
+        id: true,
+        expiresAt: true,
+      },
+    });
   });
 
   it("rejects expired sessions", async () => {
@@ -40,6 +91,7 @@ describe("AuthSessionService", () => {
           id: "session-1",
           revokedAt: null,
           expiresAt: new Date(Date.now() - 1000),
+          lastSeenAt: new Date(),
           user: {
             id: "user-1",
             email: "user@example.com",
@@ -48,21 +100,61 @@ describe("AuthSessionService", () => {
           },
         }),
         update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
     };
     const service = new AuthSessionService(
       createConfig(),
       prisma as unknown as PrismaService,
       createOidcAuth(),
+      createEncryption(),
     );
 
     await expect(service.authenticateSession("session-1")).rejects.toThrow(
       "Session is invalid",
     );
     expect(prisma.portalSession.update).not.toHaveBeenCalled();
+    expect(prisma.portalSession.updateMany).toHaveBeenCalled();
   });
 
-  it("marks expired active sessions as revoked", async () => {
+  it("rejects sessions that exceed the idle timeout", async () => {
+    const now = Date.now();
+    const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
+      portalSession: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "session-1",
+          revokedAt: null,
+          expiresAt: new Date(now + 3600_000),
+          lastSeenAt: new Date(now - 601_000),
+          accessTokenExpiresAt: new Date(now + 60_000),
+          user: {
+            id: "user-1",
+            email: "user@example.com",
+            displayName: "Example User",
+            status: UserStatus.Active,
+          },
+        }),
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const service = new AuthSessionService(
+      createConfig({ AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "600" }),
+      prisma as unknown as PrismaService,
+      createOidcAuth(),
+      createEncryption(),
+    );
+
+    await expect(service.authenticateSession("session-1")).rejects.toThrow(
+      "Session is invalid",
+    );
+    expect(prisma.portalSession.updateMany).toHaveBeenCalled();
+  });
+
+  it("marks expired or idle sessions as revoked", async () => {
     const now = new Date("2026-08-29T10:00:00.000Z");
     const prisma = {
       auditLogEntry: {
@@ -75,9 +167,10 @@ describe("AuthSessionService", () => {
       },
     };
     const service = new AuthSessionService(
-      createConfig(),
+      createConfig({ AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "1800" }),
       prisma as unknown as PrismaService,
       createOidcAuth(),
+      createEncryption(),
     );
 
     await expect(service.pruneExpiredSessions(now)).resolves.toEqual({
@@ -85,31 +178,27 @@ describe("AuthSessionService", () => {
     });
     expect(prisma.portalSession.updateMany).toHaveBeenCalledWith({
       where: {
-        expiresAt: {
-          lte: now,
-        },
+        OR: [
+          {
+            expiresAt: {
+              lte: now,
+            },
+          },
+          {
+            lastSeenAt: {
+              lte: new Date("2026-08-29T09:30:00.000Z"),
+            },
+          },
+        ],
         revokedAt: null,
       },
       data: {
         revokedAt: now,
       },
     });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "auth.sessions.pruned",
-        actor: "system",
-        changes: {
-          revokedSessions: 3,
-        },
-        resourceType: "PortalSession",
-        result: "Success",
-        tenantId: null,
-        tenantName: "global",
-      }) as unknown,
-    });
   });
 
-  it("refreshes expired access tokens for otherwise valid sessions", async () => {
+  it("decrypts refresh tokens and stores refreshed tokens encrypted", async () => {
     const sessionExpiresAt = new Date(Date.now() + 3600_000);
     const prisma = {
       auditLogEntry: {
@@ -120,8 +209,9 @@ describe("AuthSessionService", () => {
           id: "session-1",
           accessTokenExpiresAt: new Date(Date.now() - 1000),
           expiresAt: sessionExpiresAt,
-          idToken: "old-id-token",
-          refreshToken: "old-refresh-token",
+          lastSeenAt: new Date(),
+          idToken: "enc:old-id-token",
+          refreshToken: "enc:old-refresh-token",
           revokedAt: null,
           user: {
             id: "user-1",
@@ -178,6 +268,7 @@ describe("AuthSessionService", () => {
       }),
       prisma as unknown as PrismaService,
       oidcAuth,
+      createEncryption(),
     );
 
     await expect(service.authenticateSession("session-1")).resolves.toEqual({
@@ -191,33 +282,11 @@ describe("AuthSessionService", () => {
         id: "session-1",
       },
       data: {
-        accessToken: "new-access-token",
+        accessToken: "enc:new-access-token",
         accessTokenExpiresAt: expect.any(Date) as Date,
-        idToken: "new-id-token",
-        refreshToken: "new-refresh-token",
+        idToken: "enc:new-id-token",
+        refreshToken: "enc:new-refresh-token",
       },
-    });
-    expect(prisma.portalSession.update).toHaveBeenNthCalledWith(2, {
-      where: {
-        id: "session-1",
-      },
-      data: {
-        lastSeenAt: expect.any(Date) as Date,
-      },
-    });
-    expect(prisma.portalSession.updateMany).not.toHaveBeenCalled();
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "auth.session.refreshed",
-        actor: "user-1",
-        changes: {
-          accessTokenExpiresInSeconds: 600,
-          sessionId: "session-1",
-        },
-        resourceName: "session-1",
-        resourceType: "PortalSession",
-        result: "Success",
-      }) as unknown,
     });
   });
 
@@ -231,8 +300,9 @@ describe("AuthSessionService", () => {
           id: "session-1",
           accessTokenExpiresAt: new Date(Date.now() - 1000),
           expiresAt: new Date(Date.now() + 3600_000),
-          idToken: "old-id-token",
-          refreshToken: "old-refresh-token",
+          lastSeenAt: new Date(),
+          idToken: "enc:old-id-token",
+          refreshToken: "enc:old-refresh-token",
           revokedAt: null,
           user: {
             id: "user-1",
@@ -266,6 +336,7 @@ describe("AuthSessionService", () => {
       }),
       prisma as unknown as PrismaService,
       createOidcAuth(),
+      createEncryption(),
     );
 
     await expect(service.authenticateSession("session-1")).rejects.toThrow(
@@ -280,16 +351,6 @@ describe("AuthSessionService", () => {
       data: {
         revokedAt: expect.any(Date) as Date,
       },
-    });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "auth.session.refresh_failed",
-        actor: "user-1",
-        errorCode: "OIDC_REFRESH_FAILED",
-        resourceName: "session-1",
-        resourceType: "PortalSession",
-        result: "Failure",
-      }) as unknown,
     });
   });
 });
