@@ -50,8 +50,6 @@ Checked wiki documents:
 - AppGroup discard restores the AppGroup and SingleApp runtime draft from the last succeeded deployment snapshot. It does not yet fully restore every related variable/config/secret attachment to historical content.
 - AppGroup-owned `Secret` exists in Prisma, but public API currently manages `SingleAppSecret` through runtime config. This does not match the documented AppGroup Secret plus `SecretAttachment` model.
 - Secret encrypted payload is stored in the database through `SingleAppSecret.valueCiphertext`, not as encrypted envelope files under `/rp/secrets/{tenantId}/{appGroupId}/{secretName}`.
-- CustomRootDomain uniqueness is currently `(tenantId, rootDomain)`, while the wiki requires global `UNIQUE(rootDomain)`.
-- CustomRootDomain `verificationStatus` allows `Invalid` and `Error` in code, while the wiki describes `Pending | Verified | Failed`.
 - Domain DNS and CustomRootDomain validation are currently simplified and do not perform real DNS checks.
 - Managed DNS automation and TLS/certificate lifecycle are modeled but not fully integrated with DNS/ACME automation.
 - Billing does not yet implement vouchers, recurring usage aggregation/charging workers, low-balance notifications, or automatic `BillingSuspended` runtime blocker enforcement.

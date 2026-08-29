@@ -5,7 +5,12 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { DnsStatus, DomainType, Prisma } from "@prisma/client";
+import {
+  CustomRootDomainVerificationStatus,
+  DnsStatus,
+  DomainType,
+  Prisma,
+} from "@prisma/client";
 import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -96,7 +101,7 @@ export class DomainsService {
       data: {
         verificationStatus,
         verifiedAt:
-          verificationStatus === "Verified"
+          verificationStatus === CustomRootDomainVerificationStatus.Verified
             ? new Date()
             : verificationStatus === undefined
               ? undefined
@@ -119,7 +124,7 @@ export class DomainsService {
     const root = await this.prisma.customRootDomain.update({
       where: { id: customRootDomainId },
       data: {
-        verificationStatus: "Verified",
+        verificationStatus: CustomRootDomainVerificationStatus.Verified,
         verifiedAt: new Date(),
         updatedBy: actor.id,
       },
@@ -300,7 +305,10 @@ export class DomainsService {
         dto.customRootDomainId,
       );
 
-      if (root.verificationStatus !== "Verified") {
+      if (
+        root.verificationStatus !==
+        CustomRootDomainVerificationStatus.Verified
+      ) {
         throw new ConflictException("CustomRootDomainNotVerified");
       }
 

@@ -121,6 +121,12 @@ enum RegistryValidationStatus {
   Error
 }
 
+enum CustomRootDomainVerificationStatus {
+  Pending
+  Verified
+  Failed
+}
+
 model User {
   id          String             @id @default(uuid()) @db.Uuid
   email       String             @unique
@@ -520,8 +526,8 @@ model Domain {
 model CustomRootDomain {
   id                    String    @id @default(uuid()) @db.Uuid
   tenantId              String    @db.Uuid
-  rootDomain            String
-  verificationStatus    String    @default("Pending")
+  rootDomain            String    @unique
+  verificationStatus    CustomRootDomainVerificationStatus @default(Pending)
   verificationMethod    String    @default("DNS_TXT")
   verificationToken     String
   verificationCreatedAt DateTime  @default(now())
@@ -533,7 +539,6 @@ model CustomRootDomain {
   tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domains               Domain[]
 
-  @@unique([tenantId, rootDomain])
   @@index([tenantId])
 }
 
