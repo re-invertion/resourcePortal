@@ -130,19 +130,62 @@ export class RegistriesService {
     registryId: string,
     actor: AuthenticatedUser,
   ) {
-    await this.findRegistryOrThrow(tenantId, registryId);
-
-    const registry = await this.prisma.registry.update({
+    const registry = await this.findRegistryOrThrow(tenantId, registryId);
+    await this.prisma.registry.update({
       where: { id: registryId },
       data: {
-        validationStatus: RegistryValidationStatus.Valid,
-        lastValidatedAt: new Date(),
+        validationStatus: RegistryValidationStatus.Validating,
         lastValidationError: null,
         updatedBy: actor.id,
       },
     });
 
-    return mapRegistry(registry);
+    const validatedAt = new Date();
+    try {
+      const response = await fetch(this.registryPingUrl(registry), {
+        method: "GET",
+        headers: this.registryValidationHeaders(registry),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        const message = `Registry /v2/ validation returned HTTP ${response.status}`;
+        const updated = await this.prisma.registry.update({
+          where: { id: registryId },
+          data: {
+            validationStatus: RegistryValidationStatus.Invalid,
+            lastValidatedAt: validatedAt,
+            lastValidationError: message,
+            updatedBy: actor.id,
+          },
+        });
+        return mapRegistry(updated);
+      }
+
+      const updated = await this.prisma.registry.update({
+        where: { id: registryId },
+        data: {
+          validationStatus: RegistryValidationStatus.Valid,
+          lastValidatedAt: validatedAt,
+          lastValidationError: null,
+          updatedBy: actor.id,
+        },
+      });
+      return mapRegistry(updated);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Registry validation failed";
+      const updated = await this.prisma.registry.update({
+        where: { id: registryId },
+        data: {
+          validationStatus: RegistryValidationStatus.Error,
+          lastValidatedAt: validatedAt,
+          lastValidationError: message,
+          updatedBy: actor.id,
+        },
+      });
+      return mapRegistry(updated);
+    }
   }
 
   async assertRegistryCanBeUsedByImage(
@@ -176,6 +219,51 @@ export class RegistriesService {
     }
 
     return registry;
+  }
+
+  private registryPingUrl(registry: {
+    host: string;
+    tlsMode: RegistryTlsMode;
+  }) {
+    const scheme = registry.tlsMode === RegistryTlsMode.NoTLS ? "http" : "https";
+    return `${scheme}://${registry.host}/v2/`;
+  }
+
+  private registryValidationHeaders(registry: {
+    authType: RegistryAuthType;
+    username: string | null;
+    credentialData: Prisma.JsonValue | null;
+  }) {
+    const headers: Record<string, string> = {
+      accept: "application/json",
+    };
+    const credential = this.readCredential(registry.credentialData);
+
+    if (registry.authType === RegistryAuthType.UsernamePassword) {
+      if (!registry.username || !credential) {
+        throw new Error("Registry username/password credentials are incomplete");
+      }
+      headers.authorization = `Basic ${Buffer.from(
+        `${registry.username}:${credential}`,
+      ).toString("base64")}`;
+    } else if (registry.authType === RegistryAuthType.Token) {
+      if (!credential) {
+        throw new Error("Registry token is missing");
+      }
+      headers.authorization = `Bearer ${credential}`;
+    }
+
+    return headers;
+  }
+
+  private readCredential(value: Prisma.JsonValue | null) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return undefined;
+    }
+    const ciphertext = (value as Record<string, unknown>).valueCiphertext;
+    return typeof ciphertext === "string"
+      ? this.encryption.decrypt(ciphertext)
+      : undefined;
   }
 
   private normalizeHost(host: string) {
