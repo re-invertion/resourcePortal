@@ -19,6 +19,7 @@ import {
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { FastifyReply, FastifyRequest } from "fastify";
+import { Authenticated } from "./authenticated.decorator";
 import { CurrentUser } from "./current-user.decorator";
 import { Public } from "./public.decorator";
 import { AuthenticatedUser } from "./types";
@@ -131,6 +132,7 @@ export class AuthController {
   }
 
   @Post("logout")
+  @Authenticated()
   @ApiCookieAuth("rp_session")
   @ApiOperation({
     summary: "Logout current browser session",
@@ -153,6 +155,7 @@ export class AuthController {
   }
 
   @Get("me")
+  @Authenticated()
   @ApiCookieAuth("rp_session")
   @ApiOperation({
     summary: "Get current authenticated user",
