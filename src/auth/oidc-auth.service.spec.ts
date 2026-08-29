@@ -87,6 +87,8 @@ describe("OidcAuthService", () => {
           new Response(
             JSON.stringify({
               issuer: fixture.issuer,
+              authorization_endpoint: `${fixture.issuer}/oauth/v2/authorize`,
+              token_endpoint: `${fixture.issuer}/oauth/v2/token`,
               jwks_uri: fixture.jwksUri,
             }),
             {

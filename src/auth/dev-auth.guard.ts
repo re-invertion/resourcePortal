@@ -11,6 +11,7 @@ import { UserStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
 import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY } from "./auth.constants";
+import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
 
 @Injectable()
@@ -20,6 +21,7 @@ export class DevAuthGuard implements CanActivate {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly oidcAuth: OidcAuthService,
+    private readonly sessions: AuthSessionService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -76,16 +78,25 @@ export class DevAuthGuard implements CanActivate {
   ) {
     const token = this.extractBearerToken(request.headers.authorization);
 
-    if (!token) {
-      if (isPublic) {
-        return true;
-      }
-
-      throw new UnauthorizedException("Authorization bearer token is required");
+    if (token) {
+      request.user = await this.oidcAuth.authenticateBearerToken(token);
+      return true;
     }
 
-    request.user = await this.oidcAuth.authenticateBearerToken(token);
-    return true;
+    const sessionId = request.cookies[this.sessions.getSessionCookieName()];
+
+    if (sessionId) {
+      request.user = await this.sessions.authenticateSession(sessionId);
+      return true;
+    }
+
+    if (isPublic) {
+      return true;
+    }
+
+    throw new UnauthorizedException(
+      "Authorization bearer token or session cookie is required",
+    );
   }
 
   private extractBearerToken(header: string | undefined) {

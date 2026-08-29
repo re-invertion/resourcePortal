@@ -9,8 +9,10 @@ type JoseModule = typeof import("jose");
 type RemoteJWKSet = ReturnType<JoseModule["createRemoteJWKSet"]>;
 
 type OidcDiscovery = {
+  authorizationEndpoint: string;
   issuer: string;
   jwksUri: string;
+  tokenEndpoint: string;
 };
 
 @Injectable()
@@ -197,7 +199,7 @@ export class OidcAuthService {
     return this.jwks;
   }
 
-  private async getDiscovery(): Promise<OidcDiscovery> {
+  async getDiscovery(): Promise<OidcDiscovery> {
     if (this.discovery) {
       return this.discovery;
     }
@@ -219,7 +221,9 @@ export class OidcAuthService {
 
     const discovery = (await response.json()) as Record<string, unknown>;
     const discoveredIssuer = discovery.issuer;
+    const authorizationEndpoint = discovery.authorization_endpoint;
     const jwksUri = discovery.jwks_uri;
+    const tokenEndpoint = discovery.token_endpoint;
 
     if (typeof discoveredIssuer === "string" && discoveredIssuer !== issuer) {
       throw new UnauthorizedException("OIDC issuer mismatch");
@@ -229,9 +233,26 @@ export class OidcAuthService {
       throw new UnauthorizedException("OIDC discovery document misses jwks_uri");
     }
 
+    if (
+      typeof authorizationEndpoint !== "string" ||
+      authorizationEndpoint.length === 0
+    ) {
+      throw new UnauthorizedException(
+        "OIDC discovery document misses authorization_endpoint",
+      );
+    }
+
+    if (typeof tokenEndpoint !== "string" || tokenEndpoint.length === 0) {
+      throw new UnauthorizedException(
+        "OIDC discovery document misses token_endpoint",
+      );
+    }
+
     return {
+      authorizationEndpoint,
       issuer,
       jwksUri,
+      tokenEndpoint,
     };
   }
 

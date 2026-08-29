@@ -5,6 +5,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
+import fastifyCookie from "@fastify/cookie";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 
@@ -15,6 +16,8 @@ async function bootstrap() {
   );
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3000);
+
+  await app.register(fastifyCookie);
 
   app.setGlobalPrefix("api");
   app.useGlobalPipes(
