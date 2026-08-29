@@ -116,6 +116,11 @@ export function mapBillingAccount(
     balance: billing.balance.toString(),
     currency: billing.currency,
     informationThreshold: billing.informationThreshold.toString(),
+    billingState: billing.balance.lte(0)
+      ? "BillingSuspended"
+      : billing.balance.lte(billing.informationThreshold)
+        ? "LowBalance"
+        : "Active",
     transactions: billing.transactions?.map(mapBillingTransaction),
     usageRecords: billing.usageRecords?.map(mapUsageRecord),
   };

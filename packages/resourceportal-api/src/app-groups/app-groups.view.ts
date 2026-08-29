@@ -12,6 +12,12 @@ import {
 type AppGroupWithRelations = AppGroup & {
   singleApps?: SingleApp[];
   deployments?: AppGroupDeployment[];
+  tenant?: {
+    status: string;
+    billing?: {
+      balance: { lte(value: number): boolean };
+    } | null;
+  };
 };
 
 export function mapAppGroup(appGroup: AppGroupWithRelations) {
@@ -19,15 +25,24 @@ export function mapAppGroup(appGroup: AppGroupWithRelations) {
 
   return {
     ...appGroup,
+    tenant: undefined,
     effectiveRuntimeState:
       runtimeBlockers.length > 0 ? "Stopped" : appGroup.runtimeState,
     runtimeBlockers,
-    singleApps: appGroup.singleApps?.map(mapSingleApp),
+    singleApps: appGroup.singleApps?.map((singleApp) =>
+      mapSingleApp(singleApp, runtimeBlockers),
+    ),
   };
 }
 
-export function mapSingleApp(singleApp: SingleApp) {
-  const runtimeBlockers = singleAppRuntimeBlockers(singleApp);
+export function mapSingleApp(
+  singleApp: SingleApp,
+  inheritedRuntimeBlockers: string[] = [],
+) {
+  const runtimeBlockers = [
+    ...inheritedRuntimeBlockers,
+    ...singleAppRuntimeBlockers(singleApp),
+  ];
 
   return {
     ...singleApp,
@@ -77,12 +92,14 @@ export function mapConfigAttachment(attachment: ConfigAttachment) {
   return attachment;
 }
 
-function appGroupRuntimeBlockers(appGroup: AppGroup) {
+function appGroupRuntimeBlockers(appGroup: AppGroupWithRelations) {
   return [
     appGroup.status === "Deleting" ? "AppGroupDeleting" : undefined,
     appGroup.status === "Error" ? "AppGroupError" : undefined,
     appGroup.runtimeState === "Stopped" ? "AppGroupStopped" : undefined,
     appGroup.currentDeploymentVersion === null ? "AppGroupNotDeployed" : undefined,
+    appGroup.tenant?.status === "Suspended" ? "TenantSuspended" : undefined,
+    appGroup.tenant?.billing?.balance.lte(0) ? "BillingSuspended" : undefined,
   ].filter((blocker): blocker is string => blocker !== undefined);
 }
 
