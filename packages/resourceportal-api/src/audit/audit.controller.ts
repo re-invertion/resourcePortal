@@ -1,6 +1,7 @@
-import { Controller, Get, Param, ParseUUIDPipe } from "@nestjs/common";
+import { Controller, Get, Param, ParseUUIDPipe, Query } from "@nestjs/common";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuditService } from "./audit.service";
+import { ListAuditLogDto } from "./dto/list-audit-log.dto";
 
 @Controller("tenants/:tenantId/audit-log")
 export class AuditController {
@@ -8,7 +9,10 @@ export class AuditController {
 
   @RequirePermissions("audit.read")
   @Get()
-  listAuditLog(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
-    return this.auditService.listAuditLog(tenantId);
+  listAuditLog(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Query() query: ListAuditLogDto,
+  ) {
+    return this.auditService.listAuditLog(tenantId, query);
   }
 }
