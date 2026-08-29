@@ -1,0 +1,1 @@
+ALTER TABLE "AuditLogEntry" ALTER COLUMN "tenantId" DROP NOT NULL;

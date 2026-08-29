@@ -32,6 +32,9 @@ describe("AuthSessionService", () => {
 
   it("rejects expired sessions", async () => {
     const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
       portalSession: {
         findUnique: vi.fn().mockResolvedValue({
           id: "session-1",
@@ -62,6 +65,9 @@ describe("AuthSessionService", () => {
   it("marks expired active sessions as revoked", async () => {
     const now = new Date("2026-08-29T10:00:00.000Z");
     const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
       portalSession: {
         updateMany: vi.fn().mockResolvedValue({
           count: 3,
@@ -88,11 +94,27 @@ describe("AuthSessionService", () => {
         revokedAt: now,
       },
     });
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "auth.sessions.pruned",
+        actor: "system",
+        changes: {
+          revokedSessions: 3,
+        },
+        resourceType: "PortalSession",
+        result: "Success",
+        tenantId: null,
+        tenantName: "global",
+      }) as unknown,
+    });
   });
 
   it("refreshes expired access tokens for otherwise valid sessions", async () => {
     const sessionExpiresAt = new Date(Date.now() + 3600_000);
     const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
       portalSession: {
         findUnique: vi.fn().mockResolvedValue({
           id: "session-1",
@@ -184,10 +206,26 @@ describe("AuthSessionService", () => {
       },
     });
     expect(prisma.portalSession.updateMany).not.toHaveBeenCalled();
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "auth.session.refreshed",
+        actor: "user-1",
+        changes: {
+          accessTokenExpiresInSeconds: 600,
+          sessionId: "session-1",
+        },
+        resourceName: "session-1",
+        resourceType: "PortalSession",
+        result: "Success",
+      }) as unknown,
+    });
   });
 
   it("revokes the session when token refresh fails", async () => {
     const prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
       portalSession: {
         findUnique: vi.fn().mockResolvedValue({
           id: "session-1",
@@ -242,6 +280,16 @@ describe("AuthSessionService", () => {
       data: {
         revokedAt: expect.any(Date) as Date,
       },
+    });
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "auth.session.refresh_failed",
+        actor: "user-1",
+        errorCode: "OIDC_REFRESH_FAILED",
+        resourceName: "session-1",
+        resourceType: "PortalSession",
+        result: "Failure",
+      }) as unknown,
     });
   });
 });

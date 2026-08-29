@@ -35,7 +35,7 @@ export class AuthSessionService {
     const sessionTtlSeconds = this.getSessionTtlSeconds(accessTokenTtlSeconds);
     const expiresAt = new Date(now + sessionTtlSeconds * 1000);
 
-    return this.prisma.portalSession.create({
+    const session = await this.prisma.portalSession.create({
       data: {
         id: randomBytes(32).toString("base64url"),
         userId,
@@ -50,6 +50,19 @@ export class AuthSessionService {
         expiresAt: true,
       },
     });
+
+    await this.writeSessionAudit({
+      action: "auth.session.created",
+      actor: userId,
+      actorName: userId,
+      result: "Success",
+      sessionId: session.id,
+      changes: {
+        expiresAt: session.expiresAt.toISOString(),
+      },
+    });
+
+    return session;
   }
 
   async authenticateSession(sessionId: string): Promise<AuthenticatedUser> {
@@ -94,6 +107,15 @@ export class AuthSessionService {
       return;
     }
 
+    const session = await this.prisma.portalSession.findUnique({
+      where: {
+        id: sessionId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
     await this.prisma.portalSession.updateMany({
       where: {
         id: sessionId,
@@ -102,6 +124,14 @@ export class AuthSessionService {
       data: {
         revokedAt: new Date(),
       },
+    });
+
+    await this.writeSessionAudit({
+      action: "auth.session.revoked",
+      actor: session?.user.id ?? "system",
+      actorName: session?.user.displayName ?? "system",
+      result: "Success",
+      sessionId,
     });
   }
 
@@ -115,6 +145,16 @@ export class AuthSessionService {
       },
       data: {
         revokedAt: now,
+      },
+    });
+
+    await this.writeSessionAudit({
+      action: "auth.sessions.pruned",
+      actor: "system",
+      actorName: "system",
+      result: "Success",
+      changes: {
+        revokedSessions: result.count,
       },
     });
 
@@ -189,7 +229,28 @@ export class AuthSessionService {
           refreshToken: tokens.refresh_token ?? session.refreshToken,
         },
       });
+
+      await this.writeSessionAudit({
+        action: "auth.session.refreshed",
+        actor: session.user.id,
+        actorName: session.user.displayName,
+        result: "Success",
+        sessionId: session.id,
+        changes: {
+          accessTokenExpiresInSeconds: accessTokenTtlSeconds,
+        },
+      });
     } catch (error) {
+      await this.writeSessionAudit({
+        action: "auth.session.refresh_failed",
+        actor: session.user.id,
+        actorName: session.user.displayName,
+        result: "Failure",
+        sessionId: session.id,
+        errorCode: "OIDC_REFRESH_FAILED",
+        errorMessage:
+          error instanceof Error ? error.message : "Session refresh failed",
+      });
       await this.revokeSession(session.id);
 
       if (error instanceof UnauthorizedException) {
@@ -261,6 +322,43 @@ export class AuthSessionService {
     }
 
     return configuredTtlSeconds;
+  }
+
+  private async writeSessionAudit(event: {
+    action: string;
+    actor: string;
+    actorName: string;
+    result: "Failure" | "Success";
+    sessionId?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    changes?: Record<string, unknown>;
+  }) {
+    const changes = {
+      ...event.changes,
+      ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+    };
+
+    try {
+      await this.prisma.auditLogEntry.create({
+        data: {
+          tenantId: null,
+          tenantName: "global",
+          actor: event.actor,
+          actorName: event.actorName,
+          action: event.action,
+          resourceType: "PortalSession",
+          resourceId: null,
+          resourceName: event.sessionId,
+          result: event.result,
+          errorCode: event.errorCode,
+          errorMessage: event.errorMessage,
+          changes,
+        },
+      });
+    } catch {
+      // Authentication must not fail just because audit persistence is temporarily unavailable.
+    }
   }
 }
 

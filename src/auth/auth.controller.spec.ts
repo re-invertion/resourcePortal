@@ -93,6 +93,9 @@ describe("AuthController cookie flow", () => {
     getDiscovery: ReturnType<typeof vi.fn>;
   };
   let prisma: {
+    auditLogEntry: {
+      create: ReturnType<typeof vi.fn>;
+    };
     portalSession: {
       create: ReturnType<typeof vi.fn>;
       findUnique: ReturnType<typeof vi.fn>;
@@ -112,6 +115,9 @@ describe("AuthController cookie flow", () => {
       authenticateBearerToken: vi.fn().mockResolvedValue(user),
     };
     prisma = {
+      auditLogEntry: {
+        create: vi.fn(),
+      },
       portalSession: {
         create: vi.fn(({ data }: PortalSessionCreateArgs) =>
           Promise.resolve({
@@ -365,6 +371,20 @@ describe("AuthController cookie flow", () => {
       expiresAt: true,
       id: true,
     });
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "auth.session.created",
+        actor: user.id,
+        changes: expect.objectContaining({
+          sessionId: createArgs.data.id,
+        }) as unknown,
+        resourceName: createArgs.data.id,
+        resourceType: "PortalSession",
+        result: "Success",
+        tenantId: null,
+        tenantName: "global",
+      }) as unknown,
+    });
 
     const sessionCookie = getCookieValue(callbackResponse, "rp_session");
     const unsignedSession = app
@@ -424,6 +444,18 @@ describe("AuthController cookie flow", () => {
       data: {
         revokedAt: expect.any(Date) as Date,
       },
+    });
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "auth.session.revoked",
+        actor: user.id,
+        changes: {
+          sessionId: "session-1",
+        },
+        resourceName: "session-1",
+        resourceType: "PortalSession",
+        result: "Success",
+      }) as unknown,
     });
     expect(
       getSetCookieHeaders(response).some((cookie) =>

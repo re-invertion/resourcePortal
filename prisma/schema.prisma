@@ -584,7 +584,7 @@ model ConfigAttachment {
 
 model AuditLogEntry {
   id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @db.Uuid
+  tenantId      String?  @db.Uuid
   tenantName    String
   timestamp     DateTime @default(now())
   actor         String
@@ -601,5 +601,5 @@ model AuditLogEntry {
   ipAddress     String?
   userAgent     String?
   changes       Json?
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
