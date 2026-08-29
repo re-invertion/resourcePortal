@@ -57,7 +57,7 @@ Checked wiki documents:
 - Deployment reconciliation after worker crash is partial. The worker has leases and idempotent operations, but does not fully reconstruct progress from Docker Swarm before continuing every possible interrupted phase.
 - Drift detection is represented by `driftStatus`, but full Swarm reconciliation/drift scanner is not implemented.
 - Resolved image digest is not stored in deployment history.
-- Generated stack preview/export endpoints are not exposed as dedicated public API operations.
+- Generated stack preview is exposed; rendered YAML export is not exposed as a dedicated public API operation yet.
 - Platform infrastructure models such as Remote Location, HA Cluster, Swarm Cluster, Swarm Node, Storage Backend, and Placement Engine are intentionally not implemented yet.
 
 ## Current Assessment
