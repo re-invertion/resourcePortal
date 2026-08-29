@@ -121,6 +121,9 @@ describe("AuthController cookie flow", () => {
         ),
         findUnique: vi.fn().mockResolvedValue({
           id: "session-1",
+          accessTokenExpiresAt: new Date(Date.now() + 3600_000),
+          idToken: "id-token",
+          refreshToken: "refresh-token",
           revokedAt: null,
           expiresAt: new Date(Date.now() + 3600_000),
           user,
@@ -185,7 +188,7 @@ describe("AuthController cookie flow", () => {
     );
     Reflect.defineMetadata(
       "design:paramtypes",
-      [ConfigService, PrismaService],
+      [ConfigService, PrismaService, OidcAuthService],
       AuthSessionService,
     );
     Reflect.defineMetadata(

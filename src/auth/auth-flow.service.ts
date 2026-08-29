@@ -139,7 +139,9 @@ export class AuthFlowService {
   }
 
   private getScopes() {
-    return (this.config.get<string>("OIDC_SCOPES") ?? "openid profile email")
+    return (
+      this.config.get<string>("OIDC_SCOPES") ?? "openid profile email offline_access"
+    )
       .split(/\s+/)
       .map((scope) => scope.trim())
       .filter(Boolean);
