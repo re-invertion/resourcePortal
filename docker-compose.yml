@@ -17,5 +17,55 @@ services:
       timeout: 3s
       retries: 10
 
+  zitadel-postgres:
+    image: postgres:17-alpine
+    container_name: resource-portal-zitadel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zitadel
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${ZITADEL_POSTGRES_ADMIN_PASSWORD:?ZITADEL_POSTGRES_ADMIN_PASSWORD is required}
+    volumes:
+      - zitadel-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d zitadel"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-stable}
+    container_name: resource-portal-zitadel
+    restart: unless-stopped
+    command:
+      - start-from-init
+      - --config
+      - /zitadel-config.yaml
+      - --config
+      - /zitadel-secrets.yaml
+      - --steps
+      - /zitadel-init-steps.yaml
+      - --masterkey
+      - ${ZITADEL_MASTERKEY:?ZITADEL_MASTERKEY must be exactly 32 characters}
+      - --tlsMode
+      - disabled
+    volumes:
+      - ./config/zitadel/zitadel-config.yaml:/zitadel-config.yaml:ro
+      - ./config/zitadel/zitadel-secrets.yaml:/zitadel-secrets.yaml:ro
+      - ./config/zitadel/zitadel-init-steps.yaml:/zitadel-init-steps.yaml:ro
+    ports:
+      - "${ZITADEL_PORT:-8080}:8080"
+    depends_on:
+      zitadel-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready", "--config", "/zitadel-config.yaml"]
+      interval: 10s
+      timeout: 60s
+      retries: 10
+      start_period: 20s
+
 volumes:
   postgres-data:
+  zitadel-postgres-data:

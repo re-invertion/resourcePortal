@@ -9,3 +9,5 @@ pnpm-debug.log*
 yarn-debug.log*
 .DS_Store
 Thumbs.db
+config/zitadel/zitadel-init-steps.yaml
+config/zitadel/zitadel-secrets.yaml
