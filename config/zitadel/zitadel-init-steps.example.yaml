@@ -1,6 +1,13 @@
 FirstInstance:
+  PatPath: /zitadel/bootstrap/admin.pat
   Org:
     Human:
       Username: root
       Password: change-me
       PasswordChangeRequired: false
+    Machine:
+      Machine:
+        Username: resource-portal-bootstrap
+        Name: Resource Portal Bootstrap
+      Pat:
+        ExpirationDate: "2040-01-01T00:00:00Z"

@@ -13,6 +13,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node src/prisma/seed.ts",
+    "zitadel:bootstrap": "ts-node --files scripts/bootstrap-zitadel.ts",
     "worker:deployments": "ts-node --files src/internal/deployment-worker.runner.ts",
     "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts"
   },

@@ -54,6 +54,7 @@ services:
       - ./config/zitadel/zitadel-config.yaml:/zitadel-config.yaml:ro
       - ./config/zitadel/zitadel-secrets.yaml:/zitadel-secrets.yaml:ro
       - ./config/zitadel/zitadel-init-steps.yaml:/zitadel-init-steps.yaml:ro
+      - ./var/zitadel:/zitadel/bootstrap
     ports:
       - "${ZITADEL_PORT:-8080}:8080"
     depends_on:
