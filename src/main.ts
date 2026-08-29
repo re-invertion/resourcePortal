@@ -17,7 +17,7 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3000);
 
-  const cookieSecret = getCookieSecret(config);
+  const cookieSecret = config.get<string>("AUTH_COOKIE_SECRET");
   await app.register(
     fastifyCookie,
     cookieSecret
@@ -89,21 +89,6 @@ async function bootstrap() {
   await app.listen({ host: "0.0.0.0", port });
   Logger.log(`Resource Portal API listening on http://localhost:${port}/api`);
   Logger.log(`Swagger UI available at http://localhost:${port}/api/docs`);
-}
-
-function getCookieSecret(config: ConfigService) {
-  const secret = config.get<string>("AUTH_COOKIE_SECRET");
-  const authMode = config.get<string>("AUTH_MODE", "dev").toLowerCase();
-
-  if (secret) {
-    return secret;
-  }
-
-  if (authMode === "oidc" || authMode === "zitadel") {
-    throw new Error("AUTH_COOKIE_SECRET is required when AUTH_MODE uses OIDC");
-  }
-
-  return undefined;
 }
 
 void bootstrap();

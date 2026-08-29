@@ -7,6 +7,7 @@ import { DevAuthGuard } from "./auth/dev-auth.guard";
 import { PermissionsGuard } from "./auth/permissions.guard";
 import { TenantContextGuard } from "./auth/tenant-context.guard";
 import { ConfigModule } from "@nestjs/config";
+import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
 import { HealthModule } from "./health/health.module";
 import { InternalModule } from "./internal/internal.module";
@@ -20,6 +21,7 @@ import { VolumesModule } from "./volumes/volumes.module";
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateEnv,
     }),
     PrismaModule,
     AuthModule,
