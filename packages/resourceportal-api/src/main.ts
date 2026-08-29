@@ -1,13 +1,13 @@
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import fastifyCookie from "@fastify/cookie";
-import { FastifyRequest } from "fastify";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { ObservabilityService } from "./observability/observability.service";
@@ -16,6 +16,8 @@ type ObservedRequest = FastifyRequest & {
   requestId?: string;
   requestStartedAt?: number;
 };
+
+const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -45,6 +47,21 @@ async function bootstrap() {
     request.requestId = requestId;
     request.requestStartedAt = Date.now();
     reply.header("x-request-id", requestId);
+    applySecurityHeaders(request, reply, config);
+
+    if (!isCsrfValid(request, config)) {
+      reply.status(403).send({
+        error: {
+          code: "CSRF_INVALID",
+          message: "CSRF token is missing or invalid",
+          statusCode: 403,
+          requestId,
+          details: null,
+        },
+      });
+      return;
+    }
+
     done();
   });
   fastify.addHook("onResponse", (request: ObservedRequest, reply, done) => {
@@ -149,4 +166,61 @@ function requestIdFromHeader(value: string | string[] | undefined) {
 function routeFromRequest(request: FastifyRequest) {
   const routeOptions = request.routeOptions as { url?: string } | undefined;
   return routeOptions?.url ?? request.url.split("?")[0] ?? "unknown";
+}
+
+function applySecurityHeaders(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: ConfigService,
+) {
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("x-frame-options", "DENY");
+  reply.header("referrer-policy", "no-referrer");
+  reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  reply.header("cross-origin-opener-policy", "same-origin");
+  reply.header("cross-origin-resource-policy", "same-origin");
+
+  if (!request.url.startsWith("/api/docs")) {
+    reply.header(
+      "content-security-policy",
+      "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'",
+    );
+  }
+
+  if (config.get<string>("NODE_ENV") === "production") {
+    reply.header(
+      "strict-transport-security",
+      "max-age=31536000; includeSubDomains",
+    );
+  }
+}
+
+function isCsrfValid(request: FastifyRequest, config: ConfigService) {
+  if (!unsafeMethods.has(request.method.toUpperCase())) {
+    return true;
+  }
+
+  const sessionCookieName = config.get<string>(
+    "AUTH_SESSION_COOKIE_NAME",
+    "rp_session",
+  );
+  if (!request.cookies[sessionCookieName]) {
+    return true;
+  }
+
+  const csrfCookieName = config.get<string>("AUTH_CSRF_COOKIE_NAME", "rp_csrf");
+  const cookieToken = request.cookies[csrfCookieName];
+  const headerValue = request.headers["x-csrf-token"];
+  const headerToken = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+
+  if (!cookieToken || !headerToken) {
+    return false;
+  }
+
+  const cookieBuffer = Buffer.from(cookieToken);
+  const headerBuffer = Buffer.from(headerToken);
+  return (
+    cookieBuffer.length === headerBuffer.length &&
+    timingSafeEqual(cookieBuffer, headerBuffer)
+  );
 }
