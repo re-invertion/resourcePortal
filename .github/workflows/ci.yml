@@ -29,15 +29,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Audit dependencies
-        continue-on-error: true
         run: npm audit --audit-level=high
       - name: Generate Prisma client
         run: npm run api:prisma:generate
       - name: Lint
-        continue-on-error: true
         run: npm run lint
       - name: Test
-        continue-on-error: true
         run: npm run test
       - name: Build
         run: npm run build
