@@ -2,6 +2,11 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 type JsonObject = Record<string, unknown>;
 
+type Organization = {
+  id: string;
+  name: string;
+};
+
 type Project = {
   id: string;
   name: string;
@@ -38,6 +43,8 @@ const issuerUrl = (
 ).replace(/\/$/, "");
 const patFile =
   process.env.ZITADEL_BOOTSTRAP_PAT_FILE ?? "var/zitadel/admin.pat";
+const organizationName =
+  process.env.ZITADEL_BOOTSTRAP_ORGANIZATION_NAME ?? "Resource Portal";
 const projectName =
   process.env.ZITADEL_BOOTSTRAP_PROJECT_NAME ?? "Resource Portal";
 const appName =
@@ -61,11 +68,13 @@ async function main() {
   await waitForZitadel();
 
   const pat = readPat();
-  const project = await getOrCreateProject(pat);
-  const app = await getOrCreateOidcApp(pat, project.id);
-  const testUser = await getOrCreateTestUser(pat);
+  const organization = await getOrCreateOrganization(pat);
+  const project = await getOrCreateProject(pat, organization.id);
+  const app = await getOrCreateOidcApp(pat, organization.id, project.id);
+  const testUser = await getOrCreateTestUser(pat, organization.id);
 
   updateDotEnv({
+    ZITADEL_ORGANIZATION_ID: organization.id,
     OIDC_ISSUER_URL: issuerUrl,
     OIDC_CLIENT_ID: app.clientId,
     OIDC_CLIENT_SECRET: app.clientSecret,
@@ -73,6 +82,7 @@ async function main() {
   });
 
   console.log("ZITADEL bootstrap completed");
+  console.log(`Organization: ${organization.id} (${organization.name})`);
   console.log(`Project: ${project.id} (${project.name})`);
   console.log(`OIDC app: ${app.appId} (${app.name})`);
   console.log(`OIDC client id: ${app.clientId}`);
@@ -110,11 +120,46 @@ function readPat() {
   return pat.trim();
 }
 
-async function getOrCreateProject(pat: string) {
+async function getOrCreateOrganization(pat: string): Promise<Organization> {
+  const organizations = await zitadelApi<{
+    result?: Array<{ id?: string; organizationId?: string; name?: string }>;
+  }>(pat, "/v2/organizations/_search", {});
+  const existing = organizations.result?.find(
+    (organization) => organization.name === organizationName,
+  );
+  const existingId = existing?.id ?? existing?.organizationId;
+
+  if (existingId) {
+    return {
+      id: existingId,
+      name: existing?.name ?? organizationName,
+    };
+  }
+
+  const created = await zitadelApi<{
+    organizationId?: string;
+    orgId?: string;
+  }>(pat, "/v2/organizations", {
+    name: organizationName,
+  });
+  const organizationId = created.organizationId ?? created.orgId;
+
+  if (!organizationId) {
+    throw new Error("ZITADEL organization creation did not return an id");
+  }
+
+  return {
+    id: organizationId,
+    name: organizationName,
+  };
+}
+
+async function getOrCreateProject(pat: string, organizationId: string) {
   const projects = await zitadelApi<{ result?: Project[] }>(
     pat,
     "/management/v1/projects/_search",
     {},
+    organizationId,
   );
   const existing = projects.result?.find((project) => project.name === projectName);
 
@@ -128,6 +173,7 @@ async function getOrCreateProject(pat: string) {
     {
       name: projectName,
     },
+    organizationId,
   );
 
   return {
@@ -136,11 +182,16 @@ async function getOrCreateProject(pat: string) {
   };
 }
 
-async function getOrCreateOidcApp(pat: string, projectId: string) {
+async function getOrCreateOidcApp(
+  pat: string,
+  organizationId: string,
+  projectId: string,
+) {
   const apps = await zitadelApi<{ result?: App[] }>(
     pat,
     `/management/v1/projects/${projectId}/apps/_search`,
     {},
+    organizationId,
   );
   const existing = apps.result?.find((app) => app.name === appName);
 
@@ -157,19 +208,24 @@ async function getOrCreateOidcApp(pat: string, projectId: string) {
     appId: string;
     clientId: string;
     clientSecret?: string;
-  }>(pat, `/management/v1/projects/${projectId}/apps/oidc`, {
-    name: appName,
-    redirectUris,
-    responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-    grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-    appType: "OIDC_APP_TYPE_WEB",
-    authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC",
-    postLogoutRedirectUris,
-    version: "OIDC_VERSION_1_0",
-    devMode: true,
-    accessTokenType: "OIDC_TOKEN_TYPE_JWT",
-    idTokenUserinfoAssertion: true,
-  });
+  }>(
+    pat,
+    `/management/v1/projects/${projectId}/apps/oidc`,
+    {
+      name: appName,
+      redirectUris,
+      responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+      grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+      appType: "OIDC_APP_TYPE_WEB",
+      authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC",
+      postLogoutRedirectUris,
+      version: "OIDC_VERSION_1_0",
+      devMode: true,
+      accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+      idTokenUserinfoAssertion: true,
+    },
+    organizationId,
+  );
 
   return {
     appId: created.appId,
@@ -179,11 +235,12 @@ async function getOrCreateOidcApp(pat: string, projectId: string) {
   };
 }
 
-async function getOrCreateTestUser(pat: string) {
+async function getOrCreateTestUser(pat: string, organizationId: string) {
   const users = await zitadelApi<{ result?: User[] }>(
     pat,
     "/management/v1/users/_search",
     {},
+    organizationId,
   );
   const existing = users.result?.find((user) => {
     const emails = [
@@ -224,6 +281,7 @@ async function getOrCreateTestUser(pat: string) {
       password: testUserPassword,
       passwordChangeRequired: false,
     },
+    organizationId,
   );
 
   return {
@@ -235,13 +293,20 @@ async function zitadelApi<T>(
   pat: string,
   path: string,
   body: JsonObject,
+  organizationId?: string,
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${pat}`,
+    "content-type": "application/json",
+  };
+
+  if (organizationId && path.startsWith("/management/v1/")) {
+    headers["x-zitadel-orgid"] = organizationId;
+  }
+
   const response = await fetch(`${issuerUrl}${path}`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${pat}`,
-      "content-type": "application/json",
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const text = await response.text();
@@ -296,6 +361,9 @@ function loadDotEnv() {
       }
 
       const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex < 1) {
+        continue;
+      }
       const key = trimmed.slice(0, separatorIndex);
       const value = trimmed.slice(separatorIndex + 1);
 
