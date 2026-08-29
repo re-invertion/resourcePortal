@@ -27,6 +27,12 @@ export function validateEnv(config: Env) {
     errors,
     "AUTH_SESSION_IDLE_TIMEOUT_SECONDS",
   );
+  requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_MAX");
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "API_RATE_LIMIT_WINDOW_SECONDS",
+  );
 
   if (nodeEnv === "production") {
     if (config.AUTH_COOKIE_SECURE !== "true") {
