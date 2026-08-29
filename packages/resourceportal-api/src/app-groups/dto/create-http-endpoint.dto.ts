@@ -13,6 +13,7 @@ import {
 export const HTTP_ENDPOINT_PROTOCOL_MODES = [
   "HTTP",
   "HTTPS",
+  "HTTP_AND_HTTPS",
   "HTTP_REDIRECT_TO_HTTPS",
 ] as const;
 
