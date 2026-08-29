@@ -19,6 +19,7 @@ import {
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
 import { FastifyReply, FastifyRequest } from "fastify";
+import { randomBytes } from "node:crypto";
 import { Authenticated } from "./authenticated.decorator";
 import { CurrentUser } from "./current-user.decorator";
 import { Public } from "./public.decorator";
@@ -127,6 +128,18 @@ export class AuthController {
       secure: this.sessions.isCookieSecure(),
       signed: true,
     });
+    reply.setCookie(
+      this.sessions.getCsrfCookieName(),
+      randomBytes(32).toString("base64url"),
+      {
+        httpOnly: false,
+        maxAge: this.sessions.getSessionMaxAgeSeconds(),
+        path: "/",
+        sameSite: "lax",
+        secure: this.sessions.isCookieSecure(),
+        signed: false,
+      },
+    );
 
     return reply.status(302).redirect("/");
   }
@@ -148,6 +161,9 @@ export class AuthController {
       this.sessions.getSessionIdFromRequest(request),
     );
     reply.clearCookie(this.sessions.getSessionCookieName(), {
+      path: "/",
+    });
+    reply.clearCookie(this.sessions.getCsrfCookieName(), {
       path: "/",
     });
 
