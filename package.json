@@ -17,6 +17,8 @@
     "api:db:seed": "npm --workspace @resource-portal/api run db:seed",
     "api:worker:deployments": "npm --workspace @resource-portal/api run worker:deployments",
     "api:smoke:deploy": "npm --workspace @resource-portal/api run smoke:deploy",
+    "backup:control-plane": "bash scripts/backup-control-plane.sh",
+    "restore:control-plane": "bash scripts/restore-control-plane.sh",
     "cli": "npm --workspace @resource-portal/cli run start --"
   }
 }
