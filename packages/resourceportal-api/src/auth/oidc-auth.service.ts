@@ -8,11 +8,13 @@ import { AuthenticatedUser } from "./types";
 type JoseModule = typeof import("jose");
 type RemoteJWKSet = ReturnType<JoseModule["createRemoteJWKSet"]>;
 
-type OidcDiscovery = {
+export type OidcDiscovery = {
   authorizationEndpoint: string;
   issuer: string;
   jwksUri: string;
   tokenEndpoint: string;
+  revocationEndpoint?: string;
+  endSessionEndpoint?: string;
 };
 
 @Injectable()
@@ -135,30 +137,9 @@ export class OidcAuthService {
     });
 
     if (userByEmail) {
-      return this.prisma.user.update({
-        where: {
-          id: userByEmail.id,
-        },
-        data: {
-          displayName,
-          status: UserStatus.Active,
-          identities: {
-            create: {
-              providerType,
-              issuer,
-              externalSubject: subject,
-              email,
-              lastLoginAt: now,
-            },
-          },
-        },
-        select: {
-          id: true,
-          email: true,
-          displayName: true,
-          status: true,
-        },
-      });
+      throw new UnauthorizedException(
+        "OIDC identity is not linked to the existing user account",
+      );
     }
 
     if (!this.isAutoProvisionEnabled()) {
@@ -224,6 +205,8 @@ export class OidcAuthService {
     const authorizationEndpoint = discovery.authorization_endpoint;
     const jwksUri = discovery.jwks_uri;
     const tokenEndpoint = discovery.token_endpoint;
+    const revocationEndpoint = discovery.revocation_endpoint;
+    const endSessionEndpoint = discovery.end_session_endpoint;
 
     if (typeof discoveredIssuer === "string" && discoveredIssuer !== issuer) {
       throw new UnauthorizedException("OIDC issuer mismatch");
@@ -253,6 +236,14 @@ export class OidcAuthService {
       issuer,
       jwksUri,
       tokenEndpoint,
+      revocationEndpoint:
+        typeof revocationEndpoint === "string" && revocationEndpoint.length > 0
+          ? revocationEndpoint
+          : undefined,
+      endSessionEndpoint:
+        typeof endSessionEndpoint === "string" && endSessionEndpoint.length > 0
+          ? endSessionEndpoint
+          : undefined,
     };
   }
 
