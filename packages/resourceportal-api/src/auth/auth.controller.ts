@@ -147,27 +147,54 @@ export class AuthController {
   @Post("logout")
   @Authenticated()
   @ApiCookieAuth("rp_session")
-  @ApiOperation({
-    summary: "Logout current browser session",
-  })
+  @ApiOperation({ summary: "Logout current local browser session" })
   @ApiNoContentResponse({
-    description: "The current session was revoked or no session cookie existed.",
-  })
-  @ApiUnauthorizedResponse({
-    description: "Authentication is required.",
+    description: "The current local session was revoked.",
   })
   async logout(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
     await this.sessions.revokeSession(
       this.sessions.getSessionIdFromRequest(request),
     );
-    reply.clearCookie(this.sessions.getSessionCookieName(), {
-      path: "/",
-    });
-    reply.clearCookie(this.sessions.getCsrfCookieName(), {
-      path: "/",
-    });
-
+    this.clearSessionCookies(reply);
     return reply.status(204).send();
+  }
+
+  @Post("logout/provider")
+  @Authenticated()
+  @ApiCookieAuth("rp_session")
+  @ApiOperation({
+    summary: "Revoke provider tokens and prepare RP-initiated OIDC logout",
+  })
+  @ApiOkResponse({
+    description:
+      "Returns the provider end-session URL. The browser should navigate to logoutUrl when it is non-null.",
+  })
+  async providerLogout(
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const result = await this.sessions.prepareProviderLogout(
+      this.sessions.getSessionIdFromRequest(request),
+    );
+    this.clearSessionCookies(reply);
+    return reply.status(200).send(result);
+  }
+
+  @Get("sessions")
+  @Authenticated()
+  @ApiCookieAuth("rp_session")
+  @ApiOperation({ summary: "List active sessions for the current user" })
+  @ApiOkResponse({
+    description: "Active session metadata. Provider tokens are never returned.",
+  })
+  async activeSessions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.sessions.listActiveSessions(
+      user.id,
+      this.sessions.getSessionIdFromRequest(request),
+    );
   }
 
   @Get("me")
@@ -184,6 +211,15 @@ export class AuthController {
   })
   me(@CurrentUser() user: AuthenticatedUser) {
     return user;
+  }
+
+  private clearSessionCookies(reply: FastifyReply) {
+    reply.clearCookie(this.sessions.getSessionCookieName(), {
+      path: "/",
+    });
+    reply.clearCookie(this.sessions.getCsrfCookieName(), {
+      path: "/",
+    });
   }
 
   private getSignedCookie(request: FastifyRequest, name: string) {
