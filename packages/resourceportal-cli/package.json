@@ -1,0 +1,21 @@
+{
+  "name": "@resource-portal/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Resource Portal command line interface",
+  "bin": {
+    "resourceportal": "dist/index.js",
+    "rp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node dist/index.js --help",
+    "start": "ts-node --files src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

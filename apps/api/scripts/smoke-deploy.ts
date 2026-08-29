@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 
 type JsonObject = Record<string, unknown>;
 
+const envFilePaths = [".env", "../../.env"];
+
 loadDotEnv();
 
 const prisma = new PrismaClient();
@@ -485,28 +487,30 @@ function wait(ms: number) {
 }
 
 function loadDotEnv() {
-  if (!existsSync(".env")) {
-    return;
-  }
-
-  for (const line of readFileSync(".env", "utf8").split("\n")) {
-    const trimmed = line.trim();
-
-    if (!trimmed || trimmed.startsWith("#")) {
+  for (const path of envFilePaths) {
+    if (!existsSync(path)) {
       continue;
     }
 
-    const separatorIndex = trimmed.indexOf("=");
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const trimmed = line.trim();
 
-    if (separatorIndex === -1) {
-      continue;
-    }
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
 
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim();
+      const separatorIndex = trimmed.indexOf("=");
 
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const value = trimmed.slice(separatorIndex + 1).trim();
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
     }
   }
 }

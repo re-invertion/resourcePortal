@@ -27,6 +27,8 @@ type User = {
   };
 };
 
+const envFilePaths = [".env", "../../.env"];
+
 loadDotEnv();
 
 const issuerUrl = (
@@ -257,7 +259,7 @@ async function zitadelApi<T>(
 }
 
 function updateDotEnv(values: Record<string, string>) {
-  const path = ".env";
+  const path = envFilePaths.find((candidate) => existsSync(candidate)) ?? ".env";
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
   const seen = new Set<string>();
   const lines = existing.split("\n").map((line) => {
@@ -281,23 +283,25 @@ function updateDotEnv(values: Record<string, string>) {
 }
 
 function loadDotEnv() {
-  if (!existsSync(".env")) {
-    return;
-  }
-
-  for (const line of readFileSync(".env", "utf8").split("\n")) {
-    const trimmed = line.trim();
-
-    if (!trimmed || trimmed.startsWith("#")) {
+  for (const path of envFilePaths) {
+    if (!existsSync(path)) {
       continue;
     }
 
-    const separatorIndex = trimmed.indexOf("=");
-    const key = trimmed.slice(0, separatorIndex);
-    const value = trimmed.slice(separatorIndex + 1);
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const trimmed = line.trim();
 
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const separatorIndex = trimmed.indexOf("=");
+      const key = trimmed.slice(0, separatorIndex);
+      const value = trimmed.slice(separatorIndex + 1);
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
     }
   }
 }
