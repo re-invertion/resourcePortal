@@ -18,7 +18,11 @@ type PreflightParams = {
   volumeId?: string;
 };
 
-type ResizeBody = { sizeBytes?: number };
+type PreflightBody = SingleAppCostUpdate & { sizeBytes?: number };
+type PreflightRequest = FastifyRequest<{
+  Params: PreflightParams;
+  Body: PreflightBody;
+}>;
 
 @Injectable()
 export class BillingPreflightGuard implements CanActivate {
@@ -32,10 +36,10 @@ export class BillingPreflightGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<FastifyRequest>();
+    const request = context.switchToHttp().getRequest<PreflightRequest>();
     const route = request.routeOptions.url;
     const method = request.method.toUpperCase();
-    const params = request.params as PreflightParams;
+    const params = request.params;
 
     if (!params.tenantId) {
       return true;
@@ -71,10 +75,7 @@ export class BillingPreflightGuard implements CanActivate {
       });
       if (
         existing &&
-        isCostIncreasingSingleAppUpdate(
-          existing,
-          (request.body ?? {}) as SingleAppCostUpdate,
-        )
+        isCostIncreasingSingleAppUpdate(existing, request.body ?? {})
       ) {
         await this.billing.assertActivePriceList();
       }
@@ -90,7 +91,7 @@ export class BillingPreflightGuard implements CanActivate {
         where: { id: params.volumeId, tenantId: params.tenantId },
         select: { sizeBytes: true },
       });
-      const requested = (request.body as ResizeBody | undefined)?.sizeBytes;
+      const requested = request.body?.sizeBytes;
       if (
         existing &&
         requested !== undefined &&
