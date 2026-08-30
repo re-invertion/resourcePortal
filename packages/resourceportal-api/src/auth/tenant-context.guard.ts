@@ -25,8 +25,14 @@ export class TenantContextGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
 
-    if (!tenantId) {
-      return true;
+    if (!tenantId) return true;
+
+    if (request.serviceIdentity) {
+      return this.activateServiceIdentityContext(
+        request,
+        tenantId,
+        requiredPermissions,
+      );
     }
 
     if (!request.user) {
@@ -41,17 +47,11 @@ export class TenantContextGuard implements CanActivate {
         },
       },
       include: {
-        roles: {
-          include: { role: true },
-        },
+        roles: { include: { role: true } },
         groupMemberships: {
           include: {
             group: {
-              include: {
-                roles: {
-                  include: { role: true },
-                },
-              },
+              include: { roles: { include: { role: true } } },
             },
           },
         },
@@ -84,12 +84,42 @@ export class TenantContextGuard implements CanActivate {
     return true;
   }
 
-  private getTenantId(request: FastifyRequest) {
-    const tenantId = (request.params as { tenantId?: string }).tenantId;
-    if (tenantId) {
-      return tenantId;
+  private async activateServiceIdentityContext(
+    request: FastifyRequest,
+    tenantId: string,
+    requiredPermissions: string[] | undefined,
+  ) {
+    const serviceIdentity = request.serviceIdentity!;
+    if (serviceIdentity.tenantId !== tenantId || serviceIdentity.status !== "Active") {
+      throw new ForbiddenException(
+        "Service identity does not belong to the requested tenant",
+      );
     }
 
-    return undefined;
+    const roles = await this.prisma.$queryRaw<Array<{ permissions: string[] }>>`
+      SELECT r."permissions"
+      FROM "Role" r
+      INNER JOIN "ServiceIdentityRole" sir ON sir."roleId" = r."id"
+      WHERE sir."serviceIdentityId" = CAST(${serviceIdentity.id} AS uuid)
+    `;
+    const permissions = [
+      ...new Set(roles.flatMap((role) => role.permissions)),
+    ];
+
+    request.tenantContext = {
+      tenantId,
+      serviceIdentityId: serviceIdentity.id,
+      permissions,
+    };
+
+    if (requiredPermissions?.length && permissions.length === 0) {
+      throw new ForbiddenException("No service identity permissions assigned");
+    }
+
+    return true;
+  }
+
+  private getTenantId(request: FastifyRequest) {
+    return (request.params as { tenantId?: string }).tenantId;
   }
 }

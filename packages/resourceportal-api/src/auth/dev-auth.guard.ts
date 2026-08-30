@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   InternalServerErrorException,
   Injectable,
   UnauthorizedException,
@@ -47,10 +48,7 @@ export class DevAuthGuard implements CanActivate {
     const userId = Array.isArray(userIdHeader) ? userIdHeader[0] : userIdHeader;
 
     if (!userId) {
-      if (isPublic) {
-        return true;
-      }
-
+      if (isPublic) return true;
       throw new UnauthorizedException("x-dev-user-id header is required");
     }
 
@@ -79,20 +77,35 @@ export class DevAuthGuard implements CanActivate {
     const token = this.extractBearerToken(request.headers.authorization);
 
     if (token) {
-      request.user = await this.oidcAuth.authenticateBearerToken(token);
+      const principal = await this.oidcAuth.authenticatePrincipalToken(token);
+      if (principal.type === "ServiceIdentity") {
+        const tenantId = (request.params as { tenantId?: string }).tenantId;
+        if (!tenantId) {
+          throw new ForbiddenException(
+            "Service identities can access tenant-scoped endpoints only",
+          );
+        }
+        request.serviceIdentity = principal.serviceIdentity;
+        request.user = {
+          id: principal.serviceIdentity.id,
+          email: `service-identity+${principal.serviceIdentity.id}@resourceportal.invalid`,
+          displayName: principal.serviceIdentity.name,
+          status: UserStatus.Active,
+        };
+        return true;
+      }
+
+      request.user = principal.user;
       return true;
     }
 
     const sessionId = this.sessions.getSessionIdFromRequest(request);
-
     if (sessionId) {
       request.user = await this.sessions.authenticateSession(sessionId);
       return true;
     }
 
-    if (isPublic) {
-      return true;
-    }
+    if (isPublic) return true;
 
     throw new UnauthorizedException(
       "Authorization bearer token or session cookie is required",
@@ -100,26 +113,17 @@ export class DevAuthGuard implements CanActivate {
   }
 
   private extractBearerToken(header: string | undefined) {
-    if (!header) {
-      return undefined;
-    }
-
+    if (!header) return undefined;
     const [scheme, token] = header.split(" ");
-
-    if (scheme?.toLowerCase() !== "bearer" || !token) {
-      return undefined;
-    }
-
+    if (scheme?.toLowerCase() !== "bearer" || !token) return undefined;
     return token;
   }
 
   private getAuthMode() {
     const authMode = this.config.get<string>("AUTH_MODE", "dev").toLowerCase();
-
     if (authMode === "dev" || authMode === "oidc" || authMode === "zitadel") {
       return authMode === "zitadel" ? "oidc" : authMode;
     }
-
     throw new InternalServerErrorException(`Unsupported AUTH_MODE: ${authMode}`);
   }
 }

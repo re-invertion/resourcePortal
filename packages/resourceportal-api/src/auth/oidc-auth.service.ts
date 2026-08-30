@@ -3,7 +3,10 @@ import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import type { JWTPayload, JWTVerifyOptions } from "jose";
 import { PrismaService } from "../prisma/prisma.service";
-import { AuthenticatedUser } from "./types";
+import {
+  AuthenticatedServiceIdentity,
+  AuthenticatedUser,
+} from "./types";
 
 type JoseModule = typeof import("jose");
 type RemoteJWKSet = ReturnType<JoseModule["createRemoteJWKSet"]>;
@@ -15,6 +18,19 @@ export type OidcDiscovery = {
   tokenEndpoint: string;
   revocationEndpoint?: string;
   endSessionEndpoint?: string;
+};
+
+export type AuthenticatedPrincipal =
+  | { type: "User"; user: AuthenticatedUser }
+  | { type: "ServiceIdentity"; serviceIdentity: AuthenticatedServiceIdentity };
+
+type ServiceIdentityRecord = {
+  id: string;
+  tenantId: string;
+  name: string;
+  status: "Active" | "Suspended";
+  zitadelUserId: string;
+  clientId: string;
 };
 
 @Injectable()
@@ -32,28 +48,58 @@ export class OidcAuthService {
     token: string,
     identityProviderId?: string,
   ): Promise<AuthenticatedUser> {
+    const payload = await this.verifyToken(token);
+    return this.findOrProvisionUser(this.getIssuer(), payload, identityProviderId);
+  }
+
+  async authenticatePrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
+    const payload = await this.verifyToken(token);
+    const subject = this.requireStringClaim(payload.sub, "sub");
+    const serviceIdentity = await this.findServiceIdentity(subject);
+
+    if (serviceIdentity) {
+      if (serviceIdentity.status !== "Active") {
+        throw new UnauthorizedException("Service identity is suspended");
+      }
+      return {
+        type: "ServiceIdentity",
+        serviceIdentity,
+      };
+    }
+
+    return {
+      type: "User",
+      user: await this.findOrProvisionUser(this.getIssuer(), payload),
+    };
+  }
+
+  private async verifyToken(token: string) {
     const { jwtVerify } = await import("jose");
     const issuer = this.getIssuer();
     const jwks = await this.getJwks();
-    const verifyOptions: JWTVerifyOptions = {
-      issuer,
-    };
+    const verifyOptions: JWTVerifyOptions = { issuer };
     const audience = this.getAudience();
 
     if (audience.length > 0) {
       verifyOptions.audience = audience.length === 1 ? audience[0] : audience;
     }
 
-    let payload: JWTPayload;
-
     try {
       const result = await jwtVerify(token, jwks, verifyOptions);
-      payload = result.payload;
+      return result.payload;
     } catch {
       throw new UnauthorizedException("OIDC bearer token is invalid");
     }
+  }
 
-    return this.findOrProvisionUser(issuer, payload, identityProviderId);
+  private async findServiceIdentity(subject: string) {
+    const rows = await this.prisma.$queryRaw<ServiceIdentityRecord[]>`
+      SELECT "id", "tenantId", "name", "status", "zitadelUserId", "clientId"
+      FROM "ServiceIdentity"
+      WHERE "zitadelUserId" = ${subject}
+      LIMIT 1
+    `;
+    return rows[0];
   }
 
   private async findOrProvisionUser(
@@ -64,10 +110,7 @@ export class OidcAuthService {
     const subject = this.requireStringClaim(payload.sub, "sub");
     const email = this.getEmail(payload);
     const displayName = this.getDisplayName(payload, email);
-    const providerType = this.config.get<string>(
-      "OIDC_PROVIDER_TYPE",
-      "zitadel",
-    );
+    const providerType = this.config.get<string>("OIDC_PROVIDER_TYPE", "zitadel");
     const now = new Date();
 
     const existingIdentity = await this.prisma.userIdentity.findUnique({
@@ -77,51 +120,34 @@ export class OidcAuthService {
           externalSubject: subject,
         },
       },
-      include: {
-        user: true,
-      },
+      include: { user: true },
     });
 
     if (existingIdentity) {
       if (existingIdentity.user.email !== email) {
         const emailOwner = await this.prisma.user.findUnique({
-          where: {
-            email,
-          },
-          select: {
-            id: true,
-          },
+          where: { email },
+          select: { id: true },
         });
-
         if (emailOwner && emailOwner.id !== existingIdentity.userId) {
-          throw new UnauthorizedException(
-            "OIDC email belongs to another user",
-          );
+          throw new UnauthorizedException("OIDC email belongs to another user");
         }
       }
 
-      const user = await this.prisma.user.update({
-        where: {
-          id: existingIdentity.userId,
-        },
+      return this.prisma.user.update({
+        where: { id: existingIdentity.userId },
         data: {
           email,
           displayName,
           status: UserStatus.Active,
           identities: {
             update: {
-              where: {
-                id: existingIdentity.id,
-              },
+              where: { id: existingIdentity.id },
               data: {
                 email,
                 lastLoginAt: now,
                 ...(identityProviderId
-                  ? {
-                      identityProvider: {
-                        connect: { id: identityProviderId },
-                      },
-                    }
+                  ? { identityProvider: { connect: { id: identityProviderId } } }
                   : {}),
               },
             },
@@ -134,19 +160,12 @@ export class OidcAuthService {
           status: true,
         },
       });
-
-      return user;
     }
 
     const userByEmail = await this.prisma.user.findUnique({
-      where: {
-        email,
-      },
-      select: {
-        id: true,
-      },
+      where: { email },
+      select: { id: true },
     });
-
     if (userByEmail) {
       throw new UnauthorizedException(
         "OIDC identity is not linked to the existing user account",
@@ -170,11 +189,7 @@ export class OidcAuthService {
             email,
             lastLoginAt: now,
             ...(identityProviderId
-              ? {
-                  identityProvider: {
-                    connect: { id: identityProviderId },
-                  },
-                }
+              ? { identityProvider: { connect: { id: identityProviderId } } }
               : {}),
           },
         },
@@ -194,15 +209,11 @@ export class OidcAuthService {
       const discovery = await this.getDiscovery();
       this.jwks = createRemoteJWKSet(new URL(discovery.jwksUri));
     }
-
     return this.jwks;
   }
 
   async getDiscovery(): Promise<OidcDiscovery> {
-    if (this.discovery) {
-      return this.discovery;
-    }
-
+    if (this.discovery) return this.discovery;
     this.discoveryPromise ??= this.fetchDiscovery();
     this.discovery = await this.discoveryPromise;
     return this.discovery;
@@ -210,10 +221,7 @@ export class OidcAuthService {
 
   private async fetchDiscovery(): Promise<OidcDiscovery> {
     const issuer = this.getIssuer();
-    const response = await fetch(
-      `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
-    );
-
+    const response = await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
     if (!response.ok) {
       throw new UnauthorizedException("OIDC discovery document is unavailable");
     }
@@ -229,24 +237,14 @@ export class OidcAuthService {
     if (typeof discoveredIssuer === "string" && discoveredIssuer !== issuer) {
       throw new UnauthorizedException("OIDC issuer mismatch");
     }
-
     if (typeof jwksUri !== "string" || jwksUri.length === 0) {
       throw new UnauthorizedException("OIDC discovery document misses jwks_uri");
     }
-
-    if (
-      typeof authorizationEndpoint !== "string" ||
-      authorizationEndpoint.length === 0
-    ) {
-      throw new UnauthorizedException(
-        "OIDC discovery document misses authorization_endpoint",
-      );
+    if (typeof authorizationEndpoint !== "string" || authorizationEndpoint.length === 0) {
+      throw new UnauthorizedException("OIDC discovery document misses authorization_endpoint");
     }
-
     if (typeof tokenEndpoint !== "string" || tokenEndpoint.length === 0) {
-      throw new UnauthorizedException(
-        "OIDC discovery document misses token_endpoint",
-      );
+      throw new UnauthorizedException("OIDC discovery document misses token_endpoint");
     }
 
     return {
@@ -267,66 +265,45 @@ export class OidcAuthService {
 
   private getIssuer() {
     const issuer = this.config.get<string>("OIDC_ISSUER_URL");
-
-    if (!issuer) {
-      throw new UnauthorizedException("OIDC_ISSUER_URL is required");
-    }
-
+    if (!issuer) throw new UnauthorizedException("OIDC_ISSUER_URL is required");
     return issuer.replace(/\/$/, "");
   }
 
   private getAudience() {
     const audience = this.config.get<string>("OIDC_AUDIENCE");
     const clientId = this.config.get<string>("OIDC_CLIENT_ID");
-    const value = audience || clientId || "";
-
-    return value
-      .split(",")
+    const projectId = this.config.get<string>("ZITADEL_PROJECT_ID");
+    return [...new Set([...(audience || clientId || "").split(","), projectId ?? ""])]
       .map((item) => item.trim())
       .filter(Boolean);
   }
 
   private getEmail(payload: JWTPayload) {
     const email = payload.email;
-
     if (typeof email !== "string" || email.length === 0) {
       throw new UnauthorizedException("OIDC email claim is required");
     }
-
     return email.toLowerCase();
   }
 
   private getDisplayName(payload: JWTPayload, email: string) {
     const name = payload.name;
     const preferredUsername = payload.preferred_username;
-
-    if (typeof name === "string" && name.length > 0) {
-      return name;
-    }
-
-    if (
-      typeof preferredUsername === "string" &&
-      preferredUsername.length > 0
-    ) {
+    if (typeof name === "string" && name.length > 0) return name;
+    if (typeof preferredUsername === "string" && preferredUsername.length > 0) {
       return preferredUsername;
     }
-
     return email;
   }
 
   private isAutoProvisionEnabled() {
-    return (
-      this.config
-        .get<string>("OIDC_AUTO_PROVISION_USERS", "true")
-        .toLowerCase() !== "false"
-    );
+    return this.config.get<string>("OIDC_AUTO_PROVISION_USERS", "true").toLowerCase() !== "false";
   }
 
   private requireStringClaim(value: unknown, claimName: string) {
     if (typeof value !== "string" || value.length === 0) {
       throw new UnauthorizedException(`OIDC ${claimName} claim is required`);
     }
-
     return value;
   }
 }
