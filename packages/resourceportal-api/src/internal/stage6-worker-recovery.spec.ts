@@ -1,6 +1,6 @@
 import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
-import { DeploymentWorkerService } from "./deployment-worker.service";
+import { DeploymentRecoveryService } from "./deployment-recovery.service";
 
 describe("Stage 6 deployment worker recovery", () => {
   it("reclaims an expired rollback without converting it to a deploy", async () => {
@@ -69,19 +69,15 @@ describe("Stage 6 deployment worker recovery", () => {
         (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
       ),
     };
-    const service = Reflect.construct(DeploymentWorkerService, [
+    const recovery = Reflect.construct(DeploymentRecoveryService, [
       prisma,
       {},
       {},
       {},
       {},
-      {},
-      {},
-      {},
-      {},
-    ]) as DeploymentWorkerService;
+    ]) as DeploymentRecoveryService;
 
-    const claimed = await service.claimNextDeployment({
+    const claimed = await recovery.claimNextDeployment({
       workerId: "worker-b",
       leaseSeconds: 60,
     });
