@@ -133,12 +133,22 @@ export class AuditService {
       return "";
     }
 
-    const serialized =
-      value instanceof Date
-        ? value.toISOString()
-        : typeof value === "object"
-          ? JSON.stringify(value)
-          : String(value);
+    let serialized: string;
+    if (value instanceof Date) {
+      serialized = value.toISOString();
+    } else if (typeof value === "object") {
+      serialized = JSON.stringify(value);
+    } else if (typeof value === "string") {
+      serialized = value;
+    } else if (
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      typeof value === "bigint"
+    ) {
+      serialized = value.toString();
+    } else {
+      serialized = "";
+    }
 
     return /[",\r\n]/.test(serialized)
       ? `"${serialized.replaceAll('"', '""')}"`
