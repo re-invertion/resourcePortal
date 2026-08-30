@@ -211,27 +211,42 @@ model Tenant {
 }
 
 model TenantMembership {
-  id        String           @id @default(uuid()) @db.Uuid
-  userId    String           @db.Uuid
-  tenantId  String           @db.Uuid
-  status    MembershipStatus @default(Active)
-  createdBy String           @db.Uuid
-  createdAt DateTime         @default(now())
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  roles     MembershipRole[]
+  id               String              @id @default(uuid()) @db.Uuid
+  userId           String              @db.Uuid
+  tenantId         String              @db.Uuid
+  status           MembershipStatus    @default(Active)
+  createdBy        String              @db.Uuid
+  createdAt        DateTime            @default(now())
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles            MembershipRole[]
   groupMemberships TenantGroupMember[]
 
   @@unique([userId, tenantId])
 }
 
+model Permission {
+  id    String           @id
+  roles RolePermission[]
+}
+
 model Role {
   id                String                @id
   name              String
-  permissions       String[]
+  permissions       RolePermission[]
   memberships       MembershipRole[]
   groups            TenantGroupRole[]
   serviceIdentities ServiceIdentityRole[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
 }
 
 model MembershipRole {
@@ -244,36 +259,36 @@ model MembershipRole {
 }
 
 model TenantAuthPolicy {
-  tenantId                       String   @id @db.Uuid
-  allowPlatformLogin             Boolean  @default(true)
-  allowTenantIdentityProviders   Boolean  @default(true)
-  requireTenantIdentityProvider  Boolean  @default(false)
-  createdAt                      DateTime @default(now())
-  updatedAt                      DateTime @updatedAt
-  tenant                         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId                      String   @id @db.Uuid
+  allowPlatformLogin            Boolean  @default(true)
+  allowTenantIdentityProviders  Boolean  @default(true)
+  requireTenantIdentityProvider Boolean  @default(false)
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+  tenant                        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 model IdentityProvider {
-  id                         String                   @id @default(uuid()) @db.Uuid
-  scope                      IdentityProviderScope
-  tenantId                   String?                  @db.Uuid
-  name                       String
-  protocol                   IdentityProviderProtocol
-  zitadelIdentityProviderId  String?                  @unique
-  issuer                     String?
-  metadataUrl                String?
-  clientId                   String?
-  clientSecretCiphertext     String?
-  scopes                     String[]                 @default(["openid", "profile", "email"])
-  usePkce                    Boolean                  @default(true)
-  enabled                    Boolean                  @default(true)
-  provisionedAt              DateTime?
-  createdBy                  String                   @db.Uuid
-  updatedBy                  String
-  createdAt                  DateTime                 @default(now())
-  updatedAt                  DateTime                 @updatedAt
-  tenant                     Tenant?                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  identities                 UserIdentity[]
+  id                        String                   @id @default(uuid()) @db.Uuid
+  scope                     IdentityProviderScope
+  tenantId                  String?                  @db.Uuid
+  name                      String
+  protocol                  IdentityProviderProtocol
+  zitadelIdentityProviderId String?                  @unique
+  issuer                    String?
+  metadataUrl               String?
+  clientId                  String?
+  clientSecretCiphertext    String?
+  scopes                    String[]                 @default(["openid", "profile", "email"])
+  usePkce                   Boolean                  @default(true)
+  enabled                   Boolean                  @default(true)
+  provisionedAt             DateTime?
+  createdBy                 String                   @db.Uuid
+  updatedBy                 String
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  tenant                    Tenant?                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  identities                UserIdentity[]
 
   @@unique([tenantId, name])
   @@index([scope, enabled])
@@ -281,20 +296,20 @@ model IdentityProvider {
 }
 
 model OAuthApplication {
-  id                      String   @id @default(uuid()) @db.Uuid
-  tenantId                String?  @db.Uuid
-  name                    String
-  type                    String
-  redirectUris            Json     @default("[]")
-  postLogoutRedirectUris  Json     @default("[]")
-  zitadelApplicationId    String   @unique
-  clientId                String   @unique
-  clientSecretCiphertext  String?
-  createdBy               String   @db.Uuid
-  updatedBy               String   @db.Uuid
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  tenant                  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                     String   @id @default(uuid()) @db.Uuid
+  tenantId               String?  @db.Uuid
+  name                   String
+  type                   String
+  redirectUris           Json     @default("[]")
+  postLogoutRedirectUris Json     @default("[]")
+  zitadelApplicationId   String   @unique
+  clientId               String   @unique
+  clientSecretCiphertext String?
+  createdBy              String   @db.Uuid
+  updatedBy              String   @db.Uuid
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  tenant                 Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, name])
   @@index([tenantId, type])
@@ -473,7 +488,7 @@ model SingleApp {
   desiredReplicas        Int                  @default(1)
   pendingDeletion        Boolean              @default(false)
   runtimeState           RuntimeState         @default(Running)
-  actualReplicas         Int                  @default(0)
+  actualReplicas        Int                  @default(0)
   health                 HealthState          @default(Unknown)
   cpu                    Decimal              @db.Decimal(12, 4)
   memoryBytes            BigInt
@@ -622,19 +637,19 @@ model Domain {
 }
 
 model CustomRootDomain {
-  id                    String    @id @default(uuid()) @db.Uuid
-  tenantId              String    @db.Uuid
-  rootDomain            String    @unique
+  id                    String                             @id @default(uuid()) @db.Uuid
+  tenantId              String                             @db.Uuid
+  rootDomain            String                             @unique
   verificationStatus    CustomRootDomainVerificationStatus @default(Pending)
-  verificationMethod    String    @default("DNS_TXT")
+  verificationMethod    String                             @default("DNS_TXT")
   verificationToken     String
-  verificationCreatedAt DateTime  @default(now())
+  verificationCreatedAt DateTime                           @default(now())
   verifiedAt            DateTime?
-  createdBy             String    @db.Uuid
+  createdBy             String                             @db.Uuid
   updatedBy             String
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
+  tenant                Tenant                             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domains               Domain[]
 
   @@index([tenantId])
