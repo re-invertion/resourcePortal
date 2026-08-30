@@ -3,6 +3,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { IngressReconcilerService } from "./ingress-reconciler.service";
 import { StackRuntimeService } from "./stack-runtime.service";
 
+type ReconcileInput = {
+  serviceName: string;
+  desiredLabels: Record<string, string>;
+};
+
 function deployedAppGroup() {
   return {
     id: "11111111-1111-4111-8111-111111111111",
@@ -30,14 +35,11 @@ function serviceFor(appGroups: object[]) {
       findMany: vi.fn().mockResolvedValue(appGroups),
     },
   };
-  const runtime = {
-    reconcileTraefikLabels: vi.fn().mockResolvedValue({
-      changed: true,
-      success: true,
-    }),
-  };
+  const reconcileTraefikLabels = vi.fn((_input: ReconcileInput) =>
+    Promise.resolve({ changed: true, success: true }),
+  );
+  const runtime = { reconcileTraefikLabels };
   return {
-    prisma,
     runtime,
     service: new IngressReconcilerService(
       prisma as unknown as PrismaService,
@@ -52,14 +54,15 @@ describe("IngressReconcilerService", () => {
     const { runtime, service } = serviceFor([appGroup]);
 
     const result = await service.reconcileBatch();
+    const input = runtime.reconcileTraefikLabels.mock.calls[0]?.[0];
 
-    expect(runtime.reconcileTraefikLabels).toHaveBeenCalledWith({
-      serviceName: "rp_11111111_1111_4111_8111_111111111111_web_app",
-      desiredLabels: expect.objectContaining({
-        "traefik.http.routers.web-app-public-http.rule":
-          "Host(`app.example.com`)",
-        "traefik.http.routers.web-app-public-https.tls": "true",
-      }),
+    expect(input?.serviceName).toBe(
+      "rp_11111111_1111_4111_8111_111111111111_web_app",
+    );
+    expect(input?.desiredLabels).toMatchObject({
+      "traefik.http.routers.web-app-public-http.rule":
+        "Host(`app.example.com`)",
+      "traefik.http.routers.web-app-public-https.tls": "true",
     });
     expect(result).toEqual({ checked: 1, changed: 1, failed: 0 });
   });
@@ -71,7 +74,7 @@ describe("IngressReconcilerService", () => {
 
     await service.reconcileBatch();
 
-    expect(runtime.reconcileTraefikLabels).toHaveBeenCalledWith({
+    expect(runtime.reconcileTraefikLabels.mock.calls[0]?.[0]).toEqual({
       serviceName: "rp_11111111_1111_4111_8111_111111111111_web_app",
       desiredLabels: {},
     });
