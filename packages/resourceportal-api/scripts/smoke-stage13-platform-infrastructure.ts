@@ -50,6 +50,7 @@ async function main() {
   );
 
   let maintenanceEnabled = false;
+  let restoreApiError: Error | null = null;
   try {
     const enable = await request(
       `/platform/remote-locations/${remoteLocation.id}/maintenance`,
@@ -81,12 +82,17 @@ async function main() {
     );
   } finally {
     if (maintenanceEnabled) {
-      const disable = await request(
-        `/platform/remote-locations/${remoteLocation.id}/maintenance`,
-        "PATCH",
-        { enabled: false },
-      );
-      expectSuccess(disable, "disable Remote Location maintenance");
+      try {
+        const disable = await request(
+          `/platform/remote-locations/${remoteLocation.id}/maintenance`,
+          "PATCH",
+          { enabled: false },
+        );
+        expectSuccess(disable, "disable Remote Location maintenance");
+      } catch (error) {
+        restoreApiError =
+          error instanceof Error ? error : new Error("maintenance restore failed");
+      }
     }
 
     try {
@@ -120,6 +126,10 @@ async function main() {
   assert(!restored.maintenance, "Remote Location maintenance flag stayed enabled");
   assert(restored.availability === "Active", "Remote Location did not return to Active");
   assert(restored.health === "Healthy", "Remote Location did not return to Healthy");
+
+  if (restoreApiError) {
+    throw restoreApiError;
+  }
 
   console.log("Stage 13 platform infrastructure smoke passed");
 }
