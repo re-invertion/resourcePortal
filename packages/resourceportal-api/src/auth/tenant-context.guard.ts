@@ -51,7 +51,7 @@ export class TenantContextGuard implements CanActivate {
           include: {
             role: {
               include: {
-                permissions: { include: { permission: true } },
+                permissionBindings: { include: { permission: true } },
               },
             },
           },
@@ -64,7 +64,9 @@ export class TenantContextGuard implements CanActivate {
                   include: {
                     role: {
                       include: {
-                        permissions: { include: { permission: true } },
+                        permissionBindings: {
+                          include: { permission: true },
+                        },
                       },
                     },
                   },
@@ -83,11 +85,11 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set([
         ...membership.roles.flatMap(({ role }) =>
-          role.permissions.map(({ permission }) => permission.id),
+          role.permissionBindings.map(({ permission }) => permission.id),
         ),
         ...membership.groupMemberships.flatMap(({ group }) =>
           group.roles.flatMap(({ role }) =>
-            role.permissions.map(({ permission }) => permission.id),
+            role.permissionBindings.map(({ permission }) => permission.id),
           ),
         ),
       ]),
@@ -126,7 +128,7 @@ export class TenantContextGuard implements CanActivate {
       include: {
         role: {
           include: {
-            permissions: { include: { permission: true } },
+            permissionBindings: { include: { permission: true } },
           },
         },
       },
@@ -134,7 +136,7 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set(
         roleBindings.flatMap(({ role }) =>
-          role.permissions.map(({ permission }) => permission.id),
+          role.permissionBindings.map(({ permission }) => permission.id),
         ),
       ),
     ];
