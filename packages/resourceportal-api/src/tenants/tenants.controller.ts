@@ -19,6 +19,7 @@ import {
   RedeemVoucherDto,
   UsageHistoryQueryDto,
 } from "../billing/billing.dto";
+import { BillingReadService } from "../billing/billing-read.service";
 import { BillingService } from "../billing/billing.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
@@ -39,6 +40,7 @@ export class TenantsController {
   constructor(
     private readonly tenantsService: TenantsService,
     private readonly billingService: BillingService,
+    private readonly billingReadService: BillingReadService,
   ) {}
 
   @Get()
@@ -76,7 +78,7 @@ export class TenantsController {
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Query() query: BillingHistoryQueryDto,
   ) {
-    return this.billingService.listTransactions(tenantId, query);
+    return this.billingReadService.listTransactions(tenantId, query);
   }
 
   @RequirePermissions("billing.read")
@@ -85,7 +87,7 @@ export class TenantsController {
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Query() query: UsageHistoryQueryDto,
   ) {
-    return this.billingService.listUsageRecords(tenantId, query);
+    return this.billingReadService.listUsageRecords(tenantId, query);
   }
 
   @RequirePermissions("billing.read")
@@ -94,7 +96,7 @@ export class TenantsController {
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Query() query: UsageHistoryQueryDto,
   ) {
-    return this.billingService.usageSummary(tenantId, query);
+    return this.billingReadService.usageSummary(tenantId, query);
   }
 
   @RequirePermissions("billing.topup")
