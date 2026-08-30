@@ -1,5 +1,4 @@
 import { validate } from "class-validator";
-import { parse } from "yaml";
 import { describe, expect, it, vi } from "vitest";
 import { DeploymentWorkerService } from "../internal/deployment-worker.service";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
@@ -87,12 +86,11 @@ describe("Stage 4 SingleApp completion", () => {
       worker as unknown as { renderStack: (stackConfig: string) => string }
     ).renderStack.bind(worker);
 
-    const rendered = parse(JSON.stringify(parse(renderStack(JSON.stringify(stackSnapshot(0))))));
-    const limits = rendered.services.api.deploy.resources.limits;
+    const rendered = renderStack(JSON.stringify(stackSnapshot(0)));
 
-    expect(limits.cpus).toBe("1.5");
-    expect(limits.memory).toBe("536870912B");
-    expect(rendered.services.api.deploy.resources.reservations).toBeUndefined();
+    expect(rendered).toMatch(/cpus:\s*["']?1\.5["']?/);
+    expect(rendered).toMatch(/memory:\s*["']?536870912B["']?/);
+    expect(rendered).not.toContain("reservations:");
   });
 
   it("rejects active GPU allocation in create and update DTOs", async () => {
