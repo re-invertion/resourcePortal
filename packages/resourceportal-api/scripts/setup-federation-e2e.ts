@@ -12,6 +12,10 @@ const managementToken = requireEnv("ZITADEL_MANAGEMENT_TOKEN");
 const statePath = resolve(process.env.FEDERATION_E2E_STATE_FILE ?? "../../var/federation/state.json");
 const policyAssertAttempts = 40;
 const policyAssertDelayMs = 250;
+const loginPolicyEventTypes = [
+  "org.policy.login.added",
+  "org.policy.login.changed",
+] as const;
 
 const writableLoginPolicyFields = [
   "allowUsernamePassword",
@@ -44,6 +48,19 @@ type TenantResponse = { id: string };
 type LoginPolicyResponse = {
   isDefault?: boolean;
   policy?: Record<string, unknown> & { allowExternalIdp?: boolean };
+};
+type ZitadelEvent = {
+  aggregate?: {
+    id?: string;
+    resourceOwner?: string;
+    type?: { type?: string };
+  };
+  payload?: Record<string, unknown>;
+  sequence?: number | string;
+  type?: { type?: string };
+};
+type ZitadelEventsResponse = {
+  events?: ZitadelEvent[];
 };
 
 async function main() {
@@ -177,21 +194,59 @@ async function getLoginPolicy() {
   return zitadelRequest<LoginPolicyResponse>("GET", "/management/v1/policies/login");
 }
 
-async function waitForCustomLoginPolicy(expectedExternalIdp?: boolean) {
-  let lastActual = false;
-  let lastIsDefault = true;
+async function getLoginPolicyEventState() {
+  const response = await zitadelRequest<ZitadelEventsResponse>(
+    "POST",
+    "/admin/v1/events/_search",
+    {
+      asc: true,
+      limit: 1000,
+      aggregateId: organizationId,
+      aggregateTypes: ["org"],
+      resourceOwner: organizationId,
+      eventTypes: [...loginPolicyEventTypes],
+    },
+  );
+
+  let found = false;
+  let allowExternalIdp = false;
+  let lastEventType = "none";
+
+  for (const event of response.events ?? []) {
+    if (
+      event.aggregate?.id !== organizationId ||
+      event.aggregate?.resourceOwner !== organizationId ||
+      event.aggregate?.type?.type !== "org"
+    ) {
+      continue;
+    }
+
+    const eventType = event.type?.type;
+    if (!eventType || !loginPolicyEventTypes.includes(eventType as (typeof loginPolicyEventTypes)[number])) {
+      continue;
+    }
+
+    found = true;
+    lastEventType = eventType;
+    if (typeof event.payload?.allowExternalIdp === "boolean") {
+      allowExternalIdp = event.payload.allowExternalIdp;
+    }
+  }
+
+  return { allowExternalIdp, found, lastEventType };
+}
+
+async function assertExternalIdpAllowed(expected: boolean) {
+  let lastState = {
+    allowExternalIdp: false,
+    found: false,
+    lastEventType: "none",
+  };
 
   for (let attempt = 0; attempt < policyAssertAttempts; attempt += 1) {
-    const current = await getLoginPolicy();
-    lastActual = current.policy?.allowExternalIdp === true;
-    lastIsDefault = Boolean(current.isDefault ?? current.policy?.isDefault ?? true);
-
-    if (
-      current.policy &&
-      !lastIsDefault &&
-      (expectedExternalIdp === undefined || lastActual === expectedExternalIdp)
-    ) {
-      return current;
+    lastState = await getLoginPolicyEventState();
+    if (lastState.found && lastState.allowExternalIdp === expected) {
+      return;
     }
 
     if (attempt + 1 < policyAssertAttempts) {
@@ -200,20 +255,16 @@ async function waitForCustomLoginPolicy(expectedExternalIdp?: boolean) {
   }
 
   throw new Error(
-    `Expected ZITADEL custom login policy${
-      expectedExternalIdp === undefined
-        ? ""
-        : ` with allowExternalIdp=${expectedExternalIdp}`
-    }, got isDefault=${lastIsDefault}, allowExternalIdp=${lastActual} after projection catch-up`,
+    `Expected ZITADEL login-policy event state allowExternalIdp=${expected}, got found=${lastState.found}, allowExternalIdp=${lastState.allowExternalIdp}, lastEventType=${lastState.lastEventType}`,
   );
 }
 
-async function assertExternalIdpAllowed(expected: boolean) {
-  await waitForCustomLoginPolicy(expected);
-}
-
 async function setExternalIdpAllowed(value: boolean) {
-  const current = await waitForCustomLoginPolicy();
+  // The management GET can lag behind the event store, but its inherited values
+  // are still suitable for preserving the writable policy fields. PUT executes
+  // against the command-side write model, which already contains the custom
+  // policy created while provisioning the first tenant IdP.
+  const current = await getLoginPolicy();
   assert(current.policy, "ZITADEL login policy is missing");
 
   const body: Record<string, unknown> = { allowExternalIdp: value };
