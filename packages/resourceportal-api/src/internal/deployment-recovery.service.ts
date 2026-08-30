@@ -15,6 +15,8 @@ import {
 } from "../app-groups/runtime-drift";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { PrismaService } from "../prisma/prisma.service";
+import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
+import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { StackApplyService } from "./stack-apply.service";
 import { StackRolloutService } from "./stack-rollout.service";
@@ -37,6 +39,22 @@ type RollbackTarget = AppGroupDeployment & {
   stackConfig: string;
 };
 
+type RecoveryWorkerInternals = {
+  provisionArtifacts(
+    deploymentId: string,
+    workerId: string,
+  ): Promise<ReturnType<typeof mapAppGroupDeployment>>;
+  applyRenderedStack(
+    deploymentId: string,
+    workerId: string,
+  ): Promise<ReturnType<typeof mapAppGroupDeployment>>;
+  waitForRollout(
+    deploymentId: string,
+    workerId: string,
+  ): Promise<ReturnType<typeof mapAppGroupDeployment>>;
+  renderStack(stackConfig: string | null): string;
+};
+
 @Injectable()
 export class DeploymentRecoveryService {
   constructor(
@@ -47,11 +65,91 @@ export class DeploymentRecoveryService {
     private readonly stackRuntime: StackRuntimeService,
   ) {}
 
+  async claimNextDeployment(dto: ClaimDeploymentDto) {
+    const now = new Date();
+    const leaseExpiresAt = this.calculateLeaseExpiration(dto.leaseSeconds);
+    const recoverable = [
+      { status: DeploymentStatus.Pending },
+      {
+        status: DeploymentStatus.Deploying,
+        leaseExpiresAt: { lt: now },
+      },
+      {
+        status: DeploymentStatus.RollingBack,
+        leaseExpiresAt: { lt: now },
+      },
+    ];
+
+    const deployment = await this.prisma.$transaction(async (tx) => {
+      const candidate = await tx.appGroupDeployment.findFirst({
+        where: { OR: recoverable },
+        orderBy: { createdAt: "asc" },
+      });
+
+      if (!candidate) {
+        return null;
+      }
+
+      const nextStatus =
+        candidate.status === DeploymentStatus.Pending
+          ? DeploymentStatus.Deploying
+          : candidate.status;
+      const claimed = await tx.appGroupDeployment.updateMany({
+        where: {
+          id: candidate.id,
+          OR: recoverable,
+        },
+        data: {
+          status: nextStatus,
+          leaseOwner: dto.workerId,
+          leaseExpiresAt,
+          heartbeatAt: now,
+          startedAt: candidate.startedAt ?? now,
+        },
+      });
+
+      if (claimed.count !== 1) {
+        return null;
+      }
+
+      await this.createEvent(tx, candidate.id, {
+        phase: candidate.phase,
+        level: "Info",
+        message:
+          candidate.status === DeploymentStatus.Pending
+            ? `Deployment claimed by ${dto.workerId}`
+            : `Deployment lease recovered by ${dto.workerId} from ${candidate.status}/${candidate.phase}`,
+      });
+
+      return tx.appGroupDeployment.findUniqueOrThrow({
+        where: { id: candidate.id },
+      });
+    });
+
+    return deployment ? mapAppGroupDeployment(deployment) : null;
+  }
+
+  async heartbeatDeployment(
+    deploymentId: string,
+    dto: HeartbeatDeploymentDto,
+  ) {
+    await this.findClaimedDeployment(deploymentId, dto.workerId);
+    const updated = await this.prisma.appGroupDeployment.update({
+      where: { id: deploymentId },
+      data: {
+        heartbeatAt: new Date(),
+        leaseExpiresAt: this.calculateLeaseExpiration(dto.leaseSeconds),
+      },
+    });
+
+    return mapAppGroupDeployment(updated);
+  }
+
   async reconcileClaimedDeployment(deploymentId: string, workerId: string) {
     const deployment = await this.findClaimedDeployment(deploymentId, workerId);
 
     if (deployment.status === DeploymentStatus.RollingBack) {
-      return this.recoverRollback(deployment, workerId);
+      return this.recoverRollback(deployment);
     }
 
     switch (deployment.phase) {
@@ -61,10 +159,16 @@ export class DeploymentRecoveryService {
       case DeploymentPhase.Completed:
         return mapAppGroupDeployment(deployment);
       case DeploymentPhase.PreparingArtifacts:
-        await this.recordEvent(deployment.id, deployment.phase, "Info",
+        await this.recordEvent(
+          deployment.id,
+          deployment.phase,
+          "Info",
           "Worker recovery is replaying idempotent artifact provisioning",
         );
-        return this.worker.resumeArtifactProvisioning(deployment.id, workerId);
+        return this.workerInternals().provisionArtifacts(
+          deployment.id,
+          workerId,
+        );
       case DeploymentPhase.ApplyingStack:
         return this.reconcileApplyingStack(deployment, workerId);
       case DeploymentPhase.WaitingForRollout:
@@ -106,7 +210,10 @@ export class DeploymentRecoveryService {
       "Warning",
       "Worker recovery observed an incomplete stack apply; reconciling desired stack after inspection",
     );
-    return this.worker.resumeStackApply(deployment.id, workerId);
+    return this.workerInternals().applyRenderedStack(
+      deployment.id,
+      workerId,
+    );
   }
 
   private async reconcileWaitingForRollout(
@@ -130,7 +237,10 @@ export class DeploymentRecoveryService {
         "Warning",
         "Worker recovery observed runtime drift during rollout; reconciling desired stack after inspection",
       );
-      const applied = await this.worker.resumeStackApply(deployment.id, workerId);
+      const applied = await this.workerInternals().applyRenderedStack(
+        deployment.id,
+        workerId,
+      );
 
       if (this.isTerminalStatus(applied.status)) {
         return applied;
@@ -144,13 +254,10 @@ export class DeploymentRecoveryService {
       );
     }
 
-    return this.worker.resumeRollout(deployment.id, workerId);
+    return this.workerInternals().waitForRollout(deployment.id, workerId);
   }
 
-  private async recoverRollback(
-    deployment: AppGroupDeployment,
-    workerId: string,
-  ) {
+  private async recoverRollback(deployment: AppGroupDeployment) {
     if (deployment.rollbackTargetVersion === null) {
       return this.markRollbackFailed(
         deployment,
@@ -196,7 +303,7 @@ export class DeploymentRecoveryService {
         `Worker recovery observed an incomplete rollback to v${target.version}; reconciling rollback target after inspection`,
       );
       const renderedStack =
-        target.renderedStack ?? this.worker.renderStackForRecovery(target.stackConfig);
+        target.renderedStack ?? this.workerInternals().renderStack(target.stackConfig);
       const applyResult = await this.stackApply.applyStack({
         stackName,
         renderedStack,
@@ -470,6 +577,10 @@ export class DeploymentRecoveryService {
     });
   }
 
+  private workerInternals() {
+    return this.worker as unknown as RecoveryWorkerInternals;
+  }
+
   private parseSnapshot(stackConfig: string | null) {
     if (!stackConfig) {
       throw new ConflictException("Deployment has no stack config");
@@ -499,6 +610,10 @@ export class DeploymentRecoveryService {
       status === DeploymentStatus.RolledBack ||
       status === DeploymentStatus.RollbackFailed
     );
+  }
+
+  private calculateLeaseExpiration(leaseSeconds = 300) {
+    return new Date(Date.now() + leaseSeconds * 1000);
   }
 
   private stackName(appGroupId: string) {
