@@ -15,7 +15,8 @@
     "db:seed": "ts-node src/prisma/seed.ts",
     "zitadel:bootstrap": "ts-node --files scripts/bootstrap-zitadel.ts",
     "worker:deployments": "ts-node --files src/internal/deployment-worker.runner.ts",
-    "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts"
+    "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts",
+    "smoke:volume-lifecycle": "ts-node --files scripts/smoke-volume-lifecycle.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
