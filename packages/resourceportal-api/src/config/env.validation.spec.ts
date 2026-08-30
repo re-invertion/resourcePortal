@@ -13,21 +13,13 @@ describe("validateEnv", () => {
   });
 
   it("rejects unsupported auth modes", () => {
-    expect(() =>
-      validateEnv({
-        ...validBaseEnv,
-        AUTH_MODE: "unknown",
-      }),
-    ).toThrow("AUTH_MODE must be one of");
+    expect(() => validateEnv({ ...validBaseEnv, AUTH_MODE: "unknown" })).toThrow(
+      "AUTH_MODE must be one of",
+    );
   });
 
   it("requires OIDC settings when OIDC auth is enabled", () => {
-    expect(() =>
-      validateEnv({
-        ...validBaseEnv,
-        AUTH_MODE: "oidc",
-      }),
-    ).toThrow(
+    expect(() => validateEnv({ ...validBaseEnv, AUTH_MODE: "oidc" })).toThrow(
       "OIDC_ISSUER_URL is required; OIDC_CLIENT_ID is required; OIDC_AUDIENCE is required; AUTH_COOKIE_SECRET is required",
     );
   });
@@ -54,59 +46,47 @@ describe("validateEnv", () => {
       OIDC_CLIENT_ID: "resource-portal",
       OIDC_ISSUER_URL: "http://localhost:8080",
     };
-
     expect(validateEnv(env)).toBe(env);
   });
 
   it("accepts a safe Traefik certificate resolver name", () => {
-    const env = {
-      ...validBaseEnv,
-      TRAEFIK_CERT_RESOLVER: "letsencrypt-prod_1",
-    };
-
+    const env = { ...validBaseEnv, TRAEFIK_CERT_RESOLVER: "letsencrypt-prod_1" };
     expect(validateEnv(env)).toBe(env);
   });
 
   it("rejects malformed Traefik certificate resolver names", () => {
     expect(() =>
-      validateEnv({
-        ...validBaseEnv,
-        TRAEFIK_CERT_RESOLVER: "let's encrypt",
-      }),
+      validateEnv({ ...validBaseEnv, TRAEFIK_CERT_RESOLVER: "let's encrypt" }),
     ).toThrow(
       "TRAEFIK_CERT_RESOLVER must contain only letters, numbers, underscore, or hyphen",
     );
   });
 
-  it("accepts positive certificate observation and reconciliation timings", () => {
+  it("accepts positive stage 9 reconciliation timings", () => {
     const env = {
       ...validBaseEnv,
       TRAEFIK_TLS_OBSERVE_TIMEOUT_MS: "5000",
       DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS: "60000",
+      INGRESS_RECONCILE_INTERVAL_MS: "15000",
     };
-
     expect(validateEnv(env)).toBe(env);
   });
 
-  it("rejects non-positive certificate observation and reconciliation timings", () => {
+  it("rejects invalid stage 9 reconciliation timings", () => {
     expect(() =>
       validateEnv({
         ...validBaseEnv,
         TRAEFIK_TLS_OBSERVE_TIMEOUT_MS: "0",
         DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS: "invalid",
+        INGRESS_RECONCILE_INTERVAL_MS: "-1",
       }),
     ).toThrow(
-      "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS must be a positive integer; DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS must be a positive integer",
+      "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS must be a positive integer; DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS must be a positive integer; INGRESS_RECONCILE_INTERVAL_MS must be a positive integer",
     );
   });
 
   it("requires secure cookies and a non-default internal token in production", () => {
-    expect(() =>
-      validateEnv({
-        ...validBaseEnv,
-        NODE_ENV: "production",
-      }),
-    ).toThrow(
+    expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
       "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
   });
@@ -120,7 +100,6 @@ describe("validateEnv", () => {
       RESOURCE_ENCRYPTION_KEY:
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     };
-
     expect(validateEnv(env)).toBe(env);
   });
 });
