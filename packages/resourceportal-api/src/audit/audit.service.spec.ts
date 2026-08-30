@@ -12,13 +12,13 @@ function entry(id: string, timestamp: Date) {
     actorName: "User",
     action: "appgroup.update",
     resourceType: "AppGroup",
-    resourceId: null,
+    resourceId: "55555555-5555-4555-8555-555555555555",
     resourceName: "app",
     result: "Success",
     errorCode: null,
     errorMessage: null,
-    requestId: null,
-    correlationId: null,
+    requestId: "req-1",
+    correlationId: "66666666-6666-4666-8666-666666666666",
     ipAddress: null,
     userAgent: null,
     changes: null,
@@ -45,7 +45,10 @@ describe("AuditService.listAuditLog", () => {
       action: "appgroup.update",
       actor: "user-1",
       resourceType: "AppGroup",
+      resourceId: first.resourceId,
       result: "Success",
+      requestId: "req-1",
+      correlationId: first.correlationId,
       from: "2026-08-29T00:00:00.000Z",
       to: "2026-08-30T00:00:00.000Z",
     });
@@ -58,7 +61,10 @@ describe("AuditService.listAuditLog", () => {
         action: "appgroup.update",
         actor: "user-1",
         resourceType: "AppGroup",
+        resourceId: first.resourceId,
         result: "Success",
+        requestId: "req-1",
+        correlationId: first.correlationId,
         timestamp: {
           gte: new Date("2026-08-29T00:00:00.000Z"),
           lte: new Date("2026-08-30T00:00:00.000Z"),
@@ -114,5 +120,84 @@ describe("AuditService.listAuditLog", () => {
       }),
     ).rejects.toThrow("Audit log 'from' must not be after 'to'");
     expect(prisma.auditLogEntry.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuditService.exportAuditLog", () => {
+  it("exports the complete filtered result set as JSON without list pagination", async () => {
+    const auditEntry = entry(
+      "22222222-2222-4222-8222-222222222222",
+      new Date("2026-08-29T12:00:00Z"),
+    );
+    type FindManyInput = {
+      where: Record<string, unknown>;
+      orderBy: unknown;
+      take?: number;
+    };
+    const findMany = vi.fn((input: FindManyInput) => {
+      void input;
+      return Promise.resolve([auditEntry]);
+    });
+    const prisma = {
+      tenant: {
+        findUnique: vi.fn().mockResolvedValue({ id: auditEntry.tenantId }),
+      },
+      auditLogEntry: { findMany },
+    };
+    const service = new AuditService(prisma as unknown as PrismaService);
+
+    const exported = await service.exportAuditLog(auditEntry.tenantId, {
+      format: "json",
+      resourceId: auditEntry.resourceId,
+      correlationId: auditEntry.correlationId,
+      requestId: auditEntry.requestId ?? undefined,
+    });
+    const parsedBody = JSON.parse(exported.body) as unknown;
+
+    expect(exported.contentType).toBe("application/json; charset=utf-8");
+    expect(exported.fileName).toBe(`audit-log-${auditEntry.tenantId}.json`);
+    expect(parsedBody).toEqual([
+      {
+        ...auditEntry,
+        timestamp: auditEntry.timestamp.toISOString(),
+      },
+    ]);
+    expect(findMany.mock.calls[0]?.[0]?.where).toMatchObject({
+      tenantId: auditEntry.tenantId,
+      resourceId: auditEntry.resourceId,
+      correlationId: auditEntry.correlationId,
+      requestId: auditEntry.requestId,
+    });
+    expect(findMany.mock.calls[0]?.[0]?.take).toBeUndefined();
+  });
+
+  it("escapes CSV cells and serializes changes as JSON", async () => {
+    const auditEntry = {
+      ...entry(
+        "22222222-2222-4222-8222-222222222222",
+        new Date("2026-08-29T12:00:00Z"),
+      ),
+      resourceName: 'api, "primary"',
+      changes: { before: "old", after: "new" },
+    };
+    const prisma = {
+      tenant: {
+        findUnique: vi.fn().mockResolvedValue({ id: auditEntry.tenantId }),
+      },
+      auditLogEntry: {
+        findMany: vi.fn().mockResolvedValue([auditEntry]),
+      },
+    };
+    const service = new AuditService(prisma as unknown as PrismaService);
+
+    const exported = await service.exportAuditLog(auditEntry.tenantId, {
+      format: "csv",
+    });
+
+    expect(exported.contentType).toBe("text/csv; charset=utf-8");
+    expect(exported.fileName).toBe(`audit-log-${auditEntry.tenantId}.csv`);
+    expect(exported.body).toContain("tenantId,tenantName,timestamp,actor,actorName,action");
+    expect(exported.body).toContain('"api, ""primary"""');
+    expect(exported.body).toContain('"{""before"":""old"",""after"":""new""}"');
   });
 });

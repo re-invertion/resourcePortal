@@ -3,6 +3,7 @@ import { AuthModule } from "../auth/auth.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
 import { AuthSessionMaintenanceController } from "./auth-session-maintenance.controller";
+import { DeploymentAuditService } from "./deployment-audit.service";
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
@@ -23,6 +24,7 @@ import { TraefikCertificateObserverService } from "./traefik-certificate-observe
   imports: [AuthModule, PrismaModule, SecurityModule],
   controllers: [AuthSessionMaintenanceController, DeploymentWorkerController],
   providers: [
+    DeploymentAuditService,
     DeploymentRecoveryService,
     DeploymentWorkerService,
     DomainCertificateReconcilerService,
