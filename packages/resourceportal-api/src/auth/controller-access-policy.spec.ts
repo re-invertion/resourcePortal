@@ -18,6 +18,7 @@ import { InternalAuthGuard } from "../internal/internal-auth.guard";
 import { ObservabilityController } from "../observability/observability.controller";
 import { OAuthApplicationsController } from "../oauth-applications/oauth-applications.controller";
 import { PlatformOAuthApplicationsController } from "../oauth-applications/platform-oauth-applications.controller";
+import { PlatformInfrastructureController } from "../platform-infrastructure/platform-infrastructure.controller";
 import { RegistriesController } from "../registries/registries.controller";
 import { PlatformServiceIdentitiesController } from "../service-identities/platform-service-identities.controller";
 import { ServiceIdentitiesController } from "../service-identities/service-identities.controller";
@@ -47,6 +48,7 @@ const controllers = [
   ObservabilityController,
   OAuthApplicationsController,
   PlatformIdentityProvidersController,
+  PlatformInfrastructureController,
   PlatformOAuthApplicationsController,
   PlatformServiceIdentitiesController,
   RegistriesController,
