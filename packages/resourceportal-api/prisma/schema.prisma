@@ -231,12 +231,13 @@ model Permission {
 }
 
 model Role {
-  id                String                @id
-  name              String
-  permissions       RolePermission[]
-  memberships       MembershipRole[]
-  groups            TenantGroupRole[]
-  serviceIdentities ServiceIdentityRole[]
+  id                 String                @id
+  name               String
+  permissions        String[]
+  permissionBindings RolePermission[]
+  memberships        MembershipRole[]
+  groups             TenantGroupRole[]
+  serviceIdentities  ServiceIdentityRole[]
 }
 
 model RolePermission {
@@ -488,7 +489,7 @@ model SingleApp {
   desiredReplicas        Int                  @default(1)
   pendingDeletion        Boolean              @default(false)
   runtimeState           RuntimeState         @default(Running)
-  actualReplicas        Int                  @default(0)
+  actualReplicas         Int                  @default(0)
   health                 HealthState          @default(Unknown)
   cpu                    Decimal              @db.Decimal(12, 4)
   memoryBytes            BigInt
