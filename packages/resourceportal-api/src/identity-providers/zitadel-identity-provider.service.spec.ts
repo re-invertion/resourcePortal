@@ -54,6 +54,8 @@ function service() {
       OIDC_ISSUER_URL: "https://identity.example.com",
       ZITADEL_MANAGEMENT_TOKEN: "management-token",
       ZITADEL_ORGANIZATION_ID: "zitadel-org-1",
+      ZITADEL_POLICY_VERIFY_ATTEMPTS: "3",
+      ZITADEL_POLICY_VERIFY_DELAY_MS: "0",
     }),
   );
 }
@@ -186,6 +188,43 @@ describe("ZitadelIdentityProviderService", () => {
         url: "https://identity.example.com/management/v1/policies/login/idps",
       },
     ]);
+  });
+
+  it("retries verification while the ZITADEL login-policy projection is stale", async () => {
+    const requests = installFetch([
+      {
+        body: {
+          isDefault: true,
+          policy: {
+            allowUsernamePassword: true,
+            allowRegister: false,
+            allowExternalIdp: false,
+          },
+        },
+      },
+      {},
+      {
+        body: {
+          isDefault: true,
+          policy: { allowExternalIdp: false, isDefault: true },
+        },
+      },
+      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
+      {},
+    ]);
+
+    await service().setEnabled("zitadel-idp-1", true);
+
+    expect(
+      requests.filter(
+        ({ method, url }) =>
+          method === "GET" && url.endsWith("/management/v1/policies/login"),
+      ),
+    ).toHaveLength(3);
+    expect(requests.at(-1)).toMatchObject({
+      method: "POST",
+      url: "https://identity.example.com/management/v1/policies/login/idps",
+    });
   });
 
   it("updates an existing custom login policy before enabling an IdP", async () => {
@@ -346,6 +385,8 @@ describe("ZitadelIdentityProviderService", () => {
         },
       },
       {},
+      { body: { isDefault: false, policy: { allowExternalIdp: false } } },
+      { body: { isDefault: false, policy: { allowExternalIdp: false } } },
       { body: { isDefault: false, policy: { allowExternalIdp: false } } },
       {},
     ]);
