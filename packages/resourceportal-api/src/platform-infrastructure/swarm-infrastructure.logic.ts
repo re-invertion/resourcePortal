@@ -13,6 +13,12 @@ export type InfrastructureHealth =
   | "Unhealthy"
   | "Unknown";
 
+export type ExistingRemoteLocation = {
+  id: string;
+  swarmNodeId: string;
+  status: RemoteLocationStatus;
+};
+
 export function deriveRemoteLocationHealth(
   status: RemoteLocationStatus,
   availability: RemoteLocationAvailability,
@@ -68,4 +74,35 @@ export function parseNodeCapabilities(labels: Record<string, string>) {
   ).sort();
 
   return { gpuCount, networkCapabilities };
+}
+
+export function planInventoryReconciliation(
+  existing: ExistingRemoteLocation[],
+  observed: Array<{ swarmNodeId: string }>,
+) {
+  const existingByNodeId = new Map(
+    existing.map((remoteLocation) => [remoteLocation.swarmNodeId, remoteLocation]),
+  );
+  const observedNodeIds = new Set(observed.map((node) => node.swarmNodeId));
+
+  return {
+    observations: observed.map((node) => {
+      const current = existingByNodeId.get(node.swarmNodeId);
+      return {
+        swarmNodeId: node.swarmNodeId,
+        remoteLocationId: current?.id ?? null,
+        discovered: !current,
+      };
+    }),
+    removed: existing
+      .filter(
+        (remoteLocation) =>
+          remoteLocation.status !== "Removed" &&
+          !observedNodeIds.has(remoteLocation.swarmNodeId),
+      )
+      .map((remoteLocation) => ({
+        id: remoteLocation.id,
+        swarmNodeId: remoteLocation.swarmNodeId,
+      })),
+  };
 }
