@@ -7,12 +7,20 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UnauthorizedException,
 } from "@nestjs/common";
 import { Authenticated } from "../auth/authenticated.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
+import {
+  BillingHistoryQueryDto,
+  RedeemVoucherDto,
+  UsageHistoryQueryDto,
+} from "../billing/billing.dto";
+import { BillingReadService } from "../billing/billing-read.service";
+import { BillingService } from "../billing/billing.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
 import { AssignTenantGroupRoleDto } from "./dto/assign-tenant-group-role.dto";
@@ -29,7 +37,11 @@ import { TenantsService } from "./tenants.service";
 
 @Controller("tenants")
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    private readonly billingService: BillingService,
+    private readonly billingReadService: BillingReadService,
+  ) {}
 
   @Get()
   listTenants(@CurrentUser() user: AuthenticatedUser) {
@@ -57,19 +69,44 @@ export class TenantsController {
   @RequirePermissions("billing.read")
   @Get(":tenantId/billing")
   getBilling(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
-    return this.tenantsService.getBilling(tenantId);
+    return this.billingService.getAccount(tenantId);
   }
 
   @RequirePermissions("billing.read")
   @Get(":tenantId/billing/transactions")
-  listBillingTransactions(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
-    return this.tenantsService.listBillingTransactions(tenantId);
+  listBillingTransactions(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Query() query: BillingHistoryQueryDto,
+  ) {
+    return this.billingReadService.listTransactions(tenantId, query);
   }
 
   @RequirePermissions("billing.read")
   @Get(":tenantId/billing/usage-records")
-  listUsageRecords(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
-    return this.tenantsService.listUsageRecords(tenantId);
+  listUsageRecords(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Query() query: UsageHistoryQueryDto,
+  ) {
+    return this.billingReadService.listUsageRecords(tenantId, query);
+  }
+
+  @RequirePermissions("billing.read")
+  @Get(":tenantId/billing/usage-summary")
+  usageSummary(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Query() query: UsageHistoryQueryDto,
+  ) {
+    return this.billingReadService.usageSummary(tenantId, query);
+  }
+
+  @RequirePermissions("billing.topup")
+  @Post(":tenantId/billing/vouchers/redeem")
+  redeemVoucher(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: RedeemVoucherDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.billingService.redeemVoucher(tenantId, dto.code, user);
   }
 
   @RequirePermissions("billing.topup")
@@ -79,7 +116,7 @@ export class TenantsController {
     @Body() dto: TopUpBillingDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.tenantsService.topUpBilling(tenantId, dto, user);
+    return this.billingService.topUp(tenantId, dto.amount, dto.reference, user);
   }
 
   @RequirePermissions("tenant.read")
