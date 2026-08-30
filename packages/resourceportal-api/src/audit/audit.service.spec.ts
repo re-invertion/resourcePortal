@@ -134,9 +134,10 @@ describe("AuditService.exportAuditLog", () => {
       orderBy: unknown;
       take?: number;
     };
-    const findMany = vi.fn((_input: FindManyInput) =>
-      Promise.resolve([auditEntry]),
-    );
+    const findMany = vi.fn((input: FindManyInput) => {
+      void input;
+      return Promise.resolve([auditEntry]);
+    });
     const prisma = {
       tenant: {
         findUnique: vi.fn().mockResolvedValue({ id: auditEntry.tenantId }),
