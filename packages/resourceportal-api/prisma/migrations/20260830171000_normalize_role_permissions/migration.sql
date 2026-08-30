@@ -33,4 +33,4 @@ ALTER TABLE "RolePermission"
 ADD CONSTRAINT "RolePermission_permissionId_fkey"
 FOREIGN KEY ("permissionId") REFERENCES "Permission"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
-ALTER TABLE "Role" DROP COLUMN "permissions";
+-- Keep Role.permissions as a read/API compatibility projection. Authorization uses RolePermission.
