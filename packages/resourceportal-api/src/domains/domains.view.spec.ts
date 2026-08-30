@@ -40,8 +40,12 @@ function domain(protocolMode?: string) {
 }
 
 describe("mapDomain TLS semantics", () => {
-  it("reports TLS disabled for an HTTP endpoint even when persisted metadata is true", () => {
-    expect(mapDomain(domain("HTTP")).tlsEnabled).toBe(false);
+  it("reports TLS disabled and clears stale certificate metadata for HTTP", () => {
+    const result = mapDomain(domain("HTTP"));
+
+    expect(result.tlsEnabled).toBe(false);
+    expect(result.certificateStatus).toBe("Pending");
+    expect(result.certificateExpiresAt).toBeNull();
   });
 
   it("reports TLS enabled for every TLS-requiring protocol mode", () => {
@@ -50,7 +54,11 @@ describe("mapDomain TLS semantics", () => {
     expect(mapDomain(domain("HTTP_REDIRECT_TO_HTTPS")).tlsEnabled).toBe(true);
   });
 
-  it("reports TLS disabled for an unassigned domain", () => {
-    expect(mapDomain(domain()).tlsEnabled).toBe(false);
+  it("reports TLS disabled and clears stale certificate metadata when unassigned", () => {
+    const result = mapDomain(domain());
+
+    expect(result.tlsEnabled).toBe(false);
+    expect(result.certificateStatus).toBe("Pending");
+    expect(result.certificateExpiresAt).toBeNull();
   });
 });
