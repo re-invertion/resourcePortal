@@ -7,6 +7,7 @@ import { AppModule } from "../app.module";
 import { ObservabilityService } from "../observability/observability.service";
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
+import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 
 const logger = new Logger("DeploymentWorkerRunner");
@@ -209,6 +210,7 @@ async function main() {
   const config = app.get(ConfigService);
   const recovery = app.get(DeploymentRecoveryService);
   const worker = app.get(DeploymentWorkerService);
+  const certificateReconciler = app.get(DomainCertificateReconcilerService);
   const driftReconciler = app.get(RuntimeDriftReconcilerService);
   const metrics = app.get(ObservabilityService);
   const workerId = config.get<string>("WORKER_ID") ?? "local-worker";
@@ -216,6 +218,12 @@ async function main() {
   const driftScanIntervalMs = readInt(
     config,
     "DRIFT_SCAN_INTERVAL_MS",
+    60000,
+    5000,
+  );
+  const certificateReconcileIntervalMs = readInt(
+    config,
+    "DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS",
     60000,
     5000,
   );
@@ -227,6 +235,7 @@ async function main() {
     Math.floor((leaseSeconds * 1000) / 3),
   );
   let stopping = false;
+  let nextCertificateReconcileAt = 0;
   let nextDriftScanAt = 0;
 
   const metricsServer = createServer((request, response) => {
@@ -263,6 +272,7 @@ async function main() {
   try {
     metrics.recordWorkerEvent("started", workerId);
     logWorkerEvent("log", "worker.started", {
+      certificateReconcileIntervalMs,
       driftScanIntervalMs,
       leaseSeconds,
       metricsPort,
@@ -272,6 +282,24 @@ async function main() {
     });
 
     while (!stopping) {
+      if (Date.now() >= nextCertificateReconcileAt) {
+        try {
+          const reconciliation = await certificateReconciler.reconcileBatch();
+          logWorkerEvent("log", "domain.certificate.reconciled", {
+            ...reconciliation,
+            workerId,
+          });
+        } catch (error: unknown) {
+          logWorkerEvent("warn", "domain.certificate.reconciliation_failed", {
+            error: errorMessage(error),
+            workerId,
+          });
+        } finally {
+          nextCertificateReconcileAt =
+            Date.now() + certificateReconcileIntervalMs;
+        }
+      }
+
       if (Date.now() >= nextDriftScanAt) {
         try {
           const reconciliation = await driftReconciler.reconcileBatch();
