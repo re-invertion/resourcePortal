@@ -54,10 +54,18 @@ function service() {
       OIDC_ISSUER_URL: "https://identity.example.com",
       ZITADEL_MANAGEMENT_TOKEN: "management-token",
       ZITADEL_ORGANIZATION_ID: "zitadel-org-1",
-      ZITADEL_POLICY_VERIFY_ATTEMPTS: "3",
-      ZITADEL_POLICY_VERIFY_DELAY_MS: "0",
     }),
   );
+}
+
+function policyMutationResponse(resourceOwner = "zitadel-org-1") {
+  return {
+    body: {
+      details: {
+        resourceOwner,
+      },
+    },
+  };
 }
 
 describe("ZitadelIdentityProviderService", () => {
@@ -78,8 +86,7 @@ describe("ZitadelIdentityProviderService", () => {
           },
         },
       },
-      {},
-      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
+      policyMutationResponse(),
       {},
     ]);
 
@@ -128,10 +135,6 @@ describe("ZitadelIdentityProviderService", () => {
         },
       },
       {
-        method: "GET",
-        url: "https://identity.example.com/management/v1/policies/login",
-      },
-      {
         method: "POST",
         url: "https://identity.example.com/management/v1/policies/login/idps",
         body: {
@@ -156,8 +159,7 @@ describe("ZitadelIdentityProviderService", () => {
           },
         },
       },
-      {},
-      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
+      policyMutationResponse(),
       {},
     ]);
 
@@ -180,51 +182,10 @@ describe("ZitadelIdentityProviderService", () => {
         },
       },
       {
-        method: "GET",
-        url: "https://identity.example.com/management/v1/policies/login",
-      },
-      {
         method: "POST",
         url: "https://identity.example.com/management/v1/policies/login/idps",
       },
     ]);
-  });
-
-  it("retries verification while the ZITADEL login-policy projection is stale", async () => {
-    const requests = installFetch([
-      {
-        body: {
-          isDefault: true,
-          policy: {
-            allowUsernamePassword: true,
-            allowRegister: false,
-            allowExternalIdp: false,
-          },
-        },
-      },
-      {},
-      {
-        body: {
-          isDefault: true,
-          policy: { allowExternalIdp: false, isDefault: true },
-        },
-      },
-      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
-      {},
-    ]);
-
-    await service().setEnabled("zitadel-idp-1", true);
-
-    expect(
-      requests.filter(
-        ({ method, url }) =>
-          method === "GET" && url.endsWith("/management/v1/policies/login"),
-      ),
-    ).toHaveLength(3);
-    expect(requests.at(-1)).toMatchObject({
-      method: "POST",
-      url: "https://identity.example.com/management/v1/policies/login/idps",
-    });
   });
 
   it("updates an existing custom login policy before enabling an IdP", async () => {
@@ -240,8 +201,7 @@ describe("ZitadelIdentityProviderService", () => {
           },
         },
       },
-      {},
-      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
+      policyMutationResponse(),
       {},
     ]);
 
@@ -260,10 +220,6 @@ describe("ZitadelIdentityProviderService", () => {
           allowRegister: false,
           allowExternalIdp: true,
         },
-      },
-      {
-        method: "GET",
-        url: "https://identity.example.com/management/v1/policies/login",
       },
       {
         method: "POST",
@@ -290,6 +246,74 @@ describe("ZitadelIdentityProviderService", () => {
         url: "https://identity.example.com/management/v1/policies/login/idps",
       },
     ]);
+  });
+
+  it("rejects a login-policy mutation acknowledged for another organization", async () => {
+    const requests = installFetch([
+      { body: { id: "zitadel-idp-1" } },
+      {
+        body: {
+          isDefault: false,
+          policy: { allowExternalIdp: false, isDefault: false },
+        },
+      },
+      policyMutationResponse("unexpected-org"),
+      {},
+    ]);
+
+    await expect(
+      service().provision({
+        clientId: "client-1",
+        clientSecret: "secret-1",
+        enabled: true,
+        issuer: "https://external.example.com",
+        name: "External OIDC",
+        protocol: IdentityProviderProtocol.OIDC,
+        scopes: ["openid"],
+        usePkce: true,
+      }),
+    ).rejects.toThrow(
+      "ZITADEL login policy mutation targeted an unexpected organization",
+    );
+
+    expect(requests.at(-1)).toMatchObject({
+      method: "DELETE",
+      url: "https://identity.example.com/management/v1/idps/templates/zitadel-idp-1",
+    });
+  });
+
+  it("rejects a login-policy mutation without an authoritative resource owner", async () => {
+    const requests = installFetch([
+      { body: { id: "zitadel-idp-1" } },
+      {
+        body: {
+          isDefault: true,
+          policy: { allowExternalIdp: false, isDefault: true },
+        },
+      },
+      { body: { details: {} } },
+      {},
+    ]);
+
+    await expect(
+      service().provision({
+        clientId: "client-1",
+        clientSecret: "secret-1",
+        enabled: true,
+        issuer: "https://external.example.com",
+        name: "External OIDC",
+        protocol: IdentityProviderProtocol.OIDC,
+        scopes: ["openid"],
+        usePkce: true,
+      }),
+    ).rejects.toThrow(
+      "ZITADEL login policy mutation did not return a resource owner",
+    );
+
+    expect(requests.at(-1)).toMatchObject({
+      method: "DELETE",
+      url: "https://identity.example.com/management/v1/idps/templates/zitadel-idp-1",
+    });
   });
 
   it("updates SAML metadata and removes the provider idempotently", async () => {
@@ -367,43 +391,6 @@ describe("ZitadelIdentityProviderService", () => {
       }),
     ).rejects.toThrow(
       "ZITADEL identity provider request failed with HTTP 500",
-    );
-
-    expect(requests.at(-1)).toMatchObject({
-      method: "DELETE",
-      url: "https://identity.example.com/management/v1/idps/templates/zitadel-idp-1",
-    });
-  });
-
-  it("fails when ZITADEL does not persist allowExternalIdp", async () => {
-    const requests = installFetch([
-      { body: { id: "zitadel-idp-1" } },
-      {
-        body: {
-          isDefault: false,
-          policy: { allowExternalIdp: false, isDefault: false },
-        },
-      },
-      {},
-      { body: { isDefault: false, policy: { allowExternalIdp: false } } },
-      { body: { isDefault: false, policy: { allowExternalIdp: false } } },
-      { body: { isDefault: false, policy: { allowExternalIdp: false } } },
-      {},
-    ]);
-
-    await expect(
-      service().provision({
-        clientId: "client-1",
-        clientSecret: "secret-1",
-        enabled: true,
-        issuer: "https://external.example.com",
-        name: "External OIDC",
-        protocol: IdentityProviderProtocol.OIDC,
-        scopes: ["openid"],
-        usePkce: true,
-      }),
-    ).rejects.toThrow(
-      "ZITADEL login policy did not enable external identity providers",
     );
 
     expect(requests.at(-1)).toMatchObject({
