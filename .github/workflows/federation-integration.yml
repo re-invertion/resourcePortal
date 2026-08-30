@@ -30,13 +30,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate Prisma client
-        run: npm run api:prisma:generate
-
       - name: Install Playwright for live browser login
         run: |
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
+
+      - name: Generate Prisma client
+        run: npm run api:prisma:generate
 
       - name: Start ZITADEL and Keycloak
         run: bash scripts/run-federation-e2e.sh services
