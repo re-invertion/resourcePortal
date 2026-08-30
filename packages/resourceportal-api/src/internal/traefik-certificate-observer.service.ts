@@ -84,7 +84,7 @@ export class TraefikCertificateObserverService {
           error: new Error(`TLS observation timed out for ${hostname}`),
         });
       });
-      socket.once("error", (error) => {
+      socket.once("error", (error: Error) => {
         finish({ ok: false, error });
       });
     });
