@@ -33,6 +33,15 @@ HTTPClient:
     - "fc00::/7"
     - "fe80::/10"
 
+DefaultInstance:
+  Features:
+    # Login V2 is a separate frontend in ZITADEL v4.17 and is not included in
+    # the single server container used by this isolated integration stack.
+    # Use ZITADEL's built-in legacy login UI so the real OIDC/SAML federation
+    # protocol flow can be exercised in Chromium.
+    LoginV2:
+      Required: false
+
 Database:
   postgres:
     Host: localhost
