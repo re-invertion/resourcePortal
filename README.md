@@ -51,3 +51,29 @@ packages/resourceportal-api/README.md
 packages/resourceportal-sdk/README.md
 packages/resourceportal-cli/README.md
 ```
+
+## Control-plane backup
+
+`npm run backup:control-plane` creates a PostgreSQL dump, an optional config
+archive, and an archive of the encrypted AppGroup Secret store. Every artifact
+is covered by `manifest.sha256`; plaintext Secret values are never exported.
+Pause API writes and deployment workers for the duration of backup so the
+database snapshot and NFS archive describe the same point in time.
+
+```bash
+DATABASE_URL=postgresql://... \
+RESOURCE_SECRET_STORAGE_ROOT=/rp/secrets \
+RESOURCE_PORTAL_BACKUP_DIR=/srv/resource-portal-backups \
+npm run backup:control-plane
+```
+
+Restore requires an explicit destructive-operation confirmation. When present,
+`secrets.tar.gz` is restored into `RESOURCE_SECRET_STORAGE_ROOT` together with
+the database state.
+
+```bash
+DATABASE_URL=postgresql://... \
+RESOURCE_SECRET_STORAGE_ROOT=/rp/secrets \
+RESOURCE_PORTAL_RESTORE_CONFIRM=resource-portal \
+npm run restore:control-plane -- /srv/resource-portal-backups/resource-portal-TIMESTAMP
+```

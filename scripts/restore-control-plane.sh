@@ -7,6 +7,13 @@ set -euo pipefail
 BACKUP_DIR="$1"
 DB_DUMP="${BACKUP_DIR%/}/resource-portal.dump"
 MANIFEST="${BACKUP_DIR%/}/manifest.sha256"
+SECRET_ARCHIVE="${BACKUP_DIR%/}/secrets.tar.gz"
+SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_SECRET_STORAGE_ROOT:-/rp/secrets}")"
+
+if [[ "$SECRET_STORAGE_ROOT" == "/" ]]; then
+  echo "Refusing to use / as RESOURCE_SECRET_STORAGE_ROOT." >&2
+  exit 2
+fi
 
 if [[ "${RESOURCE_PORTAL_RESTORE_CONFIRM:-}" != "resource-portal" ]]; then
   echo "Refusing destructive restore. Set RESOURCE_PORTAL_RESTORE_CONFIRM=resource-portal." >&2
@@ -34,6 +41,17 @@ pg_restore \
 
 if [[ -f "${BACKUP_DIR%/}/config.tar.gz" && "${RESOURCE_PORTAL_RESTORE_CONFIG:-false}" == "true" ]]; then
   tar -xzf "${BACKUP_DIR%/}/config.tar.gz"
+fi
+
+if [[ -f "$SECRET_ARCHIVE" ]]; then
+  if tar -tzf "$SECRET_ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    echo "Refusing unsafe paths in encrypted Secret payload archive." >&2
+    exit 2
+  fi
+  mkdir -p -m 700 "$SECRET_STORAGE_ROOT"
+  tar -xzf "$SECRET_ARCHIVE" -C "$SECRET_STORAGE_ROOT"
+else
+  printf 'Warning: backup has no encrypted Secret payload archive.\n' >&2
 fi
 
 printf 'Restore completed from: %s\n' "$BACKUP_DIR"
