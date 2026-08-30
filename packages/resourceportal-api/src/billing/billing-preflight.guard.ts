@@ -37,7 +37,7 @@ export class BillingPreflightGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<PreflightRequest>();
-    const route = request.routeOptions.url;
+    const route = request.routeOptions.url ?? "";
     const method = request.method.toUpperCase();
     const params = request.params;
 
