@@ -115,6 +115,7 @@ async function main() {
 
   await assertExternalIdpAllowed(true);
   await configureKeycloakSamlClient(samlProvider.zitadelIdentityProviderId);
+  await prepareSamlLinkedUser(samlProvider.zitadelIdentityProviderId);
 
   await apiRequest(
     "PATCH",
@@ -375,6 +376,45 @@ async function configureKeycloakSamlClient(zitadelProviderId: string) {
   }
 
   console.log(`Keycloak SAML redirects: ${redirectUris.join(", ")}`);
+}
+
+async function prepareSamlLinkedUser(zitadelProviderId: string) {
+  const externalUserId = "saml-user@example.test";
+  const imported = await zitadelRequest<{ userId?: string }>(
+    "POST",
+    "/management/v1/users/human/_import",
+    {
+      userName: `saml-linked-${Date.now()}`,
+      profile: {
+        firstName: "SAML",
+        lastName: "User",
+        displayName: "SAML User",
+        preferredLanguage: "en",
+      },
+      email: {
+        email: externalUserId,
+        isEmailVerified: true,
+      },
+      password: "FederationLocalPass123!",
+      passwordChangeRequired: false,
+    },
+  );
+
+  assert(imported.userId, "ZITADEL SAML linked-user import did not return a user id");
+
+  await zitadelRequest(
+    "POST",
+    `/v2/users/${encodeURIComponent(imported.userId)}/links`,
+    {
+      idpLink: {
+        idpId: zitadelProviderId,
+        userId: externalUserId,
+        userName: externalUserId,
+      },
+    },
+  );
+
+  console.log(`Linked SAML external user ${externalUserId} -> ZITADEL user ${imported.userId}`);
 }
 
 function samlUserPropertyMapper(name: string, userProperty: string, attributeName: string) {
