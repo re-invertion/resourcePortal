@@ -28,8 +28,10 @@ type AppGroupRuntimeContext = {
 
 export function mapAppGroup(
   appGroup: AppGroupWithRelations,
-  runtimeContext: AppGroupRuntimeContext = {},
+  runtimeContextOrIndex: AppGroupRuntimeContext | number = {},
 ) {
+  const runtimeContext =
+    typeof runtimeContextOrIndex === "number" ? {} : runtimeContextOrIndex;
   const runtimeBlockers = appGroupRuntimeBlockers(appGroup, runtimeContext);
 
   return {
