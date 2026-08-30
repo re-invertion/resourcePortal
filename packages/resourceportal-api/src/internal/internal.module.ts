@@ -7,6 +7,7 @@ import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
+import { IngressReconcilerService } from "./ingress-reconciler.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 import { StackApplyService } from "./stack-apply.service";
@@ -25,6 +26,7 @@ import { TraefikCertificateObserverService } from "./traefik-certificate-observe
     DeploymentRecoveryService,
     DeploymentWorkerService,
     DomainCertificateReconcilerService,
+    IngressReconcilerService,
     InternalAuthGuard,
     RuntimeDriftReconcilerService,
     StackApplyService,
