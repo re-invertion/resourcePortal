@@ -59,15 +59,50 @@ export class OAuthApplicationCredentialsService {
       application.zitadelApplicationId,
     );
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
+    try {
+      await this.prisma.$executeRaw`
         UPDATE "OAuthApplication"
         SET "clientSecretCiphertext" = ${this.encryption.encrypt(clientSecret)},
             "updatedBy" = CAST(${actor.id} AS uuid),
             "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = CAST(${application.id} AS uuid)
       `;
-      await tx.auditLogEntry.create({
+    } catch {
+      return {
+        id: application.id,
+        clientId: application.clientId,
+        clientSecret,
+        persistenceStatus: "Failed" as const,
+        auditStatus: "Skipped" as const,
+        warning:
+          "ZITADEL rotated the client secret, but the new credential was not persisted in Resource Portal. Save this secret now and retry rotation after local persistence is restored.",
+      };
+    }
+
+    const auditStatus = await this.writeRotationAudit(
+      application,
+      actor,
+      tenantId,
+      tenantName,
+    );
+
+    return {
+      id: application.id,
+      clientId: application.clientId,
+      clientSecret,
+      persistenceStatus: "Persisted" as const,
+      auditStatus,
+    };
+  }
+
+  private async writeRotationAudit(
+    application: OAuthApplicationCredentialRecord,
+    actor: AuthenticatedUser,
+    tenantId: string | null,
+    tenantName: string,
+  ) {
+    try {
+      await this.prisma.auditLogEntry.create({
         data: {
           tenantId,
           tenantName,
@@ -86,13 +121,10 @@ export class OAuthApplicationCredentialsService {
           },
         },
       });
-    });
-
-    return {
-      id: application.id,
-      clientId: application.clientId,
-      clientSecret,
-    };
+      return "Persisted" as const;
+    } catch {
+      return "Failed" as const;
+    }
   }
 
   private async getTenantRecord(tenantId: string, applicationId: string) {
