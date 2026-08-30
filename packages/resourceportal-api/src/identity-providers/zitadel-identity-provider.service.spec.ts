@@ -71,7 +71,7 @@ function policyMutationResponse(resourceOwner = "zitadel-org-1") {
 describe("ZitadelIdentityProviderService", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("provisions OIDC, enables allowExternalIdp and links the provider", async () => {
+  it("provisions OIDC, materializes the login policy, reconciles it and links the provider", async () => {
     const requests = installFetch([
       { body: { id: "zitadel-idp-1" } },
       {
@@ -86,6 +86,7 @@ describe("ZitadelIdentityProviderService", () => {
           },
         },
       },
+      policyMutationResponse(),
       policyMutationResponse(),
       {},
     ]);
@@ -135,6 +136,17 @@ describe("ZitadelIdentityProviderService", () => {
         },
       },
       {
+        method: "PUT",
+        url: "https://identity.example.com/management/v1/policies/login",
+        body: {
+          allowUsernamePassword: true,
+          allowRegister: true,
+          allowExternalIdp: true,
+          forceMfa: false,
+          passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED",
+        },
+      },
+      {
         method: "POST",
         url: "https://identity.example.com/management/v1/policies/login/idps",
         body: {
@@ -160,6 +172,7 @@ describe("ZitadelIdentityProviderService", () => {
         },
       },
       policyMutationResponse(),
+      policyMutationResponse(),
       {},
     ]);
 
@@ -180,6 +193,57 @@ describe("ZitadelIdentityProviderService", () => {
           forceMfa: false,
           passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED",
         },
+      },
+      {
+        method: "PUT",
+        url: "https://identity.example.com/management/v1/policies/login",
+        body: {
+          allowUsernamePassword: true,
+          allowRegister: false,
+          allowExternalIdp: true,
+          forceMfa: false,
+          passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED",
+        },
+      },
+      {
+        method: "POST",
+        url: "https://identity.example.com/management/v1/policies/login/idps",
+      },
+    ]);
+  });
+
+  it("reconciles a stale default projection when the custom policy already exists", async () => {
+    const requests = installFetch([
+      {
+        body: {
+          isDefault: true,
+          policy: {
+            allowUsernamePassword: true,
+            allowRegister: false,
+            allowExternalIdp: true,
+            isDefault: true,
+          },
+        },
+      },
+      { status: 409 },
+      policyMutationResponse(),
+      {},
+    ]);
+
+    await service().setEnabled("zitadel-idp-1", true);
+
+    expect(requests.map(({ method, url }) => ({ method, url }))).toEqual([
+      {
+        method: "GET",
+        url: "https://identity.example.com/management/v1/policies/login",
+      },
+      {
+        method: "POST",
+        url: "https://identity.example.com/management/v1/policies/login",
+      },
+      {
+        method: "PUT",
+        url: "https://identity.example.com/management/v1/policies/login",
       },
       {
         method: "POST",
@@ -291,6 +355,7 @@ describe("ZitadelIdentityProviderService", () => {
           policy: { allowExternalIdp: false, isDefault: true },
         },
       },
+      policyMutationResponse(),
       { body: { details: {} } },
       {},
     ]);
