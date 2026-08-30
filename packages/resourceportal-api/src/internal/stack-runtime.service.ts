@@ -94,20 +94,14 @@ export class StackRuntimeService {
     const removeKeys = Object.keys(currentTraefik).filter(
       (key) => !(key in desiredTraefik),
     );
-    const addEntries = Object.entries(desiredTraefik).filter(
-      ([key, value]) => currentTraefik[key] !== value,
-    );
 
-    if (removeKeys.length === 0 && addEntries.length === 0) {
+    if (removeKeys.length === 0) {
       return { success: true, changed: false };
     }
 
     const args = ["service", "update"];
     for (const key of removeKeys) {
       args.push("--label-rm", key);
-    }
-    for (const [key, value] of addEntries) {
-      args.push("--label-add", `${key}=${value}`);
     }
     args.push(input.serviceName);
 
