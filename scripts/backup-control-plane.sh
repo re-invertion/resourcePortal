@@ -8,9 +8,22 @@ TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${BACKUP_ROOT%/}/resource-portal-${TIMESTAMP}"
 DB_DUMP="${BACKUP_DIR}/resource-portal.dump"
 CONFIG_ARCHIVE="${BACKUP_DIR}/config.tar.gz"
+SECRET_ARCHIVE="${BACKUP_DIR}/secrets.tar.gz"
 MANIFEST="${BACKUP_DIR}/manifest.sha256"
+SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_SECRET_STORAGE_ROOT:-/rp/secrets}")"
+
+if [[ "$SECRET_STORAGE_ROOT" == "/" ]]; then
+  echo "Refusing to use / as RESOURCE_SECRET_STORAGE_ROOT." >&2
+  exit 2
+fi
 
 mkdir -p "$BACKUP_DIR"
+
+BACKUP_DIR_REAL="$(realpath "$BACKUP_DIR")"
+if [[ "$BACKUP_DIR_REAL" == "$SECRET_STORAGE_ROOT" || "$BACKUP_DIR_REAL" == "$SECRET_STORAGE_ROOT"/* ]]; then
+  echo "Backup directory must not be inside RESOURCE_SECRET_STORAGE_ROOT." >&2
+  exit 2
+fi
 
 pg_dump \
   --dbname="$DATABASE_URL" \
@@ -20,10 +33,15 @@ pg_dump \
   --no-privileges \
   --file="$DB_DUMP"
 
-# The DB dump contains control-plane state, encrypted session/registry/secret
-# payloads, and all secret metadata. Plaintext secrets are not exported.
+# The DB dump contains control-plane state, encrypted session/registry payloads,
+# and Secret metadata. AppGroup Secret payloads stay encrypted in the archive;
+# plaintext secrets are never exported.
 if [[ -d config ]]; then
   tar -czf "$CONFIG_ARCHIVE" config
+fi
+
+if [[ -d "$SECRET_STORAGE_ROOT" ]]; then
+  tar -C "$SECRET_STORAGE_ROOT" -czf "$SECRET_ARCHIVE" .
 fi
 
 (
@@ -32,6 +50,9 @@ fi
   if [[ -f config.tar.gz ]]; then
     sha256sum config.tar.gz >> "$(basename "$MANIFEST")"
   fi
+  if [[ -f secrets.tar.gz ]]; then
+    sha256sum secrets.tar.gz >> "$(basename "$MANIFEST")"
+  fi
 )
 
 cat > "${BACKUP_DIR}/metadata.txt" <<EOF
@@ -39,6 +60,7 @@ created_at=${TIMESTAMP}
 format=postgres-custom
 contains_encrypted_secret_metadata=true
 config_archive=$([[ -f "$CONFIG_ARCHIVE" ]] && echo true || echo false)
+secret_archive=$([[ -f "$SECRET_ARCHIVE" ]] && echo true || echo false)
 EOF
 
 printf 'Backup created: %s\n' "$BACKUP_DIR"
