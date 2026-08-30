@@ -48,6 +48,12 @@ type ZitadelLoginPolicyResponse = {
   policy?: ZitadelLoginPolicy;
 };
 
+type ZitadelMutationResponse = {
+  details?: {
+    resourceOwner?: string;
+  };
+};
+
 const writableLoginPolicyFields = [
   "allowUsernamePassword",
   "allowRegister",
@@ -68,13 +74,6 @@ const writableLoginPolicyFields = [
   "disableLoginWithPhone",
   "forceMfaLocalOnly",
 ] as const satisfies ReadonlyArray<keyof ZitadelLoginPolicy>;
-
-// ZITADEL's scheduled projection catch-up defaults to 60s. Keep the
-// verification window slightly above one full catch-up cycle so a missed
-// pub/sub projection trigger does not turn a successful policy write into a
-// false provisioning failure.
-const DEFAULT_POLICY_VERIFY_ATTEMPTS = 131;
-const DEFAULT_POLICY_VERIFY_DELAY_MS = 500;
 
 @Injectable()
 export class ZitadelIdentityProviderService {
@@ -144,42 +143,32 @@ export class ZitadelIdentityProviderService {
       return;
     }
 
-    await this.request(
+    // ZITADEL commands read their current state directly from the event store,
+    // while GET /policies/login reads an eventually-consistent projection.
+    // A successful command response therefore is the authoritative write
+    // acknowledgement; waiting for the projection here can incorrectly block
+    // the immediately following AddIDPToLoginPolicy command.
+    const mutation = await this.request<ZitadelMutationResponse>(
       isDefault ? "POST" : "PUT",
       "/management/v1/policies/login",
       this.loginPolicyBody(current.policy),
     );
-
-    if (!(await this.waitForExternalIdpPolicy())) {
-      throw new BadGatewayException(
-        "ZITADEL login policy did not enable external identity providers",
-      );
-    }
+    this.assertMutationResourceOwner(mutation);
   }
 
-  private async waitForExternalIdpPolicy() {
-    const attempts = this.policyVerificationAttempts();
-    const delayMs = this.policyVerificationDelayMs();
-
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const verified = await this.getLoginPolicy();
-      const verifiedIsDefault =
-        verified.isDefault ?? verified.policy?.isDefault ?? true;
-
-      if (
-        verified.policy &&
-        !verifiedIsDefault &&
-        verified.policy.allowExternalIdp === true
-      ) {
-        return true;
-      }
-
-      if (attempt + 1 < attempts && delayMs > 0) {
-        await sleep(delayMs);
-      }
+  private assertMutationResourceOwner(response: ZitadelMutationResponse) {
+    const resourceOwner = response.details?.resourceOwner;
+    if (!resourceOwner) {
+      throw new BadGatewayException(
+        "ZITADEL login policy mutation did not return a resource owner",
+      );
     }
 
-    return false;
+    if (resourceOwner !== this.organizationId()) {
+      throw new BadGatewayException(
+        "ZITADEL login policy mutation targeted an unexpected organization",
+      );
+    }
   }
 
   private getLoginPolicy() {
@@ -308,20 +297,6 @@ export class ZitadelIdentityProviderService {
     return (text ? JSON.parse(text) : {}) as T;
   }
 
-  private policyVerificationAttempts() {
-    return positiveInteger(
-      this.config.get<string>("ZITADEL_POLICY_VERIFY_ATTEMPTS"),
-      DEFAULT_POLICY_VERIFY_ATTEMPTS,
-    );
-  }
-
-  private policyVerificationDelayMs() {
-    return nonNegativeInteger(
-      this.config.get<string>("ZITADEL_POLICY_VERIFY_DELAY_MS"),
-      DEFAULT_POLICY_VERIFY_DELAY_MS,
-    );
-  }
-
   private baseUrl() {
     const value =
       this.config.get<string>("ZITADEL_MANAGEMENT_URL") ??
@@ -367,18 +342,4 @@ function normalizeScopes(scopes: string[]) {
   return [...new Set(["openid", ...scopes.map((scope) => scope.trim())])].filter(
     Boolean,
   );
-}
-
-function positiveInteger(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function nonNegativeInteger(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function sleep(delayMs: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
