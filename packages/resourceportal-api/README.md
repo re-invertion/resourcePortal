@@ -83,6 +83,19 @@ POST /api/tenants/:tenantId/app-groups/:appGroupId/discard-changes
 DELETE /api/tenants/:tenantId/app-groups/:appGroupId
 ```
 
+## Secrets
+
+AppGroup secrets are managed through
+`/api/tenants/:tenantId/app-groups/:appGroupId/secrets`. Text values use UTF-8;
+binary values are submitted as Base64. The API never returns plaintext values.
+Each secret can be attached to multiple SingleApps in the same AppGroup and is
+mounted by Docker Swarm at `/run/secrets/<targetName>` after deployment.
+
+Encrypted envelopes are stored under `RESOURCE_SECRET_STORAGE_ROOT`, defaulting
+to `/rp/secrets`. Every value uses a random AES-256-GCM data key, and the data key
+is wrapped with the Resource Portal master encryption key. Updating an attached
+value marks the AppGroup draft as pending but does not deploy automatically.
+
 ## Deployment Flow
 
 1. Create tenant.

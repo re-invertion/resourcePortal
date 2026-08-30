@@ -14,11 +14,13 @@ import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
 import { AppGroupsService } from "./app-groups.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
+import { AttachSecretDto } from "./dto/attach-secret.dto";
 import { AttachVariableDto } from "./dto/attach-variable.dto";
 import { AttachVolumeDto } from "./dto/attach-volume.dto";
 import { CreateAppGroupDto } from "./dto/create-app-group.dto";
 import { CreateConfigDto } from "./dto/create-config.dto";
 import { CreateHttpEndpointDto } from "./dto/create-http-endpoint.dto";
+import { CreateSecretDto } from "./dto/create-secret.dto";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { CreateVariableDto } from "./dto/create-variable.dto";
 import { DeployAppGroupDto } from "./dto/deploy-app-group.dto";
@@ -26,6 +28,7 @@ import { RollbackDeploymentDto } from "./dto/rollback-deployment.dto";
 import { UpdateConfigDto } from "./dto/update-config.dto";
 import { UpdateHttpEndpointDto } from "./dto/update-http-endpoint.dto";
 import { UpdateRuntimeConfigDto } from "./dto/update-runtime-config.dto";
+import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
 
@@ -238,6 +241,60 @@ export class AppGroupsController {
     @Param("variableId", ParseUUIDPipe) variableId: string,
   ) {
     return this.appGroupsService.deleteVariable(tenantId, appGroupId, variableId);
+  }
+
+  @RequirePermissions("secret.read")
+  @Get(":appGroupId/secrets")
+  listSecrets(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+  ) {
+    return this.appGroupsService.listSecrets(tenantId, appGroupId);
+  }
+
+  @RequirePermissions("secret.create")
+  @Post(":appGroupId/secrets")
+  createSecret(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Body() dto: CreateSecretDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.createSecret(tenantId, appGroupId, dto, user);
+  }
+
+  @RequirePermissions("secret.update")
+  @Patch(":appGroupId/secrets/:secretId")
+  updateSecret(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("secretId", ParseUUIDPipe) secretId: string,
+    @Body() dto: UpdateSecretDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.updateSecret(
+      tenantId,
+      appGroupId,
+      secretId,
+      dto,
+      user,
+    );
+  }
+
+  @RequirePermissions("secret.delete")
+  @Delete(":appGroupId/secrets/:secretId")
+  deleteSecret(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("secretId", ParseUUIDPipe) secretId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.deleteSecret(
+      tenantId,
+      appGroupId,
+      secretId,
+      user,
+    );
   }
 
   @RequirePermissions("config.read")
@@ -543,6 +600,44 @@ export class AppGroupsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.appGroupsService.detachVariable(
+      tenantId,
+      appGroupId,
+      singleAppId,
+      attachmentId,
+      user,
+    );
+  }
+
+  @RequirePermissions("secret.attach")
+  @Post(":appGroupId/single-apps/:singleAppId/secret-attachments")
+  attachSecret(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @Body() dto: AttachSecretDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.attachSecret(
+      tenantId,
+      appGroupId,
+      singleAppId,
+      dto,
+      user,
+    );
+  }
+
+  @RequirePermissions("secret.attach")
+  @Delete(
+    ":appGroupId/single-apps/:singleAppId/secret-attachments/:attachmentId",
+  )
+  detachSecret(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @Param("attachmentId", ParseUUIDPipe) attachmentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.appGroupsService.detachSecret(
       tenantId,
       appGroupId,
       singleAppId,

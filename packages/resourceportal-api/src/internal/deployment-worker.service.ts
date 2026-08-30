@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
 import { EncryptionService } from "../security/encryption.service";
+import { SecretStorageService } from "../security/secret-storage.service";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
@@ -72,7 +73,10 @@ type StackConfigSingleApp = {
   }>;
   secrets: Array<{
     id: string;
-    name: string;
+    attachmentId?: string;
+    sourceType?: "AppGroup" | "LegacySingleApp";
+    targetName?: string;
+    name?: string;
     valueVersion: number;
     dockerSecretName?: string;
   }>;
@@ -129,6 +133,7 @@ export class DeploymentWorkerService {
     private readonly stackSecretProvisioner: StackSecretProvisionerService,
     private readonly stackVolumeProvisioner: StackVolumeProvisionerService,
     private readonly encryption: EncryptionService,
+    private readonly secretStorage: SecretStorageService,
   ) {}
 
   async claimNextDeployment(dto: ClaimDeploymentDto) {
@@ -441,28 +446,74 @@ export class DeploymentWorkerService {
       };
     }
 
-    const databaseSecrets = await this.prisma.singleAppSecret.findMany({
-      where: {
-        id: { in: snapshotSecrets.map((secret) => secret.id) },
-      },
-      select: {
-        id: true,
-        valueCiphertext: true,
-        valueVersion: true,
-      },
-    });
-    const databaseSecretsById = new Map(
-      databaseSecrets.map((secret) => [secret.id, secret]),
+    const appGroupSecretIds = snapshotSecrets
+      .filter((secret) => secret.sourceType === "AppGroup")
+      .map((secret) => secret.id);
+    const legacySecretIds = snapshotSecrets
+      .filter((secret) => secret.sourceType !== "AppGroup")
+      .map((secret) => secret.id);
+    const [appGroupSecrets, legacySecrets] = await Promise.all([
+      this.prisma.secret.findMany({
+        where: { id: { in: appGroupSecretIds } },
+        select: { id: true, storagePath: true, valueVersion: true },
+      }),
+      this.prisma.singleAppSecret.findMany({
+        where: { id: { in: legacySecretIds } },
+        select: { id: true, valueCiphertext: true, valueVersion: true },
+      }),
+    ]);
+    const appGroupSecretsById = new Map(
+      appGroupSecrets.map((secret) => [secret.id, secret]),
+    );
+    const legacySecretsById = new Map(
+      legacySecrets.map((secret) => [secret.id, secret]),
     );
     const resolvedSecrets = [];
 
     for (const snapshotSecret of snapshotSecrets) {
-      const databaseSecret = databaseSecretsById.get(snapshotSecret.id);
+      const displayName =
+        snapshotSecret.targetName ?? snapshotSecret.name ?? snapshotSecret.id;
+
+      if (snapshotSecret.sourceType === "AppGroup") {
+        const databaseSecret = appGroupSecretsById.get(snapshotSecret.id);
+
+        if (!databaseSecret) {
+          return {
+            success: false,
+            message: `Secret ${displayName} is missing`,
+            details: `Secret ${snapshotSecret.id} was not found`,
+          };
+        }
+
+        if (databaseSecret.valueVersion !== snapshotSecret.valueVersion) {
+          return {
+            success: false,
+            message: `Secret ${displayName} version mismatch`,
+            details: `Expected version ${snapshotSecret.valueVersion}, found ${databaseSecret.valueVersion}`,
+          };
+        }
+
+        try {
+          resolvedSecrets.push({
+            dockerSecretName: snapshotSecret.dockerSecretName,
+            value: await this.secretStorage.read(databaseSecret.storagePath),
+          });
+        } catch {
+          return {
+            success: false,
+            message: `Secret ${displayName} payload is unavailable`,
+            details: `Encrypted payload for Secret ${snapshotSecret.id} could not be read`,
+          };
+        }
+        continue;
+      }
+
+      const databaseSecret = legacySecretsById.get(snapshotSecret.id);
 
       if (!databaseSecret) {
         return {
           success: false,
-          message: `Secret ${snapshotSecret.name} is missing`,
+          message: `Secret ${displayName} is missing`,
           details: `SingleAppSecret ${snapshotSecret.id} was not found`,
         };
       }
@@ -470,7 +521,7 @@ export class DeploymentWorkerService {
       if (databaseSecret.valueVersion !== snapshotSecret.valueVersion) {
         return {
           success: false,
-          message: `Secret ${snapshotSecret.name} version mismatch`,
+          message: `Secret ${displayName} version mismatch`,
           details: `Expected version ${snapshotSecret.valueVersion}, found ${databaseSecret.valueVersion}`,
         };
       }
@@ -1370,7 +1421,7 @@ export class DeploymentWorkerService {
         singleApp.secrets.length > 0
           ? singleApp.secrets.map((secret) => ({
               source: this.secretAlias(secret),
-              target: secret.name,
+              target: secret.targetName ?? secret.name ?? secret.id,
             }))
           : undefined,
       configs:

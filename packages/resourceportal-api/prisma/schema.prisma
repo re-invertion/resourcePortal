@@ -83,6 +83,11 @@ enum AttachmentMode {
   ReadWrite
 }
 
+enum SecretType {
+  Text
+  Binary
+}
+
 enum DomainType {
   Managed
   Custom
@@ -441,6 +446,7 @@ model SingleApp {
   variableAttachments    VariableAttachment[]
   configAttachments      ConfigAttachment[]
   secrets                SingleAppSecret[]
+  secretAttachments      SecretAttachment[]
 
   @@unique([appGroupId, name])
 }
@@ -647,19 +653,36 @@ model VariableAttachment {
 }
 
 model Secret {
-  id           String   @id @default(uuid()) @db.Uuid
-  appGroupId   String   @db.Uuid
+  id           String             @id @default(uuid()) @db.Uuid
+  appGroupId   String             @db.Uuid
   name         String
   description  String?
-  type         String
+  type         SecretType
   fileName     String?
-  valueVersion Int      @default(1)
+  valueVersion Int                @default(1)
   storagePath  String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  appGroup     AppGroup @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  createdBy    String             @db.Uuid
+  updatedBy    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  appGroup     AppGroup           @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  attachments  SecretAttachment[]
 
   @@unique([appGroupId, name])
+}
+
+model SecretAttachment {
+  id          String    @id @default(uuid()) @db.Uuid
+  secretId    String    @db.Uuid
+  singleAppId String    @db.Uuid
+  targetName  String
+  createdBy   String    @db.Uuid
+  createdAt   DateTime  @default(now())
+  secret      Secret    @relation(fields: [secretId], references: [id], onDelete: Restrict)
+  singleApp   SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([secretId, singleAppId])
+  @@unique([singleAppId, targetName])
 }
 
 model Config {

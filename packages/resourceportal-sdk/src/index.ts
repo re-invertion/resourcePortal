@@ -283,6 +283,7 @@ export class ResourcePortalClient {
 
   readonly variables = resourceCollection(this, "variables");
   readonly configs = resourceCollection(this, "configs");
+  readonly secrets = resourceCollection(this, "secrets");
   readonly endpoints = nestedCollection(this, "http-endpoints");
 
   readonly volumes = {
@@ -458,8 +459,15 @@ export class ResourcePortalClient {
 
 function resourceCollection(
   client: ResourcePortalClient,
-  resource: "variables" | "configs",
+  resource: "variables" | "configs" | "secrets",
 ) {
+  const attachmentResource =
+    resource === "variables"
+      ? "variable"
+      : resource === "configs"
+        ? "config"
+        : "secret";
+
   return {
     list: (tenantId: string, appGroupId: string) =>
       client.request(
@@ -492,7 +500,7 @@ function resourceCollection(
       body: unknown,
     ) =>
       client.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/${resource === "variables" ? "variable" : "config"}-attachments`,
+        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/${attachmentResource}-attachments`,
         { method: "POST", body },
       ),
     detach: (
@@ -502,7 +510,7 @@ function resourceCollection(
       attachmentId: string,
     ) =>
       client.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/${resource === "variables" ? "variable" : "config"}-attachments/${encode(attachmentId)}`,
+        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/${attachmentResource}-attachments/${encode(attachmentId)}`,
         { method: "DELETE" },
       ),
   };

@@ -39,6 +39,8 @@ rp app create TENANT_ID APP_GROUP_ID --name nginx --image nginx:alpine --cpu 0.1
 rp volume create TENANT_ID --name data --size-bytes 1048576
 rp volume attach TENANT_ID APP_GROUP_ID APP_ID --volume-id VOLUME_ID --mount-path /data --mode ReadWrite
 rp endpoint create TENANT_ID APP_GROUP_ID APP_ID --name web --container-port 80 --protocol-mode HTTP
+rp secret create TENANT_ID APP_GROUP_ID --name api-key --type Text --value "$API_KEY"
+rp secret attach TENANT_ID APP_GROUP_ID APP_ID --secret-id SECRET_ID --target-name api-key
 rp custom-root-domain create TENANT_ID --root-domain example.com
 rp domain create TENANT_ID --type Managed --prefix demo --http-endpoint-id ENDPOINT_ID
 rp deployment create TENANT_ID APP_GROUP_ID --note "initial deploy"
@@ -55,6 +57,7 @@ app-group
 app
 variable
 config
+secret
 volume
 endpoint
 domain
@@ -83,8 +86,14 @@ rp identity-provider create TENANT_ID --name "Company OIDC" --protocol OIDC --is
 rp identity-provider create TENANT_ID --name "Company SAML" --protocol SAML --metadata-url https://login.example.com/metadata
 rp app-group discard-changes TENANT_ID APP_GROUP_ID
 rp app-group delete TENANT_ID APP_GROUP_ID
+rp secret update TENANT_ID APP_GROUP_ID SECRET_ID --value "$NEW_API_KEY"
+rp secret detach TENANT_ID APP_GROUP_ID APP_ID ATTACHMENT_ID
 rp audit list TENANT_ID
 ```
+
+Secret values are write-only. Use UTF-8 text with `--type Text`, or Base64 with
+`--type Binary`. Attached secrets are mounted at `/run/secrets/<target-name>`
+after the next deployment.
 
 Run help:
 

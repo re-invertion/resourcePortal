@@ -223,6 +223,7 @@ const commands: Command[] = [
   ),
   collectionListCommand("variable", "variables"),
   collectionListCommand("config", "configs"),
+  collectionListCommand("secret", "secrets"),
   command("volume", "list", "<tenantId>", "List volumes.", (p, c) =>
     c.volumes.list(arg(p, 0, "tenantId")),
   ),
@@ -382,8 +383,8 @@ function command(
 }
 
 function collectionListCommand(
-  group: "variable" | "config",
-  sdkKey: "variables" | "configs",
+  group: "variable" | "config" | "secret",
+  sdkKey: "variables" | "configs" | "secrets",
 ): Command {
   return command(group, "list", "<tenantId> <appGroupId>", `List ${sdkKey}.`, (p, c) =>
     c[sdkKey].list(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
@@ -420,6 +421,21 @@ commands.push(
   ),
   command("config", "detach", "<tenantId> <appGroupId> <appId> <attachmentId>", "Detach config.", (p, c) =>
     c.configs.detach(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "appId"), arg(p, 3, "attachmentId")),
+  ),
+  command("secret", "create", "<tenantId> <appGroupId> --name NAME --type Text|Binary --value VALUE", "Create an encrypted AppGroup secret. Binary values use Base64.", (p, c) =>
+    c.secrets.create(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), bodyFromFlags(p.flags, ["name", "type", "value"], ["description", "fileName"])),
+  ),
+  command("secret", "update", "<tenantId> <appGroupId> <secretId> [flags]", "Update secret metadata or value.", (p, c) =>
+    c.secrets.update(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "secretId"), bodyFromFlags(p.flags, [], ["name", "description", "type", "fileName", "value"])),
+  ),
+  command("secret", "delete", "<tenantId> <appGroupId> <secretId>", "Delete an unused secret.", (p, c) =>
+    c.secrets.delete(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "secretId")),
+  ),
+  command("secret", "attach", "<tenantId> <appGroupId> <appId> --secret-id ID [--target-name NAME]", "Attach a secret at /run/secrets/TARGET_NAME.", (p, c) =>
+    c.secrets.attach(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "appId"), bodyFromFlags(p.flags, ["secretId"], ["targetName"])),
+  ),
+  command("secret", "detach", "<tenantId> <appGroupId> <appId> <attachmentId>", "Detach a secret.", (p, c) =>
+    c.secrets.detach(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "appId"), arg(p, 3, "attachmentId")),
   ),
 );
 
