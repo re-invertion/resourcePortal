@@ -16,6 +16,23 @@ Projections:
   RequeueEvery: 1s
   TransactionDuration: 2s
 
+HTTPClient:
+  # ZITADEL v4.17 blocks loopback addresses by default to protect metadata URL
+  # fetches against SSRF. This stack deliberately runs Keycloak on the same
+  # isolated GitHub Actions host, so only the loopback restrictions are removed
+  # here. Keep every other default private/link-local deny rule intact.
+  DenyList:
+    - "0.0.0.0/8"
+    - "10.0.0.0/8"
+    - "100.64.0.0/10"
+    - "169.254.0.0/16"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "198.18.0.0/15"
+    - "::/128"
+    - "fc00::/7"
+    - "fe80::/10"
+
 Database:
   postgres:
     Host: localhost
