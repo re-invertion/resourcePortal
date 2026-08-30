@@ -69,6 +69,9 @@ const writableLoginPolicyFields = [
   "forceMfaLocalOnly",
 ] as const satisfies ReadonlyArray<keyof ZitadelLoginPolicy>;
 
+const DEFAULT_POLICY_VERIFY_ATTEMPTS = 30;
+const DEFAULT_POLICY_VERIFY_DELAY_MS = 100;
+
 @Injectable()
 export class ZitadelIdentityProviderService {
   constructor(private readonly config: ConfigService) {}
@@ -143,18 +146,36 @@ export class ZitadelIdentityProviderService {
       this.loginPolicyBody(current.policy),
     );
 
-    const verified = await this.getLoginPolicy();
-    const verifiedIsDefault =
-      verified.isDefault ?? verified.policy?.isDefault ?? true;
-    if (
-      !verified.policy ||
-      verifiedIsDefault ||
-      verified.policy.allowExternalIdp !== true
-    ) {
+    if (!(await this.waitForExternalIdpPolicy())) {
       throw new BadGatewayException(
         "ZITADEL login policy did not enable external identity providers",
       );
     }
+  }
+
+  private async waitForExternalIdpPolicy() {
+    const attempts = this.policyVerificationAttempts();
+    const delayMs = this.policyVerificationDelayMs();
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const verified = await this.getLoginPolicy();
+      const verifiedIsDefault =
+        verified.isDefault ?? verified.policy?.isDefault ?? true;
+
+      if (
+        verified.policy &&
+        !verifiedIsDefault &&
+        verified.policy.allowExternalIdp === true
+      ) {
+        return true;
+      }
+
+      if (attempt + 1 < attempts && delayMs > 0) {
+        await sleep(delayMs);
+      }
+    }
+
+    return false;
   }
 
   private getLoginPolicy() {
@@ -283,6 +304,20 @@ export class ZitadelIdentityProviderService {
     return (text ? JSON.parse(text) : {}) as T;
   }
 
+  private policyVerificationAttempts() {
+    return positiveInteger(
+      this.config.get<string>("ZITADEL_POLICY_VERIFY_ATTEMPTS"),
+      DEFAULT_POLICY_VERIFY_ATTEMPTS,
+    );
+  }
+
+  private policyVerificationDelayMs() {
+    return nonNegativeInteger(
+      this.config.get<string>("ZITADEL_POLICY_VERIFY_DELAY_MS"),
+      DEFAULT_POLICY_VERIFY_DELAY_MS,
+    );
+  }
+
   private baseUrl() {
     const value =
       this.config.get<string>("ZITADEL_MANAGEMENT_URL") ??
@@ -328,4 +363,18 @@ function normalizeScopes(scopes: string[]) {
   return [...new Set(["openid", ...scopes.map((scope) => scope.trim())])].filter(
     Boolean,
   );
+}
+
+function positiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function nonNegativeInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(delayMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
