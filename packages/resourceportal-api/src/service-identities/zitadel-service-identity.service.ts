@@ -53,6 +53,17 @@ export class ZitadelServiceIdentityService {
     });
   }
 
+  async rotateSecret(userId: string) {
+    const response = await this.request<{ clientSecret?: string }>(
+      "POST",
+      `/v2/users/${encodeURIComponent(userId)}/secret`,
+    );
+    if (!response.clientSecret) {
+      throw new BadGatewayException("ZITADEL service identity rotation did not return a client secret");
+    }
+    return response.clientSecret;
+  }
+
   async setActive(userId: string, active: boolean) {
     await this.request(
       "POST",
