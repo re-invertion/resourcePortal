@@ -68,7 +68,6 @@ export class SwarmInfrastructureAuditService {
         result: "Failed",
         errorCode: "SWARM_OBSERVATION_FAILED",
         errorMessage: "Docker Swarm inventory observation failed",
-        changes: null,
       },
     });
   }
