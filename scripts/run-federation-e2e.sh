@@ -155,14 +155,24 @@ bootstrap_zitadel() {
   }
 }
 
-database() {
+migrate_database() {
   cd "$ROOT_DIR"
   load_environment
   (
     cd packages/resourceportal-api
     npx prisma migrate deploy
   )
+}
+
+seed_database() {
+  cd "$ROOT_DIR"
+  load_environment
   npm run api:db:seed
+}
+
+database() {
+  migrate_database
+  seed_database
 }
 
 build_api() {
@@ -210,6 +220,8 @@ run_phase() {
   case "$phase" in
     services) services ;;
     bootstrap) bootstrap_zitadel ;;
+    migrate) migrate_database ;;
+    seed) seed_database ;;
     database) database ;;
     build) build_api ;;
     prepare) prepare ;;
@@ -228,7 +240,8 @@ if [[ "$PHASE" == "all" ]]; then
   trap 'exit_code=$?; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; cleanup_environment; exit $exit_code' EXIT INT TERM
   run_phase services
   run_phase bootstrap
-  run_phase database
+  run_phase migrate
+  run_phase seed
   run_phase build
   run_phase provision
   run_phase browser
