@@ -126,10 +126,6 @@ export class ZitadelIdentityProviderService {
   private async ensureExternalIdpAllowed() {
     const current = await this.getLoginPolicy();
 
-    if (current.policy?.allowExternalIdp === true) {
-      return;
-    }
-
     if (!current.policy) {
       throw new BadGatewayException(
         "ZITADEL login policy response did not contain a policy",
@@ -137,6 +133,10 @@ export class ZitadelIdentityProviderService {
     }
 
     const isDefault = current.isDefault ?? current.policy.isDefault ?? true;
+    if (!isDefault && current.policy.allowExternalIdp === true) {
+      return;
+    }
+
     await this.request(
       isDefault ? "POST" : "PUT",
       "/management/v1/policies/login",
@@ -144,7 +144,13 @@ export class ZitadelIdentityProviderService {
     );
 
     const verified = await this.getLoginPolicy();
-    if (verified.policy?.allowExternalIdp !== true) {
+    const verifiedIsDefault =
+      verified.isDefault ?? verified.policy?.isDefault ?? true;
+    if (
+      !verified.policy ||
+      verifiedIsDefault ||
+      verified.policy.allowExternalIdp !== true
+    ) {
       throw new BadGatewayException(
         "ZITADEL login policy did not enable external identity providers",
       );
