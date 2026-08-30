@@ -78,6 +78,28 @@ describe("validateEnv", () => {
     );
   });
 
+  it("accepts positive certificate observation and reconciliation timings", () => {
+    const env = {
+      ...validBaseEnv,
+      TRAEFIK_TLS_OBSERVE_TIMEOUT_MS: "5000",
+      DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS: "60000",
+    };
+
+    expect(validateEnv(env)).toBe(env);
+  });
+
+  it("rejects non-positive certificate observation and reconciliation timings", () => {
+    expect(() =>
+      validateEnv({
+        ...validBaseEnv,
+        TRAEFIK_TLS_OBSERVE_TIMEOUT_MS: "0",
+        DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS: "invalid",
+      }),
+    ).toThrow(
+      "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS must be a positive integer; DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS must be a positive integer",
+    );
+  });
+
   it("requires secure cookies and a non-default internal token in production", () => {
     expect(() =>
       validateEnv({
