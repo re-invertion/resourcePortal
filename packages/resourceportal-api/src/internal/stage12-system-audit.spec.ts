@@ -42,10 +42,16 @@ function deployment(overrides: Record<string, unknown> = {}) {
 
 function serviceFor(currentDeployment: ReturnType<typeof deployment>) {
   const auditCreate = vi.fn((input: AuditCreateInput) => Promise.resolve(input));
-  const auditFindFirst = vi.fn((_input: unknown) => Promise.resolve(null));
+  const auditFindFirst = vi.fn((input: unknown) => {
+    void input;
+    return Promise.resolve<{ id: string } | null>(null);
+  });
   const prisma = {
     appGroupDeployment: {
-      findUnique: vi.fn((_input: unknown) => Promise.resolve(currentDeployment)),
+      findUnique: vi.fn((input: unknown) => {
+        void input;
+        return Promise.resolve(currentDeployment);
+      }),
     },
     auditLogEntry: {
       findFirst: auditFindFirst,
