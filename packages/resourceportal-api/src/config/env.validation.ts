@@ -34,6 +34,12 @@ export function validateEnv(config: Env) {
     errors,
     "API_RATE_LIMIT_WINDOW_SECONDS",
   );
+  requirePositiveIntegerIfSet(config, errors, "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS");
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS",
+  );
   requirePatternIfSet(
     config,
     errors,
