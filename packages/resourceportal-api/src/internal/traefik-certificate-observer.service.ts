@@ -58,7 +58,7 @@ export class TraefikCertificateObserverService {
               certificate.subjectaltname,
               hostname,
             );
-            const issuer = certificate.issuer?.CN ?? certificate.issuer?.O;
+            const issuer = this.certificateIssuer(certificate.issuer);
 
             finish({
               ok: true,
@@ -105,5 +105,24 @@ export class TraefikCertificateObserverService {
       .filter(Boolean);
 
     return domains.length > 0 ? Array.from(new Set(domains)) : [hostname];
+  }
+
+  private certificateIssuer(issuer: unknown) {
+    if (!issuer || typeof issuer !== "object") {
+      return undefined;
+    }
+
+    const entries = Object.entries(issuer);
+    const cn = entries.find(([key, value]) => key === "CN" && typeof value === "string");
+    if (cn && typeof cn[1] === "string") {
+      return cn[1];
+    }
+
+    const organization = entries.find(
+      ([key, value]) => key === "O" && typeof value === "string",
+    );
+    return organization && typeof organization[1] === "string"
+      ? organization[1]
+      : undefined;
   }
 }
