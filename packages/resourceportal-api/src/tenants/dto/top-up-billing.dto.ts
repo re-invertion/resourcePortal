@@ -1,9 +1,10 @@
-import { IsNumber, IsOptional, IsString, MaxLength, Min } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
 
 export class TopUpBillingDto {
-  @IsNumber()
-  @Min(0.0001)
-  amount!: number;
+  @Transform(({ value }) => String(value))
+  @Matches(/^(?=.*[1-9])\d+(?:\.\d{1,8})?$/)
+  amount!: string;
 
   @IsOptional()
   @IsString()
