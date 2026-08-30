@@ -4,6 +4,8 @@ import {
   Config,
   ConfigAttachment,
   DeploymentEvent,
+  Secret,
+  SecretAttachment,
   SingleApp,
   Variable,
   VariableAttachment,
@@ -89,6 +91,18 @@ export function mapConfig(config: Config & { attachments?: ConfigAttachment[] })
 }
 
 export function mapConfigAttachment(attachment: ConfigAttachment) {
+  return attachment;
+}
+
+export function mapSecret(secret: Secret & { attachments?: SecretAttachment[] }) {
+  return {
+    ...secret,
+    attachmentCount: secret.attachments?.length,
+    hasValue: true,
+  };
+}
+
+export function mapSecretAttachment(attachment: SecretAttachment) {
   return attachment;
 }
 

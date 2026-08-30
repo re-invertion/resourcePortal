@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 
 type ProvisionSecret = {
   dockerSecretName: string;
-  value: string;
+  value: string | Buffer;
 };
 
 type CommandResult = {
@@ -73,7 +73,7 @@ export class StackSecretProvisionerService {
     );
   }
 
-  private runDocker(args: string[], stdin?: string) {
+  private runDocker(args: string[], stdin?: string | Buffer) {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const timeoutMs = this.config.get<number>(
       "DOCKER_SECRET_PROVISION_TIMEOUT_MS",

@@ -14,6 +14,9 @@ import {
   HttpEndpoint,
   Prisma,
   RuntimeState,
+  Secret,
+  SecretAttachment,
+  SecretType,
   SingleAppSecret,
   Variable,
   VariableAttachment,
@@ -25,14 +28,17 @@ import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
+import { SecretStorageService } from "../security/secret-storage.service";
 import { StackRuntimeService } from "../internal/stack-runtime.service";
 import { VolumesService } from "../volumes/volumes.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
+import { AttachSecretDto } from "./dto/attach-secret.dto";
 import { AttachVariableDto } from "./dto/attach-variable.dto";
 import { AttachVolumeDto } from "./dto/attach-volume.dto";
 import { CreateAppGroupDto } from "./dto/create-app-group.dto";
 import { CreateConfigDto } from "./dto/create-config.dto";
 import { CreateHttpEndpointDto } from "./dto/create-http-endpoint.dto";
+import { CreateSecretDto } from "./dto/create-secret.dto";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { CreateVariableDto } from "./dto/create-variable.dto";
 import { DeployAppGroupDto } from "./dto/deploy-app-group.dto";
@@ -44,6 +50,7 @@ import {
   UpdateRuntimeConfigDto,
 } from "./dto/update-runtime-config.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
+import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
 import {
   mapAppGroup,
@@ -51,6 +58,8 @@ import {
   mapConfig,
   mapConfigAttachment,
   mapDeploymentEvent,
+  mapSecret,
+  mapSecretAttachment,
   mapSingleApp,
   mapVariable,
   mapVariableAttachment,
@@ -104,6 +113,7 @@ type DeployableDraft = AppGroup & {
     variableAttachments: Array<VariableAttachment & { variable: Variable }>;
     configAttachments: Array<ConfigAttachment & { config: Config }>;
     secrets: SingleAppSecret[];
+    secretAttachments: Array<SecretAttachment & { secret: Secret }>;
   }>;
 };
 
@@ -140,6 +150,14 @@ type StackConfigSnapshot = {
     stopGracePeriodSeconds: number;
     restartPolicy: Prisma.InputJsonValue;
     updatePolicy: Prisma.InputJsonValue;
+    secrets?: Array<{
+      id: string;
+      attachmentId?: string;
+      sourceType?: "AppGroup" | "LegacySingleApp";
+      targetName?: string;
+      name?: string;
+      valueVersion: number;
+    }>;
   }>;
 };
 
@@ -149,6 +167,7 @@ export class AppGroupsService {
     private readonly prisma: PrismaService,
     private readonly registriesService: RegistriesService,
     private readonly encryption: EncryptionService,
+    private readonly secretStorage: SecretStorageService,
     private readonly stackRuntime: StackRuntimeService,
     private readonly volumesService: VolumesService,
   ) {}
@@ -261,11 +280,42 @@ export class AppGroupsService {
         ),
       );
 
+      const deployedSecretAttachments = deployedSnapshot.singleApps.flatMap(
+        (singleApp) =>
+          (singleApp.secrets ?? [])
+            .filter(
+              (secret) =>
+                secret.sourceType === "AppGroup" &&
+                typeof secret.attachmentId === "string",
+            )
+            .map((secret) => ({
+              id: secret.attachmentId as string,
+              secretId: secret.id,
+              singleAppId: singleApp.id,
+              targetName: secret.targetName ?? secret.name ?? "secret",
+              createdBy: actor.id,
+            })),
+      );
+
+      await tx.secretAttachment.deleteMany({
+        where: { singleApp: { appGroupId } },
+      });
+      if (deployedSecretAttachments.length > 0) {
+        await tx.secretAttachment.createMany({
+          data: deployedSecretAttachments,
+        });
+      }
+
+      const secretVersionDrift = await this.hasSecretVersionDrift(
+        tx,
+        deployedSnapshot,
+      );
+
       const result = await tx.appGroup.update({
         where: { id: appGroupId },
         data: {
           runtimeState: deployedSnapshot.appGroup.runtimeState,
-          hasPendingChanges: false,
+          hasPendingChanges: secretVersionDrift,
           runtimeDraftRevision: {
             increment: 1,
           },
@@ -292,6 +342,7 @@ export class AppGroupsService {
           correlationId: crypto.randomUUID(),
           changes: {
             restoredDeploymentVersion: appGroup.currentDeploymentVersion,
+            secretVersionDrift,
           },
         },
       });
@@ -870,6 +921,201 @@ export class AppGroupsService {
     return { deleted: true };
   }
 
+  async listSecrets(tenantId: string, appGroupId: string) {
+    await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
+
+    const secrets = await this.prisma.secret.findMany({
+      where: { appGroupId },
+      include: { attachments: true },
+      orderBy: { name: "asc" },
+    });
+
+    return secrets.map(mapSecret);
+  }
+
+  async createSecret(
+    tenantId: string,
+    appGroupId: string,
+    dto: CreateSecretDto,
+    actor: AuthenticatedUser,
+  ) {
+    await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
+    this.assertSecretMetadata(dto.type, dto.fileName);
+    const plaintext = this.decodeSecretValue(dto.type, dto.value);
+    const secretId = crypto.randomUUID();
+    const storagePath = this.secretStorage.path(tenantId, appGroupId, dto.name);
+
+    try {
+      return await this.secretStorage.replaceAtomically(
+        storagePath,
+        plaintext,
+        async () => {
+          const secret = await this.prisma.$transaction(async (tx) => {
+            const created = await tx.secret.create({
+              data: {
+                id: secretId,
+                appGroupId,
+                name: dto.name,
+                description: dto.description,
+                type: dto.type,
+                fileName:
+                  dto.type === SecretType.Binary ? dto.fileName : null,
+                valueVersion: 1,
+                storagePath,
+                createdBy: actor.id,
+                updatedBy: actor.id,
+              },
+              include: { attachments: true },
+            });
+
+            await this.auditSecret(tx, tenantId, actor, "secret.create", created, {
+              value: { changed: true },
+            });
+
+            return created;
+          });
+
+          return mapSecret(secret);
+        },
+      );
+    } catch (error) {
+      this.handleKnownConflict(error, "Secret name already exists");
+      throw error;
+    }
+  }
+
+  async updateSecret(
+    tenantId: string,
+    appGroupId: string,
+    secretId: string,
+    dto: UpdateSecretDto,
+    actor: AuthenticatedUser,
+  ) {
+    const existing = await this.findSecretOrThrow(
+      tenantId,
+      appGroupId,
+      secretId,
+    );
+    const nextType = dto.type ?? existing.type;
+    const nextName = dto.name ?? existing.name;
+    const typeChanged = nextType !== existing.type;
+    const valueChanged = dto.value !== undefined;
+    const nameChanged = nextName !== existing.name;
+
+    if (typeChanged && !valueChanged) {
+      throw new BadRequestException(
+        "Changing Secret type requires a new value",
+      );
+    }
+
+    const nextFileName =
+      nextType === SecretType.Binary
+        ? dto.fileName === undefined
+          ? existing.fileName
+          : dto.fileName
+        : null;
+    this.assertSecretMetadata(nextType, nextFileName);
+
+    const persist = () =>
+      this.prisma.$transaction(async (tx) => {
+        const updated = await tx.secret.update({
+          where: { id: secretId },
+          data: {
+            name: dto.name,
+            description: dto.description,
+            type: dto.type,
+            fileName: nextFileName,
+            storagePath: nameChanged
+              ? this.secretStorage.path(tenantId, appGroupId, nextName)
+              : undefined,
+            valueVersion: valueChanged ? { increment: 1 } : undefined,
+            updatedBy: actor.id,
+          },
+          include: { attachments: true },
+        });
+
+        if (valueChanged && existing.attachments.length > 0) {
+          await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+        }
+
+        await this.auditSecret(
+          tx,
+          tenantId,
+          actor,
+          nameChanged && !valueChanged ? "secret.rename" : "secret.update",
+          updated,
+          {
+            nameChanged,
+            metadataChanged:
+              dto.description !== undefined ||
+              dto.fileName !== undefined ||
+              typeChanged,
+            value: { changed: valueChanged },
+          },
+        );
+
+        return mapSecret(updated);
+      });
+
+    try {
+      if (!valueChanged && !nameChanged) {
+        return await persist();
+      }
+
+      const plaintext = valueChanged
+        ? this.decodeSecretValue(nextType, dto.value ?? "")
+        : await this.secretStorage.read(existing.storagePath);
+      const nextStoragePath = this.secretStorage.path(
+        tenantId,
+        appGroupId,
+        nextName,
+      );
+      const result = await this.secretStorage.replaceAtomically(
+        nextStoragePath,
+        plaintext,
+        persist,
+      );
+
+      if (nameChanged) {
+        await this.secretStorage.deleteBestEffort(existing.storagePath);
+      }
+
+      return result;
+    } catch (error) {
+      this.handleKnownConflict(error, "Secret name already exists");
+      throw error;
+    }
+  }
+
+  async deleteSecret(
+    tenantId: string,
+    appGroupId: string,
+    secretId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const secret = await this.findSecretOrThrow(
+      tenantId,
+      appGroupId,
+      secretId,
+    );
+
+    if (
+      secret.attachments.length > 0 ||
+      (await this.isSecretInCurrentDeployment(appGroupId, secretId))
+    ) {
+      throw new ConflictException("SecretInUse");
+    }
+
+    return this.secretStorage.deleteAtomically(secret.storagePath, async () => {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.secret.delete({ where: { id: secretId } });
+        await this.auditSecret(tx, tenantId, actor, "secret.delete", secret);
+      });
+
+      return { deleted: true };
+    });
+  }
+
   async attachVariable(
     tenantId: string,
     appGroupId: string,
@@ -947,6 +1193,107 @@ export class AppGroupsService {
       });
 
       await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+    });
+
+    return { deleted: true };
+  }
+
+  async attachSecret(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    dto: AttachSecretDto,
+    actor: AuthenticatedUser,
+  ) {
+    const singleApp = await this.ensureSingleAppBelongsToAppGroup(
+      tenantId,
+      appGroupId,
+      singleAppId,
+    );
+
+    if (singleApp.pendingDeletion) {
+      throw new ConflictException("SingleApp is pending deletion");
+    }
+
+    const secret = await this.findSecretOrThrow(
+      tenantId,
+      appGroupId,
+      dto.secretId,
+    );
+    const targetName = dto.targetName ?? secret.name;
+    this.assertSecretName(targetName);
+
+    try {
+      const attachment = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.secretAttachment.create({
+          data: {
+            secretId: secret.id,
+            singleAppId,
+            targetName,
+            createdBy: actor.id,
+          },
+        });
+
+        await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+        await this.auditSecret(
+          tx,
+          tenantId,
+          actor,
+          "secret.attach",
+          secret,
+          { attachmentId: created.id, singleAppId, targetName },
+        );
+
+        return created;
+      });
+
+      return mapSecretAttachment(attachment);
+    } catch (error) {
+      this.handleKnownConflict(
+        error,
+        "Secret already attached or target name already used",
+      );
+      throw error;
+    }
+  }
+
+  async detachSecret(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    attachmentId: string,
+    actor: AuthenticatedUser,
+  ) {
+    await this.ensureSingleAppBelongsToAppGroup(
+      tenantId,
+      appGroupId,
+      singleAppId,
+    );
+
+    const attachment = await this.prisma.secretAttachment.findFirst({
+      where: {
+        id: attachmentId,
+        singleAppId,
+        singleApp: { appGroup: { id: appGroupId, tenantId } },
+      },
+      include: { secret: true },
+    });
+
+    if (!attachment) {
+      throw new NotFoundException("Secret attachment not found");
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.secretAttachment.delete({ where: { id: attachmentId } });
+      await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+      await this.auditSecret(
+        tx,
+        tenantId,
+        actor,
+        "secret.detach",
+        attachment.secret,
+        { attachmentId, singleAppId, targetName: attachment.targetName },
+      );
     });
 
     return { deleted: true };
@@ -2274,6 +2621,171 @@ export class AppGroupsService {
     return variable;
   }
 
+  private async findSecretOrThrow(
+    tenantId: string,
+    appGroupId: string,
+    secretId: string,
+  ) {
+    const secret = await this.prisma.secret.findFirst({
+      where: {
+        id: secretId,
+        appGroup: { id: appGroupId, tenantId },
+      },
+      include: { attachments: true },
+    });
+
+    if (!secret) {
+      throw new NotFoundException("Secret not found");
+    }
+
+    return secret;
+  }
+
+  private async isSecretInCurrentDeployment(
+    appGroupId: string,
+    secretId: string,
+  ) {
+    const appGroup = await this.prisma.appGroup.findUnique({
+      where: { id: appGroupId },
+      select: { currentDeploymentVersion: true },
+    });
+
+    if (appGroup?.currentDeploymentVersion == null) {
+      return false;
+    }
+
+    const deployment = await this.prisma.appGroupDeployment.findFirst({
+      where: {
+        appGroupId,
+        version: appGroup?.currentDeploymentVersion,
+      },
+      select: { stackConfig: true },
+    });
+
+    if (!deployment?.stackConfig) {
+      return false;
+    }
+
+    const snapshot = JSON.parse(deployment.stackConfig) as {
+      singleApps?: Array<{
+        secrets?: Array<{ id?: string; secretId?: string }>;
+      }>;
+    };
+
+    return Boolean(
+      snapshot.singleApps?.some((singleApp) =>
+        singleApp.secrets?.some(
+          (secret) => secret.id === secretId || secret.secretId === secretId,
+        ),
+      ),
+    );
+  }
+
+  private async hasSecretVersionDrift(
+    tx: Prisma.TransactionClient,
+    snapshot: StackConfigSnapshot,
+  ) {
+    const snapshotSecrets = snapshot.singleApps.flatMap(
+      (singleApp) => singleApp.secrets ?? [],
+    );
+    const appGroupSecrets = snapshotSecrets.filter(
+      (secret) => secret.sourceType === "AppGroup",
+    );
+    const legacySecrets = snapshotSecrets.filter(
+      (secret) => secret.sourceType !== "AppGroup",
+    );
+    const [currentAppGroupSecrets, currentLegacySecrets] = await Promise.all([
+      tx.secret.findMany({
+        where: { id: { in: appGroupSecrets.map((secret) => secret.id) } },
+        select: { id: true, valueVersion: true },
+      }),
+      tx.singleAppSecret.findMany({
+        where: { id: { in: legacySecrets.map((secret) => secret.id) } },
+        select: { id: true, valueVersion: true },
+      }),
+    ]);
+    const currentVersions = new Map(
+      [...currentAppGroupSecrets, ...currentLegacySecrets].map((secret) => [
+        secret.id,
+        secret.valueVersion,
+      ]),
+    );
+
+    return snapshotSecrets.some(
+      (secret) => currentVersions.get(secret.id) !== secret.valueVersion,
+    );
+  }
+
+  private decodeSecretValue(type: SecretType, value: string) {
+    let plaintext: Buffer;
+
+    if (type === SecretType.Binary) {
+      const normalized = value.replace(/=+$/, "");
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value) || value.length % 4 === 1) {
+        throw new BadRequestException("Binary Secret value must be Base64");
+      }
+
+      plaintext = Buffer.from(value, "base64");
+      if (plaintext.toString("base64").replace(/=+$/, "") !== normalized) {
+        throw new BadRequestException("Binary Secret value must be Base64");
+      }
+    } else {
+      plaintext = Buffer.from(value, "utf8");
+    }
+
+    if (plaintext.length > 64 * 1024) {
+      throw new BadRequestException({
+        code: "SecretTooLarge",
+        message: "Secret value exceeds maximum size of 64 KB",
+      });
+    }
+
+    return plaintext;
+  }
+
+  private assertSecretMetadata(type: SecretType, fileName?: string | null) {
+    if (type === SecretType.Text && fileName) {
+      throw new BadRequestException(
+        "fileName is supported only for Binary Secrets",
+      );
+    }
+  }
+
+  private assertSecretName(name: string) {
+    if (
+      name === "." ||
+      name.includes("..") ||
+      !/^[A-Za-z0-9_.-]{1,128}$/.test(name)
+    ) {
+      throw new BadRequestException("Invalid Secret target name");
+    }
+  }
+
+  private async auditSecret(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    actor: AuthenticatedUser,
+    action: string,
+    secret: Secret,
+    changes?: Prisma.InputJsonObject,
+  ) {
+    await tx.auditLogEntry.create({
+      data: {
+        tenantId,
+        tenantName: await this.tenantName(tx, tenantId),
+        actor: actor.id,
+        actorName: actor.displayName,
+        action,
+        resourceType: "Secret",
+        resourceId: secret.id,
+        resourceName: secret.name,
+        result: "Success",
+        correlationId: crypto.randomUUID(),
+        changes,
+      },
+    });
+  }
+
   private async findConfigOrThrow(
     tenantId: string,
     appGroupId: string,
@@ -2377,6 +2889,10 @@ export class AppGroupsService {
               orderBy: { targetPath: "asc" },
               include: { config: true },
             },
+            secretAttachments: {
+              orderBy: { targetName: "asc" },
+              include: { secret: true },
+            },
             secrets: {
               orderBy: { name: "asc" },
             },
@@ -2452,11 +2968,21 @@ export class AppGroupsService {
             targetName: attachment.targetName,
             value: attachment.variable.value,
           })),
-          secrets: singleApp.secrets.map((secret) => ({
-            id: secret.id,
-            name: secret.name,
-            valueVersion: secret.valueVersion,
-          })),
+          secrets: [
+            ...singleApp.secretAttachments.map((attachment) => ({
+              id: attachment.secret.id,
+              attachmentId: attachment.id,
+              sourceType: "AppGroup" as const,
+              targetName: attachment.targetName,
+              valueVersion: attachment.secret.valueVersion,
+            })),
+            ...singleApp.secrets.map((secret) => ({
+              id: secret.id,
+              sourceType: "LegacySingleApp" as const,
+              targetName: secret.name,
+              valueVersion: secret.valueVersion,
+            })),
+          ],
           configs: singleApp.configAttachments.map((attachment) => ({
             id: attachment.id,
             configId: attachment.configId,
