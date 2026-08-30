@@ -89,6 +89,7 @@ const roles = [
       "domain.delete",
       "domain.validate",
       "audit.read",
+      "audit.export",
     ],
   },
   {
