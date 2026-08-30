@@ -17,7 +17,8 @@
     "worker:deployments": "ts-node --files src/internal/deployment-worker.runner.ts",
     "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts",
     "smoke:stage9-ingress": "ts-node --files scripts/smoke-stage9-ingress.ts",
-    "smoke:volume-lifecycle": "ts-node --files scripts/smoke-volume-lifecycle.ts"
+    "smoke:volume-lifecycle": "ts-node --files scripts/smoke-volume-lifecycle.ts",
+    "smoke:stage11-quota-concurrency": "ts-node --files scripts/smoke-stage11-quota-concurrency.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
@@ -38,7 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
-    "@nestjs/cli": "^11.0.10",
+    "@nestjs/cli": "^11.1.6",
     "@nestjs/schematics": "^11.0.7",
     "@nestjs/testing": "^11.1.6",
     "@types/node": "^24.3.0",
