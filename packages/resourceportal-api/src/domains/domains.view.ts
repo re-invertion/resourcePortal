@@ -1,10 +1,12 @@
 import { CustomRootDomain, Domain } from "@prisma/client";
+import { protocolModeRequiresTls } from "../internal/traefik-routing";
 
 type DomainWithEndpoint = Domain & {
   httpEndpoint?: {
     id: string;
     name: string;
     containerPort: number;
+    protocolMode: string;
     singleApp: {
       id: string;
       name: string;
@@ -14,6 +16,10 @@ type DomainWithEndpoint = Domain & {
 };
 
 export function mapDomain(domain: DomainWithEndpoint) {
+  const tlsEnabled = domain.httpEndpoint
+    ? protocolModeRequiresTls(domain.httpEndpoint.protocolMode)
+    : false;
+
   return {
     id: domain.id,
     tenantId: domain.tenantId,
@@ -23,10 +29,10 @@ export function mapDomain(domain: DomainWithEndpoint) {
     subdomain: domain.subdomain,
     hostname: domain.hostname,
     dnsStatus: domain.dnsStatus,
-    tlsEnabled: domain.tlsEnabled,
-    certificateStatus: domain.certificateStatus,
-    certificateIssuer: domain.certificateIssuer,
-    certificateExpiresAt: domain.certificateExpiresAt,
+    tlsEnabled,
+    certificateStatus: tlsEnabled ? domain.certificateStatus : "Pending",
+    certificateIssuer: tlsEnabled ? domain.certificateIssuer : null,
+    certificateExpiresAt: tlsEnabled ? domain.certificateExpiresAt : null,
     httpEndpointId: domain.httpEndpointId,
     httpEndpoint: domain.httpEndpoint
       ? {
