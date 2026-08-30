@@ -161,8 +161,8 @@ async function request(
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method,
     headers: {
-      "content-type": "application/json",
       "x-dev-user-id": userId,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
