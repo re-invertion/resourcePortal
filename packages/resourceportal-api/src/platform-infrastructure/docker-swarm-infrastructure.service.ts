@@ -63,10 +63,11 @@ export class DockerSwarmInfrastructureService {
   }
 
   async listNodes(): Promise<ObservedSwarmNode[] | null> {
+    // docker node ls does not support --no-trunc. Its .ID formatting field is
+    // already the full Swarm node ID and is safe to pass to docker node inspect.
     const list = await this.runDocker([
       "node",
       "ls",
-      "--no-trunc",
       "--format",
       "{{.ID}}",
     ]);
