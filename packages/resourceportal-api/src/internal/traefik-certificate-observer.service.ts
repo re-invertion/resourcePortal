@@ -40,7 +40,7 @@ export class TraefikCertificateObserverService {
           host: hostname,
           port: 443,
           servername: hostname,
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
         },
         () => {
           try {
