@@ -130,7 +130,7 @@ jobs:
           exit 1
 
       - name: Run Resource Portal against real Swarm
-        run: npm run api:smoke:deploy
+        run: bash scripts/run-real-swarm-smoke.sh
 
       - name: Verify Swarm is clean after smoke test
         if: always()
