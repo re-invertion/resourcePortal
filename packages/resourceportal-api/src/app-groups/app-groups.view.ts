@@ -22,8 +22,15 @@ type AppGroupWithRelations = AppGroup & {
   };
 };
 
-export function mapAppGroup(appGroup: AppGroupWithRelations) {
-  const runtimeBlockers = appGroupRuntimeBlockers(appGroup);
+type AppGroupRuntimeContext = {
+  platformMaintenance?: boolean;
+};
+
+export function mapAppGroup(
+  appGroup: AppGroupWithRelations,
+  runtimeContext: AppGroupRuntimeContext = {},
+) {
+  const runtimeBlockers = appGroupRuntimeBlockers(appGroup, runtimeContext);
 
   return {
     ...appGroup,
@@ -106,7 +113,10 @@ export function mapSecretAttachment(attachment: SecretAttachment) {
   return attachment;
 }
 
-function appGroupRuntimeBlockers(appGroup: AppGroupWithRelations) {
+function appGroupRuntimeBlockers(
+  appGroup: AppGroupWithRelations,
+  runtimeContext: AppGroupRuntimeContext,
+) {
   return [
     appGroup.status === "Deleting" ? "AppGroupDeleting" : undefined,
     appGroup.status === "Error" ? "AppGroupError" : undefined,
@@ -114,6 +124,7 @@ function appGroupRuntimeBlockers(appGroup: AppGroupWithRelations) {
     appGroup.currentDeploymentVersion === null ? "AppGroupNotDeployed" : undefined,
     appGroup.tenant?.status === "Suspended" ? "TenantSuspended" : undefined,
     appGroup.tenant?.billing?.balance.lte(0) ? "BillingSuspended" : undefined,
+    runtimeContext.platformMaintenance ? "PlatformMaintenance" : undefined,
   ].filter((blocker): blocker is string => blocker !== undefined);
 }
 
