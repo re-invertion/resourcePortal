@@ -69,8 +69,12 @@ const writableLoginPolicyFields = [
   "forceMfaLocalOnly",
 ] as const satisfies ReadonlyArray<keyof ZitadelLoginPolicy>;
 
-const DEFAULT_POLICY_VERIFY_ATTEMPTS = 30;
-const DEFAULT_POLICY_VERIFY_DELAY_MS = 100;
+// ZITADEL's scheduled projection catch-up defaults to 60s. Keep the
+// verification window slightly above one full catch-up cycle so a missed
+// pub/sub projection trigger does not turn a successful policy write into a
+// false provisioning failure.
+const DEFAULT_POLICY_VERIFY_ATTEMPTS = 131;
+const DEFAULT_POLICY_VERIFY_DELAY_MS = 500;
 
 @Injectable()
 export class ZitadelIdentityProviderService {
