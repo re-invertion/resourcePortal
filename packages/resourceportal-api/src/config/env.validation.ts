@@ -23,23 +23,16 @@ export function validateEnv(config: Env) {
   }
 
   requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_TTL_SECONDS");
-  requirePositiveIntegerIfSet(
-    config,
-    errors,
-    "AUTH_SESSION_IDLE_TIMEOUT_SECONDS",
-  );
+  requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_IDLE_TIMEOUT_SECONDS");
   requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_MAX");
-  requirePositiveIntegerIfSet(
-    config,
-    errors,
-    "API_RATE_LIMIT_WINDOW_SECONDS",
-  );
+  requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_WINDOW_SECONDS");
   requirePositiveIntegerIfSet(config, errors, "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS");
   requirePositiveIntegerIfSet(
     config,
     errors,
     "DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS",
   );
+  requirePositiveIntegerIfSet(config, errors, "INGRESS_RECONCILE_INTERVAL_MS");
   requirePatternIfSet(
     config,
     errors,
