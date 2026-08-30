@@ -25,7 +25,7 @@ wait_for_url() {
 
 load_environment() {
   if [[ ! -f "$ROOT_DIR/.env" ]]; then
-    echo "Federation .env is missing; run the prepare phase first" >&2
+    echo "Federation .env is missing; run the services phase first" >&2
     return 1
   fi
 
@@ -33,6 +33,10 @@ load_environment() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/.env"
   set +a
+  [[ -s "$PAT_FILE" ]] || {
+    echo "ZITADEL bootstrap PAT is missing" >&2
+    return 1
+  }
   export ZITADEL_MANAGEMENT_TOKEN="$(tr -d '\r\n' <"$PAT_FILE")"
   export FEDERATION_E2E_STATE_FILE="$STATE_DIR/state.json"
   export FEDERATION_E2E_API_URL="http://localhost:3000/api"
@@ -70,12 +74,11 @@ cleanup_environment() {
   docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
 }
 
-prepare() {
+services() {
   cd "$ROOT_DIR"
   rm -rf "$STATE_DIR"
   mkdir -p "$STATE_DIR/zitadel"
 
-  echo "[federation-e2e] phase=prepare services=starting"
   docker compose -f "$COMPOSE_FILE" up -d
   wait_for_url "http://localhost:8080/debug/healthz" "ZITADEL"
   wait_for_url "http://localhost:8180/realms/tenant/.well-known/openid-configuration" "Keycloak"
@@ -128,26 +131,55 @@ EOF
     echo "ZITADEL bootstrap PAT was not created" >&2
     return 1
   }
+}
 
-  echo "[federation-e2e] phase=prepare zitadel=bootstrap"
+bootstrap_zitadel() {
+  cd "$ROOT_DIR"
+  [[ -f .env ]] || {
+    echo "Federation .env is missing; run the services phase first" >&2
+    return 1
+  }
+  [[ -s "$PAT_FILE" ]] || {
+    echo "ZITADEL bootstrap PAT is missing" >&2
+    return 1
+  }
   npm --workspace @resource-portal/api run zitadel:bootstrap
   load_environment
+  [[ -n "${ZITADEL_ORGANIZATION_ID:-}" ]] || {
+    echo "ZITADEL bootstrap did not persist ZITADEL_ORGANIZATION_ID" >&2
+    return 1
+  }
+  [[ -n "${OIDC_CLIENT_ID:-}" ]] || {
+    echo "ZITADEL bootstrap did not persist OIDC_CLIENT_ID" >&2
+    return 1
+  }
+}
 
-  echo "[federation-e2e] phase=prepare database=migrate"
+database() {
+  cd "$ROOT_DIR"
+  load_environment
   (
     cd packages/resourceportal-api
     npx prisma migrate deploy
   )
   npm run api:db:seed
+}
 
-  echo "[federation-e2e] phase=prepare api=build"
+build_api() {
+  cd "$ROOT_DIR"
   npm --workspace @resource-portal/api run build
+}
+
+prepare() {
+  services
+  bootstrap_zitadel
+  database
+  build_api
 }
 
 provision() {
   cd "$ROOT_DIR"
   load_environment
-  echo "[federation-e2e] phase=provision api=dev"
   start_api dev
   trap stop_api RETURN
   (
@@ -165,7 +197,6 @@ browser_login() {
     echo "Federation state is missing; run the provision phase first" >&2
     return 1
   }
-  echo "[federation-e2e] phase=browser api=oidc"
   start_api oidc
   trap stop_api RETURN
   node scripts/run-federation-browser-e2e.mjs
@@ -177,6 +208,10 @@ run_phase() {
   local phase=$1
   echo "[federation-e2e] begin=$phase"
   case "$phase" in
+    services) services ;;
+    bootstrap) bootstrap_zitadel ;;
+    database) database ;;
+    build) build_api ;;
     prepare) prepare ;;
     provision) provision ;;
     browser) browser_login ;;
@@ -191,7 +226,10 @@ run_phase() {
 
 if [[ "$PHASE" == "all" ]]; then
   trap 'exit_code=$?; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; cleanup_environment; exit $exit_code' EXIT INT TERM
-  run_phase prepare
+  run_phase services
+  run_phase bootstrap
+  run_phase database
+  run_phase build
   run_phase provision
   run_phase browser
   echo "Federation E2E completed successfully"
