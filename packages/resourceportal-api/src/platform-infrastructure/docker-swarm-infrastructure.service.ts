@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import {
@@ -22,6 +22,8 @@ type DockerSwarmInfo = {
 
 @Injectable()
 export class DockerSwarmInfrastructureService {
+  private readonly logger = new Logger(DockerSwarmInfrastructureService.name);
+
   constructor(private readonly config: ConfigService) {}
 
   async inspectSwarm(): Promise<{ dockerClusterId: string } | null> {
@@ -32,6 +34,9 @@ export class DockerSwarmInfrastructureService {
     ]);
 
     if (result.exitCode !== 0 || !result.stdout) {
+      this.logger.warn(
+        `Swarm observation failed at docker info: exitCode=${result.exitCode} stderr=${JSON.stringify(result.stderr)}`,
+      );
       return null;
     }
 
@@ -42,11 +47,17 @@ export class DockerSwarmInfrastructureService {
         typeof swarm.Cluster?.ID !== "string" ||
         swarm.Cluster.ID.length === 0
       ) {
+        this.logger.warn(
+          `Swarm observation rejected docker info payload: localNodeState=${JSON.stringify(swarm.LocalNodeState)} clusterIdPresent=${typeof swarm.Cluster?.ID === "string" && swarm.Cluster.ID.length > 0}`,
+        );
         return null;
       }
 
       return { dockerClusterId: swarm.Cluster.ID };
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `Swarm observation could not parse docker info JSON: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
       return null;
     }
   }
@@ -61,6 +72,9 @@ export class DockerSwarmInfrastructureService {
     ]);
 
     if (list.exitCode !== 0) {
+      this.logger.warn(
+        `Swarm observation failed at docker node ls: exitCode=${list.exitCode} stderr=${JSON.stringify(list.stderr)}`,
+      );
       return null;
     }
 
@@ -80,16 +94,25 @@ export class DockerSwarmInfrastructureService {
       ]);
 
       if (inspect.exitCode !== 0 || !inspect.stdout) {
+        this.logger.warn(
+          `Swarm observation failed at docker node inspect: nodeId=${nodeId} exitCode=${inspect.exitCode} stderr=${JSON.stringify(inspect.stderr)}`,
+        );
         return null;
       }
 
       try {
         const node = parseDockerNodeInspect(JSON.parse(inspect.stdout));
         if (!node) {
+          this.logger.warn(
+            `Swarm observation rejected docker node inspect payload: nodeId=${nodeId}`,
+          );
           return null;
         }
         nodes.push(node);
-      } catch {
+      } catch (error) {
+        this.logger.warn(
+          `Swarm observation could not parse docker node inspect JSON: nodeId=${nodeId} error=${error instanceof Error ? error.message : "unknown error"}`,
+        );
         return null;
       }
     }
