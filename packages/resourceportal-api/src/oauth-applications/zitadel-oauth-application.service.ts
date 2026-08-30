@@ -54,6 +54,23 @@ export class ZitadelOAuthApplicationService {
     }
   }
 
+  async rotateSecret(applicationId: string) {
+    const response = await this.request<{ clientSecret?: string }>(
+      "POST",
+      "/zitadel.application.v2.ApplicationService/GenerateClientSecret",
+      {
+        applicationId,
+        projectId: this.projectId(),
+      },
+      [],
+      { "Connect-Protocol-Version": "1" },
+    );
+    if (!response.clientSecret) {
+      throw new BadGatewayException("ZITADEL credential rotation did not return a client secret");
+    }
+    return response.clientSecret;
+  }
+
   delete(applicationId: string) {
     return this.request(
       "DELETE",
@@ -118,6 +135,7 @@ export class ZitadelOAuthApplicationService {
     path: string,
     body?: JsonObject,
     ignoredStatuses: number[] = [],
+    extraHeaders: Record<string, string> = {},
   ): Promise<T> {
     const response = await fetch(`${this.baseUrl()}${path}`, {
       method,
@@ -125,6 +143,7 @@ export class ZitadelOAuthApplicationService {
         authorization: `Bearer ${this.managementToken()}`,
         "content-type": "application/json",
         "x-zitadel-orgid": this.organizationId(),
+        ...extraHeaders,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
