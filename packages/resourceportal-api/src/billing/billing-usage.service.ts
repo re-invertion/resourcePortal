@@ -114,7 +114,7 @@ export class BillingUsageService {
         data: {
           tenantId: input.tenantId,
           tenantName: tenant.name,
-          actor: "system:billing-worker",
+          actor: "system",
           actorName: "Billing Worker",
           action: "billing.usage_charge",
           resourceType: input.resourceType,
@@ -135,7 +135,7 @@ export class BillingUsageService {
           data: {
             tenantId: input.tenantId,
             tenantName: tenant.name,
-            actor: "system:billing-worker",
+            actor: "system",
             actorName: "Billing Worker",
             action: "billing.suspend",
             resourceType: "BillingAccount",
