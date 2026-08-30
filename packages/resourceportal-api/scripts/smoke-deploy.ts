@@ -49,6 +49,15 @@ async function main() {
     },
   });
 
+  await api(`/tenants/${createdTenantId}/billing/top-up`, {
+    method: "POST",
+    userId,
+    body: {
+      amount: 100,
+      reference: "real swarm smoke fixture",
+    },
+  });
+
   const volume = await api<JsonObject>(`/tenants/${createdTenantId}/volumes`, {
     method: "POST",
     userId,

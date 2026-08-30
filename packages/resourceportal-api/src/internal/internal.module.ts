@@ -6,6 +6,7 @@ import { AuthSessionMaintenanceController } from "./auth-session-maintenance.con
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
+import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 import { StackApplyService } from "./stack-apply.service";
 import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
@@ -20,6 +21,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
   providers: [
     DeploymentWorkerService,
     InternalAuthGuard,
+    RuntimeDriftReconcilerService,
     StackApplyService,
     StackConfigProvisionerService,
     StackRegistryAuthService,
