@@ -12,6 +12,10 @@ type UpdateInput = {
   data: Record<string, unknown>;
 };
 
+type AuditCreateInput = {
+  data: Record<string, unknown>;
+};
+
 type ObserveFn = (hostname: string) => Promise<ObservedCertificate>;
 
 function assignedDomain(
@@ -36,7 +40,7 @@ function serviceFor(domains: Array<Record<string, unknown>>, observeFn: ObserveF
   const update = vi.fn((input: UpdateInput) =>
     Promise.resolve({ id: input.where.id, ...input.data }),
   );
-  const auditCreate = vi.fn(() => Promise.resolve({}));
+  const auditCreate = vi.fn((input: AuditCreateInput) => Promise.resolve(input));
   const tx = {
     domain: { update },
     auditLogEntry: { create: auditCreate },
@@ -56,6 +60,7 @@ function serviceFor(domains: Array<Record<string, unknown>>, observeFn: ObserveF
   };
 
   return {
+    auditCreate,
     prisma,
     observer,
     service: new DomainCertificateReconcilerService(
@@ -73,7 +78,7 @@ describe("DomainCertificateReconcilerService", () => {
   it("marks an observed unexpired certificate Active and records a system audit event", async () => {
     const domain = assignedDomain("HTTPS");
     const expiresAt = new Date(Date.now() + 86_400_000);
-    const { prisma, service } = serviceFor([domain], () =>
+    const { auditCreate, prisma, service } = serviceFor([domain], () =>
       Promise.resolve({
         hostname: "app.example.com",
         domains: ["app.example.com"],
@@ -94,18 +99,16 @@ describe("DomainCertificateReconcilerService", () => {
       certificateExpiresAt: expiresAt,
       updatedBy: "system",
     });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        tenantId: domain.tenantId,
-        tenantName: "tenant",
-        actor: "system",
-        actorName: "Certificate Reconciler",
-        action: "domain.certificate.renew",
-        resourceType: "Domain",
-        resourceId: domain.id,
-        resourceName: domain.hostname,
-        result: "Success",
-      }),
+    expect(auditCreate.mock.calls[0]?.[0]?.data).toMatchObject({
+      tenantId: domain.tenantId,
+      tenantName: "tenant",
+      actor: "system",
+      actorName: "Certificate Reconciler",
+      action: "domain.certificate.renew",
+      resourceType: "Domain",
+      resourceId: domain.id,
+      resourceName: domain.hostname,
+      result: "Success",
     });
     expect(result).toEqual({ checked: 1, updated: 1, failed: 0 });
   });
@@ -137,7 +140,7 @@ describe("DomainCertificateReconcilerService", () => {
     const domain = assignedDomain("HTTP_REDIRECT_TO_HTTPS", {
       certificateStatus: CertificateStatus.Pending,
     });
-    const { prisma, service } = serviceFor([domain], () =>
+    const { auditCreate, prisma, service } = serviceFor([domain], () =>
       Promise.reject(new Error("ECONNREFUSED")),
     );
 
@@ -149,15 +152,13 @@ describe("DomainCertificateReconcilerService", () => {
       certificateExpiresAt: null,
       updatedBy: "system",
     });
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        actor: "system",
-        actorName: "Certificate Reconciler",
-        action: "domain.certificate.renew",
-        result: "Failed",
-        errorCode: "CertificateObservationFailed",
-        errorMessage: "ECONNREFUSED",
-      }),
+    expect(auditCreate.mock.calls[0]?.[0]?.data).toMatchObject({
+      actor: "system",
+      actorName: "Certificate Reconciler",
+      action: "domain.certificate.renew",
+      result: "Failed",
+      errorCode: "CertificateObservationFailed",
+      errorMessage: "ECONNREFUSED",
     });
     expect(result).toEqual({ checked: 1, updated: 1, failed: 1 });
   });
@@ -186,21 +187,23 @@ describe("DomainCertificateReconcilerService", () => {
       hostname: "second.example.com",
     });
     const expiresAt = new Date(Date.now() + 86_400_000);
-    const { prisma, service } = serviceFor([first, second], (hostname) =>
-      hostname === "app.example.com"
-        ? Promise.reject(new Error("TLS failed"))
-        : Promise.resolve({
-            hostname,
-            domains: [hostname],
-            expiresAt,
-            issuer: "R12",
-          }),
+    const { auditCreate, prisma, service } = serviceFor(
+      [first, second],
+      (hostname) =>
+        hostname === "app.example.com"
+          ? Promise.reject(new Error("TLS failed"))
+          : Promise.resolve({
+              hostname,
+              domains: [hostname],
+              expiresAt,
+              issuer: "R12",
+            }),
     );
 
     const result = await service.reconcileBatch();
 
     expect(prisma.domain.update).toHaveBeenCalledTimes(2);
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledTimes(2);
+    expect(auditCreate).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ checked: 2, updated: 2, failed: 1 });
   });
 });
