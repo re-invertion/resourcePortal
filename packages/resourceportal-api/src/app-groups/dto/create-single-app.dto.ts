@@ -59,6 +59,7 @@ export class CreateSingleAppDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(0, { message: "GpuNotAvailable" })
   gpu?: number;
 
   @IsOptional()
