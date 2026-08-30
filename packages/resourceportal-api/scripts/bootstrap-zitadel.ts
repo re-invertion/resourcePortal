@@ -75,6 +75,7 @@ async function main() {
 
   updateDotEnv({
     ZITADEL_ORGANIZATION_ID: organization.id,
+    ZITADEL_PROJECT_ID: project.id,
     OIDC_ISSUER_URL: issuerUrl,
     OIDC_CLIENT_ID: app.clientId,
     OIDC_CLIENT_SECRET: app.clientSecret,
