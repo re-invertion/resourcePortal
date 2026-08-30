@@ -6,6 +6,7 @@ import { AuthSessionMaintenanceController } from "./auth-session-maintenance.con
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
+import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 import { StackApplyService } from "./stack-apply.service";
@@ -15,6 +16,7 @@ import { StackRolloutService } from "./stack-rollout.service";
 import { StackRuntimeService } from "./stack-runtime.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
+import { TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
 
 @Module({
   imports: [AuthModule, PrismaModule, SecurityModule],
@@ -22,6 +24,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
   providers: [
     DeploymentRecoveryService,
     DeploymentWorkerService,
+    DomainCertificateReconcilerService,
     InternalAuthGuard,
     RuntimeDriftReconcilerService,
     StackApplyService,
@@ -31,6 +34,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
     StackRuntimeService,
     StackSecretProvisionerService,
     StackVolumeProvisionerService,
+    TraefikCertificateObserverService,
   ],
 })
 export class InternalModule {}
