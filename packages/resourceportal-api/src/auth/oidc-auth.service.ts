@@ -111,7 +111,8 @@ export class OidcAuthService {
     const email = this.getEmail(payload);
     const displayName = this.getDisplayName(payload, email);
     const providerType = this.config.get<string>("OIDC_PROVIDER_TYPE", "zitadel");
-    const status = payload.email_verified === true ? UserStatus.Active : UserStatus.Pending;
+    const verificationStatus =
+      payload.email_verified === true ? UserStatus.Active : UserStatus.Pending;
     const now = new Date();
 
     const existingIdentity = await this.prisma.userIdentity.findUnique({
@@ -134,6 +135,11 @@ export class OidcAuthService {
           throw new UnauthorizedException("OIDC email belongs to another user");
         }
       }
+
+      const status =
+        existingIdentity.user.status === UserStatus.Pending
+          ? verificationStatus
+          : existingIdentity.user.status;
 
       return this.prisma.user.update({
         where: { id: existingIdentity.userId },
@@ -181,7 +187,7 @@ export class OidcAuthService {
       data: {
         email,
         displayName,
-        status,
+        status: verificationStatus,
         identities: {
           create: {
             providerType,
