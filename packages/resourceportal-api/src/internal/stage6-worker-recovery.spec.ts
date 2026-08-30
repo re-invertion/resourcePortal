@@ -171,7 +171,24 @@ describe("Stage 6 deployment worker recovery", () => {
     const current = deployment();
     const applyRenderedStack = vi.fn(() => Promise.resolve(current));
     const inspectStackServices = vi.fn(() => Promise.resolve(null));
-    const releaseLease = vi.fn(() => Promise.resolve({ count: 1 }));
+    let releasedLease:
+      | { leaseOwner: string | null; heartbeatAt: Date | null }
+      | undefined;
+    const releaseLease = vi.fn(
+      (params: {
+        data: {
+          leaseOwner: string | null;
+          leaseExpiresAt: Date | null;
+          heartbeatAt: Date | null;
+        };
+      }) => {
+        releasedLease = {
+          leaseOwner: params.data.leaseOwner,
+          heartbeatAt: params.data.heartbeatAt,
+        };
+        return Promise.resolve({ count: 1 });
+      },
+    );
     const tx = {
       appGroupDeployment: {
         updateMany: releaseLease,
@@ -203,14 +220,11 @@ describe("Stage 6 deployment worker recovery", () => {
 
     expect(reconciled).toBeNull();
     expect(applyRenderedStack).not.toHaveBeenCalled();
-    expect(releaseLease).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          leaseOwner: null,
-          heartbeatAt: null,
-        }),
-      }),
-    );
+    expect(releaseLease).toHaveBeenCalledTimes(1);
+    expect(releasedLease).toEqual({
+      leaseOwner: null,
+      heartbeatAt: null,
+    });
   });
 
   it("finishes an already-applied rollback without running docker stack deploy again", async () => {
