@@ -44,6 +44,7 @@ jobs:
       RESOURCE_STORAGE_ROOT: /tmp/resource-portal/volumes
       RESOURCE_SECRET_STORAGE_ROOT: /tmp/resource-portal/secrets
       RESOURCE_PORTAL_API_URL: http://127.0.0.1:3000/api
+      TRAEFIK_CERT_RESOLVER: smoke-resolver
       DOCKER_CONTEXT: default
       DOCKER_APPLY_TIMEOUT_MS: 120000
       DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 120000
