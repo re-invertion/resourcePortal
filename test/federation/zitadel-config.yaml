@@ -1,0 +1,22 @@
+Log:
+  Level: warn
+
+Port: 8080
+ExternalDomain: localhost
+ExternalPort: 8080
+ExternalSecure: false
+
+TLS:
+  Enabled: false
+
+Database:
+  postgres:
+    Host: localhost
+    Port: 55433
+    Database: zitadel
+    User:
+      SSL:
+        Mode: disable
+    Admin:
+      SSL:
+        Mode: disable
