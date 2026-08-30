@@ -6,7 +6,7 @@ import { StackRuntimeService } from "../internal/stack-runtime.service";
 import { VolumesModule } from "../volumes/volumes.module";
 import { AppGroupsController } from "./app-groups.controller";
 import { AppGroupsService } from "./app-groups.service";
-import { Stage3AppGroupsService } from "./stage3-app-groups.service";
+import { Stage11AppGroupsService } from "./stage11-app-groups.service";
 
 @Module({
   imports: [PrismaModule, RegistriesModule, SecurityModule, VolumesModule],
@@ -14,7 +14,7 @@ import { Stage3AppGroupsService } from "./stage3-app-groups.service";
   providers: [
     {
       provide: AppGroupsService,
-      useClass: Stage3AppGroupsService,
+      useClass: Stage11AppGroupsService,
     },
     StackRuntimeService,
   ],
