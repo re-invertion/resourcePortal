@@ -58,6 +58,26 @@ describe("validateEnv", () => {
     expect(validateEnv(env)).toBe(env);
   });
 
+  it("accepts a safe Traefik certificate resolver name", () => {
+    const env = {
+      ...validBaseEnv,
+      TRAEFIK_CERT_RESOLVER: "letsencrypt-prod_1",
+    };
+
+    expect(validateEnv(env)).toBe(env);
+  });
+
+  it("rejects malformed Traefik certificate resolver names", () => {
+    expect(() =>
+      validateEnv({
+        ...validBaseEnv,
+        TRAEFIK_CERT_RESOLVER: "let's encrypt",
+      }),
+    ).toThrow(
+      "TRAEFIK_CERT_RESOLVER must contain only letters, numbers, underscore, or hyphen",
+    );
+  });
+
   it("requires secure cookies and a non-default internal token in production", () => {
     expect(() =>
       validateEnv({
