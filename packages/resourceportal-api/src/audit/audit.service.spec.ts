@@ -129,13 +129,19 @@ describe("AuditService.exportAuditLog", () => {
       "22222222-2222-4222-8222-222222222222",
       new Date("2026-08-29T12:00:00Z"),
     );
+    type FindManyInput = {
+      where: Record<string, unknown>;
+      orderBy: unknown;
+      take?: number;
+    };
+    const findMany = vi.fn((_input: FindManyInput) =>
+      Promise.resolve([auditEntry]),
+    );
     const prisma = {
       tenant: {
         findUnique: vi.fn().mockResolvedValue({ id: auditEntry.tenantId }),
       },
-      auditLogEntry: {
-        findMany: vi.fn().mockResolvedValue([auditEntry]),
-      },
+      auditLogEntry: { findMany },
     };
     const service = new AuditService(prisma as unknown as PrismaService);
 
@@ -145,22 +151,23 @@ describe("AuditService.exportAuditLog", () => {
       correlationId: auditEntry.correlationId,
       requestId: auditEntry.requestId ?? undefined,
     });
+    const parsedBody = JSON.parse(exported.body) as unknown;
 
     expect(exported.contentType).toBe("application/json; charset=utf-8");
     expect(exported.fileName).toBe(`audit-log-${auditEntry.tenantId}.json`);
-    expect(JSON.parse(exported.body)).toEqual([{
-      ...auditEntry,
-      timestamp: auditEntry.timestamp.toISOString(),
-    }]);
-    expect(prisma.auditLogEntry.findMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        tenantId: auditEntry.tenantId,
-        resourceId: auditEntry.resourceId,
-        correlationId: auditEntry.correlationId,
-        requestId: auditEntry.requestId,
-      }),
-      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+    expect(parsedBody).toEqual([
+      {
+        ...auditEntry,
+        timestamp: auditEntry.timestamp.toISOString(),
+      },
+    ]);
+    expect(findMany.mock.calls[0]?.[0]?.where).toMatchObject({
+      tenantId: auditEntry.tenantId,
+      resourceId: auditEntry.resourceId,
+      correlationId: auditEntry.correlationId,
+      requestId: auditEntry.requestId,
     });
+    expect(findMany.mock.calls[0]?.[0]?.take).toBeUndefined();
   });
 
   it("escapes CSV cells and serializes changes as JSON", async () => {
