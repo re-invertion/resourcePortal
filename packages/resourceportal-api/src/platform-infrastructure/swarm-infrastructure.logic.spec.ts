@@ -3,6 +3,7 @@ import {
   deriveRemoteLocationHealth,
   deriveSwarmClusterHealth,
   parseNodeCapabilities,
+  planInventoryReconciliation,
 } from "./swarm-infrastructure.logic";
 
 describe("Stage 13 platform infrastructure logic", () => {
@@ -76,5 +77,48 @@ describe("Stage 13 platform infrastructure logic", () => {
       gpuCount: 0,
       networkCapabilities: [],
     });
+  });
+
+  it("reuses a Remote Location identity when the Docker node remains the same", () => {
+    const plan = planInventoryReconciliation(
+      [
+        {
+          id: "remote-1",
+          swarmNodeId: "node-1",
+          status: "Ready",
+        },
+      ],
+      [{ swarmNodeId: "node-1" }],
+    );
+
+    expect(plan.observations).toEqual([
+      {
+        swarmNodeId: "node-1",
+        remoteLocationId: "remote-1",
+        discovered: false,
+      },
+    ]);
+    expect(plan.removed).toEqual([]);
+  });
+
+  it("marks only previously known missing nodes as removed", () => {
+    const plan = planInventoryReconciliation(
+      [
+        { id: "remote-1", swarmNodeId: "node-1", status: "Ready" },
+        { id: "remote-2", swarmNodeId: "node-2", status: "Removed" },
+      ],
+      [{ swarmNodeId: "node-3" }],
+    );
+
+    expect(plan.observations).toEqual([
+      {
+        swarmNodeId: "node-3",
+        remoteLocationId: null,
+        discovered: true,
+      },
+    ]);
+    expect(plan.removed).toEqual([
+      { id: "remote-1", swarmNodeId: "node-1" },
+    ]);
   });
 });
