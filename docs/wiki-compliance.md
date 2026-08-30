@@ -35,7 +35,7 @@ Checked wiki documents:
 - Volume as tenant-owned filesystem storage under `RESOURCE_STORAGE_ROOT/{tenantId}/{volumeId}`, with attachment constraints and no host bind mounts from user input.
 - Volume lifecycle now refreshes `usedSizeBytes` from the actual storage directory on read/list, treats a not-yet-provisioned path as zero usage, and does not follow symlinks while measuring usage.
 - Volume deletion now transitions through `Deleting`, removes the Docker volume and the exact tenant/volume storage directory before deleting the database record, and leaves the record in `Error` when physical cleanup fails. Attached volumes remain protected by `VolumeInUse`.
-- Domain and CustomRootDomain resources, including managed/custom hostnames, DNS/TLS state fields, endpoint assignment, and delete protection.
+- Domain and CustomRootDomain resources, including managed/custom hostnames, real DNS TXT ownership verification for custom roots, endpoint assignment, delete protection, protocol-derived TLS requirement, Traefik ACME resolver labels, observed certificate status/issuer/expiry, and active ingress cleanup after route removal.
 - Registry resources with TLS/auth modes, encrypted credential metadata, validation, image-host checks, deployment authentication, and delete protection when used.
 - Deployment Engine with async jobs, idempotency key support, worker lease/heartbeat, deployment events, generated stack YAML, Swarm apply, rollout checks, and automatic rollback paths.
 - Billing account, transactions, usage records, top-up operation, and audit for top-up.
@@ -59,6 +59,20 @@ Registry credentials are decrypted only for validation or deployment use. `Usern
 
 Stage 8 verification includes the existing Registry service and image-host tests plus a focused regression test for token-based Docker login. The repository's real Docker Swarm workflow continues to exercise the deployment path and `--with-registry-auth`; it does not provision a dedicated authenticated private registry, so this document does not claim a real private-registry pull smoke test.
 
+## Stage 9 Domains, HTTP Endpoints And TLS Decision
+
+Stage 9 keeps Traefik as the owner of ACME issuance, renewal, certificate/private-key storage, and certificate presentation. Resource Portal does not implement a second ACME client and does not persist private certificate keys or ACME account secrets.
+
+`HttpEndpoint.protocolMode` is the source of truth for TLS requirement. `HTTP` disables TLS; `HTTPS`, `HTTP_AND_HTTPS`, and `HTTP_REDIRECT_TO_HTTPS` require TLS. Domain persistence and API responses normalize `tlsEnabled` from the assigned endpoint instead of trusting a contradictory client flag. Detaching a Domain clears stale certificate metadata immediately.
+
+TLS routers render `traefik.http.routers.<router>.tls=true` and, when `TRAEFIK_CERT_RESOLVER` is configured, `traefik.http.routers.<router>.tls.certresolver=<resolver>`. The resolver name is environment-validated. HTTP-only routers never receive TLS or resolver labels.
+
+The deployment worker periodically reconciles certificate metadata. It performs a trusted TLS handshake for each Domain assigned to a TLS-requiring endpoint, validates hostname/SAN coverage and expiry, and stores only safe observed metadata: `certificateStatus`, `certificateIssuer`, and `certificateExpiresAt`. Traefik performs renewal; Resource Portal observes the renewed certificate and refreshes the expiry/status. Failed or not-yet-issued certificates are represented as `Issuing`/`Error` according to prior observed state.
+
+Ingress cleanup is intentionally cleanup-only. The worker may remove obsolete RP-owned Traefik labels from an already deployed Swarm service after Domain detach, endpoint removal, or protocol changes, but it does not publish new or changed draft routes before a normal AppGroup deployment. This preserves the existing draft/deploy boundary while satisfying prompt route removal.
+
+Stage 9 verification includes unit/regression coverage for all four protocol modes, resolver labels, Domain TLS normalization, certificate observation/reconciliation, wildcard hostname coverage, failure isolation, and cleanup namespace safety. The Real Docker Swarm workflow additionally deploys an HTTPS endpoint plus managed Domain, verifies the live service has the expected host/TLS/certresolver labels, detaches the Domain, runs reconciliation, and verifies the router labels are removed while the service label remains. CI intentionally does not contact Let's Encrypt or claim a real public-CA issuance test.
+
 ## Known Gaps Against Wiki
 
 - External directory group mapping is not implemented yet.
@@ -68,8 +82,7 @@ Stage 8 verification includes the existing Registry service and image-host tests
 - AppGroup discard restores the AppGroup and SingleApp runtime draft from the last succeeded deployment snapshot. It does not yet fully restore every related variable/config/secret attachment to historical content.
 - AppGroup-owned `Secret` exists in Prisma, but public API currently manages `SingleAppSecret` through runtime config. This does not match the documented AppGroup Secret plus `SecretAttachment` model.
 - Secret encrypted payload is stored in the database through `SingleAppSecret.valueCiphertext`, not as encrypted envelope files under `/rp/secrets/{tenantId}/{appGroupId}/{secretName}`.
-- Domain DNS and CustomRootDomain validation are currently simplified and do not perform real DNS checks.
-- Managed DNS automation and TLS/certificate lifecycle are modeled but not fully integrated with DNS/ACME automation.
+- CustomRootDomain ownership validation performs a real DNS TXT lookup, but general Domain `dnsStatus` validation remains simplified and managed-domain DNS provider automation is not implemented in this repository.
 - Billing does not yet implement vouchers, recurring usage aggregation/charging workers, low-balance notifications, or automatic `BillingSuspended` runtime blocker enforcement.
 - Usage records can be listed, but automatic compute/storage usage accounting is not implemented.
 - Deployment reconciliation after worker crash is partial. The worker has leases and idempotent operations, but does not fully reconstruct progress from Docker Swarm before continuing every possible interrupted phase.
