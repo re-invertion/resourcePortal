@@ -2,7 +2,17 @@ import { CertificateStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
-import { TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
+import {
+  ObservedCertificate,
+  TraefikCertificateObserverService,
+} from "./traefik-certificate-observer.service";
+
+type UpdateInput = {
+  where: { id: string };
+  data: Record<string, unknown>;
+};
+
+type ObserveFn = (hostname: string) => Promise<ObservedCertificate>;
 
 function assignedDomain(
   protocolMode: string,
@@ -15,24 +25,23 @@ function assignedDomain(
     certificateStatus: CertificateStatus.Pending,
     certificateIssuer: null,
     certificateExpiresAt: null,
-    httpEndpoint: {
-      protocolMode,
-    },
+    httpEndpoint: { protocolMode },
     ...overrides,
   };
 }
 
-function serviceFor(domains: Array<Record<string, unknown>>, observe: object) {
+function serviceFor(domains: Array<Record<string, unknown>>, observeFn: ObserveFn) {
+  const update = vi.fn((input: UpdateInput) =>
+    Promise.resolve({ id: input.where.id, ...input.data }),
+  );
   const prisma = {
     domain: {
       findMany: vi.fn().mockResolvedValue(domains),
-      update: vi.fn().mockImplementation(({ where, data }) =>
-        Promise.resolve({ id: where.id, ...data }),
-      ),
+      update,
     },
   };
   const observer = {
-    observe: vi.fn().mockImplementation(observe),
+    observe: vi.fn(observeFn),
   };
 
   return {
@@ -43,6 +52,10 @@ function serviceFor(domains: Array<Record<string, unknown>>, observe: object) {
       observer as unknown as TraefikCertificateObserverService,
     ),
   };
+}
+
+function updateData(update: ReturnType<typeof serviceFor>["prisma"]["domain"]["update"]) {
+  return update.mock.calls[0]?.[0]?.data;
 }
 
 describe("DomainCertificateReconcilerService", () => {
@@ -60,15 +73,15 @@ describe("DomainCertificateReconcilerService", () => {
 
     const result = await service.reconcileBatch();
 
-    expect(prisma.domain.update).toHaveBeenCalledWith({
-      where: { id: domain.id },
-      data: expect.objectContaining({
-        tlsEnabled: true,
-        certificateStatus: CertificateStatus.Active,
-        certificateIssuer: "R12",
-        certificateExpiresAt: expiresAt,
-        updatedBy: "system",
-      }),
+    expect(prisma.domain.update.mock.calls[0]?.[0]?.where).toEqual({
+      id: domain.id,
+    });
+    expect(updateData(prisma.domain.update)).toMatchObject({
+      tlsEnabled: true,
+      certificateStatus: CertificateStatus.Active,
+      certificateIssuer: "R12",
+      certificateExpiresAt: expiresAt,
+      updatedBy: "system",
     });
     expect(result).toEqual({ checked: 1, updated: 1, failed: 0 });
   });
@@ -87,15 +100,12 @@ describe("DomainCertificateReconcilerService", () => {
     await service.reconcileBatch();
 
     expect(observer.observe).not.toHaveBeenCalled();
-    expect(prisma.domain.update).toHaveBeenCalledWith({
-      where: { id: domain.id },
-      data: expect.objectContaining({
-        tlsEnabled: false,
-        certificateStatus: CertificateStatus.Pending,
-        certificateIssuer: null,
-        certificateExpiresAt: null,
-        updatedBy: "system",
-      }),
+    expect(updateData(prisma.domain.update)).toMatchObject({
+      tlsEnabled: false,
+      certificateStatus: CertificateStatus.Pending,
+      certificateIssuer: null,
+      certificateExpiresAt: null,
+      updatedBy: "system",
     });
   });
 
@@ -109,14 +119,11 @@ describe("DomainCertificateReconcilerService", () => {
 
     const result = await service.reconcileBatch();
 
-    expect(prisma.domain.update).toHaveBeenCalledWith({
-      where: { id: domain.id },
-      data: expect.objectContaining({
-        tlsEnabled: true,
-        certificateStatus: CertificateStatus.Issuing,
-        certificateExpiresAt: null,
-        updatedBy: "system",
-      }),
+    expect(updateData(prisma.domain.update)).toMatchObject({
+      tlsEnabled: true,
+      certificateStatus: CertificateStatus.Issuing,
+      certificateExpiresAt: null,
+      updatedBy: "system",
     });
     expect(result).toEqual({ checked: 1, updated: 1, failed: 1 });
   });
@@ -131,13 +138,10 @@ describe("DomainCertificateReconcilerService", () => {
 
     await service.reconcileBatch();
 
-    expect(prisma.domain.update).toHaveBeenCalledWith({
-      where: { id: domain.id },
-      data: expect.objectContaining({
-        tlsEnabled: true,
-        certificateStatus: CertificateStatus.Error,
-        updatedBy: "system",
-      }),
+    expect(updateData(prisma.domain.update)).toMatchObject({
+      tlsEnabled: true,
+      certificateStatus: CertificateStatus.Error,
+      updatedBy: "system",
     });
   });
 
@@ -148,7 +152,7 @@ describe("DomainCertificateReconcilerService", () => {
       hostname: "second.example.com",
     });
     const expiresAt = new Date(Date.now() + 86_400_000);
-    const { prisma, service } = serviceFor([first, second], (hostname: string) =>
+    const { prisma, service } = serviceFor([first, second], (hostname) =>
       hostname === "app.example.com"
         ? Promise.reject(new Error("TLS failed"))
         : Promise.resolve({
