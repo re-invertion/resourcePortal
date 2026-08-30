@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 import { join } from "node:path";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
 import { VolumeStorageService } from "./volume-storage.service";
@@ -52,24 +53,32 @@ export class VolumesService {
     dto: CreateVolumeDto,
     actor: AuthenticatedUser,
   ) {
-    await this.assertQuotaAllowsVolumeChange(tenantId, dto.sizeBytes);
     const volumeId = randomUUID();
 
     try {
-      const volume = await this.prisma.volume.create({
-        data: {
-          id: volumeId,
+      const volume = await this.prisma.$transaction(async (tx) => {
+        await lockTenantQuota(tx, tenantId);
+        await this.assertQuotaAllowsVolumeChange(
+          tx,
           tenantId,
-          name: dto.name,
-          description: dto.description,
-          storagePath: this.storagePath(tenantId, volumeId),
-          dockerVolumeName: this.dockerVolumeName(volumeId),
-          sizeBytes: dto.sizeBytes,
-          status: VolumeStatus.Ready,
-          createdBy: actor.id,
-          updatedBy: actor.id,
-        },
-        include: { attachments: true },
+          dto.sizeBytes,
+        );
+
+        return tx.volume.create({
+          data: {
+            id: volumeId,
+            tenantId,
+            name: dto.name,
+            description: dto.description,
+            storagePath: this.storagePath(tenantId, volumeId),
+            dockerVolumeName: this.dockerVolumeName(volumeId),
+            sizeBytes: dto.sizeBytes,
+            status: VolumeStatus.Ready,
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+          include: { attachments: true },
+        });
       });
 
       return mapVolume(volume);
@@ -85,31 +94,42 @@ export class VolumesService {
     dto: ResizeVolumeDto,
     actor: AuthenticatedUser,
   ) {
-    const volume = await this.findVolumeOrThrow(tenantId, volumeId);
-    const currentSize = Number(volume.sizeBytes);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await lockTenantQuota(tx, tenantId);
 
-    if (dto.sizeBytes < currentSize) {
-      throw new ConflictException("Volume cannot be shrunk");
-    }
+      const volume = await tx.volume.findFirst({
+        where: { id: volumeId, tenantId },
+        include: { attachments: true },
+      });
+      if (!volume) {
+        throw new NotFoundException("Volume not found");
+      }
 
-    if (dto.sizeBytes === currentSize) {
-      return mapVolume(volume);
-    }
+      const currentSize = Number(volume.sizeBytes);
+      if (dto.sizeBytes < currentSize) {
+        throw new ConflictException("Volume cannot be shrunk");
+      }
 
-    await this.assertQuotaAllowsVolumeChange(
-      tenantId,
-      dto.sizeBytes,
-      volumeId,
-    );
+      if (dto.sizeBytes === currentSize) {
+        return volume;
+      }
 
-    const updated = await this.prisma.volume.update({
-      where: { id: volumeId },
-      data: {
-        sizeBytes: dto.sizeBytes,
-        status: VolumeStatus.Ready,
-        updatedBy: actor.id,
-      },
-      include: { attachments: true },
+      await this.assertQuotaAllowsVolumeChange(
+        tx,
+        tenantId,
+        dto.sizeBytes,
+        volumeId,
+      );
+
+      return tx.volume.update({
+        where: { id: volumeId },
+        data: {
+          sizeBytes: dto.sizeBytes,
+          status: VolumeStatus.Ready,
+          updatedBy: actor.id,
+        },
+        include: { attachments: true },
+      });
     });
 
     return mapVolume(updated);
@@ -193,11 +213,12 @@ export class VolumesService {
   }
 
   private async assertQuotaAllowsVolumeChange(
+    tx: Prisma.TransactionClient,
     tenantId: string,
     requestedVolumeSizeBytes: number,
     replacingVolumeId?: string,
   ) {
-    const quota = await this.prisma.quota.findUnique({
+    const quota = await tx.quota.findUnique({
       where: { tenantId },
     });
 
@@ -205,7 +226,7 @@ export class VolumesService {
       return;
     }
 
-    const currentVolumes = await this.prisma.volume.findMany({
+    const currentVolumes = await tx.volume.findMany({
       where: {
         tenantId,
         id: replacingVolumeId ? { not: replacingVolumeId } : undefined,
