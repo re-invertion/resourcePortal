@@ -20,6 +20,55 @@ export type ZitadelProviderConfiguration = {
 
 type JsonObject = Record<string, unknown>;
 
+type ZitadelLoginPolicy = {
+  allowDomainDiscovery?: boolean;
+  allowExternalIdp?: boolean;
+  allowRegister?: boolean;
+  allowUsernamePassword?: boolean;
+  defaultRedirectUri?: string;
+  disableLoginWithEmail?: boolean;
+  disableLoginWithPhone?: boolean;
+  externalLoginCheckLifetime?: string;
+  forceMfa?: boolean;
+  forceMfaLocalOnly?: boolean;
+  hidePasswordReset?: boolean;
+  ignoreUnknownUsernames?: boolean;
+  isDefault?: boolean;
+  mfaInitSkipLifetime?: string;
+  multiFactorCheckLifetime?: string;
+  multiFactors?: string[];
+  passwordCheckLifetime?: string;
+  passwordlessType?: string;
+  secondFactorCheckLifetime?: string;
+  secondFactors?: string[];
+};
+
+type ZitadelLoginPolicyResponse = {
+  isDefault?: boolean;
+  policy?: ZitadelLoginPolicy;
+};
+
+const writableLoginPolicyFields = [
+  "allowUsernamePassword",
+  "allowRegister",
+  "forceMfa",
+  "passwordlessType",
+  "hidePasswordReset",
+  "ignoreUnknownUsernames",
+  "defaultRedirectUri",
+  "passwordCheckLifetime",
+  "externalLoginCheckLifetime",
+  "mfaInitSkipLifetime",
+  "secondFactorCheckLifetime",
+  "multiFactorCheckLifetime",
+  "secondFactors",
+  "multiFactors",
+  "allowDomainDiscovery",
+  "disableLoginWithEmail",
+  "disableLoginWithPhone",
+  "forceMfaLocalOnly",
+] as const satisfies ReadonlyArray<keyof ZitadelLoginPolicy>;
+
 @Injectable()
 export class ZitadelIdentityProviderService {
   constructor(private readonly config: ConfigService) {}
@@ -39,6 +88,7 @@ export class ZitadelIdentityProviderService {
 
     if (configuration.enabled) {
       try {
+        await this.ensureExternalIdpAllowed();
         await this.setLoginPolicyLink(response.id, true);
       } catch (error) {
         await this.deleteTemplateIgnoringFailure(response.id);
@@ -61,12 +111,65 @@ export class ZitadelIdentityProviderService {
   }
 
   async setEnabled(identityProviderId: string, enabled: boolean) {
+    if (enabled) {
+      await this.ensureExternalIdpAllowed();
+    }
+
     await this.setLoginPolicyLink(identityProviderId, enabled);
   }
 
   async delete(identityProviderId: string) {
     await this.setLoginPolicyLink(identityProviderId, false);
     await this.deleteTemplate(identityProviderId);
+  }
+
+  private async ensureExternalIdpAllowed() {
+    const current = await this.getLoginPolicy();
+
+    if (current.policy?.allowExternalIdp === true) {
+      return;
+    }
+
+    if (!current.policy) {
+      throw new BadGatewayException(
+        "ZITADEL login policy response did not contain a policy",
+      );
+    }
+
+    const isDefault = current.isDefault ?? current.policy.isDefault ?? true;
+    await this.request(
+      isDefault ? "POST" : "PUT",
+      "/management/v1/policies/login",
+      this.loginPolicyBody(current.policy),
+    );
+
+    const verified = await this.getLoginPolicy();
+    if (verified.policy?.allowExternalIdp !== true) {
+      throw new BadGatewayException(
+        "ZITADEL login policy did not enable external identity providers",
+      );
+    }
+  }
+
+  private getLoginPolicy() {
+    return this.request<ZitadelLoginPolicyResponse>(
+      "GET",
+      "/management/v1/policies/login",
+    );
+  }
+
+  private loginPolicyBody(policy: ZitadelLoginPolicy): JsonObject {
+    const body: JsonObject = { allowExternalIdp: true };
+
+    for (const field of writableLoginPolicyFields) {
+      const value = policy[field];
+      if (value !== undefined) {
+        body[field] = value;
+      }
+    }
+
+    body.allowExternalIdp = true;
+    return body;
   }
 
   private async setLoginPolicyLink(identityProviderId: string, enabled: boolean) {
@@ -149,7 +252,7 @@ export class ZitadelIdentityProviderService {
   }
 
   private async request<T = JsonObject>(
-    method: "POST" | "PUT" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: JsonObject,
     ignoredStatuses: number[] = [],
