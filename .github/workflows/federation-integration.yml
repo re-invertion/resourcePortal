@@ -37,8 +37,17 @@ jobs:
           npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
 
-      - name: Prepare ZITADEL and Keycloak federation environment
-        run: bash scripts/run-federation-e2e.sh prepare
+      - name: Start ZITADEL and Keycloak
+        run: bash scripts/run-federation-e2e.sh services
+
+      - name: Bootstrap Resource Portal in ZITADEL
+        run: bash scripts/run-federation-e2e.sh bootstrap
+
+      - name: Migrate and seed Resource Portal database
+        run: bash scripts/run-federation-e2e.sh database
+
+      - name: Build Resource Portal API
+        run: bash scripts/run-federation-e2e.sh build
 
       - name: Provision tenant OIDC and SAML providers
         run: bash scripts/run-federation-e2e.sh provision
