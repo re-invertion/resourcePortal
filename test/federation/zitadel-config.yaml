@@ -1,0 +1,55 @@
+Log:
+  Level: warn
+
+Port: 8080
+ExternalDomain: localhost
+ExternalPort: 8080
+ExternalSecure: false
+
+TLS:
+  Enabled: false
+
+Projections:
+  # Production defaults to 60s sweeps and a 1m transaction window. Keep the
+  # isolated live integration stack responsive while preserving the real
+  # event-store -> projection path.
+  RequeueEvery: 1s
+  TransactionDuration: 2s
+
+HTTPClient:
+  # ZITADEL v4.17 blocks loopback addresses by default to protect metadata URL
+  # fetches against SSRF. This stack deliberately runs Keycloak on the same
+  # isolated GitHub Actions host, so only the loopback restrictions are removed
+  # here. Keep every other default private/link-local deny rule intact.
+  DenyList:
+    - "0.0.0.0/8"
+    - "10.0.0.0/8"
+    - "100.64.0.0/10"
+    - "169.254.0.0/16"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "198.18.0.0/15"
+    - "::/128"
+    - "fc00::/7"
+    - "fe80::/10"
+
+DefaultInstance:
+  Features:
+    # Login V2 is a separate frontend in ZITADEL v4.17 and is not included in
+    # the single server container used by this isolated integration stack.
+    # Use ZITADEL's built-in legacy login UI so the real OIDC/SAML federation
+    # protocol flow can be exercised in Chromium.
+    LoginV2:
+      Required: false
+
+Database:
+  postgres:
+    Host: localhost
+    Port: 55433
+    Database: zitadel
+    User:
+      SSL:
+        Mode: disable
+    Admin:
+      SSL:
+        Mode: disable

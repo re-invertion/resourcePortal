@@ -20,6 +20,64 @@ export type ZitadelProviderConfiguration = {
 
 type JsonObject = Record<string, unknown>;
 
+type ZitadelLoginPolicy = {
+  allowDomainDiscovery?: boolean;
+  allowExternalIdp?: boolean;
+  allowRegister?: boolean;
+  allowUsernamePassword?: boolean;
+  defaultRedirectUri?: string;
+  disableLoginWithEmail?: boolean;
+  disableLoginWithPhone?: boolean;
+  externalLoginCheckLifetime?: string;
+  forceMfa?: boolean;
+  forceMfaLocalOnly?: boolean;
+  hidePasswordReset?: boolean;
+  ignoreUnknownUsernames?: boolean;
+  isDefault?: boolean;
+  mfaInitSkipLifetime?: string;
+  multiFactorCheckLifetime?: string;
+  multiFactors?: string[];
+  passwordCheckLifetime?: string;
+  passwordlessType?: string;
+  secondFactorCheckLifetime?: string;
+  secondFactors?: string[];
+};
+
+type ZitadelLoginPolicyResponse = {
+  isDefault?: boolean;
+  policy?: ZitadelLoginPolicy;
+};
+
+type ZitadelMutationResponse = {
+  details?: {
+    resourceOwner?: string;
+  };
+  message?: string;
+};
+
+const loginPolicyNotChangedMessage = "Errors.Org.LoginPolicy.NotChanged";
+
+const writableLoginPolicyFields = [
+  "allowUsernamePassword",
+  "allowRegister",
+  "forceMfa",
+  "passwordlessType",
+  "hidePasswordReset",
+  "ignoreUnknownUsernames",
+  "defaultRedirectUri",
+  "passwordCheckLifetime",
+  "externalLoginCheckLifetime",
+  "mfaInitSkipLifetime",
+  "secondFactorCheckLifetime",
+  "multiFactorCheckLifetime",
+  "secondFactors",
+  "multiFactors",
+  "allowDomainDiscovery",
+  "disableLoginWithEmail",
+  "disableLoginWithPhone",
+  "forceMfaLocalOnly",
+] as const satisfies ReadonlyArray<keyof ZitadelLoginPolicy>;
+
 @Injectable()
 export class ZitadelIdentityProviderService {
   constructor(private readonly config: ConfigService) {}
@@ -39,6 +97,7 @@ export class ZitadelIdentityProviderService {
 
     if (configuration.enabled) {
       try {
+        await this.ensureExternalIdpAllowed();
         await this.setLoginPolicyLink(response.id, true);
       } catch (error) {
         await this.deleteTemplateIgnoringFailure(response.id);
@@ -61,12 +120,102 @@ export class ZitadelIdentityProviderService {
   }
 
   async setEnabled(identityProviderId: string, enabled: boolean) {
+    if (enabled) {
+      await this.ensureExternalIdpAllowed();
+    }
+
     await this.setLoginPolicyLink(identityProviderId, enabled);
   }
 
   async delete(identityProviderId: string) {
     await this.setLoginPolicyLink(identityProviderId, false);
     await this.deleteTemplate(identityProviderId);
+  }
+
+  private async ensureExternalIdpAllowed() {
+    const current = await this.getLoginPolicy();
+
+    if (!current.policy) {
+      throw new BadGatewayException(
+        "ZITADEL login policy response did not contain a policy",
+      );
+    }
+
+    const isDefault = current.isDefault ?? current.policy.isDefault ?? true;
+    if (!isDefault && current.policy.allowExternalIdp === true) {
+      return;
+    }
+
+    const body = this.loginPolicyBody(current.policy);
+
+    if (isDefault) {
+      // GET /policies/login is projection-backed and can still report the
+      // inherited instance default after the organization custom policy was
+      // already created in the event store. POST is therefore idempotent from
+      // RP's perspective (409 means the custom policy already exists), and the
+      // authoritative PUT immediately reconciles allowExternalIdp=true in both
+      // the fresh and stale-projection cases.
+      await this.request(
+        "POST",
+        "/management/v1/policies/login",
+        body,
+        [409],
+      );
+    }
+
+    const mutation = await this.request<ZitadelMutationResponse>(
+      "PUT",
+      "/management/v1/policies/login",
+      body,
+      [],
+      [loginPolicyNotChangedMessage],
+    );
+
+    // ZITADEL returns FailedPrecondition/HTTP 400 when the event-store state
+    // already equals the requested policy. This is an authoritative no-op,
+    // not a provisioning failure. Only this exact ZITADEL error is accepted;
+    // all other HTTP 400 responses remain failures.
+    if (mutation.message?.includes(loginPolicyNotChangedMessage)) {
+      return;
+    }
+
+    this.assertMutationResourceOwner(mutation);
+  }
+
+  private assertMutationResourceOwner(response: ZitadelMutationResponse) {
+    const resourceOwner = response.details?.resourceOwner;
+    if (!resourceOwner) {
+      throw new BadGatewayException(
+        "ZITADEL login policy mutation did not return a resource owner",
+      );
+    }
+
+    if (resourceOwner !== this.organizationId()) {
+      throw new BadGatewayException(
+        "ZITADEL login policy mutation targeted an unexpected organization",
+      );
+    }
+  }
+
+  private getLoginPolicy() {
+    return this.request<ZitadelLoginPolicyResponse>(
+      "GET",
+      "/management/v1/policies/login",
+    );
+  }
+
+  private loginPolicyBody(policy: ZitadelLoginPolicy): JsonObject {
+    const body: JsonObject = { allowExternalIdp: true };
+
+    for (const field of writableLoginPolicyFields) {
+      const value = policy[field];
+      if (value !== undefined) {
+        body[field] = value;
+      }
+    }
+
+    body.allowExternalIdp = true;
+    return body;
   }
 
   private async setLoginPolicyLink(identityProviderId: string, enabled: boolean) {
@@ -149,10 +298,11 @@ export class ZitadelIdentityProviderService {
   }
 
   private async request<T = JsonObject>(
-    method: "POST" | "PUT" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: JsonObject,
     ignoredStatuses: number[] = [],
+    ignoredErrorMessages: string[] = [],
   ): Promise<T> {
     const response = await fetch(`${this.baseUrl()}${path}`, {
       method,
@@ -164,13 +314,21 @@ export class ZitadelIdentityProviderService {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
-    if (!response.ok && !ignoredStatuses.includes(response.status)) {
+    const text = await response.text();
+    const ignoredError = ignoredErrorMessages.some((message) =>
+      text.includes(message),
+    );
+
+    if (
+      !response.ok &&
+      !ignoredStatuses.includes(response.status) &&
+      !ignoredError
+    ) {
       throw new BadGatewayException(
         `ZITADEL identity provider request failed with HTTP ${response.status}`,
       );
     }
 
-    const text = await response.text();
     return (text ? JSON.parse(text) : {}) as T;
   }
 

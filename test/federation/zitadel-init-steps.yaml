@@ -1,0 +1,13 @@
+FirstInstance:
+  PatPath: /bootstrap/admin.pat
+  Org:
+    Human:
+      Username: root
+      Password: RootPassword1!
+      PasswordChangeRequired: false
+    Machine:
+      Machine:
+        Username: federation-bootstrap
+        Name: Federation Bootstrap
+      Pat:
+        ExpirationDate: "2040-01-01T00:00:00Z"
