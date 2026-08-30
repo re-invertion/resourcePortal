@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   federation-e2e:
@@ -41,7 +42,30 @@ jobs:
         run: bash scripts/run-federation-e2e.sh services
 
       - name: Bootstrap Resource Portal in ZITADEL
-        run: bash scripts/run-federation-e2e.sh bootstrap
+        id: bootstrap
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/run-federation-e2e.sh bootstrap 2>&1 | tee var/federation/bootstrap.log
+
+      - name: Report bootstrap failure
+        if: steps.bootstrap.outcome == 'failure' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo 'Live federation bootstrap failed. Diagnostic tail:'
+            echo '```text'
+            tail -n 30 var/federation/bootstrap.log
+            echo '```'
+          } > /tmp/federation-bootstrap-failure.md
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/federation-bootstrap-failure.md
+          exit 1
+
+      - name: Fail bootstrap outside pull requests
+        if: steps.bootstrap.outcome == 'failure' && github.event_name != 'pull_request'
+        run: exit 1
 
       - name: Migrate and seed Resource Portal database
         run: bash scripts/run-federation-e2e.sh database
