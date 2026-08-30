@@ -35,9 +35,10 @@ function serviceFor(appGroups: object[]) {
       findMany: vi.fn().mockResolvedValue(appGroups),
     },
   };
-  const reconcileTraefikLabels = vi.fn((_input: ReconcileInput) =>
-    Promise.resolve({ changed: true, success: true }),
-  );
+  const reconcileTraefikLabels = vi.fn((input: ReconcileInput) => {
+    void input;
+    return Promise.resolve({ changed: true, success: true });
+  });
   const runtime = { reconcileTraefikLabels };
   return {
     runtime,
