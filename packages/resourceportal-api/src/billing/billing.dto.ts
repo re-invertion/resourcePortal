@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -11,23 +12,24 @@ import {
   Min,
 } from "class-validator";
 
-const POSITIVE_DECIMAL = /^\d+(?:\.\d{1,8})?$/;
-const SIGNED_DECIMAL = /^-?\d+(?:\.\d{1,8})?$/;
+const NON_NEGATIVE_DECIMAL = /^\d+(?:\.\d{1,8})?$/;
+const POSITIVE_DECIMAL = /^(?=.*[1-9])\d+(?:\.\d{1,8})?$/;
+const SIGNED_NON_ZERO_DECIMAL = /^-?(?=.*[1-9])\d+(?:\.\d{1,8})?$/;
 
 export class CreatePriceListDto {
   @IsDateString()
   effectiveFrom!: string;
 
-  @Matches(POSITIVE_DECIMAL)
+  @Matches(NON_NEGATIVE_DECIMAL)
   cpuCreditsPerVcpuHour!: string;
 
-  @Matches(POSITIVE_DECIMAL)
+  @Matches(NON_NEGATIVE_DECIMAL)
   memoryCreditsPerGbHour!: string;
 
-  @Matches(POSITIVE_DECIMAL)
+  @Matches(NON_NEGATIVE_DECIMAL)
   storageCreditsPerGbHour!: string;
 
-  @Matches(POSITIVE_DECIMAL)
+  @Matches(NON_NEGATIVE_DECIMAL)
   gpuCreditsPerGpuHour!: string;
 }
 
@@ -50,7 +52,7 @@ export class PlatformBalanceMutationDto {
   @IsUUID()
   tenantId!: string;
 
-  @Matches(SIGNED_DECIMAL)
+  @Matches(SIGNED_NON_ZERO_DECIMAL)
   amountCredits!: string;
 
   @IsOptional()
@@ -64,6 +66,23 @@ export class PlatformBalanceMutationDto {
   @IsOptional()
   @IsUUID()
   sourceTransactionId?: string;
+}
+
+export class PlatformPaymentDto extends PlatformBalanceMutationDto {
+  @Matches(POSITIVE_DECIMAL)
+  declare amountCredits: string;
+}
+
+export class PlatformRefundDto extends PlatformPaymentDto {
+  @IsString()
+  @IsNotEmpty()
+  declare reason: string;
+}
+
+export class PlatformCorrectionDto extends PlatformBalanceMutationDto {
+  @IsString()
+  @IsNotEmpty()
+  declare reason: string;
 }
 
 export class BillingHistoryQueryDto {
@@ -104,12 +123,16 @@ export class UsageHistoryQueryDto {
   limit = 50;
 
   @IsOptional()
-  @IsString()
+  @IsIn(["SingleApp", "Volume"])
   resourceType?: string;
 
   @IsOptional()
   @IsUUID()
   resourceId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  appGroupId?: string;
 
   @IsOptional()
   @IsDateString()
