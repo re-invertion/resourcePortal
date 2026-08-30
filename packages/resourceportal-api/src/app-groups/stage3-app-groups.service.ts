@@ -221,7 +221,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
     );
 
     await this.stage3Prisma.$transaction(async (tx) => {
-      await this.assertNoActiveDeployment(tx, appGroupId);
+      await this.assertNoActiveStage3Deployment(tx, appGroupId);
 
       await tx.singleApp.deleteMany({
         where: {
@@ -282,7 +282,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
       await this.restoreHttpEndpoints(tx, tenantId, appGroupId, restorePlan);
       await this.restoreSecretAttachments(tx, actor, deployedSnapshot);
 
-      const secretVersionDrift = await this.hasSecretVersionDrift(
+      const secretVersionDrift = await this.hasStage3SecretVersionDrift(
         tx,
         deployedSnapshot,
       );
@@ -405,7 +405,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
     return JSON.parse(deployment.stackConfig) as RestorableStackConfigSnapshot;
   }
 
-  private async assertNoActiveDeployment(
+  private async assertNoActiveStage3Deployment(
     tx: Prisma.TransactionClient,
     appGroupId: string,
   ) {
@@ -630,7 +630,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
     }
   }
 
-  private async hasSecretVersionDrift(
+  private async hasStage3SecretVersionDrift(
     tx: Prisma.TransactionClient,
     snapshot: RestorableStackConfigSnapshot,
   ) {
