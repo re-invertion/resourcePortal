@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
+import { ObservedRuntimeService } from "../app-groups/runtime-drift";
 
 type RuntimeResult = {
   command: string;
@@ -48,6 +49,69 @@ export class StackRuntimeService {
     }
 
     return results;
+  }
+
+  async inspectStackServices(
+    stackName: string,
+  ): Promise<ObservedRuntimeService[] | null> {
+    const result = await this.runDocker([
+      "stack",
+      "services",
+      stackName,
+      "--format",
+      "{{json .}}",
+    ]);
+
+    if (result.exitCode !== 0) {
+      return null;
+    }
+
+    if (!result.stdout) {
+      return [];
+    }
+
+    try {
+      return result.stdout.split("\n").map((line) => {
+        const service = JSON.parse(line) as {
+          Name?: unknown;
+          Image?: unknown;
+          Replicas?: unknown;
+        };
+
+        if (
+          typeof service.Name !== "string" ||
+          typeof service.Image !== "string" ||
+          typeof service.Replicas !== "string"
+        ) {
+          throw new Error("Unexpected docker stack services output");
+        }
+
+        const desiredReplicas = this.parseDesiredReplicas(service.Replicas);
+
+        if (desiredReplicas === null) {
+          throw new Error("Unexpected docker service replica value");
+        }
+
+        return {
+          name: service.Name,
+          image: service.Image,
+          desiredReplicas,
+        };
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  private parseDesiredReplicas(value: string) {
+    const [, desired] = value.trim().split("/");
+
+    if (desired === undefined) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(desired, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   }
 
   private runDocker(args: string[]): Promise<RuntimeResult> {
