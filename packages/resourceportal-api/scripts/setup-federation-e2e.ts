@@ -312,9 +312,17 @@ async function configureKeycloakSamlClient(zitadelProviderId: string) {
   }
 
   const entityId = /entityID="([^"]+)"/.exec(metadata)?.[1];
-  const acs = /AssertionConsumerService[^>]+Location="([^"]+)"/.exec(metadata)?.[1];
+  const acsLocations = [
+    ...metadata.matchAll(/AssertionConsumerService[^>]+Location="([^"]+)"/g),
+  ].map((match) => match[1]);
+  const redirectUris = [...new Set(acsLocations)];
+  const loginAcs = redirectUris.find((location) =>
+    location.endsWith("/ui/login/login/externalidp/saml/acs"),
+  );
+
   assert(entityId, "ZITADEL SAML metadata does not contain entityID");
-  assert(acs, "ZITADEL SAML metadata does not contain AssertionConsumerService Location");
+  assert(redirectUris.length > 0, "ZITADEL SAML metadata does not contain AssertionConsumerService Location");
+  assert(loginAcs, "ZITADEL SAML metadata does not contain the login AssertionConsumerService Location");
 
   const tokenResponse = await fetch(`${keycloakUrl}/realms/master/protocol/openid-connect/token`, {
     method: "POST",
@@ -342,7 +350,7 @@ async function configureKeycloakSamlClient(zitadelProviderId: string) {
       protocol: "saml",
       publicClient: false,
       frontchannelLogout: true,
-      redirectUris: [acs],
+      redirectUris,
       attributes: {
         "saml.assertion.signature": "true",
         "saml.authnstatement": "true",
@@ -365,6 +373,8 @@ async function configureKeycloakSamlClient(zitadelProviderId: string) {
   if (!clientResponse.ok && clientResponse.status !== 409) {
     throw new Error(`Keycloak SAML client creation failed with ${clientResponse.status}: ${clientText}`);
   }
+
+  console.log(`Keycloak SAML redirects: ${redirectUris.join(", ")}`);
 }
 
 function samlUserPropertyMapper(name: string, userProperty: string, attributeName: string) {
