@@ -34,16 +34,24 @@ export class StackRegistryAuthService {
     const details: string[] = [];
 
     for (const registry of requiredRegistries) {
-      if (!registry.username || !registry.credential) {
+      const loginUsername = this.loginUsername(registry);
+
+      if (!loginUsername || !registry.credential) {
         return {
           success: false,
           message: `Registry credentials are incomplete for ${registry.host}`,
-          details: `Registry ${registry.host} requires username and credential for docker login`,
+          details: `Registry ${registry.host} requires valid credentials for docker login`,
         };
       }
 
       const result = await this.runDocker(
-        ["login", registry.host, "--username", registry.username, "--password-stdin"],
+        [
+          "login",
+          registry.host,
+          "--username",
+          loginUsername,
+          "--password-stdin",
+        ],
         registry.credential,
       );
 
@@ -67,6 +75,14 @@ export class StackRegistryAuthService {
       message: `Authenticated ${requiredRegistries.length} registry(ies)`,
       details: details.join("\n"),
     };
+  }
+
+  private loginUsername(registry: RegistryLogin) {
+    if (registry.authType === RegistryAuthType.Token) {
+      return registry.username || "token";
+    }
+
+    return registry.username;
   }
 
   private runDocker(args: string[], stdin: string) {
