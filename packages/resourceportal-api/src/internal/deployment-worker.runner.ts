@@ -5,6 +5,7 @@ import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
 import { createServer } from "node:http";
 import { AppModule } from "../app.module";
 import { ObservabilityService } from "../observability/observability.service";
+import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 
@@ -15,6 +16,11 @@ type WorkerDeployment = {
   status: DeploymentStatus;
   phase: DeploymentPhase;
 };
+
+type HeartbeatClient = Pick<
+  DeploymentRecoveryService,
+  "heartbeatDeployment"
+>;
 
 const DEPLOYMENT_PHASES = [
   DeploymentPhase.PreparingArtifacts,
@@ -75,8 +81,34 @@ function isTerminal(deployment: WorkerDeployment) {
   );
 }
 
+function remainingDeploymentPhases(phase: DeploymentPhase) {
+  switch (phase) {
+    case DeploymentPhase.Validating:
+      return [...DEPLOYMENT_PHASES];
+    case DeploymentPhase.PreparingArtifacts:
+      return [
+        DeploymentPhase.GeneratingStack,
+        DeploymentPhase.ApplyingStack,
+        DeploymentPhase.WaitingForRollout,
+      ];
+    case DeploymentPhase.GeneratingStack:
+      return [
+        DeploymentPhase.ApplyingStack,
+        DeploymentPhase.WaitingForRollout,
+      ];
+    case DeploymentPhase.ApplyingStack:
+      return [DeploymentPhase.WaitingForRollout];
+    case DeploymentPhase.WaitingForRollout:
+    case DeploymentPhase.RollingBack:
+    case DeploymentPhase.Completed:
+      return [];
+    case DeploymentPhase.Cleanup:
+      return [DeploymentPhase.Completed];
+  }
+}
+
 async function runWithHeartbeat<T>(
-  worker: DeploymentWorkerService,
+  heartbeatClient: HeartbeatClient,
   metrics: ObservabilityService,
   deploymentId: string,
   workerId: string,
@@ -85,7 +117,7 @@ async function runWithHeartbeat<T>(
   task: () => Promise<T>,
 ) {
   const interval = setInterval(() => {
-    void worker
+    void heartbeatClient
       .heartbeatDeployment(deploymentId, { workerId, leaseSeconds })
       .then(() => metrics.recordWorkerEvent("heartbeat", workerId))
       .catch((error: unknown) => {
@@ -107,6 +139,7 @@ async function runWithHeartbeat<T>(
 
 async function processDeployment(
   worker: DeploymentWorkerService,
+  heartbeatClient: HeartbeatClient,
   metrics: ObservabilityService,
   initialDeployment: WorkerDeployment,
   workerId: string,
@@ -121,7 +154,17 @@ async function processDeployment(
     workerId,
   });
 
-  for (const phase of DEPLOYMENT_PHASES) {
+  if (isTerminal(deployment)) {
+    logWorkerEvent("log", "deployment.processing.stopped", {
+      deploymentId: deployment.id,
+      phase: deployment.phase,
+      status: deployment.status,
+      workerId,
+    });
+    return deployment;
+  }
+
+  for (const phase of remainingDeploymentPhases(deployment.phase)) {
     if (isTerminal(deployment)) {
       logWorkerEvent("log", "deployment.processing.stopped", {
         deploymentId: deployment.id,
@@ -133,7 +176,7 @@ async function processDeployment(
     }
 
     deployment = await runWithHeartbeat(
-      worker,
+      heartbeatClient,
       metrics,
       deployment.id,
       workerId,
@@ -164,6 +207,7 @@ async function main() {
   });
 
   const config = app.get(ConfigService);
+  const recovery = app.get(DeploymentRecoveryService);
   const worker = app.get(DeploymentWorkerService);
   const driftReconciler = app.get(RuntimeDriftReconcilerService);
   const metrics = app.get(ObservabilityService);
@@ -246,7 +290,7 @@ async function main() {
       }
 
       metrics.recordWorkerEvent("poll", workerId);
-      const claimed = (await worker.claimNextDeployment({
+      const claimed = (await recovery.claimNextDeployment({
         workerId,
         leaseSeconds,
       })) as WorkerDeployment | null;
@@ -257,7 +301,6 @@ async function main() {
           logWorkerEvent("log", "worker.no_pending_deployment", { workerId });
           break;
         }
-
         await sleep(pollIntervalMs);
         continue;
       }
@@ -265,10 +308,44 @@ async function main() {
       metrics.recordWorkerEvent("claimed", workerId);
       const startedAt = Date.now();
       try {
+        const reconciled = (await runWithHeartbeat(
+          recovery,
+          metrics,
+          claimed.id,
+          workerId,
+          leaseSeconds,
+          heartbeatIntervalMs,
+          () => recovery.reconcileClaimedDeployment(claimed.id, workerId),
+        )) as WorkerDeployment | null;
+
+        if (!reconciled) {
+          metrics.recordWorkerEvent("recovery_deferred", workerId);
+          logWorkerEvent("warn", "deployment.recovery.deferred", {
+            deploymentId: claimed.id,
+            phase: claimed.phase,
+            status: claimed.status,
+            workerId,
+          });
+          if (once) {
+            break;
+          }
+          await sleep(pollIntervalMs);
+          continue;
+        }
+
+        metrics.recordWorkerEvent("reconciled", workerId);
+        logWorkerEvent("log", "deployment.recovery.reconciled", {
+          deploymentId: reconciled.id,
+          phase: reconciled.phase,
+          status: reconciled.status,
+          workerId,
+        });
+
         const completed = await processDeployment(
           worker,
+          recovery,
           metrics,
-          claimed,
+          reconciled,
           workerId,
           leaseSeconds,
           heartbeatIntervalMs,
@@ -291,20 +368,22 @@ async function main() {
           workerId,
         });
 
-        await worker
-          .failDeployment(claimed.id, {
-            workerId,
-            errorCode: "WorkerUnhandledError",
-            errorMessage: errorMessage(error),
-          })
-          .catch((failError: unknown) => {
-            metrics.recordWorkerEvent("fail_mark_error", workerId);
-            logWorkerEvent("error", "deployment.fail_mark.error", {
-              deploymentId: claimed.id,
-              error: errorMessage(failError),
+        if (claimed.status !== DeploymentStatus.RollingBack) {
+          await worker
+            .failDeployment(claimed.id, {
               workerId,
+              errorCode: "WorkerUnhandledError",
+              errorMessage: errorMessage(error),
+            })
+            .catch((failError: unknown) => {
+              metrics.recordWorkerEvent("fail_mark_error", workerId);
+              logWorkerEvent("error", "deployment.fail_mark.error", {
+                deploymentId: claimed.id,
+                error: errorMessage(failError),
+                workerId,
+              });
             });
-          });
+        }
       }
 
       if (once) {
