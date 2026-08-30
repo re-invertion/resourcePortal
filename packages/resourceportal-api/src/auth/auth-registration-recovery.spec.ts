@@ -34,18 +34,17 @@ function createService(userStatus = UserStatus.Active) {
       status: userStatus,
     }),
   } as unknown as OidcAuthService;
-  const sessions = {
-    createSession: vi.fn().mockResolvedValue({
-      id: "session-1",
-      expiresAt: new Date(Date.now() + 60_000),
-    }),
-  } as unknown as AuthSessionService;
+  const createSession = vi.fn().mockResolvedValue({
+    id: "session-1",
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  const sessions = { createSession } as unknown as AuthSessionService;
   const prisma = {} as PrismaService;
 
   return {
     service: new AuthFlowService(createConfig(), oidc, sessions, prisma),
     oidc,
-    sessions,
+    createSession,
   };
 }
 
@@ -76,7 +75,7 @@ describe("registration and recovery auth flows", () => {
   });
 
   it("does not create an RP session until ZITADEL confirms email verification", async () => {
-    const { service, sessions } = createService(UserStatus.Pending);
+    const { service, createSession } = createService(UserStatus.Pending);
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -95,6 +94,6 @@ describe("registration and recovery auth flows", () => {
     await expect(
       service.handleCallback("code", "state", "state", "verifier"),
     ).rejects.toThrow("Email verification is required before login");
-    expect(sessions.createSession).not.toHaveBeenCalled();
+    expect(createSession).not.toHaveBeenCalled();
   });
 });
