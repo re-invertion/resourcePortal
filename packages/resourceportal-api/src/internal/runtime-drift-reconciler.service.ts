@@ -110,9 +110,10 @@ export class RuntimeDriftReconcilerService {
       return "Unknown" as const;
     }
 
-    const mapped = mapAppGroup(appGroup as never, {
-      platformMaintenance: this.platformMaintenanceEnabled(),
-    });
+    const mapped = mapAppGroup(
+      { ...appGroup, singleApps: undefined } as never,
+      { platformMaintenance: this.platformMaintenanceEnabled() },
+    );
     const appGroupBlocked = mapped.runtimeBlockers.length > 0;
     const currentRuntimeById = new Map(
       appGroup.singleApps.map((singleApp) => [
