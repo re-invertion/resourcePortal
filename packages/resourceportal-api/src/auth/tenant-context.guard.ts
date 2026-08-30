@@ -47,11 +47,31 @@ export class TenantContextGuard implements CanActivate {
         },
       },
       include: {
-        roles: { include: { role: true } },
+        roles: {
+          include: {
+            role: {
+              include: {
+                permissionBindings: { include: { permission: true } },
+              },
+            },
+          },
+        },
         groupMemberships: {
           include: {
             group: {
-              include: { roles: { include: { role: true } } },
+              include: {
+                roles: {
+                  include: {
+                    role: {
+                      include: {
+                        permissionBindings: {
+                          include: { permission: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -64,9 +84,13 @@ export class TenantContextGuard implements CanActivate {
 
     const permissions = [
       ...new Set([
-        ...membership.roles.flatMap(({ role }) => role.permissions),
+        ...membership.roles.flatMap(({ role }) =>
+          role.permissionBindings.map(({ permission }) => permission.id),
+        ),
         ...membership.groupMemberships.flatMap(({ group }) =>
-          group.roles.flatMap(({ role }) => role.permissions),
+          group.roles.flatMap(({ role }) =>
+            role.permissionBindings.map(({ permission }) => permission.id),
+          ),
         ),
       ]),
     ];
@@ -90,20 +114,31 @@ export class TenantContextGuard implements CanActivate {
     requiredPermissions: string[] | undefined,
   ) {
     const serviceIdentity = request.serviceIdentity!;
-    if (serviceIdentity.tenantId !== tenantId || serviceIdentity.status !== "Active") {
+    if (
+      serviceIdentity.tenantId !== tenantId ||
+      serviceIdentity.status !== "Active"
+    ) {
       throw new ForbiddenException(
         "Service identity does not belong to the requested tenant",
       );
     }
 
-    const roles = await this.prisma.$queryRaw<Array<{ permissions: string[] }>>`
-      SELECT r."permissions"
-      FROM "Role" r
-      INNER JOIN "ServiceIdentityRole" sir ON sir."roleId" = r."id"
-      WHERE sir."serviceIdentityId" = CAST(${serviceIdentity.id} AS uuid)
-    `;
+    const roleBindings = await this.prisma.serviceIdentityRole.findMany({
+      where: { serviceIdentityId: serviceIdentity.id },
+      include: {
+        role: {
+          include: {
+            permissionBindings: { include: { permission: true } },
+          },
+        },
+      },
+    });
     const permissions = [
-      ...new Set(roles.flatMap((role) => role.permissions)),
+      ...new Set(
+        roleBindings.flatMap(({ role }) =>
+          role.permissionBindings.map(({ permission }) => permission.id),
+        ),
+      ),
     ];
 
     request.tenantContext = {

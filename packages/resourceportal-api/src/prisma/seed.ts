@@ -175,14 +175,43 @@ const roles = [
 ];
 
 async function main() {
+  const permissionIds = [
+    ...new Set(roles.flatMap((role) => role.permissions)),
+  ];
+
+  for (const id of permissionIds) {
+    await prisma.permission.upsert({
+      where: { id },
+      create: { id },
+      update: {},
+    });
+  }
+
   for (const role of roles) {
-    await prisma.role.upsert({
-      where: { id: role.id },
-      create: role,
-      update: {
-        name: role.name,
-        permissions: role.permissions,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.role.upsert({
+        where: { id: role.id },
+        create: {
+          id: role.id,
+          name: role.name,
+          permissions: role.permissions,
+        },
+        update: {
+          name: role.name,
+          permissions: role.permissions,
+        },
+      });
+
+      await tx.rolePermission.deleteMany({
+        where: { roleId: role.id },
+      });
+      await tx.rolePermission.createMany({
+        data: role.permissions.map((permissionId) => ({
+          roleId: role.id,
+          permissionId,
+        })),
+        skipDuplicates: true,
+      });
     });
   }
 }
