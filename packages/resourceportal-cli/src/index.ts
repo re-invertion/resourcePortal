@@ -118,6 +118,27 @@ const commands: Command[] = [
   command("invitation", "accept", "--token TOKEN", "Accept tenant invitation.", (p, c) =>
     c.invitations.accept(bodyFromFlags(p.flags, ["token"], [])),
   ),
+  command("identity-provider", "list", "<tenantId>", "List tenant identity providers.", (p, c) =>
+    c.identityProviders.list(arg(p, 0, "tenantId")),
+  ),
+  command("identity-provider", "show", "<tenantId> <identityProviderId>", "Show an identity provider.", (p, c) =>
+    c.identityProviders.get(arg(p, 0, "tenantId"), arg(p, 1, "identityProviderId")),
+  ),
+  command("identity-provider", "create", "<tenantId> --name NAME --protocol OIDC|SAML [flags]", "Provision a tenant identity provider in ZITADEL.", (p, c) =>
+    c.identityProviders.create(arg(p, 0, "tenantId"), optionalBody({
+      ...bodyFromFlags(p.flags, ["name", "protocol"], ["issuer", "metadataUrl", "clientId", "clientSecret", "enabled", "usePkce"]),
+      scopes: optionalArrayFlag(p.flags, "scope"),
+    })),
+  ),
+  command("identity-provider", "update", "<tenantId> <identityProviderId> [flags]", "Update a tenant identity provider and synchronize ZITADEL.", (p, c) =>
+    c.identityProviders.update(arg(p, 0, "tenantId"), arg(p, 1, "identityProviderId"), optionalBody({
+      ...bodyFromFlags(p.flags, [], ["name", "protocol", "issuer", "metadataUrl", "clientId", "clientSecret", "enabled", "usePkce"]),
+      scopes: optionalArrayFlag(p.flags, "scope"),
+    })),
+  ),
+  command("identity-provider", "delete", "<tenantId> <identityProviderId>", "Delete a tenant identity provider from RP and ZITADEL.", (p, c) =>
+    c.identityProviders.delete(arg(p, 0, "tenantId"), arg(p, 1, "identityProviderId")),
+  ),
   command("group", "list", "<tenantId>", "List tenant groups.", (p, c) =>
     c.tenants.groups(arg(p, 0, "tenantId")),
   ),

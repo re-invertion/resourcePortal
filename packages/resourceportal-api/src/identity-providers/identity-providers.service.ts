@@ -1,37 +1,51 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { IdentityProviderScope, Prisma } from "@prisma/client";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import {
+  IdentityProvider,
+  IdentityProviderProtocol,
+  IdentityProviderScope,
+  Prisma,
+} from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import { CreateIdentityProviderDto } from "./dto/create-identity-provider.dto";
 import { UpdateIdentityProviderDto } from "./dto/update-identity-provider.dto";
+import { mapIdentityProvider } from "./identity-providers.view";
+import {
+  ZitadelIdentityProviderService,
+  ZitadelProviderConfiguration,
+} from "./zitadel-identity-provider.service";
+
+const defaultScopes = ["openid", "profile", "email"];
 
 @Injectable()
 export class IdentityProvidersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+    private readonly zitadel: ZitadelIdentityProviderService,
+  ) {}
 
   async listTenantIdentityProviders(tenantId: string) {
     await this.ensureTenantExists(tenantId);
-    return this.prisma.identityProvider.findMany({
+    const providers = await this.prisma.identityProvider.findMany({
       where: { tenantId, scope: IdentityProviderScope.Tenant },
       orderBy: [{ enabled: "desc" }, { name: "asc" }],
     });
+
+    return providers.map(mapIdentityProvider);
   }
 
   async getTenantIdentityProvider(tenantId: string, identityProviderId: string) {
-    const provider = await this.prisma.identityProvider.findFirst({
-      where: {
-        id: identityProviderId,
-        tenantId,
-        scope: IdentityProviderScope.Tenant,
-      },
-    });
-
-    if (!provider) {
-      throw new NotFoundException("Identity provider not found");
-    }
-
-    return provider;
+    return mapIdentityProvider(
+      await this.getTenantIdentityProviderRecord(tenantId, identityProviderId),
+    );
   }
 
   async createTenantIdentityProvider(
@@ -40,19 +54,29 @@ export class IdentityProvidersService {
     actor: AuthenticatedUser,
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
+    const configuration = this.createConfiguration(dto);
+    this.validateConfiguration(configuration, true);
+    const zitadelIdentityProviderId = await this.zitadel.provision(configuration);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const provider = await tx.identityProvider.create({
+      const provider = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.identityProvider.create({
           data: {
             scope: IdentityProviderScope.Tenant,
             tenantId,
-            name: dto.name,
-            protocol: dto.protocol,
-            zitadelIdentityProviderId: dto.zitadelIdentityProviderId,
-            issuer: dto.issuer,
-            metadataUrl: dto.metadataUrl,
-            enabled: dto.enabled ?? true,
+            name: configuration.name,
+            protocol: configuration.protocol,
+            zitadelIdentityProviderId,
+            issuer: configuration.issuer,
+            metadataUrl: configuration.metadataUrl,
+            clientId: configuration.clientId,
+            clientSecretCiphertext: configuration.clientSecret
+              ? this.encryption.encrypt(configuration.clientSecret)
+              : null,
+            scopes: configuration.scopes,
+            usePkce: configuration.usePkce,
+            enabled: configuration.enabled,
+            provisionedAt: new Date(),
             createdBy: actor.id,
             updatedBy: actor.id,
           },
@@ -66,24 +90,20 @@ export class IdentityProvidersService {
             actorName: actor.displayName,
             action: "identity_provider.create",
             resourceType: "IdentityProvider",
-            resourceId: provider.id,
-            resourceName: provider.name,
+            resourceId: created.id,
+            resourceName: created.name,
             result: "Success",
             correlationId: randomUUID(),
-            changes: {
-              scope: provider.scope,
-              protocol: provider.protocol,
-              enabled: provider.enabled,
-              issuer: provider.issuer,
-              metadataUrl: provider.metadataUrl,
-              zitadelIdentityProviderId: provider.zitadelIdentityProviderId,
-            },
+            changes: this.auditChanges(created),
           },
         });
 
-        return provider;
+        return created;
       });
+
+      return mapIdentityProvider(provider);
     } catch (error) {
+      await this.deleteRemoteIgnoringFailure(zitadelIdentityProviderId);
       this.rethrowConflict(error);
     }
   }
@@ -95,19 +115,61 @@ export class IdentityProvidersService {
     actor: AuthenticatedUser,
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
-    const current = await this.getTenantIdentityProvider(tenantId, identityProviderId);
+    const current = await this.getTenantIdentityProviderRecord(
+      tenantId,
+      identityProviderId,
+    );
+    const configuration = this.updateConfiguration(current, dto);
+    const protocolChanged = configuration.protocol !== current.protocol;
+    const needsProvisioning =
+      protocolChanged || !current.zitadelIdentityProviderId;
+
+    if (
+      needsProvisioning &&
+      configuration.protocol === IdentityProviderProtocol.OIDC &&
+      !configuration.clientSecret &&
+      current.clientSecretCiphertext
+    ) {
+      configuration.clientSecret = this.encryption.decrypt(
+        current.clientSecretCiphertext,
+      );
+    }
+
+    this.validateConfiguration(configuration, needsProvisioning);
+
+    let zitadelIdentityProviderId = current.zitadelIdentityProviderId;
+    if (needsProvisioning) {
+      zitadelIdentityProviderId = await this.zitadel.provision(configuration);
+    } else if (zitadelIdentityProviderId) {
+      await this.zitadel.update(zitadelIdentityProviderId, configuration);
+      if (configuration.enabled !== current.enabled) {
+        await this.zitadel.setEnabled(
+          zitadelIdentityProviderId,
+          configuration.enabled,
+        );
+      }
+    }
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const provider = await tx.identityProvider.update({
+      const provider = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.identityProvider.update({
           where: { id: current.id },
           data: {
-            name: dto.name,
-            protocol: dto.protocol,
-            zitadelIdentityProviderId: dto.zitadelIdentityProviderId,
-            issuer: dto.issuer,
-            metadataUrl: dto.metadataUrl,
-            enabled: dto.enabled,
+            name: configuration.name,
+            protocol: configuration.protocol,
+            zitadelIdentityProviderId,
+            issuer: configuration.issuer,
+            metadataUrl: configuration.metadataUrl,
+            clientId: configuration.clientId,
+            clientSecretCiphertext: this.updatedSecretCiphertext(
+              current,
+              configuration,
+              protocolChanged,
+            ),
+            scopes: configuration.scopes,
+            usePkce: configuration.usePkce,
+            enabled: configuration.enabled,
+            provisionedAt: new Date(),
             updatedBy: actor.id,
           },
         });
@@ -120,24 +182,36 @@ export class IdentityProvidersService {
             actorName: actor.displayName,
             action: "identity_provider.update",
             resourceType: "IdentityProvider",
-            resourceId: provider.id,
-            resourceName: provider.name,
+            resourceId: updated.id,
+            resourceName: updated.name,
             result: "Success",
             correlationId: randomUUID(),
-            changes: {
-              name: provider.name,
-              protocol: provider.protocol,
-              enabled: provider.enabled,
-              issuer: provider.issuer,
-              metadataUrl: provider.metadataUrl,
-              zitadelIdentityProviderId: provider.zitadelIdentityProviderId,
-            },
+            changes: this.auditChanges(updated),
           },
         });
 
-        return provider;
+        return updated;
       });
+
+      if (
+        needsProvisioning &&
+        current.zitadelIdentityProviderId &&
+        current.zitadelIdentityProviderId !== zitadelIdentityProviderId
+      ) {
+        await this.deleteRemoteIgnoringFailure(
+          current.zitadelIdentityProviderId,
+        );
+      }
+
+      return mapIdentityProvider(provider);
     } catch (error) {
+      if (
+        needsProvisioning &&
+        zitadelIdentityProviderId &&
+        zitadelIdentityProviderId !== current.zitadelIdentityProviderId
+      ) {
+        await this.deleteRemoteIgnoringFailure(zitadelIdentityProviderId);
+      }
       this.rethrowConflict(error);
     }
   }
@@ -148,7 +222,14 @@ export class IdentityProvidersService {
     actor: AuthenticatedUser,
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
-    const provider = await this.getTenantIdentityProvider(tenantId, identityProviderId);
+    const provider = await this.getTenantIdentityProviderRecord(
+      tenantId,
+      identityProviderId,
+    );
+
+    if (provider.zitadelIdentityProviderId) {
+      await this.zitadel.delete(provider.zitadelIdentityProviderId);
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.identityProvider.delete({ where: { id: provider.id } });
@@ -172,6 +253,146 @@ export class IdentityProvidersService {
     return { deleted: true };
   }
 
+  private createConfiguration(
+    dto: CreateIdentityProviderDto,
+  ): ZitadelProviderConfiguration {
+    if (dto.protocol === IdentityProviderProtocol.OIDC) {
+      return {
+        clientId: dto.clientId,
+        clientSecret: dto.clientSecret,
+        enabled: dto.enabled ?? true,
+        issuer: dto.issuer,
+        name: dto.name,
+        protocol: dto.protocol,
+        scopes: dto.scopes ?? defaultScopes,
+        usePkce: dto.usePkce ?? true,
+      };
+    }
+
+    return {
+      enabled: dto.enabled ?? true,
+      metadataUrl: dto.metadataUrl,
+      name: dto.name,
+      protocol: dto.protocol,
+      scopes: [],
+      usePkce: false,
+    };
+  }
+
+  private updateConfiguration(
+    current: IdentityProvider,
+    dto: UpdateIdentityProviderDto,
+  ): ZitadelProviderConfiguration {
+    const protocol = dto.protocol ?? current.protocol;
+
+    if (protocol === IdentityProviderProtocol.OIDC) {
+      const currentIsOidc = current.protocol === IdentityProviderProtocol.OIDC;
+      return {
+        clientId:
+          dto.clientId ?? (currentIsOidc ? current.clientId : null) ?? undefined,
+        clientSecret: dto.clientSecret,
+        enabled: dto.enabled ?? current.enabled,
+        issuer:
+          dto.issuer ?? (currentIsOidc ? current.issuer : null) ?? undefined,
+        name: dto.name ?? current.name,
+        protocol,
+        scopes: dto.scopes ?? (currentIsOidc ? current.scopes : defaultScopes),
+        usePkce: dto.usePkce ?? (currentIsOidc ? current.usePkce : true),
+      };
+    }
+
+    return {
+      enabled: dto.enabled ?? current.enabled,
+      metadataUrl:
+        dto.metadataUrl ??
+        (current.protocol === IdentityProviderProtocol.SAML
+          ? current.metadataUrl
+          : null) ??
+        undefined,
+      name: dto.name ?? current.name,
+      protocol,
+      scopes: [],
+      usePkce: false,
+    };
+  }
+
+  private validateConfiguration(
+    configuration: ZitadelProviderConfiguration,
+    requireOidcSecret: boolean,
+  ) {
+    if (configuration.protocol === IdentityProviderProtocol.OIDC) {
+      const missing = [
+        !configuration.issuer ? "issuer" : undefined,
+        !configuration.clientId ? "clientId" : undefined,
+        requireOidcSecret && !configuration.clientSecret
+          ? "clientSecret"
+          : undefined,
+      ].filter((field): field is string => Boolean(field));
+
+      if (missing.length > 0) {
+        throw new BadRequestException(
+          `OIDC identity provider requires: ${missing.join(", ")}`,
+        );
+      }
+      return;
+    }
+
+    if (!configuration.metadataUrl) {
+      throw new BadRequestException(
+        "SAML identity provider requires: metadataUrl",
+      );
+    }
+  }
+
+  private updatedSecretCiphertext(
+    current: IdentityProvider,
+    configuration: ZitadelProviderConfiguration,
+    protocolChanged: boolean,
+  ) {
+    if (configuration.protocol !== IdentityProviderProtocol.OIDC) {
+      return null;
+    }
+
+    if (configuration.clientSecret) {
+      return this.encryption.encrypt(configuration.clientSecret);
+    }
+
+    return protocolChanged ? null : current.clientSecretCiphertext;
+  }
+
+  private auditChanges(provider: IdentityProvider) {
+    return {
+      scope: provider.scope,
+      protocol: provider.protocol,
+      enabled: provider.enabled,
+      issuer: provider.issuer,
+      metadataUrl: provider.metadataUrl,
+      clientId: provider.clientId,
+      scopes: provider.scopes,
+      usePkce: provider.usePkce,
+      zitadelIdentityProviderId: provider.zitadelIdentityProviderId,
+    };
+  }
+
+  private async getTenantIdentityProviderRecord(
+    tenantId: string,
+    identityProviderId: string,
+  ) {
+    const provider = await this.prisma.identityProvider.findFirst({
+      where: {
+        id: identityProviderId,
+        tenantId,
+        scope: IdentityProviderScope.Tenant,
+      },
+    });
+
+    if (!provider) {
+      throw new NotFoundException("Identity provider not found");
+    }
+
+    return provider;
+  }
+
   private async ensureTenantExists(tenantId: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -183,6 +404,14 @@ export class IdentityProvidersService {
     }
 
     return tenant;
+  }
+
+  private async deleteRemoteIgnoringFailure(identityProviderId: string) {
+    try {
+      await this.zitadel.delete(identityProviderId);
+    } catch {
+      // Keep the original database error; reconciliation can remove the orphan.
+    }
   }
 
   private rethrowConflict(error: unknown): never {

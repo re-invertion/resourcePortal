@@ -103,6 +103,13 @@ describe("AuthController cookie flow", () => {
       update: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
     };
+    identityProvider: {
+      findFirst: ReturnType<typeof vi.fn>;
+      findMany: ReturnType<typeof vi.fn>;
+    };
+    tenant: {
+      findUnique: ReturnType<typeof vi.fn>;
+    };
   };
 
   beforeEach(async () => {
@@ -138,6 +145,13 @@ describe("AuthController cookie flow", () => {
         }),
         update: vi.fn().mockResolvedValue({}),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      identityProvider: {
+        findFirst: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      tenant: {
+        findUnique: vi.fn(),
       },
     };
 
@@ -191,7 +205,7 @@ describe("AuthController cookie flow", () => {
     );
     Reflect.defineMetadata(
       "design:paramtypes",
-      [ConfigService, OidcAuthService, AuthSessionService],
+      [ConfigService, OidcAuthService, AuthSessionService, PrismaService],
       AuthFlowService,
     );
     Reflect.defineMetadata(
@@ -238,6 +252,7 @@ describe("AuthController cookie flow", () => {
             OIDC_ISSUER_URL: issuer,
             OIDC_REDIRECT_URI: "http://localhost/api/auth/callback",
             PUBLIC_API_URL: "http://localhost",
+            ZITADEL_ORGANIZATION_ID: "zitadel-org-1",
           }),
         },
         {
@@ -334,6 +349,48 @@ describe("AuthController cookie flow", () => {
     expect(response.json()).toMatchObject({
       message: "OIDC callback code and state are required",
     });
+  });
+
+  it("selects an enabled tenant identity provider through ZITADEL scopes", async () => {
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const identityProviderId = "22222222-2222-4222-8222-222222222222";
+    prisma.tenant.findUnique.mockResolvedValue({
+      authPolicy: {
+        allowPlatformLogin: true,
+        allowTenantIdentityProviders: true,
+        requireTenantIdentityProvider: false,
+      },
+    });
+    prisma.identityProvider.findFirst.mockResolvedValue({
+      id: identityProviderId,
+      scope: "Tenant",
+      tenantId,
+      zitadelIdentityProviderId: "zitadel-idp-1",
+    });
+
+    const loginResponse = await app.inject({
+      method: "GET",
+      url: `/api/auth/login?tenantId=${tenantId}&identityProviderId=${identityProviderId}`,
+    });
+    const loginLocation = new URL(getRequiredHeader(loginResponse, "location"));
+    const scopes = loginLocation.searchParams.get("scope")?.split(" ") ?? [];
+
+    expect(loginResponse.statusCode).toBe(302);
+    expect(scopes).toContain("urn:zitadel:iam:org:id:zitadel-org-1");
+    expect(scopes).toContain("urn:zitadel:iam:org:idp:id:zitadel-idp-1");
+    expect(getCookieValue(loginResponse, "rp_oidc_provider")).toBeTruthy();
+
+    const callbackResponse = await app.inject({
+      method: "GET",
+      url: `/api/auth/callback?code=valid-code&state=${loginLocation.searchParams.get("state")}`,
+      headers: { cookie: getCookieHeader(loginResponse) },
+    });
+
+    expect(callbackResponse.statusCode).toBe(302);
+    expect(oidcAuth.authenticateBearerToken).toHaveBeenCalledWith(
+      "id-token",
+      identityProviderId,
+    );
   });
 
   it("rejects callback with tampered signed cookies", async () => {

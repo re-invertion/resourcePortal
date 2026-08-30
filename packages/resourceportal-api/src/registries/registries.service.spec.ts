@@ -74,7 +74,7 @@ describe("RegistriesService.validateRegistry", () => {
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",
       "22222222-2222-4222-8222-222222222222",
-      actor as never,
+      actor,
     );
 
     expect(fetch).toHaveBeenCalledWith(
@@ -82,12 +82,13 @@ describe("RegistriesService.validateRegistry", () => {
       expect.objectContaining({ method: "GET" }),
     );
     expect(result.validationStatus).toBe(RegistryValidationStatus.Valid);
-    expect(prisma.registry.update).toHaveBeenLastCalledWith({
+    const updateArgs = prisma.registry.update.mock.lastCall?.[0] as unknown;
+    expect(updateArgs).toMatchObject({
       where: { id: "22222222-2222-4222-8222-222222222222" },
-      data: expect.objectContaining({
+      data: {
         validationStatus: RegistryValidationStatus.Valid,
         lastValidationError: null,
-      }),
+      },
     });
   });
 
@@ -103,17 +104,18 @@ describe("RegistriesService.validateRegistry", () => {
       vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
     );
 
-    await service.validateRegistry(item.tenantId, item.id, actor as never);
+    await service.validateRegistry(item.tenantId, item.id, actor);
 
     expect(encryption.decrypt).toHaveBeenCalledWith("enc:secret");
-    expect(fetch).toHaveBeenCalledWith(
+    const fetchArgs = vi.mocked(fetch).mock.lastCall as unknown;
+    expect(fetchArgs).toMatchObject([
       "https://registry.example.com/v2/",
-      expect.objectContaining({
-        headers: expect.objectContaining({
+      {
+        headers: {
           authorization: `Basic ${Buffer.from("alice:secret").toString("base64")}`,
-        }),
-      }),
-    );
+        },
+      },
+    ]);
   });
 
   it("marks non-success registry responses as invalid", async () => {
@@ -126,7 +128,7 @@ describe("RegistriesService.validateRegistry", () => {
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",
       "22222222-2222-4222-8222-222222222222",
-      actor as never,
+      actor,
     );
 
     expect(result.validationStatus).toBe(RegistryValidationStatus.Invalid);
@@ -140,7 +142,7 @@ describe("RegistriesService.validateRegistry", () => {
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",
       "22222222-2222-4222-8222-222222222222",
-      actor as never,
+      actor,
     );
 
     expect(result.validationStatus).toBe(RegistryValidationStatus.Error);

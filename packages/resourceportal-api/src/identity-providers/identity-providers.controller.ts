@@ -10,13 +10,13 @@ import { IdentityProvidersService } from "./identity-providers.service";
 export class IdentityProvidersController {
   constructor(private readonly identityProvidersService: IdentityProvidersService) {}
 
-  @RequirePermissions("tenant_auth_policy.read")
+  @RequirePermissions("identity_provider.read")
   @Get()
   list(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
     return this.identityProvidersService.listTenantIdentityProviders(tenantId);
   }
 
-  @RequirePermissions("tenant_auth_policy.read")
+  @RequirePermissions("identity_provider.read")
   @Get(":identityProviderId")
   get(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
@@ -28,7 +28,7 @@ export class IdentityProvidersController {
     );
   }
 
-  @RequirePermissions("tenant_auth_policy.update")
+  @RequirePermissions("identity_provider.create")
   @Post()
   create(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
@@ -42,7 +42,7 @@ export class IdentityProvidersController {
     );
   }
 
-  @RequirePermissions("tenant_auth_policy.update")
+  @RequirePermissions("identity_provider.update")
   @Patch(":identityProviderId")
   update(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
@@ -58,7 +58,7 @@ export class IdentityProvidersController {
     );
   }
 
-  @RequirePermissions("tenant_auth_policy.update")
+  @RequirePermissions("identity_provider.delete")
   @Delete(":identityProviderId")
   delete(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
