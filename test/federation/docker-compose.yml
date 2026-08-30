@@ -32,7 +32,7 @@ services:
       retries: 30
 
   zitadel:
-    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-stable}
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-v4.17.0}
     network_mode: host
     user: "0"
     command:
@@ -57,7 +57,7 @@ services:
         condition: service_healthy
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.3.3
+    image: quay.io/keycloak/keycloak:26.7.2
     network_mode: host
     command:
       - start-dev
