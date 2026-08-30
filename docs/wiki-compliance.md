@@ -33,6 +33,8 @@ Checked wiki documents:
 - AppGroup draft operations, including stack preview, discard changes, soft delete, effective runtime state, and runtime blockers.
 - SingleApp as one Swarm service with image, resources, replicas, environment, healthcheck, runtime operations, restart/update policy, HTTP endpoints, effective runtime state, effective replicas, and runtime blockers.
 - Volume as tenant-owned filesystem storage under `RESOURCE_STORAGE_ROOT/{tenantId}/{volumeId}`, with attachment constraints and no host bind mounts from user input.
+- Volume lifecycle now refreshes `usedSizeBytes` from the actual storage directory on read/list, treats a not-yet-provisioned path as zero usage, and does not follow symlinks while measuring usage.
+- Volume deletion now transitions through `Deleting`, removes the Docker volume and the exact tenant/volume storage directory before deleting the database record, and leaves the record in `Error` when physical cleanup fails. Attached volumes remain protected by `VolumeInUse`.
 - Domain and CustomRootDomain resources, including managed/custom hostnames, DNS/TLS state fields, endpoint assignment, and delete protection.
 - Registry resources with TLS/auth modes, encrypted credential metadata, validation, and delete protection when used.
 - Deployment Engine with async jobs, idempotency key support, worker lease/heartbeat, deployment events, generated stack YAML, Swarm apply, rollout checks, and automatic rollback paths.
@@ -40,6 +42,14 @@ Checked wiki documents:
 - Audit log model and read endpoint.
 - API observability: request ids, structured HTTP logs, structured worker logs, liveness/readiness endpoints, and Prometheus-style metrics.
 - Swagger, SDK, and CLI for the implemented public API surface.
+
+## Stage 7 Volume Lifecycle Decision
+
+Stage 7 owns the Resource Portal lifecycle semantics for a Volume: logical capacity (`sizeBytes`), tenant quota validation, no-shrink validation, actual usage reporting (`usedSizeBytes`), attachment protection, Docker volume cleanup, filesystem cleanup, and recoverable error state during deletion.
+
+The current generic filesystem backend is a directory under `RESOURCE_STORAGE_ROOT`. It cannot portably enforce a hard per-directory capacity limit on NFS/ext4/XFS without backend-specific support. For that reason, `PATCH .../resize` updates the logical requested capacity and tenant quota accounting, while physical filesystem quota enforcement and backend-specific resize are explicitly assigned to Stage 14 `StorageBackend`. Stage 7 does not emulate a physical quota with marker files or another non-enforcing mechanism.
+
+Stage 7 verification includes unit coverage for measurement, path-safety, idempotent Docker cleanup, failure preservation, and attachment protection, plus a real-Docker smoke flow that writes data to the storage path, verifies `usedSizeBytes`, creates the bind-backed Docker volume, deletes it through the public Volume API, and verifies both the Docker volume and storage directory are gone.
 
 ## Known Gaps Against Wiki
 
@@ -58,7 +68,7 @@ Checked wiki documents:
 - Drift detection is represented by `driftStatus`, but full Swarm reconciliation/drift scanner is not implemented.
 - Resolved image digest is not stored in deployment history.
 - Generated stack preview is exposed; rendered YAML export is not exposed as a dedicated public API operation yet.
-- Platform infrastructure models such as Remote Location, HA Cluster, Swarm Cluster, Swarm Node, Storage Backend, and Placement Engine are intentionally not implemented yet.
+- Platform infrastructure models such as Remote Location, HA Cluster, Swarm Cluster, Swarm Node, Storage Backend, and Placement Engine are intentionally not implemented yet. `StorageBackend` is also the planned owner of physical per-volume quota enforcement and backend-specific resize semantics referenced by Stage 7.
 
 ## Current Assessment
 
