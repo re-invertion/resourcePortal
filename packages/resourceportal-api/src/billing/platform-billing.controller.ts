@@ -13,7 +13,9 @@ import { AuthenticatedUser } from "../auth/types";
 import {
   CreatePriceListDto,
   CreateVoucherDto,
-  PlatformBalanceMutationDto,
+  PlatformCorrectionDto,
+  PlatformPaymentDto,
+  PlatformRefundDto,
 } from "./billing.dto";
 import { BillingService } from "./billing.service";
 
@@ -68,7 +70,7 @@ export class PlatformBillingController {
 
   @Post("payments")
   payment(
-    @Body() dto: PlatformBalanceMutationDto,
+    @Body() dto: PlatformPaymentDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.billing.payment(dto, actor);
@@ -76,7 +78,7 @@ export class PlatformBillingController {
 
   @Post("refunds")
   refund(
-    @Body() dto: PlatformBalanceMutationDto,
+    @Body() dto: PlatformRefundDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.billing.refund(dto, actor);
@@ -84,7 +86,7 @@ export class PlatformBillingController {
 
   @Post("corrections")
   correction(
-    @Body() dto: PlatformBalanceMutationDto,
+    @Body() dto: PlatformCorrectionDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.billing.correction(dto, actor);
