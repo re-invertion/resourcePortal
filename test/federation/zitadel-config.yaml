@@ -9,6 +9,12 @@ ExternalSecure: false
 TLS:
   Enabled: false
 
+Projections:
+  # Production defaults to 60s. The live integration stack shortens only the
+  # scheduled catch-up sweep so projection-based assertions remain fast while
+  # still exercising the real eventual-consistency path.
+  RequeueEvery: 1s
+
 Database:
   postgres:
     Host: localhost
