@@ -42,7 +42,7 @@ async function verifyConcurrentSingleAppCreate() {
           desiredReplicas: 1,
           runtimeState: "Stopped",
           cpu: 0.1,
-          memoryBytes: 67108864,
+          memoryBytes: 134217728,
         },
       ),
     ),
@@ -198,7 +198,7 @@ async function createSingleApp(
       desiredReplicas: 1,
       runtimeState: "Stopped",
       cpu,
-      memoryBytes: 67108864,
+      memoryBytes: 134217728,
     },
   );
   expectSuccess(result, `create SingleApp ${name}`);
@@ -237,13 +237,17 @@ async function request(
 function assertExactlyOneQuotaWinner(results: ApiResult[], label: string) {
   const successes = results.filter((result) => result.status >= 200 && result.status < 300);
   const rejected = results.filter((result) => result.status === 403);
+  const details = results
+    .map((result) => `${result.status}:${JSON.stringify(result.payload)}`)
+    .join(" | ");
 
-  assert(successes.length === 1, `${label}: expected exactly one success, got ${successes.length}`);
+  assert(
+    successes.length === 1,
+    `${label}: expected exactly one success, got ${successes.length}; ${details}`,
+  );
   assert(
     rejected.length === results.length - 1,
-    `${label}: expected remaining requests to fail with HTTP 403, got statuses ${results
-      .map((result) => result.status)
-      .join(", ")}`,
+    `${label}: expected remaining requests to fail with HTTP 403; ${details}`,
   );
 }
 
