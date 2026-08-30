@@ -52,7 +52,10 @@ type ZitadelMutationResponse = {
   details?: {
     resourceOwner?: string;
   };
+  message?: string;
 };
+
+const loginPolicyNotChangedMessage = "Errors.Org.LoginPolicy.NotChanged";
 
 const writableLoginPolicyFields = [
   "allowUsernamePassword",
@@ -164,7 +167,18 @@ export class ZitadelIdentityProviderService {
       "PUT",
       "/management/v1/policies/login",
       body,
+      [],
+      [loginPolicyNotChangedMessage],
     );
+
+    // ZITADEL returns FailedPrecondition/HTTP 400 when the event-store state
+    // already equals the requested policy. This is an authoritative no-op,
+    // not a provisioning failure. Only this exact ZITADEL error is accepted;
+    // all other HTTP 400 responses remain failures.
+    if (mutation.message?.includes(loginPolicyNotChangedMessage)) {
+      return;
+    }
+
     this.assertMutationResourceOwner(mutation);
   }
 
@@ -288,6 +302,7 @@ export class ZitadelIdentityProviderService {
     path: string,
     body?: JsonObject,
     ignoredStatuses: number[] = [],
+    ignoredErrorMessages: string[] = [],
   ): Promise<T> {
     const response = await fetch(`${this.baseUrl()}${path}`, {
       method,
@@ -299,13 +314,21 @@ export class ZitadelIdentityProviderService {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
-    if (!response.ok && !ignoredStatuses.includes(response.status)) {
+    const text = await response.text();
+    const ignoredError = ignoredErrorMessages.some((message) =>
+      text.includes(message),
+    );
+
+    if (
+      !response.ok &&
+      !ignoredStatuses.includes(response.status) &&
+      !ignoredError
+    ) {
       throw new BadGatewayException(
         `ZITADEL identity provider request failed with HTTP ${response.status}`,
       );
     }
 
-    const text = await response.text();
     return (text ? JSON.parse(text) : {}) as T;
   }
 
