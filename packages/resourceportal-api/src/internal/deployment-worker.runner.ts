@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { AppModule } from "../app.module";
 import { ObservabilityService } from "../observability/observability.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
+import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 
 const logger = new Logger("DeploymentWorkerRunner");
 
@@ -164,9 +165,16 @@ async function main() {
 
   const config = app.get(ConfigService);
   const worker = app.get(DeploymentWorkerService);
+  const driftReconciler = app.get(RuntimeDriftReconcilerService);
   const metrics = app.get(ObservabilityService);
   const workerId = config.get<string>("WORKER_ID") ?? "local-worker";
   const pollIntervalMs = readInt(config, "WORKER_POLL_INTERVAL_MS", 5000);
+  const driftScanIntervalMs = readInt(
+    config,
+    "DRIFT_SCAN_INTERVAL_MS",
+    60000,
+    5000,
+  );
   const leaseSeconds = readInt(config, "WORKER_LEASE_SECONDS", 300, 15);
   const metricsPort = readInt(config, "WORKER_METRICS_PORT", 9464);
   const once = readBool(config, "WORKER_ONCE");
@@ -175,6 +183,7 @@ async function main() {
     Math.floor((leaseSeconds * 1000) / 3),
   );
   let stopping = false;
+  let nextDriftScanAt = 0;
 
   const metricsServer = createServer((request, response) => {
     if (request.url !== "/metrics") {
@@ -210,6 +219,7 @@ async function main() {
   try {
     metrics.recordWorkerEvent("started", workerId);
     logWorkerEvent("log", "worker.started", {
+      driftScanIntervalMs,
       leaseSeconds,
       metricsPort,
       once,
@@ -218,6 +228,23 @@ async function main() {
     });
 
     while (!stopping) {
+      if (Date.now() >= nextDriftScanAt) {
+        try {
+          const reconciliation = await driftReconciler.reconcileBatch();
+          logWorkerEvent("log", "runtime.drift.reconciled", {
+            ...reconciliation,
+            workerId,
+          });
+        } catch (error: unknown) {
+          logWorkerEvent("warn", "runtime.drift.reconciliation_failed", {
+            error: errorMessage(error),
+            workerId,
+          });
+        } finally {
+          nextDriftScanAt = Date.now() + driftScanIntervalMs;
+        }
+      }
+
       metrics.recordWorkerEvent("poll", workerId);
       const claimed = (await worker.claimNextDeployment({
         workerId,
