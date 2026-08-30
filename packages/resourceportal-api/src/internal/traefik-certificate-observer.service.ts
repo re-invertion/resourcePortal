@@ -112,12 +112,11 @@ export class TraefikCertificateObserverService {
       return undefined;
     }
 
-    const commonName: unknown = Reflect.get(issuer, "CN");
-    if (typeof commonName === "string") {
-      return commonName;
+    const fields = issuer as { CN?: unknown; O?: unknown };
+    if (typeof fields.CN === "string") {
+      return fields.CN;
     }
 
-    const organization: unknown = Reflect.get(issuer, "O");
-    return typeof organization === "string" ? organization : undefined;
+    return typeof fields.O === "string" ? fields.O : undefined;
   }
 }
