@@ -717,6 +717,16 @@ export class DeploymentWorkerService {
       );
     }
 
+    const gpuAllocation = snapshot.singleApps.find(
+      (singleApp) => singleApp.resources.gpu > 0,
+    );
+    if (gpuAllocation) {
+      return this.validationFailure(
+        "GpuNotAvailable",
+        `GPU allocation is not available for SingleApp ${gpuAllocation.name}`,
+      );
+    }
+
     const registryFailure = await this.validateRegistries(snapshot);
     if (registryFailure) {
       return registryFailure;
