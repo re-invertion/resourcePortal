@@ -177,14 +177,21 @@ async function getLoginPolicy() {
   return zitadelRequest<LoginPolicyResponse>("GET", "/management/v1/policies/login");
 }
 
-async function assertExternalIdpAllowed(expected: boolean) {
+async function waitForCustomLoginPolicy(expectedExternalIdp?: boolean) {
   let lastActual = false;
+  let lastIsDefault = true;
 
   for (let attempt = 0; attempt < policyAssertAttempts; attempt += 1) {
     const current = await getLoginPolicy();
     lastActual = current.policy?.allowExternalIdp === true;
-    if (lastActual === expected) {
-      return;
+    lastIsDefault = Boolean(current.isDefault ?? current.policy?.isDefault ?? true);
+
+    if (
+      current.policy &&
+      !lastIsDefault &&
+      (expectedExternalIdp === undefined || lastActual === expectedExternalIdp)
+    ) {
+      return current;
     }
 
     if (attempt + 1 < policyAssertAttempts) {
@@ -193,14 +200,21 @@ async function assertExternalIdpAllowed(expected: boolean) {
   }
 
   throw new Error(
-    `Expected ZITADEL allowExternalIdp=${expected}, got ${lastActual} after projection catch-up`,
+    `Expected ZITADEL custom login policy${
+      expectedExternalIdp === undefined
+        ? ""
+        : ` with allowExternalIdp=${expectedExternalIdp}`
+    }, got isDefault=${lastIsDefault}, allowExternalIdp=${lastActual} after projection catch-up`,
   );
 }
 
+async function assertExternalIdpAllowed(expected: boolean) {
+  await waitForCustomLoginPolicy(expected);
+}
+
 async function setExternalIdpAllowed(value: boolean) {
-  const current = await getLoginPolicy();
+  const current = await waitForCustomLoginPolicy();
   assert(current.policy, "ZITADEL login policy is missing");
-  assert(!(current.isDefault ?? current.policy.isDefault ?? true), "Expected RP to create an organization custom login policy");
 
   const body: Record<string, unknown> = { allowExternalIdp: value };
   for (const field of writableLoginPolicyFields) {
