@@ -10,10 +10,11 @@ TLS:
   Enabled: false
 
 Projections:
-  # Production defaults to 60s. The live integration stack shortens only the
-  # scheduled catch-up sweep so projection-based assertions remain fast while
-  # still exercising the real eventual-consistency path.
+  # Production defaults to 60s sweeps and a 1m transaction window. Keep the
+  # isolated live integration stack responsive while preserving the real
+  # event-store -> projection path.
   RequeueEvery: 1s
+  TransactionDuration: 2s
 
 Database:
   postgres:
