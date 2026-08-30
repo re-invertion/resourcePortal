@@ -14,17 +14,7 @@ export class PlatformAdminGuard implements CanActivate {
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
 
-    if (request.serviceIdentity) {
-      if (
-        request.serviceIdentity.status === "Active" &&
-        request.serviceIdentity.tenantId === null
-      ) {
-        return true;
-      }
-      throw new ForbiddenException("Platform administrator access is required");
-    }
-
-    if (!request.user) {
+    if (!request.user || request.serviceIdentity) {
       throw new ForbiddenException("Platform administrator access is required");
     }
 
