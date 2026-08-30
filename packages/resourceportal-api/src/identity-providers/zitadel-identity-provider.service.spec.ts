@@ -140,6 +140,54 @@ describe("ZitadelIdentityProviderService", () => {
     ]);
   });
 
+  it("materializes an inherited default policy even when external IdP is already allowed", async () => {
+    const requests = installFetch([
+      {
+        body: {
+          isDefault: true,
+          policy: {
+            allowUsernamePassword: true,
+            allowRegister: false,
+            allowExternalIdp: true,
+            forceMfa: false,
+            passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED",
+          },
+        },
+      },
+      {},
+      { body: { isDefault: false, policy: { allowExternalIdp: true } } },
+      {},
+    ]);
+
+    await service().setEnabled("zitadel-idp-1", true);
+
+    expect(requests).toMatchObject([
+      {
+        method: "GET",
+        url: "https://identity.example.com/management/v1/policies/login",
+      },
+      {
+        method: "POST",
+        url: "https://identity.example.com/management/v1/policies/login",
+        body: {
+          allowUsernamePassword: true,
+          allowRegister: false,
+          allowExternalIdp: true,
+          forceMfa: false,
+          passwordlessType: "PASSWORDLESS_TYPE_NOT_ALLOWED",
+        },
+      },
+      {
+        method: "GET",
+        url: "https://identity.example.com/management/v1/policies/login",
+      },
+      {
+        method: "POST",
+        url: "https://identity.example.com/management/v1/policies/login/idps",
+      },
+    ]);
+  });
+
   it("updates an existing custom login policy before enabling an IdP", async () => {
     const requests = installFetch([
       {
