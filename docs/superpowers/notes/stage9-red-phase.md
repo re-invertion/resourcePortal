@@ -1,0 +1,1 @@
+Stage 9 TDD RED phase: tests for Traefik TLS resolver behavior and resolver environment validation were committed before production changes. The draft PR CI is used to verify these tests fail for the intended missing behavior because this session edits the repository through the GitHub connector without a local checkout.
