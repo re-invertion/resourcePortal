@@ -97,6 +97,8 @@ AUTH_SESSION_TTL_SECONDS=3600
 AUTH_SESSION_IDLE_TIMEOUT_SECONDS=1800
 AUTH_COOKIE_SECURE=false
 AUTH_COOKIE_SECRET=federation-e2e-cookie-secret
+FEDERATION_E2E_ADMIN_USER_ID=11111111-1111-4111-8111-111111111111
+PLATFORM_ADMIN_USER_IDS=11111111-1111-4111-8111-111111111111
 OIDC_ISSUER_URL=http://localhost:8080
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
@@ -107,6 +109,7 @@ OIDC_REDIRECT_URI=http://localhost:3000/api/auth/callback
 OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:3000/api/auth/logout/callback
 OIDC_SCOPES="openid profile email offline_access"
 ZITADEL_ORGANIZATION_ID=
+ZITADEL_PROJECT_ID=
 ZITADEL_MANAGEMENT_URL=http://localhost:8080
 ZITADEL_BOOTSTRAP_PAT_FILE=$PAT_FILE
 ZITADEL_BOOTSTRAP_ORGANIZATION_NAME="Resource Portal"
@@ -147,6 +150,10 @@ bootstrap_zitadel() {
   load_environment
   [[ -n "${ZITADEL_ORGANIZATION_ID:-}" ]] || {
     echo "ZITADEL bootstrap did not persist ZITADEL_ORGANIZATION_ID" >&2
+    return 1
+  }
+  [[ -n "${ZITADEL_PROJECT_ID:-}" ]] || {
+    echo "ZITADEL bootstrap did not persist ZITADEL_PROJECT_ID" >&2
     return 1
   }
   [[ -n "${OIDC_CLIENT_ID:-}" ]] || {
@@ -209,6 +216,7 @@ browser_login() {
   }
   start_api oidc
   trap stop_api RETURN
+  node scripts/run-service-identity-e2e.mjs
   node scripts/run-federation-browser-e2e.mjs
   stop_api
   trap - RETURN

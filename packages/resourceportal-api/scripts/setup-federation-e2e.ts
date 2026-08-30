@@ -9,6 +9,7 @@ const zitadelUrl = (process.env.OIDC_ISSUER_URL ?? "http://localhost:8080").repl
 const keycloakUrl = (process.env.FEDERATION_E2E_KEYCLOAK_URL ?? "http://localhost:8180").replace(/\/$/, "");
 const organizationId = requireEnv("ZITADEL_ORGANIZATION_ID");
 const managementToken = requireEnv("ZITADEL_MANAGEMENT_TOKEN");
+const projectId = requireEnv("ZITADEL_PROJECT_ID");
 const statePath = resolve(process.env.FEDERATION_E2E_STATE_FILE ?? "../../var/federation/state.json");
 const policyAssertAttempts = 40;
 const policyAssertDelayMs = 250;
@@ -41,7 +42,21 @@ const writableLoginPolicyFields = [
 type ProviderResponse = {
   id: string;
   protocol: "OIDC" | "SAML";
+  scope: "Platform" | "Tenant";
   zitadelIdentityProviderId: string;
+};
+
+type OAuthApplicationResponse = {
+  id: string;
+  type: "Web" | "SPA" | "Native" | "Machine";
+  clientId: string;
+  clientSecret?: string;
+};
+
+type ServiceIdentityResponse = {
+  id: string;
+  clientId: string;
+  clientSecret: string;
 };
 
 type TenantResponse = { id: string };
@@ -59,12 +74,11 @@ type ZitadelEvent = {
   sequence?: number | string;
   type?: { type?: string };
 };
-type ZitadelEventsResponse = {
-  events?: ZitadelEvent[];
-};
+type ZitadelEventsResponse = { events?: ZitadelEvent[] };
 
 async function main() {
-  const devUserId = randomUUID();
+  const devUserId =
+    process.env.FEDERATION_E2E_ADMIN_USER_ID ?? randomUUID();
   await prisma.user.create({
     data: {
       id: devUserId,
@@ -117,6 +131,61 @@ async function main() {
   await configureKeycloakSamlClient(samlProvider.zitadelIdentityProviderId);
   await prepareSamlLinkedUser(samlProvider.zitadelIdentityProviderId);
 
+  const platformProvider = await apiRequest<ProviderResponse>(
+    "POST",
+    "/platform/identity-providers",
+    devUserId,
+    {
+      name: "Platform Keycloak OIDC",
+      protocol: "OIDC",
+      issuer: `${keycloakUrl}/realms/tenant`,
+      clientId: "zitadel-oidc",
+      clientSecret: "zitadel-oidc-secret",
+      scopes: ["openid", "profile", "email"],
+      usePkce: true,
+      enabled: true,
+    },
+  );
+  assert(platformProvider.scope === "Platform", "Platform provider was not stored with Platform scope");
+
+  const platformLoginOptions = await fetchJson<Array<{ id: string; scope: string }>>(
+    `${apiUrl}/auth/providers`,
+  );
+  assert(
+    platformLoginOptions.some((provider) => provider.id === platformProvider.id && provider.scope === "Platform"),
+    "Platform identity provider is not exposed by global login discovery",
+  );
+
+  const oauthApplications = await provisionOAuthApplications(tenant.id, devUserId);
+  assert(
+    oauthApplications.find((application) => application.type === "Web")?.clientSecret,
+    "Web OAuth application did not return its initial client secret",
+  );
+  assert(
+    oauthApplications.find((application) => application.type === "Machine")?.clientSecret,
+    "Machine OAuth application did not return its initial client secret",
+  );
+  assert(
+    !oauthApplications.find((application) => application.type === "SPA")?.clientSecret,
+    "SPA OAuth application unexpectedly returned a client secret",
+  );
+  assert(
+    !oauthApplications.find((application) => application.type === "Native")?.clientSecret,
+    "Native OAuth application unexpectedly returned a client secret",
+  );
+
+  const serviceIdentity = await apiRequest<ServiceIdentityResponse>(
+    "POST",
+    `/tenants/${tenant.id}/service-identities`,
+    devUserId,
+    {
+      name: "Federation E2E Service",
+      description: "Live client-credentials identity",
+      roleIds: ["viewer"],
+    },
+  );
+  assert(serviceIdentity.clientSecret, "Service identity did not return its initial client secret");
+
   await apiRequest(
     "PATCH",
     `/tenants/${tenant.id}/auth-policy`,
@@ -134,6 +203,7 @@ async function main() {
   const providerIds = new Set(providers.map((provider) => provider.id));
   assert(providerIds.has(oidcProvider.id), "OIDC provider is not exposed by tenant login discovery");
   assert(providerIds.has(samlProvider.id), "SAML provider is not exposed by tenant login discovery");
+  assert(!providerIds.has(platformProvider.id), "Platform provider leaked into SSO-only login discovery");
   assert(providers.every((provider) => provider.scope === "Tenant"), "Non-tenant provider leaked into SSO-only login discovery");
 
   const unselectedLogin = await fetch(
@@ -146,8 +216,15 @@ async function main() {
     tenantId: tenant.id,
     oidcProviderId: oidcProvider.id,
     samlProviderId: samlProvider.id,
+    platformProviderId: platformProvider.id,
     oidcZitadelProviderId: oidcProvider.zitadelIdentityProviderId,
     samlZitadelProviderId: samlProvider.zitadelIdentityProviderId,
+    projectId,
+    serviceIdentity: {
+      id: serviceIdentity.id,
+      clientId: serviceIdentity.clientId,
+      clientSecret: serviceIdentity.clientSecret,
+    },
     oidcUser: {
       username: "oidc-user",
       email: "oidc-user@example.test",
@@ -165,6 +242,50 @@ async function main() {
   console.log(`Federation E2E provisioned tenant ${tenant.id}`);
   console.log(`OIDC provider ${oidcProvider.id} -> ZITADEL ${oidcProvider.zitadelIdentityProviderId}`);
   console.log(`SAML provider ${samlProvider.id} -> ZITADEL ${samlProvider.zitadelIdentityProviderId}`);
+  console.log(`Platform provider ${platformProvider.id} -> ZITADEL ${platformProvider.zitadelIdentityProviderId}`);
+  console.log(`Service identity ${serviceIdentity.id} -> client ${serviceIdentity.clientId}`);
+}
+
+async function provisionOAuthApplications(tenantId: string, devUserId: string) {
+  const inputs = [
+    {
+      name: "Federation Web Client",
+      type: "Web",
+      redirectUris: ["http://localhost:4173/callback"],
+      postLogoutRedirectUris: ["http://localhost:4173/"],
+    },
+    {
+      name: "Federation SPA Client",
+      type: "SPA",
+      redirectUris: ["http://localhost:4174/callback"],
+      postLogoutRedirectUris: ["http://localhost:4174/"],
+    },
+    {
+      name: "Federation Native Client",
+      type: "Native",
+      redirectUris: ["rp-native://callback"],
+      postLogoutRedirectUris: [],
+    },
+    {
+      name: "Federation Machine Client",
+      type: "Machine",
+      redirectUris: [],
+      postLogoutRedirectUris: [],
+    },
+  ] as const;
+
+  const results: OAuthApplicationResponse[] = [];
+  for (const input of inputs) {
+    results.push(
+      await apiRequest<OAuthApplicationResponse>(
+        "POST",
+        `/tenants/${tenantId}/oauth-applications`,
+        devUserId,
+        { ...input },
+      ),
+    );
+  }
+  return results;
 }
 
 async function apiRequest<T = Record<string, unknown>>(
@@ -261,19 +382,13 @@ async function assertExternalIdpAllowed(expected: boolean) {
 }
 
 async function setExternalIdpAllowed(value: boolean) {
-  // The management GET can lag behind the event store, but its inherited values
-  // are still suitable for preserving the writable policy fields. PUT executes
-  // against the command-side write model, which already contains the custom
-  // policy created while provisioning the first tenant IdP.
   const current = await getLoginPolicy();
   assert(current.policy, "ZITADEL login policy is missing");
 
   const body: Record<string, unknown> = { allowExternalIdp: value };
   for (const field of writableLoginPolicyFields) {
     const fieldValue = current.policy[field];
-    if (fieldValue !== undefined) {
-      body[field] = fieldValue;
-    }
+    if (fieldValue !== undefined) body[field] = fieldValue;
   }
   body.allowExternalIdp = value;
 
@@ -391,10 +506,7 @@ async function prepareSamlLinkedUser(zitadelProviderId: string) {
         displayName: "SAML User",
         preferredLanguage: "en",
       },
-      email: {
-        email: externalUserId,
-        isEmailVerified: true,
-      },
+      email: { email: externalUserId, isEmailVerified: true },
       password: "FederationLocalPass123!",
       passwordChangeRequired: false,
     },
@@ -443,16 +555,12 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 function requireEnv(name: string) {
   const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
+  if (!value) throw new Error(`${name} is required`);
   return value;
 }
 
 function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
+  if (!condition) throw new Error(message);
 }
 
 function sleep(delayMs: number) {
