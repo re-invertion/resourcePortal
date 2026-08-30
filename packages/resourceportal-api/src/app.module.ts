@@ -6,6 +6,8 @@ import { AuthModule } from "./auth/auth.module";
 import { DevAuthGuard } from "./auth/dev-auth.guard";
 import { PermissionsGuard } from "./auth/permissions.guard";
 import { TenantContextGuard } from "./auth/tenant-context.guard";
+import { BillingModule } from "./billing/billing.module";
+import { BillingPreflightGuard } from "./billing/billing-preflight.guard";
 import { ConfigModule } from "@nestjs/config";
 import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
@@ -34,6 +36,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     AuthModule,
     HealthModule,
     UsersModule,
+    BillingModule,
     TenantsModule,
     IdentityProvidersModule,
     OAuthApplicationsModule,
@@ -58,6 +61,10 @@ import { VolumesModule } from "./volumes/volumes.module";
     {
       provide: APP_GUARD,
       useClass: PermissionsGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: BillingPreflightGuard,
     },
   ],
 })
