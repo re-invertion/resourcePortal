@@ -6,6 +6,7 @@ import {
   hashVoucherCode,
   isVoucherRedeemable,
   normalizeLedgerAmount,
+  requiresBillingReason,
 } from "./billing-policy";
 
 describe("Stage 10 billing policy", () => {
@@ -76,20 +77,27 @@ describe("Stage 10 billing policy", () => {
     expect(isVoucherRedeemable({ status: "Disabled", expiresAt: null }, new Date())).toBe(false);
   });
 
-  it("makes Payment, TopUp and VoucherRedeem positive ledger amounts", () => {
-    for (const type of ["Payment", "TopUp", "VoucherRedeem"] as const) {
+  it("makes credit-adding ledger entries positive", () => {
+    for (const type of ["Payment", "TopUp", "VoucherRedeem", "Refund"] as const) {
       expect(normalizeLedgerAmount(type, new Prisma.Decimal("2.5")).toString()).toBe("2.5");
     }
   });
 
-  it("makes Refund and UsageCharge negative ledger amounts", () => {
-    for (const type of ["Refund", "UsageCharge"] as const) {
-      expect(normalizeLedgerAmount(type, new Prisma.Decimal("2.5")).toString()).toBe("-2.5");
-    }
+  it("makes UsageCharge negative", () => {
+    expect(normalizeLedgerAmount("UsageCharge", new Prisma.Decimal("2.5")).toString()).toBe("-2.5");
   });
 
   it("preserves signed Correction amounts", () => {
     expect(normalizeLedgerAmount("Correction", new Prisma.Decimal("-3.25")).toString()).toBe("-3.25");
     expect(normalizeLedgerAmount("Correction", new Prisma.Decimal("4.25")).toString()).toBe("4.25");
+  });
+
+  it("requires a reason for Refund and Correction only", () => {
+    expect(requiresBillingReason("Refund")).toBe(true);
+    expect(requiresBillingReason("Correction")).toBe(true);
+    expect(requiresBillingReason("Payment")).toBe(false);
+    expect(requiresBillingReason("TopUp")).toBe(false);
+    expect(requiresBillingReason("VoucherRedeem")).toBe(false);
+    expect(requiresBillingReason("UsageCharge")).toBe(false);
   });
 });
