@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { IdentityProviderScope } from "@prisma/client";
+import { IdentityProviderScope, UserStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
@@ -20,6 +20,8 @@ export type TokenResponse = {
   expires_in?: number;
 };
 
+type InteractivePrompt = "create" | "login";
+
 @Injectable()
 export class AuthFlowService {
   constructor(
@@ -29,7 +31,22 @@ export class AuthFlowService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async createLoginRequest(options: LoginQueryDto = {}) {
+  createLoginRequest(options: LoginQueryDto = {}) {
+    return this.createAuthorizationRequest(options);
+  }
+
+  createRegistrationRequest(options: LoginQueryDto = {}) {
+    return this.createAuthorizationRequest(options, "create");
+  }
+
+  createRecoveryRequest(options: LoginQueryDto = {}) {
+    return this.createAuthorizationRequest(options, "login");
+  }
+
+  private async createAuthorizationRequest(
+    options: LoginQueryDto,
+    prompt?: InteractivePrompt,
+  ) {
     const discovery = await this.oidcAuth.getDiscovery();
     const selection = await this.resolveLoginSelection(options);
     const state = randomToken();
@@ -43,6 +60,9 @@ export class AuthFlowService {
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", codeChallenge(codeVerifier));
     url.searchParams.set("code_challenge_method", "S256");
+    if (prompt) {
+      url.searchParams.set("prompt", prompt);
+    }
 
     return {
       authorizationUrl: url.toString(),
@@ -72,6 +92,9 @@ export class AuthFlowService {
       tokenResponse.id_token,
       identityProviderId,
     );
+    if (user.status !== UserStatus.Active) {
+      throw new UnauthorizedException("Email verification is required before login");
+    }
     const session = await this.sessions.createSession(user.id, tokenResponse);
 
     return {

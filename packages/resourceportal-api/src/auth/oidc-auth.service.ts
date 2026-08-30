@@ -26,7 +26,7 @@ export type AuthenticatedPrincipal =
 
 type ServiceIdentityRecord = {
   id: string;
-  tenantId: string;
+  tenantId: string | null;
   name: string;
   status: "Active" | "Suspended";
   zitadelUserId: string;
@@ -111,6 +111,8 @@ export class OidcAuthService {
     const email = this.getEmail(payload);
     const displayName = this.getDisplayName(payload, email);
     const providerType = this.config.get<string>("OIDC_PROVIDER_TYPE", "zitadel");
+    const verificationStatus =
+      payload.email_verified === true ? UserStatus.Active : UserStatus.Pending;
     const now = new Date();
 
     const existingIdentity = await this.prisma.userIdentity.findUnique({
@@ -134,12 +136,17 @@ export class OidcAuthService {
         }
       }
 
+      const status =
+        existingIdentity.user.status === UserStatus.Pending
+          ? verificationStatus
+          : existingIdentity.user.status;
+
       return this.prisma.user.update({
         where: { id: existingIdentity.userId },
         data: {
           email,
           displayName,
-          status: UserStatus.Active,
+          status,
           identities: {
             update: {
               where: { id: existingIdentity.id },
@@ -180,7 +187,7 @@ export class OidcAuthService {
       data: {
         email,
         displayName,
-        status: UserStatus.Active,
+        status: verificationStatus,
         identities: {
           create: {
             providerType,

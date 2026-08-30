@@ -34,7 +34,7 @@ export class AuthSessionService {
   async createSession(userId: string, tokens: TokenResponse) {
     const now = Date.now();
     const accessTokenTtlSeconds = tokens.expires_in ?? 3600;
-    const sessionTtlSeconds = this.getSessionTtlSeconds(accessTokenTtlSeconds);
+    const sessionTtlSeconds = this.getSessionTtlSeconds();
     const expiresAt = new Date(now + sessionTtlSeconds * 1000);
 
     const session = await this.prisma.portalSession.create({
@@ -289,7 +289,7 @@ export class AuthSessionService {
   }
 
   getSessionMaxAgeSeconds() {
-    return this.getSessionTtlSeconds(3600);
+    return this.getSessionTtlSeconds();
   }
 
   isCookieSecure() {
@@ -449,25 +449,30 @@ export class AuthSessionService {
     return this.config.get<string>("OIDC_CLIENT_SECRET");
   }
 
-  private getSessionTtlSeconds(accessTokenTtlSeconds: number) {
+  private getSessionTtlSeconds() {
+    const defaultTtlSeconds = 7 * 24 * 60 * 60;
     const configuredTtlSeconds = Number.parseInt(
       this.config.get<string>(
         "AUTH_SESSION_TTL_SECONDS",
-        `${accessTokenTtlSeconds}`,
+        `${defaultTtlSeconds}`,
       ),
       10,
     );
 
     if (!Number.isFinite(configuredTtlSeconds) || configuredTtlSeconds <= 0) {
-      return accessTokenTtlSeconds;
+      return defaultTtlSeconds;
     }
 
     return configuredTtlSeconds;
   }
 
   private getIdleTimeoutSeconds() {
+    const defaultIdleTimeoutSeconds = 12 * 60 * 60;
     const configuredIdleTimeoutSeconds = Number.parseInt(
-      this.config.get<string>("AUTH_SESSION_IDLE_TIMEOUT_SECONDS", "1800"),
+      this.config.get<string>(
+        "AUTH_SESSION_IDLE_TIMEOUT_SECONDS",
+        `${defaultIdleTimeoutSeconds}`,
+      ),
       10,
     );
 
@@ -475,7 +480,7 @@ export class AuthSessionService {
       !Number.isFinite(configuredIdleTimeoutSeconds) ||
       configuredIdleTimeoutSeconds <= 0
     ) {
-      return 1800;
+      return defaultIdleTimeoutSeconds;
     }
 
     return configuredIdleTimeoutSeconds;

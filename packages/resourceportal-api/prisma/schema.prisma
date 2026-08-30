@@ -282,7 +282,7 @@ model IdentityProvider {
 
 model OAuthApplication {
   id                      String   @id @default(uuid()) @db.Uuid
-  tenantId                String   @db.Uuid
+  tenantId                String?  @db.Uuid
   name                    String
   type                    String
   redirectUris            Json     @default("[]")
@@ -294,7 +294,7 @@ model OAuthApplication {
   updatedBy               String   @db.Uuid
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
-  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant                  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, name])
   @@index([tenantId, type])
@@ -302,7 +302,7 @@ model OAuthApplication {
 
 model ServiceIdentity {
   id                     String                @id @default(uuid()) @db.Uuid
-  tenantId               String                @db.Uuid
+  tenantId               String?               @db.Uuid
   name                   String
   description            String?
   status                 String                @default("Active")
@@ -313,7 +313,7 @@ model ServiceIdentity {
   updatedBy              String                @db.Uuid
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
-  tenant                 Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant                 Tenant?               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   roles                  ServiceIdentityRole[]
 
   @@unique([tenantId, name])

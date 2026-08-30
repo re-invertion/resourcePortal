@@ -5,10 +5,14 @@ import { AuthenticatedUser } from "../auth/types";
 import { CreateServiceIdentityDto } from "./dto/create-service-identity.dto";
 import { UpdateServiceIdentityDto } from "./dto/update-service-identity.dto";
 import { ServiceIdentitiesService } from "./service-identities.service";
+import { ServiceIdentityCredentialsService } from "./service-identity-credentials.service";
 
 @Controller("tenants/:tenantId/service-identities")
 export class ServiceIdentitiesController {
-  constructor(private readonly service: ServiceIdentitiesService) {}
+  constructor(
+    private readonly service: ServiceIdentitiesService,
+    private readonly credentials: ServiceIdentityCredentialsService,
+  ) {}
 
   @RequirePermissions("service_identity.read")
   @Get()
@@ -44,6 +48,16 @@ export class ServiceIdentitiesController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.service.update(tenantId, serviceIdentityId, dto, actor);
+  }
+
+  @RequirePermissions("service_identity.update")
+  @Post(":serviceIdentityId/rotate-credentials")
+  rotateCredentials(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("serviceIdentityId", ParseUUIDPipe) serviceIdentityId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.credentials.rotateTenant(tenantId, serviceIdentityId, actor);
   }
 
   @RequirePermissions("service_identity.delete")

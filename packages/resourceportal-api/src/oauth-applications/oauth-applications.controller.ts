@@ -4,11 +4,15 @@ import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
 import { CreateOAuthApplicationDto } from "./dto/create-oauth-application.dto";
 import { UpdateOAuthApplicationDto } from "./dto/update-oauth-application.dto";
+import { OAuthApplicationCredentialsService } from "./oauth-application-credentials.service";
 import { OAuthApplicationsService } from "./oauth-applications.service";
 
 @Controller("tenants/:tenantId/oauth-applications")
 export class OAuthApplicationsController {
-  constructor(private readonly service: OAuthApplicationsService) {}
+  constructor(
+    private readonly service: OAuthApplicationsService,
+    private readonly credentials: OAuthApplicationCredentialsService,
+  ) {}
 
   @RequirePermissions("oauth_application.read")
   @Get()
@@ -44,6 +48,16 @@ export class OAuthApplicationsController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.service.update(tenantId, applicationId, dto, actor);
+  }
+
+  @RequirePermissions("oauth_application.update")
+  @Post(":applicationId/rotate-credentials")
+  rotateCredentials(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("applicationId", ParseUUIDPipe) applicationId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.credentials.rotateTenant(tenantId, applicationId, actor);
   }
 
   @RequirePermissions("oauth_application.delete")

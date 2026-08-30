@@ -18,7 +18,7 @@ function createConfig(values: ConfigValues) {
   } as ConfigService;
 }
 
-async function createTokenFixture() {
+async function createTokenFixture(emailVerified = true) {
   const issuer = "https://issuer.example.com";
   const audience = "resource-portal";
   const subject = "zitadel-user-1";
@@ -31,6 +31,7 @@ async function createTokenFixture() {
 
   const token = await new SignJWT({
     email: "User@Example.com",
+    email_verified: emailVerified,
     name: "Example User",
   })
     .setProtectedHeader({
@@ -115,7 +116,7 @@ describe("OidcAuthService", () => {
     vi.unstubAllGlobals();
   });
 
-  it("verifies an OIDC token and auto-provisions a user identity", async () => {
+  it("verifies an OIDC token and auto-provisions a verified user identity", async () => {
     const fixture = await createTokenFixture();
     const prisma = {
       userIdentity: {
@@ -172,6 +173,45 @@ describe("OidcAuthService", () => {
         status: true,
       },
     });
+  });
+
+  it("provisions an unverified OIDC user as Pending", async () => {
+    const fixture = await createTokenFixture(false);
+    const prisma = {
+      userIdentity: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      user: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "31af4f62-2897-4181-965d-176728ad2e36",
+          email: "user@example.com",
+          displayName: "Example User",
+          status: UserStatus.Pending,
+        }),
+      },
+    };
+    installOidcFetch(fixture);
+
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+        OIDC_PROVIDER_TYPE: "zitadel",
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    await expect(service.authenticateBearerToken(fixture.token)).resolves.toMatchObject({
+      status: UserStatus.Pending,
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: UserStatus.Pending,
+        }) as unknown,
+      }),
+    );
   });
 
   it("does not link a new OIDC identity to an existing user by email alone", async () => {

@@ -35,6 +35,13 @@ const providerCookieName = "rp_oidc_provider";
 const stateCookieName = "rp_oidc_state";
 const verifierCookieName = "rp_oidc_verifier";
 
+type InteractiveRequest = {
+  authorizationUrl: string;
+  codeVerifier: string;
+  identityProviderId?: string;
+  state: string;
+};
+
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
@@ -56,49 +63,46 @@ export class AuthController {
 
   @Public()
   @Get("login")
-  @ApiOperation({
-    summary: "Start OIDC login",
-    description:
-      "Redirects the browser to the configured OIDC provider and sets signed, httpOnly callback cookies.",
-  })
-  @ApiFoundResponse({
-    description: "Redirects to the OIDC authorization endpoint.",
-  })
+  @ApiOperation({ summary: "Start OIDC login" })
+  @ApiFoundResponse({ description: "Redirects to the OIDC authorization endpoint." })
   @ApiQuery({ name: "tenantId", required: false, type: String })
   @ApiQuery({ name: "identityProviderId", required: false, type: String })
   async login(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
-    const login = await this.authFlow.createLoginRequest(query);
+    return this.redirectInteractive(await this.authFlow.createLoginRequest(query), reply);
+  }
 
-    reply.setCookie(stateCookieName, login.state, {
-      httpOnly: true,
-      maxAge: 600,
-      path: "/api/auth",
-      sameSite: "lax",
-      secure: this.sessions.isCookieSecure(),
-      signed: true,
-    });
-    reply.setCookie(verifierCookieName, login.codeVerifier, {
-      httpOnly: true,
-      maxAge: 600,
-      path: "/api/auth",
-      sameSite: "lax",
-      secure: this.sessions.isCookieSecure(),
-      signed: true,
-    });
-    if (login.identityProviderId) {
-      reply.setCookie(providerCookieName, login.identityProviderId, {
-        httpOnly: true,
-        maxAge: 600,
-        path: "/api/auth",
-        sameSite: "lax",
-        secure: this.sessions.isCookieSecure(),
-        signed: true,
-      });
-    } else {
-      reply.clearCookie(providerCookieName, { path: "/api/auth" });
-    }
+  @Public()
+  @Get("register")
+  @ApiOperation({
+    summary: "Start ZITADEL self-registration",
+    description:
+      "Starts the same Authorization Code + PKCE flow as login with prompt=create so ZITADEL owns registration and credential collection.",
+  })
+  @ApiFoundResponse({ description: "Redirects to the ZITADEL registration UI." })
+  @ApiQuery({ name: "tenantId", required: false, type: String })
+  @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  async register(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
+    return this.redirectInteractive(
+      await this.authFlow.createRegistrationRequest(query),
+      reply,
+    );
+  }
 
-    return reply.status(302).redirect(login.authorizationUrl);
+  @Public()
+  @Get("recover")
+  @ApiOperation({
+    summary: "Start ZITADEL account recovery",
+    description:
+      "Redirects to ZITADEL hosted login where unauthenticated users can start the provider-owned password reset flow. Resource Portal never accepts or stores reset credentials.",
+  })
+  @ApiFoundResponse({ description: "Redirects to the ZITADEL login/recovery UI." })
+  @ApiQuery({ name: "tenantId", required: false, type: String })
+  @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  async recover(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
+    return this.redirectInteractive(
+      await this.authFlow.createRecoveryRequest(query),
+      reply,
+    );
   }
 
   @Public()
@@ -106,26 +110,14 @@ export class AuthController {
   @ApiOperation({
     summary: "Complete OIDC login",
     description:
-      "Validates signed callback cookies, exchanges the authorization code, creates a server-side session, and redirects to the app root.",
+      "Validates signed callback cookies, exchanges the authorization code, requires ZITADEL-confirmed email verification, creates a server-side session, and redirects to the app root.",
   })
-  @ApiQuery({
-    name: "code",
-    required: true,
-    description: "OIDC authorization code.",
-  })
-  @ApiQuery({
-    name: "state",
-    required: true,
-    description: "OIDC state returned by the provider.",
-  })
-  @ApiFoundResponse({
-    description: "Creates the session cookie and redirects to the app root.",
-  })
-  @ApiBadRequestResponse({
-    description: "Missing callback code or state.",
-  })
+  @ApiQuery({ name: "code", required: true, description: "OIDC authorization code." })
+  @ApiQuery({ name: "state", required: true, description: "OIDC state returned by the provider." })
+  @ApiFoundResponse({ description: "Creates the session cookie and redirects to the app root." })
+  @ApiBadRequestResponse({ description: "Missing callback code or state." })
   @ApiUnauthorizedResponse({
-    description: "Invalid state, verifier, or authorization code exchange.",
+    description: "Invalid state/verifier/code or the email is not verified in ZITADEL.",
   })
   async callback(
     @Query("code") code: string | undefined,
@@ -145,15 +137,9 @@ export class AuthController {
       this.getSignedCookie(request, providerCookieName),
     );
 
-    reply.clearCookie(stateCookieName, {
-      path: "/api/auth",
-    });
-    reply.clearCookie(verifierCookieName, {
-      path: "/api/auth",
-    });
-    reply.clearCookie(providerCookieName, {
-      path: "/api/auth",
-    });
+    reply.clearCookie(stateCookieName, { path: "/api/auth" });
+    reply.clearCookie(verifierCookieName, { path: "/api/auth" });
+    reply.clearCookie(providerCookieName, { path: "/api/auth" });
     reply.setCookie(this.sessions.getSessionCookieName(), result.session.id, {
       httpOnly: true,
       maxAge: this.sessions.getSessionMaxAgeSeconds(),
@@ -182,13 +168,9 @@ export class AuthController {
   @Authenticated()
   @ApiCookieAuth("rp_session")
   @ApiOperation({ summary: "Logout current local browser session" })
-  @ApiNoContentResponse({
-    description: "The current local session was revoked.",
-  })
+  @ApiNoContentResponse({ description: "The current local session was revoked." })
   async logout(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
-    await this.sessions.revokeSession(
-      this.sessions.getSessionIdFromRequest(request),
-    );
+    await this.sessions.revokeSession(this.sessions.getSessionIdFromRequest(request));
     this.clearSessionCookies(reply);
     return reply.status(204).send();
   }
@@ -196,17 +178,12 @@ export class AuthController {
   @Post("logout/provider")
   @Authenticated()
   @ApiCookieAuth("rp_session")
-  @ApiOperation({
-    summary: "Revoke provider tokens and prepare RP-initiated OIDC logout",
-  })
+  @ApiOperation({ summary: "Revoke provider tokens and prepare RP-initiated OIDC logout" })
   @ApiOkResponse({
     description:
       "Returns the provider end-session URL. The browser should navigate to logoutUrl when it is non-null.",
   })
-  async providerLogout(
-    @Req() request: FastifyRequest,
-    @Res() reply: FastifyReply,
-  ) {
+  async providerLogout(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
     const result = await this.sessions.prepareProviderLogout(
       this.sessions.getSessionIdFromRequest(request),
     );
@@ -218,9 +195,7 @@ export class AuthController {
   @Authenticated()
   @ApiCookieAuth("rp_session")
   @ApiOperation({ summary: "List active sessions for the current user" })
-  @ApiOkResponse({
-    description: "Active session metadata. Provider tokens are never returned.",
-  })
+  @ApiOkResponse({ description: "Active session metadata. Provider tokens are never returned." })
   async activeSessions(
     @CurrentUser() user: AuthenticatedUser,
     @Req() request: FastifyRequest,
@@ -234,41 +209,57 @@ export class AuthController {
   @Get("me")
   @Authenticated()
   @ApiCookieAuth("rp_session")
-  @ApiOperation({
-    summary: "Get current authenticated user",
-  })
-  @ApiOkResponse({
-    description: "Current authenticated user.",
-  })
-  @ApiUnauthorizedResponse({
-    description: "Authentication is required.",
-  })
+  @ApiOperation({ summary: "Get current authenticated user" })
+  @ApiOkResponse({ description: "Current authenticated user." })
+  @ApiUnauthorizedResponse({ description: "Authentication is required." })
   me(@CurrentUser() user: AuthenticatedUser) {
     return user;
   }
 
+  private redirectInteractive(request: InteractiveRequest, reply: FastifyReply) {
+    reply.setCookie(stateCookieName, request.state, {
+      httpOnly: true,
+      maxAge: 600,
+      path: "/api/auth",
+      sameSite: "lax",
+      secure: this.sessions.isCookieSecure(),
+      signed: true,
+    });
+    reply.setCookie(verifierCookieName, request.codeVerifier, {
+      httpOnly: true,
+      maxAge: 600,
+      path: "/api/auth",
+      sameSite: "lax",
+      secure: this.sessions.isCookieSecure(),
+      signed: true,
+    });
+    if (request.identityProviderId) {
+      reply.setCookie(providerCookieName, request.identityProviderId, {
+        httpOnly: true,
+        maxAge: 600,
+        path: "/api/auth",
+        sameSite: "lax",
+        secure: this.sessions.isCookieSecure(),
+        signed: true,
+      });
+    } else {
+      reply.clearCookie(providerCookieName, { path: "/api/auth" });
+    }
+
+    return reply.status(302).redirect(request.authorizationUrl);
+  }
+
   private clearSessionCookies(reply: FastifyReply) {
-    reply.clearCookie(this.sessions.getSessionCookieName(), {
-      path: "/",
-    });
-    reply.clearCookie(this.sessions.getCsrfCookieName(), {
-      path: "/",
-    });
+    reply.clearCookie(this.sessions.getSessionCookieName(), { path: "/" });
+    reply.clearCookie(this.sessions.getCsrfCookieName(), { path: "/" });
   }
 
   private getSignedCookie(request: FastifyRequest, name: string) {
     const value = request.cookies[name];
-
-    if (!value) {
-      return undefined;
-    }
+    if (!value) return undefined;
 
     const unsigned = request.unsignCookie(value);
-
-    if (!unsigned.valid) {
-      return undefined;
-    }
-
+    if (!unsigned.valid) return undefined;
     return unsigned.value;
   }
 }
