@@ -1,0 +1,71 @@
+services:
+  rp-postgres:
+    image: postgres:17-alpine
+    network_mode: host
+    environment:
+      POSTGRES_DB: resource_portal
+      POSTGRES_USER: resource_portal
+      POSTGRES_PASSWORD: resource_portal
+    command: ["postgres", "-p", "55432"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 55432 -U resource_portal -d resource_portal"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  zitadel-postgres:
+    image: postgres:17-alpine
+    network_mode: host
+    environment:
+      POSTGRES_DB: zitadel
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: federation-postgres
+    command: ["postgres", "-p", "55433"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 55433 -U postgres -d zitadel"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:${ZITADEL_VERSION:-stable}
+    network_mode: host
+    user: "0"
+    command:
+      - start-from-init
+      - --config
+      - /zitadel-config.yaml
+      - --config
+      - /zitadel-secrets.yaml
+      - --steps
+      - /zitadel-init-steps.yaml
+      - --masterkey
+      - FederationMasterKey0123456789012
+      - --tlsMode
+      - disabled
+    volumes:
+      - ./zitadel-config.yaml:/zitadel-config.yaml:ro
+      - ./zitadel-secrets.yaml:/zitadel-secrets.yaml:ro
+      - ./zitadel-init-steps.yaml:/zitadel-init-steps.yaml:ro
+      - ../../var/federation/zitadel:/bootstrap
+    depends_on:
+      zitadel-postgres:
+        condition: service_healthy
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.3
+    network_mode: host
+    command:
+      - start-dev
+      - --http-port=8180
+      - --hostname=http://localhost:8180
+      - --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    volumes:
+      - ./keycloak-realm.json:/opt/keycloak/data/import/tenant-realm.json:ro
