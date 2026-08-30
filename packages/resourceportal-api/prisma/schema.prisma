@@ -198,6 +198,8 @@ model Tenant {
   invitations       TenantInvitation[]
   groups            TenantGroup[]
   identityProviders IdentityProvider[]
+  oauthApplications OAuthApplication[]
+  serviceIdentities ServiceIdentity[]
   appGroups         AppGroup[]
   volumes           Volume[]
   domains           Domain[]
@@ -224,11 +226,12 @@ model TenantMembership {
 }
 
 model Role {
-  id          String           @id
-  name        String
-  permissions String[]
-  memberships MembershipRole[]
-  groups      TenantGroupRole[]
+  id                String                @id
+  name              String
+  permissions       String[]
+  memberships       MembershipRole[]
+  groups            TenantGroupRole[]
+  serviceIdentities ServiceIdentityRole[]
 }
 
 model MembershipRole {
@@ -275,6 +278,56 @@ model IdentityProvider {
   @@unique([tenantId, name])
   @@index([scope, enabled])
   @@index([tenantId, enabled])
+}
+
+model OAuthApplication {
+  id                      String   @id @default(uuid()) @db.Uuid
+  tenantId                String   @db.Uuid
+  name                    String
+  type                    String
+  redirectUris            Json     @default("[]")
+  postLogoutRedirectUris  Json     @default("[]")
+  zitadelApplicationId    String   @unique
+  clientId                String   @unique
+  clientSecretCiphertext  String?
+  createdBy               String   @db.Uuid
+  updatedBy               String   @db.Uuid
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, type])
+}
+
+model ServiceIdentity {
+  id                     String                @id @default(uuid()) @db.Uuid
+  tenantId               String                @db.Uuid
+  name                   String
+  description            String?
+  status                 String                @default("Active")
+  zitadelUserId          String                @unique
+  clientId               String                @unique
+  clientSecretCiphertext String
+  createdBy              String                @db.Uuid
+  updatedBy              String                @db.Uuid
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  tenant                 Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  roles                  ServiceIdentityRole[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model ServiceIdentityRole {
+  serviceIdentityId String          @db.Uuid
+  roleId            String
+  serviceIdentity   ServiceIdentity @relation(fields: [serviceIdentityId], references: [id], onDelete: Cascade)
+  role              Role            @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([serviceIdentityId, roleId])
+  @@index([roleId])
 }
 
 model TenantInvitation {
