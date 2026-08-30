@@ -29,7 +29,7 @@ describe("Stage 2 Permission model", () => {
           roles: [
             {
               role: {
-                permissions: [
+                permissionBindings: [
                   { permission: { id: "tenant.read" } },
                   { permission: { id: "appgroup.read" } },
                 ],
@@ -42,7 +42,7 @@ describe("Stage 2 Permission model", () => {
                 roles: [
                   {
                     role: {
-                      permissions: [
+                      permissionBindings: [
                         { permission: { id: "group.read" } },
                         { permission: { id: "appgroup.read" } },
                       ],
@@ -77,7 +77,7 @@ describe("Stage 2 Permission model", () => {
     const roleFindMany = vi.fn().mockResolvedValue([
       {
         role: {
-          permissions: [
+          permissionBindings: [
             { permission: { id: "tenant.read" } },
             { permission: { id: "appgroup.read" } },
           ],
