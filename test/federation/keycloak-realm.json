@@ -1,0 +1,58 @@
+{
+  "realm": "tenant",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "users": [
+    {
+      "username": "oidc-user",
+      "email": "oidc-user@example.test",
+      "firstName": "OIDC",
+      "lastName": "User",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TenantPass123!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "saml-user",
+      "email": "saml-user@example.test",
+      "firstName": "SAML",
+      "lastName": "User",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "TenantPass123!",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "zitadel-oidc",
+      "name": "ZITADEL OIDC federation",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "zitadel-oidc-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/idps/callback",
+        "http://localhost:8080/ui/login/login/externalidp/callback",
+        "http://localhost:8080/ui/login/login/externalidp/callback/form"
+      ],
+      "webOrigins": ["+"]
+    }
+  ]
+}
