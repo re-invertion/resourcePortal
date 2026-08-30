@@ -11,11 +11,16 @@ import { AuditController } from "../audit/audit.controller";
 import { DomainsController } from "../domains/domains.controller";
 import { HealthController } from "../health/health.controller";
 import { IdentityProvidersController } from "../identity-providers/identity-providers.controller";
+import { PlatformIdentityProvidersController } from "../identity-providers/platform-identity-providers.controller";
 import { AuthSessionMaintenanceController } from "../internal/auth-session-maintenance.controller";
 import { DeploymentWorkerController } from "../internal/deployment-worker.controller";
 import { InternalAuthGuard } from "../internal/internal-auth.guard";
 import { ObservabilityController } from "../observability/observability.controller";
+import { OAuthApplicationsController } from "../oauth-applications/oauth-applications.controller";
+import { PlatformOAuthApplicationsController } from "../oauth-applications/platform-oauth-applications.controller";
 import { RegistriesController } from "../registries/registries.controller";
+import { PlatformServiceIdentitiesController } from "../service-identities/platform-service-identities.controller";
+import { ServiceIdentitiesController } from "../service-identities/service-identities.controller";
 import {
   TenantInvitationsController,
   TenantsController,
@@ -28,6 +33,7 @@ import {
   REQUIRED_PERMISSIONS_KEY,
 } from "./auth.constants";
 import { AuthController } from "./auth.controller";
+import { PlatformAdminGuard } from "./platform-admin.guard";
 
 const controllers = [
   AppGroupsController,
@@ -39,7 +45,12 @@ const controllers = [
   HealthController,
   IdentityProvidersController,
   ObservabilityController,
+  OAuthApplicationsController,
+  PlatformIdentityProvidersController,
+  PlatformOAuthApplicationsController,
+  PlatformServiceIdentitiesController,
   RegistriesController,
+  ServiceIdentitiesController,
   TenantInvitationsController,
   TenantsController,
   UsersController,
@@ -91,7 +102,8 @@ function hasExplicitAccessModel(
     hasMetadata(IS_PUBLIC_KEY, controller, handler) ||
     hasMetadata(IS_AUTHENTICATED_KEY, controller, handler) ||
     hasRequiredPermissions(controller, handler) ||
-    hasInternalGuard(controller, handler)
+    hasInternalGuard(controller, handler) ||
+    hasPlatformAdminGuard(controller, handler)
   );
 }
 
@@ -128,6 +140,16 @@ function hasInternalGuard(
   return (
     getGuards(handler).includes(InternalAuthGuard) ||
     getGuards(controller).includes(InternalAuthGuard)
+  );
+}
+
+function hasPlatformAdminGuard(
+  controller: ControllerClass,
+  handler: (...args: unknown[]) => unknown,
+) {
+  return (
+    getGuards(handler).includes(PlatformAdminGuard) ||
+    getGuards(controller).includes(PlatformAdminGuard)
   );
 }
 
