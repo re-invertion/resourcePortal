@@ -7,6 +7,6 @@ export async function lockTenantQuota(
   tenantId: string,
 ) {
   await tx.$queryRaw(
-    Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${QUOTA_LOCK_NAMESPACE}:${tenantId}`}, 0))`,
+    Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${QUOTA_LOCK_NAMESPACE}:${tenantId}`}, 0)) IS NULL AS "locked"`,
   );
 }
