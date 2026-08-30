@@ -40,29 +40,33 @@ describe("Stage 6 deployment worker recovery", () => {
 
     const tx = {
       appGroupDeployment: {
-        findFirst: vi.fn(async (params: { where: { OR: Array<Record<string, unknown>> } }) => {
-          const canRecoverRollback = params.where.OR.some(
-            (condition) => condition.status === DeploymentStatus.RollingBack,
-          );
-          return canRecoverRollback ? candidate : null;
-        }),
-        updateMany: vi.fn(async (params: { data: { status?: DeploymentStatus } }) => {
+        findFirst: vi.fn(
+          (params: { where: { OR: Array<Record<string, unknown>> } }) => {
+            const canRecoverRollback = params.where.OR.some(
+              (condition) => condition.status === DeploymentStatus.RollingBack,
+            );
+            return Promise.resolve(canRecoverRollback ? candidate : null);
+          },
+        ),
+        updateMany: vi.fn((params: { data: { status?: DeploymentStatus } }) => {
           claimedStatus = params.data.status;
-          return { count: 1 };
+          return Promise.resolve({ count: 1 });
         }),
-        findUniqueOrThrow: vi.fn(async () => ({
-          ...candidate,
-          status: claimedStatus ?? candidate.status,
-          leaseOwner: "worker-b",
-        })),
+        findUniqueOrThrow: vi.fn(() =>
+          Promise.resolve({
+            ...candidate,
+            status: claimedStatus ?? candidate.status,
+            leaseOwner: "worker-b",
+          }),
+        ),
       },
       deploymentEvent: {
-        create: vi.fn(async () => ({})),
+        create: vi.fn(() => Promise.resolve({})),
       },
     };
     const prisma = {
       $transaction: vi.fn(
-        async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
       ),
     };
     const service = Reflect.construct(DeploymentWorkerService, [
