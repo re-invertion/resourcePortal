@@ -9,9 +9,11 @@ export function mapAuditLogEntry(entry: AuditLogEntry) {
   };
 }
 
-function sanitizeAuditValue(value: Prisma.JsonValue | null): Prisma.JsonValue | null {
-  if (value === null || typeof value !== "object") {
-    return value;
+function sanitizeAuditValue(
+  value: Prisma.JsonValue | null | undefined,
+): Prisma.JsonValue | null {
+  if (value === undefined || value === null || typeof value !== "object") {
+    return value ?? null;
   }
 
   if (Array.isArray(value)) {
