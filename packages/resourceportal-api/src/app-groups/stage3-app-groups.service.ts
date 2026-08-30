@@ -5,7 +5,6 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
-  AttachmentMode,
   DeploymentStatus,
   Prisma,
   RuntimeState,
@@ -279,7 +278,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
 
       await this.restoreVariables(tx, appGroupId, actor, restorePlan);
       await this.restoreConfigs(tx, appGroupId, actor, restorePlan);
-      await this.restoreVolumes(tx, tenantId, restorePlan);
+      await this.restoreVolumes(tx, tenantId, actor, restorePlan);
       await this.restoreHttpEndpoints(tx, tenantId, appGroupId, restorePlan);
       await this.restoreSecretAttachments(tx, actor, deployedSnapshot);
 
@@ -527,6 +526,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
   private async restoreVolumes(
     tx: Prisma.TransactionClient,
     tenantId: string,
+    actor: AuthenticatedUser,
     restorePlan: ReturnType<typeof buildDiscardRestorePlan>,
   ) {
     const volumeIds = Array.from(
@@ -547,8 +547,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
       await tx.volumeAttachment.createMany({
         data: restorePlan.volumeAttachments.map((attachment) => ({
           ...attachment,
-          mode: attachment.mode as AttachmentMode,
-          createdBy: attachment.singleAppId,
+          createdBy: actor.id,
         })),
       });
     }
