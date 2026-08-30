@@ -211,7 +211,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
       return this.getAppGroup(tenantId, appGroupId);
     }
 
-    const deployedSnapshot = await this.findCurrentDeploymentSnapshot(
+    const deployedSnapshot = await this.loadRestorableDeploymentSnapshot(
       appGroup.id,
       appGroup.currentDeploymentVersion,
     );
@@ -381,7 +381,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
     }
   }
 
-  private async findCurrentDeploymentSnapshot(
+  private async loadRestorableDeploymentSnapshot(
     appGroupId: string,
     currentDeploymentVersion: number | null,
   ) {
