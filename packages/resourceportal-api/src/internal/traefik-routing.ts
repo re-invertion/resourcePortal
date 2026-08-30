@@ -26,7 +26,9 @@ export function protocolModeRequiresTls(protocolMode: string) {
 
 export function renderTraefikLabels(
   singleApp: TraefikSingleApp,
-  options: TraefikRoutingOptions = {},
+  options: TraefikRoutingOptions = {
+    certResolver: process.env.TRAEFIK_CERT_RESOLVER,
+  },
 ) {
   const labels: Record<string, string> = {};
 
