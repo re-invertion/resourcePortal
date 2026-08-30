@@ -8,6 +8,7 @@ import { ObservabilityService } from "../observability/observability.service";
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
+import { IngressReconcilerService } from "./ingress-reconciler.service";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 
 const logger = new Logger("DeploymentWorkerRunner");
@@ -65,12 +66,7 @@ function logWorkerEvent(
   event: string,
   fields: Record<string, unknown> = {},
 ) {
-  logger[level](
-    JSON.stringify({
-      event,
-      ...fields,
-    }),
-  );
+  logger[level](JSON.stringify({ event, ...fields }));
 }
 
 function isTerminal(deployment: WorkerDeployment) {
@@ -156,23 +152,11 @@ async function processDeployment(
   });
 
   if (isTerminal(deployment)) {
-    logWorkerEvent("log", "deployment.processing.stopped", {
-      deploymentId: deployment.id,
-      phase: deployment.phase,
-      status: deployment.status,
-      workerId,
-    });
     return deployment;
   }
 
   for (const phase of remainingDeploymentPhases(deployment.phase)) {
     if (isTerminal(deployment)) {
-      logWorkerEvent("log", "deployment.processing.stopped", {
-        deploymentId: deployment.id,
-        phase: deployment.phase,
-        status: deployment.status,
-        workerId,
-      });
       return deployment;
     }
 
@@ -211,6 +195,7 @@ async function main() {
   const recovery = app.get(DeploymentRecoveryService);
   const worker = app.get(DeploymentWorkerService);
   const certificateReconciler = app.get(DomainCertificateReconcilerService);
+  const ingressReconciler = app.get(IngressReconcilerService);
   const driftReconciler = app.get(RuntimeDriftReconcilerService);
   const metrics = app.get(ObservabilityService);
   const workerId = config.get<string>("WORKER_ID") ?? "local-worker";
@@ -227,6 +212,12 @@ async function main() {
     60000,
     5000,
   );
+  const ingressReconcileIntervalMs = readInt(
+    config,
+    "INGRESS_RECONCILE_INTERVAL_MS",
+    15000,
+    5000,
+  );
   const leaseSeconds = readInt(config, "WORKER_LEASE_SECONDS", 300, 15);
   const metricsPort = readInt(config, "WORKER_METRICS_PORT", 9464);
   const once = readBool(config, "WORKER_ONCE");
@@ -236,6 +227,7 @@ async function main() {
   );
   let stopping = false;
   let nextCertificateReconcileAt = 0;
+  let nextIngressReconcileAt = 0;
   let nextDriftScanAt = 0;
 
   const metricsServer = createServer((request, response) => {
@@ -246,7 +238,10 @@ async function main() {
     }
 
     response.statusCode = 200;
-    response.setHeader("content-type", "text/plain; version=0.0.4; charset=utf-8");
+    response.setHeader(
+      "content-type",
+      "text/plain; version=0.0.4; charset=utf-8",
+    );
     response.end(metrics.renderPrometheusMetrics());
   });
   await new Promise<void>((resolve, reject) => {
@@ -258,10 +253,7 @@ async function main() {
   });
 
   const stop = (signal: NodeJS.Signals) => {
-    logWorkerEvent("log", "worker.stopping", {
-      signal,
-      workerId,
-    });
+    logWorkerEvent("log", "worker.stopping", { signal, workerId });
     metrics.recordWorkerEvent("stopping", workerId);
     stopping = true;
   };
@@ -274,6 +266,7 @@ async function main() {
     logWorkerEvent("log", "worker.started", {
       certificateReconcileIntervalMs,
       driftScanIntervalMs,
+      ingressReconcileIntervalMs,
       leaseSeconds,
       metricsPort,
       once,
@@ -297,6 +290,23 @@ async function main() {
         } finally {
           nextCertificateReconcileAt =
             Date.now() + certificateReconcileIntervalMs;
+        }
+      }
+
+      if (Date.now() >= nextIngressReconcileAt) {
+        try {
+          const reconciliation = await ingressReconciler.reconcileBatch();
+          logWorkerEvent("log", "ingress.reconciled", {
+            ...reconciliation,
+            workerId,
+          });
+        } catch (error: unknown) {
+          logWorkerEvent("warn", "ingress.reconciliation_failed", {
+            error: errorMessage(error),
+            workerId,
+          });
+        } finally {
+          nextIngressReconcileAt = Date.now() + ingressReconcileIntervalMs;
         }
       }
 
@@ -348,12 +358,6 @@ async function main() {
 
         if (!reconciled) {
           metrics.recordWorkerEvent("recovery_deferred", workerId);
-          logWorkerEvent("warn", "deployment.recovery.deferred", {
-            deploymentId: claimed.id,
-            phase: claimed.phase,
-            status: claimed.status,
-            workerId,
-          });
           if (once) {
             break;
           }
@@ -362,13 +366,6 @@ async function main() {
         }
 
         metrics.recordWorkerEvent("reconciled", workerId);
-        logWorkerEvent("log", "deployment.recovery.reconciled", {
-          deploymentId: reconciled.id,
-          phase: reconciled.phase,
-          status: reconciled.status,
-          workerId,
-        });
-
         const completed = await processDeployment(
           worker,
           recovery,
@@ -427,8 +424,6 @@ async function main() {
 }
 
 void main().catch((error: unknown) => {
-  logWorkerEvent("error", "worker.crashed", {
-    error: errorMessage(error),
-  });
+  logWorkerEvent("error", "worker.crashed", { error: errorMessage(error) });
   process.exitCode = 1;
 });
