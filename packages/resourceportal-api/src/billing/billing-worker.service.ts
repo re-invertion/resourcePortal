@@ -5,14 +5,15 @@ import {
   OnApplicationShutdown,
 } from "@nestjs/common";
 import { Prisma, RuntimeState, TenantStatus } from "@prisma/client";
-import { BillingService } from "./billing.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { computeMinuteCost, storageMinuteCost } from "./billing-math";
+import { BillingService } from "./billing.service";
+import { BillingUsageService } from "./billing-usage.service";
 import {
   billedReplicaCount,
   effectiveReplicaCount,
   reconciliationPeriods,
 } from "./billing-worker.logic";
-import { PrismaService } from "../prisma/prisma.service";
 
 const WORKER_STATE_ID = "minute-usage";
 const MAX_BACKFILL_PERIODS = 10;
@@ -28,6 +29,7 @@ export class BillingWorkerService
   constructor(
     private readonly prisma: PrismaService,
     private readonly billing: BillingService,
+    private readonly usageLedger: BillingUsageService,
   ) {}
 
   onApplicationBootstrap() {
@@ -111,9 +113,8 @@ export class BillingWorkerService
 
     for (const app of apps) {
       const account = accountsByTenant.get(app.appGroup.tenantId);
-      if (!account) {
-        continue;
-      }
+      if (!account) continue;
+
       const effectiveReplicas = effectiveReplicaCount({
         desiredReplicas: app.desiredReplicas,
         appGroupRunning:
@@ -137,9 +138,9 @@ export class BillingWorkerService
         gpuCreditsPerGpuHour: priceList.gpuCreditsPerGpuHour,
       });
 
-      await this.billing.recordUsageCharge({
+      await this.usageLedger.recordUsageCharge({
         tenantId: app.appGroup.tenantId,
-        resourceType: "Compute",
+        resourceType: "SingleApp",
         resourceId: app.id,
         appGroupId: app.appGroup.id,
         periodStart,
@@ -148,13 +149,19 @@ export class BillingWorkerService
         theoreticalCost,
         allowDebt: false,
         usage: {
+          appGroupId: app.appGroup.id,
           desiredReplicas: app.desiredReplicas,
           actualReplicas: app.actualReplicas,
           effectiveReplicas,
           billedReplicas,
-          cpu: app.cpu.toString(),
-          memoryBytes: app.memoryBytes.toString(),
-          gpu: app.gpu,
+          cpuPerReplica: app.cpu.toString(),
+          memoryBytesPerReplica: app.memoryBytes.toString(),
+          gpuPerReplica: app.gpu,
+          rates: {
+            cpuPerVcpuHourCredits: priceList.cpuCreditsPerVcpuHour.toString(),
+            memoryPerGbHourCredits: priceList.memoryCreditsPerGbHour.toString(),
+            gpuPerUnitHourCredits: priceList.gpuCreditsPerGpuHour.toString(),
+          },
         } satisfies Prisma.InputJsonObject,
       });
     }
@@ -163,16 +170,15 @@ export class BillingWorkerService
       select: { id: true, tenantId: true, sizeBytes: true },
     });
     for (const volume of volumes) {
-      if (!accountsByTenant.has(volume.tenantId)) {
-        continue;
-      }
+      if (!accountsByTenant.has(volume.tenantId)) continue;
+
       const theoreticalCost = storageMinuteCost({
         sizeBytes: volume.sizeBytes,
         storageCreditsPerGbHour: priceList.storageCreditsPerGbHour,
       });
-      await this.billing.recordUsageCharge({
+      await this.usageLedger.recordUsageCharge({
         tenantId: volume.tenantId,
-        resourceType: "Storage",
+        resourceType: "Volume",
         resourceId: volume.id,
         periodStart,
         periodEnd,
@@ -181,6 +187,7 @@ export class BillingWorkerService
         allowDebt: true,
         usage: {
           sizeBytes: volume.sizeBytes.toString(),
+          storagePerGbHourCredits: priceList.storageCreditsPerGbHour.toString(),
         } satisfies Prisma.InputJsonObject,
       });
     }
