@@ -7,6 +7,7 @@ const statePath = resolve(process.env.FEDERATION_E2E_STATE_FILE ?? "var/federati
 const state = JSON.parse(readFileSync(statePath, "utf8"));
 const apiOrigin = process.env.FEDERATION_E2E_RP_ORIGIN ?? "http://localhost:3000";
 const keycloakOrigin = process.env.FEDERATION_E2E_KEYCLOAK_ORIGIN ?? "http://localhost:8180";
+const zitadelOrigin = process.env.FEDERATION_E2E_ZITADEL_ORIGIN ?? "http://localhost:8080";
 const prisma = new PrismaClient();
 const browser = await chromium.launch({ headless: true });
 
@@ -55,10 +56,7 @@ async function loginThroughTenantProvider({
       page.locator("#kc-login").click(),
     ]);
 
-    await page.waitForURL(
-      (url) => url.origin === new URL(apiOrigin).origin,
-      { timeout: 60_000 },
-    );
+    await finishZitadelLogin(page, protocol);
 
     const meResponse = await context.request.get(`${apiOrigin}/api/auth/me`);
     const meText = await meResponse.text();
@@ -119,6 +117,42 @@ async function routeToKeycloak(page, providerLabel) {
   }
 
   throw new Error(`ZITADEL did not redirect to tenant provider; current URL: ${page.url()}`);
+}
+
+async function finishZitadelLogin(page, protocol) {
+  const api = new URL(apiOrigin);
+  const zitadel = new URL(zitadelOrigin);
+  const deadline = Date.now() + 60_000;
+
+  while (Date.now() < deadline) {
+    const current = new URL(page.url());
+    if (current.origin === api.origin) {
+      return;
+    }
+
+    if (current.origin === zitadel.origin) {
+      // A newly auto-created federated ZITADEL user can be offered optional
+      // second-factor enrollment before the OIDC authorization completes.
+      // The legacy login handler explicitly supports skip=true and records
+      // HumanSkipMFAInit, so exercise the real onboarding path instead of
+      // treating this optional screen as a federation failure.
+      const skipMfa = page.locator(
+        'form[action="/ui/login/mfa/prompt"] button[name="skip"][value="true"]',
+      );
+      if ((await skipMfa.count()) > 0 && (await skipMfa.isVisible().catch(() => false))) {
+        console.log(`${protocol} skipping optional ZITADEL MFA enrollment`);
+        await Promise.all([
+          page.waitForLoadState("domcontentloaded"),
+          skipMfa.click(),
+        ]);
+        continue;
+      }
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  throw new Error(`${protocol} login did not return to Resource Portal; current URL: ${page.url()}`);
 }
 
 function assert(condition, message) {
