@@ -5,6 +5,7 @@ import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
 import { createServer } from "node:http";
 import { AppModule } from "../app.module";
 import { ObservabilityService } from "../observability/observability.service";
+import { DeploymentAuditService } from "./deployment-audit.service";
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
@@ -192,6 +193,7 @@ async function main() {
   });
 
   const config = app.get(ConfigService);
+  const deploymentAudit = app.get(DeploymentAuditService);
   const recovery = app.get(DeploymentRecoveryService);
   const worker = app.get(DeploymentWorkerService);
   const certificateReconciler = app.get(DomainCertificateReconcilerService);
@@ -346,6 +348,7 @@ async function main() {
       metrics.recordWorkerEvent("claimed", workerId);
       const startedAt = Date.now();
       try {
+        await deploymentAudit.recordStarted(claimed.id);
         const reconciled = (await runWithHeartbeat(
           recovery,
           metrics,
@@ -375,6 +378,7 @@ async function main() {
           leaseSeconds,
           heartbeatIntervalMs,
         );
+        await deploymentAudit.recordOutcome(completed.id);
         metrics.recordDeploymentOutcome(
           completed.status,
           workerId,
@@ -409,6 +413,16 @@ async function main() {
               });
             });
         }
+
+        await deploymentAudit
+          .recordOutcome(claimed.id)
+          .catch((auditError: unknown) => {
+            logWorkerEvent("error", "deployment.audit.error", {
+              deploymentId: claimed.id,
+              error: errorMessage(auditError),
+              workerId,
+            });
+          });
       }
 
       if (once) {
