@@ -9,7 +9,7 @@ export type AuthenticatedUser = {
 
 export type AuthenticatedServiceIdentity = {
   id: string;
-  tenantId: string;
+  tenantId: string | null;
   name: string;
   status: "Active" | "Suspended";
   zitadelUserId: string;
