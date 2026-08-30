@@ -41,7 +41,7 @@ describe("TraefikCertificateObserverService", () => {
     connectMock.mockReset();
   });
 
-  it("returns only safe public certificate metadata from a TLS handshake", async () => {
+  it("returns only safe public certificate metadata from a trusted TLS handshake", async () => {
     const socket = socketWithCertificate({
       subjectaltname: "DNS:app.example.com, DNS:www.example.com",
       valid_to: "Nov 30 12:00:00 2026 GMT",
@@ -60,7 +60,7 @@ describe("TraefikCertificateObserverService", () => {
         host: "app.example.com",
         port: 443,
         servername: "app.example.com",
-        rejectUnauthorized: false,
+        rejectUnauthorized: true,
       }),
       expect.any(Function),
     );
