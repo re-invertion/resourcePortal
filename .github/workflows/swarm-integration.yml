@@ -1,0 +1,165 @@
+name: Real Docker Swarm Integration
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swarm-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-swarm:
+    name: Real Swarm smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: resource_portal
+          POSTGRES_PASSWORD: resource_portal
+          POSTGRES_DB: resource_portal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U resource_portal -d resource_portal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgresql://resource_portal:resource_portal@127.0.0.1:5432/resource_portal?schema=public
+      AUTH_MODE: dev
+      RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      RESOURCE_STORAGE_ROOT: /tmp/resource-portal/volumes
+      RESOURCE_SECRET_STORAGE_ROOT: /tmp/resource-portal/secrets
+      RESOURCE_PORTAL_API_URL: http://127.0.0.1:3000/api
+      DOCKER_CONTEXT: default
+      DOCKER_APPLY_TIMEOUT_MS: 120000
+      DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 120000
+      DOCKER_REGISTRY_AUTH_TIMEOUT_MS: 120000
+      DOCKER_SECRET_PROVISION_TIMEOUT_MS: 120000
+      DOCKER_VOLUME_PROVISION_TIMEOUT_MS: 120000
+      DOCKER_RUNTIME_OPERATION_TIMEOUT_MS: 120000
+      DOCKER_ROLLOUT_TIMEOUT_MS: 180000
+      DOCKER_ROLLOUT_POLL_INTERVAL_MS: 2000
+      WORKER_ID: github-actions-swarm
+      WORKER_ONCE: "true"
+      SMOKE_USER_ID: 11111111-1111-4111-8111-111111111111
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run api:prisma:generate
+
+      - name: Apply database migrations
+        run: npm exec --workspace @resource-portal/api -- prisma migrate deploy
+
+      - name: Seed RBAC roles
+        run: npm run api:db:seed
+
+      - name: Create smoke-test user
+        working-directory: packages/resourceportal-api
+        run: |
+          node <<'NODE'
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient();
+          (async () => {
+            await prisma.user.upsert({
+              where: { id: process.env.SMOKE_USER_ID },
+              create: {
+                id: process.env.SMOKE_USER_ID,
+                email: 'swarm-ci@example.local',
+                displayName: 'Swarm CI',
+                status: 'Active',
+              },
+              update: { status: 'Active' },
+            });
+          })()
+            .finally(() => prisma.$disconnect())
+            .catch((error) => {
+              console.error(error);
+              process.exit(1);
+            });
+          NODE
+
+      - name: Prepare storage roots
+        run: mkdir -p "$RESOURCE_STORAGE_ROOT" "$RESOURCE_SECRET_STORAGE_ROOT"
+
+      - name: Initialize real Docker Swarm
+        run: |
+          docker info
+          docker swarm init
+          docker node ls
+          test "$(docker info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = "active true"
+
+      - name: Start Resource Portal API
+        run: |
+          npm run api:start > "$RUNNER_TEMP/resource-portal-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/resource-portal-api.pid"
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "$RUNNER_TEMP/resource-portal-api.log"
+          exit 1
+
+      - name: Run Resource Portal against real Swarm
+        run: npm run api:smoke:deploy
+
+      - name: Verify Swarm is clean after smoke test
+        if: always()
+        run: |
+          echo "Services:"
+          docker service ls || true
+          echo "Stacks:"
+          docker stack ls || true
+          echo "Secrets:"
+          docker secret ls || true
+          echo "Configs:"
+          docker config ls || true
+          echo "Volumes:"
+          docker volume ls || true
+
+          if docker stack ls --format '{{.Name}}' | grep -q '^rp_'; then
+            echo 'Resource Portal stack leaked after smoke test'
+            exit 1
+          fi
+
+      - name: Upload API log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-portal-swarm-api-log
+          path: ${{ runner.temp }}/resource-portal-api.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Leave Swarm
+        if: always()
+        run: docker swarm leave --force || true
