@@ -12,13 +12,19 @@ import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
+import { VolumeStorageService } from "./volume-storage.service";
 import { mapVolume } from "./volumes.view";
+
+type VolumeWithAttachments = Prisma.VolumeGetPayload<{
+  include: { attachments: true };
+}>;
 
 @Injectable()
 export class VolumesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly storage: VolumeStorageService,
   ) {}
 
   async listVolumes(tenantId: string) {
@@ -27,13 +33,18 @@ export class VolumesService {
       include: { attachments: true },
       orderBy: { createdAt: "desc" },
     });
+    const result = [];
 
-    return volumes.map(mapVolume);
+    for (const volume of volumes) {
+      result.push(mapVolume(await this.refreshUsedSize(volume)));
+    }
+
+    return result;
   }
 
   async getVolume(tenantId: string, volumeId: string) {
     const volume = await this.findVolumeOrThrow(tenantId, volumeId);
-    return mapVolume(volume);
+    return mapVolume(await this.refreshUsedSize(volume));
   }
 
   async createVolume(
@@ -104,11 +115,43 @@ export class VolumesService {
     return mapVolume(updated);
   }
 
-  async deleteVolume(tenantId: string, volumeId: string) {
+  async deleteVolume(
+    tenantId: string,
+    volumeId: string,
+    actor: AuthenticatedUser,
+  ) {
     const volume = await this.findVolumeOrThrow(tenantId, volumeId);
 
     if (volume.attachments.length > 0) {
       throw new ConflictException("VolumeInUse");
+    }
+
+    await this.prisma.volume.update({
+      where: { id: volumeId },
+      data: {
+        status: VolumeStatus.Deleting,
+        updatedBy: actor.id,
+      },
+    });
+
+    try {
+      await this.storage.deleteVolumeData({
+        tenantId,
+        volumeId,
+        storagePath: volume.storagePath,
+        dockerVolumeName: volume.dockerVolumeName,
+      });
+    } catch (error) {
+      await this.prisma.volume
+        .update({
+          where: { id: volumeId },
+          data: {
+            status: VolumeStatus.Error,
+            updatedBy: actor.id,
+          },
+        })
+        .catch(() => undefined);
+      throw error;
     }
 
     await this.prisma.volume.delete({
@@ -120,6 +163,20 @@ export class VolumesService {
 
   async assertVolumeBelongsToTenant(tenantId: string, volumeId: string) {
     await this.findVolumeOrThrow(tenantId, volumeId);
+  }
+
+  private async refreshUsedSize(volume: VolumeWithAttachments) {
+    const usedSizeBytes = await this.storage.measureUsedSize(volume.storagePath);
+
+    if (volume.usedSizeBytes === usedSizeBytes) {
+      return volume;
+    }
+
+    return this.prisma.volume.update({
+      where: { id: volume.id },
+      data: { usedSizeBytes },
+      include: { attachments: true },
+    });
   }
 
   private async findVolumeOrThrow(tenantId: string, volumeId: string) {

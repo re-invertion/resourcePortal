@@ -60,7 +60,8 @@ export class VolumesController {
   deleteVolume(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("volumeId", ParseUUIDPipe) volumeId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.volumesService.deleteVolume(tenantId, volumeId);
+    return this.volumesService.deleteVolume(tenantId, volumeId, user);
   }
 }
