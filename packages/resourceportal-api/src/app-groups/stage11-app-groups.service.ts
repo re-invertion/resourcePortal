@@ -75,7 +75,7 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
           appGroupId,
           tx,
         );
-        await this.assertQuotaAllowsSingleAppChange(
+        await this.assertStage11QuotaAllowsSingleAppChange(
           tx,
           tenantId,
           {
@@ -98,8 +98,8 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
             cpu: dto.cpu,
             memoryBytes: dto.memoryBytes,
             gpu: dto.gpu ?? 0,
-            environment: this.toJsonObject(dto.environment) ?? {},
-            healthCheck: this.toJsonObject(dto.healthCheck),
+            environment: this.stage11ToJsonObject(dto.environment) ?? {},
+            healthCheck: this.stage11ToJsonObject(dto.healthCheck),
             entrypoint: dto.entrypoint,
             command: dto.command ?? [],
             workingDir: dto.workingDir,
@@ -107,9 +107,10 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
             readOnlyRootFilesystem: dto.readOnlyRootFilesystem ?? false,
             stopGracePeriodSeconds: dto.stopGracePeriodSeconds ?? 30,
             restartPolicy:
-              this.toJsonObject(dto.restartPolicy) ?? DEFAULT_RESTART_POLICY,
+              this.stage11ToJsonObject(dto.restartPolicy) ??
+              DEFAULT_RESTART_POLICY,
             updatePolicy:
-              this.toJsonObject(dto.updatePolicy) ?? DEFAULT_UPDATE_POLICY,
+              this.stage11ToJsonObject(dto.updatePolicy) ?? DEFAULT_UPDATE_POLICY,
             createdBy: actor.id,
             updatedBy: actor.id,
           },
@@ -129,7 +130,7 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
 
       return mapSingleApp(singleApp);
     } catch (error) {
-      this.handleKnownConflict(error, "SingleApp name already exists");
+      this.handleStage11KnownConflict(error, "SingleApp name already exists");
       throw error;
     }
   }
@@ -188,7 +189,7 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
           );
         }
 
-        await this.assertQuotaAllowsSingleAppChange(
+        await this.assertStage11QuotaAllowsSingleAppChange(
           tx,
           tenantId,
           {
@@ -212,16 +213,16 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
             cpu: dto.cpu,
             memoryBytes: dto.memoryBytes,
             gpu: dto.gpu,
-            environment: this.toJsonObject(dto.environment),
-            healthCheck: this.toJsonObject(dto.healthCheck),
+            environment: this.stage11ToJsonObject(dto.environment),
+            healthCheck: this.stage11ToJsonObject(dto.healthCheck),
             entrypoint: dto.entrypoint,
             command: dto.command,
             workingDir: dto.workingDir,
             user: dto.user,
             readOnlyRootFilesystem: dto.readOnlyRootFilesystem,
             stopGracePeriodSeconds: dto.stopGracePeriodSeconds,
-            restartPolicy: this.toJsonObject(dto.restartPolicy),
-            updatePolicy: this.toJsonObject(dto.updatePolicy),
+            restartPolicy: this.stage11ToJsonObject(dto.restartPolicy),
+            updatePolicy: this.stage11ToJsonObject(dto.updatePolicy),
             updatedBy: actor.id,
           },
         });
@@ -240,12 +241,12 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
 
       return mapSingleApp(updated);
     } catch (error) {
-      this.handleKnownConflict(error, "SingleApp name already exists");
+      this.handleStage11KnownConflict(error, "SingleApp name already exists");
       throw error;
     }
   }
 
-  private async assertQuotaAllowsSingleAppChange(
+  private async assertStage11QuotaAllowsSingleAppChange(
     tx: Prisma.TransactionClient,
     tenantId: string,
     nextSingleApp: {
@@ -297,14 +298,14 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
     };
 
     const violations = [
-      this.quotaViolation("cpu", requested.cpu, Number(quota.cpu)),
-      this.quotaViolation(
+      this.stage11QuotaViolation("cpu", requested.cpu, Number(quota.cpu)),
+      this.stage11QuotaViolation(
         "memory",
         requested.memoryBytes,
         Number(quota.memoryBytes),
       ),
-      this.quotaViolation("gpu", requested.gpu, quota.gpu),
-      this.quotaViolation(
+      this.stage11QuotaViolation("gpu", requested.gpu, quota.gpu),
+      this.stage11QuotaViolation(
         "maxSingleApps",
         requested.singleApps,
         quota.maxSingleApps,
@@ -319,7 +320,11 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
     }
   }
 
-  private quotaViolation(resource: string, requested: number, limit: number) {
+  private stage11QuotaViolation(
+    resource: string,
+    requested: number,
+    limit: number,
+  ) {
     if (requested <= limit) {
       return undefined;
     }
@@ -361,13 +366,13 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
     return singleApp;
   }
 
-  private toJsonObject(
+  private stage11ToJsonObject(
     value: Record<string, unknown> | undefined,
   ): Prisma.InputJsonObject | undefined {
     return value as Prisma.InputJsonObject | undefined;
   }
 
-  private handleKnownConflict(error: unknown, message: string) {
+  private handleStage11KnownConflict(error: unknown, message: string) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
