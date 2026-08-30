@@ -12,6 +12,7 @@ import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
+import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
 
@@ -19,11 +20,14 @@ import { InternalAuthGuard } from "./internal-auth.guard";
 @UseGuards(InternalAuthGuard)
 @Controller("internal/deployments")
 export class DeploymentWorkerController {
-  constructor(private readonly deploymentWorkerService: DeploymentWorkerService) {}
+  constructor(
+    private readonly deploymentRecoveryService: DeploymentRecoveryService,
+    private readonly deploymentWorkerService: DeploymentWorkerService,
+  ) {}
 
   @Post("claim")
   claimNextDeployment(@Body() dto: ClaimDeploymentDto) {
-    return this.deploymentWorkerService.claimNextDeployment(dto);
+    return this.deploymentRecoveryService.claimNextDeployment(dto);
   }
 
   @Patch(":deploymentId/heartbeat")
@@ -31,7 +35,7 @@ export class DeploymentWorkerController {
     @Param("deploymentId", ParseUUIDPipe) deploymentId: string,
     @Body() dto: HeartbeatDeploymentDto,
   ) {
-    return this.deploymentWorkerService.heartbeatDeployment(deploymentId, dto);
+    return this.deploymentRecoveryService.heartbeatDeployment(deploymentId, dto);
   }
 
   @Patch(":deploymentId/advance")

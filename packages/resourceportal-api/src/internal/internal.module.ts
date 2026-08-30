@@ -3,6 +3,7 @@ import { AuthModule } from "../auth/auth.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
 import { AuthSessionMaintenanceController } from "./auth-session-maintenance.controller";
+import { DeploymentRecoveryService } from "./deployment-recovery.service";
 import { DeploymentWorkerController } from "./deployment-worker.controller";
 import { DeploymentWorkerService } from "./deployment-worker.service";
 import { InternalAuthGuard } from "./internal-auth.guard";
@@ -19,6 +20,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
   imports: [AuthModule, PrismaModule, SecurityModule],
   controllers: [AuthSessionMaintenanceController, DeploymentWorkerController],
   providers: [
+    DeploymentRecoveryService,
     DeploymentWorkerService,
     InternalAuthGuard,
     RuntimeDriftReconcilerService,
