@@ -143,15 +143,27 @@ export class ZitadelIdentityProviderService {
       return;
     }
 
-    // ZITADEL commands read their current state directly from the event store,
-    // while GET /policies/login reads an eventually-consistent projection.
-    // A successful command response therefore is the authoritative write
-    // acknowledgement; waiting for the projection here can incorrectly block
-    // the immediately following AddIDPToLoginPolicy command.
+    const body = this.loginPolicyBody(current.policy);
+
+    if (isDefault) {
+      // GET /policies/login is projection-backed and can still report the
+      // inherited instance default after the organization custom policy was
+      // already created in the event store. POST is therefore idempotent from
+      // RP's perspective (409 means the custom policy already exists), and the
+      // authoritative PUT immediately reconciles allowExternalIdp=true in both
+      // the fresh and stale-projection cases.
+      await this.request(
+        "POST",
+        "/management/v1/policies/login",
+        body,
+        [409],
+      );
+    }
+
     const mutation = await this.request<ZitadelMutationResponse>(
-      isDefault ? "POST" : "PUT",
+      "PUT",
       "/management/v1/policies/login",
-      this.loginPolicyBody(current.policy),
+      body,
     );
     this.assertMutationResourceOwner(mutation);
   }
