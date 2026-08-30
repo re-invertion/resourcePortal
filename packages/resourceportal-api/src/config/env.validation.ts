@@ -2,6 +2,7 @@ type Env = Record<string, string | undefined>;
 
 const supportedAuthModes = new Set(["dev", "oidc", "zitadel"]);
 const defaultInternalWorkerToken = "dev-worker-token";
+const traefikResolverPattern = /^[A-Za-z0-9_-]+$/;
 
 export function validateEnv(config: Env) {
   const errors: string[] = [];
@@ -22,16 +23,22 @@ export function validateEnv(config: Env) {
   }
 
   requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_TTL_SECONDS");
-  requirePositiveIntegerIfSet(
-    config,
-    errors,
-    "AUTH_SESSION_IDLE_TIMEOUT_SECONDS",
-  );
+  requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_IDLE_TIMEOUT_SECONDS");
   requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_MAX");
+  requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_WINDOW_SECONDS");
+  requirePositiveIntegerIfSet(config, errors, "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS");
   requirePositiveIntegerIfSet(
     config,
     errors,
-    "API_RATE_LIMIT_WINDOW_SECONDS",
+    "DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS",
+  );
+  requirePositiveIntegerIfSet(config, errors, "INGRESS_RECONCILE_INTERVAL_MS");
+  requirePatternIfSet(
+    config,
+    errors,
+    "TRAEFIK_CERT_RESOLVER",
+    traefikResolverPattern,
+    "TRAEFIK_CERT_RESOLVER must contain only letters, numbers, underscore, or hyphen",
   );
 
   if (nodeEnv === "production") {
@@ -95,5 +102,19 @@ function requirePositiveIntegerIfSet(
 
   if (!Number.isFinite(parsed) || parsed <= 0 || `${parsed}` !== value.trim()) {
     errors.push(`${key} must be a positive integer`);
+  }
+}
+
+function requirePatternIfSet(
+  config: Env,
+  errors: string[],
+  key: string,
+  pattern: RegExp,
+  message: string,
+) {
+  const value = config[key];
+
+  if (value && !pattern.test(value)) {
+    errors.push(message);
   }
 }

@@ -16,7 +16,20 @@ export type TraefikSingleApp = {
   httpEndpoints: TraefikEndpoint[];
 };
 
-export function renderTraefikLabels(singleApp: TraefikSingleApp) {
+export type TraefikRoutingOptions = {
+  certResolver?: string;
+};
+
+export function protocolModeRequiresTls(protocolMode: string) {
+  return protocolMode !== "HTTP";
+}
+
+export function renderTraefikLabels(
+  singleApp: TraefikSingleApp,
+  options: TraefikRoutingOptions = {
+    certResolver: process.env.TRAEFIK_CERT_RESOLVER,
+  },
+) {
   const labels: Record<string, string> = {};
 
   for (const endpoint of singleApp.httpEndpoints) {
@@ -37,7 +50,14 @@ export function renderTraefikLabels(singleApp: TraefikSingleApp) {
         break;
       case "HTTP_AND_HTTPS":
         addRouter(labels, `${serviceName}-http`, serviceName, rule, false);
-        addRouter(labels, `${serviceName}-https`, serviceName, rule, true);
+        addRouter(
+          labels,
+          `${serviceName}-https`,
+          serviceName,
+          rule,
+          true,
+          options.certResolver,
+        );
         break;
       case "HTTP_REDIRECT_TO_HTTPS": {
         const httpRouterName = `${serviceName}-http`;
@@ -53,12 +73,26 @@ export function renderTraefikLabels(singleApp: TraefikSingleApp) {
         labels[
           `traefik.http.middlewares.${middlewareName}.redirectscheme.permanent`
         ] = "true";
-        addRouter(labels, httpsRouterName, serviceName, rule, true);
+        addRouter(
+          labels,
+          httpsRouterName,
+          serviceName,
+          rule,
+          true,
+          options.certResolver,
+        );
         break;
       }
       case "HTTPS":
       default:
-        addRouter(labels, serviceName, serviceName, rule, true);
+        addRouter(
+          labels,
+          serviceName,
+          serviceName,
+          rule,
+          true,
+          options.certResolver,
+        );
         break;
     }
   }
@@ -72,11 +106,15 @@ function addRouter(
   serviceName: string,
   rule: string,
   tls: boolean,
+  certResolver?: string,
 ) {
   labels[`traefik.http.routers.${routerName}.rule`] = rule;
   labels[`traefik.http.routers.${routerName}.service`] = serviceName;
 
   if (tls) {
     labels[`traefik.http.routers.${routerName}.tls`] = "true";
+    if (certResolver) {
+      labels[`traefik.http.routers.${routerName}.tls.certresolver`] = certResolver;
+    }
   }
 }

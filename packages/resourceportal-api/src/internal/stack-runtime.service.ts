@@ -51,6 +51,67 @@ export class StackRuntimeService {
     return results;
   }
 
+  async reconcileTraefikLabels(input: {
+    serviceName: string;
+    desiredLabels: Record<string, string>;
+  }) {
+    const inspect = await this.runDocker([
+      "service",
+      "inspect",
+      input.serviceName,
+      "--format",
+      "{{json .Spec.Labels}}",
+    ]);
+
+    if (inspect.exitCode !== 0) {
+      return { success: false, changed: false };
+    }
+
+    let current: Record<string, string>;
+    try {
+      const parsed = JSON.parse(inspect.stdout || "{}") as Record<
+        string,
+        unknown
+      >;
+      current = Object.fromEntries(
+        Object.entries(parsed).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    } catch {
+      return { success: false, changed: false };
+    }
+
+    const currentTraefik = Object.fromEntries(
+      Object.entries(current).filter(([key]) => key.startsWith("traefik.")),
+    );
+    const desiredTraefik = Object.fromEntries(
+      Object.entries(input.desiredLabels).filter(([key]) =>
+        key.startsWith("traefik."),
+      ),
+    );
+
+    const removeKeys = Object.keys(currentTraefik).filter(
+      (key) => !(key in desiredTraefik),
+    );
+
+    if (removeKeys.length === 0) {
+      return { success: true, changed: false };
+    }
+
+    const args = ["service", "update"];
+    for (const key of removeKeys) {
+      args.push("--label-rm", key);
+    }
+    args.push(input.serviceName);
+
+    const update = await this.runDocker(args);
+    return {
+      success: update.exitCode === 0,
+      changed: update.exitCode === 0,
+    };
+  }
+
   async inspectStackServices(
     stackName: string,
   ): Promise<ObservedRuntimeService[] | null> {
@@ -120,7 +181,10 @@ export class StackRuntimeService {
       "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
       120000,
     );
-    const fullArgs = [...(dockerContext ? ["--context", dockerContext] : []), ...args];
+    const fullArgs = [
+      ...(dockerContext ? ["--context", dockerContext] : []),
+      ...args,
+    ];
 
     return new Promise((resolve) => {
       const child = spawn("docker", fullArgs, {

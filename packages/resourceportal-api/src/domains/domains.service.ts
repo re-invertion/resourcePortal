@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
+  CertificateStatus,
   CustomRootDomainVerificationStatus,
   DnsStatus,
   DomainType,
@@ -14,6 +15,7 @@ import {
 import crypto from "node:crypto";
 import { resolveTxt } from "node:dns/promises";
 import { AuthenticatedUser } from "../auth/types";
+import { protocolModeRequiresTls } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
@@ -176,6 +178,7 @@ export class DomainsService {
     const endpointContext = dto.httpEndpointId
       ? await this.findEndpointContextOrThrow(tenantId, dto.httpEndpointId)
       : undefined;
+    const tlsState = this.domainTlsState(endpointContext?.protocolMode, true);
 
     try {
       const domain = await this.prisma.$transaction(async (tx) => {
@@ -191,7 +194,7 @@ export class DomainsService {
             hostname,
             dnsStatus:
               dto.type === DomainType.Managed ? DnsStatus.Valid : DnsStatus.Pending,
-            tlsEnabled: dto.tlsEnabled ?? true,
+            ...tlsState,
             httpEndpointId: dto.httpEndpointId,
             createdBy: actor.id,
             updatedBy: actor.id,
@@ -231,6 +234,11 @@ export class DomainsService {
     const currentEndpointContext = existing.httpEndpointId
       ? await this.findEndpointContextOrThrow(tenantId, existing.httpEndpointId)
       : undefined;
+    const effectiveEndpointContext =
+      dto.httpEndpointId === undefined
+        ? currentEndpointContext
+        : nextEndpointContext;
+    const tlsState = this.domainTlsState(effectiveEndpointContext?.protocolMode);
 
     const domain = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.domain.update({
@@ -238,7 +246,7 @@ export class DomainsService {
         data: {
           httpEndpointId:
             dto.httpEndpointId === undefined ? undefined : dto.httpEndpointId,
-          tlsEnabled: dto.tlsEnabled,
+          ...tlsState,
           updatedBy: actor.id,
         },
         include: this.domainIncludes(),
@@ -345,6 +353,23 @@ export class DomainsService {
     );
   }
 
+  private domainTlsState(protocolMode?: string, initialize = false) {
+    const tlsEnabled = protocolMode
+      ? protocolModeRequiresTls(protocolMode)
+      : false;
+
+    if (tlsEnabled && !initialize) {
+      return { tlsEnabled };
+    }
+
+    return {
+      tlsEnabled,
+      certificateStatus: CertificateStatus.Pending,
+      certificateIssuer: null,
+      certificateExpiresAt: null,
+    };
+  }
+
   private async findDomainOrThrow(tenantId: string, domainId: string) {
     const domain = await this.prisma.domain.findFirst({
       where: { id: domainId, tenantId },
@@ -389,6 +414,7 @@ export class DomainsService {
       },
       select: {
         id: true,
+        protocolMode: true,
         singleApp: {
           select: {
             appGroupId: true,
@@ -404,6 +430,7 @@ export class DomainsService {
     return {
       httpEndpointId: endpoint.id,
       appGroupId: endpoint.singleApp.appGroupId,
+      protocolMode: endpoint.protocolMode,
     };
   }
 
