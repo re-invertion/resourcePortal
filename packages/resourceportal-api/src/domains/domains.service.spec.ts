@@ -47,7 +47,7 @@ function serviceFor(item = root()) {
   const prisma = {
     customRootDomain: {
       findFirst: vi.fn().mockResolvedValue(item),
-      update: vi.fn().mockImplementation(({ data }) =>
+      update: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
         Promise.resolve({ ...item, ...data, domains: item.domains }),
       ),
     },
@@ -100,9 +100,17 @@ function domainRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+type DomainFixture = ReturnType<typeof domainRecord>;
+type DomainCreateCall = {
+  data: Record<string, unknown>;
+};
+type DomainUpdateCall = {
+  data: Record<string, unknown>;
+};
+
 function domainServiceFor(input: {
   endpointProtocolMode?: string;
-  existingDomain?: ReturnType<typeof domainRecord>;
+  existingDomain?: DomainFixture;
 }) {
   const endpointProtocolMode = input.endpointProtocolMode ?? "HTTP";
   const existingDomain = input.existingDomain ?? domainRecord();
@@ -119,18 +127,7 @@ function domainServiceFor(input: {
   const tx = {
     domain: {
       create: vi.fn().mockResolvedValue(createdDomain),
-      update: vi.fn().mockImplementation(({ data }) =>
-        Promise.resolve({
-          ...existingDomain,
-          ...data,
-          httpEndpointId:
-            data.httpEndpointId === undefined
-              ? existingDomain.httpEndpointId
-              : data.httpEndpointId,
-          httpEndpoint:
-            data.httpEndpointId === null ? null : existingDomain.httpEndpoint,
-        }),
-      ),
+      update: vi.fn().mockResolvedValue(existingDomain),
     },
     appGroup: {
       update: vi.fn().mockResolvedValue({}),
@@ -141,15 +138,17 @@ function domainServiceFor(input: {
       findFirst: vi.fn().mockResolvedValue(existingDomain),
     },
     httpEndpoint: {
-      findFirst: vi.fn().mockImplementation(() =>
-        Promise.resolve({
-          id: existingDomain.httpEndpointId,
-          protocolMode: endpointProtocolMode,
-          singleApp: { appGroupId: existingDomain.httpEndpoint.singleApp.appGroupId },
-        }),
-      ),
+      findFirst: vi.fn().mockResolvedValue({
+        id: existingDomain.httpEndpointId,
+        protocolMode: endpointProtocolMode,
+        singleApp: { appGroupId: existingDomain.httpEndpoint.singleApp.appGroupId },
+      }),
     },
-    $transaction: vi.fn().mockImplementation((callback) => callback(tx)),
+    $transaction: vi
+      .fn()
+      .mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
   };
   const config = {
     get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
@@ -241,16 +240,13 @@ describe("DomainsService TLS persistence", () => {
       actor,
     );
 
-    expect(tx.domain.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          tlsEnabled: false,
-          certificateStatus: CertificateStatus.Pending,
-          certificateIssuer: null,
-          certificateExpiresAt: null,
-        }),
-      }),
-    );
+    const call = tx.domain.create.mock.calls[0]?.[0] as DomainCreateCall;
+    expect(call.data).toMatchObject({
+      tlsEnabled: false,
+      certificateStatus: CertificateStatus.Pending,
+      certificateIssuer: null,
+      certificateExpiresAt: null,
+    });
   });
 
   it("clears TLS certificate state immediately when a domain is detached", async () => {
@@ -267,16 +263,13 @@ describe("DomainsService TLS persistence", () => {
       actor,
     );
 
-    expect(tx.domain.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          httpEndpointId: null,
-          tlsEnabled: false,
-          certificateStatus: CertificateStatus.Pending,
-          certificateIssuer: null,
-          certificateExpiresAt: null,
-        }),
-      }),
-    );
+    const call = tx.domain.update.mock.calls[0]?.[0] as DomainUpdateCall;
+    expect(call.data).toMatchObject({
+      httpEndpointId: null,
+      tlsEnabled: false,
+      certificateStatus: CertificateStatus.Pending,
+      certificateIssuer: null,
+      certificateExpiresAt: null,
+    });
   });
 });
