@@ -3,13 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { BillingUsageService } from "./billing-usage.service";
 
+type AuditCreateInput = {
+  data: Record<string, unknown>;
+};
+
 describe("BillingUsageService system audit", () => {
   it("records billing worker activity with actor=system and a readable actorName", async () => {
     const tenantId = "11111111-1111-4111-8111-111111111111";
     const usageRecordId = "22222222-2222-4222-8222-222222222222";
     const accountId = "33333333-3333-4333-8333-333333333333";
     const transactionId = "44444444-4444-4444-8444-444444444444";
-    const auditCreate = vi.fn(() => Promise.resolve({}));
+    const auditCreate = vi.fn((input: AuditCreateInput) => Promise.resolve(input));
     const tx = {
       $queryRaw: vi
         .fn()
@@ -53,14 +57,12 @@ describe("BillingUsageService system audit", () => {
       allowDebt: false,
     });
 
-    expect(auditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        tenantId,
-        actor: "system",
-        actorName: "Billing Worker",
-        action: "billing.usage_charge",
-        result: "Success",
-      }),
+    expect(auditCreate.mock.calls[0]?.[0]?.data).toMatchObject({
+      tenantId,
+      actor: "system",
+      actorName: "Billing Worker",
+      action: "billing.usage_charge",
+      result: "Success",
     });
   });
 });
