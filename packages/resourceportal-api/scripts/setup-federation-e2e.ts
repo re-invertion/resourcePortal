@@ -10,6 +10,8 @@ const keycloakUrl = (process.env.FEDERATION_E2E_KEYCLOAK_URL ?? "http://localhos
 const organizationId = requireEnv("ZITADEL_ORGANIZATION_ID");
 const managementToken = requireEnv("ZITADEL_MANAGEMENT_TOKEN");
 const statePath = resolve(process.env.FEDERATION_E2E_STATE_FILE ?? "../../var/federation/state.json");
+const policyAssertAttempts = 40;
+const policyAssertDelayMs = 250;
 
 const writableLoginPolicyFields = [
   "allowUsernamePassword",
@@ -176,9 +178,23 @@ async function getLoginPolicy() {
 }
 
 async function assertExternalIdpAllowed(expected: boolean) {
-  const current = await getLoginPolicy();
-  const actual = current.policy?.allowExternalIdp === true;
-  assert(actual === expected, `Expected ZITADEL allowExternalIdp=${expected}, got ${actual}`);
+  let lastActual = false;
+
+  for (let attempt = 0; attempt < policyAssertAttempts; attempt += 1) {
+    const current = await getLoginPolicy();
+    lastActual = current.policy?.allowExternalIdp === true;
+    if (lastActual === expected) {
+      return;
+    }
+
+    if (attempt + 1 < policyAssertAttempts) {
+      await sleep(policyAssertDelayMs);
+    }
+  }
+
+  throw new Error(
+    `Expected ZITADEL allowExternalIdp=${expected}, got ${lastActual} after projection catch-up`,
+  );
 }
 
 async function setExternalIdpAllowed(value: boolean) {
@@ -322,6 +338,10 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function sleep(delayMs: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
 void main()
