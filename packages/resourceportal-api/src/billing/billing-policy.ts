@@ -49,11 +49,15 @@ export function normalizeLedgerAmount(
     case "Payment":
     case "TopUp":
     case "VoucherRedeem":
-      return amount.abs();
     case "Refund":
+      return amount.abs();
     case "UsageCharge":
       return amount.abs().neg();
     case "Correction":
       return amount;
   }
+}
+
+export function requiresBillingReason(type: BillingLedgerType) {
+  return type === "Refund" || type === "Correction";
 }
