@@ -78,12 +78,10 @@ describe("StackRuntimeService.reconcileTraefikLabels", () => {
     );
   });
 
-  it("adds changed desired traefik labels without touching non-traefik labels", async () => {
-    spawnMock
-      .mockImplementationOnce(() =>
-        dockerProcess(JSON.stringify({ "com.example.keep": "yes" })),
-      )
-      .mockImplementationOnce(() => dockerProcess());
+  it("does not publish desired traefik labels that are absent from the live service", async () => {
+    spawnMock.mockImplementationOnce(() =>
+      dockerProcess(JSON.stringify({ "com.example.keep": "yes" })),
+    );
 
     const result = await service().reconcileTraefikLabels({
       serviceName: "rp_stack_web",
@@ -92,19 +90,28 @@ describe("StackRuntimeService.reconcileTraefikLabels", () => {
       },
     });
 
-    expect(result).toEqual({ success: true, changed: true });
-    expect(spawnMock).toHaveBeenNthCalledWith(
-      2,
-      "docker",
-      [
-        "service",
-        "update",
-        "--label-add",
-        "traefik.http.routers.web.rule=Host(`app.example.com`)",
-        "rp_stack_web",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+    expect(result).toEqual({ success: true, changed: false });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mutate changed live traefik labels during cleanup reconciliation", async () => {
+    spawnMock.mockImplementationOnce(() =>
+      dockerProcess(
+        JSON.stringify({
+          "traefik.http.routers.web.rule": "Host(`deployed.example.com`)",
+        }),
+      ),
     );
+
+    const result = await service().reconcileTraefikLabels({
+      serviceName: "rp_stack_web",
+      desiredLabels: {
+        "traefik.http.routers.web.rule": "Host(`draft.example.com`)",
+      },
+    });
+
+    expect(result).toEqual({ success: true, changed: false });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
   it("is idempotent when current and desired traefik labels already match", async () => {
