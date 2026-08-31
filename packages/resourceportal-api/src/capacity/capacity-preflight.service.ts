@@ -80,7 +80,7 @@ export class CapacityPreflightService {
     tx: Prisma.TransactionClient,
     snapshot: CapacityDeploymentSnapshot,
   ): Promise<CapacityAdmissionResult> {
-    await this.lockCapacity(tx);
+    await this.lockRuntimeMutation(tx);
 
     const platformResult = await this.availablePlatformSupply(tx);
     if (!platformResult.success) {
@@ -108,7 +108,7 @@ export class CapacityPreflightService {
     tx: Prisma.TransactionClient,
     input: { appGroupId: string; singleAppId?: string },
   ): Promise<CapacityAdmissionResult> {
-    await this.lockCapacity(tx);
+    await this.lockRuntimeMutation(tx);
 
     const deployment = await tx.appGroupDeployment.findFirst({
       where: {
@@ -171,7 +171,7 @@ export class CapacityPreflightService {
     );
   }
 
-  private async lockCapacity(tx: Prisma.TransactionClient) {
+  async lockRuntimeMutation(tx: Prisma.TransactionClient) {
     await tx.$queryRaw(
       Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${CAPACITY_LOCK_NAMESPACE}, 0)) IS NULL AS "locked"`,
     );
