@@ -30,22 +30,20 @@ export class NfsRemoteAccessValidatorService {
       return { ok: false, skipped: false, error: "NFS_GANESHA_SERVER is required" };
     }
 
-    const readyNodes = await this.docker([
+    const nodes = await this.docker([
       "node",
       "ls",
-      "--filter",
-      "status=ready",
       "--format",
-      "{{.ID}}",
+      "{{.ID}}|{{.Status}}",
     ]);
-    if (readyNodes.exitCode !== 0) {
+    if (nodes.exitCode !== 0) {
       return {
         ok: false,
         skipped: false,
-        error: `Unable to list Ready Swarm nodes: ${readyNodes.stderr || readyNodes.stdout}`,
+        error: `Unable to list Swarm nodes: ${nodes.stderr || nodes.stdout}`,
       };
     }
-    const nodeCount = readyNodes.stdout.split("\n").filter(Boolean).length;
+    const nodeCount = this.readyNodeCount(nodes.stdout);
     if (nodeCount === 0) {
       return { ok: false, skipped: false, error: "No Ready Swarm RemoteLocations" };
     }
@@ -131,6 +129,14 @@ export class NfsRemoteAccessValidatorService {
     }
 
     return { ok: false, skipped: false, error: "NFS probe timed out" };
+  }
+
+  private readyNodeCount(output: string) {
+    return output
+      .split("\n")
+      .filter(Boolean)
+      .filter((line) => line.split("|").at(-1)?.trim().toLowerCase() === "ready")
+      .length;
   }
 
   private enabled() {
