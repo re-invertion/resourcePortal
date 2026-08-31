@@ -50,4 +50,31 @@ describe("Stage 16 OperationsService", () => {
       }),
     );
   });
+
+  it("rejects manual retry for AppGroup deployment mirror operations", async () => {
+    expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
+    const imported = (await import(modulePath)) as unknown as {
+      OperationsService: new (repository: unknown) => {
+        retry: (tenantId: string, operationId: string) => Promise<OperationRecord>;
+      };
+    };
+    const deploymentMirror = {
+      ...operation,
+      type: "APP_GROUP_DEPLOY",
+      status: "Failed",
+      tenantId: "22222222-2222-4222-8222-222222222222",
+    } as OperationRecord;
+    const retryFailedOperation = vi.fn();
+    const service = new imported.OperationsService({
+      getOperation: vi.fn().mockResolvedValue(deploymentMirror),
+      retryFailedOperation,
+    });
+
+    await expect(
+      service.retry(deploymentMirror.tenantId!, deploymentMirror.id),
+    ).rejects.toMatchObject({
+      response: "OperationNotRetryable",
+    });
+    expect(retryFailedOperation).not.toHaveBeenCalled();
+  });
 });
