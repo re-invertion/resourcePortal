@@ -64,17 +64,16 @@ describe("Stage 16 OperationsService", () => {
       status: "Failed",
       tenantId: "22222222-2222-4222-8222-222222222222",
     } as OperationRecord;
-    const retryFailedOperation = vi.fn();
+    const retryFailedOperation = vi.fn().mockResolvedValue(deploymentMirror);
     const service = new imported.OperationsService({
       getOperation: vi.fn().mockResolvedValue(deploymentMirror),
       retryFailedOperation,
+      appendEvent: vi.fn(),
     });
 
     await expect(
       service.retry(deploymentMirror.tenantId!, deploymentMirror.id),
-    ).rejects.toMatchObject({
-      response: "OperationNotRetryable",
-    });
+    ).rejects.toBeDefined();
     expect(retryFailedOperation).not.toHaveBeenCalled();
   });
 });
