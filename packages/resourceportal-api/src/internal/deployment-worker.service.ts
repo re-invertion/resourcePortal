@@ -9,6 +9,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { stringify } from "yaml";
+import { CapacityDeploymentAdmissionService } from "../capacity/capacity-deployment-admission.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
@@ -127,6 +128,7 @@ type StackConfigSingleApp = {
 export class DeploymentWorkerService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly capacityAdmission: CapacityDeploymentAdmissionService,
     private readonly stackApplyService: StackApplyService,
     private readonly stackConfigProvisioner: StackConfigProvisionerService,
     private readonly stackRegistryAuth: StackRegistryAuthService,
@@ -235,6 +237,23 @@ export class DeploymentWorkerService {
           errorMessage: validation.message,
         });
       }
+
+      const snapshot = this.parseStackConfig(deployment.stackConfig);
+      const admission = await this.capacityAdmission.admitAndAdvance(
+        deployment,
+        snapshot,
+        dto.message,
+      );
+
+      if (!admission.success) {
+        return this.failDeploymentWithPhase(deployment.id, {
+          phase: DeploymentPhase.Validating,
+          errorCode: admission.errorCode,
+          errorMessage: admission.message,
+        });
+      }
+
+      return this.provisionArtifacts(admission.deployment.id, dto.workerId);
     }
 
     const completed = dto.phase === DeploymentPhase.Completed;
@@ -267,10 +286,6 @@ export class DeploymentWorkerService {
 
       return next;
     });
-
-    if (dto.phase === DeploymentPhase.PreparingArtifacts) {
-      return this.provisionArtifacts(updated.id, dto.workerId);
-    }
 
     if (dto.phase === DeploymentPhase.ApplyingStack) {
       return this.applyRenderedStack(updated.id, dto.workerId);

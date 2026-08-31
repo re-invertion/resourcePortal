@@ -20,7 +20,8 @@
     "smoke:volume-lifecycle": "ts-node --files scripts/smoke-volume-lifecycle.ts",
     "smoke:stage11-quota-concurrency": "ts-node --files scripts/smoke-stage11-quota-concurrency.ts",
     "smoke:stage13-platform-infrastructure": "ts-node --files scripts/smoke-stage13-platform-infrastructure.ts",
-    "smoke:stage14-storage-backend": "ts-node --files scripts/smoke-stage14-storage-backend.ts"
+    "smoke:stage14-storage-backend": "ts-node --files scripts/smoke-stage14-storage-backend.ts",
+    "smoke:stage15-capacity": "ts-node --files scripts/smoke-stage15-capacity.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
