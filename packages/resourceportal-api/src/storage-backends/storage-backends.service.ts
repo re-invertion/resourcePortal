@@ -82,6 +82,11 @@ export class StorageBackendsService {
     return { backendId: backend.id, storagePath: result.storagePath };
   }
 
+  async cleanupProvisionedVolume(backendId: string, storagePath: string) {
+    const backend = await this.store.require(backendId);
+    await this.cephFs.deleteVolume(backend, storagePath);
+  }
+
   async resizeVolume(input: {
     volumeId: string;
     storagePath: string;
