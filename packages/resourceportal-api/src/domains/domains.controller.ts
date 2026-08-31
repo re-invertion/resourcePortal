@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -90,6 +91,7 @@ export class DomainsController {
   validateCustomRootDomain(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.operationsService.enqueue({
@@ -99,6 +101,7 @@ export class DomainsController {
       resourceId: customRootDomainId,
       actor: user,
       input: {},
+      idempotencyKey,
     });
   }
 
@@ -140,6 +143,7 @@ export class DomainsController {
   validateDomain(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("domainId", ParseUUIDPipe) domainId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.operationsService.enqueue({
@@ -149,6 +153,7 @@ export class DomainsController {
       resourceId: domainId,
       actor: user,
       input: {},
+      idempotencyKey,
     });
   }
 
