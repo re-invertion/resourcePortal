@@ -104,20 +104,44 @@ describe("validateEnv", () => {
     );
   });
 
-  it("requires secure cookies and a non-default internal token in production", () => {
-    expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
-      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
+  it("accepts positive Stage 14 storage reconciliation and probe timings", () => {
+    const env = {
+      ...validBaseEnv,
+      STORAGE_BACKEND_RECONCILE_INTERVAL_MS: "30000",
+      STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: "120000",
+    };
+    expect(validateEnv(env)).toBe(env);
+  });
+
+  it("rejects invalid Stage 14 storage reconciliation and probe timings", () => {
+    expect(() =>
+      validateEnv({
+        ...validBaseEnv,
+        STORAGE_BACKEND_RECONCILE_INTERVAL_MS: "0",
+        STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: "invalid",
+      }),
+    ).toThrow(
+      "STORAGE_BACKEND_RECONCILE_INTERVAL_MS must be a positive integer; STORAGE_REMOTE_VALIDATION_TIMEOUT_MS must be a positive integer",
     );
   });
 
-  it("accepts production when hardening settings are present", () => {
+  it("requires secure cookies, a non-default internal token, encryption and NFS-Ganesha in production", () => {
+    expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
+      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production; NFS_GANESHA_SERVER is required",
+    );
+  });
+
+  it("accepts production when hardening and Stage 14 storage settings are present", () => {
     const env = {
       ...validBaseEnv,
       AUTH_COOKIE_SECURE: "true",
       INTERNAL_WORKER_TOKEN: "changed-production-token",
       NODE_ENV: "production",
+      NFS_GANESHA_SERVER: "10.0.0.15",
       RESOURCE_ENCRYPTION_KEY:
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+      STORAGE_BACKEND_RECONCILE_INTERVAL_MS: "30000",
+      STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: "120000",
     };
     expect(validateEnv(env)).toBe(env);
   });

@@ -38,6 +38,16 @@ export function validateEnv(config: Env) {
     errors,
     "SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS",
   );
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "STORAGE_BACKEND_RECONCILE_INTERVAL_MS",
+  );
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "STORAGE_REMOTE_VALIDATION_TIMEOUT_MS",
+  );
   requirePatternIfSet(
     config,
     errors,
@@ -59,6 +69,8 @@ export function validateEnv(config: Env) {
     ) {
       errors.push("INTERNAL_WORKER_TOKEN must be changed in production");
     }
+
+    requireValue(config, errors, "NFS_GANESHA_SERVER");
   }
 
   if (errors.length > 0) {

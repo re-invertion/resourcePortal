@@ -23,6 +23,7 @@ import { StackConfigProvisionerService } from "./stack-config-provisioner.servic
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
+import { renderStackStorageVolumes } from "./stack-storage";
 import { renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
@@ -1504,18 +1505,17 @@ export class DeploymentWorkerService {
   }
 
   private renderVolumes(snapshot: StackConfigSnapshot) {
-    const volumes = new Map<string, { external: true; name: string }>();
+    const volumes = snapshot.singleApps.flatMap((singleApp) =>
+      singleApp.volumes.map((volume) => ({
+        volumeName: volume.volumeName,
+        storagePath: volume.storagePath,
+        dockerVolumeName: volume.dockerVolumeName,
+      })),
+    );
 
-    for (const singleApp of snapshot.singleApps) {
-      for (const volume of singleApp.volumes) {
-        volumes.set(this.volumeName(volume.volumeName), {
-          external: true,
-          name: volume.dockerVolumeName ?? volume.storagePath,
-        });
-      }
-    }
-
-    return volumes.size > 0 ? Object.fromEntries(volumes) : undefined;
+    return renderStackStorageVolumes(volumes, (storagePath) =>
+      this.stackVolumeProvisioner.runtimeVolumeDefinition(storagePath),
+    );
   }
 
   private renderSecrets(snapshot: StackConfigSnapshot) {
