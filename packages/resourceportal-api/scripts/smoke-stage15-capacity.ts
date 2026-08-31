@@ -132,7 +132,7 @@ async function verifyRuntimeStartReservation() {
       desiredReplicas: 1,
       runtimeState: "Running",
       cpu: workloadCpu,
-      memoryBytes: 67108864,
+      memoryBytes: 134217728,
     },
   );
   const baselineSingleAppId = stringField(baselineSingleApp, "id");
@@ -179,7 +179,7 @@ async function verifyRuntimeStartReservation() {
     desiredReplicas: 1,
     runtimeState: "Running",
     cpu: workloadCpu,
-    memoryBytes: 67108864,
+    memoryBytes: 134217728,
   });
 
   const conflictingDeployment = await createDeployment(
