@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -36,6 +37,7 @@ export class VolumesController {
   @HttpCode(HttpStatus.ACCEPTED)
   createVolume(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Body() dto: CreateVolumeDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -45,6 +47,7 @@ export class VolumesController {
       resourceType: "Volume",
       actor: user,
       input: { dto },
+      idempotencyKey,
     });
   }
 
@@ -63,6 +66,7 @@ export class VolumesController {
   resizeVolume(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("volumeId", ParseUUIDPipe) volumeId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @Body() dto: ResizeVolumeDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
@@ -73,6 +77,7 @@ export class VolumesController {
       resourceId: volumeId,
       actor: user,
       input: { dto },
+      idempotencyKey,
     });
   }
 
@@ -82,6 +87,7 @@ export class VolumesController {
   deleteVolume(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("volumeId", ParseUUIDPipe) volumeId: string,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.operationsService.enqueue({
@@ -91,6 +97,7 @@ export class VolumesController {
       resourceId: volumeId,
       actor: user,
       input: {},
+      idempotencyKey,
     });
   }
 }
