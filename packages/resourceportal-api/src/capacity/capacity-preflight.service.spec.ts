@@ -40,6 +40,7 @@ function serializedSnapshot(snapshot: CapacityDeploymentSnapshot) {
 describe("Stage 15 capacity preflight", () => {
   let queryRaw: ReturnType<typeof vi.fn>;
   let findDeployments: ReturnType<typeof vi.fn>;
+  let findLatestDeployment: ReturnType<typeof vi.fn>;
   let findVolumes: ReturnType<typeof vi.fn>;
   let findAppGroup: ReturnType<typeof vi.fn>;
   let findSingleApps: ReturnType<typeof vi.fn>;
@@ -49,12 +50,16 @@ describe("Stage 15 capacity preflight", () => {
   beforeEach(() => {
     queryRaw = vi.fn();
     findDeployments = vi.fn().mockResolvedValue([]);
+    findLatestDeployment = vi.fn().mockResolvedValue(null);
     findVolumes = vi.fn().mockResolvedValue([]);
     findAppGroup = vi.fn().mockResolvedValue(null);
     findSingleApps = vi.fn().mockResolvedValue([]);
     tx = {
       $queryRaw: queryRaw,
-      appGroupDeployment: { findMany: findDeployments },
+      appGroupDeployment: {
+        findMany: findDeployments,
+        findFirst: findLatestDeployment,
+      },
       volume: { findMany: findVolumes },
       appGroup: { findUnique: findAppGroup },
       singleApp: { findMany: findSingleApps },
@@ -218,6 +223,53 @@ describe("Stage 15 capacity preflight", () => {
 
     await expect(
       service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
+    ).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
+  });
+
+  it("rejects a direct AppGroup runtime start when its deployed demand cannot fit", async () => {
+    platform({ cpuNano: 2_000_000_000n });
+    const appGroupId = "00000000-0000-0000-0000-000000000105";
+    const singleAppId = "00000000-0000-0000-0000-000000000205";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000201",
+          runtimeState: "Stopped",
+        },
+        singleApps: [
+          {
+            id: singleAppId,
+            runtimeState: "Running",
+            desiredReplicas: 1,
+            resources: { cpu: "3", memoryBytes: "1024", gpu: 0 },
+            volumes: [],
+          },
+        ],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ id: appGroupId, runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([
+      {
+        id: singleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 1,
+        actualReplicas: 0,
+      },
+    ]);
+
+    const runtimeAdmission = service as unknown as {
+      admitRuntimeStart: (
+        client: Prisma.TransactionClient,
+        input: { appGroupId: string },
+      ) => Promise<unknown>;
+    };
+
+    await expect(
+      runtimeAdmission.admitRuntimeStart(tx, { appGroupId }),
     ).resolves.toMatchObject({
       success: false,
       errorCode: "InsufficientCapacity",
