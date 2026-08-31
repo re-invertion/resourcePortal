@@ -4,16 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma, VolumeStatus } from "@prisma/client";
 import { randomUUID } from "crypto";
-import { join } from "node:path";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageBackendsService } from "../storage-backends/storage-backends.service";
 import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
-import { VolumeStorageService } from "./volume-storage.service";
 import { mapVolume } from "./volumes.view";
 
 type VolumeWithAttachments = Prisma.VolumeGetPayload<{
@@ -24,8 +22,7 @@ type VolumeWithAttachments = Prisma.VolumeGetPayload<{
 export class VolumesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-    private readonly storage: VolumeStorageService,
+    private readonly storageBackends: StorageBackendsService,
   ) {}
 
   async listVolumes(tenantId: string) {
@@ -54,6 +51,9 @@ export class VolumesService {
     actor: AuthenticatedUser,
   ) {
     const volumeId = randomUUID();
+    let provisioned:
+      | { backendId: string; storagePath: string }
+      | undefined;
 
     try {
       const volume = await this.prisma.$transaction(async (tx) => {
@@ -64,13 +64,19 @@ export class VolumesService {
           dto.sizeBytes,
         );
 
+        provisioned = await this.storageBackends.provisionVolume({
+          tenantId,
+          volumeId,
+          sizeBytes: BigInt(dto.sizeBytes),
+        });
+
         return tx.volume.create({
           data: {
             id: volumeId,
             tenantId,
             name: dto.name,
             description: dto.description,
-            storagePath: this.storagePath(tenantId, volumeId),
+            storagePath: provisioned.storagePath,
             dockerVolumeName: this.dockerVolumeName(volumeId),
             sizeBytes: dto.sizeBytes,
             status: VolumeStatus.Ready,
@@ -83,6 +89,14 @@ export class VolumesService {
 
       return mapVolume(volume);
     } catch (error) {
+      if (provisioned) {
+        await this.storageBackends
+          .cleanupProvisionedVolume(
+            provisioned.backendId,
+            provisioned.storagePath,
+          )
+          .catch(() => undefined);
+      }
       this.handleKnownConflict(error, "Volume name already exists");
       throw error;
     }
@@ -105,12 +119,12 @@ export class VolumesService {
         throw new NotFoundException("Volume not found");
       }
 
-      const currentSize = Number(volume.sizeBytes);
-      if (dto.sizeBytes < currentSize) {
+      const requestedSize = BigInt(dto.sizeBytes);
+      if (requestedSize < volume.sizeBytes) {
         throw new ConflictException("Volume cannot be shrunk");
       }
 
-      if (dto.sizeBytes === currentSize) {
+      if (requestedSize === volume.sizeBytes) {
         return volume;
       }
 
@@ -120,6 +134,13 @@ export class VolumesService {
         dto.sizeBytes,
         volumeId,
       );
+
+      await this.storageBackends.resizeVolume({
+        volumeId,
+        storagePath: volume.storagePath,
+        requestedSizeBytes: requestedSize,
+        currentSizeBytes: volume.sizeBytes,
+      });
 
       return tx.volume.update({
         where: { id: volumeId },
@@ -155,12 +176,7 @@ export class VolumesService {
     });
 
     try {
-      await this.storage.deleteVolumeData({
-        tenantId,
-        volumeId,
-        storagePath: volume.storagePath,
-        dockerVolumeName: volume.dockerVolumeName,
-      });
+      await this.storageBackends.deleteVolume(volumeId, volume.storagePath);
     } catch (error) {
       await this.prisma.volume
         .update({
@@ -186,7 +202,10 @@ export class VolumesService {
   }
 
   private async refreshUsedSize(volume: VolumeWithAttachments) {
-    const usedSizeBytes = await this.storage.measureUsedSize(volume.storagePath);
+    const usedSizeBytes = await this.storageBackends.measureUsedSize(
+      volume.id,
+      volume.storagePath,
+    );
 
     if (volume.usedSizeBytes === usedSizeBytes) {
       return volume;
@@ -285,14 +304,5 @@ export class VolumesService {
 
   private dockerVolumeName(volumeId: string) {
     return `rp_vol_${volumeId.replaceAll("-", "_")}`;
-  }
-
-  private storagePath(tenantId: string, volumeId: string) {
-    const storageRoot = this.config.get<string>(
-      "RESOURCE_STORAGE_ROOT",
-      "/rp/volumes",
-    );
-
-    return join(storageRoot, tenantId, volumeId);
   }
 }
