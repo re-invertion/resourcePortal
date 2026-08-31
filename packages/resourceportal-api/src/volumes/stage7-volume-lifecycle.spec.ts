@@ -57,7 +57,7 @@ function serviceFor(item = volume()) {
   const service = Reflect.construct(VolumesService, [
     prisma as unknown as PrismaService,
     storageBackends as unknown as StorageBackendsService,
-  ]) as VolumesService;
+  ]);
 
   return { prisma, storageBackends, service };
 }
