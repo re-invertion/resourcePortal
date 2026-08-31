@@ -4,8 +4,62 @@ import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 
 const implementationUrl = new URL("./operations.repository.ts", import.meta.url);
+const modulePath = `./${["operations", "repository"].join(".")}`;
 
-const operationRow = {
+type OperationRow = {
+  id: string;
+  type: string;
+  tenantId: string | null;
+  resourceType: string;
+  resourceId: string | null;
+  status: string;
+  phase: string | null;
+  createdBy: string;
+  createdByEmail: string;
+  createdByDisplayName: string;
+  input: unknown;
+  result: unknown;
+  idempotencyKey: string | null;
+  attempt: number;
+  maxAttempts: number;
+  nextAttemptAt: Date;
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  heartbeatAt: Date | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+};
+
+type CreateInput = {
+  type: string;
+  tenantId: string | null;
+  resourceType: string;
+  resourceId: string | null;
+  createdBy: string;
+  createdByEmail: string;
+  createdByDisplayName: string;
+  input: unknown;
+  idempotencyKey?: string;
+};
+
+type RepositoryLike = {
+  createOperation: (input: CreateInput) => Promise<OperationRow>;
+  claimNext: (workerId: string, leaseSeconds: number) => Promise<OperationRow | null>;
+};
+
+type RepositoryModule = {
+  OperationsRepository: new (prisma: PrismaService) => RepositoryLike;
+};
+
+async function loadRepositoryModule() {
+  const imported = (await import(modulePath)) as unknown;
+  return imported as RepositoryModule;
+}
+
+const operationRow: OperationRow = {
   id: "11111111-1111-4111-8111-111111111111",
   type: "DOMAIN_VERIFY",
   tenantId: "22222222-2222-4222-8222-222222222222",
@@ -35,11 +89,10 @@ const operationRow = {
 describe("Stage 16 OperationsRepository", () => {
   it("returns the idempotent existing operation when create resolves the same key", async () => {
     expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
-    const { OperationsRepository } = await import("./operations.repository");
+    const { OperationsRepository } = await loadRepositoryModule();
 
-    const prisma = {
-      $queryRaw: vi.fn().mockResolvedValue([operationRow]),
-    } as unknown as PrismaService;
+    const queryRaw = vi.fn().mockResolvedValue([operationRow]);
+    const prisma = { $queryRaw: queryRaw } as unknown as PrismaService;
     const repository = new OperationsRepository(prisma);
 
     const result = await repository.createOperation({
@@ -56,14 +109,14 @@ describe("Stage 16 OperationsRepository", () => {
 
     expect(result.id).toBe(operationRow.id);
     expect(result.status).toBe("Pending");
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it("claims only an eligible queued operation and returns its Running state", async () => {
     expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
-    const { OperationsRepository } = await import("./operations.repository");
+    const { OperationsRepository } = await loadRepositoryModule();
 
-    const claimed = {
+    const claimed: OperationRow = {
       ...operationRow,
       status: "Running",
       attempt: 1,
@@ -72,9 +125,8 @@ describe("Stage 16 OperationsRepository", () => {
       heartbeatAt: new Date("2026-08-31T12:00:00Z"),
       startedAt: new Date("2026-08-31T12:00:00Z"),
     };
-    const prisma = {
-      $queryRaw: vi.fn().mockResolvedValue([claimed]),
-    } as unknown as PrismaService;
+    const queryRaw = vi.fn().mockResolvedValue([claimed]);
+    const prisma = { $queryRaw: queryRaw } as unknown as PrismaService;
     const repository = new OperationsRepository(prisma);
 
     const result = await repository.claimNext("worker-a", 300);
