@@ -1,13 +1,24 @@
 import { PrismaClient } from "@prisma/client";
+import { spawn } from "node:child_process";
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api").replace(/\/$/, "");
-const userId = process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api"
+).replace(/\/$/, "");
+const userId =
+  process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
 const suffix = Date.now().toString();
 
 type ApiResult = {
   status: number;
   payload: unknown;
+};
+
+type OperationOutcome = {
+  id: string;
+  status: string;
+  errorCode: string | null;
+  resourceId: string | null;
 };
 
 async function main() {
@@ -50,7 +61,10 @@ async function verifyConcurrentSingleAppCreate() {
 
   assertExactlyOneQuotaWinner(results, "concurrent SingleApp create");
   const count = await prisma.singleApp.count({ where: { appGroupId } });
-  assert(count === 1, `Concurrent SingleApp create persisted ${count} apps; expected 1`);
+  assert(
+    count === 1,
+    `Concurrent SingleApp create persisted ${count} apps; expected 1`,
+  );
 }
 
 async function verifyConcurrentSingleAppUpdate() {
@@ -86,7 +100,10 @@ async function verifyConcurrentSingleAppUpdate() {
     where: { appGroupId },
     select: { cpu: true, desiredReplicas: true },
   });
-  const cpu = apps.reduce((sum, app) => sum + Number(app.cpu) * app.desiredReplicas, 0);
+  const cpu = apps.reduce(
+    (sum, app) => sum + Number(app.cpu) * app.desiredReplicas,
+    0,
+  );
   assert(cpu <= 2, `Concurrent SingleApp update exceeded CPU quota: ${cpu} > 2`);
 }
 
@@ -110,10 +127,20 @@ async function verifyConcurrentVolumeCreate() {
       }),
     ),
   );
+  const operationIds = expectQueuedOperations(
+    results,
+    "concurrent Volume create enqueue",
+  );
 
-  assertExactlyOneQuotaWinner(results, "concurrent Volume create");
+  await runOperationWorkers(operationIds.length, "volume-create");
+  const outcomes = await operationOutcomes(operationIds);
+  assertExactlyOneOperationWinner(outcomes, "concurrent Volume create");
+
   const count = await prisma.volume.count({ where: { tenantId } });
-  assert(count === 1, `Concurrent Volume create persisted ${count} volumes; expected 1`);
+  assert(
+    count === 1,
+    `Concurrent Volume create persisted ${count} volumes; expected 1`,
+  );
 }
 
 async function verifyConcurrentVolumeResize() {
@@ -138,13 +165,23 @@ async function verifyConcurrentVolumeResize() {
       sizeBytes: 104857600,
     }),
   ]);
+  const operationIds = expectQueuedOperations(
+    results,
+    "concurrent Volume resize enqueue",
+  );
 
-  assertExactlyOneQuotaWinner(results, "concurrent Volume resize");
+  await runOperationWorkers(operationIds.length, "volume-resize");
+  const outcomes = await operationOutcomes(operationIds);
+  assertExactlyOneOperationWinner(outcomes, "concurrent Volume resize");
+
   const volumes = await prisma.volume.findMany({
     where: { tenantId },
     select: { sizeBytes: true },
   });
-  const storage = volumes.reduce((sum, volume) => sum + Number(volume.sizeBytes), 0);
+  const storage = volumes.reduce(
+    (sum, volume) => sum + Number(volume.sizeBytes),
+    0,
+  );
   assert(
     storage <= 157286400,
     `Concurrent Volume resize exceeded storage quota: ${storage} > 157286400`,
@@ -210,8 +247,77 @@ async function createVolume(tenantId: string, name: string, sizeBytes: number) {
     name,
     sizeBytes,
   });
-  expectSuccess(result, `create Volume ${name}`);
-  return stringField(result.payload, "id");
+  const [operationId] = expectQueuedOperations([result], `create Volume ${name}`);
+  await runOperationWorkers(1, `create-${name}`);
+  const [outcome] = await operationOutcomes([operationId]);
+  assert(
+    outcome?.status === "Succeeded" && outcome.resourceId,
+    `create Volume ${name} operation did not succeed: ${JSON.stringify(outcome)}`,
+  );
+  return outcome.resourceId;
+}
+
+async function operationOutcomes(operationIds: string[]) {
+  if (operationIds.length === 0) {
+    return [];
+  }
+  return prisma.$queryRawUnsafe<OperationOutcome[]>(
+    `SELECT "id", "status"::text AS "status", "errorCode", "resourceId"
+       FROM "Operation"
+      WHERE "id" = ANY($1::uuid[])
+      ORDER BY "createdAt" ASC`,
+    operationIds,
+  );
+}
+
+async function runOperationWorkers(count: number, label: string) {
+  const results = await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      command("npm", ["run", "worker:operations"], {
+        ...process.env,
+        OPERATION_WORKER_ONCE: "true",
+        OPERATION_WORKER_ID: `stage11-${label}-${suffix}-${index}`,
+      }),
+    ),
+  );
+
+  for (const result of results) {
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Operation worker failed during ${label}: ${result.stderr || result.stdout}`,
+      );
+    }
+  }
+}
+
+function command(
+  commandName: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve) => {
+      const child = spawn(commandName, args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        resolve({ exitCode: 127, stdout: "", stderr: error.message });
+      });
+      child.on("close", (code) => {
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    },
+  );
 }
 
 async function request(
@@ -234,8 +340,44 @@ async function request(
   };
 }
 
+function expectQueuedOperations(results: ApiResult[], label: string) {
+  const details = results
+    .map((result) => `${result.status}:${JSON.stringify(result.payload)}`)
+    .join(" | ");
+  assert(
+    results.every((result) => result.status === 202),
+    `${label}: expected all requests to enqueue with HTTP 202; ${details}`,
+  );
+  return results.map((result) => stringField(result.payload, "id"));
+}
+
+function assertExactlyOneOperationWinner(
+  outcomes: OperationOutcome[],
+  label: string,
+) {
+  const succeeded = outcomes.filter((outcome) => outcome.status === "Succeeded");
+  const failed = outcomes.filter((outcome) => outcome.status === "Failed");
+  const details = outcomes
+    .map(
+      (outcome) =>
+        `${outcome.id}:${outcome.status}:${outcome.errorCode ?? "no-error"}`,
+    )
+    .join(" | ");
+
+  assert(
+    succeeded.length === 1,
+    `${label}: expected exactly one succeeded Operation, got ${succeeded.length}; ${details}`,
+  );
+  assert(
+    failed.length === outcomes.length - 1,
+    `${label}: expected remaining Operations to fail quota enforcement; ${details}`,
+  );
+}
+
 function assertExactlyOneQuotaWinner(results: ApiResult[], label: string) {
-  const successes = results.filter((result) => result.status >= 200 && result.status < 300);
+  const successes = results.filter(
+    (result) => result.status >= 200 && result.status < 300,
+  );
   const rejected = results.filter((result) => result.status === 403);
   const details = results
     .map((result) => `${result.status}:${JSON.stringify(result.payload)}`)
@@ -253,7 +395,9 @@ function assertExactlyOneQuotaWinner(results: ApiResult[], label: string) {
 
 function expectSuccess(result: ApiResult, label: string) {
   if (result.status < 200 || result.status >= 300) {
-    throw new Error(`${label} failed: HTTP ${result.status} ${JSON.stringify(result.payload)}`);
+    throw new Error(
+      `${label} failed: HTTP ${result.status} ${JSON.stringify(result.payload)}`,
+    );
   }
 }
 
@@ -268,7 +412,7 @@ function stringField(value: unknown, field: string) {
   return fieldValue;
 }
 
-function assert(condition: boolean, message: string): asserts condition {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new Error(message);
   }
