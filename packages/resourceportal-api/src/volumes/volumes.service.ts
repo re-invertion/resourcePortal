@@ -8,7 +8,10 @@ import { Prisma, VolumeStatus } from "@prisma/client";
 import { randomUUID } from "crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
-import { StorageBackendsService } from "../storage-backends/storage-backends.service";
+import {
+  StorageBackendReservation,
+  StorageBackendsService,
+} from "../storage-backends/storage-backends.service";
 import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
@@ -17,6 +20,11 @@ import { mapVolume } from "./volumes.view";
 type VolumeWithAttachments = Prisma.VolumeGetPayload<{
   include: { attachments: true };
 }>;
+
+type ReservedVolumeSizeRow = {
+  id: string;
+  reservedSizeBytes: bigint;
+};
 
 @Injectable()
 export class VolumesService {
@@ -51,12 +59,14 @@ export class VolumesService {
     actor: AuthenticatedUser,
   ) {
     const volumeId = randomUUID();
-    let provisioned:
-      | { backendId: string; storagePath: string }
-      | undefined;
+    const sizeBytes = BigInt(dto.sizeBytes);
+    let reservation: StorageBackendReservation | undefined;
+    let provisionAttempted = false;
+
+    await this.storageBackends.refreshDefaultBackendForWrite();
 
     try {
-      const volume = await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx) => {
         await lockTenantQuota(tx, tenantId);
         await this.assertQuotaAllowsVolumeChange(
           tx,
@@ -64,39 +74,72 @@ export class VolumesService {
           dto.sizeBytes,
         );
 
-        provisioned = await this.storageBackends.provisionVolume({
+        reservation = await this.storageBackends.reserveVolume(tx, {
           tenantId,
           volumeId,
-          sizeBytes: BigInt(dto.sizeBytes),
+          sizeBytes,
         });
 
-        return tx.volume.create({
+        await tx.volume.create({
           data: {
             id: volumeId,
             tenantId,
             name: dto.name,
             description: dto.description,
-            storagePath: provisioned.storagePath,
+            storagePath: reservation.storagePath,
             dockerVolumeName: this.dockerVolumeName(volumeId),
             sizeBytes: dto.sizeBytes,
-            status: VolumeStatus.Ready,
+            status: VolumeStatus.Creating,
             createdBy: actor.id,
             updatedBy: actor.id,
           },
-          include: { attachments: true },
         });
       });
 
+      if (!reservation) {
+        throw new Error("StorageBackend reservation was not created");
+      }
+
+      provisionAttempted = true;
+      await this.storageBackends.provisionVolume(reservation, {
+        tenantId,
+        volumeId,
+        sizeBytes,
+      });
+
+      const volume = await this.prisma.volume.update({
+        where: { id: volumeId },
+        data: {
+          status: VolumeStatus.Ready,
+          updatedBy: actor.id,
+        },
+        include: { attachments: true },
+      });
       return mapVolume(volume);
     } catch (error) {
-      if (provisioned) {
-        await this.storageBackends
+      if (reservation && provisionAttempted) {
+        const cleaned = await this.storageBackends
           .cleanupProvisionedVolume(
-            provisioned.backendId,
-            provisioned.storagePath,
+            reservation.backend,
+            reservation.storagePath,
           )
-          .catch(() => undefined);
+          .then(() => true)
+          .catch(() => false);
+
+        if (!cleaned) {
+          await this.prisma.volume
+            .update({
+              where: { id: volumeId },
+              data: { status: VolumeStatus.Error, updatedBy: actor.id },
+            })
+            .catch(() => undefined);
+          throw error;
+        }
       }
+
+      await this.prisma.volume
+        .deleteMany({ where: { id: volumeId } })
+        .catch(() => undefined);
       this.handleKnownConflict(error, "Volume name already exists");
       throw error;
     }
@@ -108,7 +151,18 @@ export class VolumesService {
     dto: ResizeVolumeDto,
     actor: AuthenticatedUser,
   ) {
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const current = await this.findVolumeOrThrow(tenantId, volumeId);
+    const initiallyRequestedSize = BigInt(dto.sizeBytes);
+    if (initiallyRequestedSize < current.sizeBytes) {
+      throw new ConflictException("Volume cannot be shrunk");
+    }
+    if (initiallyRequestedSize === current.sizeBytes) {
+      return mapVolume(current);
+    }
+
+    await this.storageBackends.refreshVolumeBackendForWrite(volumeId);
+
+    const reserved = await this.prisma.$transaction(async (tx) => {
       await lockTenantQuota(tx, tenantId);
 
       const volume = await tx.volume.findFirst({
@@ -123,9 +177,8 @@ export class VolumesService {
       if (requestedSize < volume.sizeBytes) {
         throw new ConflictException("Volume cannot be shrunk");
       }
-
       if (requestedSize === volume.sizeBytes) {
-        return volume;
+        return { reservation: null, volume };
       }
 
       await this.assertQuotaAllowsVolumeChange(
@@ -135,25 +188,37 @@ export class VolumesService {
         volumeId,
       );
 
-      await this.storageBackends.resizeVolume({
+      const resizeReservation = await this.storageBackends.reserveResize(tx, {
         volumeId,
         storagePath: volume.storagePath,
         requestedSizeBytes: requestedSize,
         currentSizeBytes: volume.sizeBytes,
+        actorId: actor.id,
       });
 
-      return tx.volume.update({
-        where: { id: volumeId },
-        data: {
-          sizeBytes: dto.sizeBytes,
-          status: VolumeStatus.Ready,
-          updatedBy: actor.id,
-        },
-        include: { attachments: true },
-      });
+      return { reservation: resizeReservation, volume };
     });
 
-    return mapVolume(updated);
+    if (!reserved.reservation) {
+      return mapVolume(reserved.volume);
+    }
+
+    try {
+      await this.storageBackends.resizeVolume(reserved.reservation, {
+        storagePath: reserved.volume.storagePath,
+        requestedSizeBytes: initiallyRequestedSize,
+      });
+      await this.storageBackends.completeResize(
+        volumeId,
+        initiallyRequestedSize,
+        actor.id,
+      );
+    } catch (error) {
+      await this.storageBackends.failResize(volumeId, actor.id).catch(() => undefined);
+      throw error;
+    }
+
+    return mapVolume(await this.findVolumeOrThrow(tenantId, volumeId));
   }
 
   async deleteVolume(
@@ -245,16 +310,22 @@ export class VolumesService {
       return;
     }
 
-    const currentVolumes = await tx.volume.findMany({
-      where: {
-        tenantId,
-        id: replacingVolumeId ? { not: replacingVolumeId } : undefined,
-      },
-      select: { sizeBytes: true },
-    });
+    const exclusion = replacingVolumeId
+      ? Prisma.sql`AND "id" <> ${replacingVolumeId}::uuid`
+      : Prisma.empty;
+    const currentVolumes = await tx.$queryRaw<ReservedVolumeSizeRow[]>(
+      Prisma.sql`
+        SELECT
+          "id",
+          COALESCE("pendingSizeBytes", "sizeBytes")::bigint AS "reservedSizeBytes"
+        FROM "Volume"
+        WHERE "tenantId" = ${tenantId}::uuid
+        ${exclusion}
+      `,
+    );
 
     const currentUsage = currentVolumes.reduce(
-      (sum, volume) => sum + Number(volume.sizeBytes),
+      (sum, volume) => sum + Number(volume.reservedSizeBytes),
       0,
     );
     const requestedStorage = currentUsage + requestedVolumeSizeBytes;
