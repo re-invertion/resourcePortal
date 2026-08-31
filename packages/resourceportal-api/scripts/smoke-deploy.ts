@@ -58,15 +58,34 @@ async function main() {
     },
   });
 
-  const volume = await api<JsonObject>(`/tenants/${createdTenantId}/volumes`, {
-    method: "POST",
-    userId,
-    body: {
-      name: "data",
-      sizeBytes: 1048576,
+  const volumeOperation = await api<JsonObject>(
+    `/tenants/${createdTenantId}/volumes`,
+    {
+      method: "POST",
+      userId,
+      idempotencyKey: `smoke-volume-${suffix}`,
+      body: {
+        name: "data",
+        sizeBytes: 1048576,
+      },
     },
-  });
-  createdVolumeId = stringField(volume, "id");
+  );
+  const volumeOperationId = stringField(volumeOperation, "id");
+  await runOperationWorkerOnce();
+  const completedVolumeOperation = await api<JsonObject>(
+    `/tenants/${createdTenantId}/operations/${volumeOperationId}`,
+    {
+      method: "GET",
+      userId,
+    },
+  );
+  const volumeOperationStatus = stringField(completedVolumeOperation, "status");
+  if (volumeOperationStatus !== "Succeeded") {
+    throw new Error(
+      `Expected volume create operation ${volumeOperationId} to succeed, got ${volumeOperationStatus}`,
+    );
+  }
+  createdVolumeId = stringField(completedVolumeOperation, "resourceId");
 
   const appGroup = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups`,
@@ -311,6 +330,24 @@ async function runWorkerOnce() {
 
   if (result.exitCode !== 0) {
     throw new Error(output || "Deployment worker failed");
+  }
+}
+
+async function runOperationWorkerOnce() {
+  const result = await command("npm", ["run", "worker:operations"], {
+    ...process.env,
+    OPERATION_WORKER_ONCE: "true",
+  });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+
+  if (output) {
+    console.log(output);
+  }
+
+  if (result.exitCode !== 0) {
+    throw new Error(output || "Operation worker failed");
   }
 }
 

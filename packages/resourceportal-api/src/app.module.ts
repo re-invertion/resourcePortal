@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
 import { AppGroupsModule } from "./app-groups/app-groups.module";
 import { AuditModule } from "./audit/audit.module";
@@ -8,14 +9,14 @@ import { PermissionsGuard } from "./auth/permissions.guard";
 import { TenantContextGuard } from "./auth/tenant-context.guard";
 import { BillingModule } from "./billing/billing.module";
 import { BillingPreflightGuard } from "./billing/billing-preflight.guard";
-import { ConfigModule } from "@nestjs/config";
 import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
 import { HealthModule } from "./health/health.module";
 import { IdentityProvidersModule } from "./identity-providers/identity-providers.module";
 import { InternalModule } from "./internal/internal.module";
-import { ObservabilityModule } from "./observability/observability.module";
 import { OAuthApplicationsModule } from "./oauth-applications/oauth-applications.module";
+import { ObservabilityModule } from "./observability/observability.module";
+import { OperationsModule } from "./operations/operations.module";
 import { PlatformInfrastructureModule } from "./platform-infrastructure/platform-infrastructure.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
@@ -47,6 +48,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     RegistriesModule,
     VolumesModule,
     DomainsModule,
+    OperationsModule,
     AuditModule,
     InternalModule,
     ObservabilityModule,

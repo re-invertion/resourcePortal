@@ -1,8 +1,15 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { CapacityModule } from "../capacity/capacity.module";
+import { DomainsModule } from "../domains/domains.module";
+import { DomainOperationExecutor } from "../operations/executors/domain-operation.executors";
+import { VolumeOperationExecutor } from "../operations/executors/volume-operation.executors";
+import { OperationExecutorRegistry } from "../operations/operation-executor-registry";
+import { OperationsModule } from "../operations/operations.module";
+import { OperationsWorkerService } from "../operations/operations-worker.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
+import { VolumesModule } from "../volumes/volumes.module";
 import { AuthSessionMaintenanceController } from "./auth-session-maintenance.controller";
 import { DeploymentAuditService } from "./deployment-audit.service";
 import { DeploymentRecoveryService } from "./deployment-recovery.service";
@@ -22,15 +29,25 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
 import { TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
 
 @Module({
-  imports: [AuthModule, CapacityModule, PrismaModule, SecurityModule],
+  imports: [
+    AuthModule,
+    CapacityModule,
+    DomainsModule,
+    OperationsModule,
+    PrismaModule,
+    SecurityModule,
+    VolumesModule,
+  ],
   controllers: [AuthSessionMaintenanceController, DeploymentWorkerController],
   providers: [
     DeploymentAuditService,
     DeploymentRecoveryService,
     DeploymentWorkerService,
     DomainCertificateReconcilerService,
+    DomainOperationExecutor,
     IngressReconcilerService,
     InternalAuthGuard,
+    OperationsWorkerService,
     RuntimeDriftReconcilerService,
     StackApplyService,
     StackConfigProvisionerService,
@@ -40,6 +57,17 @@ import { TraefikCertificateObserverService } from "./traefik-certificate-observe
     StackSecretProvisionerService,
     StackVolumeProvisionerService,
     TraefikCertificateObserverService,
+    VolumeOperationExecutor,
+    {
+      provide: OperationExecutorRegistry,
+      useFactory: (
+        volumeExecutor: VolumeOperationExecutor,
+        domainExecutor: DomainOperationExecutor,
+      ) =>
+        new OperationExecutorRegistry([volumeExecutor, domainExecutor]),
+      inject: [VolumeOperationExecutor, DomainOperationExecutor],
+    },
   ],
+  exports: [OperationsWorkerService],
 })
 export class InternalModule {}

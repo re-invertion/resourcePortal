@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,14 +43,26 @@ async function main() {
     },
   });
 
-  const volume = await api<JsonObject>(`/tenants/${createdTenantId}/volumes`, {
-    method: "POST",
-    body: {
-      name: "lifecycle-data",
-      sizeBytes: 1048576,
+  const createOperation = await api<JsonObject>(
+    `/tenants/${createdTenantId}/volumes`,
+    {
+      method: "POST",
+      idempotencyKey: `stage7-volume-create-${suffix}`,
+      body: {
+        name: "lifecycle-data",
+        sizeBytes: 1048576,
+      },
     },
-  });
-  createdVolumeId = stringField(volume, "id");
+  );
+  const createOperationId = stringField(createOperation, "id");
+  await runOperationWorkerOnce();
+  const completedCreate = await expectOperationSucceeded(createOperationId);
+  createdVolumeId = stringField(completedCreate, "resourceId");
+
+  const volume = await api<JsonObject>(
+    `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
+    { method: "GET" },
+  );
   storagePath = stringField(volume, "storagePath");
   physicalStoragePath = resolveCephFsLocalPath(
     cephFsMountRoot,
@@ -75,9 +88,16 @@ async function main() {
     );
   }
 
-  await api(`/tenants/${createdTenantId}/volumes/${createdVolumeId}`, {
-    method: "DELETE",
-  });
+  const deleteOperation = await api<JsonObject>(
+    `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
+    {
+      method: "DELETE",
+      idempotencyKey: `stage7-volume-delete-${suffix}`,
+    },
+  );
+  const deleteOperationId = stringField(deleteOperation, "id");
+  await runOperationWorkerOnce();
+  await expectOperationSucceeded(deleteOperationId);
 
   if (existsSync(physicalStoragePath)) {
     throw new Error(
@@ -111,17 +131,55 @@ async function cleanup() {
   }
 }
 
+async function runOperationWorkerOnce() {
+  const result = await command("npm", ["run", "worker:operations"], {
+    ...process.env,
+    OPERATION_WORKER_ONCE: "true",
+  });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+
+  if (output) {
+    console.log(output);
+  }
+
+  if (result.exitCode !== 0) {
+    throw new Error(output || "Operation worker failed");
+  }
+}
+
+async function expectOperationSucceeded(operationId: string) {
+  const operation = await api<JsonObject>(
+    `/tenants/${createdTenantId}/operations/${operationId}`,
+    { method: "GET" },
+  );
+  const status = stringField(operation, "status");
+
+  if (status !== "Succeeded") {
+    throw new Error(
+      `Expected operation ${operationId} to succeed, got ${status}: ${JSON.stringify(operation)}`,
+    );
+  }
+
+  return operation;
+}
+
 async function api<T = unknown>(
   path: string,
   options: {
     method: "GET" | "POST" | "PATCH" | "DELETE";
     body?: unknown;
+    idempotencyKey?: string;
   },
 ): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: options.method,
     headers: {
       "x-dev-user-id": userId,
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
       ...(options.body === undefined
         ? {}
         : { "content-type": "application/json" }),
@@ -138,6 +196,30 @@ async function api<T = unknown>(
   }
 
   return payload as T;
+}
+
+function command(commandName: string, args: string[], env = process.env) {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+    const child = spawn(commandName, args, {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (error) => {
+      resolve({ exitCode: 127, stdout: "", stderr: error.message });
+    });
+    child.on("close", (code) => {
+      resolve({
+        exitCode: code ?? 1,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
 }
 
 function stringField(value: JsonObject, field: string) {
