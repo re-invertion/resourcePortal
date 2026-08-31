@@ -52,9 +52,44 @@ describe("StackVolumeProvisionerService", () => {
     spawnMock.mockReset();
   });
 
+  it("lists all Swarm nodes and provisions only across Ready nodes", async () => {
+    spawnMock
+      .mockImplementationOnce(() =>
+        dockerProcess("node-a|Ready\nnode-b|Down\nnode-c|Ready\n"),
+      )
+      .mockImplementationOnce(() => dockerProcess("probe-service\n"))
+      .mockImplementationOnce(() =>
+        dockerProcess("Complete 1 second ago|\nComplete 1 second ago|\n"),
+      )
+      .mockImplementationOnce(() => dockerProcess());
+
+    await expect(
+      service().provisionVolumes([
+        {
+          dockerVolumeName: "rp_vol_123",
+          storagePath: "/rp/volumes/tenant-a/volume-a",
+        },
+      ]),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      1,
+      "docker",
+      [
+        "--context",
+        "default",
+        "node",
+        "ls",
+        "--format",
+        "{{.ID}}|{{.Status}}",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+  });
+
   it("quotes comma-separated local-driver NFS options for the probe service", async () => {
     spawnMock
-      .mockImplementationOnce(() => dockerProcess("node-a\n"))
+      .mockImplementationOnce(() => dockerProcess("node-a|Ready\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
