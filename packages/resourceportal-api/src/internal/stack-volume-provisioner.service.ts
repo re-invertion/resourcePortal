@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { buildNfsDriverOptions } from "../storage-backends/storage-backend.logic";
 
 type ProvisionVolume = {
   dockerVolumeName: string;
@@ -24,6 +25,16 @@ type ProvisionResult = {
 @Injectable()
 export class StackVolumeProvisionerService {
   constructor(private readonly config: ConfigService) {}
+
+  runtimeVolumeDefinition(storagePath: string) {
+    const server = this.config.get<string>("NFS_GANESHA_SERVER", "");
+    const version = this.config.get<string>("NFS_GANESHA_VERSION", "4.1");
+
+    return {
+      driver: "local" as const,
+      driver_opts: buildNfsDriverOptions(server, version, storagePath),
+    };
+  }
 
   async provisionVolumes(volumes: ProvisionVolume[]): Promise<ProvisionResult> {
     const uniqueVolumes = this.uniqueVolumes(volumes);
@@ -86,8 +97,7 @@ export class StackVolumeProvisionerService {
     nodeCount: number,
   ): Promise<ProvisionResult> {
     const serviceName = `rp-vol-provision-${randomUUID().slice(0, 8)}`;
-    const server = this.config.get<string>("NFS_GANESHA_SERVER", "").trim();
-    const version = this.config.get<string>("NFS_GANESHA_VERSION", "4.1");
+    const definition = this.runtimeVolumeDefinition(volume.storagePath);
     const image = this.config.get<string>(
       "STORAGE_REMOTE_VALIDATION_IMAGE",
       "alpine:3.20",
@@ -97,9 +107,9 @@ export class StackVolumeProvisionerService {
       `source=${volume.dockerVolumeName}`,
       "target=/probe",
       "volume-driver=local",
-      "volume-opt=type=nfs",
-      `volume-opt=o=addr=${server}\\,nfsvers=${version}\\,rw`,
-      `volume-opt=device=:${volume.storagePath}`,
+      `volume-opt=type=${definition.driver_opts.type}`,
+      `volume-opt=o=${definition.driver_opts.o.replaceAll(",", "\\,")}`,
+      `volume-opt=device=${definition.driver_opts.device}`,
     ].join(",");
     const create = await this.runDocker([
       "service",
