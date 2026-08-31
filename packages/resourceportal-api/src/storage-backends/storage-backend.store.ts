@@ -196,8 +196,8 @@ export class StorageBackendStore {
     const rows = await this.prisma.$queryRaw<StorageBackendRow[]>`
       UPDATE "StorageBackend"
       SET
-        "status" = ${input.status},
-        "health" = ${input.health},
+        "status" = ${input.status}::"StorageBackendStatus",
+        "health" = ${input.health}::"HealthState",
         "capacityTotal" = ${input.capacityTotal},
         "capacityAvailable" = ${input.capacityAvailable},
         "lastValidatedAt" = ${input.lastValidatedAt},
