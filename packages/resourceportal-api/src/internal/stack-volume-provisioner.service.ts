@@ -108,8 +108,8 @@ export class StackVolumeProvisionerService {
       "target=/probe",
       "volume-driver=local",
       `volume-opt=type=${definition.driver_opts.type}`,
-      `volume-opt=o=${definition.driver_opts.o.replaceAll(",", "\\,")}`,
       `volume-opt=device=${definition.driver_opts.device}`,
+      `"volume-opt=o=${definition.driver_opts.o}"`,
     ].join(",");
     const create = await this.runDocker([
       "service",
