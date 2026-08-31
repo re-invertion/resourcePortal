@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -11,6 +13,7 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
+import { OperationsService } from "../operations/operations.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
 import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
@@ -19,7 +22,10 @@ import { DomainsService } from "./domains.service";
 
 @Controller("tenants/:tenantId/domains")
 export class DomainsController {
-  constructor(private readonly domainsService: DomainsService) {}
+  constructor(
+    private readonly domainsService: DomainsService,
+    private readonly operationsService: OperationsService,
+  ) {}
 
   @RequirePermissions("domain.read")
   @Get()
@@ -80,16 +86,20 @@ export class DomainsController {
 
   @RequirePermissions("domain.validate")
   @Post("custom-root-domains/:customRootDomainId/validate")
+  @HttpCode(HttpStatus.ACCEPTED)
   validateCustomRootDomain(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("customRootDomainId", ParseUUIDPipe) customRootDomainId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.domainsService.validateCustomRootDomain(
+    return this.operationsService.enqueue({
+      type: "CUSTOM_ROOT_DOMAIN_VERIFY",
       tenantId,
-      customRootDomainId,
-      user,
-    );
+      resourceType: "CustomRootDomain",
+      resourceId: customRootDomainId,
+      actor: user,
+      input: {},
+    });
   }
 
   @RequirePermissions("domain.delete")
@@ -126,12 +136,20 @@ export class DomainsController {
 
   @RequirePermissions("domain.validate")
   @Post(":domainId/validate")
+  @HttpCode(HttpStatus.ACCEPTED)
   validateDomain(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("domainId", ParseUUIDPipe) domainId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.domainsService.validateDomain(tenantId, domainId, user);
+    return this.operationsService.enqueue({
+      type: "DOMAIN_VERIFY",
+      tenantId,
+      resourceType: "Domain",
+      resourceId: domainId,
+      actor: user,
+      input: {},
+    });
   }
 
   @RequirePermissions("domain.delete")
