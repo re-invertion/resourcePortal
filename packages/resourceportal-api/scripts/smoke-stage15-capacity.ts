@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 
 const prisma = new PrismaClient();
@@ -11,7 +11,7 @@ const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
-let appGroupId: string | undefined;
+const appGroupIds: string[] = [];
 
 type JsonObject = Record<string, unknown>;
 
@@ -62,47 +62,33 @@ async function main() {
     },
   });
 
-  const appGroup = await api<JsonObject>(`/tenants/${tenantId}/app-groups`, {
-    method: "POST",
-    body: {
-      name: "oversized",
-      runtimeState: "Running",
-    },
-  });
-  appGroupId = stringField(appGroup, "id");
+  await verifyOversizedDeploymentRejected();
+  await verifyRuntimeStartReservation();
 
-  await api(`/tenants/${tenantId}/app-groups/${appGroupId}/single-apps`, {
-    method: "POST",
-    body: {
-      name: "oversized",
-      image: "nginx:alpine",
-      desiredReplicas: 100,
-      runtimeState: "Running",
-      cpu: 128,
-      memoryBytes: 134217728,
-      environment: {
-        STAGE15_CAPACITY_SMOKE: "true",
-      },
-    },
+  console.log("Stage 15 capacity admission smoke passed");
+}
+
+async function verifyOversizedDeploymentRejected() {
+  const appGroup = await createAppGroup("oversized", "Running");
+  const appGroupId = stringField(appGroup, "id");
+
+  await createSingleApp(appGroupId, "oversized", {
+    desiredReplicas: 100,
+    runtimeState: "Running",
+    cpu: 128,
+    memoryBytes: 134217728,
   });
 
-  const deployment = await api<JsonObject>(
-    `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
-    {
-      method: "POST",
-      idempotencyKey: `stage15-capacity-${suffix}`,
-      body: { note: "must fail capacity admission before stack apply" },
-    },
+  const deployment = await createDeployment(
+    appGroupId,
+    `stage15-capacity-${suffix}`,
+    "must fail capacity admission before stack apply",
   );
   const deploymentId = stringField(deployment, "id");
 
   await runWorkerOnce();
 
-  const observed = await api<DeploymentView>(
-    `/tenants/${tenantId}/app-groups/${appGroupId}/deployments/${deploymentId}`,
-    { method: "GET" },
-  );
-
+  const observed = await getDeployment(appGroupId, deploymentId);
   assert(
     observed.status === "Failed",
     `Expected oversized deployment to fail, got ${String(observed.status)}`,
@@ -119,24 +105,193 @@ async function main() {
     observed.renderedStack === null,
     "Oversized deployment rendered a stack before capacity rejection",
   );
+  await assertStackAbsent(appGroupId, "Oversized deployment");
+}
 
-  const stackName = `rp_${appGroupId.replaceAll("-", "_")}`;
+async function verifyRuntimeStartReservation() {
+  const supplyCpuNano = await platformCpuNano();
+  const cpuTenThousandths =
+    ((supplyCpuNano * 3n) / 4n) / 100_000n;
+  const workloadCpuNano = cpuTenThousandths * 100_000n;
+  assert(
+    cpuTenThousandths > 0n && workloadCpuNano <= supplyCpuNano,
+    `Cannot construct Stage 15 runtime capacity fixture from ${supplyCpuNano} NanoCPU`,
+  );
+  assert(
+    workloadCpuNano * 2n > supplyCpuNano,
+    `Runtime capacity fixture does not overcommit when combined: supply=${supplyCpuNano}, workload=${workloadCpuNano}`,
+  );
+  const workloadCpu = Number(cpuTenThousandths) / 10_000;
+
+  const baseline = await createAppGroup("runtime-baseline", "Stopped");
+  const baselineAppGroupId = stringField(baseline, "id");
+  const baselineSingleApp = await createSingleApp(
+    baselineAppGroupId,
+    "runtime-baseline",
+    {
+      desiredReplicas: 1,
+      runtimeState: "Running",
+      cpu: workloadCpu,
+      memoryBytes: 67108864,
+    },
+  );
+  const baselineSingleAppId = stringField(baselineSingleApp, "id");
+
+  const baselineDeployment = await createDeployment(
+    baselineAppGroupId,
+    `stage15-runtime-baseline-${suffix}`,
+    "deploy stopped workload before direct runtime start",
+  );
+  const baselineDeploymentId = stringField(baselineDeployment, "id");
+  await runWorkerOnce();
+
+  const baselineObserved = await getDeployment(
+    baselineAppGroupId,
+    baselineDeploymentId,
+  );
+  assert(
+    baselineObserved.status === "Succeeded",
+    `Expected stopped baseline deployment to succeed, got ${String(baselineObserved.status)}`,
+  );
+
+  const runtimeStart = await api<JsonObject>(
+    `/tenants/${tenantId}/app-groups/${baselineAppGroupId}/runtime/start`,
+    { method: "POST" },
+  );
+  assert(
+    runtimeStart.runtimeApplied === true,
+    "Expected direct AppGroup runtime start to scale the deployed service",
+  );
+
+  const startedSingleApp = await prisma.singleApp.findUnique({
+    where: { id: baselineSingleAppId },
+    select: { actualReplicas: true, runtimeState: true },
+  });
+  assert(
+    startedSingleApp?.runtimeState === "Running" &&
+      startedSingleApp.actualReplicas === 1,
+    `Expected runtime-started workload to report one actual replica, got ${JSON.stringify(startedSingleApp)}`,
+  );
+
+  const conflicting = await createAppGroup("runtime-conflict", "Running");
+  const conflictingAppGroupId = stringField(conflicting, "id");
+  await createSingleApp(conflictingAppGroupId, "runtime-conflict", {
+    desiredReplicas: 1,
+    runtimeState: "Running",
+    cpu: workloadCpu,
+    memoryBytes: 67108864,
+  });
+
+  const conflictingDeployment = await createDeployment(
+    conflictingAppGroupId,
+    `stage15-runtime-conflict-${suffix}`,
+    "must count directly started stopped deployment as occupied capacity",
+  );
+  const conflictingDeploymentId = stringField(conflictingDeployment, "id");
+  await runWorkerOnce();
+
+  const conflictObserved = await getDeployment(
+    conflictingAppGroupId,
+    conflictingDeploymentId,
+  );
+  assert(
+    conflictObserved.status === "Failed",
+    `Expected conflicting deployment to fail after runtime start, got ${String(conflictObserved.status)}`,
+  );
+  assert(
+    conflictObserved.phase === "Validating",
+    `Expected runtime-accounting rejection in Validating, got ${String(conflictObserved.phase)}`,
+  );
+  assert(
+    conflictObserved.errorCode === "InsufficientCapacity",
+    `Expected runtime-started workload to reserve capacity, got ${String(conflictObserved.errorCode)}`,
+  );
+  assert(
+    conflictObserved.renderedStack === null,
+    "Conflicting deployment rendered a stack before runtime capacity rejection",
+  );
+  await assertStackAbsent(conflictingAppGroupId, "Conflicting deployment");
+
+  console.log("Stage 15 runtime-start capacity regression passed");
+}
+
+async function createAppGroup(name: string, runtimeState: "Running" | "Stopped") {
+  const appGroup = await api<JsonObject>(`/tenants/${tenantId}/app-groups`, {
+    method: "POST",
+    body: { name, runtimeState },
+  });
+  appGroupIds.push(stringField(appGroup, "id"));
+  return appGroup;
+}
+
+async function createSingleApp(
+  appGroupId: string,
+  name: string,
+  input: {
+    desiredReplicas: number;
+    runtimeState: "Running" | "Stopped";
+    cpu: number;
+    memoryBytes: number;
+  },
+) {
+  return api<JsonObject>(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/single-apps`,
+    {
+      method: "POST",
+      body: {
+        name,
+        image: "nginx:alpine",
+        ...input,
+        environment: {
+          STAGE15_CAPACITY_SMOKE: "true",
+        },
+      },
+    },
+  );
+}
+
+function createDeployment(appGroupId: string, idempotencyKey: string, note: string) {
+  return api<JsonObject>(`/tenants/${tenantId}/app-groups/${appGroupId}/deploy`, {
+    method: "POST",
+    idempotencyKey,
+    body: { note },
+  });
+}
+
+function getDeployment(appGroupId: string, deploymentId: string) {
+  return api<DeploymentView>(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/deployments/${deploymentId}`,
+    { method: "GET" },
+  );
+}
+
+async function platformCpuNano() {
+  const rows = await prisma.$queryRaw<Array<{ availableCpuNano: bigint }>>(
+    Prisma.sql`
+      SELECT COALESCE(SUM("availableCpuNano"), 0)::bigint AS "availableCpuNano"
+      FROM "RemoteLocation"
+    `,
+  );
+  const supply = rows[0]?.availableCpuNano ?? 0n;
+  assert(supply > 0n, "Stage 15 runtime smoke found no available platform CPU");
+  return supply;
+}
+
+async function assertStackAbsent(appGroupId: string, label: string) {
+  const stackName = stackNameFor(appGroupId);
   const stackList = await docker(["stack", "ls", "--format", "{{.Name}}"]);
   assert(
     !stackList.stdout
       .split("\n")
       .map((value) => value.trim())
       .includes(stackName),
-    `Oversized deployment created Docker stack ${stackName}`,
+    `${label} created Docker stack ${stackName}`,
   );
-
-  console.log("Stage 15 capacity admission smoke passed");
 }
 
 async function cleanup() {
-  if (appGroupId) {
-    const stackName = `rp_${appGroupId.replaceAll("-", "_")}`;
-    await docker(["stack", "rm", stackName], true);
+  for (const appGroupId of appGroupIds) {
+    await docker(["stack", "rm", stackNameFor(appGroupId)], true);
   }
   if (tenantId) {
     await prisma.tenant
@@ -199,6 +354,10 @@ async function api<T = unknown>(
   }
 
   return payload as T;
+}
+
+function stackNameFor(appGroupId: string) {
+  return `rp_${appGroupId.replaceAll("-", "_")}`;
 }
 
 function docker(args: string[], ignoreFailure = false) {
