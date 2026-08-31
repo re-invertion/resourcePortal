@@ -10,6 +10,7 @@ import { DockerSwarmInfrastructureService } from "./docker-swarm-infrastructure.
 import { SwarmInfrastructureAuditService } from "./swarm-infrastructure-audit.service";
 import {
   deriveRemoteLocationHealth,
+  deriveSchedulableCapacity,
   deriveSwarmClusterHealth,
   parseNodeCapabilities,
   planInventoryReconciliation,
@@ -85,6 +86,12 @@ export class SwarmInfrastructureService {
 
       const current = existingByNodeId.get(node.swarmNodeId);
       const capabilities = parseNodeCapabilities(node.labels);
+      const capacity = deriveSchedulableCapacity(
+        node.status,
+        node.availability,
+        node.cpuNano,
+        node.memoryBytes,
+      );
       const maintenance =
         node.availability === "Drain" && current?.maintenance === true;
       const id = observation.remoteLocationId ?? randomUUID();
@@ -99,7 +106,9 @@ export class SwarmInfrastructureService {
         health: deriveRemoteLocationHealth(node.status, node.availability),
         maintenance,
         cpuNano: node.cpuNano,
+        availableCpuNano: capacity.availableCpuNano,
         memoryBytes: node.memoryBytes,
+        availableMemoryBytes: capacity.availableMemoryBytes,
         gpuCount: capabilities.gpuCount,
         networkCapabilities: capabilities.networkCapabilities,
         lastSeenAt: now,
@@ -174,12 +183,20 @@ export class SwarmInfrastructureService {
       remoteLocation.status,
       availability,
     );
+    const capacity = deriveSchedulableCapacity(
+      remoteLocation.status,
+      availability,
+      remoteLocation.cpuNano,
+      remoteLocation.memoryBytes,
+    );
     const updated = await this.store.setRemoteLocationMaintenance(
       remoteLocationId,
       {
         maintenance: enabled,
         availability,
         health,
+        availableCpuNano: capacity.availableCpuNano,
+        availableMemoryBytes: capacity.availableMemoryBytes,
       },
     );
 
@@ -207,14 +224,16 @@ export class SwarmInfrastructureService {
   private mapRemoteLocation(remoteLocation: RemoteLocationRow) {
     return {
       ...remoteLocation,
-      cpuNano:
-        typeof remoteLocation.cpuNano === "bigint"
-          ? remoteLocation.cpuNano.toString()
-          : String(remoteLocation.cpuNano ?? 0),
-      memoryBytes:
-        typeof remoteLocation.memoryBytes === "bigint"
-          ? remoteLocation.memoryBytes.toString()
-          : String(remoteLocation.memoryBytes ?? 0),
+      cpuNano: this.bigintString(remoteLocation.cpuNano),
+      availableCpuNano: this.bigintString(remoteLocation.availableCpuNano),
+      memoryBytes: this.bigintString(remoteLocation.memoryBytes),
+      availableMemoryBytes: this.bigintString(
+        remoteLocation.availableMemoryBytes,
+      ),
     };
+  }
+
+  private bigintString(value: bigint) {
+    return typeof value === "bigint" ? value.toString() : String(value ?? 0);
   }
 }
