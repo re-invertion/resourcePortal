@@ -86,12 +86,12 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
           throw new NotFoundException("App Group not found");
         }
 
-        await this.assertNoActiveDeployment(tx, appGroupId);
-        this.assertCapacityAdmission(
+        await this.assertStage15NoActiveDeployment(tx, appGroupId);
+        this.assertStage15CapacityAdmission(
           await this.capacityPreflight.admitRuntimeStart(tx, { appGroupId }),
         );
 
-        const serviceNames = await this.deployedServiceNames(tx, current);
+        const serviceNames = await this.stage15DeployedServiceNames(tx, current);
         const targets = current.singleApps.flatMap((singleApp) => {
           const deployedServiceName = serviceNames.get(singleApp.id);
           if (!deployedServiceName) {
@@ -100,8 +100,8 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
 
           return [
             {
-              stackName: this.stackName(appGroupId),
-              serviceName: this.serviceName(deployedServiceName),
+              stackName: this.stage15StackName(appGroupId),
+              serviceName: this.stage15ServiceName(deployedServiceName),
               singleAppId: singleApp.id,
               replicas:
                 singleApp.runtimeState === RuntimeState.Stopped ||
@@ -151,7 +151,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
       },
     );
 
-    await this.applyScaleTargets(targets);
+    await this.applyStage15ScaleTargets(targets);
     return {
       appGroup: mapAppGroup(appGroup),
       runtimeApplied: targets.length > 0,
@@ -190,21 +190,21 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
           throw new ConflictException("SingleApp is pending deletion");
         }
 
-        await this.assertNoActiveDeployment(tx, appGroupId);
-        this.assertCapacityAdmission(
+        await this.assertStage15NoActiveDeployment(tx, appGroupId);
+        this.assertStage15CapacityAdmission(
           await this.capacityPreflight.admitRuntimeStart(tx, {
             appGroupId,
             singleAppId,
           }),
         );
 
-        const serviceNames = await this.deployedServiceNames(tx, appGroup);
+        const serviceNames = await this.stage15DeployedServiceNames(tx, appGroup);
         const deployedServiceName = serviceNames.get(singleAppId);
         const targets: RuntimeScaleTarget[] = deployedServiceName
           ? [
               {
-                stackName: this.stackName(appGroupId),
-                serviceName: this.serviceName(deployedServiceName),
+                stackName: this.stage15StackName(appGroupId),
+                serviceName: this.stage15ServiceName(deployedServiceName),
                 singleAppId,
                 replicas:
                   appGroup.runtimeState === RuntimeState.Running
@@ -254,7 +254,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
       },
     );
 
-    await this.applyScaleTargets(targets);
+    await this.applyStage15ScaleTargets(targets);
     return {
       singleApp: mapSingleApp(singleApp),
       runtimeApplied: targets.length > 0,
@@ -274,7 +274,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     }
   }
 
-  private assertCapacityAdmission(result: CapacityAdmissionResult) {
+  private assertStage15CapacityAdmission(result: CapacityAdmissionResult) {
     if (result.success) {
       return;
     }
@@ -284,7 +284,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     throw platformUnavailableException(result.message);
   }
 
-  private async assertNoActiveDeployment(
+  private async assertStage15NoActiveDeployment(
     tx: Prisma.TransactionClient,
     appGroupId: string,
   ) {
@@ -305,7 +305,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     }
   }
 
-  private async deployedServiceNames(
+  private async stage15DeployedServiceNames(
     tx: Prisma.TransactionClient,
     appGroup: { id: string; currentDeploymentVersion: number | null },
   ) {
@@ -336,7 +336,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     return names;
   }
 
-  private async applyScaleTargets(targets: RuntimeScaleTarget[]) {
+  private async applyStage15ScaleTargets(targets: RuntimeScaleTarget[]) {
     if (targets.length === 0) {
       return;
     }
@@ -348,7 +348,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
         failures: failures.map((failure) => ({
           command: failure.command,
           exitCode: failure.exitCode,
-          stderr: this.truncate(failure.stderr, 500),
+          stderr: this.stage15Truncate(failure.stderr, 500),
         })),
       });
     }
@@ -363,15 +363,15 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     );
   }
 
-  private stackName(appGroupId: string) {
+  private stage15StackName(appGroupId: string) {
     return `rp_${appGroupId.replaceAll("-", "_")}`;
   }
 
-  private serviceName(name: string) {
+  private stage15ServiceName(name: string) {
     return name.replaceAll("-", "_");
   }
 
-  private truncate(value: string, maxLength: number) {
+  private stage15Truncate(value: string, maxLength: number) {
     return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 }
