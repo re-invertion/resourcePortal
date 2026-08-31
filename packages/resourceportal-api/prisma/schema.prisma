@@ -78,6 +78,15 @@ enum VolumeStatus {
   Error
 }
 
+enum StorageBackendType {
+  CephFS
+}
+
+enum StorageBackendStatus {
+  Ready
+  Error
+}
+
 enum AttachmentMode {
   ReadOnly
   ReadWrite
@@ -577,14 +586,37 @@ model DeploymentEvent {
   deployment   AppGroupDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
 }
 
+model StorageBackend {
+  id                  String               @id @default(uuid()) @db.Uuid
+  name                String               @unique
+  type                StorageBackendType   @default(CephFS)
+  basePath            String               @default("/rp")
+  volumeBasePath      String               @default("/rp/volumes")
+  secretBasePath      String               @default("/rp/secrets")
+  status              StorageBackendStatus @default(Error)
+  health              HealthState          @default(Unknown)
+  maintenance         Boolean              @default(false)
+  capacityTotal       BigInt?
+  capacityAvailable   BigInt?
+  lastValidatedAt     DateTime?
+  lastValidationError String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  volumes             Volume[]
+
+  @@index([status, health])
+}
+
 model Volume {
   id               String             @id @default(uuid()) @db.Uuid
   tenantId         String             @db.Uuid
+  storageBackendId String             @db.Uuid
   name             String
   description      String?
   storagePath      String
   dockerVolumeName String             @unique
   sizeBytes        BigInt
+  pendingSizeBytes BigInt?
   usedSizeBytes    BigInt?
   status           VolumeStatus       @default(Creating)
   createdBy        String             @db.Uuid
@@ -592,9 +624,11 @@ model Volume {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  storageBackend   StorageBackend     @relation(fields: [storageBackendId], references: [id], onDelete: Restrict)
   attachments      VolumeAttachment[]
 
   @@unique([tenantId, name])
+  @@index([storageBackendId])
 }
 
 model VolumeAttachment {
