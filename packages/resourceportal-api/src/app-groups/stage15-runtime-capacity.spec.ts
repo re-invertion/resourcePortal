@@ -1,4 +1,3 @@
-import { ConflictException, type INestApplication } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, RuntimeState } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
@@ -10,8 +9,6 @@ import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
 import { VolumesService } from "../volumes/volumes.service";
 import { Stage15AppGroupsService } from "./stage15-app-groups.service";
-
-void (null as unknown as INestApplication);
 
 describe("Stage 15 runtime capacity boundary", () => {
   it("does not persist Running or scale Swarm when capacity rejects AppGroup start", async () => {
@@ -69,15 +66,15 @@ describe("Stage 15 runtime capacity boundary", () => {
           callback(tx),
       ),
     } as unknown as PrismaService;
-    const stackRuntime = {
-      scaleServices: vi.fn(),
-    } as unknown as StackRuntimeService;
+    const scaleServices = vi.fn();
+    const stackRuntime = { scaleServices } as unknown as StackRuntimeService;
+    const admitRuntimeStart = vi.fn().mockResolvedValue({
+      success: false,
+      errorCode: "InsufficientCapacity",
+      message: "Insufficient platform cpu capacity",
+    });
     const capacity = {
-      admitRuntimeStart: vi.fn().mockResolvedValue({
-        success: false,
-        errorCode: "InsufficientCapacity",
-        message: "Insufficient platform cpu capacity",
-      }),
+      admitRuntimeStart,
     } as unknown as CapacityPreflightService;
     const config = {
       get: vi.fn().mockReturnValue(undefined),
@@ -100,10 +97,10 @@ describe("Stage 15 runtime capacity boundary", () => {
       response: {
         code: "InsufficientCapacity",
       },
-    } satisfies Partial<ConflictException>);
+    });
 
-    expect(capacity.admitRuntimeStart).toHaveBeenCalledWith(tx, { appGroupId });
+    expect(admitRuntimeStart).toHaveBeenCalledWith(tx, { appGroupId });
     expect(persistedUpdate).not.toHaveBeenCalled();
-    expect(stackRuntime.scaleServices).not.toHaveBeenCalled();
+    expect(scaleServices).not.toHaveBeenCalled();
   });
 });
