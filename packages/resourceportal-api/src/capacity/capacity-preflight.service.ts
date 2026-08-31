@@ -34,6 +34,7 @@ export type CapacityDeploymentSnapshot = {
   };
   singleApps: Array<
     CapacitySnapshotSingleApp & {
+      id?: string;
       volumes: Array<{ volumeId: string }>;
     }
   >;
@@ -283,7 +284,9 @@ export class CapacityPreflightService {
           `Cannot account deployment capacity for AppGroup ${selected.appGroupId}`,
         );
       }
-      const demand = snapshotDemand(parsed);
+      const demand = active
+        ? snapshotDemand(parsed)
+        : await this.succeededRuntimeDemand(tx, parsed);
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
         memoryBytes: occupied.memoryBytes + demand.memoryBytes,
@@ -291,6 +294,90 @@ export class CapacityPreflightService {
     }
 
     return { success: true, occupied };
+  }
+
+  private async succeededRuntimeDemand(
+    tx: Prisma.TransactionClient,
+    snapshot: CapacityDeploymentSnapshot,
+  ): Promise<CapacityDemand> {
+    const singleAppIds = snapshot.singleApps
+      .map((singleApp) => singleApp.id)
+      .filter((id): id is string => typeof id === "string");
+    if (singleAppIds.length !== snapshot.singleApps.length) {
+      return snapshotDemand(snapshot);
+    }
+
+    const appGroup = await tx.appGroup.findUnique({
+      where: { id: snapshot.appGroup.id },
+      select: { runtimeState: true },
+    });
+    if (!appGroup) {
+      return snapshotDemand(snapshot);
+    }
+
+    const currentSingleApps = await tx.singleApp.findMany({
+      where: {
+        appGroupId: snapshot.appGroup.id,
+        id: { in: singleAppIds },
+      },
+      select: {
+        id: true,
+        runtimeState: true,
+        desiredReplicas: true,
+        actualReplicas: true,
+      },
+    });
+    const currentById = new Map(
+      currentSingleApps.map((singleApp) => [singleApp.id, singleApp]),
+    );
+
+    let demand: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
+    for (const singleApp of snapshot.singleApps) {
+      const current = singleApp.id ? currentById.get(singleApp.id) : undefined;
+      if (!current) {
+        const fallback = snapshotDemand({
+          appGroup: { runtimeState: snapshot.appGroup.runtimeState },
+          singleApps: [singleApp],
+        });
+        demand = {
+          cpuNano: demand.cpuNano + fallback.cpuNano,
+          memoryBytes: demand.memoryBytes + fallback.memoryBytes,
+        };
+        continue;
+      }
+
+      const deployedReplicas =
+        snapshot.appGroup.runtimeState === "Running" &&
+        singleApp.runtimeState === "Running"
+          ? Math.max(0, singleApp.desiredReplicas)
+          : 0;
+      const liveRunning =
+        appGroup.runtimeState === "Running" &&
+        current.runtimeState === "Running";
+      const replicas = liveRunning
+        ? Math.max(
+            deployedReplicas,
+            Math.max(0, current.desiredReplicas),
+            Math.max(0, current.actualReplicas),
+          )
+        : Math.max(0, current.actualReplicas);
+      const liveDemand = snapshotDemand({
+        appGroup: { runtimeState: "Running" },
+        singleApps: [
+          {
+            runtimeState: "Running",
+            desiredReplicas: replicas,
+            resources: singleApp.resources,
+          },
+        ],
+      });
+      demand = {
+        cpuNano: demand.cpuNano + liveDemand.cpuNano,
+        memoryBytes: demand.memoryBytes + liveDemand.memoryBytes,
+      };
+    }
+
+    return demand;
   }
 
   private parseSnapshot(stackConfig: string | null): CapacityDeploymentSnapshot | null {
@@ -301,6 +388,7 @@ export class CapacityPreflightService {
       const parsed = JSON.parse(stackConfig) as CapacityDeploymentSnapshot;
       if (
         !parsed?.appGroup ||
+        typeof parsed.appGroup.id !== "string" ||
         typeof parsed.appGroup.runtimeState !== "string" ||
         !Array.isArray(parsed.singleApps)
       ) {
