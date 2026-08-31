@@ -7,6 +7,10 @@ import { HealthState, Prisma } from "@prisma/client";
 import { posix } from "node:path";
 import { AuthenticatedUser } from "../auth/types";
 import {
+  insufficientCapacityException,
+  platformUnavailableException,
+} from "../capacity/capacity-errors";
+import {
   CephFsBackendDescriptor,
   CephFsStorageAdapterService,
 } from "./cephfs-storage-adapter.service";
@@ -224,7 +228,7 @@ export class StorageBackendsService {
     });
 
     if (!healthy) {
-      throw new ServiceUnavailableException(
+      throw platformUnavailableException(
         "StorageBackend health is not writable",
       );
     }
@@ -233,13 +237,13 @@ export class StorageBackendsService {
 
   private assertPersistedWritable(backend: StorageBackendRow) {
     if (backend.maintenance) {
-      throw new ServiceUnavailableException("StorageBackend is in maintenance");
+      throw platformUnavailableException("StorageBackend is in maintenance");
     }
     if (backend.status !== "Ready") {
-      throw new ServiceUnavailableException("StorageBackend is not Ready");
+      throw platformUnavailableException("StorageBackend is not Ready");
     }
     if (!this.isWritableHealth(backend.health)) {
-      throw new ServiceUnavailableException(
+      throw platformUnavailableException(
         "StorageBackend health is not writable",
       );
     }
@@ -247,7 +251,7 @@ export class StorageBackendsService {
       backend.capacityTotal === null ||
       backend.capacityAvailable === null
     ) {
-      throw new ServiceUnavailableException(
+      throw platformUnavailableException(
         "StorageBackend capacity is unavailable",
       );
     }
@@ -263,15 +267,17 @@ export class StorageBackendsService {
       backend.capacityTotal === null ||
       backend.capacityAvailable === null
     ) {
-      throw new ServiceUnavailableException(
+      throw platformUnavailableException(
         "StorageBackend capacity is unavailable",
       );
     }
     if (committedBytes + requestedReservationBytes > backend.capacityTotal) {
-      throw new ConflictException("StorageBackend capacity exceeded");
+      throw insufficientCapacityException("StorageBackend capacity exceeded");
     }
     if (physicalGrowthBytes > backend.capacityAvailable) {
-      throw new ConflictException("StorageBackend available capacity exceeded");
+      throw insufficientCapacityException(
+        "StorageBackend available capacity exceeded",
+      );
     }
   }
 
