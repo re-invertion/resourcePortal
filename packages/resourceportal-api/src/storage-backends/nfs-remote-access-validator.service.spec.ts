@@ -35,9 +35,37 @@ function harness(results: Array<{ exitCode: number; stdout: string; stderr: stri
 }
 
 describe("NfsRemoteAccessValidatorService", () => {
+  it("lists all Swarm nodes and counts only Ready statuses", async () => {
+    const { validator, runner } = harness([
+      {
+        exitCode: 0,
+        stdout: "node-a|Ready\nnode-b|Down\nnode-c|Ready",
+        stderr: "",
+      },
+      { exitCode: 0, stdout: "probe-service", stderr: "" },
+      { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ]);
+
+    await expect(validator.validate("/rp")).resolves.toEqual({
+      ok: true,
+      skipped: false,
+      error: null,
+    });
+
+    expect(runner.run).toHaveBeenNthCalledWith(1, "docker", [
+      "--context",
+      "default",
+      "node",
+      "ls",
+      "--format",
+      "{{.ID}}|{{.Status}}",
+    ]);
+  });
+
   it("quotes comma-separated local-driver NFS options for docker service create", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a\nnode-b", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready\nnode-b|Ready", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -65,7 +93,7 @@ describe("NfsRemoteAccessValidatorService", () => {
 
   it("validates the CephFS export through a temporary global Swarm service", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a\nnode-b", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready\nnode-b|Ready", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -97,7 +125,7 @@ describe("NfsRemoteAccessValidatorService", () => {
 
   it("removes the probe service after a failed task", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Rejected 1 second ago|mount failed", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
