@@ -92,7 +92,19 @@ export class OperationsRepository {
           SELECT * FROM inserted
         `);
 
-    const operation = rows[0];
+    let operation = rows[0];
+    if (!operation && idempotencyKey) {
+      const conflictRows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+        SELECT *
+        FROM "Operation"
+        WHERE "tenantId" = ${input.tenantId}::uuid
+          AND "type" = ${input.type}
+          AND "idempotencyKey" = ${idempotencyKey}
+        LIMIT 1
+      `);
+      operation = conflictRows[0];
+    }
+
     if (!operation) {
       throw new Error("Operation could not be created or resolved idempotently");
     }
