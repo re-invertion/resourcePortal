@@ -18,7 +18,8 @@
     "smoke:deploy": "ts-node --files scripts/smoke-deploy.ts",
     "smoke:stage9-ingress": "ts-node --files scripts/smoke-stage9-ingress.ts",
     "smoke:volume-lifecycle": "ts-node --files scripts/smoke-volume-lifecycle.ts",
-    "smoke:stage11-quota-concurrency": "ts-node --files scripts/smoke-stage11-quota-concurrency.ts"
+    "smoke:stage11-quota-concurrency": "ts-node --files scripts/smoke-stage11-quota-concurrency.ts",
+    "smoke:stage13-platform-infrastructure": "ts-node --files scripts/smoke-stage13-platform-infrastructure.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

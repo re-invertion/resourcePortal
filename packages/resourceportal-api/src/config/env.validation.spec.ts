@@ -85,6 +85,25 @@ describe("validateEnv", () => {
     );
   });
 
+  it("accepts a positive Stage 13 infrastructure reconcile interval", () => {
+    const env = {
+      ...validBaseEnv,
+      SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS: "30000",
+    };
+    expect(validateEnv(env)).toBe(env);
+  });
+
+  it("rejects an invalid Stage 13 infrastructure reconcile interval", () => {
+    expect(() =>
+      validateEnv({
+        ...validBaseEnv,
+        SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS: "0",
+      }),
+    ).toThrow(
+      "SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS must be a positive integer",
+    );
+  });
+
   it("requires secure cookies and a non-default internal token in production", () => {
     expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
       "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",

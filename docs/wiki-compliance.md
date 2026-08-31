@@ -22,6 +22,7 @@ Checked wiki documents:
 - Billing
 - Quota
 - Secret
+- Swarm Runtime & Remote Location
 
 ## Implemented And Broadly Aligned
 
@@ -40,6 +41,7 @@ Checked wiki documents:
 - Deployment Engine with async jobs, idempotency key support, worker lease/heartbeat, deployment events, generated stack YAML, Swarm apply, rollout checks, and automatic rollback paths.
 - Billing account, transactions, usage records, top-up operation, and audit for top-up.
 - Audit log model and read endpoint.
+- Platform infrastructure inventory for one global Docker Swarm: `RemoteLocation = Docker Swarm node`, stable identity by Swarm node ID, platform-admin cluster/node APIs, manager-side reconciliation and heartbeat semantics, node lifecycle/health/maintenance, total and scheduler-available CPU/RAM, GPU/network capabilities, and maintenance delegated to Docker `drain/active`. No separate `SwarmNode` or per-node RP agent is introduced.
 - API observability: request ids, structured HTTP logs, structured worker logs, liveness/readiness endpoints, and Prometheus-style metrics.
 - Swagger, SDK, and CLI for the implemented public API surface.
 
@@ -73,6 +75,18 @@ Ingress cleanup is intentionally cleanup-only. The worker may remove obsolete RP
 
 Stage 9 verification includes unit/regression coverage for all four protocol modes, resolver labels, Domain TLS normalization, certificate observation/reconciliation, wildcard hostname coverage, failure isolation, and cleanup namespace safety. The Real Docker Swarm workflow additionally deploys an HTTPS endpoint plus managed Domain, verifies the live service has the expected host/TLS/certresolver labels, detaches the Domain, runs reconciliation, and verifies the router labels are removed while the service label remains. CI intentionally does not contact Let's Encrypt or claim a real public-CA issuance test.
 
+## Stage 13 Platform Infrastructure Decision
+
+Resource Portal operates against one global Docker Swarm and observes it through the configured manager/`DOCKER_CONTEXT`. `RemoteLocation` is exactly one Swarm node; there is no duplicate `SwarmNode` domain model and no RP agent on each worker. Swarm membership itself is the secure node-registration boundary, so Resource Portal only inventories nodes already authenticated into the Swarm.
+
+A manager-side reconciler discovers node identity, hostname, role, Docker status/availability, health, total CPU/RAM, deterministic GPU/network capabilities, and `lastSeenAt`. Missing nodes are retained and marked `Removed`; incomplete observations never mass-mark known nodes as removed. Periodic successful manager observation serves as the Stage 13 heartbeat model.
+
+`availableCpuNano` and `availableMemoryBytes` are Stage 13 scheduler-available capacity, not live operating-system free resources: a `Ready/Active` node exposes its total discovered capacity as available, while `Drain`, `Pause`, unavailable and removed nodes expose zero. Stage 15 may refine allocatable capacity using reservations/usage without changing the Remote Location identity model.
+
+Platform admins can reconcile inventory and enter/leave maintenance. Maintenance maps directly to Docker node availability `drain/active`, persists only after Docker succeeds, changes available CPU/RAM accordingly, and is audited globally. Tenant users do not select nodes and Resource Portal does not replace Swarm placement/rescheduling/HA.
+
+Stage 13 verification includes unit/service/access-policy tests and the Real Docker Swarm smoke. The smoke discovers the actual manager node, verifies non-zero total CPU/RAM and scheduler-available capacity, exercises `active -> drain -> active`, verifies available capacity becomes zero while drained and is restored afterwards, and always restores Docker availability during cleanup.
+
 ## Known Gaps Against Wiki
 
 - External directory group mapping is not implemented yet.
@@ -89,10 +103,10 @@ Stage 9 verification includes unit/regression coverage for all four protocol mod
 - Drift detection is represented by `driftStatus`, but full Swarm reconciliation/drift scanner is not implemented.
 - Resolved image digest is not stored in deployment history.
 - Generated stack preview is exposed; rendered YAML export is not exposed as a dedicated public API operation yet.
-- Platform infrastructure models such as Remote Location, HA Cluster, Swarm Cluster, Swarm Node, Storage Backend, and Placement Engine are intentionally not implemented yet. `StorageBackend` is also the planned owner of physical per-volume quota enforcement and backend-specific resize semantics referenced by Stage 7.
+- `StorageBackend` and the Placement/Capacity Engine remain later-stage platform infrastructure work. Stage 13 does not implement physical storage backends, user-controlled node placement, live OS resource telemetry, or a custom scheduler.
 
 ## Current Assessment
 
-The backend implements the core Resource Portal control-plane MVP for tenants, workloads, storage, domains, registries, deployments, auth, audit, SDK, CLI, and observability.
+The backend implements the core Resource Portal control-plane MVP for tenants, workloads, storage, domains, registries, deployments, auth, audit, platform Swarm inventory, SDK, CLI, and observability.
 
 It is not yet a complete implementation of the full wiki model. The largest missing areas are Resource Portal Identity beyond basic OIDC/ZITADEL login, service-identity models, AppGroup-level secrets, billing automation, and full deployment reconciliation/drift detection.

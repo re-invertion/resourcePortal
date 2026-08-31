@@ -33,6 +33,11 @@ export function validateEnv(config: Env) {
     "DOMAIN_CERTIFICATE_RECONCILE_INTERVAL_MS",
   );
   requirePositiveIntegerIfSet(config, errors, "INGRESS_RECONCILE_INTERVAL_MS");
+  requirePositiveIntegerIfSet(
+    config,
+    errors,
+    "SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS",
+  );
   requirePatternIfSet(
     config,
     errors,

@@ -16,6 +16,7 @@ import { IdentityProvidersModule } from "./identity-providers/identity-providers
 import { InternalModule } from "./internal/internal.module";
 import { ObservabilityModule } from "./observability/observability.module";
 import { OAuthApplicationsModule } from "./oauth-applications/oauth-applications.module";
+import { PlatformInfrastructureModule } from "./platform-infrastructure/platform-infrastructure.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
 import { SecurityModule } from "./security/security.module";
@@ -48,6 +49,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     AuditModule,
     InternalModule,
     ObservabilityModule,
+    PlatformInfrastructureModule,
   ],
   providers: [
     {
