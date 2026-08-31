@@ -84,6 +84,7 @@ export class VolumesService {
           data: {
             id: volumeId,
             tenantId,
+            storageBackendId: reservation.backend.id,
             name: dto.name,
             description: dto.description,
             storagePath: reservation.storagePath,
