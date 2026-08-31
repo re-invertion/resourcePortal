@@ -49,9 +49,17 @@ INSERT INTO "StorageBackend" (
 
 ALTER TABLE "Volume"
   ADD COLUMN "storageBackendId" UUID NOT NULL
-  DEFAULT '00000000-0000-4000-8000-000000000014'::uuid;
+  DEFAULT '00000000-0000-4000-8000-000000000014'::uuid,
+  ADD COLUMN "pendingSizeBytes" BIGINT;
+
+ALTER TABLE "Volume"
+  ADD CONSTRAINT "Volume_pendingSizeBytes_check"
+  CHECK ("pendingSizeBytes" IS NULL OR "pendingSizeBytes" >= "sizeBytes");
 
 CREATE INDEX "Volume_storageBackendId_idx" ON "Volume"("storageBackendId");
+CREATE INDEX "Volume_storageBackend_pendingSize_idx"
+  ON "Volume"("storageBackendId", "pendingSizeBytes")
+  WHERE "pendingSizeBytes" IS NOT NULL;
 
 ALTER TABLE "Volume"
   ADD CONSTRAINT "Volume_storageBackendId_fkey"
