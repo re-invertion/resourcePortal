@@ -4,7 +4,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import type { AuthenticatedUser } from "../auth/types";
-import type { OperationType } from "./operation.types";
+import { OperationEventBus } from "./operation-event-bus";
+import type { OperationRecord, OperationType } from "./operation.types";
 import { OperationsRepository } from "./operations.repository";
 
 export type EnqueueOperationInput = {
@@ -20,10 +21,13 @@ export type EnqueueOperationInput = {
 
 @Injectable()
 export class OperationsService {
-  constructor(private readonly repository: OperationsRepository) {}
+  constructor(
+    private readonly repository: OperationsRepository,
+    private readonly eventBus?: OperationEventBus,
+  ) {}
 
-  enqueue(input: EnqueueOperationInput) {
-    return this.repository.createOperation({
+  async enqueue(input: EnqueueOperationInput) {
+    const operation = await this.repository.createOperation({
       type: input.type,
       tenantId: input.tenantId,
       resourceType: input.resourceType,
@@ -35,6 +39,8 @@ export class OperationsService {
       idempotencyKey: input.idempotencyKey ?? null,
       maxAttempts: input.maxAttempts,
     });
+    await this.publish(operation, "OperationCreated");
+    return operation;
   }
 
   list(tenantId: string) {
@@ -76,6 +82,23 @@ export class OperationsService {
       message: "Operation was manually re-queued",
       details: { previousStatus: operation.status },
     });
+    await this.publish(retried, "ManualRetryRequested", {
+      previousStatus: operation.status,
+    });
     return retried;
+  }
+
+  private publish(operation: OperationRecord, event: string, details?: unknown) {
+    return this.eventBus?.publish({
+      operationId: operation.id,
+      type: operation.type,
+      tenantId: operation.tenantId,
+      resourceType: operation.resourceType,
+      resourceId: operation.resourceId,
+      status: operation.status,
+      phase: operation.phase,
+      event,
+      details,
+    });
   }
 }

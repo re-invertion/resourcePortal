@@ -1,11 +1,13 @@
 import { Injectable } from "@nestjs/common";
+import { OperationEventBus } from "./operation-event-bus";
+import { OperationExecutorRegistry } from "./operation-executor-registry";
 import {
   computeRetryDelayMs,
   isRetryableOperationError,
   operationErrorCode,
   operationErrorMessage,
 } from "./operation-retry";
-import { OperationExecutorRegistry } from "./operation-executor-registry";
+import type { OperationRecord, OperationStatus } from "./operation.types";
 import { OperationsRepository } from "./operations.repository";
 
 @Injectable()
@@ -13,6 +15,7 @@ export class OperationsWorkerService {
   constructor(
     private readonly repository: OperationsRepository,
     private readonly registry: OperationExecutorRegistry,
+    private readonly eventBus?: OperationEventBus,
   ) {}
 
   async processNext(workerId: string, leaseSeconds: number) {
@@ -26,6 +29,10 @@ export class OperationsWorkerService {
       event: "ExecutionStarted",
       message: `Operation execution started by worker ${workerId}`,
       details: { attempt: operation.attempt, workerId },
+    });
+    await this.publish(operation, "Running", "ExecutionStarted", {
+      attempt: operation.attempt,
+      workerId,
     });
 
     const heartbeatIntervalMs = Math.max(
@@ -54,6 +61,13 @@ export class OperationsWorkerService {
         message: "Operation execution succeeded",
         details: execution.result ?? null,
       });
+      await this.publish(
+        operation,
+        "Succeeded",
+        "ExecutionSucceeded",
+        execution.result ?? null,
+        execution.resourceId ?? operation.resourceId,
+      );
 
       return completed;
     } catch (error: unknown) {
@@ -74,18 +88,20 @@ export class OperationsWorkerService {
           errorMessage,
         );
 
+        const details = {
+          attempt: operation.attempt,
+          errorCode,
+          errorMessage,
+          nextAttemptAt: nextAttemptAt.toISOString(),
+        };
         await this.repository.appendEvent(operation.id, {
           phase: operation.phase,
           level: "Warn",
           event: "RetryScheduled",
           message: `Operation retry scheduled after ${retryDelayMs}ms`,
-          details: {
-            attempt: operation.attempt,
-            errorCode,
-            errorMessage,
-            nextAttemptAt: nextAttemptAt.toISOString(),
-          },
+          details,
         });
+        await this.publish(operation, "Pending", "RetryScheduled", details);
         return pending;
       }
 
@@ -95,20 +111,42 @@ export class OperationsWorkerService {
         errorCode,
         errorMessage,
       );
+      const details = {
+        attempt: operation.attempt,
+        errorCode,
+        errorMessage,
+      };
       await this.repository.appendEvent(operation.id, {
         phase: operation.phase,
         level: "Error",
         event: "ExecutionFailed",
         message: "Operation execution failed",
-        details: {
-          attempt: operation.attempt,
-          errorCode,
-          errorMessage,
-        },
+        details,
       });
+      await this.publish(operation, "Failed", "ExecutionFailed", details);
       return failed;
     } finally {
       clearInterval(heartbeat);
     }
+  }
+
+  private publish(
+    operation: OperationRecord,
+    status: OperationStatus,
+    event: string,
+    details?: unknown,
+    resourceId = operation.resourceId,
+  ) {
+    return this.eventBus?.publish({
+      operationId: operation.id,
+      type: operation.type,
+      tenantId: operation.tenantId,
+      resourceType: operation.resourceType,
+      resourceId,
+      status,
+      phase: operation.phase,
+      event,
+      details,
+    });
   }
 }
