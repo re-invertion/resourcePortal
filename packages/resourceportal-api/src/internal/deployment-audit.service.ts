@@ -13,12 +13,12 @@ const TERMINAL_FAILURE_STATUSES = new Set<DeploymentStatus>([
 export class DeploymentAuditService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly deploymentOperations: DeploymentOperationAdapterService,
+    private readonly deploymentOperations?: DeploymentOperationAdapterService,
   ) {}
 
   async recordStarted(deploymentId: string) {
     const deployment = await this.findDeployment(deploymentId);
-    await this.deploymentOperations.syncDeploymentOutcome(deployment);
+    await this.deploymentOperations?.syncDeploymentOutcome(deployment);
     const action = "appgroup.deploy.started";
 
     if (
@@ -48,7 +48,7 @@ export class DeploymentAuditService {
       return;
     }
 
-    await this.deploymentOperations.syncDeploymentOutcome(deployment);
+    await this.deploymentOperations?.syncDeploymentOutcome(deployment);
 
     const action = succeeded
       ? "appgroup.deploy.succeeded"
