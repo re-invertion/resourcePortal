@@ -72,6 +72,10 @@ describe("SwarmInfrastructureService", () => {
         id: "remote-1",
         swarmNodeId: "node-1",
         hostname: "manager-1",
+        cpuNano: 4_000_000_000n,
+        availableCpuNano: 4_000_000_000n,
+        memoryBytes: 8_589_934_592n,
+        availableMemoryBytes: 8_589_934_592n,
         gpuCount: 0,
         networkCapabilities: [],
       }),
@@ -79,6 +83,10 @@ describe("SwarmInfrastructureService", () => {
     expect(store.upsertRemoteLocation).toHaveBeenCalledWith(
       expect.objectContaining({
         swarmNodeId: "node-2",
+        cpuNano: 2_000_000_000n,
+        availableCpuNano: 2_000_000_000n,
+        memoryBytes: 4_294_967_296n,
+        availableMemoryBytes: 4_294_967_296n,
         gpuCount: 1,
         networkCapabilities: ["overlay"],
       }),
@@ -136,6 +144,8 @@ describe("SwarmInfrastructureService", () => {
         availability: "Active",
         health: "Healthy",
         maintenance: false,
+        cpuNano: 4_000_000_000n,
+        memoryBytes: 8_589_934_592n,
       }),
       setRemoteLocationMaintenance: vi.fn(),
     };
@@ -162,7 +172,7 @@ describe("SwarmInfrastructureService", () => {
     expect(audit.recordMaintenance).not.toHaveBeenCalled();
   });
 
-  it("persists drain maintenance after Docker update succeeds", async () => {
+  it("persists zero available capacity while a Remote Location is drained", async () => {
     const store = {
       getRemoteLocation: vi.fn().mockResolvedValue({
         id: "remote-1",
@@ -172,12 +182,18 @@ describe("SwarmInfrastructureService", () => {
         availability: "Active",
         health: "Healthy",
         maintenance: false,
+        cpuNano: 4_000_000_000n,
+        memoryBytes: 8_589_934_592n,
       }),
       setRemoteLocationMaintenance: vi.fn().mockResolvedValue({
         id: "remote-1",
         maintenance: true,
         availability: "Drain",
         health: "Degraded",
+        cpuNano: 4_000_000_000n,
+        availableCpuNano: 0n,
+        memoryBytes: 8_589_934_592n,
+        availableMemoryBytes: 0n,
       }),
     };
     const docker = {
@@ -202,6 +218,8 @@ describe("SwarmInfrastructureService", () => {
         maintenance: true,
         availability: "Drain",
         health: "Degraded",
+        availableCpuNano: 0n,
+        availableMemoryBytes: 0n,
       },
     );
     expect(audit.recordMaintenance).toHaveBeenCalledWith(
@@ -212,7 +230,12 @@ describe("SwarmInfrastructureService", () => {
       }),
     );
     expect(result).toEqual(
-      expect.objectContaining({ maintenance: true, availability: "Drain" }),
+      expect.objectContaining({
+        maintenance: true,
+        availability: "Drain",
+        availableCpuNano: "0",
+        availableMemoryBytes: "0",
+      }),
     );
   });
 });
