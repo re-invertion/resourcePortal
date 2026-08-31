@@ -112,6 +112,38 @@ describe("Stage 16 OperationsRepository", () => {
     expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 
+  it("re-reads the existing operation when a concurrent idempotent insert loses the conflict race", async () => {
+    expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
+    const { OperationsRepository } = await loadRepositoryModule();
+
+    const concurrentWinner: OperationRow = {
+      ...operationRow,
+      idempotencyKey: "same-request",
+    };
+    const queryRaw = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([concurrentWinner]);
+    const prisma = { $queryRaw: queryRaw } as unknown as PrismaService;
+    const repository = new OperationsRepository(prisma);
+
+    const result = await repository.createOperation({
+      type: "DOMAIN_VERIFY",
+      tenantId: operationRow.tenantId,
+      resourceType: "Domain",
+      resourceId: operationRow.resourceId,
+      createdBy: operationRow.createdBy,
+      createdByEmail: operationRow.createdByEmail,
+      createdByDisplayName: operationRow.createdByDisplayName,
+      input: {},
+      idempotencyKey: "same-request",
+    });
+
+    expect(result.id).toBe(concurrentWinner.id);
+    expect(result.idempotencyKey).toBe("same-request");
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
   it("claims only an eligible queued operation and returns its Running state", async () => {
     expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
     const { OperationsRepository } = await loadRepositoryModule();
