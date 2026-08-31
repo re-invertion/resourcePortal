@@ -1,15 +1,15 @@
 import { PrismaClient } from "@prisma/client";
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveCephFsLocalPath } from "../src/storage-backends/storage-backend.logic";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
   .replace(/\/$/, "");
-const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
+const cephFsMountRoot = process.env.CEPHFS_MOUNT_ROOT ?? "/";
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -17,7 +17,7 @@ const userId =
 let createdTenantId: string | undefined;
 let createdVolumeId: string | undefined;
 let storagePath: string | undefined;
-let dockerVolumeName: string | undefined;
+let physicalStoragePath: string | undefined;
 
 async function main() {
   const tenant = await api<JsonObject>("/tenants", {
@@ -51,10 +51,17 @@ async function main() {
   });
   createdVolumeId = stringField(volume, "id");
   storagePath = stringField(volume, "storagePath");
-  dockerVolumeName = stringField(volume, "dockerVolumeName");
+  physicalStoragePath = resolveCephFsLocalPath(
+    cephFsMountRoot,
+    "/rp",
+    storagePath,
+  );
 
-  await mkdir(storagePath, { recursive: true });
-  await writeFile(join(storagePath, "stage7-usage.bin"), Buffer.alloc(8192, 1));
+  await mkdir(physicalStoragePath, { recursive: true });
+  await writeFile(
+    join(physicalStoragePath, "stage7-usage.bin"),
+    Buffer.alloc(8192, 1),
+  );
 
   const measured = await api<JsonObject>(
     `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
@@ -68,49 +75,27 @@ async function main() {
     );
   }
 
-  await docker([
-    "volume",
-    "create",
-    "--driver",
-    "local",
-    "--opt",
-    "type=none",
-    "--opt",
-    "o=bind",
-    "--opt",
-    `device=${storagePath}`,
-    dockerVolumeName,
-  ]);
-
   await api(`/tenants/${createdTenantId}/volumes/${createdVolumeId}`, {
     method: "DELETE",
   });
 
-  const inspect = await docker(
-    ["volume", "inspect", dockerVolumeName],
-    true,
-  );
-  if (inspect.exitCode === 0) {
-    throw new Error(`Docker volume ${dockerVolumeName} still exists after DELETE`);
-  }
-
-  if (existsSync(storagePath)) {
-    throw new Error(`Storage path ${storagePath} still exists after DELETE`);
+  if (existsSync(physicalStoragePath)) {
+    throw new Error(
+      `Physical storage path ${physicalStoragePath} still exists after DELETE`,
+    );
   }
 
   createdVolumeId = undefined;
   storagePath = undefined;
-  dockerVolumeName = undefined;
-  console.log("Stage 7 volume lifecycle smoke completed successfully");
+  physicalStoragePath = undefined;
+  console.log("Stage 7 volume lifecycle smoke completed successfully through Stage 14 StorageBackend");
 }
 
 async function cleanup() {
-  if (dockerVolumeName) {
-    await docker(["volume", "rm", dockerVolumeName], true);
-  }
-
-  if (storagePath) {
-    await rm(storagePath, { recursive: true, force: true }).catch(() => undefined);
+  if (physicalStoragePath) {
+    await rm(physicalStoragePath, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 
   if (createdVolumeId) {
@@ -153,47 +138,6 @@ async function api<T = unknown>(
   }
 
   return payload as T;
-}
-
-function docker(args: string[], ignoreFailure = false) {
-  return command("docker", [
-    ...(dockerContext ? ["--context", dockerContext] : []),
-    ...args,
-  ]).then((result) => {
-    if (!ignoreFailure && result.exitCode !== 0) {
-      throw new Error(
-        result.stderr || result.stdout || `docker ${args.join(" ")} failed`,
-      );
-    }
-
-    return result;
-  });
-}
-
-function command(commandName: string, args: string[]) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-    (resolveCommand) => {
-      const child = spawn(commandName, args, {
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-
-      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-      child.on("error", (error) => {
-        resolveCommand({ exitCode: 127, stdout: "", stderr: error.message });
-      });
-      child.on("close", (code) => {
-        resolveCommand({
-          exitCode: code ?? 1,
-          stdout: Buffer.concat(stdout).toString("utf8"),
-          stderr: Buffer.concat(stderr).toString("utf8"),
-        });
-      });
-    },
-  );
 }
 
 function stringField(value: JsonObject, field: string) {
