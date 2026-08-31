@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveRemoteLocationHealth,
+  deriveSchedulableCapacity,
   deriveSwarmClusterHealth,
   parseNodeCapabilities,
   planInventoryReconciliation,
@@ -25,6 +26,40 @@ describe("Stage 13 platform infrastructure logic", () => {
 
   it("maps an unknown node state to Unknown", () => {
     expect(deriveRemoteLocationHealth("Unknown", "Active")).toBe("Unknown");
+  });
+
+  it("exposes total CPU and RAM as schedulable available capacity for Ready Active nodes", () => {
+    expect(
+      deriveSchedulableCapacity(
+        "Ready",
+        "Active",
+        4_000_000_000n,
+        8_589_934_592n,
+      ),
+    ).toEqual({
+      availableCpuNano: 4_000_000_000n,
+      availableMemoryBytes: 8_589_934_592n,
+    });
+  });
+
+  it("reports zero schedulable available capacity for drained, paused, or unavailable nodes", () => {
+    for (const [status, availability] of [
+      ["Ready", "Drain"],
+      ["Ready", "Pause"],
+      ["Down", "Active"],
+    ] as const) {
+      expect(
+        deriveSchedulableCapacity(
+          status,
+          availability,
+          4_000_000_000n,
+          8_589_934_592n,
+        ),
+      ).toEqual({
+        availableCpuNano: 0n,
+        availableMemoryBytes: 0n,
+      });
+    }
   });
 
   it("derives Healthy cluster when a ready manager exists and every node is ready", () => {
