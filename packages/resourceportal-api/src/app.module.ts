@@ -21,6 +21,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
 import { SecurityModule } from "./security/security.module";
 import { ServiceIdentitiesModule } from "./service-identities/service-identities.module";
+import { StorageBackendsModule } from "./storage-backends/storage-backends.module";
 import { TenantsModule } from "./tenants/tenants.module";
 import { UsersModule } from "./users/users.module";
 import { VolumesModule } from "./volumes/volumes.module";
@@ -50,6 +51,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     InternalModule,
     ObservabilityModule,
     PlatformInfrastructureModule,
+    StorageBackendsModule,
   ],
   providers: [
     {
