@@ -30,7 +30,9 @@ CREATE TABLE "RemoteLocation" (
   "health" TEXT NOT NULL DEFAULT 'Unknown',
   "maintenance" BOOLEAN NOT NULL DEFAULT false,
   "cpuNano" BIGINT NOT NULL DEFAULT 0,
+  "availableCpuNano" BIGINT NOT NULL DEFAULT 0,
   "memoryBytes" BIGINT NOT NULL DEFAULT 0,
+  "availableMemoryBytes" BIGINT NOT NULL DEFAULT 0,
   "gpuCount" INTEGER NOT NULL DEFAULT 0,
   "networkCapabilities" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   "lastSeenAt" TIMESTAMP(3),
@@ -46,7 +48,15 @@ CREATE TABLE "RemoteLocation" (
   CONSTRAINT "RemoteLocation_health_check"
     CHECK ("health" IN ('Healthy', 'Degraded', 'Unhealthy', 'Unknown')),
   CONSTRAINT "RemoteLocation_capacity_check"
-    CHECK ("cpuNano" >= 0 AND "memoryBytes" >= 0 AND "gpuCount" >= 0)
+    CHECK (
+      "cpuNano" >= 0 AND
+      "availableCpuNano" >= 0 AND
+      "availableCpuNano" <= "cpuNano" AND
+      "memoryBytes" >= 0 AND
+      "availableMemoryBytes" >= 0 AND
+      "availableMemoryBytes" <= "memoryBytes" AND
+      "gpuCount" >= 0
+    )
 );
 
 CREATE UNIQUE INDEX "RemoteLocation_swarmNodeId_key"
