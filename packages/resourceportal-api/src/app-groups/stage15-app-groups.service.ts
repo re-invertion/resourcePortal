@@ -70,7 +70,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     appGroupId: string,
     actor: AuthenticatedUser,
   ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
+    await this.assertStage15ExternalRuntimeUnblocked(tenantId, appGroupId);
     const { appGroup, targets } = await this.stage15Prisma.$transaction(
       async (tx) => {
         const current = await tx.appGroup.findFirst({
@@ -164,7 +164,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     singleAppId: string,
     actor: AuthenticatedUser,
   ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
+    await this.assertStage15ExternalRuntimeUnblocked(tenantId, appGroupId);
     const { singleApp, targets } = await this.stage15Prisma.$transaction(
       async (tx) => {
         const appGroup = await tx.appGroup.findFirst({
@@ -261,7 +261,7 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     };
   }
 
-  private async assertExternalRuntimeUnblocked(
+  private async assertStage15ExternalRuntimeUnblocked(
     tenantId: string,
     appGroupId: string,
   ) {
