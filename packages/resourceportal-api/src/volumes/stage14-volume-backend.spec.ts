@@ -12,24 +12,42 @@ const actor = {
 } as const;
 
 const tenantId = "33333333-3333-4333-8333-333333333333";
+const backend = {
+  id: "00000000-0000-4000-8000-000000000014",
+  name: "default-cephfs",
+  type: "CephFS" as const,
+  basePath: "/rp",
+  volumeBasePath: "/rp/volumes",
+  secretBasePath: "/rp/secrets",
+  status: "Ready" as const,
+  health: "Healthy" as const,
+  maintenance: false,
+  capacityTotal: 10_000n,
+  capacityAvailable: 10_000n,
+  lastValidatedAt: new Date(),
+  lastValidationError: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
 
 function createHarness() {
   let insideTransaction = false;
+  let createdVolume: Record<string, unknown> | undefined;
   const tx = {
     $queryRaw: vi.fn(() => Promise.resolve([{ locked: true }])),
     quota: { findUnique: vi.fn(() => Promise.resolve(null)) },
     volume: {
       findMany: vi.fn(() => Promise.resolve([])),
-      create: vi.fn(({ data }: { data: Record<string, unknown> }) =>
-        Promise.resolve({
+      create: vi.fn(({ data }: { data: Record<string, unknown> }) => {
+        createdVolume = {
           ...data,
           usedSizeBytes: null,
-          status: VolumeStatus.Ready,
           createdAt: new Date(),
           updatedAt: new Date(),
           attachments: [],
-        }),
-      ),
+        };
+        return Promise.resolve(createdVolume);
+      }),
     },
   };
   const prisma = {
@@ -41,14 +59,28 @@ function createHarness() {
         insideTransaction = false;
       }
     }),
+    volume: {
+      update: vi.fn(() =>
+        Promise.resolve({
+          ...createdVolume,
+          status: VolumeStatus.Ready,
+          attachments: [],
+        }),
+      ),
+      deleteMany: vi.fn(() => Promise.resolve({ count: 0 })),
+    },
   };
   const storageBackends = {
+    refreshDefaultBackendForWrite: vi.fn(() => Promise.resolve(backend)),
+    reserveVolume: vi.fn((_tx: unknown, input: { tenantId: string; volumeId: string }) =>
+      Promise.resolve({
+        backend,
+        storagePath: `/rp/volumes/${input.tenantId}/${input.volumeId}`,
+      }),
+    ),
     provisionVolume: vi.fn(() => {
       expect(insideTransaction).toBe(false);
-      return Promise.resolve({
-        backendId: "00000000-0000-4000-8000-000000000014",
-        storagePath: "/rp/volumes/tenant/volume",
-      });
+      return Promise.resolve();
     }),
     cleanupProvisionedVolume: vi.fn(() => Promise.resolve()),
   };
@@ -70,6 +102,7 @@ describe("Stage 14 Volume backend transaction boundaries", () => {
       actor,
     );
 
+    expect(storageBackends.reserveVolume).toHaveBeenCalledTimes(1);
     expect(storageBackends.provisionVolume).toHaveBeenCalledTimes(1);
   });
 });
