@@ -115,9 +115,9 @@ describe("Stage 15 runtime capacity boundary", () => {
 
     const tx = {
       appGroup: {
-        findFirst: vi.fn().mockImplementation(async () => {
+        findFirst: vi.fn().mockImplementation(() => {
           order.push("read");
-          return {
+          return Promise.resolve({
             id: appGroupId,
             tenantId,
             name: "api",
@@ -125,7 +125,7 @@ describe("Stage 15 runtime capacity boundary", () => {
             runtimeState: RuntimeState.Stopped,
             currentDeploymentVersion: null,
             singleApps: [],
-          };
+          });
         }),
         update: vi.fn().mockResolvedValue({
           id: appGroupId,
@@ -162,17 +162,18 @@ describe("Stage 15 runtime capacity boundary", () => {
       ),
     } as unknown as PrismaService;
     const capacity = {
-      lockRuntimeMutation: vi.fn().mockImplementation(async () => {
+      lockRuntimeMutation: vi.fn().mockImplementation(() => {
         order.push("lock");
+        return Promise.resolve();
       }),
-      admitRuntimeStart: vi.fn().mockImplementation(async () => {
+      admitRuntimeStart: vi.fn().mockImplementation(() => {
         order.push("admit");
-        return {
+        return Promise.resolve({
           success: true,
           demand: { cpuNano: 0n, memoryBytes: 0n },
           occupied: { cpuNano: 0n, memoryBytes: 0n },
           supply: { cpuNano: 0n, memoryBytes: 0n },
-        };
+        });
       }),
     } as unknown as CapacityPreflightService;
     const service = new Stage15AppGroupsService(
@@ -199,9 +200,9 @@ describe("Stage 15 runtime capacity boundary", () => {
 
     const tx = {
       appGroup: {
-        findFirst: vi.fn().mockImplementation(async () => {
+        findFirst: vi.fn().mockImplementation(() => {
           order.push("read");
-          return {
+          return Promise.resolve({
             id: appGroupId,
             tenantId,
             name: "api",
@@ -209,7 +210,7 @@ describe("Stage 15 runtime capacity boundary", () => {
             runtimeState: RuntimeState.Running,
             currentDeploymentVersion: null,
             singleApps: [],
-          };
+          });
         }),
         update: vi.fn().mockResolvedValue({
           id: appGroupId,
@@ -233,8 +234,9 @@ describe("Stage 15 runtime capacity boundary", () => {
       ),
     } as unknown as PrismaService;
     const capacity = {
-      lockRuntimeMutation: vi.fn().mockImplementation(async () => {
+      lockRuntimeMutation: vi.fn().mockImplementation(() => {
         order.push("lock");
+        return Promise.resolve();
       }),
       admitRuntimeStart: vi.fn(),
     } as unknown as CapacityPreflightService;
