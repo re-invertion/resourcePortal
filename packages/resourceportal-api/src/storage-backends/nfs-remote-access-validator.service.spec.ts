@@ -18,11 +18,13 @@ function harness(results: Array<{ exitCode: number; stdout: string; stderr: stri
     }),
   };
   const runner = {
-    run: vi.fn((_program: string, _args: string[]) =>
-      Promise.resolve(
+    run: vi.fn((program: string, args: string[]) => {
+      void program;
+      void args;
+      return Promise.resolve(
         results.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
-      ),
-    ),
+      );
+    }),
   };
   const validator = new NfsRemoteAccessValidatorService(
     config as unknown as ConfigService,
