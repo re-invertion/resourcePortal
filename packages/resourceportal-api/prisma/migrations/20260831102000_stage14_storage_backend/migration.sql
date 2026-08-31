@@ -1,14 +1,17 @@
 -- Stage 14: platform StorageBackend backed by CephFS.
 
+CREATE TYPE "StorageBackendType" AS ENUM ('CephFS');
+CREATE TYPE "StorageBackendStatus" AS ENUM ('Ready', 'Error');
+
 CREATE TABLE "StorageBackend" (
   "id" UUID NOT NULL,
   "name" TEXT NOT NULL,
-  "type" TEXT NOT NULL DEFAULT 'CephFS',
+  "type" "StorageBackendType" NOT NULL DEFAULT 'CephFS',
   "basePath" TEXT NOT NULL DEFAULT '/rp',
   "volumeBasePath" TEXT NOT NULL DEFAULT '/rp/volumes',
   "secretBasePath" TEXT NOT NULL DEFAULT '/rp/secrets',
-  "status" TEXT NOT NULL DEFAULT 'Error',
-  "health" TEXT NOT NULL DEFAULT 'Unknown',
+  "status" "StorageBackendStatus" NOT NULL DEFAULT 'Error',
+  "health" "HealthState" NOT NULL DEFAULT 'Unknown',
   "maintenance" BOOLEAN NOT NULL DEFAULT false,
   "capacityTotal" BIGINT,
   "capacityAvailable" BIGINT,
@@ -17,9 +20,6 @@ CREATE TABLE "StorageBackend" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "StorageBackend_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "StorageBackend_type_check" CHECK ("type" IN ('CephFS')),
-  CONSTRAINT "StorageBackend_status_check" CHECK ("status" IN ('Ready', 'Error')),
-  CONSTRAINT "StorageBackend_health_check" CHECK ("health" IN ('Healthy', 'Degraded', 'Unhealthy', 'Unknown')),
   CONSTRAINT "StorageBackend_capacity_check" CHECK (
     ("capacityTotal" IS NULL OR "capacityTotal" >= 0) AND
     ("capacityAvailable" IS NULL OR "capacityAvailable" >= 0) AND
