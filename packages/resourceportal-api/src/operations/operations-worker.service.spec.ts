@@ -11,7 +11,7 @@ const implementationUrl = new URL(
   "./operations-worker.service.ts",
   import.meta.url,
 );
-const modulePath = `./${["operations", "worker", "service"].join("-")}`;
+const modulePath = `./${["operations", "worker"].join("-")}.service`;
 
 type RepositoryLike = {
   claimNext: (workerId: string, leaseSeconds: number) => Promise<OperationRecord | null>;
