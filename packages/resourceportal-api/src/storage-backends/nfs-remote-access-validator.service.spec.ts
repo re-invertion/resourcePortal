@@ -18,7 +18,11 @@ function harness(results: Array<{ exitCode: number; stdout: string; stderr: stri
     }),
   };
   const runner = {
-    run: vi.fn(() => Promise.resolve(results.shift() ?? { exitCode: 0, stdout: "", stderr: "" })),
+    run: vi.fn((_program: string, _args: string[]) =>
+      Promise.resolve(
+        results.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
+      ),
+    ),
   };
   const validator = new NfsRemoteAccessValidatorService(
     config as unknown as ConfigService,
@@ -46,12 +50,11 @@ describe("NfsRemoteAccessValidatorService", () => {
     const createCall = runner.run.mock.calls.find(
       ([program, args]) =>
         program === "docker" &&
-        Array.isArray(args) &&
         args.includes("service") &&
         args.includes("create"),
     );
     expect(createCall).toBeDefined();
-    const createArgs = createCall?.[1] as string[];
+    const createArgs = createCall?.[1] ?? [];
     const mountIndex = createArgs.indexOf("--mount");
     expect(createArgs[mountIndex + 1]).toBe(
       'type=volume,target=/probe,volume-driver=local,volume-opt=type=nfs,volume-opt=device=:/rp,"volume-opt=o=addr=10.0.0.15,rw,nfsvers=4.1"',
