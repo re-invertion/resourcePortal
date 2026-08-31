@@ -63,8 +63,10 @@ export class OperationsService {
   async retry(tenantId: string, operationId: string) {
     const operation = await this.get(tenantId, operationId);
     if (
-      operation.status !== "Failed" &&
-      operation.status !== "RollbackFailed"
+      operation.type === "APP_GROUP_DEPLOY" ||
+      operation.type === "APP_GROUP_ROLLBACK" ||
+      (operation.status !== "Failed" &&
+        operation.status !== "RollbackFailed")
     ) {
       throw new ConflictException("OperationNotRetryable");
     }
