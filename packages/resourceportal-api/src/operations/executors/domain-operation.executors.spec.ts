@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OperationRecord } from "../operation.types";
 
 const implementationUrl = new URL("./domain-operation.executors.ts", import.meta.url);
-const modulePath = `./${["domain", "operation", "executors"].join("-")}`;
+const modulePath = "./domain-operation.executors";
 
 describe("Stage 16 domain operation executor", () => {
   it("delegates DOMAIN_VERIFY to existing domain validation", async () => {

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { OperationRecord } from "../operation.types";
 
 const implementationUrl = new URL("./volume-operation.executors.ts", import.meta.url);
-const modulePath = `./${["volume", "operation", "executors"].join("-")}`;
+const modulePath = "./volume-operation.executors";
 
 const baseOperation = {
   id: "11111111-1111-4111-8111-111111111111",
