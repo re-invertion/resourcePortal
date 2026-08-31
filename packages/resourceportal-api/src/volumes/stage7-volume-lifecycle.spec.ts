@@ -1,7 +1,7 @@
-import { ConfigService } from "@nestjs/config";
 import { VolumeStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageBackendsService } from "../storage-backends/storage-backends.service";
 import { VolumesService } from "./volumes.service";
 
 const actor = {
@@ -50,31 +50,30 @@ function serviceFor(item = volume()) {
       findUnique: vi.fn(() => Promise.resolve(null)),
     },
   };
-  const config = {
-    get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
-  };
-  const storage = {
+  const storageBackends = {
     measureUsedSize: vi.fn(() => Promise.resolve(0n)),
-    deleteVolumeData: vi.fn(() => Promise.resolve()),
+    deleteVolume: vi.fn(() => Promise.resolve()),
   };
   const service = Reflect.construct(VolumesService, [
     prisma as unknown as PrismaService,
-    config as unknown as ConfigService,
-    storage,
+    storageBackends as unknown as StorageBackendsService,
   ]) as VolumesService;
 
-  return { prisma, storage, service };
+  return { prisma, storageBackends, service };
 }
 
-describe("Stage 7 volume lifecycle", () => {
+describe("Stage 7 volume lifecycle through Stage 14 backend", () => {
   it("refreshes usedSizeBytes from physical storage when a volume is read", async () => {
     const item = volume();
-    const { prisma, storage, service } = serviceFor(item);
-    storage.measureUsedSize.mockResolvedValue(4096n);
+    const { prisma, storageBackends, service } = serviceFor(item);
+    storageBackends.measureUsedSize.mockResolvedValue(4096n);
 
     const result = await service.getVolume(item.tenantId, item.id);
 
-    expect(storage.measureUsedSize).toHaveBeenCalledWith(item.storagePath);
+    expect(storageBackends.measureUsedSize).toHaveBeenCalledWith(
+      item.id,
+      item.storagePath,
+    );
     expect(prisma.volume.update).toHaveBeenCalledWith({
       where: { id: item.id },
       data: { usedSizeBytes: 4096n },
@@ -83,34 +82,32 @@ describe("Stage 7 volume lifecycle", () => {
     expect(result.usedSizeBytes).toBe("4096");
   });
 
-  it("removes Docker and filesystem data before deleting the database record", async () => {
+  it("removes backend data before deleting the database record", async () => {
     const item = volume();
-    const { prisma, storage, service } = serviceFor(item);
+    const { prisma, storageBackends, service } = serviceFor(item);
 
     await service.deleteVolume(item.tenantId, item.id, actor);
 
-    expect(storage.deleteVolumeData).toHaveBeenCalledWith({
-      tenantId: item.tenantId,
-      volumeId: item.id,
-      storagePath: item.storagePath,
-      dockerVolumeName: item.dockerVolumeName,
-    });
+    expect(storageBackends.deleteVolume).toHaveBeenCalledWith(
+      item.id,
+      item.storagePath,
+    );
     expect(prisma.volume.delete).toHaveBeenCalledWith({
       where: { id: item.id },
     });
-    expect(storage.deleteVolumeData.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(storageBackends.deleteVolume.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.volume.delete.mock.invocationCallOrder[0],
     );
   });
 
   it("keeps the database record and marks the volume Error when physical cleanup fails", async () => {
     const item = volume();
-    const { prisma, storage, service } = serviceFor(item);
-    storage.deleteVolumeData.mockRejectedValue(new Error("docker unavailable"));
+    const { prisma, storageBackends, service } = serviceFor(item);
+    storageBackends.deleteVolume.mockRejectedValue(new Error("ceph unavailable"));
 
     await expect(
       service.deleteVolume(item.tenantId, item.id, actor),
-    ).rejects.toThrow("docker unavailable");
+    ).rejects.toThrow("ceph unavailable");
 
     expect(prisma.volume.delete).not.toHaveBeenCalled();
     expect(prisma.volume.update).toHaveBeenLastCalledWith({
@@ -124,13 +121,13 @@ describe("Stage 7 volume lifecycle", () => {
 
   it("does not touch physical storage while the volume has attachments", async () => {
     const item = volume({ attachments: [{ id: "attachment-1" }] });
-    const { prisma, storage, service } = serviceFor(item);
+    const { prisma, storageBackends, service } = serviceFor(item);
 
     await expect(
       service.deleteVolume(item.tenantId, item.id, actor),
     ).rejects.toThrow("VolumeInUse");
 
-    expect(storage.deleteVolumeData).not.toHaveBeenCalled();
+    expect(storageBackends.deleteVolume).not.toHaveBeenCalled();
     expect(prisma.volume.delete).not.toHaveBeenCalled();
   });
 });
