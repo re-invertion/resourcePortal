@@ -58,8 +58,8 @@ export class NfsRemoteAccessValidatorService {
       "target=/probe",
       "volume-driver=local",
       "volume-opt=type=nfs",
-      `volume-opt=o=addr=${server}\\,nfsvers=${version}\\,rw`,
       `volume-opt=device=:${basePath}`,
+      `"volume-opt=o=addr=${server},rw,nfsvers=${version}"`,
     ].join(",");
     const create = await this.docker([
       "service",
