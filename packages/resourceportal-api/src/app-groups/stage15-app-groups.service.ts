@@ -73,6 +73,8 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     await this.assertStage15ExternalRuntimeUnblocked(tenantId, appGroupId);
     const { appGroup, targets } = await this.stage15Prisma.$transaction(
       async (tx) => {
+        await this.capacityPreflight.lockRuntimeMutation(tx);
+
         const current = await tx.appGroup.findFirst({
           where: { id: appGroupId, tenantId },
           include: {
@@ -158,6 +160,94 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     };
   }
 
+  async stopAppGroup(
+    tenantId: string,
+    appGroupId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const { appGroup, targets } = await this.stage15Prisma.$transaction(
+      async (tx) => {
+        await this.capacityPreflight.lockRuntimeMutation(tx);
+
+        const current = await tx.appGroup.findFirst({
+          where: { id: appGroupId, tenantId },
+          include: {
+            singleApps: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+
+        if (!current) {
+          throw new NotFoundException("App Group not found");
+        }
+
+        await this.assertStage15NoActiveDeployment(tx, appGroupId);
+        const serviceNames = await this.stage15DeployedServiceNames(tx, current);
+        const targets: RuntimeScaleTarget[] = current.singleApps.flatMap(
+          (singleApp) => {
+            const deployedServiceName = serviceNames.get(singleApp.id);
+            if (!deployedServiceName) {
+              return [];
+            }
+
+            return [
+              {
+                stackName: this.stage15StackName(appGroupId),
+                serviceName: this.stage15ServiceName(deployedServiceName),
+                singleAppId: singleApp.id,
+                replicas: 0,
+              },
+            ];
+          },
+        );
+        const tenant = await tx.tenant.findUniqueOrThrow({
+          where: { id: tenantId },
+          select: { name: true },
+        });
+        const updated = await tx.appGroup.update({
+          where: { id: appGroupId },
+          data: {
+            runtimeState: RuntimeState.Stopped,
+            updatedBy: actor.id,
+          },
+          include: {
+            singleApps: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "appgroup.runtime.stopped",
+            resourceType: "AppGroup",
+            resourceId: appGroupId,
+            resourceName: current.name,
+            result: "Success",
+            changes: {
+              previousRuntimeState: current.runtimeState,
+              runtimeState: RuntimeState.Stopped,
+              runtimeApplied: targets.length > 0,
+            },
+          },
+        });
+
+        return { appGroup: updated, targets };
+      },
+    );
+
+    await this.applyStage15ScaleTargets(targets);
+    return {
+      appGroup: mapAppGroup(appGroup),
+      runtimeApplied: targets.length > 0,
+    };
+  }
+
   async startSingleApp(
     tenantId: string,
     appGroupId: string,
@@ -167,6 +257,8 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
     await this.assertStage15ExternalRuntimeUnblocked(tenantId, appGroupId);
     const { singleApp, targets } = await this.stage15Prisma.$transaction(
       async (tx) => {
+        await this.capacityPreflight.lockRuntimeMutation(tx);
+
         const appGroup = await tx.appGroup.findFirst({
           where: { id: appGroupId, tenantId },
           include: {
@@ -245,6 +337,100 @@ export class Stage15AppGroupsService extends Stage11AppGroupsService {
               appGroupName: appGroup.name,
               previousRuntimeState: existing.runtimeState,
               runtimeState: RuntimeState.Running,
+              runtimeApplied: targets.length > 0,
+            },
+          },
+        });
+
+        return { singleApp: updated, targets };
+      },
+    );
+
+    await this.applyStage15ScaleTargets(targets);
+    return {
+      singleApp: mapSingleApp(singleApp),
+      runtimeApplied: targets.length > 0,
+    };
+  }
+
+  async stopSingleApp(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const { singleApp, targets } = await this.stage15Prisma.$transaction(
+      async (tx) => {
+        await this.capacityPreflight.lockRuntimeMutation(tx);
+
+        const appGroup = await tx.appGroup.findFirst({
+          where: { id: appGroupId, tenantId },
+          include: {
+            singleApps: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        });
+
+        if (!appGroup) {
+          throw new NotFoundException("App Group not found");
+        }
+
+        const existing = appGroup.singleApps.find(
+          (singleApp) => singleApp.id === singleAppId,
+        );
+        if (!existing) {
+          throw new NotFoundException("SingleApp not found");
+        }
+        if (existing.pendingDeletion) {
+          throw new ConflictException("SingleApp is pending deletion");
+        }
+
+        await this.assertStage15NoActiveDeployment(tx, appGroupId);
+        const serviceNames = await this.stage15DeployedServiceNames(tx, appGroup);
+        const deployedServiceName = serviceNames.get(singleAppId);
+        const targets: RuntimeScaleTarget[] = deployedServiceName
+          ? [
+              {
+                stackName: this.stage15StackName(appGroupId),
+                serviceName: this.stage15ServiceName(deployedServiceName),
+                singleAppId,
+                replicas: 0,
+              },
+            ]
+          : [];
+        const tenant = await tx.tenant.findUniqueOrThrow({
+          where: { id: tenantId },
+          select: { name: true },
+        });
+        const updated = await tx.singleApp.update({
+          where: { id: singleAppId },
+          data: {
+            runtimeState: RuntimeState.Stopped,
+            updatedBy: actor.id,
+          },
+        });
+
+        await tx.appGroup.update({
+          where: { id: appGroupId },
+          data: { updatedBy: actor.id },
+        });
+        await tx.auditLogEntry.create({
+          data: {
+            tenantId,
+            tenantName: tenant.name,
+            actor: actor.id,
+            actorName: actor.displayName,
+            action: "singleapp.runtime.stopped",
+            resourceType: "SingleApp",
+            resourceId: singleAppId,
+            resourceName: existing.name,
+            result: "Success",
+            changes: {
+              appGroupId,
+              appGroupName: appGroup.name,
+              previousRuntimeState: existing.runtimeState,
+              runtimeState: RuntimeState.Stopped,
               runtimeApplied: targets.length > 0,
             },
           },
