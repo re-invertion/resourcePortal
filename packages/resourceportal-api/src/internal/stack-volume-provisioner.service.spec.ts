@@ -76,7 +76,7 @@ describe("StackVolumeProvisionerService", () => {
     const createArgs = (createCall?.[1] as string[] | undefined) ?? [];
     const mountIndex = createArgs.indexOf("--mount");
     expect(createArgs[mountIndex + 1]).toBe(
-      'type=volume,source=rp_vol_123,target=/probe,volume-driver=local,volume-opt=type=nfs,volume-opt=device=:/rp/volumes/tenant-a/volume-a,"volume-opt=o=addr=10.0.0.15,rw,nfsvers=4.1"',
+      'type=volume,source=rp_vol_123,target=/probe,volume-driver=local,volume-opt=type=nfs,volume-opt=device=:/rp/volumes/tenant-a/volume-a,"volume-opt=o=addr=10.0.0.15,nfsvers=4.1,rw"',
     );
   });
 });
