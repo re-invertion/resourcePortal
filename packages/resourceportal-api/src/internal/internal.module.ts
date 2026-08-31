@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
+import { CapacityModule } from "../capacity/capacity.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
 import { AuthSessionMaintenanceController } from "./auth-session-maintenance.controller";
@@ -21,7 +22,7 @@ import { StackVolumeProvisionerService } from "./stack-volume-provisioner.servic
 import { TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
 
 @Module({
-  imports: [AuthModule, PrismaModule, SecurityModule],
+  imports: [AuthModule, CapacityModule, PrismaModule, SecurityModule],
   controllers: [AuthSessionMaintenanceController, DeploymentWorkerController],
   providers: [
     DeploymentAuditService,
