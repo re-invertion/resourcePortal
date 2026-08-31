@@ -53,13 +53,17 @@ Fields:
 - `health` — `Healthy | Degraded | Unhealthy | Unknown`.
 - `maintenance` — RP maintenance flag; kept consistent with `availability=Drain` for RP-initiated maintenance.
 - `cpuNano` — total node CPU expressed as Docker NanoCPUs.
+- `availableCpuNano` — currently schedulable CPU capacity exposed by Stage 13.
 - `memoryBytes` — total node memory.
+- `availableMemoryBytes` — currently schedulable memory capacity exposed by Stage 13.
 - `gpuCount` — GPU capacity inferred from deterministic node labels, default `0`.
 - `networkCapabilities` — normalized string list inferred from deterministic node labels.
 - `lastSeenAt` — timestamp of last successful observation of this node.
 - timestamps.
 
 Node IDs are authoritative identity. Hostname changes update the existing record.
+
+Stage 13 defines `availableCpuNano` and `availableMemoryBytes` as **scheduler-available node capacity**, not as instantaneous operating-system free CPU or RAM. A `Ready/Active` node exposes its discovered total capacity as available; `Drain`, `Pause`, `Down`, `Disconnected`, `Unknown` and `Removed` expose zero available capacity. This keeps the manager-only architecture deterministic and avoids pretending that Docker Swarm manager inventory exposes live OS utilization. Stage 15 Capacity may refine allocatable capacity with reservations/usage without changing the Stage 13 identity model.
 
 ## Docker observation
 
@@ -78,11 +82,12 @@ All commands reuse the existing Docker context and runtime timeout handling.
 1. inspect the configured Swarm;
 2. list nodes;
 3. inspect each node;
-4. upsert `RemoteLocation` by `swarmNodeId`;
-5. mark previously known but no-longer-listed nodes as `Removed`;
-6. derive cluster health;
-7. upsert the singleton `SwarmCluster` record;
-8. write audit events for material lifecycle or maintenance changes.
+4. derive total and scheduler-available CPU/RAM capacity;
+5. upsert `RemoteLocation` by `swarmNodeId`;
+6. mark previously known but no-longer-listed nodes as `Removed` with zero available capacity;
+7. derive cluster health;
+8. upsert the singleton `SwarmCluster` record;
+9. write audit events for material lifecycle or maintenance changes.
 
 Health derivation:
 
@@ -128,15 +133,16 @@ Events:
 
 Stage 13 requires:
 
-- unit tests for health derivation and label capacity parsing;
-- service tests for idempotent reconciliation, node removal and maintenance failure semantics;
+- unit tests for health derivation, scheduler-available capacity and label capacity parsing;
+- service tests for idempotent reconciliation, node removal, capacity persistence and maintenance failure semantics;
 - controller access-policy coverage proving platform-admin protection;
-- a real Docker Swarm smoke that confirms node discovery and `active -> drain -> active` lifecycle;
+- a real Docker Swarm smoke that confirms node discovery, total/available CPU/RAM, and `active -> drain -> active` lifecycle with available capacity changing accordingly;
 - existing CI, Real Docker Swarm Integration and Live Federation Integration must remain green.
 
 ## Non-goals
 
 - no per-node RP agent;
+- no instantaneous OS free-CPU/free-RAM telemetry in Stage 13;
 - no user-selectable placement;
 - no custom placement engine;
 - no multi-cluster abstraction;
