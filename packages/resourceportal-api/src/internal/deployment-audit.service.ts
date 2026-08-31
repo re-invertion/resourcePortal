@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
+import { DeploymentOperationAdapterService } from "../operations/deployment-operation-adapter.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 const TERMINAL_FAILURE_STATUSES = new Set<DeploymentStatus>([
@@ -10,13 +11,23 @@ const TERMINAL_FAILURE_STATUSES = new Set<DeploymentStatus>([
 
 @Injectable()
 export class DeploymentAuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deploymentOperations: DeploymentOperationAdapterService,
+  ) {}
 
   async recordStarted(deploymentId: string) {
     const deployment = await this.findDeployment(deploymentId);
+    await this.deploymentOperations.syncDeploymentOutcome(deployment);
     const action = "appgroup.deploy.started";
 
-    if (await this.exists(deployment.appGroup.tenantId, deployment.correlationId, action)) {
+    if (
+      await this.exists(
+        deployment.appGroup.tenantId,
+        deployment.correlationId,
+        action,
+      )
+    ) {
       return;
     }
 
@@ -37,11 +48,19 @@ export class DeploymentAuditService {
       return;
     }
 
+    await this.deploymentOperations.syncDeploymentOutcome(deployment);
+
     const action = succeeded
       ? "appgroup.deploy.succeeded"
       : "appgroup.deploy.failed";
 
-    if (await this.exists(deployment.appGroup.tenantId, deployment.correlationId, action)) {
+    if (
+      await this.exists(
+        deployment.appGroup.tenantId,
+        deployment.correlationId,
+        action,
+      )
+    ) {
       return;
     }
 
@@ -92,7 +111,9 @@ export class DeploymentAuditService {
   }
 
   private auditData(
-    deployment: Awaited<ReturnType<DeploymentAuditService["findDeployment"]>>,
+    deployment: Awaited<
+      ReturnType<DeploymentAuditService["findDeployment"]>
+    >,
     event: {
       action: string;
       result: "Success" | "Failed";
