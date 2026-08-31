@@ -40,18 +40,29 @@ function serializedSnapshot(snapshot: CapacityDeploymentSnapshot) {
 describe("Stage 15 capacity preflight", () => {
   let queryRaw: ReturnType<typeof vi.fn>;
   let findDeployments: ReturnType<typeof vi.fn>;
+  let findLatestDeployment: ReturnType<typeof vi.fn>;
   let findVolumes: ReturnType<typeof vi.fn>;
+  let findAppGroup: ReturnType<typeof vi.fn>;
+  let findSingleApps: ReturnType<typeof vi.fn>;
   let tx: Prisma.TransactionClient;
   let service: CapacityPreflightService;
 
   beforeEach(() => {
     queryRaw = vi.fn();
     findDeployments = vi.fn().mockResolvedValue([]);
+    findLatestDeployment = vi.fn().mockResolvedValue(null);
     findVolumes = vi.fn().mockResolvedValue([]);
+    findAppGroup = vi.fn().mockResolvedValue(null);
+    findSingleApps = vi.fn().mockResolvedValue([]);
     tx = {
       $queryRaw: queryRaw,
-      appGroupDeployment: { findMany: findDeployments },
+      appGroupDeployment: {
+        findMany: findDeployments,
+        findFirst: findLatestDeployment,
+      },
       volume: { findMany: findVolumes },
+      appGroup: { findUnique: findAppGroup },
+      singleApp: { findMany: findSingleApps },
     } as unknown as Prisma.TransactionClient;
     service = new CapacityPreflightService();
   });
@@ -167,6 +178,224 @@ describe("Stage 15 capacity preflight", () => {
     await expect(
       service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
     ).resolves.toMatchObject({ success: true });
+  });
+
+  it("counts a workload started after its succeeded snapshot was Stopped", async () => {
+    platform({ cpuNano: 4_000_000_000n });
+    const otherAppGroupId = "00000000-0000-0000-0000-000000000104";
+    const otherSingleAppId = "00000000-0000-0000-0000-000000000204";
+    findDeployments.mockResolvedValue([
+      {
+        appGroupId: otherAppGroupId,
+        version: 1,
+        status: DeploymentStatus.Succeeded,
+        phase: DeploymentPhase.Completed,
+        stackConfig: JSON.stringify({
+          appGroup: {
+            id: otherAppGroupId,
+            tenantId: "00000000-0000-0000-0000-000000000202",
+            runtimeState: "Stopped",
+          },
+          singleApps: [
+            {
+              id: otherSingleAppId,
+              runtimeState: "Running",
+              desiredReplicas: 3,
+              resources: { cpu: "1", memoryBytes: "1024", gpu: 0 },
+              volumes: [],
+            },
+          ],
+        }),
+      },
+    ]);
+    findAppGroup.mockResolvedValue({
+      id: otherAppGroupId,
+      runtimeState: "Running",
+    });
+    findSingleApps.mockResolvedValue([
+      {
+        id: otherSingleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 3,
+        actualReplicas: 3,
+      },
+    ]);
+
+    await expect(
+      service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
+    ).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
+  });
+
+  it("keeps a stopping workload reserved while actual replicas are still running", async () => {
+    platform({ cpuNano: 4_000_000_000n });
+    const otherAppGroupId = "00000000-0000-0000-0000-000000000106";
+    const otherSingleAppId = "00000000-0000-0000-0000-000000000206";
+    findDeployments.mockResolvedValue([
+      {
+        appGroupId: otherAppGroupId,
+        version: 1,
+        status: DeploymentStatus.Succeeded,
+        phase: DeploymentPhase.Completed,
+        stackConfig: JSON.stringify({
+          appGroup: {
+            id: otherAppGroupId,
+            tenantId: "00000000-0000-0000-0000-000000000202",
+            runtimeState: "Running",
+          },
+          singleApps: [
+            {
+              id: otherSingleAppId,
+              runtimeState: "Running",
+              desiredReplicas: 1,
+              resources: { cpu: "3", memoryBytes: "1024", gpu: 0 },
+              volumes: [],
+            },
+          ],
+        }),
+      },
+    ]);
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([
+      {
+        id: otherSingleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 1,
+        actualReplicas: 1,
+      },
+    ]);
+
+    await expect(
+      service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
+    ).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
+  });
+
+  it("releases a stopped workload after actual replicas reach zero", async () => {
+    platform({ cpuNano: 4_000_000_000n });
+    const otherAppGroupId = "00000000-0000-0000-0000-000000000107";
+    const otherSingleAppId = "00000000-0000-0000-0000-000000000207";
+    findDeployments.mockResolvedValue([
+      {
+        appGroupId: otherAppGroupId,
+        version: 1,
+        status: DeploymentStatus.Succeeded,
+        phase: DeploymentPhase.Completed,
+        stackConfig: JSON.stringify({
+          appGroup: {
+            id: otherAppGroupId,
+            tenantId: "00000000-0000-0000-0000-000000000202",
+            runtimeState: "Running",
+          },
+          singleApps: [
+            {
+              id: otherSingleAppId,
+              runtimeState: "Running",
+              desiredReplicas: 1,
+              resources: { cpu: "3", memoryBytes: "1024", gpu: 0 },
+              volumes: [],
+            },
+          ],
+        }),
+      },
+    ]);
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([
+      {
+        id: otherSingleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 1,
+        actualReplicas: 0,
+      },
+    ]);
+
+    await expect(
+      service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
+    ).resolves.toMatchObject({ success: true });
+  });
+
+  it("rejects a direct AppGroup runtime start when its deployed demand cannot fit", async () => {
+    platform({ cpuNano: 2_000_000_000n });
+    const appGroupId = "00000000-0000-0000-0000-000000000105";
+    const singleAppId = "00000000-0000-0000-0000-000000000205";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000201",
+          runtimeState: "Stopped",
+        },
+        singleApps: [
+          {
+            id: singleAppId,
+            runtimeState: "Running",
+            desiredReplicas: 1,
+            resources: { cpu: "3", memoryBytes: "1024", gpu: 0 },
+            volumes: [],
+          },
+        ],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ id: appGroupId, runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([
+      {
+        id: singleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 1,
+        actualReplicas: 0,
+      },
+    ]);
+
+    await expect(
+      service.admitRuntimeStart(tx, { appGroupId }),
+    ).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
+  });
+
+  it("rejects a direct SingleApp runtime start when its deployed demand cannot fit", async () => {
+    platform({ cpuNano: 2_000_000_000n });
+    const appGroupId = "00000000-0000-0000-0000-000000000108";
+    const singleAppId = "00000000-0000-0000-0000-000000000208";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000201",
+          runtimeState: "Running",
+        },
+        singleApps: [
+          {
+            id: singleAppId,
+            runtimeState: "Stopped",
+            desiredReplicas: 1,
+            resources: { cpu: "3", memoryBytes: "1024", gpu: 0 },
+            volumes: [],
+          },
+        ],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ id: appGroupId, runtimeState: "Running" });
+    findSingleApps.mockResolvedValue([
+      {
+        id: singleAppId,
+        runtimeState: "Stopped",
+        desiredReplicas: 1,
+        actualReplicas: 0,
+      },
+    ]);
+
+    await expect(
+      service.admitRuntimeStart(tx, { appGroupId, singleAppId }),
+    ).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
   });
 
   it("returns PlatformUnavailable when a referenced StorageBackend is in maintenance", async () => {
