@@ -451,7 +451,7 @@ export class CapacityPreflightService {
 
       const currentRuntimeState =
         override?.singleAppId === singleApp.id
-          ? (override.singleAppRuntimeState ?? current.runtimeState)
+          ? (override?.singleAppRuntimeState ?? current.runtimeState)
           : current.runtimeState;
       const deployedReplicas =
         snapshot.appGroup.runtimeState === "Running" &&
