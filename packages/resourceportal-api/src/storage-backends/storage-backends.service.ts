@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { HealthState, Prisma } from "@prisma/client";
@@ -10,6 +11,7 @@ import {
   insufficientCapacityException,
   platformUnavailableException,
 } from "../capacity/capacity-errors";
+import { ObservabilityService } from "../observability/observability.service";
 import {
   CephFsBackendDescriptor,
   CephFsStorageAdapterService,
@@ -28,14 +30,19 @@ export class StorageBackendsService {
     private readonly store: StorageBackendStore,
     private readonly cephFs: CephFsStorageAdapterService,
     private readonly remoteAccess: NfsRemoteAccessValidatorService,
+    @Optional() private readonly observability?: ObservabilityService,
   ) {}
 
   async listBackends() {
-    return (await this.store.list()).map((backend) => this.mapBackend(backend));
+    const backends = await this.store.list();
+    await Promise.all(backends.map((backend) => this.publishBackendMetric(backend)));
+    return backends.map((backend) => this.mapBackend(backend));
   }
 
   async getBackend(id: string) {
-    return this.mapBackend(await this.store.require(id));
+    const backend = await this.store.require(id);
+    await this.publishBackendMetric(backend);
+    return this.mapBackend(backend);
   }
 
   async validateBackend(id: string) {
@@ -48,30 +55,29 @@ export class StorageBackendsService {
       const healthReady = this.isWritableHealth(local.health);
       const ready = healthReady && remote.ok;
       const error = remote.error;
-
-      return this.mapBackend(
-        await this.store.saveValidation(id, {
-          status: ready ? "Ready" : "Error",
-          health: local.health,
-          capacityTotal: local.capacityTotal,
-          capacityAvailable: local.capacityAvailable,
-          lastValidatedAt: now,
-          lastValidationError: ready && !remote.skipped ? null : error,
-        }),
-      );
+      const saved = await this.store.saveValidation(id, {
+        status: ready ? "Ready" : "Error",
+        health: local.health,
+        capacityTotal: local.capacityTotal,
+        capacityAvailable: local.capacityAvailable,
+        lastValidatedAt: now,
+        lastValidationError: ready && !remote.skipped ? null : error,
+      });
+      await this.publishBackendMetric(saved);
+      return this.mapBackend(saved);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "StorageBackend validation failed";
-      return this.mapBackend(
-        await this.store.saveValidation(id, {
-          status: "Error",
-          health: HealthState.Unknown,
-          capacityTotal: null,
-          capacityAvailable: null,
-          lastValidatedAt: now,
-          lastValidationError: message,
-        }),
-      );
+      const saved = await this.store.saveValidation(id, {
+        status: "Error",
+        health: HealthState.Unknown,
+        capacityTotal: null,
+        capacityAvailable: null,
+        lastValidatedAt: now,
+        lastValidationError: message,
+      });
+      await this.publishBackendMetric(saved);
+      return this.mapBackend(saved);
     }
   }
 
@@ -86,7 +92,9 @@ export class StorageBackendsService {
     actor: AuthenticatedUser,
   ) {
     void actor;
-    return this.mapBackend(await this.store.setMaintenance(id, enabled));
+    const backend = await this.store.setMaintenance(id, enabled);
+    await this.publishBackendMetric(backend);
+    return this.mapBackend(backend);
   }
 
   async refreshDefaultBackendForWrite() {
@@ -202,7 +210,9 @@ export class StorageBackendsService {
 
   async measureUsedSize(volumeId: string, storagePath: string) {
     const backend = await this.store.requireForVolume(volumeId);
-    return this.cephFs.measureUsedSize(backend, storagePath);
+    const usedSize = await this.cephFs.measureUsedSize(backend, storagePath);
+    await this.publishBackendMetric(backend);
+    return usedSize;
   }
 
   runtimeVolumeDefinition(storagePath: string) {
@@ -226,6 +236,7 @@ export class StorageBackendsService {
         ? backend.lastValidationError
         : "Ceph health is not writable",
     });
+    await this.publishBackendMetric(saved);
 
     if (!healthy) {
       throw platformUnavailableException(
@@ -233,6 +244,23 @@ export class StorageBackendsService {
       );
     }
     return saved;
+  }
+
+  private async publishBackendMetric(backend: StorageBackendRow) {
+    if (!this.observability) {
+      return;
+    }
+    const usedBytes = await this.store.usedCapacity(backend.id);
+    this.observability.recordStorageBackendSnapshot({
+      id: backend.id,
+      name: backend.name,
+      status: backend.status,
+      health: backend.health,
+      maintenance: backend.maintenance,
+      capacityTotal: backend.capacityTotal,
+      capacityAvailable: backend.capacityAvailable,
+      usedBytes,
+    });
   }
 
   private assertPersistedWritable(backend: StorageBackendRow) {
