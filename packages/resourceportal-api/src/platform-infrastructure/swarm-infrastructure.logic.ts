@@ -38,6 +38,19 @@ export function deriveRemoteLocationHealth(
   return availability === "Active" ? "Healthy" : "Degraded";
 }
 
+export function deriveSchedulableCapacity(
+  status: RemoteLocationStatus,
+  availability: RemoteLocationAvailability,
+  cpuNano: bigint,
+  memoryBytes: bigint,
+) {
+  const schedulable = status === "Ready" && availability === "Active";
+  return {
+    availableCpuNano: schedulable ? cpuNano : 0n,
+    availableMemoryBytes: schedulable ? memoryBytes : 0n,
+  };
+}
+
 export function deriveSwarmClusterHealth(
   nodes: Array<{
     role: RemoteLocationRole;
