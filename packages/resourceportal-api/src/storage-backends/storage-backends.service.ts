@@ -139,6 +139,7 @@ export class StorageBackendsService {
     tx: Prisma.TransactionClient,
     input: {
       volumeId: string;
+      storagePath: string;
       requestedSizeBytes: bigint;
       currentSizeBytes: bigint;
       actorId: string;
@@ -168,7 +169,7 @@ export class StorageBackendsService {
       actorId: input.actorId,
     });
 
-    return { backend, storagePath: "" };
+    return { backend, storagePath: input.storagePath };
   }
 
   async resizeVolume(
