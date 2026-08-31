@@ -3,11 +3,20 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { HealthState } from "@prisma/client";
+import { HealthState, Prisma } from "@prisma/client";
+import { posix } from "node:path";
 import { AuthenticatedUser } from "../auth/types";
-import { CephFsStorageAdapterService } from "./cephfs-storage-adapter.service";
+import {
+  CephFsBackendDescriptor,
+  CephFsStorageAdapterService,
+} from "./cephfs-storage-adapter.service";
 import { NfsRemoteAccessValidatorService } from "./nfs-remote-access-validator.service";
 import { StorageBackendRow, StorageBackendStore } from "./storage-backend.store";
+
+export type StorageBackendReservation = {
+  backend: StorageBackendRow;
+  storagePath: string;
+};
 
 @Injectable()
 export class StorageBackendsService {
@@ -18,7 +27,7 @@ export class StorageBackendsService {
   ) {}
 
   async listBackends() {
-    return Promise.all((await this.store.list()).map((backend) => this.mapBackend(backend)));
+    return (await this.store.list()).map((backend) => this.mapBackend(backend));
   }
 
   async getBackend(id: string) {
@@ -32,9 +41,7 @@ export class StorageBackendsService {
     try {
       const local = await this.cephFs.validateLocal();
       const remote = await this.remoteAccess.validate(backend.basePath);
-      const healthReady =
-        local.health === HealthState.Healthy ||
-        local.health === HealthState.Degraded;
+      const healthReady = this.isWritableHealth(local.health);
       const ready = healthReady && remote.ok;
       const error = remote.error;
 
@@ -49,7 +56,8 @@ export class StorageBackendsService {
         }),
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "StorageBackend validation failed";
+      const message =
+        error instanceof Error ? error.message : "StorageBackend validation failed";
       return this.mapBackend(
         await this.store.saveValidation(id, {
           status: "Error",
@@ -68,44 +76,118 @@ export class StorageBackendsService {
     return this.validateBackend(backend.id);
   }
 
-  async setMaintenance(id: string, enabled: boolean, _actor: AuthenticatedUser) {
+  async setMaintenance(
+    id: string,
+    enabled: boolean,
+    actor: AuthenticatedUser,
+  ) {
+    void actor;
     return this.mapBackend(await this.store.setMaintenance(id, enabled));
   }
 
-  async provisionVolume(input: {
-    tenantId: string;
-    volumeId: string;
-    sizeBytes: bigint;
-  }) {
-    const backend = await this.requireWritableBackend(input.sizeBytes);
-    const result = await this.cephFs.provisionVolume(backend, input);
-    return { backendId: backend.id, storagePath: result.storagePath };
+  async refreshDefaultBackendForWrite() {
+    return this.refreshBackendForWrite(await this.store.requireDefault());
   }
 
-  async cleanupProvisionedVolume(backendId: string, storagePath: string) {
-    const backend = await this.store.require(backendId);
+  async refreshVolumeBackendForWrite(volumeId: string) {
+    return this.refreshBackendForWrite(
+      await this.store.requireForVolume(volumeId),
+    );
+  }
+
+  async reserveVolume(
+    tx: Prisma.TransactionClient,
+    input: { tenantId: string; volumeId: string; sizeBytes: bigint },
+  ): Promise<StorageBackendReservation> {
+    await this.store.lockCapacity(tx);
+    const backend = await this.store.requireDefaultInTransaction(tx);
+    this.assertPersistedWritable(backend);
+
+    const committed = await this.store.committedCapacity(tx, backend.id);
+    this.assertCapacity(backend, committed, input.sizeBytes, input.sizeBytes);
+
+    return {
+      backend,
+      storagePath: posix.join(
+        backend.volumeBasePath,
+        input.tenantId,
+        input.volumeId,
+      ),
+    };
+  }
+
+  async provisionVolume(
+    reservation: StorageBackendReservation,
+    input: { tenantId: string; volumeId: string; sizeBytes: bigint },
+  ) {
+    const result = await this.cephFs.provisionVolume(reservation.backend, input);
+    if (result.storagePath !== reservation.storagePath) {
+      throw new ServiceUnavailableException(
+        "StorageBackend returned an unexpected Volume path",
+      );
+    }
+  }
+
+  async cleanupProvisionedVolume(
+    backend: CephFsBackendDescriptor,
+    storagePath: string,
+  ) {
     await this.cephFs.deleteVolume(backend, storagePath);
   }
 
-  async resizeVolume(input: {
-    volumeId: string;
-    storagePath: string;
-    requestedSizeBytes: bigint;
-    currentSizeBytes: bigint;
-  }) {
+  async reserveResize(
+    tx: Prisma.TransactionClient,
+    input: {
+      volumeId: string;
+      requestedSizeBytes: bigint;
+      currentSizeBytes: bigint;
+      actorId: string;
+    },
+  ): Promise<StorageBackendReservation> {
     const growth = input.requestedSizeBytes - input.currentSizeBytes;
     if (growth < 0n) {
       throw new ConflictException("Volume cannot be shrunk");
     }
-    if (growth === 0n) return;
 
-    const backend = await this.store.requireForVolume(input.volumeId);
-    await this.assertWritableBackend(backend, growth);
+    await this.store.lockCapacity(tx);
+    const backend = await this.store.requireForVolumeInTransaction(
+      tx,
+      input.volumeId,
+    );
+    this.assertPersistedWritable(backend);
+
+    const committed = await this.store.committedCapacity(
+      tx,
+      backend.id,
+      input.volumeId,
+    );
+    this.assertCapacity(backend, committed, input.requestedSizeBytes, growth);
+    await this.store.reserveResize(tx, {
+      volumeId: input.volumeId,
+      pendingSizeBytes: input.requestedSizeBytes,
+      actorId: input.actorId,
+    });
+
+    return { backend, storagePath: "" };
+  }
+
+  async resizeVolume(
+    reservation: StorageBackendReservation,
+    input: { storagePath: string; requestedSizeBytes: bigint },
+  ) {
     await this.cephFs.resizeVolume(
-      backend,
+      reservation.backend,
       input.storagePath,
       input.requestedSizeBytes,
     );
+  }
+
+  completeResize(volumeId: string, sizeBytes: bigint, actorId: string) {
+    return this.store.completeResize(volumeId, sizeBytes, actorId);
+  }
+
+  failResize(volumeId: string, actorId: string) {
+    return this.store.failResize(volumeId, actorId);
   }
 
   async deleteVolume(volumeId: string, storagePath: string) {
@@ -125,41 +207,75 @@ export class StorageBackendsService {
     };
   }
 
-  private async requireWritableBackend(requiredBytes: bigint) {
-    const backend = await this.store.requireDefault();
-    await this.assertWritableBackend(backend, requiredBytes);
-    return backend;
+  private async refreshBackendForWrite(backend: StorageBackendRow) {
+    this.assertPersistedWritable(backend);
+    const live = await this.cephFs.validateLocal();
+    const healthy = this.isWritableHealth(live.health);
+    const saved = await this.store.saveValidation(backend.id, {
+      status: healthy ? "Ready" : "Error",
+      health: live.health,
+      capacityTotal: live.capacityTotal,
+      capacityAvailable: live.capacityAvailable,
+      lastValidatedAt: new Date(),
+      lastValidationError: healthy
+        ? backend.lastValidationError
+        : "Ceph health is not writable",
+    });
+
+    if (!healthy) {
+      throw new ServiceUnavailableException(
+        "StorageBackend health is not writable",
+      );
+    }
+    return saved;
   }
 
-  private async assertWritableBackend(
-    backend: StorageBackendRow,
-    requiredBytes: bigint,
-  ) {
+  private assertPersistedWritable(backend: StorageBackendRow) {
     if (backend.maintenance) {
       throw new ServiceUnavailableException("StorageBackend is in maintenance");
     }
     if (backend.status !== "Ready") {
       throw new ServiceUnavailableException("StorageBackend is not Ready");
     }
-
-    const live = await this.cephFs.validateLocal();
-    const healthy =
-      live.health === HealthState.Healthy || live.health === HealthState.Degraded;
-    await this.store.saveValidation(backend.id, {
-      status: healthy ? backend.status : "Error",
-      health: live.health,
-      capacityTotal: live.capacityTotal,
-      capacityAvailable: live.capacityAvailable,
-      lastValidatedAt: new Date(),
-      lastValidationError: healthy ? backend.lastValidationError : "Ceph health is not writable",
-    });
-
-    if (!healthy) {
-      throw new ServiceUnavailableException("StorageBackend health is not writable");
+    if (!this.isWritableHealth(backend.health)) {
+      throw new ServiceUnavailableException(
+        "StorageBackend health is not writable",
+      );
     }
-    if (live.capacityAvailable < requiredBytes) {
+    if (
+      backend.capacityTotal === null ||
+      backend.capacityAvailable === null
+    ) {
+      throw new ServiceUnavailableException(
+        "StorageBackend capacity is unavailable",
+      );
+    }
+  }
+
+  private assertCapacity(
+    backend: StorageBackendRow,
+    committedBytes: bigint,
+    requestedReservationBytes: bigint,
+    physicalGrowthBytes: bigint,
+  ) {
+    if (
+      backend.capacityTotal === null ||
+      backend.capacityAvailable === null
+    ) {
+      throw new ServiceUnavailableException(
+        "StorageBackend capacity is unavailable",
+      );
+    }
+    if (committedBytes + requestedReservationBytes > backend.capacityTotal) {
       throw new ConflictException("StorageBackend capacity exceeded");
     }
+    if (physicalGrowthBytes > backend.capacityAvailable) {
+      throw new ConflictException("StorageBackend available capacity exceeded");
+    }
+  }
+
+  private isWritableHealth(health: HealthState) {
+    return health === HealthState.Healthy || health === HealthState.Degraded;
   }
 
   private mapBackend(backend: StorageBackendRow) {
