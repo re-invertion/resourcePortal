@@ -33,7 +33,9 @@ export type RemoteLocationRow = {
   health: InfrastructureHealth;
   maintenance: boolean;
   cpuNano: bigint;
+  availableCpuNano: bigint;
   memoryBytes: bigint;
+  availableMemoryBytes: bigint;
   gpuCount: number;
   networkCapabilities: string[];
   lastSeenAt: Date | null;
@@ -88,7 +90,9 @@ export class SwarmInfrastructureStore {
     health: InfrastructureHealth;
     maintenance: boolean;
     cpuNano: bigint;
+    availableCpuNano: bigint;
     memoryBytes: bigint;
+    availableMemoryBytes: bigint;
     gpuCount: number;
     networkCapabilities: string[];
     lastSeenAt: Date;
@@ -101,8 +105,9 @@ export class SwarmInfrastructureStore {
     await this.prisma.$executeRaw`
       INSERT INTO "RemoteLocation" (
         "id", "swarmNodeId", "hostname", "role", "status", "availability",
-        "health", "maintenance", "cpuNano", "memoryBytes", "gpuCount",
-        "networkCapabilities", "lastSeenAt", "createdAt", "updatedAt"
+        "health", "maintenance", "cpuNano", "availableCpuNano", "memoryBytes",
+        "availableMemoryBytes", "gpuCount", "networkCapabilities", "lastSeenAt",
+        "createdAt", "updatedAt"
       ) VALUES (
         ${input.id}::uuid,
         ${input.swarmNodeId},
@@ -113,7 +118,9 @@ export class SwarmInfrastructureStore {
         ${input.health},
         ${input.maintenance},
         ${input.cpuNano},
+        ${input.availableCpuNano},
         ${input.memoryBytes},
+        ${input.availableMemoryBytes},
         ${input.gpuCount},
         ${networkCapabilities},
         ${input.lastSeenAt},
@@ -128,7 +135,9 @@ export class SwarmInfrastructureStore {
         "health" = EXCLUDED."health",
         "maintenance" = EXCLUDED."maintenance",
         "cpuNano" = EXCLUDED."cpuNano",
+        "availableCpuNano" = EXCLUDED."availableCpuNano",
         "memoryBytes" = EXCLUDED."memoryBytes",
+        "availableMemoryBytes" = EXCLUDED."availableMemoryBytes",
         "gpuCount" = EXCLUDED."gpuCount",
         "networkCapabilities" = EXCLUDED."networkCapabilities",
         "lastSeenAt" = EXCLUDED."lastSeenAt",
@@ -143,6 +152,8 @@ export class SwarmInfrastructureStore {
         "status" = 'Removed',
         "health" = 'Unhealthy',
         "maintenance" = false,
+        "availableCpuNano" = 0,
+        "availableMemoryBytes" = 0,
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
     `;
@@ -196,6 +207,8 @@ export class SwarmInfrastructureStore {
       maintenance: boolean;
       availability: RemoteLocationAvailability;
       health: InfrastructureHealth;
+      availableCpuNano: bigint;
+      availableMemoryBytes: bigint;
     },
   ) {
     const rows = await this.prisma.$queryRaw<RemoteLocationRow[]>`
@@ -204,6 +217,8 @@ export class SwarmInfrastructureStore {
         "maintenance" = ${input.maintenance},
         "availability" = ${input.availability},
         "health" = ${input.health},
+        "availableCpuNano" = ${input.availableCpuNano},
+        "availableMemoryBytes" = ${input.availableMemoryBytes},
         "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${id}::uuid
       RETURNING *
