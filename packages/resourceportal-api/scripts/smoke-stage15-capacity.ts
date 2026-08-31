@@ -45,7 +45,7 @@ async function main() {
   await api(`/tenants/${tenantId}/quota`, {
     method: "PATCH",
     body: {
-      cpu: 12800,
+      cpu: 100000,
       memoryBytes: 53687091200,
       gpu: 0,
       storageBytes: 1073741824,
