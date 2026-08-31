@@ -29,7 +29,11 @@ async function main() {
     `/platform/storage-backends/${backendId}/validate`,
     { method: "POST" },
   );
-  expectField(validated, "status", "Ready");
+  if (validated.status !== "Ready") {
+    throw new Error(
+      `StorageBackend validation failed: ${JSON.stringify(validated)}`,
+    );
+  }
 
   const health = stringField(validated, "health");
   if (health !== "Healthy" && health !== "Degraded") {
