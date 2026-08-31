@@ -52,19 +52,17 @@ export class StackVolumeProvisionerService {
     const nodes = await this.runDocker([
       "node",
       "ls",
-      "--filter",
-      "status=ready",
       "--format",
-      "{{.ID}}",
+      "{{.ID}}|{{.Status}}",
     ]);
     if (nodes.exitCode !== 0) {
       return {
         success: false,
-        message: "Unable to enumerate Ready Swarm nodes",
+        message: "Unable to enumerate Swarm nodes",
         details: nodes.stderr || nodes.stdout || nodes.command,
       };
     }
-    const nodeCount = nodes.stdout.split("\n").filter(Boolean).length;
+    const nodeCount = this.readyNodeCount(nodes.stdout);
     if (nodeCount === 0) {
       return {
         success: false,
@@ -191,6 +189,14 @@ export class StackVolumeProvisionerService {
     }
 
     return { success: false, details: "Timed out waiting for NFS volume provisioning" };
+  }
+
+  private readyNodeCount(output: string) {
+    return output
+      .split("\n")
+      .filter(Boolean)
+      .filter((line) => line.split("|").at(-1)?.trim().toLowerCase() === "ready")
+      .length;
   }
 
   private uniqueVolumes(volumes: ProvisionVolume[]) {
