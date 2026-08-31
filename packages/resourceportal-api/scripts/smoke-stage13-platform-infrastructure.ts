@@ -21,7 +21,9 @@ type RemoteLocation = {
   health: string;
   maintenance: boolean;
   cpuNano: string;
+  availableCpuNano: string;
   memoryBytes: string;
+  availableMemoryBytes: string;
 };
 
 async function main() {
@@ -45,8 +47,17 @@ async function main() {
   assert(remoteLocation.status === "Ready", "Local Swarm node was not Ready");
   assert(BigInt(remoteLocation.cpuNano) > 0n, "Remote Location CPU capacity was not captured");
   assert(
+    BigInt(remoteLocation.availableCpuNano) === BigInt(remoteLocation.cpuNano),
+    "Active Remote Location available CPU did not match total schedulable CPU",
+  );
+  assert(
     BigInt(remoteLocation.memoryBytes) > 0n,
     "Remote Location memory capacity was not captured",
+  );
+  assert(
+    BigInt(remoteLocation.availableMemoryBytes) ===
+      BigInt(remoteLocation.memoryBytes),
+    "Active Remote Location available memory did not match total schedulable memory",
   );
 
   let maintenanceEnabled = false;
@@ -64,6 +75,11 @@ async function main() {
     assert(drained.maintenance, "Remote Location maintenance flag was not enabled");
     assert(drained.availability === "Drain", "Remote Location was not drained");
     assert(
+      BigInt(drained.availableCpuNano) === 0n &&
+        BigInt(drained.availableMemoryBytes) === 0n,
+      "Drained Remote Location still exposed schedulable CPU or memory",
+    );
+    assert(
       docker(["node", "inspect", nodeId, "--format", "{{.Spec.Availability}}"])
         .trim()
         .toLowerCase() === "drain",
@@ -79,6 +95,11 @@ async function main() {
     assert(
       observedDrain.maintenance && observedDrain.availability === "Drain",
       "Reconcile did not preserve RP-managed maintenance",
+    );
+    assert(
+      BigInt(observedDrain.availableCpuNano) === 0n &&
+        BigInt(observedDrain.availableMemoryBytes) === 0n,
+      "Reconcile restored schedulable capacity while node remained drained",
     );
   } finally {
     if (maintenanceEnabled) {
@@ -126,6 +147,11 @@ async function main() {
   assert(!restored.maintenance, "Remote Location maintenance flag stayed enabled");
   assert(restored.availability === "Active", "Remote Location did not return to Active");
   assert(restored.health === "Healthy", "Remote Location did not return to Healthy");
+  assert(
+    BigInt(restored.availableCpuNano) === BigInt(restored.cpuNano) &&
+      BigInt(restored.availableMemoryBytes) === BigInt(restored.memoryBytes),
+    "Restored Remote Location did not recover schedulable capacity",
+  );
 
   if (restoreApiError) {
     throw restoreApiError;
@@ -208,7 +234,9 @@ function remoteLocationPayload(value: unknown): RemoteLocation {
     "availability",
     "health",
     "cpuNano",
+    "availableCpuNano",
     "memoryBytes",
+    "availableMemoryBytes",
   ] as const;
   for (const field of requiredStrings) {
     if (typeof payload[field] !== "string") {
