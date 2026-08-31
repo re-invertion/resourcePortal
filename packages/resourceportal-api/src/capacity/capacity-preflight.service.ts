@@ -40,6 +40,19 @@ export type CapacityDeploymentSnapshot = {
   >;
 };
 
+export type CapacityAdmissionResult =
+  | {
+      success: true;
+      demand: CapacityDemand;
+      occupied: CapacityDemand;
+      supply: CapacityDemand;
+    }
+  | {
+      success: false;
+      errorCode: CapacityErrorCode;
+      message: string;
+    };
+
 type PlatformCapacityRow = {
   health: string;
   availableCpuNano: bigint;
@@ -55,18 +68,11 @@ type DeploymentReservationRow = {
   stackConfig: string | null;
 };
 
-type CapacityAdmissionResult =
-  | {
-      success: true;
-      demand: CapacityDemand;
-      occupied: CapacityDemand;
-      supply: CapacityDemand;
-    }
-  | {
-      success: false;
-      errorCode: CapacityErrorCode;
-      message: string;
-    };
+type RuntimeDemandOverride = {
+  appGroupRuntimeState?: string;
+  singleAppId?: string;
+  singleAppRuntimeState?: string;
+};
 
 @Injectable()
 export class CapacityPreflightService {
@@ -76,6 +82,107 @@ export class CapacityPreflightService {
   ): Promise<CapacityAdmissionResult> {
     await this.lockCapacity(tx);
 
+    const platformResult = await this.availablePlatformSupply(tx);
+    if (!platformResult.success) {
+      return platformResult;
+    }
+
+    const storageFailure = await this.validateStorageBackends(tx, snapshot);
+    if (storageFailure) {
+      return storageFailure;
+    }
+
+    const occupiedResult = await this.occupiedCapacity(tx, snapshot.appGroup.id);
+    if (!occupiedResult.success) {
+      return occupiedResult;
+    }
+
+    return this.fitAdmission(
+      platformResult.supply,
+      occupiedResult.occupied,
+      snapshotDemand(snapshot),
+    );
+  }
+
+  async admitRuntimeStart(
+    tx: Prisma.TransactionClient,
+    input: { appGroupId: string; singleAppId?: string },
+  ): Promise<CapacityAdmissionResult> {
+    await this.lockCapacity(tx);
+
+    const deployment = await tx.appGroupDeployment.findFirst({
+      where: {
+        appGroupId: input.appGroupId,
+        status: DeploymentStatus.Succeeded,
+      },
+      orderBy: { version: "desc" },
+      select: { stackConfig: true },
+    });
+
+    if (!deployment?.stackConfig) {
+      return {
+        success: true,
+        demand: { cpuNano: 0n, memoryBytes: 0n },
+        occupied: { cpuNano: 0n, memoryBytes: 0n },
+        supply: { cpuNano: 0n, memoryBytes: 0n },
+      };
+    }
+
+    const snapshot = this.parseSnapshot(deployment.stackConfig);
+    if (!snapshot) {
+      return this.platformUnavailable(
+        `Cannot account deployment capacity for AppGroup ${input.appGroupId}`,
+      );
+    }
+
+    const demand = await this.succeededRuntimeDemand(tx, snapshot, {
+      appGroupRuntimeState: input.singleAppId ? undefined : "Running",
+      singleAppId: input.singleAppId,
+      singleAppRuntimeState: input.singleAppId ? "Running" : undefined,
+    });
+    if (demand.cpuNano === 0n && demand.memoryBytes === 0n) {
+      return {
+        success: true,
+        demand,
+        occupied: { cpuNano: 0n, memoryBytes: 0n },
+        supply: { cpuNano: 0n, memoryBytes: 0n },
+      };
+    }
+
+    const platformResult = await this.availablePlatformSupply(tx);
+    if (!platformResult.success) {
+      return platformResult;
+    }
+
+    const storageFailure = await this.validateStorageBackends(tx, snapshot);
+    if (storageFailure) {
+      return storageFailure;
+    }
+
+    const occupiedResult = await this.occupiedCapacity(tx, input.appGroupId);
+    if (!occupiedResult.success) {
+      return occupiedResult;
+    }
+
+    return this.fitAdmission(
+      platformResult.supply,
+      occupiedResult.occupied,
+      demand,
+    );
+  }
+
+  private async lockCapacity(tx: Prisma.TransactionClient) {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${CAPACITY_LOCK_NAMESPACE}, 0)) IS NULL AS "locked"`,
+    );
+  }
+
+  private async availablePlatformSupply(
+    tx: Prisma.TransactionClient,
+  ): Promise<
+    | { success: true; supply: CapacityDemand }
+    | { success: false; errorCode: "PlatformUnavailable"; message: string }
+  > {
     const platform = await this.platformCapacity(tx);
     if (!platform) {
       return this.platformUnavailable(
@@ -93,22 +200,21 @@ export class CapacityPreflightService {
       );
     }
 
-    const storageFailure = await this.validateStorageBackends(tx, snapshot);
-    if (storageFailure) {
-      return storageFailure;
-    }
-
-    const occupiedResult = await this.occupiedCapacity(tx, snapshot.appGroup.id);
-    if (!occupiedResult.success) {
-      return occupiedResult;
-    }
-
-    const demand = snapshotDemand(snapshot);
-    const supply = {
-      cpuNano: platform.availableCpuNano,
-      memoryBytes: platform.availableMemoryBytes,
+    return {
+      success: true,
+      supply: {
+        cpuNano: platform.availableCpuNano,
+        memoryBytes: platform.availableMemoryBytes,
+      },
     };
-    const fit = projectedCapacityFits(supply, occupiedResult.occupied, demand);
+  }
+
+  private fitAdmission(
+    supply: CapacityDemand,
+    occupied: CapacityDemand,
+    demand: CapacityDemand,
+  ): CapacityAdmissionResult {
+    const fit = projectedCapacityFits(supply, occupied, demand);
     if (!fit.fits) {
       return {
         success: false,
@@ -120,15 +226,9 @@ export class CapacityPreflightService {
     return {
       success: true,
       demand,
-      occupied: occupiedResult.occupied,
+      occupied,
       supply,
     };
-  }
-
-  private async lockCapacity(tx: Prisma.TransactionClient) {
-    await tx.$queryRaw(
-      Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${CAPACITY_LOCK_NAMESPACE}, 0)) IS NULL AS "locked"`,
-    );
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {
@@ -299,6 +399,7 @@ export class CapacityPreflightService {
   private async succeededRuntimeDemand(
     tx: Prisma.TransactionClient,
     snapshot: CapacityDeploymentSnapshot,
+    override?: RuntimeDemandOverride,
   ): Promise<CapacityDemand> {
     const singleAppIds = snapshot.singleApps
       .map((singleApp) => singleApp.id)
@@ -330,6 +431,8 @@ export class CapacityPreflightService {
     const currentById = new Map(
       currentSingleApps.map((singleApp) => [singleApp.id, singleApp]),
     );
+    const appGroupRuntimeState =
+      override?.appGroupRuntimeState ?? appGroup.runtimeState;
 
     let demand: CapacityDemand = { cpuNano: 0n, memoryBytes: 0n };
     for (const singleApp of snapshot.singleApps) {
@@ -346,14 +449,17 @@ export class CapacityPreflightService {
         continue;
       }
 
+      const currentRuntimeState =
+        override?.singleAppId === singleApp.id
+          ? (override.singleAppRuntimeState ?? current.runtimeState)
+          : current.runtimeState;
       const deployedReplicas =
         snapshot.appGroup.runtimeState === "Running" &&
         singleApp.runtimeState === "Running"
           ? Math.max(0, singleApp.desiredReplicas)
           : 0;
       const liveRunning =
-        appGroup.runtimeState === "Running" &&
-        current.runtimeState === "Running";
+        appGroupRuntimeState === "Running" && currentRuntimeState === "Running";
       const replicas = liveRunning
         ? Math.max(
             deployedReplicas,
