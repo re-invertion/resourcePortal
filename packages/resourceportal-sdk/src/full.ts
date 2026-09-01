@@ -184,6 +184,12 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
       }),
   };
 
+  readonly health = {
+    get: () => this.request("/health"),
+    live: () => this.request("/health/live"),
+    ready: () => this.request("/health/ready"),
+  };
+
   override readonly auditLog = {
     list: (tenantId: string, query?: ResourcePortalQuery) =>
       this.request(`/tenants/${encode(tenantId)}/audit-log`, { query }),
