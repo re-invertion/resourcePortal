@@ -9,15 +9,14 @@ const actorId = "00000000-0000-4000-8000-000000000001";
 
 describe("PlatformMaintenanceService", () => {
   it("returns persisted singleton state", async () => {
-    const store = {
-      getState: vi.fn().mockResolvedValue({
-        id: "00000000-0000-4000-8000-000000000019",
-        enabled: true,
-        reason: "database maintenance",
-        updatedBy: actorId,
-        updatedAt: new Date("2026-09-01T06:00:00.000Z"),
-      }),
-    } as unknown as PlatformMaintenanceStore;
+    const getState = vi.fn().mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000019",
+      enabled: true,
+      reason: "database maintenance",
+      updatedBy: actorId,
+      updatedAt: new Date("2026-09-01T06:00:00.000Z"),
+    });
+    const store = { getState } as unknown as PlatformMaintenanceStore;
     const audit = {} as unknown as PlatformMaintenanceAuditService;
     const service = new PlatformMaintenanceService(store, audit);
 
@@ -31,18 +30,16 @@ describe("PlatformMaintenanceService", () => {
 
   it("persists changes and records a platform audit event", async () => {
     const updatedAt = new Date("2026-09-01T06:05:00.000Z");
-    const store = {
-      setState: vi.fn().mockResolvedValue({
-        id: "00000000-0000-4000-8000-000000000019",
-        enabled: true,
-        reason: "storage intervention",
-        updatedBy: actorId,
-        updatedAt,
-      }),
-    } as unknown as PlatformMaintenanceStore;
-    const audit = {
-      recordChanged: vi.fn().mockResolvedValue(undefined),
-    } as unknown as PlatformMaintenanceAuditService;
+    const setState = vi.fn().mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000019",
+      enabled: true,
+      reason: "storage intervention",
+      updatedBy: actorId,
+      updatedAt,
+    });
+    const recordChanged = vi.fn().mockResolvedValue(undefined);
+    const store = { setState } as unknown as PlatformMaintenanceStore;
+    const audit = { recordChanged } as unknown as PlatformMaintenanceAuditService;
     const service = new PlatformMaintenanceService(store, audit);
     const actor: AuthenticatedUser = {
       id: actorId,
@@ -59,12 +56,12 @@ describe("PlatformMaintenanceService", () => {
       updatedBy: actorId,
       updatedAt,
     });
-    expect(store.setState).toHaveBeenCalledWith({
+    expect(setState).toHaveBeenCalledWith({
       enabled: true,
       reason: "storage intervention",
       updatedBy: actorId,
     });
-    expect(audit.recordChanged).toHaveBeenCalledWith({
+    expect(recordChanged).toHaveBeenCalledWith({
       enabled: true,
       reason: "storage intervention",
       actor,
