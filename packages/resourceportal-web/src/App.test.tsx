@@ -39,6 +39,6 @@ describe("Web Console bootstrap", () => {
     render(<App />);
 
     await waitFor(() => expect(location.pathname).toBe("/tenants/t1/overview"));
-    expect(await screen.findByText(/Tenant overview/)).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Tenant overview" })).toBeTruthy();
   });
 });
