@@ -3,6 +3,7 @@ import { apiRequest } from "../api/client";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "../components/forms";
 import { ErrorState, ReadOnlyPanel, ResourcePanel } from "../components/resource";
 import { buildAuditQueries, formatAuditExport } from "./audit-query";
+import { buildQuotaMutation } from "./quota-payload";
 
 const enc = encodeURIComponent;
 const itemId = (item: Record<string, unknown>) => enc(String(item.id ?? ""));
@@ -101,8 +102,23 @@ function CredentialPage({ root, permissions }: { root: string; permissions?: str
   return <main><h1>Tenant machine credentials</h1><ResourcePanel title="OAuth applications" listPath={`${root}/oauth-applications`} createPath={`${root}/oauth-applications`} itemPath={(item) => `${root}/oauth-applications/${itemId(item)}`} actions={credentialActions("oauth-applications")} oneTimeCreateResponse permissions={permissions} /><ResourcePanel title="Service identities" listPath={`${root}/service-identities`} createPath={`${root}/service-identities`} itemPath={(item) => `${root}/service-identities/${itemId(item)}`} actions={credentialActions("service-identities")} oneTimeCreateResponse permissions={permissions} /></main>;
 }
 
+function QuotaEditor({ path }: { path: string }) {
+  const [current, setCurrent] = useState<unknown>();
+  const [ready, setReady] = useState(false);
+  const [saved, setSaved] = useState<unknown>();
+  const [error, setError] = useState<unknown>();
+  useEffect(() => {
+    let active = true;
+    apiRequest(path)
+      .then((value) => { if (active) { setCurrent(value); setReady(true); } })
+      .catch((cause) => { if (active) setError(cause); });
+    return () => { active = false; };
+  }, [path]);
+  return <section><ReadOnlyPanel title="Quota" path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm submitLabel="Save" disabled={!ready} onSubmit={async (body) => { setError(undefined); try { const result = await apiRequest(path, { method: "PATCH", body: buildQuotaMutation(current, body) }); setCurrent(result); setSaved(result); } catch (cause) { setError(cause); throw cause; } }} />{saved ? <pre>{JSON.stringify(saved, null, 2)}</pre> : null}</section>;
+}
+
 function BillingPage({ root }: { root: string }) {
-  return <main><h1>Billing and quota</h1><ReadOnlyPanel title="Billing account" path={`${root}/billing`} /><ReadOnlyPanel title="Transactions" path={`${root}/billing/transactions`} /><ReadOnlyPanel title="Usage records" path={`${root}/billing/usage-records`} /><PatchSingleton title="Quota" path={`${root}/quota`} /><section><h2>Top up / redeem voucher</h2><JsonPayloadForm submitLabel="Top up" onSubmit={async (body) => { await apiRequest(`${root}/billing/top-up`, { method: "POST", body }); }} /></section></main>;
+  return <main><h1>Billing and quota</h1><ReadOnlyPanel title="Billing account" path={`${root}/billing`} /><ReadOnlyPanel title="Transactions" path={`${root}/billing/transactions`} /><ReadOnlyPanel title="Usage records" path={`${root}/billing/usage-records`} /><QuotaEditor path={`${root}/quota`} /><section><h2>Top up / redeem voucher</h2><JsonPayloadForm submitLabel="Top up" onSubmit={async (body) => { await apiRequest(`${root}/billing/top-up`, { method: "POST", body }); }} /></section></main>;
 }
 
 function AuditPage({ root }: { root: string }) {
