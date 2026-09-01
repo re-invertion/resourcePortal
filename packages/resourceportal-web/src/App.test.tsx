@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -9,6 +10,12 @@ function json(value: unknown, status = 200) {
 describe("Web Console bootstrap", () => {
   beforeEach(() => {
     history.replaceState(null, "", "/tenants");
+  });
+
+  it("renders on the server without browser location globals", () => {
+    vi.stubGlobal("location", undefined);
+    expect(() => renderToString(<App />)).not.toThrow();
+    vi.unstubAllGlobals();
   });
 
   it("renders controlled re-login when the BFF session is missing", async () => {
