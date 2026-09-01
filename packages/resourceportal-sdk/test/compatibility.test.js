@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readdirSync } = require("node:fs");
+const { join, relative, resolve } = require("node:path");
 const { ResourcePortalApiError, ResourcePortalClient } = require("..");
 
 function jsonResponse(body = { ok: true }, init = {}) {
@@ -35,6 +37,49 @@ function pathOf(call) {
   return new URL(call.url).pathname;
 }
 
+function controllerFiles(directory, root = directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return controllerFiles(path, root);
+    if (!entry.name.endsWith(".controller.ts")) return [];
+    return [relative(root, path).replaceAll("\\", "/")];
+  });
+}
+
+test("classifies every API controller so new public surface cannot drift silently", () => {
+  const apiRoot = resolve(__dirname, "../../resourceportal-api/src");
+  const actual = controllerFiles(apiRoot).sort();
+  const classified = [
+    "app-groups/app-groups.controller.ts",
+    "audit/audit.controller.ts",
+    "auth/auth.controller.ts",
+    "billing/platform-billing.controller.ts",
+    "domains/domains.controller.ts",
+    "health/health.controller.ts",
+    "identity-providers/identity-providers.controller.ts",
+    "identity-providers/platform-identity-providers.controller.ts",
+    "internal/credential-exchange.controller.ts",
+    "internal/deployment-worker.controller.ts",
+    "internal/operations-worker.controller.ts",
+    "internal/platform-operations-worker.controller.ts",
+    "oauth-applications/oauth-applications.controller.ts",
+    "oauth-applications/platform-oauth-applications.controller.ts",
+    "observability/observability.controller.ts",
+    "operations/operations.controller.ts",
+    "platform-infrastructure/platform-infrastructure.controller.ts",
+    "platform-maintenance/platform-maintenance.controller.ts",
+    "registries/registries.controller.ts",
+    "service-identities/platform-service-identities.controller.ts",
+    "service-identities/service-identities.controller.ts",
+    "storage-backends/storage-backends.controller.ts",
+    "tenants/tenants.controller.ts",
+    "users/users.controller.ts",
+    "volumes/volumes.controller.ts",
+  ].sort();
+
+  assert.deepEqual(actual, classified);
+});
+
 test("exposes every post-Stage-8 public management resource family", async () => {
   const { client, calls } = recordingClient();
 
@@ -48,6 +93,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   await client.serviceIdentities.list("tenant id");
   await client.platformServiceIdentities.list();
   await client.platformIdentityProviders.list();
+  await client.health.ready();
 
   assert.deepEqual(
     calls.map(pathOf),
@@ -62,6 +108,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
       "/api/tenants/tenant%20id/service-identities",
       "/api/platform/service-identities",
       "/api/platform/identity-providers",
+      "/api/health/ready",
     ],
   );
 });
