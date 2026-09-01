@@ -19,8 +19,16 @@ const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext();
   const page = await context.newPage();
-  const appGroupName = `web-e2e-${Date.now()}`;
-  const serviceIdentityName = `web-e2e-service-${Date.now()}`;
+  const stamp = Date.now();
+  const appGroupName = `web-e2e-${stamp}`;
+  const singleAppName = `web-e2e-app-${stamp}`;
+  const variableName = `WEB_E2E_VAR_${stamp}`;
+  const configName = `web-e2e-config-${stamp}`;
+  const secretName = `web-e2e-secret-${stamp}`;
+  const sensitivePayloadValue = `opaque-value-${stamp}`;
+  const oauthApplicationName = `web-e2e-oauth-${stamp}`;
+  const serviceIdentityName = `web-e2e-service-${stamp}`;
+  const groupName = `web-e2e-group-${stamp}`;
 
   try {
     await page.goto(
@@ -115,19 +123,8 @@ try {
     await page.locator("main > h1", { hasText: "AppGroups" }).waitFor();
     await waitForPageRequests(page, "app-groups");
 
-    const appGroupsSection = page
-      .locator("section")
-      .filter({
-        has: page.getByRole("heading", { name: "AppGroups", level: 2 }),
-      })
-      .first();
-    await appGroupsSection.locator("summary", { hasText: "Create" }).click();
-    await appGroupsSection
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(JSON.stringify({ name: appGroupName }, null, 2));
-    await appGroupsSection
-      .getByRole("button", { name: "Create", exact: true })
-      .click();
+    const appGroupsSection = panelByHeading(page, "AppGroups");
+    await createResource(appGroupsSection, { name: appGroupName });
 
     const createdRow = page.getByRole("row").filter({ hasText: appGroupName });
     await createdRow.waitFor();
@@ -139,13 +136,74 @@ try {
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
+    await waitForPageRequests(page, "app-group-detail");
+
+    const singleAppsPanel = panelByHeading(page, "SingleApps");
+    await createResource(singleAppsPanel, {
+      name: singleAppName,
+      description: "Stage 20 browser E2E SingleApp",
+      image: "nginx:alpine",
+      desiredReplicas: 0,
+      cpu: 0.1,
+      memoryBytes: 134217728,
+    });
+    const singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
+    await singleAppRow.waitFor();
+    const singleAppId = (await singleAppRow.locator("td").first().textContent())?.trim();
+    assert(singleAppId, "SingleApp create did not expose an id in the resource table");
+
+    const variablesPanel = panelByHeading(page, "Variables");
+    await createResource(variablesPanel, {
+      name: variableName,
+      description: "Stage 20 browser E2E variable",
+      value: "browser-e2e-value",
+    });
+    const variableRow = page.getByRole("row").filter({ hasText: variableName });
+    await variableRow.waitFor();
+
+    const configsPanel = panelByHeading(page, "Configs");
+    await createResource(configsPanel, {
+      name: configName,
+      description: "Stage 20 browser E2E config",
+      content: "feature=true\n",
+    });
+    const configRow = page.getByRole("row").filter({ hasText: configName });
+    await configRow.waitFor();
+
+    const secretsPanel = panelByHeading(page, "Secrets");
+    await createResource(secretsPanel, {
+      name: secretName,
+      description: "Stage 20 browser E2E secret metadata",
+      type: "Text",
+      value: sensitivePayloadValue,
+    });
+    const secretRow = page.getByRole("row").filter({ hasText: secretName });
+    await secretRow.waitFor();
+    assert(
+      !(await secretRow.textContent())?.includes(sensitivePayloadValue),
+      "Secret plaintext leaked into the Web resource table after create/read",
+    );
+
+    await page.getByLabel("SingleApp ID").fill(singleAppId);
+    const endpointsPanel = panelByHeading(page, "HTTP endpoints");
+    await createResource(endpointsPanel, {
+      name: "web",
+      containerPort: 8080,
+      protocolMode: "HTTP",
+    });
+    const endpointRow = page.getByRole("row").filter({ hasText: "web" });
+    await endpointRow.waitFor();
+    await deleteResourceRow(endpointRow);
+
+    await deleteResourceRow(variableRow);
+    await deleteResourceRow(configRow);
+    await deleteResourceRow(secretRow);
+    await deleteResourceRow(singleAppRow);
 
     await navigateTenantSection(page, "app-groups", "AppGroups");
     const cleanupRow = page.getByRole("row").filter({ hasText: appGroupName });
     await cleanupRow.waitFor();
-    page.once("dialog", (dialog) => dialog.accept());
-    await cleanupRow.getByRole("button", { name: "Delete" }).click();
-    await cleanupRow.waitFor({ state: "detached" });
+    await deleteResourceRow(cleanupRow);
 
     const routeMatrix = [
       ["volumes", "Volumes"],
@@ -167,40 +225,90 @@ try {
       );
     }
 
-    await navigateTenantSection(page, "credentials", "Tenant machine credentials");
-    await waitForPageRequests(page, "credentials");
-    const servicePanel = page
+    await navigateTenantSection(page, "administration", "Tenant administration");
+    await waitForPageRequests(page, "administration");
+    const groupsPanel = panelByHeading(page, "Groups");
+    await createResource(groupsPanel, {
+      name: groupName,
+      description: "Stage 20 browser E2E group",
+    });
+    let groupRow = page.getByRole("row").filter({ hasText: groupName });
+    await groupRow.waitFor();
+    await groupRow.locator("summary", { hasText: "Patch" }).click();
+    await groupRow
+      .getByRole("textbox", { name: "JSON payload" })
+      .fill(JSON.stringify({ description: "Stage 20 browser E2E group updated" }, null, 2));
+    await groupRow.getByRole("button", { name: "Save", exact: true }).click();
+    groupRow = page.getByRole("row").filter({ hasText: groupName });
+    await groupRow.waitFor();
+    await deleteResourceRow(groupRow);
+
+    const authPolicySection = page
       .locator("section")
-      .filter({
-        has: page.getByRole("heading", {
-          name: "Service identities",
-          level: 2,
-        }),
-      })
+      .filter({ has: page.getByRole("heading", { name: "Authentication policy", level: 2 }) })
       .first();
-    await servicePanel.locator("summary", { hasText: "Create" }).click();
-    await servicePanel
+    await authPolicySection
       .getByRole("textbox", { name: "JSON payload" })
       .fill(
         JSON.stringify(
           {
-            name: serviceIdentityName,
-            description: "Stage 20 browser E2E identity",
-            roleIds: ["viewer"],
+            allowPlatformLogin: false,
+            allowTenantIdentityProviders: true,
+            requireTenantIdentityProvider: true,
           },
           null,
           2,
         ),
       );
-    await servicePanel
-      .getByRole("button", { name: "Create", exact: true })
-      .click();
+    await authPolicySection.getByRole("button", { name: "Save", exact: true }).click();
+    assert(
+      (await authPolicySection.getByRole("alert").count()) === 0,
+      "Authentication policy update rendered an error",
+    );
 
-    const createdIdentityRow = page
+    await navigateTenantSection(page, "credentials", "Tenant machine credentials");
+    await waitForPageRequests(page, "credentials");
+
+    const oauthPanel = panelByHeading(page, "OAuth applications");
+    await createResource(oauthPanel, {
+      name: oauthApplicationName,
+      type: "Machine",
+      redirectUris: [],
+      postLogoutRedirectUris: [],
+    });
+    let oauthRow = page.getByRole("row").filter({ hasText: oauthApplicationName });
+    await oauthRow.waitFor();
+    let oauthCredential = oauthPanel.locator('section[aria-label="One-time credential"]');
+    await oauthCredential.waitFor();
+    assert(
+      (await oauthCredential.textContent())?.includes("clientSecret"),
+      "OAuthApplication create did not expose its one-time clientSecret",
+    );
+    await oauthCredential.getByRole("button", { name: "Clear credential" }).click();
+    await oauthCredential.waitFor({ state: "detached" });
+    await oauthRow.getByRole("button", { name: "Rotate credentials" }).click();
+    oauthCredential = oauthPanel.locator('section[aria-label="One-time credential"]');
+    await oauthCredential.waitFor();
+    assert(
+      (await oauthCredential.textContent())?.includes("clientSecret"),
+      "OAuthApplication rotation did not expose a one-time clientSecret",
+    );
+    oauthRow = page.getByRole("row").filter({ hasText: oauthApplicationName });
+    await oauthRow.waitFor();
+    await deleteResourceRow(oauthRow);
+
+    const servicePanel = panelByHeading(page, "Service identities");
+    await createResource(servicePanel, {
+      name: serviceIdentityName,
+      description: "Stage 20 browser E2E identity",
+      roleIds: ["viewer"],
+    });
+
+    let createdIdentityRow = page
       .getByRole("row")
       .filter({ hasText: serviceIdentityName });
     await createdIdentityRow.waitFor();
-    const oneTimeCredential = servicePanel.locator(
+    let oneTimeCredential = servicePanel.locator(
       'section[aria-label="One-time credential"]',
     );
     await oneTimeCredential.waitFor();
@@ -216,22 +324,48 @@ try {
     await createdIdentityRow
       .getByRole("button", { name: "Rotate credentials" })
       .click();
-    const rotatedCredential = servicePanel.locator(
+    oneTimeCredential = servicePanel.locator(
       'section[aria-label="One-time credential"]',
     );
-    await rotatedCredential.waitFor();
+    await oneTimeCredential.waitFor();
     assert(
-      (await rotatedCredential.textContent())?.includes("clientSecret"),
+      (await oneTimeCredential.textContent())?.includes("clientSecret"),
       "ServiceIdentity rotation did not expose a one-time clientSecret",
     );
 
-    const refreshedIdentityRow = page
+    createdIdentityRow = page
       .getByRole("row")
       .filter({ hasText: serviceIdentityName });
-    await refreshedIdentityRow.waitFor();
-    page.once("dialog", (dialog) => dialog.accept());
-    await refreshedIdentityRow.getByRole("button", { name: "Delete" }).click();
-    await refreshedIdentityRow.waitFor({ state: "detached" });
+    await createdIdentityRow.waitFor();
+    await deleteResourceRow(createdIdentityRow);
+
+    await navigateTenantSection(page, "billing", "Billing and quota");
+    await waitForPageRequests(page, "billing");
+    const quotaSection = page
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Quota", level: 2 }) })
+      .first();
+    await quotaSection
+      .getByRole("textbox", { name: "JSON payload" })
+      .fill(JSON.stringify({ maxSingleApps: 100, maxVolumes: 100 }, null, 2));
+    await quotaSection.getByRole("button", { name: "Save", exact: true }).click();
+    assert(
+      (await quotaSection.getByRole("alert").count()) === 0,
+      "Quota update rendered an error",
+    );
+
+    await navigateTenantSection(page, "audit", "Audit log");
+    await waitForPageRequests(page, "audit");
+    await page
+      .getByRole("textbox", { name: "JSON payload" })
+      .fill(JSON.stringify({ limit: 10 }, null, 2));
+    await page.getByRole("button", { name: "Apply filters" }).click();
+    await page.getByRole("button", { name: "Export" }).click();
+    await page.locator("details", { hasText: "Export output" }).waitFor();
+    assert(
+      (await page.getByRole("alert").count()) === 0,
+      "Audit filter/export rendered an error",
+    );
 
     const storageKeys = await page.evaluate(() => [
       ...Object.keys(localStorage),
@@ -258,6 +392,31 @@ try {
 } finally {
   await browser.close();
   await prisma.$disconnect();
+}
+
+function panelByHeading(page, heading) {
+  return page
+    .locator("section")
+    .filter({ has: page.getByRole("heading", { name: heading, level: 2 }) })
+    .first();
+}
+
+async function createResource(panel, body) {
+  await panel.locator("summary", { hasText: "Create" }).click();
+  await panel
+    .getByRole("textbox", { name: "JSON payload" })
+    .fill(JSON.stringify(body, null, 2));
+  await panel.getByRole("button", { name: "Create", exact: true }).click();
+}
+
+async function deleteResourceRow(row) {
+  pageDialogAccept(row.page());
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.waitFor({ state: "detached" });
+}
+
+function pageDialogAccept(page) {
+  page.once("dialog", (dialog) => dialog.accept());
 }
 
 async function navigateTenantSection(page, section, heading) {
