@@ -1,0 +1,5 @@
+export const PLATFORM_MAINTENANCE_STATE_ID =
+  "00000000-0000-4000-8000-000000000019";
+
+export const ALLOW_DURING_PLATFORM_MAINTENANCE_KEY =
+  "platform-maintenance:allow";
