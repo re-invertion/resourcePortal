@@ -4,6 +4,7 @@ import { IngressReconcilerService } from "../internal/ingress-reconciler.service
 import { SwarmInfrastructureService } from "../platform-infrastructure/swarm-infrastructure.service";
 import { StorageBackendsService } from "../storage-backends/storage-backends.service";
 import { DisasterRecoveryService } from "./disaster-recovery.service";
+import { RuntimeRestoreService } from "./runtime-restore.service";
 
 describe("DisasterRecoveryService", () => {
   it("reconciles external control-plane state after restore", async () => {
@@ -19,6 +20,12 @@ describe("DisasterRecoveryService", () => {
       { id: "storage-2" },
     ]);
     const validateBackend = vi.fn().mockResolvedValue({ status: "Ready" });
+    const runtimeRestore = vi.fn().mockResolvedValue({
+      checked: 2,
+      applied: 2,
+      failed: 0,
+      skipped: 0,
+    });
     const runtimeReconcile = vi.fn().mockResolvedValue({
       scanned: 2,
       inSync: 2,
@@ -37,6 +44,7 @@ describe("DisasterRecoveryService", () => {
         listBackends,
         validateBackend,
       } as unknown as StorageBackendsService,
+      { reconcile: runtimeRestore } as unknown as RuntimeRestoreService,
       { reconcileBatch: runtimeReconcile } as unknown as RuntimeDriftReconcilerService,
       { reconcileBatch: ingressReconcile } as unknown as IngressReconcilerService,
     );
@@ -44,6 +52,7 @@ describe("DisasterRecoveryService", () => {
     await expect(service.reconcileAfterRestore()).resolves.toEqual({
       swarm: expect.objectContaining({ nodeCount: 3, health: "Healthy" }),
       storage: { checked: 2, failed: 0 },
+      runtimeRestore: { checked: 2, applied: 2, failed: 0, skipped: 0 },
       runtime: expect.objectContaining({ scanned: 2, inSync: 2 }),
       ingress: expect.objectContaining({ checked: 2, failed: 0 }),
       healthy: true,
@@ -53,11 +62,18 @@ describe("DisasterRecoveryService", () => {
     expect(listBackends).toHaveBeenCalledOnce();
     expect(validateBackend).toHaveBeenNthCalledWith(1, "storage-1");
     expect(validateBackend).toHaveBeenNthCalledWith(2, "storage-2");
+    expect(runtimeRestore).toHaveBeenCalledOnce();
     expect(runtimeReconcile).toHaveBeenCalledWith(10_000);
     expect(ingressReconcile).toHaveBeenCalledOnce();
   });
 
-  it("reports storage validation failures without skipping runtime reconciliation", async () => {
+  it("reports failures without skipping the remaining reconciliation stages", async () => {
+    const runtimeRestore = vi.fn().mockResolvedValue({
+      checked: 1,
+      applied: 0,
+      failed: 1,
+      skipped: 0,
+    });
     const runtimeReconcile = vi.fn().mockResolvedValue({
       scanned: 1,
       inSync: 0,
@@ -78,6 +94,7 @@ describe("DisasterRecoveryService", () => {
         listBackends: vi.fn().mockResolvedValue([{ id: "storage-1" }]),
         validateBackend: vi.fn().mockRejectedValue(new Error("Ceph unavailable")),
       } as unknown as StorageBackendsService,
+      { reconcile: runtimeRestore } as unknown as RuntimeRestoreService,
       { reconcileBatch: runtimeReconcile } as unknown as RuntimeDriftReconcilerService,
       { reconcileBatch: ingressReconcile } as unknown as IngressReconcilerService,
     );
@@ -85,7 +102,9 @@ describe("DisasterRecoveryService", () => {
     const result = await service.reconcileAfterRestore();
 
     expect(result.storage).toEqual({ checked: 1, failed: 1 });
+    expect(result.runtimeRestore.failed).toBe(1);
     expect(result.healthy).toBe(false);
+    expect(runtimeRestore).toHaveBeenCalledOnce();
     expect(runtimeReconcile).toHaveBeenCalledOnce();
     expect(ingressReconcile).toHaveBeenCalledOnce();
   });
