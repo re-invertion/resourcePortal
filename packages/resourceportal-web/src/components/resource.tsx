@@ -96,7 +96,6 @@ export function ResourcePanel(props: ResourcePanelProps) {
       const result = await apiRequest(path, { method, body });
       if (oneTimeResponse) setOneTime(result);
       await reload();
-      return result;
     } catch (cause) {
       setError(cause);
       throw cause;

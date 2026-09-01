@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, apiRequest, readCsrfToken } from "./client";
+import { apiRequest, readCsrfToken } from "./client";
 
 describe("browser API transport", () => {
   it("always uses same-origin credentials", async () => {
@@ -58,7 +58,7 @@ describe("browser API transport", () => {
       headers: { "content-type": "application/json" },
     })));
 
-    await expect(apiRequest("/api/tenants/t1/app-groups")).rejects.toMatchObject<ApiError>({
+    await expect(apiRequest("/api/tenants/t1/app-groups")).rejects.toMatchObject({
       status: 403,
       code: "PermissionDenied",
       message: "Denied",
