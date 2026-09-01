@@ -44,7 +44,8 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
           <ul>
             {providers.map((provider, index) => {
               const id = String(provider.id ?? provider.identityProviderId ?? "");
-              const label = String(provider.name ?? provider.displayName ?? provider.label ?? id || `Provider ${index + 1}`);
+              const rawLabel = provider.name ?? provider.displayName ?? provider.label ?? (id || `Provider ${index + 1}`);
+              const label = String(rawLabel);
               return <li key={id || index}><button type="button" onClick={() => start(id || undefined)}>{label}</button></li>;
             })}
           </ul>
