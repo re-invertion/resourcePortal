@@ -17,6 +17,7 @@ export type ResourcePanelProps = {
   listPath: string;
   createPath?: string;
   itemPath?: (item: Record<string, unknown>) => string;
+  detailHref?: (item: Record<string, unknown>) => string;
   createPermission?: string;
   updatePermission?: string;
   deletePermission?: string;
@@ -114,10 +115,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
       {props.createPath && allowed(props.permissions, props.createPermission) ? (
         <details>
           <summary>Create</summary>
-          <JsonPayloadForm
-            submitLabel="Create"
-            onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse); }}
-          />
+          <JsonPayloadForm submitLabel="Create" onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse); }} />
         </details>
       ) : null}
       {loading ? <p>Loading…</p> : items.length === 0 ? <p>No resources.</p> : (
@@ -130,21 +128,16 @@ export function ResourcePanel(props: ResourcePanelProps) {
                 <tr key={id}>
                   {columns.map((column) => <td key={column}>{display(item[column])}</td>)}
                   <td>
+                    {props.detailHref ? <a href={props.detailHref(item)}>Open</a> : null}
                     <details><summary>Details</summary><pre>{JSON.stringify(item, null, 2)}</pre></details>
                     {props.itemPath && allowed(props.permissions, props.updatePermission) ? (
-                      <details>
-                        <summary>Patch</summary>
-                        <JsonPayloadForm submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body); }} />
-                      </details>
+                      <details><summary>Patch</summary><JsonPayloadForm submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body); }} /></details>
                     ) : null}
                     {props.itemPath && allowed(props.permissions, props.deletePermission) ? (
                       <ConfirmButton confirm={`Delete ${props.title} resource ${id}?`} onConfirm={() => mutate(props.itemPath!(item), "DELETE")}>Delete</ConfirmButton>
                     ) : null}
                     {(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? (
-                      <details key={action.label}>
-                        <summary>{action.label}</summary>
-                        <JsonPayloadForm submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse); }} />
-                      </details>
+                      <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse); }} /></details>
                     ) : action.destructive ? (
                       <ConfirmButton key={action.label} confirm={`${action.label} ${id}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse)}>{action.label}</ConfirmButton>
                     ) : (
@@ -164,6 +157,6 @@ export function ResourcePanel(props: ResourcePanelProps) {
 export function ReadOnlyPanel({ title, path }: { title: string; path: string }) {
   const [data, setData] = useState<unknown>();
   const [error, setError] = useState<unknown>();
-  useEffect(() => { apiRequest(path).then(setData).catch(setError); }, [path]);
+  useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]);
   return <section><h2>{title}</h2>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : <pre>{typeof data === "string" ? data : JSON.stringify(data, null, 2)}</pre>}</section>;
 }
