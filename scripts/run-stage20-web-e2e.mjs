@@ -390,7 +390,9 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator("xpath=parent::header/parent::section");
+  return title.locator(
+    "xpath=parent::header/parent::section | parent::section/parent::section",
+  );
 }
 
 async function createResource(panel, body) {
