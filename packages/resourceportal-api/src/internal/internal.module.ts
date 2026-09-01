@@ -70,6 +70,11 @@ import { TraefikCertificateObserverService } from "./traefik-certificate-observe
       inject: [VolumeOperationExecutor, DomainOperationExecutor],
     },
   ],
-  exports: [OperationsWorkerService],
+  exports: [
+    OperationsWorkerService,
+    IngressReconcilerService,
+    RuntimeDriftReconcilerService,
+    StackApplyService,
+  ],
 })
 export class InternalModule {}
