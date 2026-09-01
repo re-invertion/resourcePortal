@@ -22,12 +22,24 @@ You can also avoid persisted config:
 RESOURCE_PORTAL_API_URL=http://localhost:3000/api RESOURCE_PORTAL_DEV_USER_ID=USER_UUID rp tenant list
 ```
 
+## Correlation and request IDs
+
+All legacy and compatibility commands can propagate observability identifiers:
+
+```bash
+rp operation list TENANT_ID --correlation-id workflow-123 --request-id request-123
+```
+
+The same defaults can be provided with `RESOURCE_PORTAL_CORRELATION_ID` and `RESOURCE_PORTAL_REQUEST_ID`.
+
 ## Output
 
 ```bash
 rp tenant list
 rp tenant list -o json
 ```
+
+Raw text endpoints such as `metrics show` and `audit export` are printed as text. JSON API responses retain table or JSON output behavior.
 
 ## End-to-End Example
 
@@ -49,10 +61,15 @@ rp deployment events TENANT_ID APP_GROUP_ID DEPLOYMENT_ID
 
 ## Command Groups
 
+Existing command groups remain supported:
+
 ```text
 account
 tenant
 membership
+invitation
+identity-provider
+group
 app-group
 app
 variable
@@ -67,7 +84,74 @@ deployment
 audit
 ```
 
-Useful tenant billing and audit commands:
+The compatibility sync adds:
+
+```text
+platform-billing
+swarm
+remote-location
+storage-backend
+operation
+platform-maintenance
+oauth-application
+platform-oauth-application
+service-identity
+platform-service-identity
+platform-identity-provider
+metrics
+```
+
+Representative commands:
+
+```bash
+rp platform-billing price-list-list
+rp platform-billing voucher-list
+rp platform-billing payment --tenant-id TENANT_ID --amount-credits 25 --reference manual-credit
+rp platform-billing refund --tenant-id TENANT_ID --amount-credits 10 --reason correction
+rp platform-billing correction --tenant-id TENANT_ID --amount-credits -2 --reason adjustment
+
+rp swarm show
+rp swarm reconcile
+rp remote-location list
+rp remote-location maintenance REMOTE_LOCATION_ID --enabled true
+
+rp storage-backend list
+rp storage-backend validate STORAGE_BACKEND_ID
+rp storage-backend maintenance STORAGE_BACKEND_ID --enabled false
+
+rp operation list TENANT_ID
+rp operation show TENANT_ID OPERATION_ID
+rp operation events TENANT_ID OPERATION_ID
+rp operation retry TENANT_ID OPERATION_ID
+
+rp platform-maintenance show
+rp platform-maintenance set --enabled true --reason upgrade
+
+rp oauth-application list TENANT_ID
+rp oauth-application create TENANT_ID --name web --type Web --redirect-uris https://app.example.com/callback
+rp oauth-application rotate-credentials TENANT_ID APPLICATION_ID
+
+rp platform-oauth-application list
+rp platform-oauth-application rotate-credentials APPLICATION_ID
+
+rp service-identity list TENANT_ID
+rp service-identity create TENANT_ID --name deployer --role-ids ROLE_ID
+rp service-identity rotate-credentials TENANT_ID SERVICE_IDENTITY_ID
+
+rp platform-service-identity list
+rp platform-service-identity rotate-credentials SERVICE_IDENTITY_ID
+
+rp platform-identity-provider list
+rp platform-identity-provider create --name "Company OIDC" --protocol OIDC --issuer https://login.example.com --client-id CLIENT_ID --client-secret CLIENT_SECRET --scopes profile --scopes email
+
+rp audit list TENANT_ID --action DEPLOY --limit 25
+rp audit export TENANT_ID --format csv --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
+rp metrics show
+```
+
+Mutation commands added by the compatibility sync accept DTO properties as kebab-case flags. Repeated flags become arrays. For complex or exact request bodies, `--body-json` accepts the complete JSON object.
+
+Useful existing tenant commands include:
 
 ```bash
 rp tenant billing TENANT_ID
@@ -88,16 +172,20 @@ rp app-group discard-changes TENANT_ID APP_GROUP_ID
 rp app-group delete TENANT_ID APP_GROUP_ID
 rp secret update TENANT_ID APP_GROUP_ID SECRET_ID --value "$NEW_API_KEY"
 rp secret detach TENANT_ID APP_GROUP_ID APP_ID ATTACHMENT_ID
-rp audit list TENANT_ID
 ```
 
 Secret values are write-only. Use UTF-8 text with `--type Text`, or Base64 with
 `--type Binary`. Attached secrets are mounted at `/run/secrets/<target-name>`
 after the next deployment.
 
+## Scope boundary
+
+The CLI exposes the public Resource Portal management API. Internal worker endpoints are intentionally excluded, including `/internal/*` and `/users` guarded by `InternalAuthGuard`.
+
 Run help:
 
 ```bash
 rp --help
+rp operation --help
 rp app --help
 ```
