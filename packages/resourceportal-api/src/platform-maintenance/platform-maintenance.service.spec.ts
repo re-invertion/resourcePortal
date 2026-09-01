@@ -1,7 +1,11 @@
+import { UserStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { AuthenticatedUser } from "../auth/types";
 import { PlatformMaintenanceAuditService } from "./platform-maintenance-audit.service";
 import { PlatformMaintenanceService } from "./platform-maintenance.service";
 import { PlatformMaintenanceStore } from "./platform-maintenance.store";
+
+const actorId = "00000000-0000-4000-8000-000000000001";
 
 describe("PlatformMaintenanceService", () => {
   it("returns persisted singleton state", async () => {
@@ -10,17 +14,17 @@ describe("PlatformMaintenanceService", () => {
         id: "00000000-0000-4000-8000-000000000019",
         enabled: true,
         reason: "database maintenance",
-        updatedBy: "user-1",
+        updatedBy: actorId,
         updatedAt: new Date("2026-09-01T06:00:00.000Z"),
       }),
     } as unknown as PlatformMaintenanceStore;
-    const audit = {} as PlatformMaintenanceAuditService;
+    const audit = {} as unknown as PlatformMaintenanceAuditService;
     const service = new PlatformMaintenanceService(store, audit);
 
     await expect(service.getState()).resolves.toEqual({
       enabled: true,
       reason: "database maintenance",
-      updatedBy: "user-1",
+      updatedBy: actorId,
       updatedAt: new Date("2026-09-01T06:00:00.000Z"),
     });
   });
@@ -32,7 +36,7 @@ describe("PlatformMaintenanceService", () => {
         id: "00000000-0000-4000-8000-000000000019",
         enabled: true,
         reason: "storage intervention",
-        updatedBy: "user-1",
+        updatedBy: actorId,
         updatedAt,
       }),
     } as unknown as PlatformMaintenanceStore;
@@ -40,10 +44,11 @@ describe("PlatformMaintenanceService", () => {
       recordChanged: vi.fn().mockResolvedValue(undefined),
     } as unknown as PlatformMaintenanceAuditService;
     const service = new PlatformMaintenanceService(store, audit);
-    const actor = {
-      id: "user-1",
+    const actor: AuthenticatedUser = {
+      id: actorId,
       email: "admin@example.test",
       displayName: "Platform Admin",
+      status: UserStatus.Active,
     };
 
     await expect(
@@ -51,13 +56,13 @@ describe("PlatformMaintenanceService", () => {
     ).resolves.toEqual({
       enabled: true,
       reason: "storage intervention",
-      updatedBy: "user-1",
+      updatedBy: actorId,
       updatedAt,
     });
     expect(store.setState).toHaveBeenCalledWith({
       enabled: true,
       reason: "storage intervention",
-      updatedBy: "user-1",
+      updatedBy: actorId,
     });
     expect(audit.recordChanged).toHaveBeenCalledWith({
       enabled: true,
