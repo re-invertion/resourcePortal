@@ -2,10 +2,12 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
+import { ObservabilityService } from "../observability/observability.service";
 import { DockerSwarmInfrastructureService } from "./docker-swarm-infrastructure.service";
 import { SwarmInfrastructureAuditService } from "./swarm-infrastructure-audit.service";
 import {
@@ -26,6 +28,7 @@ export class SwarmInfrastructureService {
     private readonly store: SwarmInfrastructureStore,
     private readonly docker: DockerSwarmInfrastructureService,
     private readonly audit: SwarmInfrastructureAuditService,
+    @Optional() private readonly observability?: ObservabilityService,
   ) {}
 
   async getCluster() {
@@ -145,6 +148,8 @@ export class SwarmInfrastructureService {
       lastError: null,
     });
 
+    await this.publishRemoteLocationMetrics();
+
     return {
       nodeCount: nodes.length,
       managerCount,
@@ -208,7 +213,32 @@ export class SwarmInfrastructureService {
       actor,
     });
 
+    this.publishRemoteLocationMetric(updated);
     return this.mapRemoteLocation(updated);
+  }
+
+  private async publishRemoteLocationMetrics() {
+    if (!this.observability) {
+      return;
+    }
+    const remoteLocations = await this.store.listRemoteLocations();
+    for (const remoteLocation of remoteLocations) {
+      this.publishRemoteLocationMetric(remoteLocation);
+    }
+  }
+
+  private publishRemoteLocationMetric(remoteLocation: RemoteLocationRow) {
+    this.observability?.recordRemoteLocationSnapshot({
+      id: remoteLocation.id,
+      hostname: remoteLocation.hostname,
+      status: remoteLocation.status,
+      health: remoteLocation.health,
+      maintenance: remoteLocation.maintenance,
+      cpuNano: remoteLocation.cpuNano,
+      availableCpuNano: remoteLocation.availableCpuNano,
+      memoryBytes: remoteLocation.memoryBytes,
+      availableMemoryBytes: remoteLocation.availableMemoryBytes,
+    });
   }
 
   private async failReconcile(): Promise<never> {

@@ -7,6 +7,29 @@ type RequestMetric = {
   durationMs: number;
 };
 
+type RemoteLocationSnapshot = {
+  id: string;
+  hostname: string;
+  status: string;
+  health: string;
+  maintenance: boolean;
+  cpuNano: bigint;
+  availableCpuNano: bigint;
+  memoryBytes: bigint;
+  availableMemoryBytes: bigint;
+};
+
+type StorageBackendSnapshot = {
+  id: string;
+  name: string;
+  status: string;
+  health: string;
+  maintenance: boolean;
+  capacityTotal: bigint | null;
+  capacityAvailable: bigint | null;
+  usedBytes: bigint;
+};
+
 @Injectable()
 export class ObservabilityService {
   private readonly startedAt = new Date();
@@ -15,6 +38,8 @@ export class ObservabilityService {
   private readonly workerEvents = new Map<string, number>();
   private readonly deploymentOutcomes = new Map<string, number>();
   private readonly deploymentDurationBuckets = new Map<string, number[]>();
+  private readonly remoteLocations = new Map<string, RemoteLocationSnapshot>();
+  private readonly storageBackends = new Map<string, StorageBackendSnapshot>();
   private readonly buckets = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
   private readonly deploymentBucketsSeconds = [1, 5, 10, 30, 60, 120, 300, 600, 1800];
 
@@ -61,6 +86,22 @@ export class ObservabilityService {
       }
     }
     this.deploymentDurationBuckets.set(labels, existing);
+  }
+
+  recordRemoteLocationSnapshot(snapshot: RemoteLocationSnapshot) {
+    this.remoteLocations.set(snapshot.id, snapshot);
+  }
+
+  removeRemoteLocationSnapshot(id: string) {
+    this.remoteLocations.delete(id);
+  }
+
+  recordStorageBackendSnapshot(snapshot: StorageBackendSnapshot) {
+    this.storageBackends.set(snapshot.id, snapshot);
+  }
+
+  removeStorageBackendSnapshot(id: string) {
+    this.storageBackends.delete(id);
   }
 
   renderPrometheusMetrics() {
@@ -135,7 +176,61 @@ export class ObservabilityService {
       );
     }
 
+    this.renderRemoteLocationMetrics(lines);
+    this.renderStorageBackendMetrics(lines);
+
     return `${lines.join("\n")}\n`;
+  }
+
+  private renderRemoteLocationMetrics(lines: string[]) {
+    lines.push(
+      "# HELP resource_portal_remote_location_cpu_nano Total CPU capacity of a RemoteLocation in nano CPUs.",
+      "# TYPE resource_portal_remote_location_cpu_nano gauge",
+      "# HELP resource_portal_remote_location_available_cpu_nano Scheduler-available CPU capacity of a RemoteLocation in nano CPUs.",
+      "# TYPE resource_portal_remote_location_available_cpu_nano gauge",
+      "# HELP resource_portal_remote_location_memory_bytes Total memory capacity of a RemoteLocation.",
+      "# TYPE resource_portal_remote_location_memory_bytes gauge",
+      "# HELP resource_portal_remote_location_available_memory_bytes Scheduler-available memory capacity of a RemoteLocation.",
+      "# TYPE resource_portal_remote_location_available_memory_bytes gauge",
+    );
+
+    for (const snapshot of this.remoteLocations.values()) {
+      const labels = remoteLocationLabels(snapshot);
+      lines.push(
+        `resource_portal_remote_location_cpu_nano{${labels}} ${snapshot.cpuNano.toString()}`,
+        `resource_portal_remote_location_available_cpu_nano{${labels}} ${snapshot.availableCpuNano.toString()}`,
+        `resource_portal_remote_location_memory_bytes{${labels}} ${snapshot.memoryBytes.toString()}`,
+        `resource_portal_remote_location_available_memory_bytes{${labels}} ${snapshot.availableMemoryBytes.toString()}`,
+      );
+    }
+  }
+
+  private renderStorageBackendMetrics(lines: string[]) {
+    lines.push(
+      "# HELP resource_portal_storage_backend_capacity_total_bytes Total physical capacity reported by a StorageBackend.",
+      "# TYPE resource_portal_storage_backend_capacity_total_bytes gauge",
+      "# HELP resource_portal_storage_backend_capacity_available_bytes Available physical capacity reported by a StorageBackend.",
+      "# TYPE resource_portal_storage_backend_capacity_available_bytes gauge",
+      "# HELP resource_portal_storage_backend_used_bytes Logical used bytes measured for Volumes on a StorageBackend.",
+      "# TYPE resource_portal_storage_backend_used_bytes gauge",
+    );
+
+    for (const snapshot of this.storageBackends.values()) {
+      const labels = storageBackendLabels(snapshot);
+      if (snapshot.capacityTotal !== null) {
+        lines.push(
+          `resource_portal_storage_backend_capacity_total_bytes{${labels}} ${snapshot.capacityTotal.toString()}`,
+        );
+      }
+      if (snapshot.capacityAvailable !== null) {
+        lines.push(
+          `resource_portal_storage_backend_capacity_available_bytes{${labels}} ${snapshot.capacityAvailable.toString()}`,
+        );
+      }
+      lines.push(
+        `resource_portal_storage_backend_used_bytes{${labels}} ${snapshot.usedBytes.toString()}`,
+      );
+    }
   }
 
   private labels(method: string, route: string, statusCode: number) {
@@ -145,6 +240,26 @@ export class ObservabilityService {
       `status_code="${statusCode}"`,
     ].join(",");
   }
+}
+
+function remoteLocationLabels(snapshot: RemoteLocationSnapshot) {
+  return [
+    `remote_location_id="${escapeLabel(snapshot.id)}"`,
+    `hostname="${escapeLabel(snapshot.hostname)}"`,
+    `status="${escapeLabel(snapshot.status)}"`,
+    `health="${escapeLabel(snapshot.health)}"`,
+    `maintenance="${snapshot.maintenance}"`,
+  ].join(",");
+}
+
+function storageBackendLabels(snapshot: StorageBackendSnapshot) {
+  return [
+    `storage_backend_id="${escapeLabel(snapshot.id)}"`,
+    `name="${escapeLabel(snapshot.name)}"`,
+    `status="${escapeLabel(snapshot.status)}"`,
+    `health="${escapeLabel(snapshot.health)}"`,
+    `maintenance="${snapshot.maintenance}"`,
+  ].join(",");
 }
 
 function escapeLabel(value: string) {

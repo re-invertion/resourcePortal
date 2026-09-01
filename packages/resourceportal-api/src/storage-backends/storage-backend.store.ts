@@ -32,6 +32,10 @@ type CommittedCapacityRow = {
   committedBytes: bigint;
 };
 
+type UsedCapacityRow = {
+  usedBytes: bigint;
+};
+
 @Injectable()
 export class StorageBackendStore {
   constructor(private readonly prisma: PrismaService) {}
@@ -126,6 +130,15 @@ export class StorageBackendStore {
       ${exclusion}
     `);
     return rows[0]?.committedBytes ?? 0n;
+  }
+
+  async usedCapacity(backendId: string) {
+    const rows = await this.prisma.$queryRaw<UsedCapacityRow[]>`
+      SELECT COALESCE(SUM(COALESCE("usedSizeBytes", 0)), 0)::bigint AS "usedBytes"
+      FROM "Volume"
+      WHERE "storageBackendId" = ${backendId}::uuid
+    `;
+    return rows[0]?.usedBytes ?? 0n;
   }
 
   async reserveResize(
