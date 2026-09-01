@@ -30,4 +30,16 @@ describe("functional Stage 20 forms", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear credential" }));
     expect(screen.queryByText(/once-only/)).toBeNull();
   });
+
+  it("shows a newly supplied one-time value after the previous value was cleared", () => {
+    const { rerender } = render(<OneTimeCredential value={{ value: "first-once" }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear credential" }));
+    expect(screen.getByText(/Credential cleared from this browser view/)).toBeTruthy();
+
+    rerender(<OneTimeCredential value={{ value: "second-once" }} />);
+
+    expect(screen.getByText(/second-once/)).toBeTruthy();
+    expect(screen.queryByText(/Credential cleared from this browser view/)).toBeNull();
+  });
 });
