@@ -164,6 +164,9 @@ client.platformIdentityProviders.delete(identityProviderId)
 client.auditLog.list(tenantId, filters)
 client.auditLog.export(tenantId, { ...filters, format: "csv" })
 client.metrics.get()
+client.health.get()
+client.health.live()
+client.health.ready()
 ```
 
 Audit list filters support `action`, `actor`, `resourceType`, `resourceId`, `result`, `requestId`, `correlationId`, `from`, `to`, `cursor` and `limit`. Audit export supports the same filters plus `format=json|csv`.
@@ -188,6 +191,8 @@ error.requestId
 error.correlationId
 ```
 
-## Scope boundary
+## Scope boundary and drift prevention
 
 The SDK targets the public Resource Portal management API. `/internal/*` endpoints and routes explicitly protected as internal worker APIs are intentionally excluded, including `/users` guarded by `InternalAuthGuard`.
+
+The compatibility test inventory classifies every API controller. Adding or removing a controller changes that manifest and forces an explicit SDK/CLI parity decision instead of allowing public surface drift to pass silently.
