@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "../components/forms";
 import { ErrorState, ReadOnlyPanel, ResourcePanel } from "../components/resource";
+import { buildAuditQueries, formatAuditExport } from "./audit-query";
 
 const enc = encodeURIComponent;
 const itemId = (item: Record<string, unknown>) => enc(String(item.id ?? ""));
@@ -104,21 +105,11 @@ function BillingPage({ root }: { root: string }) {
   return <main><h1>Billing and quota</h1><ReadOnlyPanel title="Billing account" path={`${root}/billing`} /><ReadOnlyPanel title="Transactions" path={`${root}/billing/transactions`} /><ReadOnlyPanel title="Usage records" path={`${root}/billing/usage-records`} /><PatchSingleton title="Quota" path={`${root}/quota`} /><section><h2>Top up / redeem voucher</h2><JsonPayloadForm submitLabel="Top up" onSubmit={async (body) => { await apiRequest(`${root}/billing/top-up`, { method: "POST", body }); }} /></section></main>;
 }
 
-function toQuery(value: Record<string, unknown>) {
-  const params = new URLSearchParams();
-  for (const [key, raw] of Object.entries(value)) {
-    if (raw == null || raw === "") continue;
-    for (const item of Array.isArray(raw) ? raw : [raw]) params.append(key, String(item));
-  }
-  const query = params.toString();
-  return query ? `?${query}` : "";
-}
-
 function AuditPage({ root }: { root: string }) {
-  const [query, setQuery] = useState("");
-  const [exported, setExported] = useState<string>();
+  const [queries, setQueries] = useState({ list: "", export: "" });
+  const [exported, setExported] = useState<unknown>();
   const [error, setError] = useState<unknown>();
-  return <main><h1>Audit log</h1><JsonPayloadForm submitLabel="Apply filters" initialValue={{ action: "", actorId: "", resourceType: "", from: "", to: "", limit: 100 }} onSubmit={(body) => setQuery(toQuery(body))} /><ReadOnlyPanel title="Audit records" path={`${root}/audit-log${query}`} />{error ? <ErrorState error={error} /> : null}<button type="button" onClick={() => { apiRequest<string>(`${root}/audit-log/export${query}`).then(setExported).catch(setError); }}>Export</button>{exported !== undefined ? <details open><summary>Export output</summary><pre>{exported}</pre></details> : null}</main>;
+  return <main><h1>Audit log</h1><JsonPayloadForm submitLabel="Apply filters" initialValue={{ action: "", actor: "", resourceType: "", from: "", to: "", limit: 100, format: "json" }} onSubmit={(body) => setQueries(buildAuditQueries(body))} /><ReadOnlyPanel title="Audit records" path={`${root}/audit-log${queries.list}`} />{error ? <ErrorState error={error} /> : null}<button type="button" onClick={() => { setError(undefined); apiRequest(`${root}/audit-log/export${queries.export}`).then(setExported).catch(setError); }}>Export</button>{exported !== undefined ? <details open><summary>Export output</summary><pre>{formatAuditExport(exported)}</pre></details> : null}</main>;
 }
 
 function OperationsPage({ tenantId, root, operationId }: { tenantId: string; root: string; operationId?: string }) {
