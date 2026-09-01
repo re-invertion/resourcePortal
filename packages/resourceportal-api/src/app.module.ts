@@ -18,6 +18,8 @@ import { OAuthApplicationsModule } from "./oauth-applications/oauth-applications
 import { ObservabilityModule } from "./observability/observability.module";
 import { OperationsModule } from "./operations/operations.module";
 import { PlatformInfrastructureModule } from "./platform-infrastructure/platform-infrastructure.module";
+import { PlatformMaintenanceGuard } from "./platform-maintenance/platform-maintenance.guard";
+import { PlatformMaintenanceModule } from "./platform-maintenance/platform-maintenance.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
 import { SecurityModule } from "./security/security.module";
@@ -35,6 +37,7 @@ import { VolumesModule } from "./volumes/volumes.module";
       validate: validateEnv,
     }),
     PrismaModule,
+    PlatformMaintenanceModule,
     SecurityModule,
     AuthModule,
     HealthModule,
@@ -56,6 +59,10 @@ import { VolumesModule } from "./volumes/volumes.module";
     StorageBackendsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: PlatformMaintenanceGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: DevAuthGuard,
