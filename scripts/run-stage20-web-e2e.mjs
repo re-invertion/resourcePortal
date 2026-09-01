@@ -20,6 +20,7 @@ try {
   const context = await browser.newContext();
   const page = await context.newPage();
   const appGroupName = `web-e2e-${Date.now()}`;
+  const serviceIdentityName = `web-e2e-service-${Date.now()}`;
 
   try {
     await page.goto(
@@ -109,17 +110,10 @@ try {
       "Tenant overview rendered an error alert",
     );
 
-    const primary = page.getByRole("navigation", { name: "Primary" });
-    await primary
-      .getByRole("link", { name: "app-groups", exact: true })
-      .click();
-    await page.waitForURL(
-      new RegExp(`/tenants/${state.tenantId}/app-groups$`),
-    );
-    await page.locator("main > h1", { hasText: "AppGroups" }).waitFor();
-
+    await navigateTenantSection(page, "app-groups", "AppGroups");
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("main > h1", { hasText: "AppGroups" }).waitFor();
+    await waitForPageRequests(page, "app-groups");
 
     const appGroupsSection = page
       .locator("section")
@@ -146,17 +140,98 @@ try {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
 
-    await page
-      .getByRole("navigation", { name: "Primary" })
-      .getByRole("link", { name: "app-groups", exact: true })
-      .click();
-    await page.locator("main > h1", { hasText: "AppGroups" }).waitFor();
-
+    await navigateTenantSection(page, "app-groups", "AppGroups");
     const cleanupRow = page.getByRole("row").filter({ hasText: appGroupName });
     await cleanupRow.waitFor();
     page.once("dialog", (dialog) => dialog.accept());
     await cleanupRow.getByRole("button", { name: "Delete" }).click();
     await cleanupRow.waitFor({ state: "detached" });
+
+    const routeMatrix = [
+      ["volumes", "Volumes"],
+      ["registries", "Registries"],
+      ["domains", "Domains and HTTP routing"],
+      ["administration", "Tenant administration"],
+      ["credentials", "Tenant machine credentials"],
+      ["billing", "Billing and quota"],
+      ["audit", "Audit log"],
+      ["operations", "Operations / jobs"],
+    ];
+
+    for (const [section, heading] of routeMatrix) {
+      await navigateTenantSection(page, section, heading);
+      await waitForPageRequests(page, section);
+      assert(
+        (await page.getByRole("alert").count()) === 0,
+        `Tenant ${section} route rendered an API error alert`,
+      );
+    }
+
+    await navigateTenantSection(page, "credentials", "Tenant machine credentials");
+    await waitForPageRequests(page, "credentials");
+    const servicePanel = page
+      .locator("section")
+      .filter({
+        has: page.getByRole("heading", {
+          name: "Service identities",
+          level: 2,
+        }),
+      })
+      .first();
+    await servicePanel.locator("summary", { hasText: "Create" }).click();
+    await servicePanel
+      .getByRole("textbox", { name: "JSON payload" })
+      .fill(
+        JSON.stringify(
+          {
+            name: serviceIdentityName,
+            description: "Stage 20 browser E2E identity",
+            roleIds: ["viewer"],
+          },
+          null,
+          2,
+        ),
+      );
+    await servicePanel
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
+
+    const createdIdentityRow = page
+      .getByRole("row")
+      .filter({ hasText: serviceIdentityName });
+    await createdIdentityRow.waitFor();
+    const oneTimeCredential = servicePanel.locator(
+      'section[aria-label="One-time credential"]',
+    );
+    await oneTimeCredential.waitFor();
+    assert(
+      (await oneTimeCredential.textContent())?.includes("clientSecret"),
+      "ServiceIdentity create did not expose its one-time clientSecret",
+    );
+
+    await oneTimeCredential
+      .getByRole("button", { name: "Clear credential" })
+      .click();
+    await oneTimeCredential.waitFor({ state: "detached" });
+    await createdIdentityRow
+      .getByRole("button", { name: "Rotate credentials" })
+      .click();
+    const rotatedCredential = servicePanel.locator(
+      'section[aria-label="One-time credential"]',
+    );
+    await rotatedCredential.waitFor();
+    assert(
+      (await rotatedCredential.textContent())?.includes("clientSecret"),
+      "ServiceIdentity rotation did not expose a one-time clientSecret",
+    );
+
+    const refreshedIdentityRow = page
+      .getByRole("row")
+      .filter({ hasText: serviceIdentityName });
+    await refreshedIdentityRow.waitFor();
+    page.once("dialog", (dialog) => dialog.accept());
+    await refreshedIdentityRow.getByRole("button", { name: "Delete" }).click();
+    await refreshedIdentityRow.waitFor({ state: "detached" });
 
     const storageKeys = await page.evaluate(() => [
       ...Object.keys(localStorage),
@@ -183,6 +258,30 @@ try {
 } finally {
   await browser.close();
   await prisma.$disconnect();
+}
+
+async function navigateTenantSection(page, section, heading) {
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: section, exact: true })
+    .click();
+  await page.waitForURL(
+    new RegExp(`/tenants/${state.tenantId}/${section}$`),
+  );
+  await page.locator("main > h1", { hasText: heading }).waitFor();
+}
+
+async function waitForPageRequests(page, section) {
+  await page.waitForFunction(() => {
+    const loading = [...document.querySelectorAll("p")].some(
+      (element) => element.textContent?.trim() === "Loading…",
+    );
+    return !loading;
+  });
+  assert(
+    (await page.getByRole("alert").count()) === 0,
+    `Tenant ${section} route did not settle cleanly`,
+  );
 }
 
 async function routeToKeycloak(page, providerLabel) {
