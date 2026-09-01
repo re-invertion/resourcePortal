@@ -219,6 +219,13 @@ jobs:
           cat "$RUNNER_TEMP/resource-portal-web.log"
           exit 1
 
+      - name: Reconcile Swarm capacity for Stage 20 browser smoke
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "x-dev-user-id: $SMOKE_USER_ID" \
+            http://127.0.0.1:3000/api/platform/swarm-cluster/reconcile
+
       - name: Run Stage 20 browser smoke against real Swarm
         env:
           STAGE20_REAL_SWARM_WEB_ORIGIN: http://127.0.0.1:4173
