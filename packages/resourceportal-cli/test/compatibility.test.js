@@ -33,6 +33,7 @@ test("global help exposes post-Stage-8 compatibility commands", () => {
     "platform-identity-provider list",
     "audit export",
     "metrics show",
+    "health ready",
     "--correlation-id ID",
     "--request-id ID",
   ]) {
