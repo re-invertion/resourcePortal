@@ -7,6 +7,7 @@ import { VolumeOperationExecutor } from "../operations/executors/volume-operatio
 import { OperationExecutorRegistry } from "../operations/operation-executor-registry";
 import { OperationsModule } from "../operations/operations.module";
 import { OperationsWorkerService } from "../operations/operations-worker.service";
+import { PlatformMaintenanceModule } from "../platform-maintenance/platform-maintenance.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
 import { VolumesModule } from "../volumes/volumes.module";
@@ -34,6 +35,7 @@ import { TraefikCertificateObserverService } from "./traefik-certificate-observe
     CapacityModule,
     DomainsModule,
     OperationsModule,
+    PlatformMaintenanceModule,
     PrismaModule,
     SecurityModule,
     VolumesModule,
