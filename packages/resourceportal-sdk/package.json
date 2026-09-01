@@ -4,18 +4,18 @@
   "private": true,
   "description": "Resource Portal public API SDK",
   "type": "commonjs",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/full.js",
+  "types": "dist/full.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/full.d.ts",
+      "default": "./dist/full.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build"
+    "test": "npm run build && node --test test/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
