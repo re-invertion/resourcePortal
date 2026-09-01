@@ -415,13 +415,16 @@ async function deleteDraftSingleAppRow(row) {
   await row
     .locator("pre")
     .filter({ hasText: '"pendingDeletion": true' })
-    .waitFor();
+    .waitFor({ state: "attached" });
 }
 
 async function deleteDraftAppGroupRow(row) {
   pageDialogAccept(row.page());
   await row.getByRole("button", { name: "Delete" }).click();
-  await row.locator("pre").filter({ hasText: '"status": "Deleting"' }).waitFor();
+  await row
+    .locator("pre")
+    .filter({ hasText: '"status": "Deleting"' })
+    .waitFor({ state: "attached" });
 }
 
 function pageDialogAccept(page) {
