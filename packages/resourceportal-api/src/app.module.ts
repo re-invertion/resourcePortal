@@ -10,6 +10,7 @@ import { TenantContextGuard } from "./auth/tenant-context.guard";
 import { BillingModule } from "./billing/billing.module";
 import { BillingPreflightGuard } from "./billing/billing-preflight.guard";
 import { validateEnv } from "./config/env.validation";
+import { DisasterRecoveryModule } from "./disaster-recovery/disaster-recovery.module";
 import { DomainsModule } from "./domains/domains.module";
 import { HealthModule } from "./health/health.module";
 import { IdentityProvidersModule } from "./identity-providers/identity-providers.module";
@@ -57,6 +58,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     ObservabilityModule,
     PlatformInfrastructureModule,
     StorageBackendsModule,
+    DisasterRecoveryModule,
   ],
   providers: [
     {
