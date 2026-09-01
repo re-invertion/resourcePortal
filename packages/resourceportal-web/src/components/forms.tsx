@@ -56,6 +56,8 @@ export function JsonPayloadForm({
 
 export function OneTimeCredential({ value }: { value: unknown }) {
   const [credential, setCredential] = useState<unknown>(value);
+  useEffect(() => setCredential(value), [value]);
+
   if (credential == null) return <p>Credential cleared from this browser view.</p>;
 
   const text = typeof credential === "string" ? credential : JSON.stringify(credential, null, 2);
