@@ -1,0 +1,34 @@
+name: Stage 20 Dev
+
+on:
+  push:
+    branches: [feat/stage20-web-console]
+
+permissions:
+  contents: write
+
+jobs:
+  web-red-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stage20-web-console
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install and refresh lockfile
+        run: npm install
+      - name: Persist generated lockfile
+        run: |
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add package-lock.json
+            git commit -m "chore(stage20): refresh npm lockfile"
+            git push
+          fi
+      - name: Web tests
+        run: npm run test --workspace @resource-portal/web
