@@ -150,4 +150,16 @@ test("singleton DTO array flags are sent as arrays", async () => {
   ]);
   assert.deepEqual(oauthRequest.body.redirectUris, ["https://example.test/callback"]);
   assert.deepEqual(oauthRequest.body.postLogoutRedirectUris, ["https://example.test/logout"]);
+
+  const identityProviderRequest = await captureJsonRequest([
+    "platform-identity-provider",
+    "create",
+    "--name",
+    "company-oidc",
+    "--protocol",
+    "OIDC",
+    "--scopes",
+    "openid",
+  ]);
+  assert.deepEqual(identityProviderRequest.body.scopes, ["openid"]);
 });
