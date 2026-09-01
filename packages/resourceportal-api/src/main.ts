@@ -11,11 +11,13 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module";
 import { ObservabilityService } from "./observability/observability.service";
+import { ServerSpan, TracingService } from "./observability/tracing.service";
 import { RateLimitService } from "./security/rate-limit.service";
 
 type ObservedRequest = FastifyRequest & {
   requestId?: string;
   requestStartedAt?: number;
+  traceSpan?: ServerSpan;
 };
 
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -27,6 +29,7 @@ async function bootstrap() {
   );
   const config = app.get(ConfigService);
   const observability = app.get(ObservabilityService);
+  const tracing = app.get(TracingService);
   const rateLimit = app.get(RateLimitService);
   const port = config.get<number>("PORT", 3000);
   const httpLogger = new Logger("HttpRequest");
@@ -45,10 +48,16 @@ async function bootstrap() {
   const fastify = app.getHttpAdapter().getInstance();
   fastify.addHook("onRequest", (request: ObservedRequest, reply, done) => {
     const requestId = requestIdFromHeader(request.headers["x-request-id"]);
+    const traceSpan = tracing.startServerSpan(
+      request.headers.traceparent,
+      `${request.method} ${request.url.split("?")[0] ?? request.url}`,
+    );
 
     request.requestId = requestId;
     request.requestStartedAt = Date.now();
+    request.traceSpan = traceSpan;
     reply.header("x-request-id", requestId);
+    reply.header("traceparent", traceSpan.traceparent);
     applySecurityHeaders(request, reply, config);
 
     const limit = rateLimit.consume(request.ip);
@@ -96,10 +105,19 @@ async function bootstrap() {
       statusCode: reply.statusCode,
       durationMs,
     });
+    if (request.traceSpan) {
+      void tracing.finishServerSpan(request.traceSpan, {
+        method: request.method,
+        route,
+        statusCode: reply.statusCode,
+      });
+    }
     httpLogger.log(
       JSON.stringify({
         event: "http.request",
         requestId: request.requestId,
+        traceId: request.traceSpan?.traceId ?? null,
+        spanId: request.traceSpan?.spanId ?? null,
         method: request.method,
         route,
         statusCode: reply.statusCode,
