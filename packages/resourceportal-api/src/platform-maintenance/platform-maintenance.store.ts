@@ -16,7 +16,12 @@ export class PlatformMaintenanceStore {
   constructor(private readonly prisma: PrismaService) {}
 
   async getState() {
-    const rows = await this.prisma.$queryRaw<PlatformMaintenanceStateRow[]>`
+    const existing = await this.selectState();
+    if (existing) {
+      return existing;
+    }
+
+    await this.prisma.$executeRaw`
       INSERT INTO "PlatformMaintenanceState" (
         "id",
         "enabled",
@@ -33,12 +38,14 @@ export class PlatformMaintenanceStore {
         CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP
       )
-      ON CONFLICT ("id") DO UPDATE
-      SET "id" = EXCLUDED."id"
-      RETURNING *
+      ON CONFLICT ("id") DO NOTHING
     `;
 
-    return rows[0];
+    const created = await this.selectState();
+    if (!created) {
+      throw new Error("Platform maintenance state could not be initialized");
+    }
+    return created;
   }
 
   async setState(input: {
@@ -72,6 +79,20 @@ export class PlatformMaintenanceStore {
       RETURNING *
     `;
 
-    return rows[0];
+    const state = rows[0];
+    if (!state) {
+      throw new Error("Platform maintenance state update returned no row");
+    }
+    return state;
+  }
+
+  private async selectState() {
+    const rows = await this.prisma.$queryRaw<PlatformMaintenanceStateRow[]>`
+      SELECT *
+      FROM "PlatformMaintenanceState"
+      WHERE "id" = ${PLATFORM_MAINTENANCE_STATE_ID}::uuid
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
   }
 }
