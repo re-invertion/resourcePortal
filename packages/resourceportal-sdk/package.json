@@ -4,12 +4,12 @@
   "private": true,
   "description": "Resource Portal public API SDK",
   "type": "commonjs",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/full.js",
+  "types": "dist/full.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/full.d.ts",
+      "default": "./dist/full.js"
     }
   },
   "scripts": {
