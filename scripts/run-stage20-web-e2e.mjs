@@ -198,12 +198,12 @@ try {
     await deleteResourceRow(variableRow);
     await deleteResourceRow(configRow);
     await deleteResourceRow(secretRow);
-    await deleteResourceRow(singleAppRow);
+    await deleteDraftSingleAppRow(singleAppRow);
 
     await navigateTenantSection(page, "app-groups", "AppGroups");
     const cleanupRow = page.getByRole("row").filter({ hasText: appGroupName });
     await cleanupRow.waitFor();
-    await deleteResourceRow(cleanupRow);
+    await deleteDraftAppGroupRow(cleanupRow);
 
     const routeMatrix = [
       ["volumes", "Volumes"],
@@ -407,6 +407,21 @@ async function deleteResourceRow(row) {
   pageDialogAccept(row.page());
   await row.getByRole("button", { name: "Delete" }).click();
   await row.waitFor({ state: "detached" });
+}
+
+async function deleteDraftSingleAppRow(row) {
+  pageDialogAccept(row.page());
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row
+    .locator("pre")
+    .filter({ hasText: '"pendingDeletion": true' })
+    .waitFor();
+}
+
+async function deleteDraftAppGroupRow(row) {
+  pageDialogAccept(row.page());
+  await row.getByRole("button", { name: "Delete" }).click();
+  await row.locator("pre").filter({ hasText: '"status": "Deleting"' }).waitFor();
 }
 
 function pageDialogAccept(page) {
