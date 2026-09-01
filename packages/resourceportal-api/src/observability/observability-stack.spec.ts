@@ -10,7 +10,7 @@ describe("Stage 19 observability stack", () => {
     );
 
     expect(stack).toContain("loki:");
-    expect(stack).toContain("promtail:");
+    expect(stack).toContain("alloy:");
     expect(stack).toContain("otel-collector:");
     expect(stack).toContain("4318");
   });
