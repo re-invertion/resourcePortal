@@ -218,6 +218,7 @@ browser_login() {
   trap stop_api RETURN
   node scripts/run-service-identity-e2e.mjs
   node scripts/run-federation-browser-e2e.mjs
+  node scripts/run-stage20-web-e2e.mjs
   stop_api
   trap - RETURN
 }
