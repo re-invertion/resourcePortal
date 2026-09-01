@@ -63,12 +63,12 @@ describe("RuntimeRestoreService", () => {
             {
               id: "app-group-1",
               currentDeploymentVersion: 1,
-              deployments: [{ renderedStack: null }],
+              deployments: [{ version: 1, renderedStack: null }],
             },
             {
               id: "app-group-2",
               currentDeploymentVersion: 2,
-              deployments: [{ renderedStack: "services: {}\n" }],
+              deployments: [{ version: 2, renderedStack: "services: {}\n" }],
             },
           ]),
         },
