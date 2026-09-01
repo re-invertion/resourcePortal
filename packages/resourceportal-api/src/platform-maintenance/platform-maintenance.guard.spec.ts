@@ -12,12 +12,11 @@ describe("PlatformMaintenanceGuard", () => {
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(false),
     } as unknown as Reflector;
-    const service = {
-      getState: vi.fn().mockResolvedValue({
-        enabled: true,
-        reason: "control plane upgrade",
-      }),
-    } as unknown as PlatformMaintenanceService;
+    const getState = vi.fn().mockResolvedValue({
+      enabled: true,
+      reason: "control plane upgrade",
+    });
+    const service = { getState } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
     let caught: unknown;
@@ -41,22 +40,20 @@ describe("PlatformMaintenanceGuard", () => {
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(true),
     } as unknown as Reflector;
-    const service = {
-      getState: vi.fn(),
-    } as unknown as PlatformMaintenanceService;
+    const getState = vi.fn();
+    const service = { getState } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
     await expect(guard.canActivate(httpContext())).resolves.toBe(true);
-    expect(service.getState).not.toHaveBeenCalled();
+    expect(getState).not.toHaveBeenCalled();
   });
 
   it("allows ordinary requests when maintenance is disabled", async () => {
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(false),
     } as unknown as Reflector;
-    const service = {
-      getState: vi.fn().mockResolvedValue({ enabled: false, reason: null }),
-    } as unknown as PlatformMaintenanceService;
+    const getState = vi.fn().mockResolvedValue({ enabled: false, reason: null });
+    const service = { getState } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
     await expect(guard.canActivate(httpContext())).resolves.toBe(true);
