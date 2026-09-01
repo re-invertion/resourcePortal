@@ -1,11 +1,11 @@
 import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { DeploymentStatus, RuntimeState } from "@prisma/client";
 import {
   deriveAppGroupDriftStatus,
   ExpectedRuntimeService,
 } from "../app-groups/runtime-drift";
 import { mapAppGroup } from "../app-groups/app-groups.view";
+import { PlatformMaintenanceService } from "../platform-maintenance/platform-maintenance.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StackRuntimeService } from "./stack-runtime.service";
 
@@ -23,36 +23,42 @@ export class RuntimeDriftReconcilerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stackRuntime: StackRuntimeService,
-    private readonly config: ConfigService,
+    private readonly maintenance: PlatformMaintenanceService,
   ) {}
 
   async reconcileBatch(limit = 50) {
-    const appGroups = await this.prisma.appGroup.findMany({
-      where: { currentDeploymentVersion: { not: null } },
-      orderBy: { updatedAt: "asc" },
-      take: limit,
-      include: {
-        tenant: {
-          select: {
-            status: true,
-            billing: { select: { balance: true } },
+    const [appGroups, maintenanceState] = await Promise.all([
+      this.prisma.appGroup.findMany({
+        where: { currentDeploymentVersion: { not: null } },
+        orderBy: { updatedAt: "asc" },
+        take: limit,
+        include: {
+          tenant: {
+            select: {
+              status: true,
+              billing: { select: { balance: true } },
+            },
+          },
+          singleApps: {
+            select: {
+              id: true,
+              runtimeState: true,
+            },
           },
         },
-        singleApps: {
-          select: {
-            id: true,
-            runtimeState: true,
-          },
-        },
-      },
-    });
+      }),
+      this.maintenance.getState(),
+    ]);
 
     let inSync = 0;
     let drifted = 0;
     let unknown = 0;
 
     for (const appGroup of appGroups) {
-      const driftStatus = await this.reconcileAppGroup(appGroup);
+      const driftStatus = await this.reconcileAppGroup(
+        appGroup,
+        maintenanceState.enabled,
+      );
 
       if (driftStatus === "InSync") {
         inSync += 1;
@@ -71,17 +77,20 @@ export class RuntimeDriftReconcilerService {
     };
   }
 
-  private async reconcileAppGroup(appGroup: {
-    id: string;
-    status: string;
-    runtimeState: RuntimeState;
-    currentDeploymentVersion: number | null;
-    tenant: {
+  private async reconcileAppGroup(
+    appGroup: {
+      id: string;
       status: string;
-      billing: { balance: { lte(value: number): boolean } } | null;
-    };
-    singleApps: Array<{ id: string; runtimeState: RuntimeState }>;
-  }) {
+      runtimeState: RuntimeState;
+      currentDeploymentVersion: number | null;
+      tenant: {
+        status: string;
+        billing: { balance: { lte(value: number): boolean } } | null;
+      };
+      singleApps: Array<{ id: string; runtimeState: RuntimeState }>;
+    },
+    platformMaintenance: boolean,
+  ) {
     const deployment = await this.prisma.appGroupDeployment.findFirst({
       where: {
         appGroupId: appGroup.id,
@@ -112,7 +121,7 @@ export class RuntimeDriftReconcilerService {
 
     const mapped = mapAppGroup(
       { ...appGroup, singleApps: undefined } as never,
-      { platformMaintenance: this.platformMaintenanceEnabled() },
+      { platformMaintenance },
     );
     const appGroupBlocked = mapped.runtimeBlockers.length > 0;
     const currentRuntimeById = new Map(
@@ -148,12 +157,6 @@ export class RuntimeDriftReconcilerService {
       where: { id: appGroupId },
       data: { driftStatus },
     });
-  }
-
-  private platformMaintenanceEnabled() {
-    return ["1", "true", "yes", "on"].includes(
-      (this.config.get<string>("PLATFORM_MAINTENANCE_MODE") ?? "").toLowerCase(),
-    );
   }
 
   private stackName(appGroupId: string) {
