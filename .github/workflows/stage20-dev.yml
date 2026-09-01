@@ -32,3 +32,9 @@ jobs:
           fi
       - name: Web tests
         run: npm run test --workspace @resource-portal/web
+      - name: Web typecheck and build
+        run: |
+          npm run lint --workspace @resource-portal/web
+          npm run build --workspace @resource-portal/web
+      - name: Dependency audit
+        run: npm audit --audit-level=high
