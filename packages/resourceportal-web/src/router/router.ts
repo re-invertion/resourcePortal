@@ -33,9 +33,3 @@ export function parseRoute(pathname: string): AppRoute {
 export function tenantHref(tenantId: string, section: string, resourceId?: string) {
   return `/tenants/${encodeURIComponent(tenantId)}/${section}${resourceId ? `/${encodeURIComponent(resourceId)}` : ""}`;
 }
-
-export function navigate(href: string, replace = false) {
-  if (replace) history.replaceState(null, "", href);
-  else history.pushState(null, "", href);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}

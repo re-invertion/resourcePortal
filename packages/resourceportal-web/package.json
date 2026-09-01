@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "lint": "tsc --noEmit",
+    "dev": "node server.mjs",
+    "start": "NODE_ENV=production node server.mjs",
+    "build:client": "vite build --outDir dist/client",
+    "build:server": "vite build --outDir dist/server --ssr src/entry-server.tsx",
+    "build": "tsc --noEmit && npm run build:client && npm run build:server",
+    "lint": "tsc --noEmit && node --check server.mjs",
     "test": "vitest run",
     "test:security": "vitest run src/security/storage.test.ts"
   },

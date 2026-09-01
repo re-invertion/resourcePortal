@@ -5,19 +5,43 @@ import { ErrorState } from "./components/resource";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
 import { PlatformPage } from "./pages/platform";
 import { TenantPage } from "./pages/tenant";
-import { AppRoute, navigate, parseRoute, tenantHref } from "./router/router";
+import { AppRoute, parseRoute, tenantHref } from "./router/router";
 
 type User = { id: string; email?: string; displayName?: string; status?: string };
 type Tenant = { id: string; name?: string; displayName?: string; status?: string };
 
-function useRoute() {
-  const [route, setRoute] = useState<AppRoute>(() => parseRoute(location.pathname));
-  useEffect(() => {
-    const listener = () => setRoute(parseRoute(location.pathname));
-    addEventListener("popstate", listener);
-    return () => removeEventListener("popstate", listener);
-  }, []);
-  return route;
+type AppProps = {
+  initialPath?: string;
+};
+
+function browserPath() {
+  return typeof window === "undefined" ? "/" : window.location.pathname;
+}
+
+function useRoute(initialPath?: string) {
+  const pathname = initialPath ?? browserPath();
+  return useMemo(() => parseRoute(pathname), [pathname]);
+}
+
+function routeAttributes(route: AppRoute) {
+  const attributes: Record<string, string> = { "data-route-kind": route.kind };
+  if (route.kind === "tenant") {
+    attributes["data-tenant-id"] = route.tenantId;
+    attributes["data-route-section"] = route.section;
+  } else if (route.kind === "platform") {
+    attributes["data-route-section"] = route.section;
+  } else if (route.kind === "public") {
+    attributes["data-route-page"] = route.page;
+  }
+  return attributes;
+}
+
+function routeLoadingText(route: AppRoute) {
+  if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`;
+  if (route.kind === "platform") return `Loading platform route: ${route.section}…`;
+  if (route.kind === "tenants") return "Loading tenants…";
+  if (route.kind === "not-found") return "Loading route…";
+  return "Loading session…";
 }
 
 function tenantList(value: unknown): Tenant[] {
@@ -25,8 +49,8 @@ function tenantList(value: unknown): Tenant[] {
   return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant);
 }
 
-export function App() {
-  const route = useRoute();
+export function App({ initialPath }: AppProps = {}) {
+  const route = useRoute(initialPath);
   const [user, setUser] = useState<User | null | undefined>();
   const [tenants, setTenants] = useState<Tenant[] | undefined>();
   const [error, setError] = useState<unknown>();
@@ -47,12 +71,12 @@ export function App() {
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
 
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
-  if (user === undefined) return <main><h1>Resource Portal</h1><p>Loading session…</p>{error ? <ErrorState error={error} /> : null}</main>;
+  if (user === undefined) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>{routeLoadingText(route)}</p>{error ? <ErrorState error={error} /> : null}</main>;
   if (!user) {
     const mode = route.kind === "public" && route.page !== "health" ? route.page : "login";
     return <AuthPage mode={mode} />;
   }
-  if (!tenants) return <main><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
+  if (!tenants) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
 
   if (route.kind === "tenants" || route.kind === "public" || route.kind === "not-found") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
   return <Shell user={user} route={route}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</Shell>;
@@ -61,13 +85,11 @@ export function App() {
 function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {
   const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]);
   const [error, setError] = useState<unknown>();
-  useEffect(() => { if (active.length === 1) navigate(tenantHref(active[0].id, "overview"), true); }, [active]);
-  if (active.length === 1) return <main><h1>Resource Portal</h1><p>Opening tenant…</p></main>;
-  return <main><h1>Choose tenant</h1>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <><p>No active tenant is available. Create one if your platform permissions allow it.</p><JsonPayloadForm submitLabel="Create tenant" initialValue={{ name: "" }} onSubmit={async (body) => { try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); } }} /></> : <ul>{active.map((tenant) => <li key={tenant.id}><a href={tenantHref(tenant.id, "overview")}>{tenant.displayName ?? tenant.name ?? tenant.id}</a></li>)}</ul>}<p><a href="/health">Public health</a></p></main>;
+  return <main><h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <><p>No active tenant is available. Create one if your platform permissions allow it.</p><JsonPayloadForm submitLabel="Create tenant" initialValue={{ name: "" }} onSubmit={async (body) => { try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); } }} /></> : <ul>{active.map((tenant) => <li key={tenant.id}><a href={tenantHref(tenant.id, "overview")}>{tenant.displayName ?? tenant.name ?? tenant.id}</a></li>)}</ul>}<p><a href="/health">Public health</a></p></main>;
 }
 
 function Shell({ user, route, children }: { user: User; route: AppRoute; children: React.ReactNode }) {
   const tenantId = route.kind === "tenant" ? route.tenantId : undefined;
   const tenantSections = ["overview", "app-groups", "volumes", "registries", "domains", "administration", "credentials", "billing", "audit", "operations"];
-  return <><header><strong>Resource Portal</strong> <span>{user.displayName ?? user.email ?? user.id}</span><button type="button" onClick={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => navigate("/login", true)); }}>Logout</button></header><nav aria-label="Primary"><a href="/tenants">Tenants</a>{tenantId ? tenantSections.map((section) => <span key={section}> · <a href={tenantHref(tenantId, section)}>{section}</a></span>) : null}<span> · <a href="/platform/overview">platform</a></span><span> · <a href="/platform/maintenance">maintenance</a></span><span> · <a href="/platform/infrastructure">infrastructure</a></span><span> · <a href="/platform/identity-providers">platform IdPs</a></span><span> · <a href="/platform/credentials">platform credentials</a></span><span> · <a href="/platform/billing">platform billing</a></span></nav>{children}</>;
+  return <><header><strong>Resource Portal</strong> <span>{user.displayName ?? user.email ?? user.id}</span><button type="button" onClick={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>Logout</button></header><nav aria-label="Primary"><a href="/tenants">Tenants</a>{tenantId ? tenantSections.map((section) => <span key={section}> · <a href={tenantHref(tenantId, section)}>{section}</a></span>) : null}<span> · <a href="/platform/overview">platform</a></span><span> · <a href="/platform/maintenance">maintenance</a></span><span> · <a href="/platform/infrastructure">infrastructure</a></span><span> · <a href="/platform/identity-providers">platform IdPs</a></span><span> · <a href="/platform/credentials">platform credentials</a></span><span> · <a href="/platform/billing">platform billing</a></span></nav>{children}</>;
 }

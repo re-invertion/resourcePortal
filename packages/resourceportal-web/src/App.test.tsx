@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -8,7 +9,17 @@ function json(value: unknown, status = 200) {
 
 describe("Web Console bootstrap", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     history.replaceState(null, "", "/tenants");
+  });
+
+  it("renders on the server without browser location globals", () => {
+    vi.stubGlobal("location", undefined);
+    try {
+      expect(() => renderToString(<App initialPath="/tenants/t1/app-groups" />)).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("renders controlled re-login when the BFF session is missing", async () => {
@@ -29,16 +40,14 @@ describe("Web Console bootstrap", () => {
     expect(screen.getByRole("link", { name: /two/ }).getAttribute("href")).toContain("/tenants/t2/overview");
   });
 
-  it("enters the only active tenant automatically", async () => {
+  it("renders a normal document link for the only active tenant", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
-      .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }]))
-      .mockResolvedValueOnce(json({ id: "t1", name: "one", status: "Active" }))
-      .mockResolvedValueOnce(json([]));
+      .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }]));
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    await waitFor(() => expect(location.pathname).toBe("/tenants/t1/overview"));
-    expect(await screen.findByRole("heading", { level: 1, name: "Tenant overview" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Tenant" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toBe("/tenants/t1/overview");
   });
 });
