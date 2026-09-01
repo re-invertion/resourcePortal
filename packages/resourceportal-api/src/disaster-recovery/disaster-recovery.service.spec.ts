@@ -49,14 +49,22 @@ describe("DisasterRecoveryService", () => {
       { reconcileBatch: ingressReconcile } as unknown as IngressReconcilerService,
     );
 
-    await expect(service.reconcileAfterRestore()).resolves.toEqual({
-      swarm: expect.objectContaining({ nodeCount: 3, health: "Healthy" }),
-      storage: { checked: 2, failed: 0 },
-      runtimeRestore: { checked: 2, applied: 2, failed: 0, skipped: 0 },
-      runtime: expect.objectContaining({ scanned: 2, inSync: 2 }),
-      ingress: expect.objectContaining({ checked: 2, failed: 0 }),
-      healthy: true,
+    const result = await service.reconcileAfterRestore();
+
+    expect(result.swarm.nodeCount).toBe(3);
+    expect(result.swarm.health).toBe("Healthy");
+    expect(result.storage).toEqual({ checked: 2, failed: 0 });
+    expect(result.runtimeRestore).toEqual({
+      checked: 2,
+      applied: 2,
+      failed: 0,
+      skipped: 0,
     });
+    expect(result.runtime.scanned).toBe(2);
+    expect(result.runtime.inSync).toBe(2);
+    expect(result.ingress.checked).toBe(2);
+    expect(result.ingress.failed).toBe(0);
+    expect(result.healthy).toBe(true);
 
     expect(swarmReconcile).toHaveBeenCalledOnce();
     expect(listBackends).toHaveBeenCalledOnce();
