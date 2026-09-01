@@ -1,0 +1,116 @@
+version: "3.9"
+
+services:
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/config.yml"]
+    configs:
+      - source: loki_config
+        target: /etc/loki/config.yml
+    volumes:
+      - loki-data:/loki
+    networks: [observability]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.role == manager"]
+
+  alloy:
+    image: grafana/alloy:v1.19.0
+    command: ["run", "/etc/alloy/config.alloy", "--storage.path=/var/lib/alloy"]
+    configs:
+      - source: alloy_config
+        target: /etc/alloy/config.alloy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [observability]
+    deploy:
+      mode: global
+
+  tempo:
+    image: grafana/tempo:3.0.0
+    command: ["-config.file=/etc/tempo/config.yml"]
+    configs:
+      - source: tempo_config
+        target: /etc/tempo/config.yml
+    volumes:
+      - tempo-data:/var/tempo
+    networks: [observability]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.role == manager"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    command: ["--config=/etc/otel/config.yml"]
+    configs:
+      - source: otel_config
+        target: /etc/otel/config.yml
+    ports:
+      - target: 4318
+        published: 4318
+        protocol: tcp
+        mode: ingress
+    networks: [observability]
+    deploy:
+      replicas: 1
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+      - source: prometheus_rules
+        target: /etc/prometheus/rules.yml
+    volumes:
+      - prometheus-data:/prometheus
+    networks: [observability]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.role == manager"]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    configs:
+      - source: alertmanager_config
+        target: /etc/alertmanager/alertmanager.yml
+    volumes:
+      - alertmanager-data:/alertmanager
+    networks: [observability]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.role == manager"]
+
+configs:
+  loki_config:
+    file: ./loki/config.yml
+  alloy_config:
+    file: ./alloy/config.alloy
+  tempo_config:
+    file: ./tempo/config.yml
+  otel_config:
+    file: ./otel-collector/config.yml
+  prometheus_config:
+    file: ./prometheus/prometheus.yml
+  prometheus_rules:
+    file: ./prometheus/rules.yml
+  alertmanager_config:
+    file: ./alertmanager/alertmanager.yml
+
+volumes:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  alertmanager-data:
+
+networks:
+  observability:
+    driver: overlay
+    attachable: true

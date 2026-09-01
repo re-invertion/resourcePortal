@@ -1,0 +1,71 @@
+groups:
+  - name: resource-portal
+    rules:
+      - alert: ResourcePortalApiDown
+        expr: up{job="resource-portal-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Resource Portal API is unavailable
+          description: Prometheus has been unable to scrape the Resource Portal API for at least 2 minutes.
+
+      - alert: ResourcePortalHighHttp5xxRate
+        expr: |
+          (
+            sum(rate(resource_portal_http_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(resource_portal_http_requests_total[5m])), 0.001)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Resource Portal API 5xx rate is high
+          description: More than 5% of Resource Portal API requests have returned 5xx responses for 5 minutes.
+
+      - alert: ResourcePortalRemoteLocationUnhealthy
+        expr: resource_portal_remote_location_available_cpu_nano{health!="Healthy",maintenance="false"} >= 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: RemoteLocation is unhealthy
+          description: RemoteLocation {{ $labels.hostname }} reports health={{ $labels.health }}.
+
+      - alert: ResourcePortalRemoteLocationLowMemory
+        expr: |
+          (
+            resource_portal_remote_location_available_memory_bytes{maintenance="false"}
+            /
+            resource_portal_remote_location_memory_bytes{maintenance="false"}
+          ) < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: RemoteLocation available memory is low
+          description: RemoteLocation {{ $labels.hostname }} has less than 10% scheduler-available memory.
+
+      - alert: ResourcePortalStorageBackendUnhealthy
+        expr: resource_portal_storage_backend_used_bytes{health!="Healthy",maintenance="false"} >= 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: StorageBackend is unhealthy
+          description: StorageBackend {{ $labels.name }} reports health={{ $labels.health }}.
+
+      - alert: ResourcePortalStorageBackendLowCapacity
+        expr: |
+          (
+            resource_portal_storage_backend_capacity_available_bytes{maintenance="false"}
+            /
+            resource_portal_storage_backend_capacity_total_bytes{maintenance="false"}
+          ) < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: StorageBackend free capacity is low
+          description: StorageBackend {{ $labels.name }} has less than 10% physical capacity available.
