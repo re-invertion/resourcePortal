@@ -8,7 +8,7 @@
     "rp": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('dist/index.js','dist/legacy.js');fs.copyFileSync('dist/index.d.ts','dist/legacy.d.ts');fs.copyFileSync('dist/full-cli.js','dist/index.js');fs.copyFileSync('dist/full-cli.d.ts','dist/index.d.ts')\"",
+    "build": "tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('dist/index.js','dist/legacy.js');fs.copyFileSync('dist/index.d.ts','dist/legacy.d.ts');fs.copyFileSync('dist/complete-cli.js','dist/index.js');fs.copyFileSync('dist/complete-cli.d.ts','dist/index.d.ts')\"",
     "lint": "npm run build --workspace @resource-portal/sdk && tsc -p tsconfig.json --noEmit",
     "test": "npm run build --workspace @resource-portal/sdk && npm run build && node --test test/*.test.js",
     "start": "npm run build --workspace @resource-portal/sdk && npm run build && node dist/index.js"
