@@ -36,5 +36,34 @@ jobs:
         run: |
           npm run lint --workspace @resource-portal/web
           npm run build --workspace @resource-portal/web
+      - name: Production SSR deep-link smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=4173 HOST=127.0.0.1 NODE_ENV=production RESOURCE_PORTAL_API_ORIGIN=http://127.0.0.1:65535 node packages/resourceportal-web/server.mjs > /tmp/resourceportal-web.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173/tenants/tenant-1/app-groups > /tmp/deep-link.html; then
+              ready=1
+              break
+            fi
+            sleep 0.25
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat /tmp/resourceportal-web.log
+            exit 1
+          fi
+
+          grep -q 'data-route-kind="tenant"' /tmp/deep-link.html
+          grep -q 'data-tenant-id="tenant-1"' /tmp/deep-link.html
+          grep -q 'data-route-section="app-groups"' /tmp/deep-link.html
+          grep -q 'Loading tenant route: app-groups' /tmp/deep-link.html
+
+          status="$(curl --silent --output /tmp/not-found.html --write-out '%{http_code}' http://127.0.0.1:4173/definitely-not-a-resource-portal-route)"
+          test "$status" = "404"
+          grep -q 'data-route-kind="not-found"' /tmp/not-found.html
       - name: Dependency audit
         run: npm audit --audit-level=high
