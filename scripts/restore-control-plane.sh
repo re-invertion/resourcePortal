@@ -4,6 +4,7 @@ set -euo pipefail
 : "${DATABASE_URL:?DATABASE_URL is required}"
 : "${1:?Usage: scripts/restore-control-plane.sh <backup-directory>}"
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="$1"
 DB_DUMP="${BACKUP_DIR%/}/resource-portal.dump"
 MANIFEST="${BACKUP_DIR%/}/manifest.sha256"
@@ -54,5 +55,10 @@ else
   printf 'Warning: backup has no encrypted Secret payload archive.\n' >&2
 fi
 
-printf 'Restore completed from: %s\n' "$BACKUP_DIR"
-printf 'Run database migrations and readiness checks before returning traffic.\n'
+(
+  cd "$REPO_ROOT"
+  npm exec --workspace @resource-portal/api -- prisma migrate deploy
+  npm --workspace @resource-portal/api run dr:reconcile
+)
+
+printf 'Restore and post-restore reconciliation completed from: %s\n' "$BACKUP_DIR"
