@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
+import { prepareStage20PlatformAdmin } from "./stage20-platform-admin-fixture.mjs";
 
 const statePath = resolve(
   process.env.FEDERATION_E2E_STATE_FILE ?? "var/federation/state.json",
@@ -31,6 +32,13 @@ try {
   const groupName = `web-e2e-group-${stamp}`;
 
   try {
+    await prepareStage20PlatformAdmin({
+      prisma,
+      state,
+      keycloakOrigin,
+      zitadelOrigin,
+    });
+
     await page.goto(
       `${webOrigin}/login?tenantId=${encodeURIComponent(state.tenantId)}`,
       { waitUntil: "domcontentloaded" },
@@ -58,6 +66,10 @@ try {
     assert(
       me.email === state.oidcUser.email,
       `Unexpected Web session email ${me.email}`,
+    );
+    assert(
+      me.id === process.env.FEDERATION_E2E_ADMIN_USER_ID,
+      `Stage 20 browser identity is not the configured platform admin (${me.id})`,
     );
 
     const identity = await prisma.userIdentity.findFirst({
@@ -361,6 +373,22 @@ try {
       "Audit filter/export rendered an error",
     );
 
+    const platformRouteMatrix = [
+      ["overview", "Platform overview"],
+      ["maintenance", "Platform maintenance"],
+      ["identity-providers", "Platform identity providers"],
+      ["credentials", "Platform machine credentials"],
+      ["billing", "Platform billing administration"],
+    ];
+    for (const [section, heading] of platformRouteMatrix) {
+      await navigatePlatformSection(page, section, heading);
+      await waitForPageRequests(page, `platform-${section}`);
+      assert(
+        (await page.getByRole("alert").count()) === 0,
+        `Platform ${section} route rendered an API error alert`,
+      );
+    }
+
     const storageKeys = await page.evaluate(() => [
       ...Object.keys(localStorage),
       ...Object.keys(sessionStorage),
@@ -442,6 +470,22 @@ async function navigateTenantSection(page, section, heading) {
   await page.locator("main > h1", { hasText: heading }).waitFor();
 }
 
+async function navigatePlatformSection(page, section, heading) {
+  const labels = {
+    overview: "platform",
+    maintenance: "maintenance",
+    "identity-providers": "platform IdPs",
+    credentials: "platform credentials",
+    billing: "platform billing",
+  };
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: labels[section], exact: true })
+    .click();
+  await page.waitForURL(new RegExp(`/platform/${section}$`));
+  await page.locator("main > h1", { hasText: heading }).waitFor();
+}
+
 async function waitForPageRequests(page, section) {
   await page.waitForFunction(() => {
     const loading = [...document.querySelectorAll("p")].some(
@@ -451,7 +495,7 @@ async function waitForPageRequests(page, section) {
   });
   assert(
     (await page.getByRole("alert").count()) === 0,
-    `Tenant ${section} route did not settle cleanly`,
+    `${section} route did not settle cleanly`,
   );
 }
 
