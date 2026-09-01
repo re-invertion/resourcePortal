@@ -49,6 +49,22 @@ const COMPATIBILITY_GROUPS = new Set([
   "metrics",
 ]);
 
+const DECIMAL_STRING_FIELDS = new Set([
+  "cpuCreditsPerVcpuHour",
+  "memoryCreditsPerGbHour",
+  "storageCreditsPerGbHour",
+  "gpuCreditsPerGpuHour",
+  "valueCredits",
+  "amountCredits",
+]);
+
+const DTO_ARRAY_FIELDS = new Set([
+  "roleIds",
+  "redirectUris",
+  "postLogoutRedirectUris",
+  "scopes",
+]);
+
 const parsed = parseArgs(process.argv.slice(2));
 
 if (parsed.options.correlationId) {
@@ -424,7 +440,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (raw.startsWith("--")) {
       const key = camelCase(raw.slice(2));
       const next = argv[index + 1];
-      const value = !next || next.startsWith("--") ? true : coerce(next);
+      const value = !next || next.startsWith("--") ? true : coerceFlagValue(key, next);
       if (value !== true || next === "true") index += 1;
       appendFlag(flags, key, value);
       continue;
@@ -458,7 +474,7 @@ function mutationBody(flags: Flags): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(flags)
       .filter(([key]) => key !== "bodyJson")
-      .map(([key, value]) => [key, normalizeFlagValue(value)]),
+      .map(([key, value]) => [key, normalizeMutationValue(key, value)]),
   );
 }
 
@@ -469,6 +485,14 @@ function queryFromFlags(flags: Flags): ResourcePortalQuery {
       normalizeQueryValue(value),
     ]),
   );
+}
+
+function normalizeMutationValue(key: string, value: FlagValue): unknown {
+  const normalized = normalizeFlagValue(value);
+  if (DTO_ARRAY_FIELDS.has(key) && !Array.isArray(normalized)) {
+    return [normalized];
+  }
+  return normalized;
 }
 
 function normalizeFlagValue(value: FlagValue): unknown {
@@ -510,6 +534,11 @@ function appendFlag(flags: Flags, key: string, value: string | number | boolean)
   } else {
     flags[key] = [existing, value];
   }
+}
+
+function coerceFlagValue(key: string, value: string): string | number | boolean {
+  if (DECIMAL_STRING_FIELDS.has(key) || DTO_ARRAY_FIELDS.has(key)) return value;
+  return coerce(value);
 }
 
 function coerce(value: string): string | number | boolean {
