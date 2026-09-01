@@ -191,7 +191,7 @@ try {
       containerPort: 8080,
       protocolMode: "HTTP",
     });
-    const endpointRow = page.getByRole("row").filter({ hasText: "web" });
+    const endpointRow = endpointsPanel.getByRole("row").filter({ hasText: "web" });
     await endpointRow.waitFor();
     await deleteResourceRow(endpointRow);
 
@@ -243,10 +243,7 @@ try {
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
 
-    const authPolicySection = page
-      .locator("section")
-      .filter({ has: page.getByRole("heading", { name: "Authentication policy", level: 2 }) })
-      .first();
+    const authPolicySection = panelByHeading(page, "Authentication policy");
     await authPolicySection
       .getByRole("textbox", { name: "JSON payload" })
       .fill(
@@ -341,10 +338,7 @@ try {
 
     await navigateTenantSection(page, "billing", "Billing and quota");
     await waitForPageRequests(page, "billing");
-    const quotaSection = page
-      .locator("section")
-      .filter({ has: page.getByRole("heading", { name: "Quota", level: 2 }) })
-      .first();
+    const quotaSection = panelByHeading(page, "Quota");
     await quotaSection
       .getByRole("textbox", { name: "JSON payload" })
       .fill(JSON.stringify({ maxSingleApps: 100, maxVolumes: 100 }, null, 2));
@@ -396,9 +390,8 @@ try {
 
 function panelByHeading(page, heading) {
   return page
-    .locator("section")
-    .filter({ has: page.getByRole("heading", { name: heading, level: 2 }) })
-    .first();
+    .getByRole("heading", { name: heading, level: 2 })
+    .locator("xpath=ancestor::section[1]");
 }
 
 async function createResource(panel, body) {
