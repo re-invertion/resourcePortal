@@ -99,6 +99,7 @@ service-identity
 platform-service-identity
 platform-identity-provider
 metrics
+health
 ```
 
 Representative commands:
@@ -147,6 +148,9 @@ rp platform-identity-provider create --name "Company OIDC" --protocol OIDC --iss
 rp audit list TENANT_ID --action DEPLOY --limit 25
 rp audit export TENANT_ID --format csv --from 2026-08-01T00:00:00Z --to 2026-09-01T00:00:00Z
 rp metrics show
+rp health show
+rp health live
+rp health ready
 ```
 
 Mutation commands added by the compatibility sync accept DTO properties as kebab-case flags. Repeated flags become arrays. For complex or exact request bodies, `--body-json` accepts the complete JSON object.
@@ -182,10 +186,13 @@ after the next deployment.
 
 The CLI exposes the public Resource Portal management API. Internal worker endpoints are intentionally excluded, including `/internal/*` and `/users` guarded by `InternalAuthGuard`.
 
+SDK compatibility tests maintain an explicit inventory of API controllers, so a future controller change forces an explicit public/internal parity decision instead of silently drifting away from CLI/SDK coverage.
+
 Run help:
 
 ```bash
 rp --help
 rp operation --help
+rp health --help
 rp app --help
 ```
