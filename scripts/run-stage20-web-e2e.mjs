@@ -389,9 +389,8 @@ try {
 }
 
 function panelByHeading(page, heading) {
-  return page
-    .getByRole("heading", { name: heading, level: 2 })
-    .locator("xpath=ancestor::section[1]");
+  const title = page.getByRole("heading", { name: heading, level: 2 });
+  return title.locator("xpath=parent::header/parent::section");
 }
 
 async function createResource(panel, body) {
