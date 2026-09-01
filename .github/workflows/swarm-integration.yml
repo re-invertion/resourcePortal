@@ -18,7 +18,7 @@ jobs:
   real-swarm:
     name: Real Swarm smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -83,6 +83,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Playwright for Stage 20 real-Swarm browser smoke
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
 
       - name: Generate Prisma client
         run: npm run api:prisma:generate
@@ -176,6 +181,9 @@ jobs:
           docker node ls
           test "$(docker info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = "active true"
 
+      - name: Build Stage 20 Web Console
+        run: npm --workspace @resource-portal/web run build
+
       - name: Start Resource Portal API
         run: |
           npm run api:start > "$RUNNER_TEMP/resource-portal-api.log" 2>&1 &
@@ -190,6 +198,29 @@ jobs:
 
           cat "$RUNNER_TEMP/resource-portal-api.log"
           exit 1
+
+      - name: Start Stage 20 Web Console
+        env:
+          PORT: 4173
+          RESOURCE_PORTAL_API_ORIGIN: http://127.0.0.1:3000
+        run: |
+          npm --workspace @resource-portal/web run start > "$RUNNER_TEMP/resource-portal-web.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/resource-portal-web.pid"
+
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat "$RUNNER_TEMP/resource-portal-web.log"
+          exit 1
+
+      - name: Run Stage 20 browser smoke against real Swarm
+        env:
+          STAGE20_REAL_SWARM_WEB_ORIGIN: http://127.0.0.1:4173
+        run: node scripts/run-stage20-real-swarm-web-e2e.mjs
 
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
@@ -220,6 +251,7 @@ jobs:
           name: resource-portal-swarm-integration-logs
           path: |
             ${{ runner.temp }}/resource-portal-api.log
+            ${{ runner.temp }}/resource-portal-web.log
             ${{ runner.temp }}/nfs-ganesha.log
           if-no-files-found: ignore
           retention-days: 7
