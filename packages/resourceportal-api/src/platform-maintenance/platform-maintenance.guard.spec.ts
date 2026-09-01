@@ -1,4 +1,7 @@
-import { ServiceUnavailableException } from "@nestjs/common";
+import {
+  ExecutionContext,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformMaintenanceGuard } from "./platform-maintenance.guard";
@@ -17,16 +20,20 @@ describe("PlatformMaintenanceGuard", () => {
     } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
-    await expect(
-      guard.canActivate({
-        getHandler: () => function handler() {},
-        getClass: () => class Controller {},
-      } as never),
-    ).rejects.toMatchObject<ServiceUnavailableException>({
-      response: expect.objectContaining({
-        code: "PLATFORM_MAINTENANCE",
-        reason: "control plane upgrade",
-      }),
+    let caught: unknown;
+    try {
+      await guard.canActivate(httpContext());
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ServiceUnavailableException);
+    if (!(caught instanceof ServiceUnavailableException)) {
+      throw new Error("Expected ServiceUnavailableException");
+    }
+    expect(caught.getResponse()).toMatchObject({
+      code: "PLATFORM_MAINTENANCE",
+      reason: "control plane upgrade",
     });
   });
 
@@ -39,12 +46,7 @@ describe("PlatformMaintenanceGuard", () => {
     } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
-    await expect(
-      guard.canActivate({
-        getHandler: () => function handler() {},
-        getClass: () => class Controller {},
-      } as never),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(httpContext())).resolves.toBe(true);
     expect(service.getState).not.toHaveBeenCalled();
   });
 
@@ -57,11 +59,14 @@ describe("PlatformMaintenanceGuard", () => {
     } as unknown as PlatformMaintenanceService;
     const guard = new PlatformMaintenanceGuard(reflector, service);
 
-    await expect(
-      guard.canActivate({
-        getHandler: () => function handler() {},
-        getClass: () => class Controller {},
-      } as never),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(httpContext())).resolves.toBe(true);
   });
 });
+
+function httpContext() {
+  return {
+    getType: () => "http",
+    getHandler: () => function handler() {},
+    getClass: () => class Controller {},
+  } as unknown as ExecutionContext;
+}
