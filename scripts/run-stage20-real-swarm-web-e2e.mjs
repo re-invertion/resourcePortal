@@ -46,19 +46,11 @@ try {
         response.request().method() === "POST" &&
         response.url() === `${webOrigin}/api/tenants`,
     );
-    await page
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(
-        JSON.stringify(
-          {
-            name: tenantName,
-            displayName: "Stage 20 Real Swarm",
-            contactEmail: `${tenantName}@example.local`,
-          },
-          null,
-          2,
-        ),
-      );
+    await fillStructuredForm(page, {
+      name: tenantName,
+      displayName: "Stage 20 Real Swarm",
+      contactEmail: `${tenantName}@example.local`,
+    });
     await page.getByRole("button", { name: "Create tenant" }).click();
     const tenantResponse = await createTenantResponse;
     const tenantText = await tenantResponse.text();
@@ -141,16 +133,9 @@ try {
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deploy`,
     );
-    await deploymentsSection
-      .getByRole("textbox", { name: "JSON payload" })
-      .first()
-      .fill(
-        JSON.stringify(
-          { note: "Stage 20 real Swarm browser deploy" },
-          null,
-          2,
-        ),
-      );
+    await fillStructuredForm(deploymentsSection, {
+      note: "Stage 20 real Swarm browser deploy",
+    });
     await deploymentsSection.getByRole("button", { name: "Deploy" }).click();
     const deployResponse = await deployResponsePromise;
     const deployText = await deployResponse.text();
@@ -210,15 +195,9 @@ try {
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments/${deploymentId}/rollback`,
     );
-    await rollbackSourceRow
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(
-        JSON.stringify(
-          { note: "Stage 20 real Swarm browser rollback" },
-          null,
-          2,
-        ),
-      );
+    await fillStructuredForm(rollbackSourceRow, {
+      note: "Stage 20 real Swarm browser rollback",
+    });
     await rollbackSourceRow.getByRole("button", { name: "Rollback" }).click();
     const rollbackResponse = await rollbackResponsePromise;
     const rollbackText = await rollbackResponse.text();
@@ -291,10 +270,93 @@ function panelByHeading(page, heading) {
 
 async function createResource(panel, body) {
   await panel.locator("summary", { hasText: "Create" }).click();
-  await panel
-    .getByRole("textbox", { name: "JSON payload" })
-    .fill(JSON.stringify(body, null, 2));
+  await fillStructuredForm(panel, body);
   await panel.getByRole("button", { name: "Create", exact: true }).click();
+}
+
+async function fillStructuredForm(container, body) {
+  for (const [key, value] of Object.entries(body)) {
+    const label = formLabel(key);
+
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const item = value[index];
+        assert(
+          item == null || ["string", "number"].includes(typeof item),
+          `Stage 20 real-Swarm E2E only supports primitive list items for ${key}`,
+        );
+        await container
+          .getByLabel(`${label} item ${index + 1}`, { exact: true })
+          .fill(item == null ? "" : String(item));
+      }
+      continue;
+    }
+
+    if (value && typeof value === "object") {
+      const group = container.getByRole("group", { name: label, exact: true });
+      const entries = Object.entries(value);
+      for (let index = 0; index < entries.length; index += 1) {
+        if (index > 0) {
+          await group.getByRole("button", { name: "Add field", exact: true }).click();
+        }
+        const [entryKey, entryValue] = entries[index];
+        await group
+          .getByLabel(`${label} key ${index + 1}`, { exact: true })
+          .fill(entryKey);
+        const typeControl = group.getByLabel(`${label} type ${index + 1}`, {
+          exact: true,
+        });
+        if (typeof entryValue === "number") {
+          await typeControl.selectOption("number");
+        } else if (typeof entryValue === "boolean") {
+          await typeControl.selectOption("boolean");
+        } else {
+          assert(
+            typeof entryValue === "string",
+            `Stage 20 real-Swarm E2E only supports primitive object values for ${key}`,
+          );
+        }
+        const valueControl = group.getByLabel(`${label} value ${index + 1}`, {
+          exact: true,
+        });
+        if (typeof entryValue === "boolean") {
+          const checked = await valueControl.isChecked();
+          if (checked !== entryValue) await valueControl.click();
+        } else {
+          await valueControl.fill(String(entryValue));
+        }
+      }
+      continue;
+    }
+
+    const control = container.getByLabel(label, { exact: true });
+    if (typeof value === "boolean") {
+      const checked = await control.isChecked();
+      if (checked !== value) await control.click();
+      continue;
+    }
+    await control.fill(value == null ? "" : String(value));
+  }
+}
+
+function formLabel(key) {
+  const spaced = key
+    .replace(/Ids\b/g, " IDs")
+    .replace(/Id\b/g, " ID")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  if (!spaced) return "Value";
+  return spaced
+    .split(/\s+/)
+    .map((word, index) => {
+      if (word === "ID" || word === "IDs") return word;
+      const normalized = word.toLowerCase();
+      return index === 0
+        ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
+        : normalized;
+    })
+    .join(" ");
 }
 
 async function waitForPageRequests(page, section) {

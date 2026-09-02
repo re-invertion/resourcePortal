@@ -247,28 +247,20 @@ try {
     let groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
     await groupRow.locator("summary", { hasText: "Patch" }).click();
-    await groupRow
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(JSON.stringify({ description: "Stage 20 browser E2E group updated" }, null, 2));
+    await fillStructuredForm(groupRow, {
+      description: "Stage 20 browser E2E group updated",
+    });
     await groupRow.getByRole("button", { name: "Save", exact: true }).click();
     groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
 
     const authPolicySection = panelByHeading(page, "Authentication policy");
-    await authPolicySection
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(
-        JSON.stringify(
-          {
-            allowPlatformLogin: false,
-            allowTenantIdentityProviders: true,
-            requireTenantIdentityProvider: true,
-          },
-          null,
-          2,
-        ),
-      );
+    await fillStructuredForm(authPolicySection, {
+      allowPlatformLogin: false,
+      allowTenantIdentityProviders: true,
+      requireTenantIdentityProvider: true,
+    });
     await authPolicySection.getByRole("button", { name: "Save", exact: true }).click();
     assert(
       (await authPolicySection.getByRole("alert").count()) === 0,
@@ -351,9 +343,10 @@ try {
     await navigateTenantSection(page, "billing", "Billing and quota");
     await waitForPageRequests(page, "billing");
     const quotaSection = panelByHeading(page, "Quota");
-    await quotaSection
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(JSON.stringify({ maxSingleApps: 100, maxVolumes: 100 }, null, 2));
+    await fillStructuredForm(quotaSection, {
+      maxSingleApps: 100,
+      maxVolumes: 100,
+    });
     await quotaSection.getByRole("button", { name: "Save", exact: true }).click();
     assert(
       (await quotaSection.getByRole("alert").count()) === 0,
@@ -362,9 +355,7 @@ try {
 
     await navigateTenantSection(page, "audit", "Audit log");
     await waitForPageRequests(page, "audit");
-    await page
-      .getByRole("textbox", { name: "JSON payload" })
-      .fill(JSON.stringify({ limit: 10 }, null, 2));
+    await fillStructuredForm(page, { limit: 10 });
     await page.getByRole("button", { name: "Apply filters" }).click();
     await page.getByRole("button", { name: "Export" }).click();
     await page.locator("details", { hasText: "Export output" }).waitFor();
@@ -424,11 +415,60 @@ function panelByHeading(page, heading) {
 }
 
 async function createResource(panel, body) {
-  await panel.locator("summary", { hasText: "Create" }).click();
-  await panel
-    .getByRole("textbox", { name: "JSON payload" })
-    .fill(JSON.stringify(body, null, 2));
-  await panel.getByRole("button", { name: "Create", exact: true }).click();
+  const createDetails = panel
+    .locator("summary")
+    .filter({ hasText: /^Create$/ })
+    .locator("xpath=parent::details");
+  await createDetails.locator("summary").click();
+  await fillStructuredForm(createDetails, body);
+  await createDetails.getByRole("button", { name: "Create", exact: true }).click();
+}
+
+async function fillStructuredForm(container, body) {
+  for (const [key, value] of Object.entries(body)) {
+    const label = formLabel(key);
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const item = value[index];
+        assert(
+          item == null || ["string", "number"].includes(typeof item),
+          `Stage 20 E2E only supports primitive list items for ${key}`,
+        );
+        await container
+          .getByLabel(`${label} item ${index + 1}`, { exact: true })
+          .fill(item == null ? "" : String(item));
+      }
+      continue;
+    }
+
+    const control = container.getByLabel(label, { exact: true });
+    if (typeof value === "boolean") {
+      const checked = await control.isChecked();
+      if (checked !== value) await control.click();
+      continue;
+    }
+    await control.fill(value == null ? "" : String(value));
+  }
+}
+
+function formLabel(key) {
+  const spaced = key
+    .replace(/Ids\b/g, " IDs")
+    .replace(/Id\b/g, " ID")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  if (!spaced) return "Value";
+  return spaced
+    .split(/\s+/)
+    .map((word, index) => {
+      if (word === "ID" || word === "IDs") return word;
+      const normalized = word.toLowerCase();
+      return index === 0
+        ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
+        : normalized;
+    })
+    .join(" ");
 }
 
 async function deleteResourceRow(row) {
