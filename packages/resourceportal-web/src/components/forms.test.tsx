@@ -17,6 +17,27 @@ describe("functional Stage 20 forms", () => {
     expect(localSpy).not.toHaveBeenCalled();
   });
 
+  it("uses Formik when the preview runtime has loaded it", () => {
+    const useFormik = vi.fn(() => ({
+      values: { payload: "{}" },
+      errors: {} as Record<string, string>,
+      isSubmitting: false,
+      handleChange: vi.fn(),
+      handleSubmit: vi.fn((event: { preventDefault: () => void }) => event.preventDefault()),
+      setFieldError: vi.fn(),
+      setSubmitting: vi.fn(),
+    }));
+    const browser = window as unknown as { Formik?: { useFormik: typeof useFormik } };
+    browser.Formik = { useFormik };
+
+    try {
+      render(<JsonPayloadForm submitLabel="Create" initialValue={{ name: "demo" }} onSubmit={vi.fn()} />);
+      expect(useFormik).toHaveBeenCalledTimes(1);
+    } finally {
+      delete browser.Formik;
+    }
+  });
+
   it("shows invalid JSON as an inline validation error", () => {
     render(<JsonPayloadForm submitLabel="Save" onSubmit={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("JSON payload"), { target: { value: "{" } });
