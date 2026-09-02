@@ -134,7 +134,7 @@ export const customRootDomainForm = {
 };
 
 export const customRootDomainUpdateForm = {
-  verificationStatus: "Pending",
+  verificationStatus: "",
 };
 
 export const membershipForm = {
@@ -143,7 +143,7 @@ export const membershipForm = {
 };
 
 export const membershipUpdateForm = {
-  status: "Active",
+  status: "",
   roleIds: [""],
 };
 
@@ -197,7 +197,7 @@ export const tenantServiceIdentityForm = {
 export const tenantServiceIdentityUpdateForm = {
   name: "",
   description: "",
-  status: "Active",
+  status: "",
   roleIds: [""],
 };
 
@@ -209,7 +209,7 @@ export const platformServiceIdentityForm = {
 export const platformServiceIdentityUpdateForm = {
   name: "",
   description: "",
-  status: "Active",
+  status: "",
 };
 
 export const quotaForm = {
