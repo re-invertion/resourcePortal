@@ -1,4 +1,4 @@
-Resource Portal is a monorepo for the Resource Portal backend, TypeScript SDK, and command line interface.
+Resource Portal is a monorepo for the Resource Portal backend, TypeScript SDK, command line interface, and Web Console.
 
 ## Packages
 
@@ -7,6 +7,7 @@ packages/
   resourceportal-api/   NestJS API, Prisma schema, deployment worker
   resourceportal-sdk/   TypeScript SDK for the public HTTP API
   resourceportal-cli/   rp/resourceportal CLI built on top of the SDK
+  resourceportal-web/   React + TypeScript SSR/MPA Web Console
 ```
 
 ## Root Commands
@@ -31,6 +32,20 @@ docker compose up -d postgres
 npm run api:prisma:migrate
 npm run api:db:seed
 npm run api:start
+```
+
+## GitHub Codespaces Preview
+
+The repository includes a one-click development preview in `.devcontainer/devcontainer.json`. From GitHub choose **Code → Codespaces → Create codespace**. The container installs dependencies, prepares a local runtime, starts PostgreSQL, applies Prisma migrations, seeds the core roles and a development administrator, starts the API and workers, initializes a single-node Docker Swarm when available, and opens the Web Console on private forwarded port `5173`.
+
+The preview creates a `codespace-demo` tenant with development quota and credits so the functional Web Console can be explored immediately. Runtime state and logs are stored under the ignored `var/codespaces/` directory.
+
+The Codespaces preview intentionally uses `AUTH_MODE=dev`. The Web proxy injects the fixed development identity only when `NODE_ENV` is not `production`; production mode never enables this behavior. ZITADEL/OIDC login, CephFS/NFS-Ganesha storage, production Traefik ingress, certificates, and multi-node infrastructure are not simulated by this preview.
+
+To restart the preview manually inside a Codespace:
+
+```bash
+bash scripts/codespace-start.sh
 ```
 
 ## Production Shape
