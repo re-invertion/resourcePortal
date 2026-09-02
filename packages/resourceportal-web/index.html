@@ -4,8 +4,151 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Resource Portal</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style type="text/tailwindcss">
+      @layer base {
+        body {
+          @apply min-h-screen bg-slate-50 text-slate-900 antialiased;
+        }
+
+        #root {
+          @apply min-h-screen;
+        }
+
+        #root > header {
+          @apply flex flex-wrap items-center gap-4 border-b border-slate-200 bg-white px-6 py-4 shadow-sm;
+        }
+
+        #root > header strong {
+          @apply mr-auto text-lg;
+        }
+
+        #root > nav {
+          @apply flex flex-wrap gap-x-3 gap-y-2 border-b border-slate-200 bg-slate-100 px-6 py-3 text-sm;
+        }
+
+        main {
+          @apply mx-auto w-full max-w-screen-2xl p-6;
+        }
+
+        section {
+          @apply my-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm;
+        }
+
+        section > header {
+          @apply mb-4 flex flex-wrap items-start gap-3 border-b border-slate-100 pb-3;
+        }
+
+        section > header h2 {
+          @apply mr-auto;
+        }
+
+        h1 {
+          @apply mb-4 text-2xl font-semibold tracking-tight;
+        }
+
+        h2 {
+          @apply text-lg font-semibold tracking-tight;
+        }
+
+        p {
+          @apply my-2 text-sm leading-6 text-slate-700;
+        }
+
+        a {
+          @apply font-medium text-blue-700 underline-offset-2;
+        }
+
+        a:hover {
+          @apply underline;
+        }
+
+        button {
+          @apply inline-flex min-h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm;
+        }
+
+        button:hover:not(:disabled) {
+          @apply bg-slate-100;
+        }
+
+        button:focus-visible,
+        a:focus-visible,
+        textarea:focus-visible,
+        input:focus-visible,
+        select:focus-visible,
+        summary:focus-visible {
+          @apply outline-2 outline-offset-2 outline-blue-600;
+        }
+
+        button:disabled {
+          @apply cursor-not-allowed opacity-50;
+        }
+
+        form {
+          @apply my-3 space-y-3;
+        }
+
+        label {
+          @apply grid gap-2 text-sm font-medium text-slate-800;
+        }
+
+        textarea,
+        input,
+        select {
+          @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-inner;
+        }
+
+        textarea {
+          @apply min-h-44 resize-y;
+        }
+
+        table {
+          @apply my-3 w-full border-collapse text-left text-sm;
+        }
+
+        thead {
+          @apply bg-slate-100;
+        }
+
+        th {
+          @apply border border-slate-200 px-3 py-2 font-semibold text-slate-700;
+        }
+
+        td {
+          @apply border border-slate-200 px-3 py-2 align-top text-slate-700;
+        }
+
+        td:last-child {
+          @apply space-x-2;
+        }
+
+        details {
+          @apply my-2 rounded-md border border-slate-200 bg-slate-50 p-2;
+        }
+
+        summary {
+          @apply cursor-pointer text-sm font-medium text-slate-800;
+        }
+
+        pre {
+          @apply my-3 max-w-full overflow-auto rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-100;
+        }
+
+        code {
+          @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-xs;
+        }
+
+        [role="alert"] {
+          @apply my-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800;
+        }
+
+        ul {
+          @apply my-3 space-y-2;
+        }
+      }
+    </style>
   </head>
-  <body>
+  <body data-preview-ui="tailwind-basic">
     <div id="root"><!--ssr-outlet--></div>
     <script type="module" src="/src/entry-client.tsx"></script>
   </body>
