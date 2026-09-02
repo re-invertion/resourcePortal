@@ -127,12 +127,11 @@ try {
     await page.locator("main > h1", { hasText: "Tenant overview" }).waitFor();
     const tenantOverviewPanel = panelByHeading(page, "Tenant overview");
     await tenantOverviewPanel.locator(".rp-readable-data").waitFor();
-    await tenantOverviewPanel.getByText("Display name", { exact: true }).waitFor();
-    await tenantOverviewPanel
-      .locator(".rp-readable-data")
-      .getByText("Federation E2E", { exact: true })
-      .first()
-      .waitFor();
+    const tenantOverviewGrid = tenantOverviewPanel
+      .locator(".rp-readable-data > .rp-data-object > .rp-data-grid")
+      .first();
+    await tenantOverviewGrid.getByText("Display name", { exact: true }).waitFor();
+    await tenantOverviewGrid.getByText("Federation E2E", { exact: true }).waitFor();
     await tenantOverviewPanel.getByText("Technical JSON", { exact: true }).waitFor();
     assert(
       !(await tenantOverviewPanel.locator(".rp-technical-json pre").isVisible()),
