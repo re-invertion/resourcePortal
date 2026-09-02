@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "../api/client";
-import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "./forms";
+import { ConfirmButton, JsonPayloadForm, OneTimeCredential, type ReferenceOptions } from "./forms";
 
 type FormTemplate = Record<string, unknown>;
 
@@ -31,6 +31,7 @@ export type ResourcePanelProps = {
   actions?: ResourceAction[];
   permissions?: string[];
   help?: string;
+  referenceOptionSources?: Record<string, string>;
 };
 
 function allowed(permissions: string[] | undefined, permission: string | undefined) {
@@ -48,6 +49,13 @@ function extractItems(payload: unknown): Record<string, unknown>[] {
     return [record];
   }
   return [];
+}
+
+function optionLabel(item: Record<string, unknown>) {
+  for (const key of ["displayName", "name", "email", "rootDomain", "host", "id"]) {
+    if (typeof item[key] === "string" && item[key]) return String(item[key]);
+  }
+  return String(item.id ?? "Unknown resource");
 }
 
 function display(value: unknown) {
@@ -84,6 +92,8 @@ export function ResourcePanel(props: ResourcePanelProps) {
   const [error, setError] = useState<unknown>();
   const [loading, setLoading] = useState(true);
   const [oneTime, setOneTime] = useState<unknown>();
+  const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({});
+  const referenceSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -94,6 +104,20 @@ export function ResourcePanel(props: ResourcePanelProps) {
   }, [props.listPath]);
 
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    const sources = props.referenceOptionSources ?? {};
+    if (Object.keys(sources).length === 0) { setReferenceOptions({}); return; }
+    let cancelled = false;
+    void Promise.all(Object.entries(sources).map(async ([field, path]) => {
+      const result = await apiRequest(path);
+      const options = extractItems(result).filter((item) => typeof item.id === "string").map((item) => ({ value: String(item.id), label: optionLabel(item) }));
+      return [field, options] as const;
+    })).then((entries) => { if (!cancelled) setReferenceOptions(Object.fromEntries(entries)); }).catch((cause) => { if (!cancelled) setError(cause); });
+    return () => { cancelled = true; };
+    // Source objects are commonly declared inline; the serialized key prevents request loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referenceSourceKey]);
+
   const items = useMemo(() => extractItems(payload), [payload]);
   const columns = useMemo(() => {
     const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"];
@@ -128,7 +152,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
       {props.createPath && allowed(props.permissions, props.createPermission) ? (
         <details>
           <summary>Create</summary>
-          <JsonPayloadForm initialValue={props.createInitialValue} submitLabel="Create" onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse); }} />
+          <JsonPayloadForm initialValue={props.createInitialValue} referenceOptions={referenceOptions} submitLabel="Create" onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse); }} />
         </details>
       ) : null}
       {loading ? <p>Loading…</p> : items.length === 0 ? <p>No resources.</p> : (
@@ -145,13 +169,13 @@ export function ResourcePanel(props: ResourcePanelProps) {
                     {props.detailHref ? <a href={props.detailHref(item)}>Open</a> : null}
                     <details><summary>Details</summary><pre>{JSON.stringify(item, null, 2)}</pre></details>
                     {props.itemPath && allowed(props.permissions, props.updatePermission) ? (
-                      <details><summary>Patch</summary><JsonPayloadForm initialValue={patchTemplate(props, item)} submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body); }} /></details>
+                      <details><summary>Patch</summary><JsonPayloadForm initialValue={patchTemplate(props, item)} referenceOptions={referenceOptions} submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body); }} /></details>
                     ) : null}
                     {deletePath && allowed(props.permissions, props.deletePermission) ? (
                       <ConfirmButton confirm={`Delete ${props.title} resource ${id}?`} onConfirm={() => mutate(deletePath(item), "DELETE")}>Delete</ConfirmButton>
                     ) : null}
                     {(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? (
-                      <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm initialValue={action.initialValue} submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse); }} /></details>
+                      <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm initialValue={action.initialValue} referenceOptions={referenceOptions} submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse); }} /></details>
                     ) : action.destructive ? (
                       <ConfirmButton key={action.label} confirm={`${action.label} ${id}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse)}>{action.label}</ConfirmButton>
                     ) : (
