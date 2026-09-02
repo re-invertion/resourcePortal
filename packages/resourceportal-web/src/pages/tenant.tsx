@@ -13,15 +13,19 @@ import {
   authPolicyForm,
   configForm,
   customRootDomainForm,
+  customRootDomainUpdateForm,
   deployForm,
   detachAttachmentForm,
   domainForm,
+  domainUpdateForm,
   groupForm,
   httpEndpointForm,
   identityProviderForm,
   invitationForm,
   membershipForm,
+  membershipUpdateForm,
   oauthApplicationForm,
+  oauthApplicationUpdateForm,
   quotaForm,
   registryForm,
   resizeVolumeForm,
@@ -30,6 +34,7 @@ import {
   secretForm,
   singleAppForm,
   tenantServiceIdentityForm,
+  tenantServiceIdentityUpdateForm,
   topUpForm,
   variableForm,
   volumeForm,
@@ -134,16 +139,16 @@ function SingleAppWorkbench({ root }: { root: string }) {
 }
 
 function DomainPage({ root }: { root: string }) {
-  return <main><h1>Domains and HTTP routing</h1><ResourcePanel title="Domains" listPath={`${root}/domains`} createPath={`${root}/domains`} createInitialValue={domainForm} itemPath={(item) => `${root}/domains/${itemId(item)}`} actions={[{ label: "Validate", method: "POST", path: (item) => `${root}/domains/${itemId(item)}/validate` }]} /><ResourcePanel title="Custom root domains" listPath={`${root}/domains/custom-root-domains`} createPath={`${root}/domains/custom-root-domains`} createInitialValue={customRootDomainForm} itemPath={(item) => `${root}/domains/custom-root-domains/${itemId(item)}`} actions={[{ label: "Validate", method: "POST", path: (item) => `${root}/domains/custom-root-domains/${itemId(item)}/validate` }]} /><p>HTTP endpoint assignment is managed inside an AppGroup using the SingleApp workbench.</p></main>;
+  return <main><h1>Domains and HTTP routing</h1><ResourcePanel title="Domains" listPath={`${root}/domains`} createPath={`${root}/domains`} createInitialValue={domainForm} updateInitialValue={domainUpdateForm} itemPath={(item) => `${root}/domains/${itemId(item)}`} actions={[{ label: "Validate", method: "POST", path: (item) => `${root}/domains/${itemId(item)}/validate` }]} /><ResourcePanel title="Custom root domains" listPath={`${root}/domains/custom-root-domains`} createPath={`${root}/domains/custom-root-domains`} createInitialValue={customRootDomainForm} updateInitialValue={customRootDomainUpdateForm} itemPath={(item) => `${root}/domains/custom-root-domains/${itemId(item)}`} actions={[{ label: "Validate", method: "POST", path: (item) => `${root}/domains/custom-root-domains/${itemId(item)}/validate` }]} /><p>HTTP endpoint assignment is managed inside an AppGroup using the SingleApp workbench.</p></main>;
 }
 
 function AdministrationPage({ root, permissions }: { root: string; permissions?: string[] }) {
-  return <main><h1>Tenant administration</h1><ResourcePanel title="Memberships" listPath={`${root}/memberships`} createPath={`${root}/memberships`} createInitialValue={membershipForm} itemPath={(item) => `${root}/memberships/${itemId(item)}`} permissions={permissions} /><ReadOnlyPanel title="Roles" path={`${root}/roles`} /><ResourcePanel title="Invitations" listPath={`${root}/invitations`} createPath={`${root}/invitations`} createInitialValue={invitationForm} actions={[{ label: "Resend", method: "POST", path: (item) => `${root}/invitations/${itemId(item)}/resend` }, { label: "Delete", method: "DELETE", path: (item) => `${root}/invitations/${itemId(item)}`, destructive: true }]} permissions={permissions} /><ResourcePanel title="Groups" listPath={`${root}/groups`} createPath={`${root}/groups`} createInitialValue={groupForm} itemPath={(item) => `${root}/groups/${itemId(item)}`} permissions={permissions} /><PatchSingleton title="Authentication policy" path={`${root}/auth-policy`} initialValue={authPolicyForm} /><ResourcePanel title="Identity providers" listPath={`${root}/identity-providers`} createPath={`${root}/identity-providers`} createInitialValue={identityProviderForm} itemPath={(item) => `${root}/identity-providers/${itemId(item)}`} permissions={permissions} /></main>;
+  return <main><h1>Tenant administration</h1><ResourcePanel title="Memberships" listPath={`${root}/memberships`} createPath={`${root}/memberships`} createInitialValue={membershipForm} updateInitialValue={membershipUpdateForm} itemPath={(item) => `${root}/memberships/${itemId(item)}`} permissions={permissions} /><ReadOnlyPanel title="Roles" path={`${root}/roles`} /><ResourcePanel title="Invitations" listPath={`${root}/invitations`} createPath={`${root}/invitations`} createInitialValue={invitationForm} actions={[{ label: "Resend", method: "POST", path: (item) => `${root}/invitations/${itemId(item)}/resend` }, { label: "Delete", method: "DELETE", path: (item) => `${root}/invitations/${itemId(item)}`, destructive: true }]} permissions={permissions} /><ResourcePanel title="Groups" listPath={`${root}/groups`} createPath={`${root}/groups`} createInitialValue={groupForm} itemPath={(item) => `${root}/groups/${itemId(item)}`} permissions={permissions} /><PatchSingleton title="Authentication policy" path={`${root}/auth-policy`} initialValue={authPolicyForm} /><ResourcePanel title="Identity providers" listPath={`${root}/identity-providers`} createPath={`${root}/identity-providers`} createInitialValue={identityProviderForm} itemPath={(item) => `${root}/identity-providers/${itemId(item)}`} permissions={permissions} /></main>;
 }
 
 function CredentialPage({ root, permissions }: { root: string; permissions?: string[] }) {
   const credentialActions = (resource: string) => [{ label: "Rotate credentials", method: "POST" as const, path: (item: Record<string, unknown>) => `${root}/${resource}/${itemId(item)}/rotate-credentials`, oneTimeResponse: true }];
-  return <main><h1>Tenant machine credentials</h1><ResourcePanel title="OAuth applications" listPath={`${root}/oauth-applications`} createPath={`${root}/oauth-applications`} createInitialValue={oauthApplicationForm} itemPath={(item) => `${root}/oauth-applications/${itemId(item)}`} actions={credentialActions("oauth-applications")} oneTimeCreateResponse permissions={permissions} /><ResourcePanel title="Service identities" listPath={`${root}/service-identities`} createPath={`${root}/service-identities`} createInitialValue={tenantServiceIdentityForm} itemPath={(item) => `${root}/service-identities/${itemId(item)}`} actions={credentialActions("service-identities")} oneTimeCreateResponse permissions={permissions} /></main>;
+  return <main><h1>Tenant machine credentials</h1><ResourcePanel title="OAuth applications" listPath={`${root}/oauth-applications`} createPath={`${root}/oauth-applications`} createInitialValue={oauthApplicationForm} updateInitialValue={oauthApplicationUpdateForm} itemPath={(item) => `${root}/oauth-applications/${itemId(item)}`} actions={credentialActions("oauth-applications")} oneTimeCreateResponse permissions={permissions} /><ResourcePanel title="Service identities" listPath={`${root}/service-identities`} createPath={`${root}/service-identities`} createInitialValue={tenantServiceIdentityForm} updateInitialValue={tenantServiceIdentityUpdateForm} itemPath={(item) => `${root}/service-identities/${itemId(item)}`} actions={credentialActions("service-identities")} oneTimeCreateResponse permissions={permissions} /></main>;
 }
 
 function QuotaEditor({ path }: { path: string }) {
