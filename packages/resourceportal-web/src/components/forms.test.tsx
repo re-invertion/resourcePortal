@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { JsonPayloadForm, OneTimeCredential } from "./forms";
 
@@ -33,7 +33,7 @@ describe("functional Stage 20 forms", () => {
     expect(screen.getByLabelText("Field value 1")).toBeTruthy();
   });
 
-  it("keeps optional numeric and boolean fields typed but omits them until set", () => {
+  it("keeps optional numeric and boolean fields typed but omits them until set", async () => {
     const submit = vi.fn();
     render(
       <JsonPayloadForm
@@ -46,12 +46,13 @@ describe("functional Stage 20 forms", () => {
     expect(screen.getByLabelText("Desired replicas").getAttribute("type")).toBe("number");
     expect(screen.getByLabelText("Enabled").getAttribute("type")).toBe("checkbox");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    expect(submit).toHaveBeenLastCalledWith({});
+    await waitFor(() => expect(submit).toHaveBeenLastCalledWith({}));
+    await screen.findByRole("button", { name: "Create" });
 
     fireEvent.change(screen.getByLabelText("Desired replicas"), { target: { value: "2" } });
     fireEvent.click(screen.getByLabelText("Enabled"));
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    expect(submit).toHaveBeenLastCalledWith({ desiredReplicas: 2, enabled: true });
+    await waitFor(() => expect(submit).toHaveBeenLastCalledWith({ desiredReplicas: 2, enabled: true }));
   });
 
   it("uses Formik when the preview runtime has loaded it", () => {
