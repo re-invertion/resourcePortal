@@ -58,6 +58,16 @@ function optionLabel(item: Record<string, unknown>) {
   return String(item.id ?? "Unknown resource");
 }
 
+function inferredReferenceOptionSources(listPath: string) {
+  const tenant = listPath.match(/^(\/api\/tenants\/[^/]+)/)?.[1];
+  if (!tenant) return {};
+  const sources: Record<string, string> = {};
+  if (/\/app-groups\/[^/]+\/single-apps$/.test(listPath)) sources.registryId = `${tenant}/registries`;
+  if (/\/(memberships|invitations|service-identities)$/.test(listPath)) sources.roleIds = `${tenant}/roles`;
+  if (/\/domains$/.test(listPath)) sources.customRootDomainId = `${tenant}/domains/custom-root-domains`;
+  return sources;
+}
+
 function display(value: unknown) {
   if (value == null) return "";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
@@ -93,7 +103,12 @@ export function ResourcePanel(props: ResourcePanelProps) {
   const [loading, setLoading] = useState(true);
   const [oneTime, setOneTime] = useState<unknown>();
   const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({});
-  const referenceSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
+  const explicitSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
+  const referenceOptionSources = useMemo(() => ({
+    ...inferredReferenceOptionSources(props.listPath),
+    ...(props.referenceOptionSources ?? {}),
+  }), [props.listPath, explicitSourceKey]);
+  const referenceSourceKey = JSON.stringify(referenceOptionSources);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -105,16 +120,15 @@ export function ResourcePanel(props: ResourcePanelProps) {
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
-    const sources = props.referenceOptionSources ?? {};
-    if (Object.keys(sources).length === 0) { setReferenceOptions({}); return; }
+    if (Object.keys(referenceOptionSources).length === 0) { setReferenceOptions({}); return; }
     let cancelled = false;
-    void Promise.all(Object.entries(sources).map(async ([field, path]) => {
+    void Promise.all(Object.entries(referenceOptionSources).map(async ([field, path]) => {
       const result = await apiRequest(path);
       const options = extractItems(result).filter((item) => typeof item.id === "string").map((item) => ({ value: String(item.id), label: optionLabel(item) }));
       return [field, options] as const;
     })).then((entries) => { if (!cancelled) setReferenceOptions(Object.fromEntries(entries)); }).catch((cause) => { if (!cancelled) setError(cause); });
     return () => { cancelled = true; };
-    // Source objects are commonly declared inline; the serialized key prevents request loops.
+    // The serialized key intentionally controls request identity for inline source objects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referenceSourceKey]);
 
