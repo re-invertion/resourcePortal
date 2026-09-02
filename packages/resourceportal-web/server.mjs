@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveApiTarget } from "./proxy-target.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const production = process.env.NODE_ENV === "production";
@@ -33,7 +34,7 @@ function isApiPath(pathname) {
 }
 
 function proxyApi(request, response) {
-  const target = new URL(request.url ?? "/api", apiOrigin);
+  const target = new URL(resolveApiTarget(request.url ?? "/api", apiOrigin));
   const transport = target.protocol === "https:" ? https : http;
   const upstream = transport.request({
     protocol: target.protocol,
