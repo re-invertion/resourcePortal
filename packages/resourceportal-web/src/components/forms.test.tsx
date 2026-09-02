@@ -44,24 +44,103 @@ describe("functional Stage 20 forms", () => {
     );
 
     expect(screen.getByLabelText("Desired replicas").getAttribute("type")).toBe("number");
-    expect(screen.getByLabelText("Enabled").getAttribute("type")).toBe("checkbox");
+    expect(screen.getByLabelText("Enabled").tagName).toBe("SELECT");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(submit).toHaveBeenLastCalledWith({}));
-    await screen.findByRole("button", { name: "Create" });
 
     fireEvent.change(screen.getByLabelText("Desired replicas"), { target: { value: "2" } });
-    fireEvent.click(screen.getByLabelText("Enabled"));
+    fireEvent.change(screen.getByLabelText("Enabled"), { target: { value: "true" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(submit).toHaveBeenLastCalledWith({ desiredReplicas: 2, enabled: true }));
+  });
+
+  it("renders closed contract fields as selects with only supported options", () => {
+    render(
+      <JsonPayloadForm
+        submitLabel="Create"
+        initialValue={{ protocolMode: "HTTP", type: "Managed", protocol: "OIDC" }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Protocol mode").tagName).toBe("SELECT");
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(expect.arrayContaining([
+      "HTTP",
+      "HTTPS",
+      "HTTP + HTTPS",
+      "HTTP → HTTPS",
+      "Managed",
+      "Custom",
+      "OIDC",
+      "SAML",
+    ]));
+  });
+
+  it("renders field guidance next to inputs", () => {
+    render(<JsonPayloadForm submitLabel="Create" initialValue={{ containerPort: 80 }} onSubmit={vi.fn()} />);
+
+    expect(screen.getByText(/Port exposed by the application container/i)).toBeTruthy();
+  });
+
+  it("renders reference choices as selects instead of free text UUID inputs", () => {
+    render(
+      <JsonPayloadForm
+        submitLabel="Create"
+        initialValue={{ registryId: "" }}
+        referenceOptions={{ registryId: [{ value: "registry-1", label: "Docker Hub mirror" }] }}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Registry ID").tagName).toBe("SELECT");
+    expect(screen.getByRole("option", { name: "Docker Hub mirror" })).toBeTruthy();
+  });
+
+  it("passes a Yup validation schema to Formik when the preview runtimes are available", () => {
+    const schema = { validate: vi.fn() };
+    const yupObject = vi.fn(() => schema);
+    const useFormik = vi.fn(() => ({
+      values: { containerPort: 80 },
+      errors: {} as Record<string, string>,
+      touched: {} as Record<string, boolean>,
+      isSubmitting: false,
+      handleSubmit: vi.fn(),
+      setFieldTouched: vi.fn(),
+      setFieldValue: vi.fn(),
+      setSubmitting: vi.fn(),
+    }));
+    const browser = window as unknown as {
+      Formik?: { useFormik: typeof useFormik };
+      Yup?: { object: typeof yupObject; number: () => unknown; string: () => unknown; boolean: () => unknown; array: () => unknown; mixed: () => unknown };
+    };
+    browser.Formik = { useFormik };
+    browser.Yup = {
+      object: yupObject,
+      number: () => ({ integer: () => ({ min: () => ({ max: () => ({ nullable: () => ({}) }) }) }) }),
+      string: () => ({ trim: () => ({ max: () => ({ matches: () => ({ required: () => ({ nullable: () => ({}) }) }) }) }) }),
+      boolean: () => ({ nullable: () => ({}) }),
+      array: () => ({ of: () => ({ max: () => ({ nullable: () => ({}) }) }) }),
+      mixed: () => ({ oneOf: () => ({ nullable: () => ({}) }) }),
+    };
+
+    try {
+      render(<JsonPayloadForm submitLabel="Create" initialValue={{ containerPort: 80 }} onSubmit={vi.fn()} />);
+      expect(useFormik).toHaveBeenCalledWith(expect.objectContaining({ validationSchema: schema }));
+    } finally {
+      delete browser.Formik;
+      delete browser.Yup;
+    }
   });
 
   it("uses Formik when the preview runtime has loaded it", () => {
     const useFormik = vi.fn(() => ({
       values: { name: "demo" },
       errors: {} as Record<string, string>,
+      touched: {} as Record<string, boolean>,
       isSubmitting: false,
       handleChange: vi.fn(),
       handleSubmit: vi.fn((event: { preventDefault: () => void }) => event.preventDefault()),
+      setFieldTouched: vi.fn(),
       setFieldValue: vi.fn(),
       setSubmitting: vi.fn(),
     }));
