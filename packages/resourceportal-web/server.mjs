@@ -4,7 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveApiTarget } from "./proxy-target.mjs";
+import { resolveApiTarget, resolveProxyHeaders } from "./proxy-target.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const production = process.env.NODE_ENV === "production";
@@ -42,7 +42,7 @@ function proxyApi(request, response) {
     port: target.port || undefined,
     method: request.method,
     path: `${target.pathname}${target.search}`,
-    headers: { ...request.headers, host: target.host },
+    headers: { ...resolveProxyHeaders(request.headers), host: target.host },
   }, (upstreamResponse) => {
     response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
     upstreamResponse.pipe(response);
@@ -135,16 +135,7 @@ const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://resourceportal.local");
 
   if (isApiPath(url.pathname)) {
-    if (production) proxyApi(request, response);
-    else vite.middlewares(request, response, (error) => {
-      if (error) {
-        response.statusCode = 502;
-        response.end("Resource Portal API proxy failed");
-      } else {
-        response.statusCode = 404;
-        response.end("Resource Portal API route not found");
-      }
-    });
+    proxyApi(request, response);
     return;
   }
 
