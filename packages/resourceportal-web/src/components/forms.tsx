@@ -75,7 +75,7 @@ function FormikJsonPayloadForm({
   });
 
   return (
-    <form onSubmit={formik.handleSubmit} data-form-engine="formik">
+    <form onSubmit={formik.handleSubmit}>
       <label>
         JSON payload
         <textarea
@@ -121,10 +121,11 @@ function FallbackJsonPayloadForm({
   }
 
   return (
-    <form onSubmit={submit} data-form-engine="semantic-fallback">
+    <form onSubmit={submit}>
       <label>
         JSON payload
         <textarea
+          name="payload"
           aria-label="JSON payload"
           rows={10}
           cols={72}
