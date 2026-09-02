@@ -7,9 +7,11 @@ import {
   identityProviderForm,
   infrastructureMaintenanceForm,
   oauthApplicationForm,
+  oauthApplicationUpdateForm,
   paymentForm,
   platformMaintenanceForm,
   platformServiceIdentityForm,
+  platformServiceIdentityUpdateForm,
   priceListForm,
   refundForm,
   voucherForm,
@@ -58,7 +60,7 @@ function Infrastructure() {
 
 function Credentials() {
   const actions = (resource: string) => [{ label: "Rotate credentials", method: "POST" as const, path: (item: Record<string, unknown>) => `/api/platform/${resource}/${itemId(item)}/rotate-credentials`, oneTimeResponse: true }];
-  return <main><h1>Platform machine credentials</h1><ResourcePanel title="Platform OAuth applications" listPath="/api/platform/oauth-applications" createPath="/api/platform/oauth-applications" createInitialValue={oauthApplicationForm} itemPath={(item) => `/api/platform/oauth-applications/${itemId(item)}`} actions={actions("oauth-applications")} oneTimeCreateResponse /><ResourcePanel title="Platform service identities" listPath="/api/platform/service-identities" createPath="/api/platform/service-identities" createInitialValue={platformServiceIdentityForm} itemPath={(item) => `/api/platform/service-identities/${itemId(item)}`} actions={actions("service-identities")} oneTimeCreateResponse /></main>;
+  return <main><h1>Platform machine credentials</h1><ResourcePanel title="Platform OAuth applications" listPath="/api/platform/oauth-applications" createPath="/api/platform/oauth-applications" createInitialValue={oauthApplicationForm} updateInitialValue={oauthApplicationUpdateForm} itemPath={(item) => `/api/platform/oauth-applications/${itemId(item)}`} actions={actions("oauth-applications")} oneTimeCreateResponse /><ResourcePanel title="Platform service identities" listPath="/api/platform/service-identities" createPath="/api/platform/service-identities" createInitialValue={platformServiceIdentityForm} updateInitialValue={platformServiceIdentityUpdateForm} itemPath={(item) => `/api/platform/service-identities/${itemId(item)}`} actions={actions("service-identities")} oneTimeCreateResponse /></main>;
 }
 
 function MutationForm({ title, path, initialValue }: { title: string; path: string; initialValue: Record<string, unknown> }) {
