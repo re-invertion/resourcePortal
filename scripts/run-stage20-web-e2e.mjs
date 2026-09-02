@@ -415,9 +415,13 @@ function panelByHeading(page, heading) {
 }
 
 async function createResource(panel, body) {
-  await panel.locator("summary", { hasText: "Create" }).click();
-  await fillStructuredForm(panel, body);
-  await panel.getByRole("button", { name: "Create", exact: true }).click();
+  const createDetails = panel
+    .locator("summary")
+    .filter({ hasText: /^Create$/ })
+    .locator("xpath=parent::details");
+  await createDetails.locator("summary").click();
+  await fillStructuredForm(createDetails, body);
+  await createDetails.getByRole("button", { name: "Create", exact: true }).click();
 }
 
 async function fillStructuredForm(container, body) {
