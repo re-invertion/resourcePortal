@@ -9,19 +9,19 @@ export const singleAppForm = {
   description: "",
   image: "",
   registryId: "",
-  desiredReplicas: 0,
+  desiredReplicas: null,
   runtimeState: "",
   cpu: 0,
   memoryBytes: 134217728,
-  gpu: 0,
+  gpu: null,
   environment: {},
   healthCheck: {},
   entrypoint: "",
   command: [""],
   workingDir: "",
   user: "",
-  readOnlyRootFilesystem: false,
-  stopGracePeriodSeconds: 0,
+  readOnlyRootFilesystem: null,
+  stopGracePeriodSeconds: null,
   restartPolicy: {},
   updatePolicy: {},
 };
@@ -74,7 +74,7 @@ export const registryForm = {
 
 export const deployForm = {
   note: "",
-  force: false,
+  force: null,
   correlationId: "",
 };
 
@@ -121,7 +121,7 @@ export const domainForm = {
   customRootDomainId: "",
   subdomain: "",
   httpEndpointId: "",
-  tlsEnabled: false,
+  tlsEnabled: null,
 };
 
 export const customRootDomainForm = {
@@ -144,9 +144,9 @@ export const groupForm = {
 };
 
 export const authPolicyForm = {
-  allowPlatformLogin: false,
-  allowTenantIdentityProviders: false,
-  requireTenantIdentityProvider: false,
+  allowPlatformLogin: null,
+  allowTenantIdentityProviders: null,
+  requireTenantIdentityProvider: null,
 };
 
 export const identityProviderForm = {
@@ -157,8 +157,8 @@ export const identityProviderForm = {
   clientId: "",
   clientSecret: "",
   scopes: [""],
-  usePkce: false,
-  enabled: false,
+  usePkce: null,
+  enabled: null,
 };
 
 export const oauthApplicationForm = {
@@ -180,12 +180,12 @@ export const platformServiceIdentityForm = {
 };
 
 export const quotaForm = {
-  cpu: 0,
-  memoryBytes: 0,
-  gpu: 0,
-  storageBytes: 0,
-  maxSingleApps: 0,
-  maxVolumes: 0,
+  cpu: null,
+  memoryBytes: null,
+  gpu: null,
+  storageBytes: null,
+  maxSingleApps: null,
+  maxVolumes: null,
 };
 
 export const topUpForm = {
