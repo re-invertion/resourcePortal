@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
+import { fillPlaywrightControl } from "./playwright-form-controls.mjs";
 import { prepareStage20PlatformAdmin } from "./stage20-platform-admin-fixture.mjs";
 
 const statePath = resolve(
@@ -434,9 +435,10 @@ async function fillStructuredForm(container, body) {
           item == null || ["string", "number"].includes(typeof item),
           `Stage 20 E2E only supports primitive list items for ${key}`,
         );
-        await container
-          .getByLabel(`${label} item ${index + 1}`, { exact: true })
-          .fill(item == null ? "" : String(item));
+        const itemControl = container.getByLabel(`${label} item ${index + 1}`, {
+          exact: true,
+        });
+        await fillPlaywrightControl(itemControl, item);
       }
       continue;
     }
@@ -447,7 +449,7 @@ async function fillStructuredForm(container, body) {
       if (checked !== value) await control.click();
       continue;
     }
-    await control.fill(value == null ? "" : String(value));
+    await fillPlaywrightControl(control, value);
   }
 }
 
