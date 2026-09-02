@@ -219,7 +219,7 @@ function ValueEditor({ label, fieldKey, value, onChange, disabled, forcedType, r
     return <label><input type="checkbox" aria-label={label} aria-describedby={`${fieldKey}-help`} checked={Boolean(value)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />{label}<FieldHelp fieldKey={fieldKey} error={error} /></label>;
   }
   if (type === "number") {
-    return <label>{label}<input type="number" aria-label={label} aria-describedby={`${fieldKey}-help`} min={fieldKey === "containerPort" ? 1 : 0} max={fieldKey === "containerPort" ? 65535 : undefined} required={requiredFieldKeys.has(fieldKey)} value={typeof value === "number" ? value : ""} disabled={disabled} onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))} /><FieldHelp fieldKey={fieldKey} error={error} /></label>;
+    return <label>{label}<input type="number" aria-label={label} aria-describedby={`${fieldKey}-help`} min={fieldKey === "containerPort" ? 1 : 0} max={fieldKey === "containerPort" ? 65535 : undefined} step={fieldKey === "cpu" ? "any" : 1} required={requiredFieldKeys.has(fieldKey)} value={typeof value === "number" ? value : ""} disabled={disabled} onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))} /><FieldHelp fieldKey={fieldKey} error={error} /></label>;
   }
   if (type === "list") return <ArrayField label={label} fieldKey={fieldKey} value={Array.isArray(value) ? value : []} onChange={onChange} disabled={disabled} references={references} />;
   if (type === "object") return <RecordField label={label} value={isRecord(value) ? value : {}} onChange={onChange} disabled={disabled} />;
