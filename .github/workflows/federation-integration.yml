@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Playwright for live browser login
         run: |
-          npm install --no-save --package-lock=false playwright@1.55.0
+          npm install --no-save --package-lock=false playwright@1.62.1
           npx playwright install --with-deps chromium
 
       - name: Generate Prisma client
@@ -70,13 +70,13 @@ jobs:
       - name: Migrate and seed Resource Portal database
         run: bash scripts/run-federation-e2e.sh database
 
-      - name: Build Resource Portal API
+      - name: Build Resource Portal API and Web Console
         run: bash scripts/run-federation-e2e.sh build
 
       - name: Provision tenant OIDC and SAML providers
         run: bash scripts/run-federation-e2e.sh provision
 
-      - name: Login through tenant providers in Chromium
+      - name: Login and exercise Web Console in Chromium
         run: bash scripts/run-federation-e2e.sh browser
 
       - name: Cleanup federation environment

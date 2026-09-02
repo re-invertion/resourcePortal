@@ -6,7 +6,9 @@ COMPOSE_FILE="$ROOT_DIR/test/federation/docker-compose.yml"
 STATE_DIR="$ROOT_DIR/var/federation"
 PAT_FILE="$STATE_DIR/zitadel/admin.pat"
 API_LOG="$STATE_DIR/api.log"
+WEB_LOG="$STATE_DIR/web.log"
 API_PID=""
+WEB_PID=""
 PHASE="${1:-all}"
 
 wait_for_url() {
@@ -41,6 +43,7 @@ load_environment() {
   export FEDERATION_E2E_STATE_FILE="$STATE_DIR/state.json"
   export FEDERATION_E2E_API_URL="http://localhost:3000/api"
   export FEDERATION_E2E_KEYCLOAK_URL="http://localhost:8180"
+  export FEDERATION_E2E_WEB_ORIGIN="http://localhost:4173"
 }
 
 start_api() {
@@ -62,14 +65,39 @@ stop_api() {
   API_PID=""
 }
 
+start_web() {
+  : >"$WEB_LOG"
+  (
+    cd "$ROOT_DIR"
+    NODE_ENV=production \
+      HOST=127.0.0.1 \
+      PORT=4173 \
+      RESOURCE_PORTAL_API_ORIGIN=http://127.0.0.1:3000 \
+      node packages/resourceportal-web/server.mjs
+  ) >"$WEB_LOG" 2>&1 &
+  WEB_PID=$!
+  wait_for_url "http://localhost:4173/health" "Resource Portal Web"
+}
+
+stop_web() {
+  if [[ -n "$WEB_PID" ]] && kill -0 "$WEB_PID" 2>/dev/null; then
+    kill "$WEB_PID" 2>/dev/null || true
+    wait "$WEB_PID" 2>/dev/null || true
+  fi
+  WEB_PID=""
+}
+
 print_diagnostics() {
   echo "=== Resource Portal API log ==="
   cat "$API_LOG" 2>/dev/null || true
+  echo "=== Resource Portal Web log ==="
+  cat "$WEB_LOG" 2>/dev/null || true
   echo "=== Federation containers ==="
   docker compose -f "$COMPOSE_FILE" logs --no-color 2>/dev/null || true
 }
 
 cleanup_environment() {
+  stop_web
   stop_api
   docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
 }
@@ -182,16 +210,17 @@ database() {
   seed_database
 }
 
-build_api() {
+build_products() {
   cd "$ROOT_DIR"
   npm --workspace @resource-portal/api run build
+  npm --workspace @resource-portal/web run build
 }
 
 prepare() {
   services
   bootstrap_zitadel
   database
-  build_api
+  build_products
 }
 
 provision() {
@@ -215,9 +244,12 @@ browser_login() {
     return 1
   }
   start_api oidc
-  trap stop_api RETURN
+  start_web
+  trap 'stop_web; stop_api' RETURN
   node scripts/run-service-identity-e2e.mjs
   node scripts/run-federation-browser-e2e.mjs
+  node scripts/run-stage20-web-e2e.mjs
+  stop_web
   stop_api
   trap - RETURN
 }
@@ -231,7 +263,7 @@ run_phase() {
     migrate) migrate_database ;;
     seed) seed_database ;;
     database) database ;;
-    build) build_api ;;
+    build) build_products ;;
     prepare) prepare ;;
     provision) provision ;;
     browser) browser_login ;;
@@ -245,7 +277,7 @@ run_phase() {
 }
 
 if [[ "$PHASE" == "all" ]]; then
-  trap 'exit_code=$?; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; cleanup_environment; exit $exit_code' EXIT INT TERM
+  trap 'exit_code=$?; stop_web; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; cleanup_environment; exit $exit_code' EXIT INT TERM
   run_phase services
   run_phase bootstrap
   run_phase migrate
@@ -255,6 +287,6 @@ if [[ "$PHASE" == "all" ]]; then
   run_phase browser
   echo "Federation E2E completed successfully"
 else
-  trap 'exit_code=$?; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; exit $exit_code' EXIT INT TERM
+  trap 'exit_code=$?; stop_web; stop_api; if [[ $exit_code -ne 0 ]]; then print_diagnostics; fi; exit $exit_code' EXIT INT TERM
   run_phase "$PHASE"
 fi
