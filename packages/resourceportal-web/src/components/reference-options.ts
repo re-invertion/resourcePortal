@@ -51,7 +51,10 @@ export function useAutomaticReferenceOptions(values: Payload | undefined, provid
   const sourceKey = JSON.stringify(sources);
 
   useEffect(() => {
-    if (provided !== undefined || Object.keys(sources).length === 0) { setLoaded({}); return; }
+    if (provided !== undefined || Object.keys(sources).length === 0) {
+      setLoaded((current) => Object.keys(current).length === 0 ? current : {});
+      return;
+    }
     let cancelled = false;
     void Promise.all(Object.entries(sources).map(async ([field, path]) => {
       const result = await apiRequest(path);
@@ -60,7 +63,7 @@ export function useAutomaticReferenceOptions(values: Payload | undefined, provid
         .map((item) => ({ value: String(item.id), label: optionLabel(item) }));
       return [field, options] as const;
     })).then((entries) => { if (!cancelled) setLoaded(Object.fromEntries(entries)); }).catch(() => {
-      if (!cancelled) setLoaded({});
+      if (!cancelled) setLoaded((current) => Object.keys(current).length === 0 ? current : {});
     });
     return () => { cancelled = true; };
     // sourceKey is a stable representation of the inferred API paths.
