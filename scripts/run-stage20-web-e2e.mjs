@@ -454,7 +454,17 @@ function formLabel(key) {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[-_]+/g, " ")
     .trim();
-  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : "Value";
+  if (!spaced) return "Value";
+  return spaced
+    .split(/\s+/)
+    .map((word, index) => {
+      if (word === "ID" || word === "IDs") return word;
+      const normalized = word.toLowerCase();
+      return index === 0
+        ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
+        : normalized;
+    })
+    .join(" ");
 }
 
 async function deleteResourceRow(row) {
