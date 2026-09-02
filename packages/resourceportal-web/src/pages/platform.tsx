@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { JsonPayloadForm } from "../components/forms";
-import { ErrorState, ReadOnlyPanel, ResourcePanel } from "../components/resource";
+import { ErrorState, ReadableDataView, ReadOnlyPanel, ResourcePanel } from "../components/resource";
 import {
   correctionForm,
   identityProviderForm,
@@ -32,7 +32,7 @@ function prefill(template: Record<string, unknown>, current: unknown) {
 function Action({ label, path }: { label: string; path: string }) {
   const [error, setError] = useState<unknown>();
   const [result, setResult] = useState<unknown>();
-  return <section>{error ? <ErrorState error={error} /> : null}<button type="button" onClick={() => { apiRequest(path, { method: "POST" }).then(setResult).catch(setError); }}>{label}</button>{result !== undefined ? <pre>{JSON.stringify(result, null, 2)}</pre> : null}</section>;
+  return <section>{error ? <ErrorState error={error} /> : null}<button type="button" onClick={() => { apiRequest(path, { method: "POST" }).then(setResult).catch(setError); }}>{label}</button>{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
 }
 
 function Patch({ title, path, initialValue }: { title: string; path: string; initialValue: Record<string, unknown> }) {
@@ -41,7 +41,7 @@ function Patch({ title, path, initialValue }: { title: string; path: string; ini
   const [result, setResult] = useState<unknown>();
   useEffect(() => { apiRequest(path).then(setCurrent).catch(setError); }, [path]);
   const formValue = useMemo(() => prefill(initialValue, current), [current, initialValue]);
-  return <section><ReadOnlyPanel title={title} path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { try { const saved = await apiRequest(path, { method: "PATCH", body }); setResult(saved); setCurrent(saved); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <pre>{JSON.stringify(result, null, 2)}</pre> : null}</section>;
+  return <section><ReadOnlyPanel title={title} path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { try { const saved = await apiRequest(path, { method: "PATCH", body }); setResult(saved); setCurrent(saved); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
 }
 
 export function PlatformPage({ section }: { section: string; resourceId?: string }) {
@@ -66,7 +66,7 @@ function Credentials() {
 function MutationForm({ title, path, initialValue }: { title: string; path: string; initialValue: Record<string, unknown> }) {
   const [error, setError] = useState<unknown>();
   const [result, setResult] = useState<unknown>();
-  return <section><h2>{title}</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={initialValue} submitLabel={title} onSubmit={async (body) => { try { setResult(await apiRequest(path, { method: "POST", body })); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <pre>{JSON.stringify(result, null, 2)}</pre> : null}</section>;
+  return <section><h2>{title}</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={initialValue} submitLabel={title} onSubmit={async (body) => { try { setResult(await apiRequest(path, { method: "POST", body })); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
 }
 
 function PlatformBilling() {
