@@ -100,7 +100,10 @@ export class TenantsService {
       throw new NotFoundException("Tenant not found");
     }
 
-    return tenant;
+    return {
+      ...tenant,
+      quota: tenant.quota ? mapQuota(tenant.quota) : null,
+    };
   }
 
   async createTenant(dto: CreateTenantDto, actor: AuthenticatedUser) {
