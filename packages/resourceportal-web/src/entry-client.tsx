@@ -5,10 +5,12 @@ import { App } from "./App";
 
 const TAILWIND_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4";
 const FORMIK_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/formik@2.2.9/dist/formik.umd.production.min.js";
+const YUP_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/yup@1.7.1/+esm";
 
 type PreviewWindow = Window & {
   React?: typeof React;
   Formik?: unknown;
+  Yup?: unknown;
 };
 
 async function loadPreviewScript(url: string, marker: string, warning: string) {
@@ -42,6 +44,15 @@ async function loadPreviewScript(url: string, marker: string, warning: string) {
   });
 }
 
+async function loadPreviewYup(browser: PreviewWindow) {
+  if (browser.Yup) return;
+  try {
+    browser.Yup = await import(/* @vite-ignore */ YUP_PREVIEW_URL);
+  } catch {
+    console.warn("Yup preview runtime could not be loaded; browser-native validation remains available.");
+  }
+}
+
 async function loadPreviewUi() {
   if (!import.meta.env.DEV) return;
 
@@ -54,6 +65,7 @@ async function loadPreviewUi() {
       "tailwind",
       "Tailwind preview runtime could not be loaded; using unstyled semantic HTML.",
     ),
+    loadPreviewYup(browser),
   ];
 
   if (!browser.Formik) {
