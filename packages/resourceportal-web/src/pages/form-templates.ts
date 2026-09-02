@@ -1,7 +1,7 @@
 export const appGroupForm = {
   name: "",
   description: "",
-  runtimeState: "",
+  runtimeState: "Stopped",
 };
 
 export const singleAppForm = {
@@ -10,7 +10,7 @@ export const singleAppForm = {
   image: "",
   registryId: "",
   desiredReplicas: null,
-  runtimeState: "",
+  runtimeState: "Stopped",
   cpu: 0,
   memoryBytes: 134217728,
   gpu: null,
@@ -41,7 +41,7 @@ export const configForm = {
 export const secretForm = {
   name: "",
   description: "",
-  type: "",
+  type: "Text",
   fileName: "",
   value: "",
 };
@@ -66,8 +66,8 @@ export const registryForm = {
   name: "",
   description: "",
   host: "",
-  tlsMode: "",
-  authType: "",
+  tlsMode: "TLS",
+  authType: "None",
   username: "",
   credential: "",
 };
@@ -107,7 +107,7 @@ export const attachSecretForm = {
 export const attachVolumeForm = {
   volumeId: "",
   mountPath: "",
-  mode: "",
+  mode: "ReadOnly",
 };
 
 export const detachAttachmentForm = {
@@ -115,7 +115,7 @@ export const detachAttachmentForm = {
 };
 
 export const domainForm = {
-  type: "",
+  type: "Managed",
   prefix: "",
   hostname: "",
   customRootDomainId: "",
@@ -134,7 +134,7 @@ export const customRootDomainForm = {
 };
 
 export const customRootDomainUpdateForm = {
-  verificationStatus: "",
+  verificationStatus: "Pending",
 };
 
 export const membershipForm = {
@@ -143,7 +143,7 @@ export const membershipForm = {
 };
 
 export const membershipUpdateForm = {
-  status: "",
+  status: "Active",
   roleIds: [""],
 };
 
@@ -165,7 +165,7 @@ export const authPolicyForm = {
 
 export const identityProviderForm = {
   name: "",
-  protocol: "",
+  protocol: "OIDC",
   issuer: "",
   metadataUrl: "",
   clientId: "",
@@ -177,7 +177,7 @@ export const identityProviderForm = {
 
 export const oauthApplicationForm = {
   name: "",
-  type: "",
+  type: "Web",
   redirectUris: [""],
   postLogoutRedirectUris: [""],
 };
@@ -197,7 +197,7 @@ export const tenantServiceIdentityForm = {
 export const tenantServiceIdentityUpdateForm = {
   name: "",
   description: "",
-  status: "",
+  status: "Active",
   roleIds: [""],
 };
 
@@ -209,7 +209,7 @@ export const platformServiceIdentityForm = {
 export const platformServiceIdentityUpdateForm = {
   name: "",
   description: "",
-  status: "",
+  status: "Active",
 };
 
 export const quotaForm = {
