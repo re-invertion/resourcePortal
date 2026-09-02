@@ -1,7 +1,7 @@
 export const appGroupForm = {
   name: "",
   description: "",
-  runtimeState: "Stopped",
+  runtimeState: "",
 };
 
 export const singleAppForm = {
@@ -10,7 +10,7 @@ export const singleAppForm = {
   image: "",
   registryId: "",
   desiredReplicas: null,
-  runtimeState: "Stopped",
+  runtimeState: "",
   cpu: 0,
   memoryBytes: 134217728,
   gpu: null,
@@ -66,8 +66,8 @@ export const registryForm = {
   name: "",
   description: "",
   host: "",
-  tlsMode: "TLS",
-  authType: "None",
+  tlsMode: "",
+  authType: "",
   username: "",
   credential: "",
 };
@@ -107,7 +107,7 @@ export const attachSecretForm = {
 export const attachVolumeForm = {
   volumeId: "",
   mountPath: "",
-  mode: "ReadOnly",
+  mode: "",
 };
 
 export const detachAttachmentForm = {
@@ -165,7 +165,7 @@ export const authPolicyForm = {
 
 export const identityProviderForm = {
   name: "",
-  protocol: "OIDC",
+  protocol: "",
   issuer: "",
   metadataUrl: "",
   clientId: "",
