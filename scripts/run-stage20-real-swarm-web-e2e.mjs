@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
+import { fillPlaywrightControl } from "./playwright-form-controls.mjs";
 
 const webOrigin = (
   process.env.STAGE20_REAL_SWARM_WEB_ORIGIN ?? "http://127.0.0.1:4173"
@@ -285,9 +286,10 @@ async function fillStructuredForm(container, body) {
           item == null || ["string", "number"].includes(typeof item),
           `Stage 20 real-Swarm E2E only supports primitive list items for ${key}`,
         );
-        await container
-          .getByLabel(`${label} item ${index + 1}`, { exact: true })
-          .fill(item == null ? "" : String(item));
+        const itemControl = container.getByLabel(`${label} item ${index + 1}`, {
+          exact: true,
+        });
+        await fillPlaywrightControl(itemControl, item);
       }
       continue;
     }
@@ -323,7 +325,7 @@ async function fillStructuredForm(container, body) {
           const checked = await valueControl.isChecked();
           if (checked !== entryValue) await valueControl.click();
         } else {
-          await valueControl.fill(String(entryValue));
+          await fillPlaywrightControl(valueControl, entryValue);
         }
       }
       continue;
@@ -335,7 +337,7 @@ async function fillStructuredForm(container, body) {
       if (checked !== value) await control.click();
       continue;
     }
-    await control.fill(value == null ? "" : String(value));
+    await fillPlaywrightControl(control, value);
   }
 }
 

@@ -41,7 +41,7 @@ export const configForm = {
 export const secretForm = {
   name: "",
   description: "",
-  type: "",
+  type: "Text",
   fileName: "",
   value: "",
 };
@@ -115,7 +115,7 @@ export const detachAttachmentForm = {
 };
 
 export const domainForm = {
-  type: "",
+  type: "Managed",
   prefix: "",
   hostname: "",
   customRootDomainId: "",
@@ -177,7 +177,7 @@ export const identityProviderForm = {
 
 export const oauthApplicationForm = {
   name: "",
-  type: "",
+  type: "Web",
   redirectUris: [""],
   postLogoutRedirectUris: [""],
 };
