@@ -231,6 +231,11 @@ jobs:
           STAGE20_REAL_SWARM_WEB_ORIGIN: http://127.0.0.1:4173
         run: node scripts/run-stage20-real-swarm-web-e2e.mjs
 
+      - name: Verify Stage 20 management matrix
+        env:
+          STAGE20_REAL_SWARM_WEB_ORIGIN: http://127.0.0.1:4173
+        run: node scripts/verify-stage20-management-matrix.mjs
+
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
 
