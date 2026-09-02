@@ -125,7 +125,19 @@ try {
 
     await page.goto(deepLink, { waitUntil: "domcontentloaded" });
     await page.locator("main > h1", { hasText: "Tenant overview" }).waitFor();
-    await page.locator("main section pre").first().waitFor();
+    const tenantOverviewPanel = panelByHeading(page, "Tenant overview");
+    await tenantOverviewPanel.locator(".rp-readable-data").waitFor();
+    await tenantOverviewPanel.getByText("Display name", { exact: true }).waitFor();
+    await tenantOverviewPanel
+      .locator(".rp-readable-data")
+      .getByText("Federation E2E", { exact: true })
+      .first()
+      .waitFor();
+    await tenantOverviewPanel.getByText("Technical JSON", { exact: true }).waitFor();
+    assert(
+      !(await tenantOverviewPanel.locator(".rp-technical-json pre").isVisible()),
+      "Tenant overview Technical JSON fallback should be collapsed by default",
+    );
     assert(
       (await page.getByRole("alert").count()) === 0,
       "Tenant overview rendered an error alert",
