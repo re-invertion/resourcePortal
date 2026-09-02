@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "../components/forms";
-import { ErrorState, ReadOnlyPanel, ResourcePanel } from "../components/resource";
+import { ErrorState, ReadableDataView, ReadOnlyPanel, ResourcePanel } from "../components/resource";
 import { buildAuditQueries, formatAuditExport } from "./audit-query";
 import {
   appGroupForm,
@@ -85,7 +85,7 @@ function PatchSingleton({ title, path, initialValue }: { title: string; path: st
   const [error, setError] = useState<unknown>();
   useEffect(() => { apiRequest(path).then(setCurrent).catch(setError); }, [path]);
   const formValue = useMemo(() => prefill(initialValue, current), [current, initialValue]);
-  return <section><ReadOnlyPanel title={title} path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { try { const result = await apiRequest(path, { method: "PATCH", body }); setCredential(result); setCurrent(result); } catch (cause) { setError(cause); throw cause; } }} />{credential ? <pre>{JSON.stringify(credential, null, 2)}</pre> : null}</section>;
+  return <section><ReadOnlyPanel title={title} path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { try { const result = await apiRequest(path, { method: "PATCH", body }); setCredential(result); setCurrent(result); } catch (cause) { setError(cause); throw cause; } }} />{credential ? <ReadableDataView value={credential} /> : null}</section>;
 }
 
 export function TenantPage({ tenantId, section, resourceId, userId }: { tenantId: string; section: string; resourceId?: string; userId: string }) {
@@ -127,7 +127,7 @@ function DeploymentWorkbench({ root }: { root: string }) {
   const [deploymentId, setDeploymentId] = useState("");
   const [created, setCreated] = useState<unknown>();
   const [error, setError] = useState<unknown>();
-  return <section><h2>Deployments</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={deployForm} submitLabel="Deploy" onSubmit={async (body) => { try { setCreated(await apiRequest(`${root}/deploy`, { method: "POST", body, headers: { "idempotency-key": crypto.randomUUID() } })); } catch (cause) { setError(cause); throw cause; } }} />{created ? <pre>{JSON.stringify(created, null, 2)}</pre> : null}<ResourcePanel title="Deployment history" listPath={`${root}/deployments`} actions={[{ label: "Rollback", method: "POST", path: (item) => `${root}/deployments/${itemId(item)}/rollback`, body: true, initialValue: rollbackForm }]} /><label>Deployment ID for detail/events <input value={deploymentId} onChange={(event) => setDeploymentId(event.target.value)} /></label>{deploymentId ? <><ReadOnlyPanel title="Deployment detail" path={`${root}/deployments/${enc(deploymentId)}`} /><ReadOnlyPanel title="Deployment events" path={`${root}/deployments/${enc(deploymentId)}/events`} /></> : null}</section>;
+  return <section><h2>Deployments</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={deployForm} submitLabel="Deploy" onSubmit={async (body) => { try { setCreated(await apiRequest(`${root}/deploy`, { method: "POST", body, headers: { "idempotency-key": crypto.randomUUID() } })); } catch (cause) { setError(cause); throw cause; } }} />{created ? <ReadableDataView value={created} /> : null}<ResourcePanel title="Deployment history" listPath={`${root}/deployments`} actions={[{ label: "Rollback", method: "POST", path: (item) => `${root}/deployments/${itemId(item)}/rollback`, body: true, initialValue: rollbackForm }]} /><label>Deployment ID for detail/events <input value={deploymentId} onChange={(event) => setDeploymentId(event.target.value)} /></label>{deploymentId ? <><ReadOnlyPanel title="Deployment detail" path={`${root}/deployments/${enc(deploymentId)}`} /><ReadOnlyPanel title="Deployment events" path={`${root}/deployments/${enc(deploymentId)}/events`} /></> : null}</section>;
 }
 
 function SingleAppWorkbench({ root }: { root: string }) {
@@ -164,7 +164,7 @@ function QuotaEditor({ path }: { path: string }) {
     return () => { active = false; };
   }, [path]);
   const formValue = useMemo(() => prefill(quotaForm, current), [current]);
-  return <section><ReadOnlyPanel title="Quota" path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" disabled={!ready} onSubmit={async (body) => { setError(undefined); try { const result = await apiRequest(path, { method: "PATCH", body: buildQuotaMutation(current, body) }); setCurrent(result); setSaved(result); } catch (cause) { setError(cause); throw cause; } }} />{saved ? <pre>{JSON.stringify(saved, null, 2)}</pre> : null}</section>;
+  return <section><ReadOnlyPanel title="Quota" path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" disabled={!ready} onSubmit={async (body) => { setError(undefined); try { const result = await apiRequest(path, { method: "PATCH", body: buildQuotaMutation(current, body) }); setCurrent(result); setSaved(result); } catch (cause) { setError(cause); throw cause; } }} />{saved ? <ReadableDataView value={saved} /> : null}</section>;
 }
 
 function BillingPage({ root }: { root: string }) {
