@@ -33,6 +33,27 @@ describe("functional Stage 20 forms", () => {
     expect(screen.getByLabelText("Field value 1")).toBeTruthy();
   });
 
+  it("keeps optional numeric and boolean fields typed but omits them until set", () => {
+    const submit = vi.fn();
+    render(
+      <JsonPayloadForm
+        submitLabel="Create"
+        initialValue={{ desiredReplicas: null, enabled: null }}
+        onSubmit={submit}
+      />,
+    );
+
+    expect(screen.getByLabelText("Desired replicas").getAttribute("type")).toBe("number");
+    expect(screen.getByLabelText("Enabled").getAttribute("type")).toBe("checkbox");
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(submit).toHaveBeenLastCalledWith({});
+
+    fireEvent.change(screen.getByLabelText("Desired replicas"), { target: { value: "2" } });
+    fireEvent.click(screen.getByLabelText("Enabled"));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(submit).toHaveBeenLastCalledWith({ desiredReplicas: 2, enabled: true });
+  });
+
   it("uses Formik when the preview runtime has loaded it", () => {
     const useFormik = vi.fn(() => ({
       values: { name: "demo" },
