@@ -50,4 +50,15 @@ describe("Web Console bootstrap", () => {
     expect(await screen.findByRole("heading", { name: "Tenant" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toBe("/tenants/t1/overview");
   });
+
+  it("keeps an authenticated unknown document route on a not-found view", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
+      .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialPath="/definitely-not-a-resource-portal-route" />);
+
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Tenant" })).toBeNull();
+  });
 });
