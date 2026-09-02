@@ -26,4 +26,14 @@ describe("Codespaces preview configuration", () => {
       expect(() => execFileSync("bash", ["-n", path.join(repoRoot, script)], { stdio: "pipe" })).not.toThrow();
     }
   });
+
+  it("keeps CDN preview UI dependencies out of the production document path", () => {
+    const entryClient = readFileSync(path.join(packageRoot, "src/entry-client.tsx"), "utf8");
+    const indexHtml = readFileSync(path.join(packageRoot, "index.html"), "utf8");
+
+    expect(entryClient).toContain("if (!import.meta.env.DEV) return;");
+    expect(entryClient).toContain("@tailwindcss/browser@4");
+    expect(entryClient).toContain("formik@2.2.9");
+    expect(indexHtml).not.toContain('<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>');
+  });
 });
