@@ -78,7 +78,8 @@ export function App({ initialPath }: AppProps = {}) {
   }
   if (!tenants) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
 
-  if (route.kind === "tenants" || route.kind === "public" || route.kind === "not-found") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
+  if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
+  if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
   return <Shell user={user} route={route}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</Shell>;
 }
 
