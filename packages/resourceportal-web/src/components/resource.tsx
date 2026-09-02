@@ -17,6 +17,7 @@ export type ResourcePanelProps = {
   listPath: string;
   createPath?: string;
   itemPath?: (item: Record<string, unknown>) => string;
+  deletePath?: (item: Record<string, unknown>) => string;
   detailHref?: (item: Record<string, unknown>) => string;
   createPermission?: string;
   updatePermission?: string;
@@ -123,6 +124,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
           <tbody>
             {items.map((item, index) => {
               const id = String(item.id ?? index);
+              const deletePath = props.deletePath ?? props.itemPath;
               return (
                 <tr key={id}>
                   {columns.map((column) => <td key={column}>{display(item[column])}</td>)}
@@ -132,8 +134,8 @@ export function ResourcePanel(props: ResourcePanelProps) {
                     {props.itemPath && allowed(props.permissions, props.updatePermission) ? (
                       <details><summary>Patch</summary><JsonPayloadForm submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body); }} /></details>
                     ) : null}
-                    {props.itemPath && allowed(props.permissions, props.deletePermission) ? (
-                      <ConfirmButton confirm={`Delete ${props.title} resource ${id}?`} onConfirm={() => mutate(props.itemPath!(item), "DELETE")}>Delete</ConfirmButton>
+                    {deletePath && allowed(props.permissions, props.deletePermission) ? (
+                      <ConfirmButton confirm={`Delete ${props.title} resource ${id}?`} onConfirm={() => mutate(deletePath(item), "DELETE")}>Delete</ConfirmButton>
                     ) : null}
                     {(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? (
                       <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse); }} /></details>
