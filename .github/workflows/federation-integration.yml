@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Playwright for live browser login
         run: |
-          npm install --no-save --package-lock=false playwright@1.55.0
+          npm install --no-save --package-lock=false playwright@1.62.1
           npx playwright install --with-deps chromium
 
       - name: Generate Prisma client
