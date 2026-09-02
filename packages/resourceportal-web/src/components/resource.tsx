@@ -286,5 +286,5 @@ export function ReadOnlyPanel({ title, path }: { title: string; path: string }) 
   const [data, setData] = useState<unknown>();
   const [error, setError] = useState<unknown>();
   useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]);
-  return <section><h2>{title}</h2>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
+  return <section><header><h2>{title}</h2></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
 }
