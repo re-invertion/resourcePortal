@@ -32,20 +32,22 @@ jobs:
         run: bash scripts/codespace-setup.sh
       - name: Start Codespaces preview
         run: bash scripts/codespace-start.sh
-      - name: Verify Web Console and demo tenant
+      - name: Verify Web Console, proxy identity, and demo tenant
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error http://127.0.0.1:5173/health | grep -q "Resource Portal"
-          source var/codespaces/runtime.env
-          curl --fail --silent --show-error \
-            -H "x-dev-user-id: $RESOURCE_PORTAL_DEV_USER_ID" \
-            http://127.0.0.1:3000/api/tenants > /tmp/codespaces-tenants.json
+          curl --fail --silent --show-error http://127.0.0.1:5173/api/auth/me > /tmp/codespaces-me.json
+          curl --fail --silent --show-error http://127.0.0.1:5173/api/tenants > /tmp/codespaces-tenants.json
           node - <<'EOF_NODE'
           const fs = require("node:fs");
+          const me = JSON.parse(fs.readFileSync("/tmp/codespaces-me.json", "utf8"));
+          if (me?.id !== "00000000-0000-4000-8000-000000000001") {
+            throw new Error(`unexpected proxied development identity: ${JSON.stringify(me)}`);
+          }
           const tenants = JSON.parse(fs.readFileSync("/tmp/codespaces-tenants.json", "utf8"));
           if (!Array.isArray(tenants) || !tenants.some((tenant) => tenant?.name === "codespace-demo")) {
-            throw new Error("codespace-demo tenant was not seeded");
+            throw new Error("codespace-demo tenant was not visible through the Web Console proxy");
           }
           EOF_NODE
       - name: Show preview logs on failure
