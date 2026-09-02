@@ -124,12 +124,26 @@ export const domainForm = {
   tlsEnabled: null,
 };
 
+export const domainUpdateForm = {
+  httpEndpointId: "",
+  tlsEnabled: null,
+};
+
 export const customRootDomainForm = {
   rootDomain: "",
 };
 
+export const customRootDomainUpdateForm = {
+  verificationStatus: "",
+};
+
 export const membershipForm = {
   userId: "",
+  roleIds: [""],
+};
+
+export const membershipUpdateForm = {
+  status: "",
   roleIds: [""],
 };
 
@@ -168,15 +182,34 @@ export const oauthApplicationForm = {
   postLogoutRedirectUris: [""],
 };
 
+export const oauthApplicationUpdateForm = {
+  name: "",
+  redirectUris: [""],
+  postLogoutRedirectUris: [""],
+};
+
 export const tenantServiceIdentityForm = {
   name: "",
   description: "",
   roleIds: [""],
 };
 
+export const tenantServiceIdentityUpdateForm = {
+  name: "",
+  description: "",
+  status: "",
+  roleIds: [""],
+};
+
 export const platformServiceIdentityForm = {
   name: "",
   description: "",
+};
+
+export const platformServiceIdentityUpdateForm = {
+  name: "",
+  description: "",
+  status: "",
 };
 
 export const quotaForm = {
