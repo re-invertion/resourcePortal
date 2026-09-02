@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Payload = Record<string, unknown>;
 type FormHelpers = { setSubmitting: (submitting: boolean) => void };
@@ -26,6 +26,32 @@ type JsonPayloadFormProps = {
 
 type DynamicType = "text" | "number" | "boolean" | "list" | "object";
 type DynamicRow = { id: number; key: string; type: DynamicType; value: unknown };
+
+const numericFieldKeys = new Set([
+  "cpu",
+  "desiredReplicas",
+  "gpu",
+  "limit",
+  "maxSingleApps",
+  "maxVolumes",
+  "memoryBytes",
+  "replicas",
+  "sizeBytes",
+  "stopGracePeriodSeconds",
+  "storageBytes",
+  "containerPort",
+]);
+
+const booleanFieldKeys = new Set([
+  "allowPlatformLogin",
+  "allowTenantIdentityProviders",
+  "enabled",
+  "force",
+  "readOnlyRootFilesystem",
+  "requireTenantIdentityProvider",
+  "tlsEnabled",
+  "usePkce",
+]);
 
 let nextRowId = 1;
 const rowId = () => nextRowId++;
@@ -55,7 +81,15 @@ function labelFor(key: string) {
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[-_]+/g, " ")
     .trim();
-  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : "Value";
+  if (!spaced) return "Value";
+  return spaced
+    .split(/\s+/)
+    .map((word, index) => {
+      if (word === "ID" || word === "IDs") return word;
+      const normalized = word.toLowerCase();
+      return index === 0 ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : normalized;
+    })
+    .join(" ");
 }
 
 function inferType(value: unknown): DynamicType {
@@ -64,6 +98,14 @@ function inferType(value: unknown): DynamicType {
   if (Array.isArray(value)) return "list";
   if (isRecord(value)) return "object";
   return "text";
+}
+
+function fieldType(key: string, value: unknown): DynamicType {
+  if (value == null) {
+    if (numericFieldKeys.has(key)) return "number";
+    if (booleanFieldKeys.has(key)) return "boolean";
+  }
+  return inferType(value);
 }
 
 function defaultValue(type: DynamicType): unknown {
@@ -102,17 +144,20 @@ function shouldUseTextarea(key: string) {
 
 function ArrayField({
   label,
+  fieldKey,
   value,
   onChange,
   disabled,
 }: {
   label: string;
+  fieldKey: string;
   value: unknown[];
   onChange: (value: unknown[]) => void;
   disabled: boolean;
 }) {
-  const items = value.length ? value : [""];
-  const template = value[0] ?? "";
+  const initialTemplate = useRef<unknown>(cloneValue(value[0] ?? ""));
+  const items = value.length ? value : [];
+
   return (
     <fieldset>
       <legend>{label}</legend>
@@ -120,7 +165,7 @@ function ArrayField({
         <div key={index}>
           <ValueEditor
             label={`${label} item ${index + 1}`}
-            fieldKey={`${label}-${index}`}
+            fieldKey={fieldKey}
             value={item}
             onChange={(next) => {
               const updated = [...items];
@@ -138,7 +183,11 @@ function ArrayField({
           </button>
         </div>
       ))}
-      <button type="button" disabled={disabled} onClick={() => onChange([...items, cloneValue(template)])}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange([...items, cloneValue(initialTemplate.current)])}
+      >
         Add item
       </button>
     </fieldset>
@@ -146,7 +195,12 @@ function ArrayField({
 }
 
 function rowsFromRecord(value: Payload): DynamicRow[] {
-  const rows = Object.entries(value).map(([key, item]) => ({ id: rowId(), key, type: inferType(item), value: cloneValue(item) }));
+  const rows = Object.entries(value).map(([key, item]) => ({
+    id: rowId(),
+    key,
+    type: fieldType(key, item),
+    value: cloneValue(item),
+  }));
   return rows.length ? rows : [{ id: rowId(), key: "", type: "text", value: "" }];
 }
 
@@ -216,7 +270,7 @@ function RecordField({
           </label>
           <ValueEditor
             label={`${label} value ${index + 1}`}
-            fieldKey={`${label}-${row.key || index}`}
+            fieldKey={row.key || `${label}-${index}`}
             value={row.value}
             forcedType={row.type}
             disabled={disabled}
@@ -249,7 +303,7 @@ function ValueEditor({
   disabled: boolean;
   forcedType?: DynamicType;
 }) {
-  const type = forcedType ?? inferType(value);
+  const type = forcedType ?? fieldType(fieldKey, value);
   if (type === "boolean") {
     return (
       <label>
@@ -273,13 +327,13 @@ function ValueEditor({
           aria-label={label}
           value={typeof value === "number" ? value : ""}
           disabled={disabled}
-          onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))}
+          onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))}
         />
       </label>
     );
   }
   if (type === "list") {
-    return <ArrayField label={label} value={Array.isArray(value) ? value : []} onChange={onChange} disabled={disabled} />;
+    return <ArrayField label={label} fieldKey={fieldKey} value={Array.isArray(value) ? value : []} onChange={onChange} disabled={disabled} />;
   }
   if (type === "object") {
     return <RecordField label={label} value={isRecord(value) ? value : {}} onChange={onChange} disabled={disabled} />;
@@ -315,6 +369,7 @@ function ObjectShapeFields({
       label={labelFor(key)}
       fieldKey={key}
       value={value}
+      forcedType={fieldType(key, value)}
       onChange={(next) => onChange(key, next)}
       disabled={disabled}
     />
