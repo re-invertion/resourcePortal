@@ -16,7 +16,7 @@ export type YupChain = {
 };
 
 export type PreviewYupRuntime = {
-  object: (shape?: Record<string, unknown>) => unknown;
+  object: (shape?: Record<string, unknown>) => YupChain;
   number: () => YupChain;
   string: () => YupChain;
   boolean: () => YupChain;
@@ -146,7 +146,8 @@ export function buildYupSchema(values: Record<string, unknown>, yup: PreviewYupR
     else if (type === "list") {
       schema = call(yup.array(), "of", call(call(yup.string(), "trim"), "max", 1000, "Entry is too long"));
       schema = call(schema, "max", 20, "At most 20 entries are allowed");
-    } else {
+    } else if (type === "object") schema = yup.object();
+    else {
       schema = call(call(yup.string(), "trim"), "max", key === "description" ? 1000 : 255, "Value is too long");
       if (key === "email" || key === "contactEmail") schema = call(schema, "email", "Enter a valid email address");
       if (key === "issuer" || key === "metadataUrl") schema = call(schema, "url", "Enter a valid URL");
