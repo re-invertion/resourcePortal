@@ -9,6 +9,7 @@ import {
   type PreviewYupRuntime,
   type ReferenceOptions,
 } from "./form-contracts";
+import { useAutomaticReferenceOptions } from "./reference-options";
 
 export type { ReferenceOption, ReferenceOptions } from "./form-contracts";
 
@@ -307,9 +308,11 @@ function DynamicPayloadForm({ submitLabel, onSubmit, disabled = false }: JsonPay
 
 export function JsonPayloadForm(props: JsonPayloadFormProps) {
   const initial = isRecord(props.initialValue) ? props.initialValue : undefined;
-  if (!initial || Object.keys(initial).length === 0) return <DynamicPayloadForm {...props} />;
+  const referenceOptions = useAutomaticReferenceOptions(initial, props.referenceOptions);
+  if (!initial || Object.keys(initial).length === 0) return <DynamicPayloadForm {...props} referenceOptions={referenceOptions} />;
   const runtime = previewFormikRuntime();
-  return runtime ? <FormikStructuredPayloadForm {...props} initialValue={initial} runtime={runtime} /> : <FallbackStructuredPayloadForm {...props} initialValue={initial} />;
+  const effectiveProps = { ...props, referenceOptions };
+  return runtime ? <FormikStructuredPayloadForm {...effectiveProps} initialValue={initial} runtime={runtime} /> : <FallbackStructuredPayloadForm {...effectiveProps} initialValue={initial} />;
 }
 
 export function OneTimeCredential({ value }: { value: unknown }) {
