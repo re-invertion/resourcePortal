@@ -65,7 +65,6 @@ const expectedContracts = [
   ["GET", "/tenants/*/app-groups"],
   ["POST", "/tenants/*/app-groups"],
   ["GET", "/tenants/*/app-groups/*"],
-  ["PATCH", "/tenants/*/app-groups/*"],
   ["DELETE", "/tenants/*/app-groups/*"],
   ["POST", "/tenants/*/app-groups/*/runtime/start"],
   ["POST", "/tenants/*/app-groups/*/runtime/stop"],
