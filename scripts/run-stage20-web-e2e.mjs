@@ -507,7 +507,11 @@ async function openDeleteConfirmation(row) {
   try {
     await row.getByRole("button", { name: "Delete" }).click({ timeout: 5_000 });
   } catch (error) {
-    if (!(await dialog.isVisible().catch(() => false))) throw error;
+    try {
+      await dialog.waitFor({ state: "visible", timeout: 1_000 });
+    } catch {
+      throw error;
+    }
   }
   await dialog.waitFor();
 }
