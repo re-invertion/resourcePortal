@@ -36,7 +36,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error http://127.0.0.1:5173/health | grep -q "Resource Portal"
+          curl --fail --silent --show-error http://127.0.0.1:5173/health > /tmp/codespaces-health.html
+          grep -q "Resource Portal" /tmp/codespaces-health.html
           curl --fail --silent --show-error http://127.0.0.1:5173/api/auth/me > /tmp/codespaces-me.json
           curl --fail --silent --show-error http://127.0.0.1:5173/api/tenants > /tmp/codespaces-tenants.json
           node - <<'EOF_NODE'

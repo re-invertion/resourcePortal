@@ -145,6 +145,84 @@
           @apply my-3 space-y-2;
         }
       }
+
+      @layer components {
+        .rp-table-scroll {
+          @apply w-full overflow-x-auto;
+        }
+
+        .rp-readable-data {
+          @apply my-3 space-y-3;
+        }
+
+        .rp-data-grid {
+          @apply grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3;
+        }
+
+        .rp-data-field {
+          @apply min-w-0 rounded-md border border-slate-200 bg-white p-3;
+        }
+
+        .rp-data-field dt {
+          @apply mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500;
+        }
+
+        .rp-data-field dd {
+          @apply break-words text-sm text-slate-900;
+        }
+
+        .rp-data-muted {
+          @apply text-sm italic text-slate-500;
+        }
+
+        .rp-data-nested {
+          @apply my-3 rounded-md border border-slate-200 bg-slate-50 p-3 shadow-none;
+        }
+
+        .rp-data-nested h3 {
+          @apply mb-2 text-sm font-semibold text-slate-800;
+        }
+
+        .rp-data-chip-list {
+          @apply my-2 flex flex-wrap gap-2 space-y-0;
+        }
+
+        .rp-data-chip-list li {
+          @apply rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700;
+        }
+
+        .rp-data-card-list {
+          @apply grid gap-3 lg:grid-cols-2;
+        }
+
+        .rp-data-card {
+          @apply rounded-md border border-slate-200 bg-white p-3;
+        }
+
+        .rp-status-pill {
+          @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold;
+        }
+
+        .rp-status-pill[data-tone="positive"] {
+          @apply bg-green-100 text-green-800;
+        }
+
+        .rp-status-pill[data-tone="warning"] {
+          @apply bg-amber-100 text-amber-800;
+        }
+
+        .rp-status-pill[data-tone="negative"] {
+          @apply bg-red-100 text-red-800;
+        }
+
+        .rp-status-pill[data-tone="neutral"] {
+          @apply bg-slate-100 text-slate-700;
+        }
+
+        .rp-technical-json {
+          @apply mt-3 border-dashed bg-white;
+        }
+      }
     </style>
   </head>
   <body>

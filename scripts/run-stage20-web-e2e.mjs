@@ -125,7 +125,18 @@ try {
 
     await page.goto(deepLink, { waitUntil: "domcontentloaded" });
     await page.locator("main > h1", { hasText: "Tenant overview" }).waitFor();
-    await page.locator("main section pre").first().waitFor();
+    const tenantOverviewPanel = panelByHeading(page, "Tenant overview");
+    await tenantOverviewPanel.locator(".rp-readable-data").waitFor();
+    const tenantOverviewGrid = tenantOverviewPanel
+      .locator(".rp-readable-data > .rp-data-object > .rp-data-grid")
+      .first();
+    await tenantOverviewGrid.getByText("Display name", { exact: true }).waitFor();
+    await tenantOverviewGrid.getByText("Federation E2E", { exact: true }).waitFor();
+    await tenantOverviewPanel.getByText("Technical JSON", { exact: true }).waitFor();
+    assert(
+      !(await tenantOverviewPanel.locator(".rp-technical-json pre").isVisible()),
+      "Tenant overview Technical JSON fallback should be collapsed by default",
+    );
     assert(
       (await page.getByRole("alert").count()) === 0,
       "Tenant overview rendered an error alert",
@@ -256,7 +267,7 @@ try {
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
 
-    const authPolicySection = panelByHeading(page, "Authentication policy");
+    const authPolicySection = editablePanelByHeading(page, "Authentication policy");
     await fillStructuredForm(authPolicySection, {
       allowPlatformLogin: false,
       allowTenantIdentityProviders: true,
@@ -343,7 +354,7 @@ try {
 
     await navigateTenantSection(page, "billing", "Billing and quota");
     await waitForPageRequests(page, "billing");
-    const quotaSection = panelByHeading(page, "Quota");
+    const quotaSection = editablePanelByHeading(page, "Quota");
     await fillStructuredForm(quotaSection, {
       maxSingleApps: 100,
       maxVolumes: 100,
@@ -412,6 +423,12 @@ function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
   return title.locator(
     "xpath=parent::header/parent::section | parent::section/parent::section",
+  );
+}
+
+function editablePanelByHeading(page, heading) {
+  return panelByHeading(page, heading).locator(
+    "xpath=ancestor-or-self::section[.//form][1]",
   );
 }
 
