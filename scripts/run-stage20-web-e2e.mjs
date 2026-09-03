@@ -494,8 +494,8 @@ function formLabel(key) {
 
 async function openMoreActions(row) {
   const actions = row.locator("details.rp-row-actions");
-  if (!(await actions.getAttribute("open"))) {
-    await actions.locator("summary").click();
+  if ((await actions.getAttribute("open")) === null) {
+    await actions.locator(":scope > summary").click();
   }
   return actions;
 }
