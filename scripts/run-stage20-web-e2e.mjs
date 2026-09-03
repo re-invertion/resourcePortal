@@ -271,7 +271,7 @@ try {
     await fillStructuredForm(authPolicySection, {
       allowPlatformLogin: false,
       allowTenantIdentityProviders: true,
-      requireTenantIdentityProviders: true,
+      requireTenantIdentityProvider: true,
     });
     await authPolicySection.getByRole("button", { name: "Save", exact: true }).click();
     assert(
