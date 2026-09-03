@@ -267,9 +267,7 @@ try {
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
 
-    const authPolicySection = panelByHeading(page, "Authentication policy").locator(
-      "xpath=ancestor-or-self::section[.//form][1]",
-    );
+    const authPolicySection = editablePanelByHeading(page, "Authentication policy");
     await fillStructuredForm(authPolicySection, {
       allowPlatformLogin: false,
       allowTenantIdentityProviders: true,
@@ -356,7 +354,7 @@ try {
 
     await navigateTenantSection(page, "billing", "Billing and quota");
     await waitForPageRequests(page, "billing");
-    const quotaSection = panelByHeading(page, "Quota");
+    const quotaSection = editablePanelByHeading(page, "Quota");
     await fillStructuredForm(quotaSection, {
       maxSingleApps: 100,
       maxVolumes: 100,
@@ -425,6 +423,12 @@ function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
   return title.locator(
     "xpath=parent::header/parent::section | parent::section/parent::section",
+  );
+}
+
+function editablePanelByHeading(page, heading) {
+  return panelByHeading(page, heading).locator(
+    "xpath=ancestor-or-self::section[.//form][1]",
   );
 }
 
