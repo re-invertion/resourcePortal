@@ -111,6 +111,8 @@ PostgreSQL databases are never exposed publicly.
 
 Public ingress normally exposes only HTTP/HTTPS. Swarm control/data ports and NFS are restricted to configured cluster/private networks whenever an address range can be established safely.
 
+Because Docker/Swarm programs netfilter rules directly, the installer must not assume that UFW alone can hide an intentionally published Docker port. The production stack must publish only intended public ports, while host-level Swarm/NFS/SSH restrictions are enforced with UFW and any narrowly required Docker-compatible firewall rules.
+
 ## 8. Primary installation flow
 
 The Primary path performs, in order:
@@ -127,16 +129,29 @@ The Primary path performs, in order:
 10. ResourcePortal release selection
 11. control-plane secret generation/import
 12. production stack rendering
-13. PostgreSQL initialization/migrations
-14. ZITADEL bootstrap
-15. first Platform Admin bootstrap
-16. optional SMTP configuration and validation
-17. ingress/domain/DNS/ACME setup
-18. stack deployment
-19. health and runtime validation
-20. installer state persistence
+13. deploy bootstrap/foundation services
+14. wait for PostgreSQL and ZITADEL readiness
+15. run ResourcePortal schema migrations as a one-shot released-image task
+16. complete ZITADEL/OIDC bootstrap
+17. create the first Platform Admin
+18. optional SMTP configuration and validation
+19. ingress/domain/DNS/ACME setup
+20. deploy the final desired control-plane stack
+21. health and runtime validation
+22. installer state persistence
 
 A failed phase must stop subsequent phases and leave enough state for Repair/Diagnostics or safe re-execution.
+
+### 8.1 Bootstrap/final stack phases
+
+The installer must not assume that PostgreSQL, ZITADEL, or ResourcePortal API are available before the stack that owns them is started.
+
+Use two declarative deployment states from the same production stack model:
+
+- **bootstrap/foundation state**: starts PostgreSQL services and ZITADEL plus only the minimum networking/ingress pieces required for bootstrap; ResourcePortal API/Web/workers remain at zero replicas or otherwise gated;
+- **final state**: after databases are ready, migrations succeed, OIDC is configured, and the first administrator is created, deploy the normal desired replicas for API/Web/workers/Traefik.
+
+ResourcePortal database migrations run from the selected released API image as a one-shot task/container with the same immutable image digest and Swarm Secrets as the target release. Production hosts do not require Node.js/npm source tooling for migration.
 
 ## 9. Storage model
 
@@ -280,7 +295,7 @@ Production hosts never run `npm install` or build ResourcePortal source.
 
 Add release workflows that publish public GHCR images for at least:
 
-- ResourcePortal API/runtime image (also used for worker commands)
+- ResourcePortal API/runtime image (also used for worker commands and migration tasks)
 - ResourcePortal Web image
 
 Use immutable version tags and publish/record image digests.
@@ -359,7 +374,7 @@ The bootstrap creates the first ZITADEL user and grants the corresponding Resour
 
 Primary setup asks whether a domain is ready.
 
-If a domain is provided, before enabling ACME the installer verifies that DNS resolves to the intended ingress address(es) or external load balancer and that the ingress path is reachable. It must not repeatedly invoke Let's Encrypt against obviously incorrect DNS.
+If a domain is provided, before enabling ACME the installer verifies that DNS resolves to the intended ingress address(es) or external load balancer. It also validates local listener readiness and performs external reachability checks where reliable from the installation environment. It must not repeatedly invoke Let's Encrypt against obviously incorrect DNS.
 
 If DNS is not ready, allow a temporary IP/HTTP installation that can later be converted through `Reconfigure`.
 
@@ -601,7 +616,7 @@ Implementation is expected to touch more than the installer scripts. Required ar
 2. production Swarm stack template/rendering;
 3. public GHCR release workflow;
 4. production Web container image;
-5. API/runtime image adjustments needed for all worker commands;
+5. API/runtime image adjustments needed for all worker commands and migration tasks;
 6. Swarm Secret file-loading support for sensitive settings;
 7. one-time join-bundle enrollment/redeem support;
 8. production NFS volume rendering/provisioning consistent with ResourcePortal Volume semantics;
