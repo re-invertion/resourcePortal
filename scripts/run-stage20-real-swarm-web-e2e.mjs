@@ -120,7 +120,9 @@ try {
       },
     });
 
-    let singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
+    let singleAppRow = singleAppsPanel
+      .getByRole("row")
+      .filter({ hasText: singleAppName });
     await singleAppRow.waitFor();
     const singleAppId = (await singleAppRow.locator("td").first().textContent())?.trim();
     assert(singleAppId, "SingleApp create did not expose an id in the resource table");
@@ -168,17 +170,26 @@ try {
       "Deployment history did not show the browser-created deployment as Succeeded",
     );
 
-    singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
+    singleAppRow = singleAppsPanel
+      .getByRole("row")
+      .filter({ hasText: singleAppName });
+    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Stop", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "0/0");
 
-    singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
+    singleAppRow = singleAppsPanel
+      .getByRole("row")
+      .filter({ hasText: singleAppName });
+    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Start", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     const serviceName = `${createdStackName}_${singleAppName}`;
     const forceUpdateBefore = await serviceForceUpdate(serviceName);
-    singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
+    singleAppRow = singleAppsPanel
+      .getByRole("row")
+      .filter({ hasText: singleAppName });
+    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Restart", exact: true }).click();
     await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
     await waitForReplicas(createdStackName, singleAppName, "1/1");
@@ -188,6 +199,7 @@ try {
       .getByRole("row")
       .filter({ hasText: deploymentId });
     await rollbackSourceRow.waitFor();
+    await openMoreActions(rollbackSourceRow);
     await rollbackSourceRow.locator("summary", { hasText: "Rollback" }).click();
 
     const rollbackResponsePromise = page.waitForResponse(
@@ -267,6 +279,14 @@ function panelByHeading(page, heading) {
   return title.locator(
     "xpath=parent::header/parent::section | parent::section/parent::section",
   );
+}
+
+async function openMoreActions(row) {
+  const actions = row.locator("details.rp-row-actions");
+  if ((await actions.getAttribute("open")) === null) {
+    await actions.locator(":scope > summary").click();
+  }
+  return actions;
 }
 
 async function createResource(panel, body) {

@@ -48,6 +48,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function resourceLabel(item: Record<string, unknown>) {
+  for (const key of ["displayName", "name", "email", "id"]) {
+    if (typeof item[key] === "string" && item[key]) return String(item[key]);
+  }
+  return "Selected resource";
+}
+
 function prefill(template: Record<string, unknown>, current: unknown) {
   if (!isRecord(current)) return template;
   return Object.fromEntries(Object.entries(template).map(([key, fallback]) => [key, current[key] === undefined ? fallback : current[key]]));
@@ -108,34 +115,36 @@ export function TenantPage({ tenantId, section, resourceId, userId }: { tenantId
 
 function AppGroupPage({ tenantId, appGroupId, permissions }: { tenantId: string; appGroupId: string; permissions?: string[] }) {
   const root = `/api/tenants/${enc(tenantId)}/app-groups/${enc(appGroupId)}`;
+  const [selectedSingleApp, setSelectedSingleApp] = useState<Record<string, unknown>>();
   return <main>
     <p><a href={`/tenants/${enc(tenantId)}/app-groups`}>← AppGroups</a></p>
     <h1>AppGroup {appGroupId}</h1>
     <ReadOnlyPanel title="AppGroup detail" path={root} />
     <section><h2>Runtime</h2><MutationButton label="Start" path={`${root}/runtime/start`} /><MutationButton label="Stop" path={`${root}/runtime/stop`} /><MutationButton label="Restart" path={`${root}/runtime/restart`} /><MutationButton label="Discard draft changes" path={`${root}/discard-changes`} confirm="Discard all draft changes?" /></section>
     <ReadOnlyPanel title="Stack preview" path={`${root}/stack-preview`} />
-    <ResourcePanel title="SingleApps" listPath={`${root}/single-apps`} createPath={`${root}/single-apps`} createInitialValue={singleAppForm} itemPath={(item) => `${root}/single-apps/${itemId(item)}`} actions={[{ label: "Start", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/start` }, { label: "Stop", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/stop` }, { label: "Restart", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/restart` }]} permissions={permissions} />
+    <ResourcePanel title="SingleApps" listPath={`${root}/single-apps`} createPath={`${root}/single-apps`} createInitialValue={singleAppForm} itemPath={(item) => `${root}/single-apps/${itemId(item)}`} onSelect={setSelectedSingleApp} selectLabel="Configure" actions={[{ label: "Start", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/start` }, { label: "Stop", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/stop` }, { label: "Restart", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/restart` }]} permissions={permissions} />
+    <SingleAppWorkbench root={root} selected={selectedSingleApp} onClear={() => setSelectedSingleApp(undefined)} />
     <ResourcePanel title="Variables" listPath={`${root}/variables`} createPath={`${root}/variables`} createInitialValue={variableForm} itemPath={(item) => `${root}/variables/${itemId(item)}`} permissions={permissions} />
     <ResourcePanel title="Configs" listPath={`${root}/configs`} createPath={`${root}/configs`} createInitialValue={configForm} itemPath={(item) => `${root}/configs/${itemId(item)}`} permissions={permissions} />
     <ResourcePanel title="Secrets" listPath={`${root}/secrets`} createPath={`${root}/secrets`} createInitialValue={secretForm} itemPath={(item) => `${root}/secrets/${itemId(item)}`} help="Secret values are accepted only in mutation payloads; reads render backend metadata only." permissions={permissions} />
     <DeploymentWorkbench root={root} />
-    <SingleAppWorkbench root={root} />
   </main>;
 }
 
 function DeploymentWorkbench({ root }: { root: string }) {
-  const [deploymentId, setDeploymentId] = useState("");
+  const [selected, setSelected] = useState<Record<string, unknown>>();
   const [created, setCreated] = useState<unknown>();
   const [error, setError] = useState<unknown>();
-  return <section><h2>Deployments</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={deployForm} submitLabel="Deploy" onSubmit={async (body) => { try { setCreated(await apiRequest(`${root}/deploy`, { method: "POST", body, headers: { "idempotency-key": crypto.randomUUID() } })); } catch (cause) { setError(cause); throw cause; } }} />{created ? <ReadableDataView value={created} /> : null}<ResourcePanel title="Deployment history" listPath={`${root}/deployments`} actions={[{ label: "Rollback", method: "POST", path: (item) => `${root}/deployments/${itemId(item)}/rollback`, body: true, initialValue: rollbackForm }]} /><label>Deployment ID for detail/events <input value={deploymentId} onChange={(event) => setDeploymentId(event.target.value)} /></label>{deploymentId ? <><ReadOnlyPanel title="Deployment detail" path={`${root}/deployments/${enc(deploymentId)}`} /><ReadOnlyPanel title="Deployment events" path={`${root}/deployments/${enc(deploymentId)}/events`} /></> : null}</section>;
+  const deploymentId = selected ? String(selected.id ?? "") : "";
+  return <section><h2>Deployments</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={deployForm} submitLabel="Deploy" onSubmit={async (body) => { try { const result = await apiRequest(`${root}/deploy`, { method: "POST", body, headers: { "idempotency-key": crypto.randomUUID() } }); setCreated(result); if (isRecord(result) && result.id) setSelected(result); } catch (cause) { setError(cause); throw cause; } }} />{created ? <ReadableDataView value={created} /> : null}<ResourcePanel title="Deployment history" listPath={`${root}/deployments`} onSelect={setSelected} selectLabel="View details" actions={[{ label: "Rollback", method: "POST", path: (item) => `${root}/deployments/${itemId(item)}/rollback`, body: true, initialValue: rollbackForm }]} />{selected && deploymentId ? <div className="rp-selected-resource"><p>Selected deployment: <strong>{resourceLabel(selected)}</strong></p><button type="button" onClick={() => setSelected(undefined)}>Close details</button><ReadOnlyPanel title="Deployment detail" path={`${root}/deployments/${enc(deploymentId)}`} /><ReadOnlyPanel title="Deployment events" path={`${root}/deployments/${enc(deploymentId)}/events`} /></div> : <p>Select a deployment from the history to view its detail and events.</p>}</section>;
 }
 
-function SingleAppWorkbench({ root }: { root: string }) {
-  const [singleAppId, setSingleAppId] = useState("");
+function SingleAppWorkbench({ root, selected, onClear }: { root: string; selected?: Record<string, unknown>; onClear: () => void }) {
+  const singleAppId = selected ? String(selected.id ?? "") : "";
   const appRoot = `${root}/single-apps/${enc(singleAppId)}`;
   const attachmentTypes = ["variable", "config", "secret", "volume"] as const;
   const attachmentForms = { variable: attachVariableForm, config: attachConfigForm, secret: attachSecretForm, volume: attachVolumeForm };
-  return <section><h2>SingleApp configuration / attachments / HTTP endpoints</h2><label>SingleApp ID <input value={singleAppId} onChange={(event) => setSingleAppId(event.target.value)} /></label>{singleAppId ? <><PatchSingleton title="Runtime / resource configuration" path={`${appRoot}/runtime-config`} initialValue={runtimeConfigForm} /><ResourcePanel title="HTTP endpoints" listPath={`${appRoot}/http-endpoints`} createPath={`${appRoot}/http-endpoints`} createInitialValue={httpEndpointForm} itemPath={(item) => `${appRoot}/http-endpoints/${itemId(item)}`} />{attachmentTypes.map((type) => <details key={type}><summary>Attach {type}</summary><JsonPayloadForm initialValue={attachmentForms[type]} submitLabel={`Attach ${type}`} onSubmit={async (body) => { await apiRequest(`${appRoot}/${type}-attachments`, { method: "POST", body }); }} /><p>Detach uses the attachment ID returned by the API.</p><JsonPayloadForm submitLabel={`Detach ${type}`} initialValue={detachAttachmentForm} onSubmit={async (body) => { const attachmentId = String(body.attachmentId ?? ""); if (!attachmentId) throw new Error("attachmentId is required"); await apiRequest(`${appRoot}/${type}-attachments/${enc(attachmentId)}`, { method: "DELETE" }); }} /></details>)}</> : <p>Choose a SingleApp ID to manage scoped settings.</p>}</section>;
+  return <section><h2>SingleApp configuration / attachments / HTTP endpoints</h2>{selected && singleAppId ? <><div className="rp-selected-resource"><p>Selected application: <strong>{resourceLabel(selected)}</strong></p><button type="button" onClick={onClear}>Change application</button></div><PatchSingleton title="Runtime / resource configuration" path={`${appRoot}/runtime-config`} initialValue={runtimeConfigForm} /><ResourcePanel title="HTTP endpoints" listPath={`${appRoot}/http-endpoints`} createPath={`${appRoot}/http-endpoints`} createInitialValue={httpEndpointForm} itemPath={(item) => `${appRoot}/http-endpoints/${itemId(item)}`} />{attachmentTypes.map((type) => <details key={type}><summary>Attach {type}</summary><JsonPayloadForm initialValue={attachmentForms[type]} submitLabel={`Attach ${type}`} onSubmit={async (body) => { await apiRequest(`${appRoot}/${type}-attachments`, { method: "POST", body }); }} /><p>Detach uses the attachment ID returned by the API.</p><JsonPayloadForm submitLabel={`Detach ${type}`} initialValue={detachAttachmentForm} onSubmit={async (body) => { const attachmentId = String(body.attachmentId ?? ""); if (!attachmentId) throw new Error("attachmentId is required"); await apiRequest(`${appRoot}/${type}-attachments/${enc(attachmentId)}`, { method: "DELETE" }); }} /></details>)}</> : <p>Select a SingleApp from the list above to manage its configuration, endpoints, and attachments.</p>}</section>;
 }
 
 function DomainPage({ root }: { root: string }) {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { JsonPayloadForm, OneTimeCredential } from "./forms";
+import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "./forms";
 
 describe("functional Stage 20 forms", () => {
   it("renders typed fields instead of raw JSON and submits typed values", async () => {
@@ -172,5 +172,27 @@ describe("functional Stage 20 forms", () => {
 
     expect(screen.getByText(/second-once/)).toBeTruthy();
     expect(screen.queryByText(/Credential cleared from this browser view/)).toBeNull();
+  });
+});
+
+describe("destructive confirmation", () => {
+  it("uses an accessible in-app dialog and only runs the action after confirmation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    render(<ConfirmButton confirm="Delete demo application?" onConfirm={onConfirm}>Delete</ConfirmButton>);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("dialog", { name: "Confirm action" })).toBeTruthy();
+    expect(screen.getByText("Delete demo application?")).toBeTruthy();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Confirm action" })).toBeNull();
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog", { name: "Confirm action" })).toBeNull();
   });
 });

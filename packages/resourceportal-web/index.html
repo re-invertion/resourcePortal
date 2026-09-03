@@ -151,6 +151,63 @@
           @apply w-full overflow-x-auto;
         }
 
+        .rp-list-toolbar {
+          @apply my-3 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 md:grid-cols-2;
+        }
+
+        .rp-primary-actions {
+          @apply flex flex-wrap items-center gap-2;
+        }
+
+        .rp-primary-actions > details,
+        .rp-row-actions {
+          @apply my-0 inline-block;
+        }
+
+        .rp-row-actions > div {
+          @apply mt-2 flex min-w-48 flex-col gap-2;
+        }
+
+        .rp-row-actions > div > details {
+          @apply my-0;
+        }
+
+        .rp-empty-state {
+          @apply my-4 rounded-md border border-dashed border-slate-300 bg-slate-50 p-6 text-center;
+        }
+
+        .rp-empty-state p {
+          @apply mb-3 text-slate-600;
+        }
+
+        .rp-success-message {
+          @apply my-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm font-medium text-green-800;
+        }
+
+        .rp-selected-resource {
+          @apply my-3 flex flex-wrap items-center gap-3 rounded-md border border-blue-200 bg-blue-50 p-3;
+        }
+
+        .rp-selected-resource p {
+          @apply mr-auto my-0 text-blue-900;
+        }
+
+        .rp-dialog-backdrop {
+          @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4;
+        }
+
+        .rp-confirm-dialog {
+          @apply m-0 w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-xl;
+        }
+
+        .rp-confirm-dialog h2 {
+          @apply mb-2;
+        }
+
+        .rp-dialog-actions {
+          @apply mt-4 flex justify-end gap-2;
+        }
+
         .rp-readable-data {
           @apply my-3 space-y-3;
         }

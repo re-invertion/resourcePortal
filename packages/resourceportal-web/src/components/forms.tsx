@@ -324,6 +324,19 @@ export function OneTimeCredential({ value }: { value: unknown }) {
 }
 
 export function ConfirmButton({ children, confirm, onConfirm, disabled = false }: { children: React.ReactNode; confirm: string; onConfirm: () => void | Promise<void>; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
-  return <button type="button" disabled={disabled || working} onClick={async () => { if (!window.confirm(confirm)) return; setWorking(true); try { await onConfirm(); } finally { setWorking(false); } }}>{working ? "Working…" : children}</button>;
+  const run = async () => {
+    setWorking(true);
+    try {
+      await onConfirm();
+      setOpen(false);
+    } finally {
+      setWorking(false);
+    }
+  };
+  return <>
+    <button type="button" disabled={disabled || working} onClick={() => setOpen(true)}>{working ? "Working…" : children}</button>
+    {open ? <div className="rp-dialog-backdrop"><section className="rp-confirm-dialog" role="dialog" aria-modal="true" aria-label="Confirm action"><h2>Confirm action</h2><p>{confirm}</p><div className="rp-dialog-actions"><button type="button" disabled={working} onClick={() => setOpen(false)}>Cancel</button><button type="button" disabled={working} onClick={() => void run()}>{working ? "Working…" : "Confirm"}</button></div></section></div> : null}
+  </>;
 }
