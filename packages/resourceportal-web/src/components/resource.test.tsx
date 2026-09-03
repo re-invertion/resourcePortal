@@ -115,7 +115,7 @@ describe("readable data views", () => {
 
     render(<ResourcePanel title="AppGroups" listPath="/api/tenants/t/app-groups" />);
 
-    await screen.findByText("Ready");
+    await screen.findByText("Ready", { selector: ".rp-status-pill" });
     expect(screen.getByText("Runtime")).toBeTruthy();
     expect(screen.getByText("Actual replicas")).toBeTruthy();
     expect(screen.getByText("BillingSuspended")).toBeTruthy();
