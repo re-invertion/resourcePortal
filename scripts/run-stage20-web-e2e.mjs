@@ -504,15 +504,9 @@ async function openDeleteConfirmation(row) {
   const page = row.page();
   const dialog = page.getByRole("dialog", { name: "Confirm action" });
   await openMoreActions(row);
-  try {
-    await row.getByRole("button", { name: "Delete" }).click({ timeout: 5_000 });
-  } catch (error) {
-    try {
-      await dialog.waitFor({ state: "visible", timeout: 1_000 });
-    } catch {
-      throw error;
-    }
-  }
+  const deleteButton = row.getByRole("button", { name: "Delete" });
+  await deleteButton.waitFor({ state: "visible" });
+  await deleteButton.dispatchEvent("click");
   await dialog.waitFor();
 }
 
