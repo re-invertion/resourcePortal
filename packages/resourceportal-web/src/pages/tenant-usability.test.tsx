@@ -30,7 +30,7 @@ describe("AppGroup task-oriented selection", () => {
 
     fireEvent.click(within(appRow).getByRole("button", { name: "Configure" }));
 
-    expect(await screen.findByText("Selected application: web")).toBeTruthy();
+    expect(await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Selected application: web")).toBeTruthy();
     expect(await screen.findByText("Runtime / resource configuration")).toBeTruthy();
   });
 
@@ -43,7 +43,7 @@ describe("AppGroup task-oriented selection", () => {
 
     fireEvent.click(within(deploymentRow).getByRole("button", { name: "View details" }));
 
-    expect(await screen.findByText("Selected deployment: release-1")).toBeTruthy();
+    expect(await screen.findByText((_, element) => element?.tagName === "P" && element.textContent === "Selected deployment: release-1")).toBeTruthy();
     expect(await screen.findByText("Deployment detail")).toBeTruthy();
     expect(await screen.findByText("Deployment events")).toBeTruthy();
   });
