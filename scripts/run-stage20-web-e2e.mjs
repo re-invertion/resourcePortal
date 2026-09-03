@@ -217,7 +217,6 @@ try {
     const endpointRow = endpointsPanel.getByRole("row").filter({ hasText: "web" });
     await endpointRow.waitFor();
     await deleteResourceRow(endpointRow);
-
     await deleteResourceRow(variableRow);
     await deleteResourceRow(configRow);
     await deleteResourceRow(secretRow);
@@ -263,6 +262,10 @@ try {
       description: "Stage 20 browser E2E group updated",
     });
     await groupRow.getByRole("button", { name: "Save", exact: true }).click();
+    await groupsPanel
+      .getByRole("status")
+      .filter({ hasText: "Changes saved." })
+      .waitFor();
     groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
