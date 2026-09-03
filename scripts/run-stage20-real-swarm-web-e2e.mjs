@@ -199,6 +199,7 @@ try {
       .getByRole("row")
       .filter({ hasText: deploymentId });
     await rollbackSourceRow.waitFor();
+    await openMoreActions(rollbackSourceRow);
     await rollbackSourceRow.locator("summary", { hasText: "Rollback" }).click();
 
     const rollbackResponsePromise = page.waitForResponse(
