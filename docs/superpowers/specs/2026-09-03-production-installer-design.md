@@ -330,6 +330,7 @@ Expected secret classes include:
 - internal worker token(s)
 - OIDC client secret
 - SMTP password when configured
+- installer-enrollment TLS private key
 
 Where an upstream/current process only supports environment variables, add a controlled entrypoint or application support for `*_FILE`-style loading from `/run/secrets/...` instead of putting plaintext values into `stack.yml` or normal environment files.
 
@@ -432,7 +433,9 @@ A bundle is:
 - single-use,
 - secret-bearing and never logged in plaintext.
 
-Because native Docker Swarm join tokens are reusable until rotated, one-time semantics cannot be implemented by simply embedding the raw Swarm token in a static file. Implement a small ResourcePortal installer-enrollment flow: the Primary stores only a hash of a random enrollment token plus role, expiry, and consumed state. The join bundle carries the random enrollment token and Primary enrollment endpoint. The Additional Node redeems it over a validated TLS connection. Only a valid, unused, unexpired enrollment token receives the role-appropriate Swarm join credentials and cluster parameters; redemption atomically marks it consumed.
+Because native Docker Swarm join tokens are reusable until rotated, one-time semantics cannot be implemented by simply embedding the raw Swarm token in a static file. Implement a small ResourcePortal installer-enrollment flow: the Primary stores only a hash of a random enrollment token plus role, expiry, and consumed state. The join bundle carries the random enrollment token and Primary enrollment endpoint. The Additional Node redeems it over HTTPS. Only a valid, unused, unexpired enrollment token receives the role-appropriate Swarm join credentials and cluster parameters; redemption atomically marks it consumed.
+
+Enrollment security must not depend on the public ResourcePortal domain already having valid ACME. During Primary bootstrap, generate a dedicated installer-enrollment TLS identity. Its private key is held as a Swarm Secret; the join bundle contains the expected enrollment certificate/CA or SPKI SHA-256 pin plus endpoint. The Additional Node verifies that pin before sending the enrollment token. This permits secure node enrollment even while the public Web/API is still running temporarily over HTTP/IP. The enrollment listener is exposed only on the configured private/cluster path where possible and is not a general public API.
 
 The enrollment response supplies only what is required for bootstrap, including:
 
@@ -451,11 +454,12 @@ The Additional Node then:
 4. configures UFW,
 5. installs NFS client support,
 6. validates NFS connectivity,
-7. joins Swarm with the fixed role,
-8. verifies the resulting node identity/role,
-9. for managers, asks whether to participate in Control Plane,
-10. for participating managers, separately asks whether to run Traefik/ingress,
-11. triggers/recommends manager-side ResourcePortal infrastructure reconciliation.
+7. securely redeems the role-bound enrollment token,
+8. joins Swarm with the returned role-appropriate credentials,
+9. verifies the resulting node identity/role,
+10. for managers, asks whether to participate in Control Plane,
+11. for participating managers, separately asks whether to run Traefik/ingress,
+12. triggers/recommends manager-side ResourcePortal infrastructure reconciliation.
 
 A worker bundle can never be promoted to a manager bundle by editing a local option.
 
@@ -553,6 +557,7 @@ Diagnostics should be useful without making changes. Checks include at least:
 - Traefik/HTTP/HTTPS
 - DNS and certificate state
 - installed image digests/version consistency
+- installer-enrollment listener identity and expiry/consumption behavior
 
 Repair actions are separate, named operations and require confirmation. Diagnostics must not mutate state merely by being run.
 
@@ -599,13 +604,14 @@ Installer logging goes to `/var/log/resourceportal/installer.log` with timestamp
 
 Rules:
 
-- no passwords, master keys, join bundles, raw enrollment tokens, Swarm join tokens, session secrets, or SMTP credentials in logs;
+- no passwords, master keys, join bundles, raw enrollment tokens, Swarm join tokens, session secrets, SMTP credentials, or enrollment private keys in logs;
 - disable shell xtrace around all secret handling;
 - sanitize command errors that could echo credentials;
 - use restrictive umask for temporary secret files;
 - delete temporary secret material after importing it into Swarm;
 - protect `/etc/resourceportal` and `/var/lib/resourceportal` according to file sensitivity;
-- verify HTTPS certificates when contacting GitHub/GHCR/Primary enrollment endpoints;
+- verify HTTPS certificates when contacting GitHub/GHCR;
+- pin the installer-enrollment TLS identity from the join bundle before sending enrollment credentials;
 - pin production images by digest after release selection.
 
 ## 27. Required repository changes
@@ -618,7 +624,7 @@ Implementation is expected to touch more than the installer scripts. Required ar
 4. production Web container image;
 5. API/runtime image adjustments needed for all worker commands and migration tasks;
 6. Swarm Secret file-loading support for sensitive settings;
-7. one-time join-bundle enrollment/redeem support;
+7. one-time role-bound join-bundle enrollment/redeem service with pinned TLS;
 8. production NFS volume rendering/provisioning consistent with ResourcePortal Volume semantics;
 9. installer-compatible ZITADEL/bootstrap path;
 10. SMTP configuration support needed by the selected production flow;
@@ -640,6 +646,7 @@ Use a shell test framework or repository-consistent test harness to cover pure p
 - release manifest parsing
 - secret-name/version logic
 - join-bundle expiry/role/consumption rules
+- enrollment certificate/SPKI pin validation
 
 ### Static checks
 
@@ -658,6 +665,7 @@ Run disposable Linux VMs/containers where feasible for:
 - loopback-device storage/RAID tests
 - ext4 and XFS formatting/mount persistence
 - NFS export/client access
+- pinned-TLS enrollment in temporary public HTTP mode
 
 ### Real Docker Swarm CI
 
@@ -666,6 +674,7 @@ Extend real Swarm coverage to validate:
 - Primary production-stack bootstrap in a safe CI mode
 - Additional worker enrollment and join
 - role-specific join enforcement
+- expired/reused join bundle rejection
 - an RP-managed NFS-backed Volume accessible when a workload is rescheduled between nodes
 - control-plane health checks
 - safe release upgrade between test versions where feasible
@@ -691,7 +700,7 @@ The design is complete when implementation demonstrates all of the following:
 6. Production authentication uses ZITADEL/OIDC and the installer bootstraps the first Platform Admin.
 7. HTTPS is enabled only after successful DNS preflight; temporary HTTP/IP mode remains available.
 8. SMTP can be configured and tested or explicitly deferred.
-9. A 30-minute, single-use, role-bound join bundle can add workers/managers without exposing a reusable raw Swarm token in the bundle.
+9. A 30-minute, single-use, role-bound join bundle can add workers/managers without exposing a reusable raw Swarm token in the bundle, including when the public RP domain is not yet configured.
 10. Additional managers can independently opt into Control Plane and ingress participation.
 11. Upgrade requires a verified backup and refuses unsafe rollback across incompatible irreversible schema migrations.
 12. Reconfigure, Diagnostics/Repair, and manual Backup/Restore are available from the same installer.
