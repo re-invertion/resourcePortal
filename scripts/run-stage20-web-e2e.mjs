@@ -267,7 +267,9 @@ try {
     await groupRow.waitFor();
     await deleteResourceRow(groupRow);
 
-    const authPolicySection = panelByHeading(page, "Authentication policy");
+    const authPolicySection = panelByHeading(page, "Authentication policy").locator(
+      "xpath=ancestor-or-self::section[.//form][1]",
+    );
     await fillStructuredForm(authPolicySection, {
       allowPlatformLogin: false,
       allowTenantIdentityProviders: true,
