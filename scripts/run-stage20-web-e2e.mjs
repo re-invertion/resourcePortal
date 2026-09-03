@@ -173,8 +173,6 @@ try {
     });
     const singleAppRow = page.getByRole("row").filter({ hasText: singleAppName });
     await singleAppRow.waitFor();
-    const singleAppId = (await singleAppRow.locator("td").first().textContent())?.trim();
-    assert(singleAppId, "SingleApp create did not expose an id in the resource table");
 
     const variablesPanel = panelByHeading(page, "Variables");
     await createResource(variablesPanel, {
@@ -208,7 +206,8 @@ try {
       "Secret plaintext leaked into the Web resource table after create/read",
     );
 
-    await page.getByLabel("SingleApp ID").fill(singleAppId);
+    await singleAppRow.getByRole("button", { name: "Configure" }).click();
+    await page.locator(".rp-selected-resource", { hasText: singleAppName }).waitFor();
     const endpointsPanel = panelByHeading(page, "HTTP endpoints");
     await createResource(endpointsPanel, {
       name: "web",
@@ -258,7 +257,8 @@ try {
     });
     let groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
-    await groupRow.locator("summary", { hasText: "Patch" }).click();
+    await openMoreActions(groupRow);
+    await groupRow.locator("summary", { hasText: "Edit" }).click();
     await fillStructuredForm(groupRow, {
       description: "Stage 20 browser E2E group updated",
     });
@@ -299,6 +299,7 @@ try {
     );
     await oauthCredential.getByRole("button", { name: "Clear credential" }).click();
     await oauthCredential.waitFor({ state: "detached" });
+    await openMoreActions(oauthRow);
     await oauthRow.getByRole("button", { name: "Rotate credentials" }).click();
     oauthCredential = oauthPanel.locator('section[aria-label="One-time credential"]');
     await oauthCredential.waitFor();
@@ -334,6 +335,7 @@ try {
       .getByRole("button", { name: "Clear credential" })
       .click();
     await oneTimeCredential.waitFor({ state: "detached" });
+    await openMoreActions(createdIdentityRow);
     await createdIdentityRow
       .getByRole("button", { name: "Rotate credentials" })
       .click();
@@ -490,15 +492,31 @@ function formLabel(key) {
     .join(" ");
 }
 
+async function openMoreActions(row) {
+  const actions = row.locator("details.rp-row-actions");
+  if (!(await actions.getAttribute("open"))) {
+    await actions.locator("summary").click();
+  }
+  return actions;
+}
+
+async function confirmAction(page) {
+  const dialog = page.getByRole("dialog", { name: "Confirm action" });
+  await dialog.waitFor();
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+}
+
 async function deleteResourceRow(row) {
-  pageDialogAccept(row.page());
+  await openMoreActions(row);
   await row.getByRole("button", { name: "Delete" }).click();
+  await confirmAction(row.page());
   await row.waitFor({ state: "detached" });
 }
 
 async function deleteDraftSingleAppRow(row) {
-  pageDialogAccept(row.page());
+  await openMoreActions(row);
   await row.getByRole("button", { name: "Delete" }).click();
+  await confirmAction(row.page());
   await row
     .locator("pre")
     .filter({ hasText: '"pendingDeletion": true' })
@@ -506,16 +524,13 @@ async function deleteDraftSingleAppRow(row) {
 }
 
 async function deleteDraftAppGroupRow(row) {
-  pageDialogAccept(row.page());
+  await openMoreActions(row);
   await row.getByRole("button", { name: "Delete" }).click();
+  await confirmAction(row.page());
   await row
     .locator("pre")
     .filter({ hasText: '"status": "Deleting"' })
     .waitFor({ state: "attached" });
-}
-
-function pageDialogAccept(page) {
-  page.once("dialog", (dialog) => dialog.accept());
 }
 
 async function navigateTenantSection(page, section, heading) {
