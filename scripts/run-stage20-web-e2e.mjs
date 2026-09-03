@@ -271,7 +271,7 @@ try {
     await fillStructuredForm(authPolicySection, {
       allowPlatformLogin: false,
       allowTenantIdentityProviders: true,
-      requireTenantIdentityProvider: true,
+      requireTenantIdentityProviders: true,
     });
     await authPolicySection.getByRole("button", { name: "Save", exact: true }).click();
     assert(
@@ -500,6 +500,18 @@ async function openMoreActions(row) {
   return actions;
 }
 
+async function openDeleteConfirmation(row) {
+  const page = row.page();
+  const dialog = page.getByRole("dialog", { name: "Confirm action" });
+  await openMoreActions(row);
+  try {
+    await row.getByRole("button", { name: "Delete" }).click({ timeout: 5_000 });
+  } catch (error) {
+    if (!(await dialog.isVisible().catch(() => false))) throw error;
+  }
+  await dialog.waitFor();
+}
+
 async function confirmAction(page) {
   const dialog = page.getByRole("dialog", { name: "Confirm action" });
   await dialog.waitFor();
@@ -507,15 +519,13 @@ async function confirmAction(page) {
 }
 
 async function deleteResourceRow(row) {
-  await openMoreActions(row);
-  await row.getByRole("button", { name: "Delete" }).click();
+  await openDeleteConfirmation(row);
   await confirmAction(row.page());
   await row.waitFor({ state: "detached" });
 }
 
 async function deleteDraftSingleAppRow(row) {
-  await openMoreActions(row);
-  await row.getByRole("button", { name: "Delete" }).click();
+  await openDeleteConfirmation(row);
   await confirmAction(row.page());
   await row
     .locator("pre")
@@ -524,8 +534,7 @@ async function deleteDraftSingleAppRow(row) {
 }
 
 async function deleteDraftAppGroupRow(row) {
-  await openMoreActions(row);
-  await row.getByRole("button", { name: "Delete" }).click();
+  await openDeleteConfirmation(row);
   await confirmAction(row.page());
   await row
     .locator("pre")
