@@ -38,3 +38,17 @@ jobs:
         run: npm run test
       - name: Build
         run: npm run build
+      - name: Build API runtime image
+        run: docker build -t resourceportal-api-ci .
+      - name: Verify storage tools in API runtime image
+        run: |
+          docker run --rm --user root --entrypoint /bin/sh resourceportal-api-ci -c '
+            command -v findmnt &&
+            command -v xfs_quota &&
+            command -v setquota &&
+            command -v chattr &&
+            command -v lsattr
+          '
+      - name: Verify API image remains non-root by default
+        run: |
+          test "$(docker run --rm --entrypoint /usr/bin/id resourceportal-api-ci -u)" != "0"
