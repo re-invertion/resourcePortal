@@ -3,14 +3,14 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveCephFsLocalPath } from "../src/storage-backends/storage-backend.logic";
+import { resolveLocalStoragePath } from "../src/storage-backends/storage-backend.logic";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
   .replace(/\/$/, "");
-const cephFsMountRoot = process.env.CEPHFS_MOUNT_ROOT ?? "/";
+const storageMountRoot = process.env.STORAGE_MOUNT_ROOT ?? "/mnt/resourceportal-storage";
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -64,8 +64,8 @@ async function main() {
     { method: "GET" },
   );
   storagePath = stringField(volume, "storagePath");
-  physicalStoragePath = resolveCephFsLocalPath(
-    cephFsMountRoot,
+  physicalStoragePath = resolveLocalStoragePath(
+    storageMountRoot,
     "/rp",
     storagePath,
   );
