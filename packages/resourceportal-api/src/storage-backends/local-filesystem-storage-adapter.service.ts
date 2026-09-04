@@ -55,7 +55,7 @@ export class LocalFilesystemStorageAdapterService {
     },
   ) {
     this.assertProjectId(input.projectId);
-    await this.validateMount();
+    const filesystem = await this.validateMount();
 
     const storagePath = posix.join(
       backend.volumeBasePath,
@@ -66,8 +66,8 @@ export class LocalFilesystemStorageAdapterService {
     await mkdir(localPath, { recursive: true });
 
     try {
-      await this.applyProjectLimit(input.projectId, input.sizeBytes);
-      await this.assignProject(localPath, input.projectId);
+      await this.applyProjectLimit(filesystem, input.projectId, input.sizeBytes);
+      await this.assignProject(filesystem, localPath, input.projectId);
       await this.verifyProject(localPath, input.projectId);
     } catch (error) {
       await rm(localPath, { recursive: true, force: true }).catch(() => undefined);
@@ -84,10 +84,10 @@ export class LocalFilesystemStorageAdapterService {
     projectId: number,
   ) {
     this.assertProjectId(projectId);
-    await this.validateMount();
+    const filesystem = await this.validateMount();
     const localPath = this.localPath(backend, storagePath);
     await this.verifyProject(localPath, projectId);
-    await this.applyProjectLimit(projectId, sizeBytes);
+    await this.applyProjectLimit(filesystem, projectId, sizeBytes);
   }
 
   async deleteVolume(
@@ -168,14 +168,38 @@ export class LocalFilesystemStorageAdapterService {
     return filesystem;
   }
 
-  private async applyProjectLimit(projectId: number, sizeBytes: bigint) {
+  private async applyProjectLimit(
+    filesystem: LocalStorageFilesystem,
+    projectId: number,
+    sizeBytes: bigint,
+  ) {
     if (sizeBytes < 0n) {
       throw new InternalServerErrorException("Storage quota size must be non-negative");
     }
 
-    const result = await this.runQuota(
-      `limit -p bhard=${sizeBytes.toString()} bsoft=${sizeBytes.toString()} ${projectId}`,
-    );
+    if (filesystem === "xfs") {
+      const result = await this.runXfsQuota(
+        `limit -p bhard=${sizeBytes.toString()} bsoft=${sizeBytes.toString()} ${projectId}`,
+      );
+      if (result.exitCode !== 0) {
+        throw new InternalServerErrorException(
+          `Storage project quota update failed: ${result.stderr || result.stdout}`,
+        );
+      }
+      return;
+    }
+
+    const setquota = this.config.get<string>("STORAGE_SETQUOTA_CLI", "setquota");
+    const blocks = ((sizeBytes + 1023n) / 1024n).toString();
+    const result = await this.commands.run(setquota, [
+      "-P",
+      projectId.toString(),
+      blocks,
+      blocks,
+      "0",
+      "0",
+      this.mountRoot(),
+    ]);
     if (result.exitCode !== 0) {
       throw new InternalServerErrorException(
         `Storage project quota update failed: ${result.stderr || result.stdout}`,
@@ -183,8 +207,28 @@ export class LocalFilesystemStorageAdapterService {
     }
   }
 
-  private async assignProject(localPath: string, projectId: number) {
-    const result = await this.runQuota(`project -s -p ${localPath} ${projectId}`);
+  private async assignProject(
+    filesystem: LocalStorageFilesystem,
+    localPath: string,
+    projectId: number,
+  ) {
+    if (filesystem === "xfs") {
+      const result = await this.runXfsQuota(`project -s -p ${localPath} ${projectId}`);
+      if (result.exitCode !== 0) {
+        throw new InternalServerErrorException(
+          `Storage project assignment failed: ${result.stderr || result.stdout}`,
+        );
+      }
+      return;
+    }
+
+    const chattr = this.config.get<string>("STORAGE_CHATTR_CLI", "chattr");
+    const result = await this.commands.run(chattr, [
+      "-p",
+      projectId.toString(),
+      "+P",
+      localPath,
+    ]);
     if (result.exitCode !== 0) {
       throw new InternalServerErrorException(
         `Storage project assignment failed: ${result.stderr || result.stdout}`,
@@ -204,7 +248,7 @@ export class LocalFilesystemStorageAdapterService {
     }
   }
 
-  private runQuota(command: string) {
+  private runXfsQuota(command: string) {
     const cli = this.config.get<string>("STORAGE_XFS_QUOTA_CLI", "xfs_quota");
     return this.commands.run(cli, [
       "-P/dev/null",
