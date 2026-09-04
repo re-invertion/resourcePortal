@@ -37,6 +37,8 @@ function adapterFor(input?: {
         STORAGE_MOUNT_ROOT: "/mnt/resourceportal-storage",
         STORAGE_FINDMNT_CLI: "findmnt",
         STORAGE_XFS_QUOTA_CLI: "xfs_quota",
+        STORAGE_SETQUOTA_CLI: "setquota",
+        STORAGE_CHATTR_CLI: "chattr",
         STORAGE_LSATTR_CLI: "lsattr",
         NFS_GANESHA_SERVER: "10.0.0.15",
         NFS_GANESHA_VERSION: "4.1",
@@ -60,7 +62,7 @@ function adapterFor(input?: {
           stderr: "",
         });
       }
-      if (program === "xfs_quota") {
+      if (["xfs_quota", "setquota", "chattr"].includes(program)) {
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       }
       if (program === "lsattr") {
@@ -133,7 +135,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
     await expect(adapter.validateLocal()).rejects.toThrow("Unsupported storage filesystem");
   });
 
-  it("provisions a Volume with a numeric project quota", async () => {
+  it("provisions an XFS Volume with a numeric project quota", async () => {
     const { adapter, runner } = adapterFor();
     const localPath = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
 
@@ -168,27 +170,34 @@ describe("LocalFilesystemStorageAdapterService", () => {
     expect(runner.run).toHaveBeenCalledWith("lsattr", ["-pd", localPath]);
   });
 
-  it("uses the same project-quota contract for ext4", async () => {
+  it("uses ext4 project hierarchy plus setquota and rounds limits up to KiB", async () => {
     const { adapter, runner } = adapterFor({
       filesystem: "ext4",
       projectIdReadback: 12002,
     });
+    const localPath = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
 
     await adapter.provisionVolume(backend, {
       tenantId: "tenant-a",
       volumeId: "volume-a",
-      sizeBytes: 8192n,
+      sizeBytes: 8193n,
       projectId: 12002,
     });
 
-    expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
-      "-P/dev/null",
-      "-D/dev/null",
-      "-x",
-      "-f",
+    expect(runner.run).toHaveBeenCalledWith("chattr", [
+      "-p",
+      "12002",
+      "+P",
+      localPath,
+    ]);
+    expect(runner.run).toHaveBeenCalledWith("setquota", [
+      "-P",
+      "12002",
+      "9",
+      "9",
+      "0",
+      "0",
       "/mnt/resourceportal-storage",
-      "-c",
-      "limit -p bhard=8192 bsoft=8192 12002",
     ]);
   });
 
@@ -208,7 +217,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
     expect(mockedRm).toHaveBeenCalledWith(localPath, { recursive: true, force: true });
   });
 
-  it("resizes the hard and soft project quota without changing the project id", async () => {
+  it("resizes the XFS hard and soft project quota without changing the project id", async () => {
     const { adapter, runner } = adapterFor();
 
     await adapter.resizeVolume(
