@@ -9,4 +9,9 @@ npm --workspace @resource-portal/api run smoke:stage16-operations
 npm --workspace @resource-portal/api run smoke:stage11-quota-concurrency
 npm run api:smoke:deploy
 npm --workspace @resource-portal/api run smoke:stage9-ingress
-npm --workspace @resource-portal/api run smoke:volume-lifecycle
+
+if [[ "${STORAGE_SMOKE_PRIVILEGED_WORKER:-false}" == "true" ]]; then
+  sudo -E env "PATH=$PATH" npm --workspace @resource-portal/api run smoke:volume-lifecycle
+else
+  npm --workspace @resource-portal/api run smoke:volume-lifecycle
+fi
