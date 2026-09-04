@@ -1,10 +1,22 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { statfs } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { posix } from "node:path";
+import {
+  buildNfsDriverOptions,
+  resolveLocalStoragePath,
+} from "./storage-backend.logic";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 export type LocalStorageFilesystem = "xfs" | "ext4";
+
+export type LocalFilesystemBackendDescriptor = {
+  id: string;
+  basePath: string;
+  volumeBasePath: string;
+  secretBasePath: string;
+};
 
 @Injectable()
 export class LocalFilesystemStorageAdapterService {
@@ -14,10 +26,97 @@ export class LocalFilesystemStorageAdapterService {
   ) {}
 
   async validateLocal() {
-    const mountRoot = this.config.get<string>(
-      "STORAGE_MOUNT_ROOT",
-      "/mnt/resourceportal-storage",
+    const filesystem = await this.validateMount();
+    const mountRoot = this.mountRoot();
+    const stats = await statfs(mountRoot);
+    const blockSize = BigInt(stats.bsize);
+    const capacityTotal = blockSize * BigInt(stats.blocks);
+    const capacityAvailable = blockSize * BigInt(stats.bavail);
+
+    if (capacityTotal < 0n || capacityAvailable < 0n || capacityAvailable > capacityTotal) {
+      throw new InternalServerErrorException("Storage filesystem returned invalid capacity data");
+    }
+
+    return {
+      health: HealthState.Healthy,
+      filesystem,
+      capacityTotal,
+      capacityAvailable,
+    };
+  }
+
+  async provisionVolume(
+    backend: LocalFilesystemBackendDescriptor,
+    input: {
+      tenantId: string;
+      volumeId: string;
+      sizeBytes: bigint;
+      projectId: number;
+    },
+  ) {
+    this.assertProjectId(input.projectId);
+    await this.validateMount();
+
+    const storagePath = posix.join(
+      backend.volumeBasePath,
+      input.tenantId,
+      input.volumeId,
     );
+    const localPath = this.localPath(backend, storagePath);
+    await mkdir(localPath, { recursive: true });
+
+    try {
+      await this.applyProjectLimit(input.projectId, input.sizeBytes);
+      await this.assignProject(localPath, input.projectId);
+      await this.verifyProject(localPath, input.projectId);
+    } catch (error) {
+      await rm(localPath, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+
+    return { storagePath };
+  }
+
+  async resizeVolume(
+    backend: LocalFilesystemBackendDescriptor,
+    storagePath: string,
+    sizeBytes: bigint,
+    projectId: number,
+  ) {
+    this.assertProjectId(projectId);
+    await this.validateMount();
+    const localPath = this.localPath(backend, storagePath);
+    await this.verifyProject(localPath, projectId);
+    await this.applyProjectLimit(projectId, sizeBytes);
+  }
+
+  async deleteVolume(
+    backend: LocalFilesystemBackendDescriptor,
+    storagePath: string,
+  ) {
+    await rm(this.localPath(backend, storagePath), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  async measureUsedSize(
+    backend: LocalFilesystemBackendDescriptor,
+    storagePath: string,
+  ) {
+    return this.measureDirectory(this.localPath(backend, storagePath));
+  }
+
+  runtimeDriverOptions(storagePath: string) {
+    return buildNfsDriverOptions(
+      this.config.get<string>("NFS_GANESHA_SERVER", ""),
+      this.config.get<string>("NFS_GANESHA_VERSION", "4.1"),
+      storagePath,
+    );
+  }
+
+  private async validateMount(): Promise<LocalStorageFilesystem> {
+    const mountRoot = this.mountRoot();
     const findmnt = this.config.get<string>("STORAGE_FINDMNT_CLI", "findmnt");
 
     const filesystemResult = await this.commands.run(findmnt, [
@@ -66,24 +165,125 @@ export class LocalFilesystemStorageAdapterService {
       );
     }
 
-    const stats = await statfs(mountRoot);
-    const blockSize = BigInt(stats.bsize);
-    const capacityTotal = blockSize * BigInt(stats.blocks);
-    const capacityAvailable = blockSize * BigInt(stats.bavail);
+    return filesystem;
+  }
 
-    if (capacityTotal < 0n || capacityAvailable < 0n || capacityAvailable > capacityTotal) {
-      throw new InternalServerErrorException("Storage filesystem returned invalid capacity data");
+  private async applyProjectLimit(projectId: number, sizeBytes: bigint) {
+    if (sizeBytes < 0n) {
+      throw new InternalServerErrorException("Storage quota size must be non-negative");
     }
 
-    return {
-      health: HealthState.Healthy,
-      filesystem,
-      capacityTotal,
-      capacityAvailable,
-    };
+    const result = await this.runQuota(
+      `limit -p bhard=${sizeBytes.toString()} bsoft=${sizeBytes.toString()} ${projectId}`,
+    );
+    if (result.exitCode !== 0) {
+      throw new InternalServerErrorException(
+        `Storage project quota update failed: ${result.stderr || result.stdout}`,
+      );
+    }
+  }
+
+  private async assignProject(localPath: string, projectId: number) {
+    const result = await this.runQuota(`project -s -p ${localPath} ${projectId}`);
+    if (result.exitCode !== 0) {
+      throw new InternalServerErrorException(
+        `Storage project assignment failed: ${result.stderr || result.stdout}`,
+      );
+    }
+  }
+
+  private async verifyProject(localPath: string, projectId: number) {
+    const lsattr = this.config.get<string>("STORAGE_LSATTR_CLI", "lsattr");
+    const result = await this.commands.run(lsattr, ["-pd", localPath]);
+    const readback = this.parseProjectId(result.stdout);
+
+    if (result.exitCode !== 0 || readback !== projectId) {
+      throw new InternalServerErrorException(
+        `Storage project quota verification failed: expected ${projectId}, got ${readback ?? "unavailable"}`,
+      );
+    }
+  }
+
+  private runQuota(command: string) {
+    const cli = this.config.get<string>("STORAGE_XFS_QUOTA_CLI", "xfs_quota");
+    return this.commands.run(cli, [
+      "-P/dev/null",
+      "-D/dev/null",
+      "-x",
+      "-f",
+      this.mountRoot(),
+      "-c",
+      command,
+    ]);
+  }
+
+  private parseProjectId(output: string) {
+    const first = output.trim().split(/\s+/)[0];
+    if (!first || !/^\d+$/.test(first)) return null;
+    const parsed = Number(first);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  private localPath(
+    backend: LocalFilesystemBackendDescriptor,
+    logicalPath: string,
+  ) {
+    return resolveLocalStoragePath(
+      this.mountRoot(),
+      backend.basePath,
+      logicalPath,
+    );
+  }
+
+  private mountRoot() {
+    return this.config.get<string>(
+      "STORAGE_MOUNT_ROOT",
+      "/mnt/resourceportal-storage",
+    );
+  }
+
+  private assertProjectId(projectId: number) {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || projectId > 2_147_483_647) {
+      throw new InternalServerErrorException("Storage project id is invalid");
+    }
   }
 
   private isSupportedFilesystem(value: string): value is LocalStorageFilesystem {
     return value === "xfs" || value === "ext4";
+  }
+
+  private async measureDirectory(path: string): Promise<bigint> {
+    let names: string[];
+    try {
+      names = await readdir(path);
+    } catch (error) {
+      if (this.hasCode(error, "ENOENT")) return 0n;
+      throw error;
+    }
+
+    let total = 0n;
+    for (const name of names) {
+      const child = posix.join(path, name);
+      let details;
+      try {
+        details = await lstat(child);
+      } catch (error) {
+        if (this.hasCode(error, "ENOENT")) continue;
+        throw error;
+      }
+      if (details.isSymbolicLink()) continue;
+      if (details.isDirectory()) total += await this.measureDirectory(child);
+      else if (details.isFile()) total += BigInt(details.size);
+    }
+    return total;
+  }
+
+  private hasCode(error: unknown, code: string) {
+    return (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: unknown }).code === code
+    );
   }
 }
