@@ -35,7 +35,15 @@ WORKDIR /app/packages/resourceportal-api
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache docker-cli
+# The image stays non-root by default. The production operation-worker may
+# override the user to root on the storage node so only that process can
+# mutate filesystem project quotas.
+RUN apk add --no-cache \
+    docker-cli \
+    e2fsprogs-extra \
+    findmnt \
+    quota-tools \
+    xfsprogs-extra
 
 COPY --from=production-dependencies /app/node_modules /app/node_modules
 COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
