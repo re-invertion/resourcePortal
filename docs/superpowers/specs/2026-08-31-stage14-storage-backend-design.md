@@ -97,11 +97,26 @@ NFS-Ganesha remote validation remains a separate check. The backend is `Ready` o
 
 Each Volume directory receives its own numeric project ID.
 
-ResourcePortal applies project quotas with `xfs_quota` in expert/foreign-filesystem mode for both supported v1 filesystems. The configured project ID is assigned to the Volume directory and the byte limit is applied as both the hard and soft project limit.
+Quota enforcement is filesystem-specific:
+
+- **XFS** — ResourcePortal uses `xfs_quota` in expert mode to assign the project and apply equal hard/soft byte limits.
+- **ext4** — ResourcePortal assigns the directory project ID and project hierarchy flag with `chattr`, then applies project limits with `setquota -P`. ext4 block limits are expressed in KiB, so requested byte limits are rounded up to the next KiB.
 
 After provisioning ResourcePortal reads the directory project ID back with `lsattr -pd`. A mismatch is treated as provisioning failure and the newly-created directory is removed.
 
 Volume shrink remains unsupported.
+
+### Privilege boundary
+
+Quota mutation is intentionally separated from normal API execution.
+
+- the ResourcePortal runtime image defaults to the non-root `node` user,
+- API and normal non-storage processes remain non-root,
+- only the `operation-worker` instance responsible for Volume mutation is started as root on the designated storage node,
+- that worker receives the local storage mount and only the runtime privileges/capabilities required by the supported quota tools,
+- the adapter refuses provisioning and quota resize when the process effective UID is not `0`.
+
+This prevents accidentally moving privileged quota operations back into the public API process. Read-only validation, capacity inspection and NFS driver-option generation do not require the privileged mutation path.
 
 ### Used size
 
@@ -123,7 +138,7 @@ Used bytes are measured recursively from the local Volume directory without foll
 10. apply and verify the physical quota,
 11. move the Volume to `Ready`.
 
-Physical provisioning is intentionally outside the database transaction.
+Physical provisioning is intentionally outside the database transaction and executes through the privileged operation-worker.
 
 If physical provisioning fails, ResourcePortal removes the newly-created directory and removes the database record when cleanup succeeds. A cleanup failure leaves the Volume in `Error` for operator recovery.
 
@@ -137,7 +152,7 @@ If physical provisioning fails, ResourcePortal removes the newly-created directo
 6. reserve the requested size in `pendingSizeBytes`,
 7. read the existing durable project ID,
 8. verify the directory still has that project ID,
-9. grow the project quota,
+9. grow the project quota through the privileged operation-worker,
 10. commit the new `sizeBytes` and return the Volume to `Ready`.
 
 ### Delete
@@ -174,6 +189,8 @@ Backend validation may launch the existing temporary global Swarm probe service.
 
 A one-node Swarm remains valid: the storage host may also run workloads and consume the same export locally.
 
+The production `operation-worker` that performs Volume mutation is constrained to the designated storage node. Other workers do not receive the local storage mount merely because they are part of the Swarm.
+
 ## Platform API
 
 Platform administrators can:
@@ -191,7 +208,9 @@ The v1 storage implementation uses:
 
 - `STORAGE_MOUNT_ROOT` — physical host mount containing ResourcePortal storage,
 - `STORAGE_FINDMNT_CLI` — filesystem/mount inspection command,
-- `STORAGE_XFS_QUOTA_CLI` — project quota command; defaults to `xfs_quota`,
+- `STORAGE_XFS_QUOTA_CLI` — XFS project quota command; defaults to `xfs_quota`,
+- `STORAGE_SETQUOTA_CLI` — ext4 project quota limit command; defaults to `setquota`,
+- `STORAGE_CHATTR_CLI` — ext4 project ID/hierarchy command; defaults to `chattr`,
 - `STORAGE_LSATTR_CLI` — project-ID readback command; defaults to `lsattr`,
 - `NFS_GANESHA_SERVER`,
 - `NFS_GANESHA_VERSION`,
@@ -215,12 +234,15 @@ The LocalFilesystem migration is complete only when:
 - path-safety tests pass,
 - XFS and ext4 validation tests pass,
 - missing project-quota mount options are rejected,
-- provisioning assigns and verifies project IDs,
+- XFS provisioning assigns and verifies project IDs with `xfs_quota`,
+- ext4 provisioning assigns the project hierarchy and enforces limits with `setquota`,
+- non-root quota mutation is rejected before filesystem mutation,
 - resize preserves the project ID and grows quota,
 - failed provisioning cleans up the new directory,
 - used-size measurement does not follow symlinks,
 - Prisma generates the `LocalFilesystem` backend type and `storageProjectId`,
 - Volume transaction-boundary tests prove physical work occurs outside the quota transaction,
 - stack rendering still produces NFS-Ganesha driver options,
+- the real Docker Swarm workflow provisions a real XFS filesystem with project quotas and validates the NFS-Ganesha path,
 - lint, unit tests and build pass,
 - existing real Docker Swarm and federation integration workflows remain green.
