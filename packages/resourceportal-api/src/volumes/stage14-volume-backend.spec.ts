@@ -14,8 +14,8 @@ const actor = {
 const tenantId = "33333333-3333-4333-8333-333333333333";
 const backend = {
   id: "00000000-0000-4000-8000-000000000014",
-  name: "default-cephfs",
-  type: "CephFS" as const,
+  name: "default-local-filesystem",
+  type: "LocalFilesystem" as const,
   basePath: "/rp",
   volumeBasePath: "/rp/volumes",
   secretBasePath: "/rp/secrets",
@@ -76,6 +76,7 @@ function createHarness() {
       Promise.resolve({
         backend,
         storagePath: `/rp/volumes/${input.tenantId}/${input.volumeId}`,
+        projectId: 12001,
       }),
     ),
     provisionVolume: vi.fn(() => {
@@ -89,12 +90,12 @@ function createHarness() {
     storageBackends as unknown as StorageBackendsService,
   );
 
-  return { service, storageBackends };
+  return { service, storageBackends, tx };
 }
 
 describe("Stage 14 Volume backend transaction boundaries", () => {
-  it("does not perform physical StorageBackend provisioning inside the quota transaction", async () => {
-    const { service, storageBackends } = createHarness();
+  it("persists the allocated project id before physical provisioning", async () => {
+    const { service, storageBackends, tx } = createHarness();
 
     await service.createVolume(
       tenantId,
@@ -103,6 +104,9 @@ describe("Stage 14 Volume backend transaction boundaries", () => {
     );
 
     expect(storageBackends.reserveVolume).toHaveBeenCalledTimes(1);
+    expect(tx.volume.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ storageProjectId: 12001 }),
+    });
     expect(storageBackends.provisionVolume).toHaveBeenCalledTimes(1);
   });
 });
