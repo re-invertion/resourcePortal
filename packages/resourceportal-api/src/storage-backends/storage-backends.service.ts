@@ -13,22 +13,23 @@ import {
 } from "../capacity/capacity-errors";
 import { ObservabilityService } from "../observability/observability.service";
 import {
-  CephFsBackendDescriptor,
-  CephFsStorageAdapterService,
-} from "./cephfs-storage-adapter.service";
+  LocalFilesystemBackendDescriptor,
+  LocalFilesystemStorageAdapterService,
+} from "./local-filesystem-storage-adapter.service";
 import { NfsRemoteAccessValidatorService } from "./nfs-remote-access-validator.service";
 import { StorageBackendRow, StorageBackendStore } from "./storage-backend.store";
 
 export type StorageBackendReservation = {
   backend: StorageBackendRow;
   storagePath: string;
+  projectId: number;
 };
 
 @Injectable()
 export class StorageBackendsService {
   constructor(
     private readonly store: StorageBackendStore,
-    private readonly cephFs: CephFsStorageAdapterService,
+    private readonly localFilesystem: LocalFilesystemStorageAdapterService,
     private readonly remoteAccess: NfsRemoteAccessValidatorService,
     @Optional() private readonly observability?: ObservabilityService,
   ) {}
@@ -50,7 +51,7 @@ export class StorageBackendsService {
     const now = new Date();
 
     try {
-      const local = await this.cephFs.validateLocal();
+      const local = await this.localFilesystem.validateLocal();
       const remote = await this.remoteAccess.validate(backend.basePath);
       const healthReady = this.isWritableHealth(local.health);
       const ready = healthReady && remote.ok;
@@ -117,6 +118,7 @@ export class StorageBackendsService {
 
     const committed = await this.store.committedCapacity(tx, backend.id);
     this.assertCapacity(backend, committed, input.sizeBytes, input.sizeBytes);
+    const projectId = await this.store.allocateProjectId(tx);
 
     return {
       backend,
@@ -125,6 +127,7 @@ export class StorageBackendsService {
         input.tenantId,
         input.volumeId,
       ),
+      projectId,
     };
   }
 
@@ -132,7 +135,13 @@ export class StorageBackendsService {
     reservation: StorageBackendReservation,
     input: { tenantId: string; volumeId: string; sizeBytes: bigint },
   ) {
-    const result = await this.cephFs.provisionVolume(reservation.backend, input);
+    const result = await this.localFilesystem.provisionVolume(
+      reservation.backend,
+      {
+        ...input,
+        projectId: reservation.projectId,
+      },
+    );
     if (result.storagePath !== reservation.storagePath) {
       throw new ServiceUnavailableException(
         "StorageBackend returned an unexpected Volume path",
@@ -141,10 +150,10 @@ export class StorageBackendsService {
   }
 
   async cleanupProvisionedVolume(
-    backend: CephFsBackendDescriptor,
+    backend: LocalFilesystemBackendDescriptor,
     storagePath: string,
   ) {
-    await this.cephFs.deleteVolume(backend, storagePath);
+    await this.localFilesystem.deleteVolume(backend, storagePath);
   }
 
   async reserveResize(
@@ -175,23 +184,28 @@ export class StorageBackendsService {
       input.volumeId,
     );
     this.assertCapacity(backend, committed, input.requestedSizeBytes, growth);
+    const projectId = await this.store.requireProjectIdForVolumeInTransaction(
+      tx,
+      input.volumeId,
+    );
     await this.store.reserveResize(tx, {
       volumeId: input.volumeId,
       pendingSizeBytes: input.requestedSizeBytes,
       actorId: input.actorId,
     });
 
-    return { backend, storagePath: input.storagePath };
+    return { backend, storagePath: input.storagePath, projectId };
   }
 
   async resizeVolume(
     reservation: StorageBackendReservation,
     input: { storagePath: string; requestedSizeBytes: bigint },
   ) {
-    await this.cephFs.resizeVolume(
+    await this.localFilesystem.resizeVolume(
       reservation.backend,
       input.storagePath,
       input.requestedSizeBytes,
+      reservation.projectId,
     );
   }
 
@@ -205,12 +219,15 @@ export class StorageBackendsService {
 
   async deleteVolume(volumeId: string, storagePath: string) {
     const backend = await this.store.requireForVolume(volumeId);
-    await this.cephFs.deleteVolume(backend, storagePath);
+    await this.localFilesystem.deleteVolume(backend, storagePath);
   }
 
   async measureUsedSize(volumeId: string, storagePath: string) {
     const backend = await this.store.requireForVolume(volumeId);
-    const usedSize = await this.cephFs.measureUsedSize(backend, storagePath);
+    const usedSize = await this.localFilesystem.measureUsedSize(
+      backend,
+      storagePath,
+    );
     await this.publishBackendMetric(backend);
     return usedSize;
   }
@@ -218,13 +235,13 @@ export class StorageBackendsService {
   runtimeVolumeDefinition(storagePath: string) {
     return {
       driver: "local" as const,
-      driver_opts: this.cephFs.runtimeDriverOptions(storagePath),
+      driver_opts: this.localFilesystem.runtimeDriverOptions(storagePath),
     };
   }
 
   private async refreshBackendForWrite(backend: StorageBackendRow) {
     this.assertPersistedWritable(backend);
-    const live = await this.cephFs.validateLocal();
+    const live = await this.localFilesystem.validateLocal();
     const healthy = this.isWritableHealth(live.health);
     const saved = await this.store.saveValidation(backend.id, {
       status: healthy ? "Ready" : "Error",
@@ -234,7 +251,7 @@ export class StorageBackendsService {
       lastValidatedAt: new Date(),
       lastValidationError: healthy
         ? backend.lastValidationError
-        : "Ceph health is not writable",
+        : "Local filesystem health is not writable",
     });
     await this.publishBackendMetric(saved);
 
@@ -264,6 +281,9 @@ export class StorageBackendsService {
   }
 
   private assertPersistedWritable(backend: StorageBackendRow) {
+    if (backend.type !== "LocalFilesystem") {
+      throw platformUnavailableException("Unsupported StorageBackend type");
+    }
     if (backend.maintenance) {
       throw platformUnavailableException("StorageBackend is in maintenance");
     }
