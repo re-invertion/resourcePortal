@@ -132,10 +132,14 @@ async function cleanup() {
 }
 
 async function runOperationWorkerOnce() {
-  const result = await command("npm", ["run", "worker:operations"], {
+  const workerEnv = {
     ...process.env,
     OPERATION_WORKER_ONCE: "true",
-  });
+  };
+  const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
+  const result = privileged
+    ? await command("sudo", ["-E", "npm", "run", "worker:operations"], workerEnv)
+    : await command("npm", ["run", "worker:operations"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");
