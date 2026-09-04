@@ -18,7 +18,8 @@ const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
 const mockedRm = vi.mocked(rm);
 const mockedStatfs = vi.mocked(statfs);
-const mockedGetuid = vi.spyOn(process, "getuid");
+let effectiveUid = 0;
+vi.spyOn(process, "getuid").mockImplementation(() => effectiveUid);
 
 const backend = {
   id: "00000000-0000-4000-8000-000000000014",
@@ -89,7 +90,7 @@ function adapterFor(input?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedGetuid.mockReturnValue(0);
+  effectiveUid = 0;
   mockedStatfs.mockResolvedValue({
     bsize: 4096,
     blocks: 1000,
@@ -138,7 +139,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
   });
 
   it("rejects quota mutation outside the privileged operation worker", async () => {
-    mockedGetuid.mockReturnValue(1000);
+    effectiveUid = 1000;
     const { adapter, runner } = adapterFor();
 
     await expect(
