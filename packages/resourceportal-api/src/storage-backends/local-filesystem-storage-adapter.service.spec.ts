@@ -18,6 +18,7 @@ const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
 const mockedRm = vi.mocked(rm);
 const mockedStatfs = vi.mocked(statfs);
+const mockedGetuid = vi.spyOn(process, "getuid");
 
 const backend = {
   id: "00000000-0000-4000-8000-000000000014",
@@ -88,6 +89,7 @@ function adapterFor(input?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedGetuid.mockReturnValue(0);
   mockedStatfs.mockResolvedValue({
     bsize: 4096,
     blocks: 1000,
@@ -133,6 +135,23 @@ describe("LocalFilesystemStorageAdapterService", () => {
     const { adapter } = adapterFor({ filesystem: "btrfs", options: "rw,relatime,prjquota" });
 
     await expect(adapter.validateLocal()).rejects.toThrow("Unsupported storage filesystem");
+  });
+
+  it("rejects quota mutation outside the privileged operation worker", async () => {
+    mockedGetuid.mockReturnValue(1000);
+    const { adapter, runner } = adapterFor();
+
+    await expect(
+      adapter.provisionVolume(backend, {
+        tenantId: "tenant-a",
+        volumeId: "volume-a",
+        sizeBytes: 4096n,
+        projectId: 12001,
+      }),
+    ).rejects.toThrow("privileged operation-worker");
+
+    expect(mockedMkdir).not.toHaveBeenCalled();
+    expect(runner.run).not.toHaveBeenCalled();
   });
 
   it("provisions an XFS Volume with a numeric project quota", async () => {
