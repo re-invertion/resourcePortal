@@ -48,8 +48,8 @@ RUN apk add --no-cache \
 
 COPY --from=production-dependencies /app/node_modules /app/node_modules
 COPY --from=production-dependencies /app/packages/resourceportal-api/node_modules ./node_modules
-COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
-COPY --from=build /app/node_modules/@prisma/client /app/node_modules/@prisma/client
+COPY --from=build /app/packages/resourceportal-api/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/packages/resourceportal-api/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist
