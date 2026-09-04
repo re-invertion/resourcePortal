@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from "@nestjs/common";
 import { HealthState, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -8,7 +13,7 @@ export const DEFAULT_STORAGE_BACKEND_ID =
 const STORAGE_CAPACITY_LOCK_NAMESPACE = "resourceportal:storage-backend-capacity";
 
 export type StorageBackendStatus = "Ready" | "Error";
-export type StorageBackendType = "CephFS";
+export type StorageBackendType = "LocalFilesystem";
 
 export type StorageBackendRow = {
   id: string;
@@ -34,6 +39,10 @@ type CommittedCapacityRow = {
 
 type UsedCapacityRow = {
   usedBytes: bigint;
+};
+
+type ProjectIdRow = {
+  projectId: bigint;
 };
 
 @Injectable()
@@ -104,6 +113,57 @@ export class StorageBackendStore {
     const backend = rows[0];
     if (!backend) throw new NotFoundException("StorageBackend for Volume not found");
     return backend;
+  }
+
+  async allocateProjectId(tx: Prisma.TransactionClient) {
+    const rows = await tx.$queryRaw<ProjectIdRow[]>(Prisma.sql`
+      SELECT nextval('"Volume_storageProjectId_seq"')::bigint AS "projectId"
+    `);
+    const raw = rows[0]?.projectId;
+    if (raw === undefined) {
+      throw new InternalServerErrorException("Unable to allocate storage project id");
+    }
+
+    const projectId = Number(raw);
+    if (
+      !Number.isSafeInteger(projectId) ||
+      projectId <= 0 ||
+      projectId > 2_147_483_647
+    ) {
+      throw new InternalServerErrorException("Allocated storage project id is invalid");
+    }
+    return projectId;
+  }
+
+  async requireProjectIdForVolume(volumeId: string) {
+    const rows = await this.prisma.$queryRaw<ProjectIdRow[]>`
+      SELECT "storageProjectId"::bigint AS "projectId"
+      FROM "Volume"
+      WHERE "id" = ${volumeId}::uuid
+      LIMIT 1
+    `;
+    const raw = rows[0]?.projectId;
+    if (raw === undefined) {
+      throw new NotFoundException("Storage project id for Volume not found");
+    }
+    return this.projectIdNumber(raw);
+  }
+
+  async requireProjectIdForVolumeInTransaction(
+    tx: Prisma.TransactionClient,
+    volumeId: string,
+  ) {
+    const rows = await tx.$queryRaw<ProjectIdRow[]>(Prisma.sql`
+      SELECT "storageProjectId"::bigint AS "projectId"
+      FROM "Volume"
+      WHERE "id" = ${volumeId}::uuid
+      LIMIT 1
+    `);
+    const raw = rows[0]?.projectId;
+    if (raw === undefined) {
+      throw new NotFoundException("Storage project id for Volume not found");
+    }
+    return this.projectIdNumber(raw);
   }
 
   async lockCapacity(
@@ -234,5 +294,17 @@ export class StorageBackendStore {
     const backend = rows[0];
     if (!backend) throw new NotFoundException("StorageBackend not found");
     return backend;
+  }
+
+  private projectIdNumber(raw: bigint) {
+    const projectId = Number(raw);
+    if (
+      !Number.isSafeInteger(projectId) ||
+      projectId <= 0 ||
+      projectId > 2_147_483_647
+    ) {
+      throw new InternalServerErrorException("Storage project id is invalid");
+    }
+    return projectId;
   }
 }
