@@ -169,7 +169,10 @@ describe("LocalFilesystemStorageAdapterService", () => {
   });
 
   it("uses the same project-quota contract for ext4", async () => {
-    const { adapter, runner } = adapterFor({ filesystem: "ext4" });
+    const { adapter, runner } = adapterFor({
+      filesystem: "ext4",
+      projectIdReadback: 12002,
+    });
 
     await adapter.provisionVolume(backend, {
       tenantId: "tenant-a",
