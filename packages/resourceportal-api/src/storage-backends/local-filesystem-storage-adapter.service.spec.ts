@@ -1,7 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
 import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalFilesystemStorageAdapterService } from "./local-filesystem-storage-adapter.service";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
@@ -18,8 +18,14 @@ const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
 const mockedRm = vi.mocked(rm);
 const mockedStatfs = vi.mocked(statfs);
-let effectiveUid = 0;
-vi.spyOn(process, "getuid").mockImplementation(() => effectiveUid);
+const originalGetuid = process.getuid;
+
+function setEffectiveUid(uid: number) {
+  Object.defineProperty(process, "getuid", {
+    configurable: true,
+    value: () => uid,
+  });
+}
 
 const backend = {
   id: "00000000-0000-4000-8000-000000000014",
@@ -90,7 +96,7 @@ function adapterFor(input?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  effectiveUid = 0;
+  setEffectiveUid(0);
   mockedStatfs.mockResolvedValue({
     bsize: 4096,
     blocks: 1000,
@@ -103,6 +109,13 @@ beforeEach(() => {
   mockedMkdir.mockResolvedValue(undefined);
   mockedRm.mockResolvedValue(undefined);
   mockedReaddir.mockResolvedValue([]);
+});
+
+afterAll(() => {
+  Object.defineProperty(process, "getuid", {
+    configurable: true,
+    value: originalGetuid,
+  });
 });
 
 describe("LocalFilesystemStorageAdapterService", () => {
@@ -139,7 +152,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
   });
 
   it("rejects quota mutation outside the privileged operation worker", async () => {
-    effectiveUid = 1000;
+    setEffectiveUid(1000);
     const { adapter, runner } = adapterFor();
 
     await expect(
