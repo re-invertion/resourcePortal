@@ -113,10 +113,13 @@ Quota mutation is intentionally separated from normal API execution.
 - the ResourcePortal runtime image defaults to the non-root `node` user,
 - API and normal non-storage processes remain non-root,
 - only the `operation-worker` instance responsible for Volume mutation is started as root on the designated storage node,
-- that worker receives the local storage mount and only the runtime privileges/capabilities required by the supported quota tools,
+- that worker receives the local storage mount read-write and only the runtime privileges/capabilities required by the supported quota tools,
+- the API remains non-root and receives only read-only access to the local storage mount on the storage/control-plane node so it can perform backend validation and `usedSizeBytes` measurement,
 - the adapter refuses provisioning and quota resize when the process effective UID is not `0`.
 
-This prevents accidentally moving privileged quota operations back into the public API process. Read-only validation, capacity inspection and NFS driver-option generation do not require the privileged mutation path.
+This prevents accidentally moving privileged quota operations back into the public API process. Read-only validation, capacity inspection, used-size measurement and NFS driver-option generation do not require the privileged mutation path.
+
+In the initial one-storage-node deployment, API and operation-worker are constrained to the storage/control-plane node because their local filesystem operations target `STORAGE_MOUNT_ROOT`. Workload tasks on other Swarm nodes use NFS-Ganesha instead of the local mount. A future control-plane HA design must explicitly replace this local read dependency before allowing API placement away from the storage node.
 
 ### Used size
 
@@ -189,7 +192,7 @@ Backend validation may launch the existing temporary global Swarm probe service.
 
 A one-node Swarm remains valid: the storage host may also run workloads and consume the same export locally.
 
-The production `operation-worker` that performs Volume mutation is constrained to the designated storage node. Other workers do not receive the local storage mount merely because they are part of the Swarm.
+The production `operation-worker` that performs Volume mutation is constrained to the designated storage node and receives the storage mount read-write. The API is also constrained to the storage/control-plane node in v1 but receives that mount read-only. Other workers do not receive the local storage mount merely because they are part of the Swarm.
 
 ## Platform API
 
@@ -244,5 +247,6 @@ The LocalFilesystem migration is complete only when:
 - Volume transaction-boundary tests prove physical work occurs outside the quota transaction,
 - stack rendering still produces NFS-Ganesha driver options,
 - the real Docker Swarm workflow provisions a real XFS filesystem with project quotas and validates the NFS-Ganesha path,
+- the API runtime image builds with the required quota tools and remains non-root by default,
 - lint, unit tests and build pass,
 - existing real Docker Swarm and federation integration workflows remain green.
