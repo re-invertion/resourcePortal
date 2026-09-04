@@ -1,16 +1,16 @@
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveCephFsLocalPath } from "../src/storage-backends/storage-backend.logic";
+import { resolveLocalStoragePath } from "../src/storage-backends/storage-backend.logic";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
   .replace(/\/$/, "");
-const cephFsMountRoot = process.env.CEPHFS_MOUNT_ROOT ?? "/";
+const storageMountRoot = process.env.STORAGE_MOUNT_ROOT ?? "/mnt/resourceportal-storage";
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -64,17 +64,13 @@ async function main() {
     { method: "GET" },
   );
   storagePath = stringField(volume, "storagePath");
-  physicalStoragePath = resolveCephFsLocalPath(
-    cephFsMountRoot,
+  physicalStoragePath = resolveLocalStoragePath(
+    storageMountRoot,
     "/rp",
     storagePath,
   );
 
-  await mkdir(physicalStoragePath, { recursive: true });
-  await writeFile(
-    join(physicalStoragePath, "stage7-usage.bin"),
-    Buffer.alloc(8192, 1),
-  );
+  await writeUsageFixture(physicalStoragePath);
 
   const measured = await api<JsonObject>(
     `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
@@ -131,11 +127,37 @@ async function cleanup() {
   }
 }
 
+async function writeUsageFixture(path: string) {
+  const fixturePath = join(path, "stage7-usage.bin");
+  if (process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true") {
+    const result = await command("sudo", [
+      "dd",
+      "if=/dev/zero",
+      `of=${fixturePath}`,
+      "bs=8192",
+      "count=1",
+      "status=none",
+    ]);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        result.stderr || result.stdout || "Unable to write privileged volume usage fixture",
+      );
+    }
+    return;
+  }
+
+  await writeFile(fixturePath, Buffer.alloc(8192, 1));
+}
+
 async function runOperationWorkerOnce() {
-  const result = await command("npm", ["run", "worker:operations"], {
+  const workerEnv = {
     ...process.env,
     OPERATION_WORKER_ONCE: "true",
-  });
+  };
+  const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
+  const result = privileged
+    ? await command("sudo", ["-E", "npm", "run", "worker:operations"], workerEnv)
+    : await command("npm", ["run", "worker:operations"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");

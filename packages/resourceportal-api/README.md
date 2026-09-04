@@ -107,10 +107,14 @@ value marks the AppGroup draft as pending but does not deploy automatically.
 
 ## Storage
 
-New volumes are created under `RESOURCE_STORAGE_ROOT`, defaulting to:
+The v1 persistent-storage backend is `LocalFilesystem`. The storage host exposes an XFS or ext4 filesystem mounted with project quotas enabled at `STORAGE_MOUNT_ROOT` (default `/mnt/resourceportal-storage`). XFS is preferred; ext4 is supported.
+
+ResourcePortal keeps logical Volume paths under:
 
 ```text
-/rp/volumes
+/rp/volumes/{tenantId}/{volumeId}
 ```
 
-The stored volume path is mounted into Docker local bind volumes by the worker.
+The local adapter maps the logical `/rp` namespace below `STORAGE_MOUNT_ROOT`, assigns each Volume a durable numeric `storageProjectId`, and enforces the requested size with filesystem project quotas.
+
+Docker Swarm workloads do not use host bind mounts for persistent Volumes. They use Docker `local` driver NFS volumes pointing at NFS-Ganesha, which exports the logical `/rp` namespace. This supports the single-node deployment and lets additional Swarm workers access the same Volume without mounting the underlying XFS/ext4 filesystem directly.

@@ -19,8 +19,8 @@ async function main() {
 
   const backend = backends[0];
   backendId = stringField(backend, "id");
-  expectField(backend, "name", "default-cephfs");
-  expectField(backend, "type", "CephFS");
+  expectField(backend, "name", "default-local-filesystem");
+  expectField(backend, "type", "LocalFilesystem");
   expectField(backend, "basePath", "/rp");
   expectField(backend, "volumeBasePath", "/rp/volumes");
   expectField(backend, "secretBasePath", "/rp/secrets");

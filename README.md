@@ -40,7 +40,7 @@ The repository includes a one-click development preview in `.devcontainer/devcon
 
 The preview creates a `codespace-demo` tenant with development quota and credits so the functional Web Console can be explored immediately. Runtime state and logs are stored under the ignored `var/codespaces/` directory.
 
-The Codespaces preview intentionally uses `AUTH_MODE=dev`. The Web proxy injects the fixed development identity only when `NODE_ENV` is not `production`; production mode never enables this behavior. ZITADEL/OIDC login, CephFS/NFS-Ganesha storage, production Traefik ingress, certificates, and multi-node infrastructure are not simulated by this preview.
+The Codespaces preview intentionally uses `AUTH_MODE=dev`. The Web proxy injects the fixed development identity only when `NODE_ENV` is not `production`; production mode never enables this behavior. ZITADEL/OIDC login, host-mounted XFS/ext4 project-quota storage with NFS-Ganesha access, production Traefik ingress, certificates, and multi-node infrastructure are not simulated by this preview.
 
 To restart the preview manually inside a Codespace:
 

@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ObservabilityModule } from "../observability/observability.module";
 import { PrismaModule } from "../prisma/prisma.module";
-import { CephFsStorageAdapterService } from "./cephfs-storage-adapter.service";
+import { LocalFilesystemStorageAdapterService } from "./local-filesystem-storage-adapter.service";
 import { NfsRemoteAccessValidatorService } from "./nfs-remote-access-validator.service";
 import { StorageBackendReconcilerService } from "./storage-backend-reconciler.service";
 import { StorageBackendStore } from "./storage-backend.store";
@@ -14,7 +14,7 @@ import { StorageCommandRunnerService } from "./storage-command-runner.service";
   controllers: [StorageBackendsController],
   providers: [
     StorageCommandRunnerService,
-    CephFsStorageAdapterService,
+    LocalFilesystemStorageAdapterService,
     NfsRemoteAccessValidatorService,
     StorageBackendStore,
     StorageBackendsService,

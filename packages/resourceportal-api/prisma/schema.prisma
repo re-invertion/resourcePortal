@@ -79,7 +79,7 @@ enum VolumeStatus {
 }
 
 enum StorageBackendType {
-  CephFS
+  LocalFilesystem
 }
 
 enum StorageBackendStatus {
@@ -189,7 +189,7 @@ model PortalSession {
   lastSeenAt           DateTime  @default(now())
   expiresAt            DateTime
   revokedAt            DateTime?
-  createdAt            DateTime  @default(now())
+  createdAt             DateTime  @default(now())
   user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -589,7 +589,7 @@ model DeploymentEvent {
 model StorageBackend {
   id                  String               @id @default(uuid()) @db.Uuid
   name                String               @unique
-  type                StorageBackendType   @default(CephFS)
+  type                StorageBackendType   @default(LocalFilesystem)
   basePath            String               @default("/rp")
   volumeBasePath      String               @default("/rp/volumes")
   secretBasePath      String               @default("/rp/secrets")
@@ -611,6 +611,7 @@ model Volume {
   id               String             @id @default(uuid()) @db.Uuid
   tenantId         String             @db.Uuid
   storageBackendId String             @db.Uuid
+  storageProjectId Int                @unique
   name             String
   description      String?
   storagePath      String
@@ -680,10 +681,10 @@ model CustomRootDomain {
   verificationToken     String
   verificationCreatedAt DateTime                           @default(now())
   verifiedAt            DateTime?
-  createdBy             String                             @db.Uuid
-  updatedBy             String
-  createdAt             DateTime                           @default(now())
-  updatedAt             DateTime                           @updatedAt
+  createdBy              String                             @db.Uuid
+  updatedBy              String
+  createdAt              DateTime                           @default(now())
+  updatedAt              DateTime                           @updatedAt
   tenant                Tenant                             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domains               Domain[]
 
