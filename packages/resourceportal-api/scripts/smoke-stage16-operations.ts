@@ -9,7 +9,8 @@ const apiBaseUrl = (
 ).replace(/\/$/, "");
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
-const cephFsMountRoot = process.env.CEPHFS_MOUNT_ROOT ?? "/tmp/resource-portal";
+const storageMountRoot =
+  process.env.STORAGE_MOUNT_ROOT ?? "/mnt/resourceportal-storage";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
@@ -223,7 +224,8 @@ async function cleanup() {
       await command("docker", ["volume", "rm", "-f", volume.dockerVolumeName]).catch(
         () => undefined,
       );
-      const physicalPath = join(cephFsMountRoot, volume.storagePath.replace(/^\/+/, ""));
+      const relativeStoragePath = volume.storagePath.replace(/^\/rp\/?/, "");
+      const physicalPath = join(storageMountRoot, relativeStoragePath);
       await rm(physicalPath, { recursive: true, force: true }).catch(() => undefined);
     }
 
@@ -241,10 +243,28 @@ async function preflightApi() {
 }
 
 async function runOperationWorkerOnce() {
-  const result = await command("npm", ["run", "worker:operations"], {
+  const workerEnv = {
     ...process.env,
     OPERATION_WORKER_ONCE: "true",
-  });
+  };
+  const privileged =
+    process.env.STORAGE_SMOKE_PRIVILEGED_WORKER?.trim().toLowerCase() === "true";
+
+  let result;
+  if (privileged) {
+    const npmExecPath = process.env.npm_execpath;
+    if (!npmExecPath) {
+      throw new Error("Privileged storage smoke requires npm_execpath");
+    }
+    result = await command(
+      "sudo",
+      ["-E", process.execPath, npmExecPath, "run", "worker:operations"],
+      workerEnv,
+    );
+  } else {
+    result = await command("npm", ["run", "worker:operations"], workerEnv);
+  }
+
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");
