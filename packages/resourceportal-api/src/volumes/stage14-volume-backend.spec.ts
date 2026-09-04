@@ -104,9 +104,8 @@ describe("Stage 14 Volume backend transaction boundaries", () => {
     );
 
     expect(storageBackends.reserveVolume).toHaveBeenCalledTimes(1);
-    expect(tx.volume.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ storageProjectId: 12001 }),
-    });
+    const createInput = tx.volume.create.mock.calls[0]?.[0];
+    expect(createInput?.data.storageProjectId).toBe(12001);
     expect(storageBackends.provisionVolume).toHaveBeenCalledTimes(1);
   });
 });
