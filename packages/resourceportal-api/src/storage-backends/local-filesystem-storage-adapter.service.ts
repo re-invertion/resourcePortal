@@ -54,6 +54,7 @@ export class LocalFilesystemStorageAdapterService {
       projectId: number;
     },
   ) {
+    this.assertPrivilegedMutation();
     this.assertProjectId(input.projectId);
     const filesystem = await this.validateMount();
 
@@ -83,6 +84,7 @@ export class LocalFilesystemStorageAdapterService {
     sizeBytes: bigint,
     projectId: number,
   ) {
+    this.assertPrivilegedMutation();
     this.assertProjectId(projectId);
     const filesystem = await this.validateMount();
     const localPath = this.localPath(backend, storagePath);
@@ -284,6 +286,14 @@ export class LocalFilesystemStorageAdapterService {
       "STORAGE_MOUNT_ROOT",
       "/mnt/resourceportal-storage",
     );
+  }
+
+  private assertPrivilegedMutation() {
+    if (typeof process.getuid !== "function" || process.getuid() !== 0) {
+      throw new InternalServerErrorException(
+        "Storage quota mutation requires the privileged operation-worker",
+      );
+    }
   }
 
   private assertProjectId(projectId: number) {
