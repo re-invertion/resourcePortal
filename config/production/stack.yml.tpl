@@ -29,6 +29,7 @@ secrets:
     external: true
   rp_oidc_client_secret:
     external: true
+    name: __OIDC_SWARM_REF__
 
 volumes: {}
 
@@ -126,6 +127,13 @@ services:
         constraints:
           - node.role == manager
           - node.labels.resourceportal.storage.platform == true
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.resourceportal-zitadel.rule=Host(`__ZITADEL_DOMAIN__`)
+        - traefik.http.routers.resourceportal-zitadel.entrypoints=websecure
+        - traefik.http.routers.resourceportal-zitadel.tls=true
+        - traefik.http.routers.resourceportal-zitadel.tls.certresolver=letsencrypt
+        - traefik.http.services.resourceportal-zitadel.loadbalancer.server.port=8080
       restart_policy:
         condition: on-failure
 
@@ -141,9 +149,9 @@ services:
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__DOMAIN__
-      OIDC_CLIENT_ID: resource-portal
-      OIDC_AUDIENCE: resource-portal
+      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
+      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
+      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
@@ -200,9 +208,9 @@ services:
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__DOMAIN__
-      OIDC_CLIENT_ID: resource-portal
-      OIDC_AUDIENCE: resource-portal
+      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
+      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
+      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
@@ -245,9 +253,9 @@ services:
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__DOMAIN__
-      OIDC_CLIENT_ID: resource-portal
-      OIDC_AUDIENCE: resource-portal
+      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
+      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
+      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
@@ -287,9 +295,9 @@ services:
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__DOMAIN__
-      OIDC_CLIENT_ID: resource-portal
-      OIDC_AUDIENCE: resource-portal
+      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
+      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
+      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
     secrets:
       - rp_database_url
       - rp_encryption_key
@@ -319,6 +327,13 @@ services:
       placement:
         constraints:
           - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.resourceportal-web.rule=Host(`__DOMAIN__`)
+        - traefik.http.routers.resourceportal-web.entrypoints=websecure
+        - traefik.http.routers.resourceportal-web.tls=true
+        - traefik.http.routers.resourceportal-web.tls.certresolver=letsencrypt
+        - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
       restart_policy:
         condition: on-failure
 

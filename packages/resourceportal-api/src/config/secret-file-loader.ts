@@ -15,16 +15,17 @@ export const SECRET_FILE_KEYS = [
 ] as const;
 
 export function loadSecretFiles<T extends SecretFileEnv>(env: T): T {
+  const mutableEnv: SecretFileEnv = env;
   for (const key of SECRET_FILE_KEYS) {
-    if (env[key] !== undefined) continue;
+    if (mutableEnv[key] !== undefined) continue;
     const fileKey = `${key}_FILE`;
-    const path = env[fileKey];
+    const path = mutableEnv[fileKey];
     if (!path) continue;
     if (!isAbsolute(path)) {
       throw new Error(`${fileKey} must be an absolute path`);
     }
     try {
-      env[key] = readFileSync(path, "utf8").replace(/\r?\n$/, "");
+      mutableEnv[key] = readFileSync(path, "utf8").replace(/\r?\n$/, "");
     } catch {
       throw new Error(`Unable to read ${fileKey}`);
     }

@@ -33,3 +33,21 @@ rp_remove_secret_file() {
     rm -f "$path"
   fi
 }
+
+rp_versioned_secret_name() {
+  local logical_name="$1" source_file="$2" digest
+  [[ "$logical_name" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+  [[ "$source_file" == /* && -r "$source_file" ]] || return 1
+  digest="$(sha256sum "$source_file" | awk '{print substr($1,1,16)}')" || return 1
+  [[ "$digest" =~ ^[a-fA-F0-9]{16}$ ]] || return 1
+  printf '%s_%s\n' "$logical_name" "$digest"
+}
+
+rp_ensure_versioned_swarm_secret() {
+  local logical_name="$1" source_file="$2" versioned_name
+  versioned_name="$(rp_versioned_secret_name "$logical_name" "$source_file")" || return 1
+  if ! rp_secret_exists "$versioned_name"; then
+    docker secret create "$versioned_name" - <"$source_file" >/dev/null || return 1
+  fi
+  printf '%s\n' "$versioned_name"
+}

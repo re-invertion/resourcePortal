@@ -8,7 +8,8 @@ rp_require_stack_config() {
   local key value
   for key in \
     RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE \
-    RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ACME_EMAIL; do
+    RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL \
+    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF; do
     value="${!key-}"
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
@@ -22,6 +23,8 @@ rp_stack_replica_value() {
   case "$state:$service" in
     bootstrap:postgres-rp|bootstrap:postgres-zitadel|bootstrap:zitadel) printf '1\n' ;;
     bootstrap:*) printf '0\n' ;;
+    ingress:postgres-rp|ingress:postgres-zitadel|ingress:zitadel|ingress:traefik) printf '1\n' ;;
+    ingress:*) printf '0\n' ;;
     final:postgres-rp|final:postgres-zitadel|final:zitadel|final:api|final:web|final:deployment-worker|final:operation-worker|final:traefik) printf '1\n' ;;
     final:dr-reconciliation) printf '0\n' ;;
     *) return 1 ;;
@@ -34,7 +37,7 @@ rp_escape_sed_replacement() {
 
 rp_render_stack() {
   local state="$1" repo_root template storage_base platform_admin_ids output
-  case "$state" in bootstrap|final) ;; *) return 1 ;; esac
+  case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
   rp_require_stack_config || return 1
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   template="$repo_root/config/production/stack.yml.tpl"
@@ -50,8 +53,11 @@ rp_render_stack() {
     "WEB_IMAGE|$RP_CFG_WEB_IMAGE"
     "TRAEFIK_IMAGE|$RP_CFG_TRAEFIK_IMAGE"
     "DOMAIN|$RP_CFG_DOMAIN"
+    "ZITADEL_DOMAIN|$RP_CFG_ZITADEL_DOMAIN"
     "ACME_EMAIL|$RP_CFG_ACME_EMAIL"
     "PLATFORM_ADMIN_IDS|$platform_admin_ids"
+    "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
+    "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
     "POSTGRES_RP_REPLICAS|$(rp_stack_replica_value "$state" postgres-rp)"
     "POSTGRES_ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" postgres-zitadel)"

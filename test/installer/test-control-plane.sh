@@ -19,11 +19,15 @@ export RP_CFG_POSTGRES_IMAGE='postgres:17-alpine@sha256:cccccccccccccccccccccccc
 export RP_CFG_ZITADEL_IMAGE='ghcr.io/zitadel/zitadel:v4.0.0@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 export RP_CFG_TRAEFIK_IMAGE='traefik:v3.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 export RP_CFG_DOMAIN='rp.example.com'
+export RP_CFG_ZITADEL_DOMAIN='auth.rp.example.com'
 export RP_CFG_ACME_EMAIL='admin@example.com'
 export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
+export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
+export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
 
 bootstrap="$(rp_render_stack bootstrap)"
+ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 
 contains "$bootstrap" 'replicas: 0 # RP_API_REPLICAS' 'bootstrap gates API'
@@ -34,6 +38,11 @@ contains "$bootstrap" 'replicas: 0 # RP_TRAEFIK_REPLICAS' 'bootstrap gates Traef
 contains "$bootstrap" 'replicas: 1 # RP_POSTGRES_RP_REPLICAS' 'bootstrap starts RP PostgreSQL'
 contains "$bootstrap" 'replicas: 1 # RP_POSTGRES_ZITADEL_REPLICAS' 'bootstrap starts ZITADEL PostgreSQL'
 contains "$bootstrap" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'bootstrap starts ZITADEL'
+
+contains "$ingress" 'replicas: 1 # RP_TRAEFIK_REPLICAS' 'ingress state enables Traefik for ACME'
+contains "$ingress" 'replicas: 0 # RP_API_REPLICAS' 'ingress state still gates API'
+contains "$ingress" 'replicas: 0 # RP_WEB_REPLICAS' 'ingress state still gates Web'
+contains "$ingress" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'ingress state keeps ZITADEL available'
 
 contains "$final" 'replicas: 1 # RP_API_REPLICAS' 'final enables API'
 contains "$final" 'replicas: 1 # RP_WEB_REPLICAS' 'final enables Web'
@@ -59,6 +68,14 @@ contains "$final" 'node.labels.resourceportal.storage.platform == true' 'statefu
 contains "$final" 'node.labels.resourceportal.storage.authoritative == true' 'operation worker requires authoritative storage host'
 contains "$final" 'node.role == manager' 'control plane requires managers'
 contains "$final" 'node.labels.resourceportal.ingress == true' 'Traefik requires ingress opt-in'
+contains "$final" 'Host(`rp.example.com`)' 'Web router uses production domain'
+contains "$final" 'Host(`auth.rp.example.com`)' 'ZITADEL router uses separate auth domain'
+contains "$final" 'OIDC_ISSUER_URL: https://auth.rp.example.com' 'API issuer uses auth domain'
+contains "$final" 'OIDC_CLIENT_ID: zitadel-client-123' 'stack uses generated ZITADEL client id'
+contains "$final" 'OIDC_AUDIENCE: zitadel-client-123' 'stack audience follows generated client id'
+contains "$final" 'name: rp_oidc_client_secret_v42' 'stack aliases versioned OIDC client secret'
+contains "$final" 'traefik.http.services.resourceportal-web.loadbalancer.server.port=5173' 'Web router targets SSR port'
+contains "$final" 'traefik.http.services.resourceportal-zitadel.loadbalancer.server.port=8080' 'ZITADEL router targets identity port'
 contains "$final" 'RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes' 'runtime volume root is canonical'
 contains "$final" 'RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets' 'runtime secret root is canonical'
 contains "$final" 'RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform' 'runtime platform root is canonical'
