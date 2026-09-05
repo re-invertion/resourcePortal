@@ -277,7 +277,7 @@ export class LocalFilesystemStorageAdapterService {
     const line = output
       .split("\n")
       .map((value) => value.trim())
-      .find((value) => value.startsWith(`${projectId} `));
+      .find((value) => value.startsWith(`${projectId} `) || value.startsWith(`#${projectId} `));
     if (!line) return null;
     const fields = line.split(/\s+/);
     const raw = fields[3];

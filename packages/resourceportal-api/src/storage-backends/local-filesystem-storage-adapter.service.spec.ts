@@ -83,7 +83,7 @@ function adapterFor(input?: {
       }
       if (program === "xfs_quota" && args.at(-1)?.startsWith("report ")) {
         const hard = currentHardKiB ?? 4;
-        return Promise.resolve({ exitCode: 0, stdout: `12001 0 ${hard} ${hard} 00 [--------]\n`, stderr: "" });
+        return Promise.resolve({ exitCode: 0, stdout: `#12001 0 ${hard} ${hard} 00 [--------]\n`, stderr: "" });
       }
       if (["xfs_quota", "setquota", "chattr"].includes(program)) {
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
