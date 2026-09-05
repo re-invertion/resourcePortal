@@ -14,6 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { DEFAULT_STORAGE_BASE_PATH, physicalSecretPath } from "../storage-backends/storage-paths";
 import { EncryptionService } from "./encryption.service";
 
 type SecretEnvelope = {
@@ -35,12 +36,12 @@ export class SecretStorageService {
 
   path(tenantId: string, appGroupId: string, secretName: string) {
     this.assertSafeSegment(secretName);
-    const root = this.config.get<string>(
-      "RESOURCE_SECRET_STORAGE_ROOT",
-      "/rp/secrets",
+    const basePath = this.config.get<string>(
+      "RESOURCE_STORAGE_BASE_PATH",
+      DEFAULT_STORAGE_BASE_PATH,
     );
 
-    return join(root, tenantId, appGroupId, secretName);
+    return physicalSecretPath(basePath, tenantId, appGroupId, secretName);
   }
 
   async read(storagePath: string) {

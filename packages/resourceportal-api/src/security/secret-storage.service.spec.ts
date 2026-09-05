@@ -14,7 +14,7 @@ describe("SecretStorageService", () => {
     root = await mkdtemp(join(tmpdir(), "resource-portal-secrets-"));
     const config = {
       get: (key: string, fallback?: string) =>
-        key === "RESOURCE_SECRET_STORAGE_ROOT" ? root : fallback,
+        key === "RESOURCE_STORAGE_BASE_PATH" ? root : fallback,
     } as unknown as ConfigService;
 
     service = new SecretStorageService(config, new EncryptionService(config));
@@ -24,6 +24,14 @@ describe("SecretStorageService", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+
+  it("uses the protected Wiki Secret namespace by default", () => {
+    const config = { get: (_key: string, fallback?: string) => fallback } as unknown as ConfigService;
+    const storage = new SecretStorageService(config, new EncryptionService(config));
+    expect(storage.path("tenant-a", "app-a", "api-key")).toBe(
+      "/srv/resource-portal/storage/secrets/tenant-a/app-a/api-key",
+    );
+  });
   it("stores an encrypted envelope and reads the original bytes", async () => {
     const path = service.path("tenant-id", "app-group-id", "api-key");
 
