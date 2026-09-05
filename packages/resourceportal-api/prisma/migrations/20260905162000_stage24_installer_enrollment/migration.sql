@@ -6,6 +6,8 @@ CREATE TABLE "InstallerEnrollment" (
     "role" "InstallerEnrollmentRole" NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "consumedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "nodeId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "InstallerEnrollment_pkey" PRIMARY KEY ("id")
 );

@@ -67,7 +67,49 @@ export class InstallerEnrollmentService {
       clusterId: this.requiredConfig("INSTALLER_CLUSTER_ID"),
       installerVersion: this.requiredConfig("INSTALLER_VERSION"),
       swarmAdvertiseAddr: this.requiredConfig("INSTALLER_SWARM_ADVERTISE_ADDR"),
+      clusterCidr: this.requiredConfig("INSTALLER_CLUSTER_CIDR"),
     };
+  }
+
+  async claimCompletion(
+    token: string,
+    requestedRole: InstallerEnrollmentBundleRole,
+    nodeId: string,
+    now = new Date(),
+  ) {
+    if (!/^[A-Za-z0-9_-]{40,}$/.test(token) || !/^[a-zA-Z0-9]{20,64}$/.test(nodeId)) {
+      throw invalidEnrollment();
+    }
+    const completedAt = now;
+    const recentRedemptionCutoff = new Date(now.getTime() - 5 * 60 * 1000);
+    const result = await this.prisma.installerEnrollment.updateMany({
+      where: {
+        tokenHash: hashToken(token),
+        role: toPrismaRole(requestedRole),
+        consumedAt: { gt: recentRedemptionCutoff },
+        completedAt: null,
+      },
+      data: { completedAt, nodeId },
+    });
+    if (result.count !== 1) throw invalidEnrollment();
+    return { role: requestedRole, completedAt };
+  }
+
+  async releaseCompletionClaim(
+    token: string,
+    requestedRole: InstallerEnrollmentBundleRole,
+    nodeId: string,
+    completedAt: Date,
+  ) {
+    await this.prisma.installerEnrollment.updateMany({
+      where: {
+        tokenHash: hashToken(token),
+        role: toPrismaRole(requestedRole),
+        nodeId,
+        completedAt,
+      },
+      data: { completedAt: null, nodeId: null },
+    });
   }
 
   private requiredConfig(key: string) {

@@ -854,6 +854,8 @@ model InstallerEnrollment {
   role       InstallerEnrollmentRole
   expiresAt  DateTime
   consumedAt DateTime?
+  completedAt DateTime?
+  nodeId      String?
   createdAt  DateTime                @default(now())
 
   @@index([role, expiresAt, consumedAt])

@@ -10,6 +10,7 @@ const requiredValues = [
   "INSTALLER_CLUSTER_ID",
   "INSTALLER_VERSION",
   "INSTALLER_SWARM_ADVERTISE_ADDR",
+  "INSTALLER_CLUSTER_CIDR",
 ] as const;
 
 const requiredAbsolutePaths = [

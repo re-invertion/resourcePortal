@@ -86,6 +86,7 @@ rp_start_enrollment_listener() {
     --name "$service_name" \
     --constraint 'node.role==manager' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
+    --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --publish "mode=host,target=7443,published=${port},protocol=tcp" \
     --secret source=rp_database_url,target=rp_database_url \
     --secret source="$RP_CFG_ENROLLMENT_WORKER_TOKEN_REF",target=installer_worker_token \
@@ -102,6 +103,7 @@ rp_start_enrollment_listener() {
     --env INSTALLER_CLUSTER_ID="$cluster_id" \
     --env INSTALLER_VERSION="${RP_CFG_RELEASE_VERSION:-unknown}" \
     --env INSTALLER_SWARM_ADVERTISE_ADDR="$RP_CFG_SWARM_ADVERTISE_ADDR" \
+    --env INSTALLER_CLUSTER_CIDR="$RP_CFG_CLUSTER_CIDR" \
     --env INSTALLER_ENROLLMENT_PORT=7443 \
     "$RP_CFG_API_IMAGE" node dist/src/internal/installer-enrollment.runner.js >/dev/null
 }
@@ -143,7 +145,7 @@ rp_issue_enrollment_bundle() {
 }
 
 rp_redeem_join_bundle() {
-  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint
+  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_cidr node_id ssh_port control_plane ingress completion
   command -v jq >/dev/null 2>&1 || { printf 'jq is required for node enrollment.\n' >&2; return 1; }
   role="$(rp_bundle_value "$bundle" RP_ENROLLMENT_ROLE)" || return 1
   token="$(rp_bundle_value "$bundle" RP_ENROLLMENT_TOKEN)" || return 1
@@ -161,6 +163,32 @@ rp_redeem_join_bundle() {
   [[ "$join_role" == "$role" ]] || return 1
   join_token="$(jq -er '.joinToken' "$response")" || return 1
   manager_endpoint="$(jq -er '.managerEndpoint' "$response")" || return 1
-  docker swarm join --token "$join_token" "$manager_endpoint"
-  rm -f "$response"; trap - RETURN
+  nfs_server="$(jq -er '.nfsServerAddress' "$response")" || return 1
+  cluster_cidr="$(jq -er '.clusterCidr' "$response")" || return 1
+
+  control_plane="${RP_JOIN_CONTROL_PLANE:-false}"
+  ingress="${RP_JOIN_INGRESS:-false}"
+  if [[ "$role" == "worker" ]]; then control_plane=false; ingress=false; fi
+  ssh_port="$(rp_detect_ssh_port)" || return 1
+  rp_configure_ufw "$ssh_port" "$cluster_cidr" "$ingress" || return 1
+
+  docker swarm join --token "$join_token" "$manager_endpoint" || return 1
+  rp_mount_runtime_namespace volumes nfs "$nfs_server" || return 1
+  if [[ "$role" == "manager" ]]; then
+    rp_mount_runtime_namespace secrets nfs "$nfs_server" || return 1
+    rp_mount_runtime_namespace platform nfs "$nfs_server" || return 1
+  fi
+
+  node_id="$(docker info --format '{{.Swarm.NodeID}}')" || return 1
+  completion="$(mktemp /tmp/resourceportal-enrollment-complete.XXXXXX.json)" || return 1
+  chmod 0600 "$completion"
+  if ! curl --fail --silent --show-error --insecure \
+    --pinnedpubkey "$pin" \
+    -H 'content-type: application/json' \
+    --data-binary "{\"token\":\"${token}\",\"role\":\"${role}\",\"nodeId\":\"${node_id}\",\"controlPlane\":${control_plane},\"ingress\":${ingress}}" \
+    "${endpoint}/installer/enrollment/complete" >"$completion"; then
+    rm -f "$completion"; return 1
+  fi
+  jq -e '.status == "completed" and (.role == "worker" or .role == "manager")' "$completion" >/dev/null || { rm -f "$completion"; return 1; }
+  rm -f "$completion" "$response"; trap - RETURN
 }

@@ -28,6 +28,10 @@ enrollment_source="$(cat "$repo_root/scripts/installer/enrollment.sh")"
 contains "$enrollment_source" '--pinnedpubkey' 'redemption pins enrollment SPKI'
 contains "$enrollment_source" '--insecure' 'self-signed TLS is accepted only with explicit pin'
 contains "$enrollment_source" '/installer/enrollment/redeem' 'redemption uses dedicated enrollment endpoint'
+contains "$enrollment_source" '/installer/enrollment/complete' 'joined node calls completion endpoint'
+contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can inspect and label joined Swarm nodes'
+contains "$enrollment_source" 'rp_mount_runtime_namespace volumes nfs' 'worker mounts shared volume namespace over NFS'
+contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
 not_contains "$enrollment_source" 'docker swarm join-token -q >' 'join tokens are never written by an unprotected shell redirection'
 
 issue_source="$(cat "$repo_root/packages/resourceportal-api/scripts/issue-installer-enrollment.ts")"

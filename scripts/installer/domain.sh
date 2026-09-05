@@ -47,3 +47,20 @@ rp_wait_for_https_origin() {
   printf 'HTTPS readiness failed for %s after %ss.\n' "$domain" "$timeout" >&2
   return 1
 }
+
+
+rp_validate_https_certificate() {
+  local domain="$1" code
+  code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 20 "https://${domain}/" 2>/dev/null)" || return 1
+  [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]
+}
+
+rp_wait_for_https_certificate() {
+  local domain="$1" timeout="${2:-300}" elapsed=0
+  while (( elapsed < timeout )); do
+    rp_validate_https_certificate "$domain" && return 0
+    sleep 5; elapsed=$((elapsed+5))
+  done
+  return 1
+}

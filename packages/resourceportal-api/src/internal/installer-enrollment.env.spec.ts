@@ -23,6 +23,7 @@ describe("validateInstallerEnrollmentEnv", () => {
         INSTALLER_CLUSTER_ID: "cluster-a",
         INSTALLER_VERSION: "0.1.0",
         INSTALLER_SWARM_ADVERTISE_ADDR: "10.0.0.10",
+        INSTALLER_CLUSTER_CIDR: "10.0.0.0/24",
         INSTALLER_ENROLLMENT_TLS_CERT_FILE: "/run/secrets/installer_tls_cert",
         INSTALLER_ENROLLMENT_TLS_KEY_FILE: "/run/secrets/installer_tls_key",
       };
@@ -47,6 +48,7 @@ describe("validateInstallerEnrollmentEnv", () => {
         INSTALLER_CLUSTER_ID: "cluster-a",
         INSTALLER_VERSION: "0.1.0",
         INSTALLER_SWARM_ADVERTISE_ADDR: "10.0.0.10",
+        INSTALLER_CLUSTER_CIDR: "10.0.0.0/24",
         INSTALLER_ENROLLMENT_TLS_CERT_FILE: "/run/secrets/cert",
       }),
     ).toThrow("INSTALLER_ENROLLMENT_TLS_KEY_FILE is required");

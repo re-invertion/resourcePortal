@@ -33,6 +33,7 @@ rp_render_ufw_rules() {
   printf 'allow from %s to any port 7946 proto udp comment ResourcePortal-Swarm-Gossip-UDP\n' "$cluster_cidr"
   printf 'allow from %s to any port 4789 proto udp comment ResourcePortal-Swarm-Overlay\n' "$cluster_cidr"
   printf 'allow from %s to any port 2049 proto tcp comment ResourcePortal-NFSv4\n' "$cluster_cidr"
+  printf 'allow from %s to any port 7443 proto tcp comment ResourcePortal-Enrollment\n' "$cluster_cidr"
   if [[ "$ingress_enabled" == "true" ]]; then
     printf 'allow 80/tcp comment ResourcePortal-HTTP\n'
     printf 'allow 443/tcp comment ResourcePortal-HTTPS\n'
@@ -53,6 +54,7 @@ rp_configure_ufw() {
   ufw allow from "$cluster_cidr" to any port 7946 proto udp comment ResourcePortal-Swarm-Gossip-UDP
   ufw allow from "$cluster_cidr" to any port 4789 proto udp comment ResourcePortal-Swarm-Overlay
   ufw allow from "$cluster_cidr" to any port 2049 proto tcp comment ResourcePortal-NFSv4
+  ufw allow from "$cluster_cidr" to any port 7443 proto tcp comment ResourcePortal-Enrollment
   if [[ "$ingress_enabled" == "true" ]]; then
     ufw allow 80/tcp comment ResourcePortal-HTTP
     ufw allow 443/tcp comment ResourcePortal-HTTPS

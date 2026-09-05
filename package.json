@@ -20,6 +20,6 @@
     "backup:control-plane": "bash scripts/backup-control-plane.sh",
     "restore:control-plane": "bash scripts/restore-control-plane.sh",
     "cli": "npm --workspace @resource-portal/cli run start --",
-    "test:installer": "bash test/installer/test-core.sh && bash test/installer/test-storage.sh && bash test/installer/test-nfs.sh && bash test/installer/test-host-runtime.sh && bash test/installer/test-packaging.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-identity-domain.sh && bash test/installer/test-enrollment.sh && bash test/installer/test-releases.sh"
+    "test:installer": "bash test/installer/test-core.sh && bash test/installer/test-storage.sh && bash test/installer/test-nfs.sh && bash test/installer/test-host-runtime.sh && bash test/installer/test-packaging.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-identity-domain.sh && bash test/installer/test-enrollment.sh && bash test/installer/test-releases.sh && bash test/installer/test-diagnostics.sh"
   }
 }

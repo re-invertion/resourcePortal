@@ -41,13 +41,14 @@ assert_status 0 "Docker equal minimum" rp_docker_version_supported 29.0.0 29.0.0
 assert_status 0 "Docker newer than minimum" rp_docker_version_supported 29.1.3 29.0.0
 assert_status 1 "Docker older than minimum" rp_docker_version_supported 28.5.1 29.0.0
 
-rules="$(rp_render_ufw_rules 2222 10.20.0.0/24 true)"
+rules="$(rp_render_ufw_rules 2222 10.20.0.0/24 true 7443)"
 assert_contains "$rules" 'allow 2222/tcp comment ResourcePortal-SSH' "preserve SSH port"
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 2377 proto tcp' "restrict Swarm manager port"
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 7946 proto tcp' "allow Swarm gossip tcp"
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 7946 proto udp' "allow Swarm gossip udp"
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 4789 proto udp' "allow Swarm overlay"
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 2049 proto tcp' "restrict NFSv4"
+assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 7443 proto tcp comment ResourcePortal-Enrollment' "restrict enrollment listener"
 assert_contains "$rules" 'allow 80/tcp comment ResourcePortal-HTTP' "public HTTP ingress"
 assert_contains "$rules" 'allow 443/tcp comment ResourcePortal-HTTPS' "public HTTPS ingress"
 assert_before "$rules" 'allow 2222/tcp comment ResourcePortal-SSH' 'allow 80/tcp comment ResourcePortal-HTTP' "SSH rule rendered before public ingress"

@@ -9,6 +9,8 @@ type RecordState = {
   role: "Worker" | "Manager";
   expiresAt: Date;
   consumedAt: Date | null;
+  completedAt?: Date | null;
+  nodeId?: string | null;
 };
 
 function fixture() {
@@ -20,15 +22,18 @@ function fixture() {
         return { id: "enrollment-1", ...data };
       },
       updateMany: async ({ where, data }: any) => {
-        const match = records.find(
-          (record) =>
-            record.tokenHash === where.tokenHash &&
-            record.role === where.role &&
-            record.consumedAt === null &&
-            record.expiresAt > where.expiresAt.gt,
-        );
+        const match = records.find((record) => {
+          if (record.tokenHash !== where.tokenHash || record.role !== where.role) return false;
+          if (where.consumedAt === null && record.consumedAt !== null) return false;
+          if (where.consumedAt?.gt && (!record.consumedAt || record.consumedAt <= where.consumedAt.gt)) return false;
+          if (where.expiresAt?.gt && record.expiresAt <= where.expiresAt.gt) return false;
+          if (where.completedAt === null && record.completedAt) return false;
+          if (where.completedAt instanceof Date && record.completedAt?.getTime() !== where.completedAt.getTime()) return false;
+          if (where.nodeId !== undefined && record.nodeId !== where.nodeId) return false;
+          return true;
+        });
         if (!match) return { count: 0 };
-        match.consumedAt = data.consumedAt;
+        Object.assign(match, data);
         return { count: 1 };
       },
     },
@@ -43,6 +48,7 @@ function fixture() {
         INSTALLER_CLUSTER_ID: "cluster-abc",
         INSTALLER_VERSION: "0.1.0",
         INSTALLER_SWARM_ADVERTISE_ADDR: "10.20.0.10",
+        INSTALLER_CLUSTER_CIDR: "10.20.0.0/24",
       })[key],
   };
   return {
@@ -87,6 +93,7 @@ describe("InstallerEnrollmentService", () => {
       clusterId: "cluster-abc",
       installerVersion: "0.1.0",
       swarmAdvertiseAddr: "10.20.0.10",
+      clusterCidr: "10.20.0.0/24",
     });
     expect(redeemed.joinToken).not.toBe("SWMTKN-manager-secret");
   });
@@ -107,6 +114,52 @@ describe("InstallerEnrollmentService", () => {
     await expect(
       service.redeem(issued.token, "manager", new Date("2026-09-05T12:30:00.001Z")),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("claims completion for exactly one recently redeemed node", async () => {
+    const { service, records } = fixture();
+    const issued = await service.issue("worker", new Date("2026-09-05T12:00:00.000Z"));
+    await service.redeem(issued.token, "worker", new Date("2026-09-05T12:05:00.000Z"));
+
+    const claim = await service.claimCompletion(
+      issued.token,
+      "worker",
+      "abcdefghijklmnopqrstuvwxy",
+      new Date("2026-09-05T12:06:00.000Z"),
+    );
+
+    expect(claim.role).toBe("worker");
+    expect(records[0].nodeId).toBe("abcdefghijklmnopqrstuvwxy");
+    await expect(
+      service.claimCompletion(
+        issued.token,
+        "worker",
+        "zyxwvutsrqponmlkjihgfedcb",
+        new Date("2026-09-05T12:06:01.000Z"),
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("can release a failed completion claim for the same node", async () => {
+    const { service, records } = fixture();
+    const issued = await service.issue("manager", new Date("2026-09-05T12:00:00.000Z"));
+    await service.redeem(issued.token, "manager", new Date("2026-09-05T12:05:00.000Z"));
+    const claim = await service.claimCompletion(
+      issued.token,
+      "manager",
+      "abcdefghijklmnopqrstuvwxy",
+      new Date("2026-09-05T12:06:00.000Z"),
+    );
+
+    await service.releaseCompletionClaim(
+      issued.token,
+      "manager",
+      "abcdefghijklmnopqrstuvwxy",
+      claim.completedAt,
+    );
+
+    expect(records[0].completedAt).toBeNull();
+    expect(records[0].nodeId).toBeNull();
   });
 
   it("rejects token reuse after successful redemption", async () => {
