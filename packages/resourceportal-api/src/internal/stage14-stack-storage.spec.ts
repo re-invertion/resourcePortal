@@ -1,62 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
-import { renderStackStorageVolumes } from "./stack-storage";
+import { describe, expect, it } from "vitest";
+import {
+  renderRuntimeVolumeMount,
+  storagePlacementConstraints,
+} from "./stack-storage";
 
 describe("Stage 14 stack storage rendering", () => {
-  it("renders attached Volumes as Docker local-driver NFS definitions", () => {
-    const runtimeDefinition = vi.fn(() => ({
-      driver: "local" as const,
-      driver_opts: {
-        type: "nfs" as const,
-        o: "addr=10.0.0.15,nfsvers=4.1,rw",
-        device: ":/rp/volumes/tenant-a/volume-a",
-      },
-    }));
-
-    expect(
-      renderStackStorageVolumes(
-        [
-          {
-            volumeName: "app-data",
-            storagePath: "/rp/volumes/tenant-a/volume-a",
-            dockerVolumeName: "rp_vol_volume_a",
-          },
-        ],
-        runtimeDefinition,
-      ),
-    ).toEqual({
-      rp_app_data: {
-        name: "rp_vol_volume_a",
-        driver: "local",
-        driver_opts: {
-          type: "nfs",
-          o: "addr=10.0.0.15,nfsvers=4.1,rw",
-          device: ":/rp/volumes/tenant-a/volume-a",
-        },
-      },
-    });
-    expect(runtimeDefinition).toHaveBeenCalledWith(
-      "/rp/volumes/tenant-a/volume-a",
-    );
+  it("renders a canonical bind source for an attached Volume", () => {
+    expect(renderRuntimeVolumeMount({
+      runtimeRoot: "/mnt/resourceportal/volumes",
+      tenantId: "tenant-a",
+      volumeId: "volume-a",
+      mountPath: "/data",
+      mode: "ReadWrite",
+    })).toBe("/mnt/resourceportal/volumes/tenant-a/volume-a:/data:rw");
   });
 
-  it("does not mark Stage 14 volumes as external", () => {
-    const rendered = renderStackStorageVolumes(
-      [
-        {
-          volumeName: "data",
-          storagePath: "/rp/volumes/tenant-a/volume-a",
-        },
-      ],
-      () => ({
-        driver: "local",
-        driver_opts: {
-          type: "nfs",
-          o: "addr=nfs.internal,nfsvers=4.1,rw",
-          device: ":/rp/volumes/tenant-a/volume-a",
-        },
-      }),
-    );
+  it("renders read-only mounts", () => {
+    expect(renderRuntimeVolumeMount({
+      runtimeRoot: "/mnt/resourceportal/volumes",
+      tenantId: "tenant-a",
+      volumeId: "volume-a",
+      mountPath: "/data",
+      mode: "ReadOnly",
+    })).toBe("/mnt/resourceportal/volumes/tenant-a/volume-a:/data:ro");
+  });
 
-    expect(rendered?.rp_data).not.toHaveProperty("external");
+  it("requires the storage readiness label when a service uses a Volume", () => {
+    expect(storagePlacementConstraints(true)).toEqual([
+      "node.labels.resourceportal.storage.volumes == true",
+    ]);
+    expect(storagePlacementConstraints(false)).toEqual([]);
   });
 });
