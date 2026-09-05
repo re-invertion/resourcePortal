@@ -12,6 +12,8 @@ export const SECRET_FILE_KEYS = [
   "ZITADEL_MANAGEMENT_TOKEN",
   "ZITADEL_BOOTSTRAP_PAT",
   "SMTP_PASSWORD",
+  "INSTALLER_SWARM_WORKER_TOKEN",
+  "INSTALLER_SWARM_MANAGER_TOKEN",
 ] as const;
 
 export function loadSecretFiles<T extends SecretFileEnv>(env: T): T {

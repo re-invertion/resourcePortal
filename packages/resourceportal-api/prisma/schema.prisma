@@ -146,6 +146,12 @@ enum IdentityProviderScope {
   Tenant
 }
 
+
+enum InstallerEnrollmentRole {
+  Worker
+  Manager
+}
+
 enum IdentityProviderProtocol {
   OIDC
   SAML
@@ -840,4 +846,15 @@ model AuditLogEntry {
   userAgent     String?
   changes       Json?
   tenant        Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model InstallerEnrollment {
+  id         String                  @id @default(uuid()) @db.Uuid
+  tokenHash  String                  @unique
+  role       InstallerEnrollmentRole
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime                @default(now())
+
+  @@index([role, expiresAt, consumedAt])
 }
