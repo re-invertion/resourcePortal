@@ -54,6 +54,7 @@ status 1 'mutable latest image rejected' rp_validate_release_manifest "$mutable"
 workflow="$(cat "$repo_root/.github/workflows/release.yml")"
 contains "$workflow" 'packages: write' 'release workflow can publish GHCR'
 contains "$workflow" 'docker/build-push-action' 'release workflow builds immutable images'
+contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ github.ref_name }}' 'release workflow publishes fenced PostgreSQL image'
 contains "$workflow" 'resourceportal-release-manifest.json' 'release workflow publishes machine-readable manifest'
 not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
 
@@ -62,5 +63,11 @@ contains "$schema" 'rollbackPolicy' 'manifest schema declares rollback policy'
 contains "$schema" 'minimumVersion' 'manifest schema declares installer compatibility'
 
 rm -f "$manifest" "$safe_manifest" "$mutable"
+
+upgrade_source="$(cat "$repo_root/scripts/installer/upgrade.sh")"
+contains "$upgrade_source" 'rp_wait_for_https_origin' 'upgrade verifies ResourcePortal health after deploy'
+contains "$upgrade_source" 'rp_config_write' 'upgrade persists release state only after successful health check'
+contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected release version'
+
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer release tests passed.\n'

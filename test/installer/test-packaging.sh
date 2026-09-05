@@ -26,5 +26,15 @@ fi
 contains "$api_docker" 'COPY --from=build /app/packages/resourceportal-api/dist ./dist' "API image contains compiled runners"
 not_contains "$api_docker" 'CMD ["ts-node"' "API runtime does not depend on ts-node"
 
+
+postgres_dockerfile="$repo_root/packages/resourceportal-postgres/Dockerfile"
+[[ -f "$postgres_dockerfile" ]] && pass 'PostgreSQL fencing runtime Dockerfile exists' || fail 'PostgreSQL fencing runtime Dockerfile exists'
+contains "$postgres_dockerfile" 'util-linux' 'PostgreSQL fencing image installs flock provider'
+contains "$postgres_dockerfile" 'resourceportal-postgres-fence' 'PostgreSQL fencing image installs wrapper'
+
+fence_script="$repo_root/packages/resourceportal-postgres/postgres-fence.sh"
+not_contains "$fence_script" '.holder' 'PostgreSQL fencing does not leave stale holder marker files'
+contains "$fence_script" 'flock -n 9' 'PostgreSQL fencing remains fail-closed on exclusive lock'
+
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All production packaging tests passed.\n'

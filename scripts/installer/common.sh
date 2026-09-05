@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 
+RP_INSTALLER_LOG_FILE="${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
+
+rp_log_init() {
+  install -d -m 0750 "$(dirname "$RP_INSTALLER_LOG_FILE")"
+  touch "$RP_INSTALLER_LOG_FILE"
+  chmod 0600 "$RP_INSTALLER_LOG_FILE"
+}
+
 rp_log() {
-  local level="$1"
+  local level="$1" line
   shift
-  printf '%s [%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$level" "$*" >&2
+  line="$(printf '%s [%s] %s' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$level" "$*")"
+  printf '%s\n' "$line" >&2
+  if [[ -n "${RP_INSTALLER_LOG_FILE:-}" && -w "${RP_INSTALLER_LOG_FILE:-}" ]]; then
+    printf '%s\n' "$line" >>"$RP_INSTALLER_LOG_FILE"
+  fi
 }
 
 rp_die() {

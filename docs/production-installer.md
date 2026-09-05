@@ -29,6 +29,10 @@ Canonical storage paths are:
 
 The default physical root may be overridden with a validated custom path.
 
+## PostgreSQL single-writer fencing
+
+Both ResourcePortal PostgreSQL and ZITADEL PostgreSQL run through `/usr/local/bin/resourceportal-postgres-fence`. The wrapper acquires an exclusive lock under `/mnt/resourceportal/platform/fencing` before launching PostgreSQL. Swarm may reschedule a database task to another manager with `resourceportal.storage.platform=true`, but the replacement remains fail-closed while another writer still owns the shared-storage lock.
+
 ## Add node
 
 Additional nodes use a 30-minute, single-use, role-bound enrollment bundle. The bundle contains an enrollment token, endpoint, role, expiry and SPKI pin; it never contains a reusable Swarm join token.
@@ -41,14 +45,16 @@ Upgrade consumes a release manifest containing exact image digests, installer co
 
 ## Reconfigure
 
-Supported v1 reconfiguration is deliberately non-destructive. The installer supports domain/ACME changes, SMTP validation, managed secret rotation hooks and manager control-plane/ingress participation. Storage migrations are not performed automatically.
+Supported v1 reconfiguration is deliberately controlled. The installer supports domain/ACME changes, SMTP validation, versioned rotation of the cookie signing secret and internal worker token, manager control-plane/ingress participation, and safe local Swarm/NFS address migration using drain/remount sequencing. Storage data migrations are not performed automatically.
 
 ## Diagnostics
 
-Diagnostics are read-only. They inspect OS, Docker, Swarm/quorum, storage filesystem/quota/runtime mounts, NFS-Ganesha, storage readiness, stack services, HTTPS/TLS and installed release metadata. Mutating repair operations must remain separate and explicitly confirmed.
+Diagnostics are read-only. Explicit repair actions use `--repair` and require exact `REPAIR <action>` confirmation. They inspect OS, Docker, Swarm/quorum, storage filesystem/quota/runtime mounts, NFS-Ganesha, storage readiness, stack services, HTTPS/TLS and installed release metadata. Mutating repair operations must remain separate and explicitly confirmed.
 
 ## Security and limitations
 
 Passwords, private keys, raw enrollment tokens, raw Swarm join tokens and SMTP credentials are not written to `installer.conf`. Runtime application secrets are delivered with Docker Swarm Secrets and `*_FILE` loading. The enrollment listener is exposed only on the private cluster firewall rule and uses pinned TLS.
 
 v1 intentionally does **not** provide CephFS, software RAID management, storage-host HA, or a backup/restore subsystem. The single active storage host remains a storage SPOF. One Swarm manager is supported for bootstrap, while diagnostics recommends three managers for quorum resilience.
+
+Unattended destructive storage additionally requires `--allow-destructive-storage` plus the exact device confirmation; interactive confirmation alone is not treated as unattended consent.

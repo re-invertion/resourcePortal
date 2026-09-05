@@ -54,5 +54,5 @@ rp_install_storage_ready_unit() {
   install -m 0644 "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service" \
     /etc/systemd/system/resourceportal-storage-ready.service
   systemctl daemon-reload
-  systemctl enable resourceportal-storage-ready.service
+  systemctl enable --now resourceportal-storage-ready.service
 }

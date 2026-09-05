@@ -21,6 +21,8 @@ export RP_CFG_TRAEFIK_IMAGE='traefik:v3.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 export RP_CFG_DOMAIN='rp.example.com'
 export RP_CFG_ZITADEL_DOMAIN='auth.rp.example.com'
 export RP_CFG_ACME_EMAIL='admin@example.com'
+export RP_CFG_COOKIE_SWARM_REF='rp_cookie_secret_0123456789abcdef'
+export RP_CFG_WORKER_SWARM_REF='rp_internal_worker_token_0123456789abcdef'
 export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
 export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
 export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
@@ -87,6 +89,28 @@ status 1 'reject short digest' rp_validate_image_ref 'ghcr.io/re-invertion/resou
 control_source="$(cat "$repo_root/scripts/installer/control-plane.sh")"
 contains "$control_source" 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"' 'migration reads database URL from Swarm Secret'
 not_contains "$final" 'mode: replicated-job' 'stack avoids unsupported DR job mode'
+
+
+contains "$final" '/usr/local/bin/resourceportal-postgres-fence' 'RP PostgreSQL starts through storage fencing wrapper'
+contains "$final" 'RP_POSTGRES_FENCE_NAME: resourceportal-postgres' 'RP PostgreSQL has distinct fencing lock name'
+contains "$final" 'RP_POSTGRES_FENCE_NAME: zitadel-postgres' 'ZITADEL PostgreSQL has distinct fencing lock name'
+contains "$final" '/mnt/resourceportal/platform/fencing' 'PostgreSQL fencing state lives on authoritative platform storage'
+control_template="$(cat "$repo_root/config/production/stack.yml.tpl")"
+contains "$control_template" 'source: postgres_fence_script' 'stack ships PostgreSQL fencing wrapper as config'
+
+
+rp_pg_block="$(awk '/^  postgres-rp:/{flag=1} /^  postgres-zitadel:/{if(flag){exit}} flag' <<<"$final")"
+zitadel_pg_block="$(awk '/^  postgres-zitadel:/{flag=1} /^  zitadel:/{if(flag){exit}} flag' <<<"$final")"
+contains "$rp_pg_block" 'node.labels.resourceportal.storage.platform == true' 'RP PostgreSQL can run on any platform-storage manager'
+not_contains "$rp_pg_block" 'resourceportal.storage.authoritative' 'RP PostgreSQL is not pinned to authoritative storage host'
+not_contains "$rp_pg_block" 'postgres-rp-writer' 'RP PostgreSQL no longer relies on static writer label'
+contains "$zitadel_pg_block" 'node.labels.resourceportal.storage.platform == true' 'ZITADEL PostgreSQL can run on any platform-storage manager'
+not_contains "$zitadel_pg_block" 'resourceportal.storage.authoritative' 'ZITADEL PostgreSQL is not pinned to authoritative storage host'
+not_contains "$zitadel_pg_block" 'postgres-zitadel-writer' 'ZITADEL PostgreSQL no longer relies on static writer label'
+
+
+contains "$final" 'name: rp_cookie_secret_' 'stack aliases versioned cookie secret'
+contains "$final" 'name: rp_internal_worker_token_' 'stack aliases versioned internal worker token'
 
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All control-plane installer tests passed.\n'

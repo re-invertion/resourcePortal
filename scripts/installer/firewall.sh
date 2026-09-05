@@ -14,9 +14,10 @@ rp_detect_ssh_port() {
     return 0
   fi
   if [[ -n "${SSH_CONNECTION:-}" ]]; then
-    set -- $SSH_CONNECTION
-    [[ "${4:-}" =~ ^[0-9]+$ ]] || return 1
-    printf '%s\n' "$4"
+    local ssh_server_port
+    read -r _ _ _ ssh_server_port <<<"$SSH_CONNECTION"
+    [[ "$ssh_server_port" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$ssh_server_port"
     return 0
   fi
   return 1

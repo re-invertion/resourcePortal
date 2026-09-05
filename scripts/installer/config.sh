@@ -23,6 +23,8 @@ RP_CONFIG_KEYS=(
   RP_CFG_PLATFORM_ADMIN_IDS
   RP_CFG_OIDC_CLIENT_ID
   RP_CFG_OIDC_SWARM_REF
+  RP_CFG_COOKIE_SWARM_REF
+  RP_CFG_WORKER_SWARM_REF
   RP_CFG_STACK_NAME
   RP_CFG_RELEASE_VERSION
   RP_CFG_STORAGE_MOUNTPOINT
@@ -79,7 +81,6 @@ rp_config_load() {
     value="${line#*=}"
     rp_config_key_allowed "$key" || continue
     eval "value=$value"
-    printf -v "$key" '%s' "$value"
-    export "$key"
+    export "$key=$value"
   done <"$path"
 }

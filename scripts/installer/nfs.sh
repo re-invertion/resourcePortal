@@ -155,11 +155,12 @@ rp_storage_label_args() {
 
 rp_apply_storage_labels() {
   local node="$1" volumes_ready="$2" secrets_ready="$3" platform_ready="$4"
-  local -a args=(node update)
+  local -a args=(node update) label_args=()
   local label
   while IFS= read -r label; do
     [[ -n "$label" ]] || continue
-    args+=( $label )
+    read -r -a label_args <<<"$label"
+    args+=("${label_args[@]}")
   done < <(rp_storage_label_args "$volumes_ready" "$secrets_ready" "$platform_ready")
   args+=("$node")
   docker "${args[@]}"

@@ -25,8 +25,10 @@ secrets:
     external: true
   rp_cookie_secret:
     external: true
+    name: __COOKIE_SWARM_REF__
   rp_internal_worker_token:
     external: true
+    name: __WORKER_SWARM_REF__
   rp_oidc_client_secret:
     external: true
     name: __OIDC_SWARM_REF__
@@ -36,17 +38,28 @@ volumes: {}
 services:
   postgres-rp:
     image: __POSTGRES_IMAGE__
+    entrypoint: ["/usr/local/bin/resourceportal-postgres-fence"]
+    command: ["postgres"]
     environment:
+      RP_POSTGRES_FENCE_NAME: resourceportal-postgres
+      RP_POSTGRES_FENCE_ROOT: /mnt/resourceportal/platform/fencing
       POSTGRES_DB: resource_portal
       POSTGRES_USER: resource_portal
       POSTGRES_PASSWORD_FILE: /run/secrets/rp_postgres_password
       PGDATA: /var/lib/postgresql/data/pgdata
     secrets:
       - rp_postgres_password
+    configs:
+      - source: postgres_fence_script
+        target: /usr/local/bin/resourceportal-postgres-fence
+        mode: 0555
     volumes:
       - type: bind
         source: /mnt/resourceportal/platform/databases/resourceportal-postgres
         target: /var/lib/postgresql/data
+      - type: bind
+        source: /mnt/resourceportal/platform/fencing
+        target: /mnt/resourceportal/platform/fencing
     networks:
       - rp-control
     healthcheck:
@@ -60,24 +73,33 @@ services:
         constraints:
           - node.role == manager
           - node.labels.resourceportal.storage.platform == true
-          - node.labels.resourceportal.storage.authoritative == true
-          - node.labels.resourceportal.platform.postgres-rp-writer == true
       restart_policy:
         condition: on-failure
 
   postgres-zitadel:
     image: __POSTGRES_IMAGE__
+    entrypoint: ["/usr/local/bin/resourceportal-postgres-fence"]
+    command: ["postgres"]
     environment:
+      RP_POSTGRES_FENCE_NAME: zitadel-postgres
+      RP_POSTGRES_FENCE_ROOT: /mnt/resourceportal/platform/fencing
       POSTGRES_DB: zitadel
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/zitadel_postgres_password
       PGDATA: /var/lib/postgresql/data/pgdata
     secrets:
       - zitadel_postgres_password
+    configs:
+      - source: postgres_fence_script
+        target: /usr/local/bin/resourceportal-postgres-fence
+        mode: 0555
     volumes:
       - type: bind
         source: /mnt/resourceportal/platform/databases/zitadel-postgres
         target: /var/lib/postgresql/data
+      - type: bind
+        source: /mnt/resourceportal/platform/fencing
+        target: /mnt/resourceportal/platform/fencing
     networks:
       - rp-control
     healthcheck:
@@ -91,8 +113,6 @@ services:
         constraints:
           - node.role == manager
           - node.labels.resourceportal.storage.platform == true
-          - node.labels.resourceportal.storage.authoritative == true
-          - node.labels.resourceportal.platform.postgres-zitadel-writer == true
       restart_policy:
         condition: on-failure
 
@@ -374,5 +394,7 @@ services:
         condition: on-failure
 
 configs:
+  postgres_fence_script:
+    file: /usr/local/share/resourceportal/postgres-fence.sh
   zitadel_public_config:
     file: /etc/resourceportal/zitadel-config.yaml

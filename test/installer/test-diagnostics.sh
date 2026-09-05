@@ -64,5 +64,33 @@ done
 [[ "$lifecycle_source" == *'rp_inspect_block_device "$device"'* ]] && pass 'destructive storage shows target identity first' || fail 'destructive storage shows target identity first'
 [[ "$lifecycle_source" == *"FORMAT \$device"* ]] && pass 'destructive storage requests exact device confirmation' || fail 'destructive storage requests exact device confirmation'
 
+
+common_source="$(cat "$repo_root/scripts/installer/common.sh")"
+contains_log(){ [[ "$1" == *"$2"* ]] && pass "$3" || fail "$3"; }
+contains_log "$common_source" '/var/log/resourceportal/installer.log' 'installer has canonical log path'
+contains_log "$entrypoint_source" 'rp_log_init' 'entrypoint initializes installer log'
+for check in 'ufw status' 'docker node inspect' 'findmnt -nro FSTYPE' 'findmnt -nro UUID' '/etc/fstab' 'ganesha' 'postgres-rp' 'installer-enrollment' 'RP_CFG_API_IMAGE' 'RP_CFG_WEB_IMAGE'; do
+  [[ "$diag_source" == *"$check"* ]] && pass "diagnostics covers $check" || fail "diagnostics covers $check"
+done
+
+
+reconfigure_source="$(cat "$repo_root/scripts/installer/reconfigure.sh")"
+for behavior in 'rp_primary_configure_smtp' 'rp_ensure_versioned_swarm_secret' 'rp_deploy_control_plane final' 'rp_wait_for_https_origin' 'docker node update' 'resourceportal.control-plane' 'resourceportal.ingress' 'availability drain' 'rp_mount_runtime_namespace' 'rp_install_ganesha_config'; do
+  [[ "$reconfigure_source" == *"$behavior"* ]] && pass "reconfigure implements $behavior" || fail "reconfigure implements $behavior"
+done
+status 0 'address migration reconfigure allowed' rp_reconfigure_action_valid addresses
+
+
+entrypoint_source="$(cat "$repo_root/resourceportal-install.sh")"
+[[ "$entrypoint_source" == *'--allow-destructive-storage'* ]] && pass 'entrypoint exposes explicit unattended destructive-storage opt-in' || fail 'entrypoint exposes explicit unattended destructive-storage opt-in'
+[[ "$lifecycle_source" == *'RP_ALLOW_DESTRUCTIVE_STORAGE'* ]] && pass 'unattended destructive storage requires explicit opt-in' || fail 'unattended destructive storage requires explicit opt-in'
+[[ "$entrypoint_source" == *'--repair'* ]] && pass 'entrypoint exposes explicit repair action' || fail 'entrypoint exposes explicit repair action'
+[[ "$entrypoint_source" == *'rp_run_repair'* ]] && pass 'repair is dispatched separately from diagnostics' || fail 'repair is dispatched separately from diagnostics'
+repair_source="$(cat "$repo_root/scripts/installer/repair.sh" 2>/dev/null || true)"
+for action in 'storage-ready' 'ganesha' 'control-plane'; do
+  [[ "$repair_source" == *"$action"* ]] && pass "repair supports $action" || fail "repair supports $action"
+done
+[[ "$repair_source" == *'REPAIR $action'* ]] && pass 'repair requires exact typed confirmation' || fail 'repair requires exact typed confirmation'
+
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer lifecycle/diagnostics tests passed.\n'

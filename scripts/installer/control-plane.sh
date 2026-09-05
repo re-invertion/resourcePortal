@@ -9,7 +9,7 @@ rp_require_stack_config() {
   for key in \
     RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE \
     RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL \
-    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF; do
+    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF; do
     value="${!key-}"
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
@@ -58,6 +58,8 @@ rp_render_stack() {
     "PLATFORM_ADMIN_IDS|$platform_admin_ids"
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
+    "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
+    "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
     "POSTGRES_RP_REPLICAS|$(rp_stack_replica_value "$state" postgres-rp)"
     "POSTGRES_ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" postgres-zitadel)"
@@ -103,7 +105,8 @@ rp_deploy_control_plane() {
 
 rp_run_migrations() {
   local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
-  local service_name="${stack_name}-migration-$(date +%s)" timeout="${RP_MIGRATION_TIMEOUT_SECONDS:-300}"
+  local service_name timeout="${RP_MIGRATION_TIMEOUT_SECONDS:-300}"
+  service_name="${stack_name}-migration-$(date +%s)"
   rp_validate_image_ref "${RP_CFG_API_IMAGE:-}" || return 1
   docker service create \
     --name "$service_name" \

@@ -32,8 +32,7 @@ rp_prompt_if_empty() {
   [[ -n "$value" ]] && return 0
   value="$(rp_ui_input "$title" "$prompt" "$default")" || return 1
   [[ -n "$value" ]] || return 1
-  printf -v "$var" '%s' "$value"
-  export "$var"
+  export "$var=$value"
 }
 
 rp_collect_primary_config() {
@@ -97,7 +96,8 @@ rp_prepare_host_packages() {
 }
 
 rp_primary_prepare_storage() {
-  local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" mountpoint="${RP_CFG_STORAGE_MOUNTPOINT:-$base}" fs source system_disk device type partition
+  local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}"
+  local mountpoint="${RP_CFG_STORAGE_MOUNTPOINT:-$base}" fs system_disk device type partition
   if findmnt -rn -T "$mountpoint" >/dev/null 2>&1; then
     fs="$(findmnt -nro FSTYPE -T "$mountpoint")"
     rp_validate_filesystem_type "$fs" || return 1
@@ -108,6 +108,10 @@ rp_primary_prepare_storage() {
     system_disk="$(rp_system_disk)" || return 1
     rp_device_is_safe_target "$device" "$system_disk" || return 1
     rp_inspect_block_device "$device"
+    if [[ -n "${RP_DESTRUCTIVE_CONFIRMATION:-}" && ! -t 0 && "${RP_ALLOW_DESTRUCTIVE_STORAGE:-false}" != true ]]; then
+      printf 'Unattended destructive storage requires --allow-destructive-storage.\n' >&2
+      return 1
+    fi
     if [[ -z "${RP_DESTRUCTIVE_CONFIRMATION:-}" ]]; then
       RP_DESTRUCTIVE_CONFIRMATION="$(rp_ui_input 'Destructive storage confirmation' "Type exactly: FORMAT $device" '')" || return 1
     fi
@@ -142,6 +146,7 @@ rp_primary_configure_firewall() {
 }
 
 rp_primary_init_swarm() {
+  systemctl is-active --quiet resourceportal-storage-ready.service || return 1
   rp_swarm_init "${RP_CFG_SWARM_ADVERTISE_ADDR:?}" "${RP_CFG_SWARM_DATA_PATH_ADDR:-$RP_CFG_SWARM_ADVERTISE_ADDR}"
   local node
   node="$(docker info --format '{{.Swarm.NodeID}}')" || return 1
@@ -189,8 +194,9 @@ rp_primary_create_platform_secrets() {
   rp_ensure_swarm_secret zitadel_postgres_password "$zdbpass"
   rp_ensure_swarm_secret zitadel_masterkey "$master"
   rp_ensure_swarm_secret rp_encryption_key "$enc"
-  rp_ensure_swarm_secret rp_cookie_secret "$cookie"
-  rp_ensure_swarm_secret rp_internal_worker_token "$worker"
+  RP_CFG_COOKIE_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_cookie_secret "$cookie")" || return 1
+  RP_CFG_WORKER_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_internal_worker_token "$worker")" || return 1
+  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF
   rp_ensure_swarm_secret rp_database_url "$dburl"
   RP_CFG_OIDC_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")"
   RP_CFG_OIDC_CLIENT_ID="bootstrap-pending"
@@ -200,6 +206,7 @@ rp_primary_create_platform_secrets() {
 rp_primary_bootstrap_stack() {
   local etc=/etc/resourceportal secret_dir=/var/lib/resourceportal/installer-state/secrets
   install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap"
+  install -m 0555 "$RP_INSTALLER_REPO_ROOT/config/production/postgres-fence.sh" "$etc/postgres-fence.sh"
   rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$etc/zitadel-config.yaml"; chmod 0644 "$etc/zitadel-config.yaml"
   rp_render_zitadel_secret_config postgres "$(cat "$secret_dir/zitadel-postgres")" "$(cat "$secret_dir/zitadel-postgres")" >"$secret_dir/zitadel-secret.yaml"; chmod 0600 "$secret_dir/zitadel-secret.yaml"
   rp_render_zitadel_init_steps resourceportal-bootstrap "$(cat "$secret_dir/cookie")" >"$secret_dir/zitadel-init.yaml"; chmod 0600 "$secret_dir/zitadel-init.yaml"
@@ -226,7 +233,8 @@ rp_primary_run_migrations() {
 }
 
 rp_primary_bootstrap_identity() {
-  local secret_dir=/var/lib/resourceportal/installer-state/secrets output=/var/lib/resourceportal/installer-state/zitadel-bootstrap.json admin_file="$secret_dir/first-admin-password"
+  local secret_dir=/var/lib/resourceportal/installer-state/secrets output=/var/lib/resourceportal/installer-state/zitadel-bootstrap.json
+  local admin_file="$secret_dir/first-admin-password"
   [[ -n "${RP_ADMIN_EMAIL:-}" && -n "${RP_ADMIN_USERNAME:-}" && -n "${RP_ADMIN_PASSWORD:-}" ]] || return 1
   rp_admin_password_valid "$RP_ADMIN_PASSWORD" || return 1
   printf '%s' "$RP_ADMIN_PASSWORD" >"$admin_file"; chmod 0600 "$admin_file"
@@ -268,7 +276,8 @@ rp_primary_deploy_final() {
 }
 
 rp_primary_start_enrollment() {
-  local dir=/var/lib/resourceportal/installer-state/enrollment cert="$dir/tls.crt" key="$dir/tls.key"
+  local dir=/var/lib/resourceportal/installer-state/enrollment
+  local cert="$dir/tls.crt" key="$dir/tls.key"
   install -d -m 0700 "$dir"
   [[ -r "$cert" && -r "$key" ]] || rp_generate_enrollment_tls_identity "$cert" "$key" "$RP_CFG_SWARM_ADVERTISE_ADDR"
   rp_start_enrollment_listener "$cert" "$key"

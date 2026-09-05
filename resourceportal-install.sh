@@ -24,6 +24,7 @@ source "$repo_root/scripts/installer/enrollment.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
 source "$repo_root/scripts/installer/reconfigure.sh"
 source "$repo_root/scripts/installer/diagnostics.sh"
+source "$repo_root/scripts/installer/repair.sh"
 
 RP_INSTALLER_REPO_ROOT="$repo_root"
 RP_INSTALLER_VERSION="${RP_INSTALLER_VERSION:-0.1.0}"
@@ -36,7 +37,7 @@ Usage:
   sudo ./resourceportal-install.sh --mode add-node --bundle PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode upgrade --manifest PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode reconfigure --action ACTION [--config PATH]
-  sudo ./resourceportal-install.sh --mode diagnostics [--config PATH]
+  sudo ./resourceportal-install.sh --mode diagnostics [--repair ACTION] [--config PATH]
 
 Modes:
   primary       Install or resume the Primary ResourcePortal node.
@@ -83,7 +84,7 @@ rp_dispatch() {
 }
 
 rp_main() {
-  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest=""
+  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair=""
   while (($#)); do
     case "$1" in
       --config)
@@ -101,6 +102,11 @@ rp_main() {
       --manifest)
         [[ $# -ge 2 ]] || { printf '%s\n' '--manifest requires a path' >&2; return 2; }
         manifest="$2"; shift 2 ;;
+      --repair)
+        [[ $# -ge 2 ]] || { printf '%s\n' '--repair requires an action' >&2; return 2; }
+        repair="$2"; shift 2 ;;
+      --allow-destructive-storage)
+        RP_ALLOW_DESTRUCTIVE_STORAGE=true; export RP_ALLOW_DESTRUCTIVE_STORAGE; shift ;;
       --help|-h)
         rp_usage; return 0 ;;
       *)
@@ -109,6 +115,7 @@ rp_main() {
   done
 
   rp_require_root
+  rp_log_init
   if [[ -r "$config_path" ]]; then
     rp_config_load "$config_path"
   fi
@@ -123,7 +130,7 @@ rp_main() {
   fi
   rp_mode_valid "$mode" || { printf 'Unsupported installer mode: %s\n' "$mode" >&2; return 2; }
   RP_CFG_MODE="$mode"; export RP_CFG_MODE
-  rp_dispatch "$mode" "$bundle" "$action" "$manifest"
+  if [[ -n "$repair" ]]; then rp_run_repair "$repair"; else rp_dispatch "$mode" "$bundle" "$action" "$manifest"; fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

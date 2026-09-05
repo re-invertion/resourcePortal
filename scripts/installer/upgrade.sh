@@ -24,7 +24,7 @@ rp_upgrade_apply() {
   [[ -r "$previous_stack" ]] || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
-  if ! rp_run_migrations || ! rp_deploy_control_plane final; then
+  if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     if rp_upgrade_rollback_allowed "$manifest"; then
       docker stack deploy --compose-file "$previous_stack" --with-registry-auth "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
       return 1
@@ -32,4 +32,8 @@ rp_upgrade_apply() {
     printf 'Upgrade failed after an irreversible/incompatible migration. Automatic rollback refused.\n' >&2
     return 1
   fi
+  RP_CFG_RELEASE_VERSION="$(rp_manifest_value "$manifest" '.version')"
+  export RP_CFG_RELEASE_VERSION
+  rp_config_write /etc/resourceportal/installer.conf
+  rp_write_stack final /etc/resourceportal/stack.yml
 }

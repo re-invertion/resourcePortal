@@ -75,8 +75,10 @@ assert_contains "$unit_text" "Before=docker.service" "storage readiness precedes
 assert_contains "$unit_text" "ExecStart=/usr/local/lib/resourceportal/storage-ready-check" "unit invokes readiness checker"
 assert_contains "$unit_text" "RemainAfterExit=yes" "readiness remains active"
 
-if (( failures > 0 )); then
-  printf '%s\n' "$failures test(s) failed" >&2
-  exit 1
-fi
+quota_source="$(cat "$repo_root/scripts/installer/quota.sh")"
+assert_contains "$quota_source" 'systemctl enable --now resourceportal-storage-ready.service' 'storage readiness unit starts immediately'
+lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+assert_contains "$lifecycle_source" 'systemctl is-active --quiet resourceportal-storage-ready.service' 'Primary checks readiness service before applying storage labels'
+
+if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'
