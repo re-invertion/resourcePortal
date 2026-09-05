@@ -13,7 +13,7 @@ MANIFEST="${BACKUP_DIR}/manifest.sha256"
 SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/secrets")"
 
 if [[ "$SECRET_STORAGE_ROOT" == "/" ]]; then
-  echo "Refusing to use / as RESOURCE_SECRET_STORAGE_ROOT." >&2
+  echo "Refusing to use / as RESOURCE_STORAGE_BASE_PATH-derived Secret storage path." >&2
   exit 2
 fi
 
@@ -21,7 +21,7 @@ mkdir -p "$BACKUP_DIR"
 
 BACKUP_DIR_REAL="$(realpath "$BACKUP_DIR")"
 if [[ "$BACKUP_DIR_REAL" == "$SECRET_STORAGE_ROOT" || "$BACKUP_DIR_REAL" == "$SECRET_STORAGE_ROOT"/* ]]; then
-  echo "Backup directory must not be inside RESOURCE_SECRET_STORAGE_ROOT." >&2
+  echo "Backup directory must not be inside RESOURCE_STORAGE_BASE_PATH-derived Secret storage path." >&2
   exit 2
 fi
 

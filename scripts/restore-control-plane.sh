@@ -12,7 +12,7 @@ SECRET_ARCHIVE="${BACKUP_DIR%/}/secrets.tar.gz"
 SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/secrets")"
 
 if [[ "$SECRET_STORAGE_ROOT" == "/" ]]; then
-  echo "Refusing to use / as RESOURCE_SECRET_STORAGE_ROOT." >&2
+  echo "Refusing to use / as RESOURCE_STORAGE_BASE_PATH-derived Secret storage path." >&2
   exit 2
 fi
 
