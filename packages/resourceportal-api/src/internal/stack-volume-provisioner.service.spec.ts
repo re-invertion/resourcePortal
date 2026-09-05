@@ -73,8 +73,10 @@ describe("StackVolumeProvisionerService", () => {
   it("validates only Ready nodes carrying the volumes readiness label", async () => {
     spawnMock
       .mockImplementationOnce(() =>
-        dockerProcess("node-a|Ready|true\nnode-b|Ready|false\nnode-c|Down|true\n"),
+        dockerProcess("node-a|Ready\nnode-b|Ready\nnode-c|Down\n"),
       )
+      .mockImplementationOnce(() => dockerProcess("true\n"))
+      .mockImplementationOnce(() => dockerProcess("false\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
@@ -97,7 +99,21 @@ describe("StackVolumeProvisionerService", () => {
         "node",
         "ls",
         "--format",
-        '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
+        "{{.ID}}|{{.Status}}",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      2,
+      "docker",
+      [
+        "--context",
+        "default",
+        "node",
+        "inspect",
+        "--format",
+        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        "node-a",
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -105,7 +121,8 @@ describe("StackVolumeProvisionerService", () => {
 
   it("probes the canonical runtime root with a bind mount and storage constraint", async () => {
     spawnMock
-      .mockImplementationOnce(() => dockerProcess("node-a|Ready|true\n"))
+      .mockImplementationOnce(() => dockerProcess("node-a|Ready\n"))
+      .mockImplementationOnce(() => dockerProcess("true\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
@@ -135,9 +152,9 @@ describe("StackVolumeProvisionerService", () => {
   });
 
   it("fails closed when no Ready storage node is eligible", async () => {
-    spawnMock.mockImplementationOnce(() =>
-      dockerProcess("node-a|Ready|false\nnode-b|Down|true\n"),
-    );
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("node-a|Ready\nnode-b|Down\n"))
+      .mockImplementationOnce(() => dockerProcess("false\n"));
 
     await expect(
       service().provisionVolumes([

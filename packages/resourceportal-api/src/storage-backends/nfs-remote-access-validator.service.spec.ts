@@ -38,9 +38,11 @@ describe("NfsRemoteAccessValidatorService", () => {
     const { validator, runner } = harness([
       {
         exitCode: 0,
-        stdout: "node-a|Ready|true\nnode-b|Ready|false\nnode-c|Down|true",
+        stdout: "node-a|Ready\nnode-b|Ready\nnode-c|Down",
         stderr: "",
       },
+      { exitCode: 0, stdout: "true", stderr: "" },
+      { exitCode: 0, stdout: "false", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -56,13 +58,23 @@ describe("NfsRemoteAccessValidatorService", () => {
       "node",
       "ls",
       "--format",
-      '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
+      "{{.ID}}|{{.Status}}",
+    ]);
+    expect(runner.run).toHaveBeenNthCalledWith(2, "docker", [
+      "--context",
+      "default",
+      "node",
+      "inspect",
+      "--format",
+      '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+      "node-a",
     ]);
   });
 
   it("probes only the canonical workload Volume runtime namespace", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a|Ready|true", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
+      { exitCode: 0, stdout: "true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -90,7 +102,8 @@ describe("NfsRemoteAccessValidatorService", () => {
 
   it("fails closed when no storage-ready node is eligible", async () => {
     const { validator } = harness([
-      { exitCode: 0, stdout: "node-a|Ready|false\nnode-b|Down|true", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready\nnode-b|Down", stderr: "" },
+      { exitCode: 0, stdout: "false", stderr: "" },
     ]);
 
     await expect(
@@ -104,7 +117,8 @@ describe("NfsRemoteAccessValidatorService", () => {
 
   it("removes the probe service after a failed task", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a|Ready|true", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
+      { exitCode: 0, stdout: "true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Rejected 1 second ago|mount failed", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },

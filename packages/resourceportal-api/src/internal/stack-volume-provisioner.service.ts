@@ -54,7 +54,7 @@ export class StackVolumeProvisionerService {
       "node",
       "ls",
       "--format",
-      '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
+      "{{.ID}}|{{.Status}}",
     ]);
     if (nodes.exitCode !== 0) {
       return {
@@ -64,11 +64,27 @@ export class StackVolumeProvisionerService {
       };
     }
 
-    const eligibleNodes = nodes.stdout
-      .split("\n")
-      .filter(Boolean)
-      .map(parseStorageNode)
-      .filter((node) => node.ready && node.volumesReady);
+    const eligibleNodes: StorageNodeReadiness[] = [];
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [id = "", status = ""] = line.split("|");
+      if (status.trim().toLowerCase() !== "ready") continue;
+      const label = await this.runDocker([
+        "node",
+        "inspect",
+        "--format",
+        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        id.trim(),
+      ]);
+      if (label.exitCode !== 0) {
+        return {
+          success: false,
+          message: "Unable to inspect Swarm storage readiness",
+          details: label.stderr || label.stdout || label.command,
+        };
+      }
+      const node = parseStorageNode(`${id}|${status}|${label.stdout.trim()}`);
+      if (node.ready && node.volumesReady) eligibleNodes.push(node);
+    }
 
     if (eligibleNodes.length === 0) {
       return {

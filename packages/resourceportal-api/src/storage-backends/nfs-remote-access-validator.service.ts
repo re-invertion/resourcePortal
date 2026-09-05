@@ -36,7 +36,7 @@ export class NfsRemoteAccessValidatorService {
       "node",
       "ls",
       "--format",
-      '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
+      "{{.ID}}|{{.Status}}",
     ]);
     if (nodes.exitCode !== 0) {
       return {
@@ -46,11 +46,27 @@ export class NfsRemoteAccessValidatorService {
       };
     }
 
-    const eligibleNodeCount = nodes.stdout
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => this.parseNode(line))
-      .filter((node) => node.ready && node.volumesReady).length;
+    let eligibleNodeCount = 0;
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [id = "", status = ""] = line.split("|");
+      if (status.trim().toLowerCase() !== "ready") continue;
+      const label = await this.docker([
+        "node",
+        "inspect",
+        "--format",
+        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        id.trim(),
+      ]);
+      if (label.exitCode !== 0) {
+        return {
+          ok: false,
+          skipped: false,
+          error: `Unable to inspect Swarm storage readiness: ${label.stderr || label.stdout}`,
+        };
+      }
+      const node = this.parseNode(`${id}|${status}|${label.stdout.trim()}`);
+      if (node.ready && node.volumesReady) eligibleNodeCount += 1;
+    }
     if (eligibleNodeCount === 0) {
       return {
         ok: false,
