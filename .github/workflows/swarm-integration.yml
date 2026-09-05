@@ -209,6 +209,19 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Stage 24 installer contracts on runner
+        run: |
+          bash -n resourceportal-install.sh
+          npm run test:installer
+          source scripts/installer/common.sh
+          source scripts/installer/swarm.sh
+          source scripts/installer/nfs.sh
+          test "$(rp_manager_quorum_state 1 1)" = healthy
+          test "$(rp_manager_quorum_recommendation 1)" = recommend-3
+          test "$(rp_runtime_path volumes)" = /mnt/resourceportal/volumes
+          test "$(rp_runtime_path secrets)" = /mnt/resourceportal/secrets
+          test "$(rp_runtime_path platform)" = /mnt/resourceportal/platform
+
       - name: Initialize real Docker Swarm
         run: |
           docker info

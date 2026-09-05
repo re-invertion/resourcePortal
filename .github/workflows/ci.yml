@@ -32,6 +32,16 @@ jobs:
         run: npm audit --audit-level=high
       - name: Generate Prisma client
         run: npm run api:prisma:generate
+      - name: Install installer static tooling
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Verify installer shell syntax and static checks
+        run: |
+          for file in resourceportal-install.sh scripts/installer/*.sh test/installer/*.sh; do
+            bash -n "$file"
+          done
+          shellcheck -x resourceportal-install.sh scripts/installer/*.sh test/installer/*.sh
+      - name: Test Production Installer
+        run: npm run test:installer
       - name: Lint
         run: npm run lint
       - name: Test
@@ -40,6 +50,8 @@ jobs:
         run: npm run build
       - name: Build API runtime image
         run: docker build -t resourceportal-api-ci .
+      - name: Build Web runtime image
+        run: docker build -t resourceportal-web-ci -f packages/resourceportal-web/Dockerfile .
       - name: Verify storage tools in API runtime image
         run: |
           docker run --rm --user root --entrypoint /bin/sh resourceportal-api-ci -c '
