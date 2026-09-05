@@ -73,22 +73,22 @@ packages/resourceportal-cli/README.md
 archive, and an archive of the encrypted AppGroup Secret store. Every artifact
 is covered by `manifest.sha256`; plaintext Secret values are never exported.
 Pause API writes and deployment workers for the duration of backup so the
-database snapshot and NFS archive describe the same point in time.
+database snapshot and encrypted Secret archive describe the same point in time.
 
 ```bash
 DATABASE_URL=postgresql://... \
-RESOURCE_SECRET_STORAGE_ROOT=/rp/secrets \
+RESOURCE_STORAGE_BASE_PATH=/srv/resource-portal/storage \
 RESOURCE_PORTAL_BACKUP_DIR=/srv/resource-portal-backups \
 npm run backup:control-plane
 ```
 
 Restore requires an explicit destructive-operation confirmation. When present,
-`secrets.tar.gz` is restored into `RESOURCE_SECRET_STORAGE_ROOT` together with
+`secrets.tar.gz` is restored into `${RESOURCE_STORAGE_BASE_PATH}/secrets` together with
 the database state.
 
 ```bash
 DATABASE_URL=postgresql://... \
-RESOURCE_SECRET_STORAGE_ROOT=/rp/secrets \
+RESOURCE_STORAGE_BASE_PATH=/srv/resource-portal/storage \
 RESOURCE_PORTAL_RESTORE_CONFIRM=resource-portal \
 npm run restore:control-plane -- /srv/resource-portal-backups/resource-portal-TIMESTAMP
 ```

@@ -91,8 +91,7 @@ binary values are submitted as Base64. The API never returns plaintext values.
 Each secret can be attached to multiple SingleApps in the same AppGroup and is
 mounted by Docker Swarm at `/run/secrets/<targetName>` after deployment.
 
-Encrypted envelopes are stored under `RESOURCE_SECRET_STORAGE_ROOT`, defaulting
-to `/rp/secrets`. Every value uses a random AES-256-GCM data key, and the data key
+Encrypted envelopes are stored under `${RESOURCE_STORAGE_BASE_PATH}/secrets`, with `RESOURCE_STORAGE_BASE_PATH` defaulting to `/srv/resource-portal/storage`. Every value uses a random AES-256-GCM data key, and the data key
 is wrapped with the Resource Portal master encryption key. Updating an attached
 value marks the AppGroup draft as pending but does not deploy automatically.
 
@@ -107,14 +106,28 @@ value marks the AppGroup draft as pending but does not deploy automatically.
 
 ## Storage
 
-The v1 persistent-storage backend is `LocalFilesystem`. The storage host exposes an XFS or ext4 filesystem mounted with project quotas enabled at `STORAGE_MOUNT_ROOT` (default `/mnt/resourceportal-storage`). XFS is preferred; ext4 is supported.
-
-ResourcePortal keeps logical Volume paths under:
+The v1 persistent-storage backend is `LocalFilesystem`. The storage host exposes an XFS or ext4 filesystem with project quotas enabled. The canonical physical root is configurable through `RESOURCE_STORAGE_BASE_PATH` and defaults to:
 
 ```text
-/rp/volumes/{tenantId}/{volumeId}
+/srv/resource-portal/storage
 ```
 
-The local adapter maps the logical `/rp` namespace below `STORAGE_MOUNT_ROOT`, assigns each Volume a durable numeric `storageProjectId`, and enforces the requested size with filesystem project quotas.
+The physical namespaces are isolated:
 
-Docker Swarm workloads do not use host bind mounts for persistent Volumes. They use Docker `local` driver NFS volumes pointing at NFS-Ganesha, which exports the logical `/rp` namespace. This supports the single-node deployment and lets additional Swarm workers access the same Volume without mounting the underlying XFS/ext4 filesystem directly.
+```text
+/srv/resource-portal/storage/volumes/{tenantId}/{volumeId}
+/srv/resource-portal/storage/secrets/{tenantId}/{appGroupId}/{secretName}
+/srv/resource-portal/storage/platform
+```
+
+Every Volume has a durable numeric `storageProjectId`. `Volume.sizeBytes` is enforced as a filesystem project-quota hard limit and the worker verifies the effective limit after create and resize.
+
+Docker Swarm workloads do not create per-Volume Docker NFS volumes. Eligible nodes have the canonical runtime root:
+
+```text
+/mnt/resourceportal/volumes
+```
+
+A Volume attachment renders as a bind mount from `/mnt/resourceportal/volumes/{tenantId}/{volumeId}` and constrains the service to nodes with `resourceportal.storage.volumes=true`. On the storage host the runtime root may be a local bind mount; additional nodes may receive the same namespace through NFSv4/NFS-Ganesha prepared by host/installer configuration.
+
+The workload-facing NFS namespace exposes tenant Volume data only. The encrypted `secrets` namespace and internal `platform` namespace must not be exposed to tenant workloads. AppGroup Secret plaintext continues to enter containers only through Docker Swarm Secrets.

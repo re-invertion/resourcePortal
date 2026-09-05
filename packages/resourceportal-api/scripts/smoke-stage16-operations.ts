@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (
@@ -9,8 +8,8 @@ const apiBaseUrl = (
 ).replace(/\/$/, "");
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
-const storageMountRoot =
-  process.env.STORAGE_MOUNT_ROOT ?? "/mnt/resourceportal-storage";
+const storageBasePath =
+  process.env.RESOURCE_STORAGE_BASE_PATH ?? "/srv/resource-portal/storage";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
@@ -25,6 +24,7 @@ type OperationView = JsonObject & {
   status?: unknown;
   attempt?: unknown;
   errorCode?: unknown;
+  errorMessage?: unknown;
   nextAttemptAt?: unknown;
   resourceId?: unknown;
 };
@@ -141,7 +141,7 @@ async function main() {
   const succeeded = await getOperation(operationId);
   assert(
     succeeded.status === "Succeeded",
-    `Expected VOLUME_CREATE to succeed after retry, got ${String(succeeded.status)}`,
+    `Expected VOLUME_CREATE to succeed after retry, got ${String(succeeded.status)} (${String(succeeded.errorCode)}: ${String(succeeded.errorMessage)})`,
   );
   createdVolumeId = stringField(succeeded, "resourceId");
 
@@ -216,16 +216,15 @@ async function cleanup() {
     const volumes = await prisma.volume
       .findMany({
         where: { tenantId },
-        select: { dockerVolumeName: true, storagePath: true },
+        select: { storagePath: true },
       })
       .catch(() => []);
 
     for (const volume of volumes) {
-      await command("docker", ["volume", "rm", "-f", volume.dockerVolumeName]).catch(
-        () => undefined,
-      );
-      const relativeStoragePath = volume.storagePath.replace(/^\/rp\/?/, "");
-      const physicalPath = join(storageMountRoot, relativeStoragePath);
+      const physicalPath = volume.storagePath;
+      if (!physicalPath.startsWith(`${storageBasePath}/volumes/`)) {
+        throw new Error(`Unsafe Stage 16 cleanup storage path: ${physicalPath}`);
+      }
       await rm(physicalPath, { recursive: true, force: true }).catch(() => undefined);
     }
 

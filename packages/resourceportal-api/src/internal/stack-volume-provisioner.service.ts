@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { buildNfsDriverOptions } from "../storage-backends/storage-backend.logic";
+import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
 
 type ProvisionVolume = {
   dockerVolumeName: string;
@@ -22,30 +22,31 @@ type ProvisionResult = {
   details: string;
 };
 
+export type StorageNodeReadiness = {
+  id: string;
+  ready: boolean;
+  volumesReady: boolean;
+};
+
+export function parseStorageNode(line: string): StorageNodeReadiness {
+  const [id = "", status = "", volumesLabel = ""] = line.split("|");
+  return {
+    id: id.trim(),
+    ready: status.trim().toLowerCase() === "ready",
+    volumesReady: volumesLabel.trim().toLowerCase() === "true",
+  };
+}
+
 @Injectable()
 export class StackVolumeProvisionerService {
   constructor(private readonly config: ConfigService) {}
 
-  runtimeVolumeDefinition(storagePath: string) {
-    const server = this.config.get<string>("NFS_GANESHA_SERVER", "");
-    const version = this.config.get<string>("NFS_GANESHA_VERSION", "4.1");
-
-    return {
-      driver: "local" as const,
-      driver_opts: buildNfsDriverOptions(server, version, storagePath),
-    };
-  }
-
   async provisionVolumes(volumes: ProvisionVolume[]): Promise<ProvisionResult> {
-    const uniqueVolumes = this.uniqueVolumes(volumes);
-    const details: string[] = [];
-    const server = this.config.get<string>("NFS_GANESHA_SERVER", "").trim();
-
-    if (!server) {
+    if (volumes.length === 0) {
       return {
-        success: false,
-        message: "NFS-Ganesha server is not configured",
-        details: "NFS_GANESHA_SERVER is required for CephFS Volume provisioning",
+        success: true,
+        message: "No Volume runtime readiness validation required",
+        details: "",
       };
     }
 
@@ -62,53 +63,46 @@ export class StackVolumeProvisionerService {
         details: nodes.stderr || nodes.stdout || nodes.command,
       };
     }
-    const nodeCount = this.readyNodeCount(nodes.stdout);
-    if (nodeCount === 0) {
+
+    const eligibleNodes: StorageNodeReadiness[] = [];
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [id = "", status = ""] = line.split("|");
+      if (status.trim().toLowerCase() !== "ready") continue;
+      const label = await this.runDocker([
+        "node",
+        "inspect",
+        "--format",
+        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        id.trim(),
+      ]);
+      if (label.exitCode !== 0) {
+        return {
+          success: false,
+          message: "Unable to inspect Swarm storage readiness",
+          details: label.stderr || label.stdout || label.command,
+        };
+      }
+      const node = parseStorageNode(`${id}|${status}|${label.stdout.trim()}`);
+      if (node.ready && node.volumesReady) eligibleNodes.push(node);
+    }
+
+    if (eligibleNodes.length === 0) {
       return {
         success: false,
-        message: "No Ready Swarm nodes for Volume provisioning",
+        message: "No Ready Swarm nodes with Volume storage readiness",
         details: nodes.command,
       };
     }
 
-    for (const volume of uniqueVolumes) {
-      const result = await this.provisionVolumeOnAllNodes(volume, nodeCount);
-      details.push(result.details);
-      if (!result.success) {
-        return {
-          success: false,
-          message: result.message,
-          details: details.join("\n"),
-        };
-      }
-    }
-
-    return {
-      success: true,
-      message: `Provisioned ${uniqueVolumes.length} NFS volume(s) on ${nodeCount} Ready node(s)`,
-      details: details.join("\n"),
-    };
-  }
-
-  private async provisionVolumeOnAllNodes(
-    volume: ProvisionVolume,
-    nodeCount: number,
-  ): Promise<ProvisionResult> {
-    const serviceName = `rp-vol-provision-${randomUUID().slice(0, 8)}`;
-    const definition = this.runtimeVolumeDefinition(volume.storagePath);
+    const serviceName = `rp-volume-runtime-probe-${randomUUID().slice(0, 8)}`;
+    const runtimeRoot = this.config.get<string>(
+      "RESOURCE_VOLUME_RUNTIME_ROOT",
+      DEFAULT_VOLUME_RUNTIME_ROOT,
+    );
     const image = this.config.get<string>(
       "STORAGE_REMOTE_VALIDATION_IMAGE",
       "alpine:3.20",
     );
-    const mount = [
-      "type=volume",
-      `source=${volume.dockerVolumeName}`,
-      "target=/probe",
-      "volume-driver=local",
-      `volume-opt=type=${definition.driver_opts.type}`,
-      `volume-opt=device=${definition.driver_opts.device}`,
-      `"volume-opt=o=${definition.driver_opts.o}"`,
-    ].join(",");
     const create = await this.runDocker([
       "service",
       "create",
@@ -117,37 +111,42 @@ export class StackVolumeProvisionerService {
       serviceName,
       "--mode",
       "global",
+      "--constraint",
+      "node.labels.resourceportal.storage.volumes==true",
       "--restart-condition",
       "none",
       "--mount",
-      mount,
+      `type=bind,source=${runtimeRoot},target=/probe`,
       image,
       "sh",
       "-c",
-      'probe="/probe/.rp-volume-provision-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
+      'probe="/probe/.rp-volume-runtime-probe-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
     ]);
 
     if (create.exitCode !== 0) {
       return {
         success: false,
-        message: `NFS volume provision failed for ${volume.dockerVolumeName}`,
+        message: "Volume runtime namespace probe could not start",
         details: create.stderr || create.stdout || create.command,
       };
     }
 
     try {
-      const completion = await this.waitForGlobalCompletion(serviceName, nodeCount);
+      const completion = await this.waitForGlobalCompletion(
+        serviceName,
+        eligibleNodes.length,
+      );
       if (!completion.success) {
         return {
           success: false,
-          message: `NFS volume provision failed for ${volume.dockerVolumeName}`,
+          message: "Volume runtime namespace readiness validation failed",
           details: completion.details,
         };
       }
       return {
         success: true,
-        message: `Provisioned ${volume.dockerVolumeName}`,
-        details: `Validated ${volume.storagePath} through NFS-Ganesha on ${nodeCount} Ready node(s)`,
+        message: `Validated canonical Volume runtime namespace on ${eligibleNodes.length} Ready storage node(s)`,
+        details: `${runtimeRoot} is writable on eligible nodes`,
       };
     } finally {
       await this.runDocker(["service", "rm", serviceName]).catch(() => undefined);
@@ -178,9 +177,7 @@ export class StackVolumeProvisionerService {
       }
       const tasks = status.stdout.split("\n").filter(Boolean);
       const failed = tasks.find((line) => /^(Failed|Rejected)/i.test(line));
-      if (failed) {
-        return { success: false, details: failed };
-      }
+      if (failed) return { success: false, details: failed };
       const completed = tasks.filter((line) => /^Complete/i.test(line)).length;
       if (completed >= nodeCount) {
         return { success: true, details: status.stdout };
@@ -188,21 +185,10 @@ export class StackVolumeProvisionerService {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    return { success: false, details: "Timed out waiting for NFS volume provisioning" };
-  }
-
-  private readyNodeCount(output: string) {
-    return output
-      .split("\n")
-      .filter(Boolean)
-      .filter((line) => line.split("|").at(-1)?.trim().toLowerCase() === "ready")
-      .length;
-  }
-
-  private uniqueVolumes(volumes: ProvisionVolume[]) {
-    return Array.from(
-      new Map(volumes.map((volume) => [volume.dockerVolumeName, volume])).values(),
-    );
+    return {
+      success: false,
+      details: "Timed out waiting for Volume runtime namespace readiness probe",
+    };
   }
 
   private runDocker(args: string[]) {
@@ -225,9 +211,7 @@ export class StackVolumeProvisionerService {
       const stderr: Buffer[] = [];
       let settled = false;
       const timeout = setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGTERM");
-        }
+        if (!settled) child.kill("SIGTERM");
       }, timeoutMs);
 
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
@@ -251,7 +235,7 @@ export class StackVolumeProvisionerService {
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
           stderr: signal
-            ? `docker volume command terminated by ${signal}`
+            ? `docker storage readiness command terminated by ${signal}`
             : this.decode(stderr),
         });
       });

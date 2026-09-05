@@ -41,12 +41,15 @@ jobs:
       DATABASE_URL: postgresql://resource_portal:resource_portal@127.0.0.1:5432/resource_portal?schema=public
       AUTH_MODE: dev
       RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-      RESOURCE_STORAGE_ROOT: /rp/volumes
-      RESOURCE_SECRET_STORAGE_ROOT: /rp/secrets
+      RESOURCE_STORAGE_BASE_PATH: /srv/resource-portal/storage
+      RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
+      RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
+      RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
       RESOURCE_PORTAL_API_URL: http://127.0.0.1:3000/api
-      STORAGE_MOUNT_ROOT: /tmp/resourceportal-storage
+      STORAGE_MOUNT_ROOT: /srv/resource-portal/storage
       STORAGE_FINDMNT_CLI: findmnt
       STORAGE_XFS_QUOTA_CLI: xfs_quota
+      STORAGE_QUOTA_CLI: quota
       STORAGE_LSATTR_CLI: lsattr
       NFS_GANESHA_SERVER: 127.0.0.1
       NFS_GANESHA_VERSION: "4.1"
@@ -126,7 +129,7 @@ jobs:
       - name: Prepare Stage 14 XFS storage harness
         run: |
           sudo apt-get update
-          sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs nfs-common xfsprogs
+          sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs nfs-common xfsprogs quota
           sudo systemctl stop nfs-ganesha 2>/dev/null || true
 
           STORAGE_IMAGE="$RUNNER_TEMP/resourceportal-storage.img"
@@ -135,15 +138,28 @@ jobs:
           LOOP_DEVICE="$(sudo losetup --find --show "$STORAGE_IMAGE")"
           printf '%s\n' "$LOOP_DEVICE" > "$RUNNER_TEMP/resourceportal-storage.loop"
 
-          sudo mkdir -p "$STORAGE_MOUNT_ROOT"
-          sudo mount -o prjquota "$LOOP_DEVICE" "$STORAGE_MOUNT_ROOT"
+          sudo mkdir -p /srv/resource-portal/storage
+          sudo mount -o prjquota "$LOOP_DEVICE" /srv/resource-portal/storage
           sudo mkdir -p \
             /run/ganesha \
-            "$STORAGE_MOUNT_ROOT/volumes" \
-            "$STORAGE_MOUNT_ROOT/secrets"
+            /srv/resource-portal/storage/volumes \
+            /srv/resource-portal/storage/secrets \
+            /srv/resource-portal/storage/platform \
+            /mnt/resourceportal/volumes \
+            /mnt/resourceportal/secrets \
+            /mnt/resourceportal/platform
 
-          test "$(findmnt -n -o FSTYPE -T "$STORAGE_MOUNT_ROOT")" = xfs
-          findmnt -n -o OPTIONS -T "$STORAGE_MOUNT_ROOT" | grep -Eq '(^|,)(prjquota|pquota)(,|$)'
+          sudo mount --bind /srv/resource-portal/storage/volumes /mnt/resourceportal/volumes
+          sudo mount --bind /srv/resource-portal/storage/secrets /mnt/resourceportal/secrets
+          sudo mount --bind /srv/resource-portal/storage/platform /mnt/resourceportal/platform
+          sudo chmod 0777 /srv/resource-portal/storage/volumes
+
+          test "$(findmnt -n -o FSTYPE -T /srv/resource-portal/storage)" = xfs
+          findmnt -n -o OPTIONS -T /srv/resource-portal/storage | grep -Eq '(^|,)(prjquota|pquota)(,|$)'
+          test "$(findmnt -n -o TARGET -T /mnt/resourceportal/volumes)" = /mnt/resourceportal/volumes
+          printf ok | sudo tee /mnt/resourceportal/volumes/.rp-local-ready >/dev/null
+          test "$(sudo cat /srv/resource-portal/storage/volumes/.rp-local-ready)" = ok
+          sudo rm -f /mnt/resourceportal/volumes/.rp-local-ready
 
           sudo tee /etc/ganesha/ganesha.conf >/dev/null <<EOF
           NFS_Core_Param {
@@ -152,12 +168,12 @@ jobs:
 
           EXPORT {
             Export_Id = 14;
-            Path = $STORAGE_MOUNT_ROOT;
-            Pseudo = /rp;
+            Path = /srv/resource-portal/storage/volumes;
+            Pseudo = /volumes;
             Protocols = 4;
             Transports = TCP;
             Access_Type = RW;
-            Squash = None;
+            Squash = Root_Squash;
             SecType = sys;
             FSAL {
               Name = VFS;
@@ -176,11 +192,22 @@ jobs:
           sudo ss -ltn | grep ':2049 '
 
           sudo mkdir -p /tmp/resource-portal-nfs-probe
-          sudo mount -t nfs -o vers=4.1 127.0.0.1:/rp /tmp/resource-portal-nfs-probe
+          sudo mount -t nfs -o vers=4.1 127.0.0.1:/volumes /tmp/resource-portal-nfs-probe
           printf ok | sudo tee /tmp/resource-portal-nfs-probe/.rp-stage14-probe >/dev/null
-          test "$(sudo cat "$STORAGE_MOUNT_ROOT/.rp-stage14-probe")" = ok
+          test "$(sudo cat /srv/resource-portal/storage/volumes/.rp-stage14-probe)" = ok
           sudo rm -f /tmp/resource-portal-nfs-probe/.rp-stage14-probe
           sudo umount /tmp/resource-portal-nfs-probe
+
+          if sudo mount -t nfs -o vers=4.1 127.0.0.1:/secrets /tmp/resource-portal-nfs-probe 2>/dev/null; then
+            echo 'Protected secrets namespace was unexpectedly exported'
+            sudo umount /tmp/resource-portal-nfs-probe || true
+            exit 1
+          fi
+          if sudo mount -t nfs -o vers=4.1 127.0.0.1:/platform /tmp/resource-portal-nfs-probe 2>/dev/null; then
+            echo 'Protected platform namespace was unexpectedly exported'
+            sudo umount /tmp/resource-portal-nfs-probe || true
+            exit 1
+          fi
 
       - name: Initialize real Docker Swarm
         run: |
@@ -188,6 +215,14 @@ jobs:
           docker swarm init
           docker node ls
           test "$(docker info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = "active true"
+          NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
+          test -w /mnt/resourceportal/volumes
+          docker node update \
+            --label-add resourceportal.storage.volumes=true \
+            --label-add resourceportal.storage.secrets=true \
+            --label-add resourceportal.storage.platform=true \
+            "$NODE_ID"
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
 
       - name: Build Stage 20 Web Console
         env:
@@ -289,7 +324,10 @@ jobs:
         if: always()
         run: |
           sudo umount /tmp/resource-portal-nfs-probe 2>/dev/null || true
-          sudo umount "$STORAGE_MOUNT_ROOT" 2>/dev/null || true
+          sudo umount /mnt/resourceportal/volumes 2>/dev/null || true
+          sudo umount /mnt/resourceportal/secrets 2>/dev/null || true
+          sudo umount /mnt/resourceportal/platform 2>/dev/null || true
+          sudo umount /srv/resource-portal/storage 2>/dev/null || true
           if test -f "$RUNNER_TEMP/resourceportal-storage.loop"; then
             sudo losetup -d "$(cat "$RUNNER_TEMP/resourceportal-storage.loop")" 2>/dev/null || true
           fi

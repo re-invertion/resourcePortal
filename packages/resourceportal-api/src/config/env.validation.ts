@@ -48,6 +48,14 @@ export function validateEnv(config: Env) {
     errors,
     "STORAGE_REMOTE_VALIDATION_TIMEOUT_MS",
   );
+  for (const key of [
+    "RESOURCE_STORAGE_BASE_PATH",
+    "RESOURCE_VOLUME_RUNTIME_ROOT",
+    "RESOURCE_SECRET_RUNTIME_ROOT",
+    "RESOURCE_PLATFORM_RUNTIME_ROOT",
+  ]) {
+    requireAbsolutePathIfSet(config, errors, key);
+  }
   requirePatternIfSet(
     config,
     errors,
@@ -70,7 +78,6 @@ export function validateEnv(config: Env) {
       errors.push("INTERNAL_WORKER_TOKEN must be changed in production");
     }
 
-    requireValue(config, errors, "NFS_GANESHA_SERVER");
   }
 
   if (errors.length > 0) {
@@ -133,5 +140,12 @@ function requirePatternIfSet(
 
   if (value && !pattern.test(value)) {
     errors.push(message);
+  }
+}
+
+function requireAbsolutePathIfSet(config: Env, errors: string[], key: string) {
+  const value = config[key];
+  if (value && !value.startsWith("/")) {
+    errors.push(`${key} must be an absolute path`);
   }
 }

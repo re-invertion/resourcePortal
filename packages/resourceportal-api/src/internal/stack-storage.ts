@@ -1,34 +1,18 @@
-export type StackStorageVolume = {
-  volumeName: string;
-  storagePath: string;
-  dockerVolumeName?: string;
-};
+import { volumeRuntimePath } from "../storage-backends/storage-paths";
 
-export type RuntimeVolumeDefinition = {
-  driver: "local";
-  driver_opts: {
-    type: "nfs";
-    o: string;
-    device: string;
-  };
-};
+export function renderRuntimeVolumeMount(input: {
+  runtimeRoot: string;
+  tenantId: string;
+  volumeId: string;
+  mountPath: string;
+  mode: "ReadOnly" | "ReadWrite";
+}): string {
+  const source = volumeRuntimePath(input.runtimeRoot, input.tenantId, input.volumeId);
+  return `${source}:${input.mountPath}:${input.mode === "ReadOnly" ? "ro" : "rw"}`;
+}
 
-export function renderStackStorageVolumes(
-  volumes: StackStorageVolume[],
-  runtimeDefinition: (storagePath: string) => RuntimeVolumeDefinition,
-) {
-  const definitions = new Map<
-    string,
-    RuntimeVolumeDefinition & { name: string }
-  >();
-
-  for (const volume of volumes) {
-    const alias = `rp_${volume.volumeName.replaceAll("-", "_")}`;
-    definitions.set(alias, {
-      name: volume.dockerVolumeName ?? alias,
-      ...runtimeDefinition(volume.storagePath),
-    });
-  }
-
-  return definitions.size > 0 ? Object.fromEntries(definitions) : undefined;
+export function storagePlacementConstraints(hasVolumes: boolean): string[] {
+  return hasVolumes
+    ? ["node.labels.resourceportal.storage.volumes == true"]
+    : [];
 }

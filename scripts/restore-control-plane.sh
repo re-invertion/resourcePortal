@@ -9,10 +9,10 @@ BACKUP_DIR="$1"
 DB_DUMP="${BACKUP_DIR%/}/resource-portal.dump"
 MANIFEST="${BACKUP_DIR%/}/manifest.sha256"
 SECRET_ARCHIVE="${BACKUP_DIR%/}/secrets.tar.gz"
-SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_SECRET_STORAGE_ROOT:-/rp/secrets}")"
+SECRET_STORAGE_ROOT="$(realpath -m "${RESOURCE_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/secrets")"
 
 if [[ "$SECRET_STORAGE_ROOT" == "/" ]]; then
-  echo "Refusing to use / as RESOURCE_SECRET_STORAGE_ROOT." >&2
+  echo "Refusing to use / as RESOURCE_STORAGE_BASE_PATH-derived Secret storage path." >&2
   exit 2
 fi
 

@@ -3,14 +3,12 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveLocalStoragePath } from "../src/storage-backends/storage-backend.logic";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
   .replace(/\/$/, "");
-const storageMountRoot = process.env.STORAGE_MOUNT_ROOT ?? "/mnt/resourceportal-storage";
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -64,13 +62,10 @@ async function main() {
     { method: "GET" },
   );
   storagePath = stringField(volume, "storagePath");
-  physicalStoragePath = resolveLocalStoragePath(
-    storageMountRoot,
-    "/rp",
-    storagePath,
-  );
+  physicalStoragePath = storagePath;
 
   await writeUsageFixture(physicalStoragePath);
+  await assertHardQuotaEnforced(physicalStoragePath);
 
   const measured = await api<JsonObject>(
     `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
@@ -124,6 +119,37 @@ async function cleanup() {
     await prisma.tenant
       .delete({ where: { id: createdTenantId } })
       .catch(() => undefined);
+  }
+}
+
+
+async function assertHardQuotaEnforced(path: string) {
+  if (process.env.STORAGE_SMOKE_PRIVILEGED_WORKER !== "true") {
+    return;
+  }
+  const withinQuota = join(path, "stage14-quota-within.bin");
+  const beyondQuota = join(path, "stage14-quota-beyond.bin");
+  const first = await command("sudo", [
+    "dd",
+    "if=/dev/zero",
+    `of=${withinQuota}`,
+    "bs=1024",
+    "count=900",
+    "status=none",
+  ]);
+  if (first.exitCode !== 0) {
+    throw new Error(`Expected write within Volume quota to succeed: ${first.stderr}`);
+  }
+  const second = await command("sudo", [
+    "dd",
+    "if=/dev/zero",
+    `of=${beyondQuota}`,
+    "bs=1024",
+    "count=256",
+    "status=none",
+  ]);
+  if (second.exitCode === 0) {
+    throw new Error("Expected project quota to reject a write beyond Volume.sizeBytes");
   }
 }
 

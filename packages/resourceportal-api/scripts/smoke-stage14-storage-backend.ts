@@ -21,9 +21,9 @@ async function main() {
   backendId = stringField(backend, "id");
   expectField(backend, "name", "default-local-filesystem");
   expectField(backend, "type", "LocalFilesystem");
-  expectField(backend, "basePath", "/rp");
-  expectField(backend, "volumeBasePath", "/rp/volumes");
-  expectField(backend, "secretBasePath", "/rp/secrets");
+  expectField(backend, "basePath", "/srv/resource-portal/storage");
+  expectField(backend, "volumeBasePath", "/srv/resource-portal/storage/volumes");
+  expectField(backend, "secretBasePath", "/srv/resource-portal/storage/secrets");
 
   const validated = await api<JsonObject>(
     `/platform/storage-backends/${backendId}/validate`,

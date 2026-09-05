@@ -16,9 +16,9 @@ const backend = {
   id: "00000000-0000-4000-8000-000000000014",
   name: "default-local-filesystem",
   type: "LocalFilesystem" as const,
-  basePath: "/rp",
-  volumeBasePath: "/rp/volumes",
-  secretBasePath: "/rp/secrets",
+  basePath: "/srv/resource-portal/storage",
+  volumeBasePath: "/srv/resource-portal/storage/volumes",
+  secretBasePath: "/srv/resource-portal/storage/secrets",
   status: "Ready" as const,
   health: "Healthy" as const,
   maintenance: false,
@@ -75,7 +75,7 @@ function createHarness() {
     reserveVolume: vi.fn((_tx: unknown, input: { tenantId: string; volumeId: string }) =>
       Promise.resolve({
         backend,
-        storagePath: `/rp/volumes/${input.tenantId}/${input.volumeId}`,
+        storagePath: `/srv/resource-portal/storage/volumes/${input.tenantId}/${input.volumeId}`,
         projectId: 12001,
       }),
     ),

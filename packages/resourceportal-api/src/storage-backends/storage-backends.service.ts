@@ -232,12 +232,6 @@ export class StorageBackendsService {
     return usedSize;
   }
 
-  runtimeVolumeDefinition(storagePath: string) {
-    return {
-      driver: "local" as const,
-      driver_opts: this.localFilesystem.runtimeDriverOptions(storagePath),
-    };
-  }
 
   private async refreshBackendForWrite(backend: StorageBackendRow) {
     this.assertPersistedWritable(backend);

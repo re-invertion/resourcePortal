@@ -2,7 +2,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
   DeploymentPhase,
   DeploymentStatus,
@@ -24,7 +26,11 @@ import { StackConfigProvisionerService } from "./stack-config-provisioner.servic
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
-import { renderStackStorageVolumes } from "./stack-storage";
+import {
+  renderRuntimeVolumeMount,
+  storagePlacementConstraints,
+} from "./stack-storage";
+import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
 import { renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
@@ -137,6 +143,7 @@ export class DeploymentWorkerService {
     private readonly stackVolumeProvisioner: StackVolumeProvisionerService,
     private readonly encryption: EncryptionService,
     private readonly secretStorage: SecretStorageService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async claimNextDeployment(dto: ClaimDeploymentDto) {
@@ -1038,7 +1045,6 @@ export class DeploymentWorkerService {
           this.renderService(snapshot, singleApp),
         ]),
       ),
-      volumes: this.renderVolumes(snapshot),
       secrets: this.renderSecrets(snapshot),
       configs: this.renderConfigs(snapshot),
     });
@@ -1438,9 +1444,17 @@ export class DeploymentWorkerService {
       healthcheck: this.renderHealthCheck(singleApp.healthCheck),
       volumes:
         singleApp.volumes.length > 0
-          ? singleApp.volumes.map(
-              (volume) =>
-                `${this.volumeName(volume.volumeName)}:${volume.mountPath}:${volume.mode === "ReadOnly" ? "ro" : "rw"}`,
+          ? singleApp.volumes.map((volume) =>
+              renderRuntimeVolumeMount({
+                runtimeRoot: this.config?.get<string>(
+                  "RESOURCE_VOLUME_RUNTIME_ROOT",
+                  DEFAULT_VOLUME_RUNTIME_ROOT,
+                ) ?? DEFAULT_VOLUME_RUNTIME_ROOT,
+                tenantId: snapshot.appGroup.tenantId,
+                volumeId: volume.volumeId,
+                mountPath: volume.mountPath,
+                mode: volume.mode,
+              }),
             )
           : undefined,
       secrets:
@@ -1467,6 +1481,10 @@ export class DeploymentWorkerService {
         },
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
+        placement:
+          singleApp.volumes.length > 0
+            ? { constraints: storagePlacementConstraints(true) }
+            : undefined,
         labels: this.renderTraefikLabels(singleApp),
       },
     });
@@ -1519,19 +1537,6 @@ export class DeploymentWorkerService {
     return renderTraefikLabels(singleApp);
   }
 
-  private renderVolumes(snapshot: StackConfigSnapshot) {
-    const volumes = snapshot.singleApps.flatMap((singleApp) =>
-      singleApp.volumes.map((volume) => ({
-        volumeName: volume.volumeName,
-        storagePath: volume.storagePath,
-        dockerVolumeName: volume.dockerVolumeName,
-      })),
-    );
-
-    return renderStackStorageVolumes(volumes, (storagePath) =>
-      this.stackVolumeProvisioner.runtimeVolumeDefinition(storagePath),
-    );
-  }
 
   private renderSecrets(snapshot: StackConfigSnapshot) {
     const secrets = new Map<string, { external: true; name: string }>();

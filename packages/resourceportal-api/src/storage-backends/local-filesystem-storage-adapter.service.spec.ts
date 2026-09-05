@@ -1,11 +1,12 @@
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalFilesystemStorageAdapterService } from "./local-filesystem-storage-adapter.service";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 vi.mock("node:fs/promises", () => ({
+  chmod: vi.fn(),
   lstat: vi.fn(),
   mkdir: vi.fn(),
   readdir: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("node:fs/promises", () => ({
   statfs: vi.fn(),
 }));
 
+const mockedChmod = vi.mocked(chmod);
 const mockedLstat = vi.mocked(lstat);
 const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
@@ -29,20 +31,23 @@ function setEffectiveUid(uid: number) {
 
 const backend = {
   id: "00000000-0000-4000-8000-000000000014",
-  basePath: "/rp",
-  volumeBasePath: "/rp/volumes",
-  secretBasePath: "/rp/secrets",
+  basePath: "/srv/resource-portal/storage",
+  volumeBasePath: "/srv/resource-portal/storage/volumes",
+  secretBasePath: "/srv/resource-portal/storage/secrets",
 };
 
 function adapterFor(input?: {
   filesystem?: string;
   options?: string;
   projectIdReadback?: number;
+  quotaHardKiB?: number;
 }) {
   const config = {
     get: vi.fn((key: string, defaultValue: unknown) => {
       const values: Record<string, unknown> = {
-        STORAGE_MOUNT_ROOT: "/mnt/resourceportal-storage",
+        RESOURCE_STORAGE_BASE_PATH: "/srv/resource-portal/storage",
+        STORAGE_MOUNT_ROOT: "/srv/resource-portal/storage",
+        STORAGE_QUOTA_CLI: "quota",
         STORAGE_FINDMNT_CLI: "findmnt",
         STORAGE_XFS_QUOTA_CLI: "xfs_quota",
         STORAGE_SETQUOTA_CLI: "setquota",
@@ -54,6 +59,7 @@ function adapterFor(input?: {
       return values[key] ?? defaultValue;
     }),
   };
+  let currentHardKiB = input?.quotaHardKiB;
   const runner = {
     run: vi.fn((program: string, args: string[]) => {
       if (program === "findmnt" && args.includes("FSTYPE")) {
@@ -70,8 +76,25 @@ function adapterFor(input?: {
           stderr: "",
         });
       }
+      if (program === "xfs_quota" && args.at(-1)?.startsWith("limit -p")) {
+        const match = args.at(-1)?.match(/bhard=(\d+)k/);
+        if (match && input?.quotaHardKiB === undefined) currentHardKiB = Number(match[1]);
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (program === "xfs_quota" && args.at(-1)?.startsWith("report ")) {
+        const hard = currentHardKiB ?? 4;
+        return Promise.resolve({ exitCode: 0, stdout: `#12001 0 ${hard} ${hard} 00 [--------]\n`, stderr: "" });
+      }
       if (["xfs_quota", "setquota", "chattr"].includes(program)) {
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (program === "setquota") {
+        if (input?.quotaHardKiB === undefined) currentHardKiB = Number(args[2]);
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (program === "quota") {
+        const hard = currentHardKiB ?? 9;
+        return Promise.resolve({ exitCode: 0, stdout: `12002 0 ${hard} ${hard} 0 0\n`, stderr: "" });
       }
       if (program === "lsattr") {
         const path = args.at(-1) ?? "";
@@ -170,7 +193,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
 
   it("provisions an XFS Volume with a numeric project quota", async () => {
     const { adapter, runner } = adapterFor();
-    const localPath = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
+    const localPath = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
 
     await expect(
       adapter.provisionVolume(backend, {
@@ -179,24 +202,25 @@ describe("LocalFilesystemStorageAdapterService", () => {
         sizeBytes: 4096n,
         projectId: 12001,
       }),
-    ).resolves.toEqual({ storagePath: "/rp/volumes/tenant-a/volume-a" });
+    ).resolves.toEqual({ storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a" });
 
     expect(mockedMkdir).toHaveBeenCalledWith(localPath, { recursive: true });
+    expect(mockedChmod).toHaveBeenCalledWith(localPath, 0o777);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
       "-D/dev/null",
       "-x",
       "-f",
-      "/mnt/resourceportal-storage",
+      "/srv/resource-portal/storage",
       "-c",
-      "limit -p bhard=4096 bsoft=4096 12001",
+      "limit -p bhard=4k bsoft=4k 12001",
     ]);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
       "-D/dev/null",
       "-x",
       "-f",
-      "/mnt/resourceportal-storage",
+      "/srv/resource-portal/storage",
       "-c",
       `project -s -p ${localPath} 12001`,
     ]);
@@ -208,7 +232,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
       filesystem: "ext4",
       projectIdReadback: 12002,
     });
-    const localPath = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
+    const localPath = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
 
     await adapter.provisionVolume(backend, {
       tenantId: "tenant-a",
@@ -230,13 +254,13 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "9",
       "0",
       "0",
-      "/mnt/resourceportal-storage",
+      "/srv/resource-portal/storage",
     ]);
   });
 
   it("removes a newly-created directory when project-id verification fails", async () => {
     const { adapter } = adapterFor({ projectIdReadback: 12099 });
-    const localPath = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
+    const localPath = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
 
     await expect(
       adapter.provisionVolume(backend, {
@@ -255,7 +279,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
 
     await adapter.resizeVolume(
       backend,
-      "/rp/volumes/tenant-a/volume-a",
+      "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
       16384n,
       12001,
     );
@@ -265,15 +289,15 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "-D/dev/null",
       "-x",
       "-f",
-      "/mnt/resourceportal-storage",
+      "/srv/resource-portal/storage",
       "-c",
-      "limit -p bhard=16384 bsoft=16384 12001",
+      "limit -p bhard=16k bsoft=16k 12001",
     ]);
   });
 
   it("measures used bytes recursively without following symlinks", async () => {
     const { adapter } = adapterFor();
-    const root = "/mnt/resourceportal-storage/volumes/tenant-a/volume-a";
+    const root = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
     mockedReaddir.mockImplementation((path) => {
       if (String(path) === root) return Promise.resolve(["a.txt", "nested", "link"] as never);
       if (String(path) === `${root}/nested`) return Promise.resolve(["b.txt"] as never);
@@ -314,17 +338,21 @@ describe("LocalFilesystemStorageAdapterService", () => {
     });
 
     await expect(
-      adapter.measureUsedSize(backend, "/rp/volumes/tenant-a/volume-a"),
+      adapter.measureUsedSize(backend, "/srv/resource-portal/storage/volumes/tenant-a/volume-a"),
     ).resolves.toBe(12n);
   });
 
-  it("returns NFS-Ganesha runtime driver options", () => {
-    const { adapter } = adapterFor();
 
-    expect(adapter.runtimeDriverOptions("/rp/volumes/tenant-a/volume-a")).toEqual({
-      type: "nfs",
-      o: "addr=10.0.0.15,nfsvers=4.1,rw",
-      device: ":/rp/volumes/tenant-a/volume-a",
-    });
+  it("rejects an XFS hard quota readback mismatch", async () => {
+    const { adapter } = adapterFor({ quotaHardKiB: 5 });
+    await expect(adapter.provisionVolume(backend, { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 4096n, projectId: 12001 }))
+      .rejects.toThrow("Storage project quota verification failed");
   });
+
+  it("rejects an ext4 hard quota readback mismatch", async () => {
+    const { adapter } = adapterFor({ filesystem: "ext4", projectIdReadback: 12002, quotaHardKiB: 10 });
+    await expect(adapter.provisionVolume(backend, { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 8193n, projectId: 12002 }))
+      .rejects.toThrow("Storage project quota verification failed");
+  });
+
 });

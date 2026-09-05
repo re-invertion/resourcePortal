@@ -1,12 +1,18 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_VOLUME_RUNTIME_ROOT } from "./storage-paths";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 export type NfsRemoteValidationResult = {
   ok: boolean;
   skipped: boolean;
   error: string | null;
+};
+
+type StorageNode = {
+  ready: boolean;
+  volumesReady: boolean;
 };
 
 @Injectable()
@@ -17,17 +23,13 @@ export class NfsRemoteAccessValidatorService {
   ) {}
 
   async validate(basePath: string): Promise<NfsRemoteValidationResult> {
+    void basePath;
     if (!this.enabled()) {
       return {
         ok: true,
         skipped: true,
-        error: "Remote NFS validation disabled by configuration",
+        error: "Remote storage validation disabled by configuration",
       };
-    }
-
-    const server = this.config.get<string>("NFS_GANESHA_SERVER", "").trim();
-    if (!server) {
-      return { ok: false, skipped: false, error: "NFS_GANESHA_SERVER is required" };
     }
 
     const nodes = await this.docker([
@@ -43,22 +45,45 @@ export class NfsRemoteAccessValidatorService {
         error: `Unable to list Swarm nodes: ${nodes.stderr || nodes.stdout}`,
       };
     }
-    const nodeCount = this.readyNodeCount(nodes.stdout);
-    if (nodeCount === 0) {
-      return { ok: false, skipped: false, error: "No Ready Swarm RemoteLocations" };
+
+    let eligibleNodeCount = 0;
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [id = "", status = ""] = line.split("|");
+      if (status.trim().toLowerCase() !== "ready") continue;
+      const label = await this.docker([
+        "node",
+        "inspect",
+        "--format",
+        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        id.trim(),
+      ]);
+      if (label.exitCode !== 0) {
+        return {
+          ok: false,
+          skipped: false,
+          error: `Unable to inspect Swarm storage readiness: ${label.stderr || label.stdout}`,
+        };
+      }
+      const node = this.parseNode(`${id}|${status}|${label.stdout.trim()}`);
+      if (node.ready && node.volumesReady) eligibleNodeCount += 1;
+    }
+    if (eligibleNodeCount === 0) {
+      return {
+        ok: false,
+        skipped: false,
+        error: "No Ready Swarm RemoteLocations with Volume storage readiness",
+      };
     }
 
-    const serviceName = `rp-storage-probe-${randomUUID().slice(0, 8)}`;
-    const version = this.config.get<string>("NFS_GANESHA_VERSION", "4.1");
-    const image = this.config.get<string>("STORAGE_REMOTE_VALIDATION_IMAGE", "alpine:3.20");
-    const mount = [
-      "type=volume",
-      "target=/probe",
-      "volume-driver=local",
-      "volume-opt=type=nfs",
-      `volume-opt=device=:${basePath}`,
-      `"volume-opt=o=addr=${server},rw,nfsvers=${version}"`,
-    ].join(",");
+    const serviceName = `rp-storage-runtime-probe-${randomUUID().slice(0, 8)}`;
+    const image = this.config.get<string>(
+      "STORAGE_REMOTE_VALIDATION_IMAGE",
+      "alpine:3.20",
+    );
+    const runtimeRoot = this.config.get<string>(
+      "RESOURCE_VOLUME_RUNTIME_ROOT",
+      DEFAULT_VOLUME_RUNTIME_ROOT,
+    );
     const create = await this.docker([
       "service",
       "create",
@@ -67,25 +92,27 @@ export class NfsRemoteAccessValidatorService {
       serviceName,
       "--mode",
       "global",
+      "--constraint",
+      "node.labels.resourceportal.storage.volumes==true",
       "--restart-condition",
       "none",
       "--mount",
-      mount,
+      `type=bind,source=${runtimeRoot},target=/probe`,
       image,
       "sh",
       "-c",
-      'probe="/probe/.rp-storage-probe-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
+      'probe="/probe/.rp-storage-runtime-probe-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
     ]);
     if (create.exitCode !== 0) {
       return {
         ok: false,
         skipped: false,
-        error: `NFS probe service create failed: ${create.stderr || create.stdout}`,
+        error: `storage runtime probe service create failed: ${create.stderr || create.stdout}`,
       };
     }
 
     try {
-      return await this.waitForProbe(serviceName, nodeCount);
+      return await this.waitForProbe(serviceName, eligibleNodeCount);
     } finally {
       await this.docker(["service", "rm", serviceName]).catch(() => undefined);
     }
@@ -95,7 +122,10 @@ export class NfsRemoteAccessValidatorService {
     serviceName: string,
     nodeCount: number,
   ): Promise<NfsRemoteValidationResult> {
-    const timeoutMs = this.config.get<number>("STORAGE_REMOTE_VALIDATION_TIMEOUT_MS", 120000);
+    const timeoutMs = this.config.get<number>(
+      "STORAGE_REMOTE_VALIDATION_TIMEOUT_MS",
+      120000,
+    );
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
@@ -111,14 +141,18 @@ export class NfsRemoteAccessValidatorService {
         return {
           ok: false,
           skipped: false,
-          error: `NFS probe inspection failed: ${result.stderr || result.stdout}`,
+          error: `storage runtime probe inspection failed: ${result.stderr || result.stdout}`,
         };
       }
 
       const tasks = result.stdout.split("\n").filter(Boolean);
       const failed = tasks.find((line) => /^(Failed|Rejected)/i.test(line));
       if (failed) {
-        return { ok: false, skipped: false, error: `NFS probe failed: ${failed}` };
+        return {
+          ok: false,
+          skipped: false,
+          error: `storage runtime probe failed: ${failed}`,
+        };
       }
       const completed = tasks.filter((line) => /^Complete/i.test(line)).length;
       if (completed >= nodeCount) {
@@ -128,19 +162,26 @@ export class NfsRemoteAccessValidatorService {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
 
-    return { ok: false, skipped: false, error: "NFS probe timed out" };
+    return {
+      ok: false,
+      skipped: false,
+      error: "storage runtime probe timed out",
+    };
   }
 
-  private readyNodeCount(output: string) {
-    return output
-      .split("\n")
-      .filter(Boolean)
-      .filter((line) => line.split("|").at(-1)?.trim().toLowerCase() === "ready")
-      .length;
+  private parseNode(line: string): StorageNode {
+    const [, status = "", volumesLabel = ""] = line.split("|");
+    return {
+      ready: status.trim().toLowerCase() === "ready",
+      volumesReady: volumesLabel.trim().toLowerCase() === "true",
+    };
   }
 
   private enabled() {
-    return this.config.get<string>("STORAGE_REMOTE_VALIDATION_ENABLED", "true") !== "false";
+    return (
+      this.config.get<string>("STORAGE_REMOTE_VALIDATION_ENABLED", "true") !==
+      "false"
+    );
   }
 
   private docker(args: string[]) {

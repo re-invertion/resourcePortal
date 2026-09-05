@@ -19,7 +19,7 @@ function volume(overrides: Record<string, unknown> = {}) {
     name: "data",
     description: null,
     storagePath:
-      "/rp/volumes/33333333-3333-4333-8333-333333333333/22222222-2222-4222-8222-222222222222",
+      "/srv/resource-portal/storage/volumes/33333333-3333-4333-8333-333333333333/22222222-2222-4222-8222-222222222222",
     dockerVolumeName:
       "rp_vol_22222222_2222_4222_8222_222222222222",
     sizeBytes: 10_000n,
@@ -103,11 +103,11 @@ describe("Stage 7 volume lifecycle through Stage 14 backend", () => {
   it("keeps the database record and marks the volume Error when physical cleanup fails", async () => {
     const item = volume();
     const { prisma, storageBackends, service } = serviceFor(item);
-    storageBackends.deleteVolume.mockRejectedValue(new Error("ceph unavailable"));
+    storageBackends.deleteVolume.mockRejectedValue(new Error("storage unavailable"));
 
     await expect(
       service.deleteVolume(item.tenantId, item.id, actor),
-    ).rejects.toThrow("ceph unavailable");
+    ).rejects.toThrow("storage unavailable");
 
     expect(prisma.volume.delete).not.toHaveBeenCalled();
     expect(prisma.volume.update).toHaveBeenLastCalledWith({

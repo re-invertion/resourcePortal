@@ -1,8 +1,10 @@
 # Stage 14 — StorageBackend / LocalFilesystem Design
 
+> **SUPERSEDED / HISTORICAL (2026-09-05).** This document records the earlier LocalFilesystem transition design and is not authoritative for active runtime paths. The ResourcePortal Wiki is the architectural source of truth. The approved replacement design is `docs/superpowers/specs/2026-09-05-stage14-wiki-storage-alignment-design.md`, which requires physical storage under `/srv/resource-portal/storage`, canonical runtime mounts under `/mnt/resourceportal/*`, storage-readiness node labels, and no per-Volume Docker NFS driver path. Historical migration details below are retained for audit only.
+
 ## Status
 
-This document describes the current v1 storage architecture after the decision to remove CephFS from the initial ResourcePortal deployment model.
+This document is historical and has been superseded by the 2026-09-05 Wiki-alignment design.
 
 CephFS is **not** a v1 backend. It may be introduced later as a separate backend without changing the tenant-facing Volume API.
 

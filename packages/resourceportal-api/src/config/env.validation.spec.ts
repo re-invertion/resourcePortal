@@ -125,9 +125,31 @@ describe("validateEnv", () => {
     );
   });
 
-  it("requires secure cookies, a non-default internal token, encryption and NFS-Ganesha in production", () => {
+
+  it("accepts canonical Stage 14 physical and runtime roots", () => {
+    const env = {
+      ...validBaseEnv,
+      RESOURCE_STORAGE_BASE_PATH: "/srv/resource-portal/storage",
+      RESOURCE_VOLUME_RUNTIME_ROOT: "/mnt/resourceportal/volumes",
+      RESOURCE_SECRET_RUNTIME_ROOT: "/mnt/resourceportal/secrets",
+      RESOURCE_PLATFORM_RUNTIME_ROOT: "/mnt/resourceportal/platform",
+    };
+    expect(validateEnv(env)).toBe(env);
+  });
+
+  it("rejects relative Stage 14 physical and runtime roots", () => {
+    expect(() => validateEnv({
+      ...validBaseEnv,
+      RESOURCE_STORAGE_BASE_PATH: "srv/resource-portal/storage",
+      RESOURCE_VOLUME_RUNTIME_ROOT: "mnt/resourceportal/volumes",
+    })).toThrow(
+      "RESOURCE_STORAGE_BASE_PATH must be an absolute path; RESOURCE_VOLUME_RUNTIME_ROOT must be an absolute path",
+    );
+  });
+
+  it("requires secure cookies, a non-default internal token and encryption in production", () => {
     expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
-      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production; NFS_GANESHA_SERVER is required",
+      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
   });
 
