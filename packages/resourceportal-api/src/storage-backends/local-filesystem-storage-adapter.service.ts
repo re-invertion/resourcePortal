@@ -3,10 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
 import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { posix } from "node:path";
-import {
-  buildNfsDriverOptions,
-  resolveLocalStoragePath,
-} from "./storage-backend.logic";
+import { resolveLocalStoragePath } from "./storage-backend.logic";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 export type LocalStorageFilesystem = "xfs" | "ext4";
@@ -70,6 +67,7 @@ export class LocalFilesystemStorageAdapterService {
       await this.applyProjectLimit(filesystem, input.projectId, input.sizeBytes);
       await this.assignProject(filesystem, localPath, input.projectId);
       await this.verifyProject(localPath, input.projectId);
+      await this.verifyProjectLimit(filesystem, input.projectId, input.sizeBytes);
     } catch (error) {
       await rm(localPath, { recursive: true, force: true }).catch(() => undefined);
       throw error;
@@ -90,6 +88,7 @@ export class LocalFilesystemStorageAdapterService {
     const localPath = this.localPath(backend, storagePath);
     await this.verifyProject(localPath, projectId);
     await this.applyProjectLimit(filesystem, projectId, sizeBytes);
+    await this.verifyProjectLimit(filesystem, projectId, sizeBytes);
   }
 
   async deleteVolume(
@@ -109,13 +108,6 @@ export class LocalFilesystemStorageAdapterService {
     return this.measureDirectory(this.localPath(backend, storagePath));
   }
 
-  runtimeDriverOptions(storagePath: string) {
-    return buildNfsDriverOptions(
-      this.config.get<string>("NFS_GANESHA_SERVER", ""),
-      this.config.get<string>("NFS_GANESHA_VERSION", "4.1"),
-      storagePath,
-    );
-  }
 
   private async validateMount(): Promise<LocalStorageFilesystem> {
     const mountRoot = this.mountRoot();
@@ -180,8 +172,9 @@ export class LocalFilesystemStorageAdapterService {
     }
 
     if (filesystem === "xfs") {
+      const blocks = (sizeBytes + 1023n) / 1024n;
       const result = await this.runXfsQuota(
-        `limit -p bhard=${sizeBytes.toString()} bsoft=${sizeBytes.toString()} ${projectId}`,
+        `limit -p bhard=${blocks.toString()}k bsoft=${blocks.toString()}k ${projectId}`,
       );
       if (result.exitCode !== 0) {
         throw new InternalServerErrorException(
@@ -250,6 +243,46 @@ export class LocalFilesystemStorageAdapterService {
     }
   }
 
+
+  private async verifyProjectLimit(
+    filesystem: LocalStorageFilesystem,
+    projectId: number,
+    sizeBytes: bigint,
+  ) {
+    const expectedKiB = (sizeBytes + 1023n) / 1024n;
+    let result;
+    if (filesystem === "xfs") {
+      result = await this.runXfsQuota("report -p -n -b");
+    } else {
+      const quota = this.config.get<string>("STORAGE_QUOTA_CLI", "quota");
+      result = await this.commands.run(quota, [
+        "-P",
+        "-w",
+        "-v",
+        projectId.toString(),
+        this.mountRoot(),
+      ]);
+    }
+
+    const hardKiB = this.parseQuotaHardKiB(result.stdout, projectId);
+    if (result.exitCode !== 0 || hardKiB !== expectedKiB) {
+      throw new InternalServerErrorException(
+        `Storage project quota verification failed: expected ${expectedKiB.toString()} KiB, got ${hardKiB?.toString() ?? "unavailable"} KiB`,
+      );
+    }
+  }
+
+  private parseQuotaHardKiB(output: string, projectId: number): bigint | null {
+    const line = output
+      .split("\n")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(`${projectId} `));
+    if (!line) return null;
+    const fields = line.split(/\s+/);
+    const raw = fields[3];
+    if (!raw || !/^\d+$/.test(raw)) return null;
+    return BigInt(raw);
+  }
   private runXfsQuota(command: string) {
     const cli = this.config.get<string>("STORAGE_XFS_QUOTA_CLI", "xfs_quota");
     return this.commands.run(cli, [
@@ -284,7 +317,7 @@ export class LocalFilesystemStorageAdapterService {
   private mountRoot() {
     return this.config.get<string>(
       "STORAGE_MOUNT_ROOT",
-      "/mnt/resourceportal-storage",
+      this.config.get<string>("RESOURCE_STORAGE_BASE_PATH", "/srv/resource-portal/storage"),
     );
   }
 
