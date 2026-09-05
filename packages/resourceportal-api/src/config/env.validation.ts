@@ -1,3 +1,5 @@
+import { loadSecretFiles } from "./secret-file-loader";
+
 type Env = Record<string, string | undefined>;
 
 const supportedAuthModes = new Set(["dev", "oidc", "zitadel"]);
@@ -5,6 +7,7 @@ const defaultInternalWorkerToken = "dev-worker-token";
 const traefikResolverPattern = /^[A-Za-z0-9_-]+$/;
 
 export function validateEnv(config: Env) {
+  loadSecretFiles(config);
   const errors: string[] = [];
   const nodeEnv = config.NODE_ENV ?? "development";
   const authMode = (config.AUTH_MODE ?? "dev").toLowerCase();
