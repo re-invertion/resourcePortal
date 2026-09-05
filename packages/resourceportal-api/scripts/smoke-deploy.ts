@@ -14,6 +14,7 @@ const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:300
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const suffix = `${Date.now()}`;
 const stackPrefix = "rp_";
+const storageBasePath = process.env.RESOURCE_STORAGE_BASE_PATH ?? "/srv/resource-portal/storage";
 
 let createdTenantId: string | undefined;
 let createdVolumeId: string | undefined;
@@ -215,6 +216,12 @@ async function main() {
 
   const stackName = stackNameFor(createdAppGroupId);
   await docker(["stack", "services", stackName]);
+  const volumeMarker = await assertCanonicalVolumeRuntime(
+    stackName,
+    "nginx",
+    createdTenantId,
+    createdVolumeId,
+  );
 
   await api(
     `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/single-apps/${singleAppId}/runtime/stop`,
@@ -241,6 +248,8 @@ async function main() {
       userId,
     },
   );
+  await expectServiceReplicas(stackName, "nginx", "1/1");
+  await expectVolumeMarker(stackName, "nginx", volumeMarker);
 
   const rollback = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/deployments/${deploymentId}/rollback`,
@@ -266,7 +275,16 @@ async function cleanup() {
   }
 
   if (createdVolumeId) {
-    await removeDockerVolume(`rp_vol_${createdVolumeId.replaceAll("-", "_")}`);
+    const volume = await prisma.volume.findUnique({
+      where: { id: createdVolumeId },
+      select: { storagePath: true },
+    }).catch(() => null);
+    if (volume?.storagePath) {
+      if (!volume.storagePath.startsWith(`${storageBasePath}/volumes/`)) {
+        throw new Error(`Unsafe smoke cleanup storage path: ${volume.storagePath}`);
+      }
+      await command("sudo", ["rm", "-rf", volume.storagePath]).catch(() => undefined);
+    }
   }
 
   if (createdTenantId) {
@@ -396,6 +414,83 @@ async function expectDeploymentStatus(
   }
 }
 
+async function assertCanonicalVolumeRuntime(
+  stackName: string,
+  serviceName: string,
+  tenantId: string,
+  volumeId: string,
+) {
+  const service = `${stackName}_${serviceName}`;
+  const inspect = await docker([
+    "service",
+    "inspect",
+    service,
+    "--format",
+    "{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}|{{json .Spec.TaskTemplate.Placement.Constraints}}",
+  ]);
+  const expectedSource = `/mnt/resourceportal/volumes/${tenantId}/${volumeId}`;
+  if (!inspect.stdout.includes(`"Type":"bind"`) || !inspect.stdout.includes(expectedSource)) {
+    throw new Error(`Expected canonical bind mount ${expectedSource}, got ${inspect.stdout}`);
+  }
+  if (!inspect.stdout.includes("node.labels.resourceportal.storage.volumes == true")) {
+    throw new Error(`Expected Volume storage placement constraint, got ${inspect.stdout}`);
+  }
+
+  const container = await docker([
+    "ps",
+    "--filter",
+    `name=${service}`,
+    "--format",
+    "{{.ID}}",
+  ]);
+  const containerId = container.stdout.trim().split("\n")[0];
+  if (!containerId) throw new Error(`No running container found for ${service}`);
+  const marker = `stage14-${Date.now()}`;
+  const persisted = await docker([
+    "exec",
+    containerId,
+    "sh",
+    "-c",
+    `printf '%s' '${marker}' > /smoke-data/.rp-stage14-marker && cat /smoke-data/.rp-stage14-marker`,
+  ]);
+  if (persisted.stdout.trim() !== marker) {
+    throw new Error(`Volume-backed workload marker mismatch: ${persisted.stdout}`);
+  }
+  return marker;
+}
+
+async function expectVolumeMarker(
+  stackName: string,
+  serviceName: string,
+  marker: string,
+) {
+  const service = `${stackName}_${serviceName}`;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const container = await docker(
+      [
+        "ps",
+        "--filter",
+        `name=${service}`,
+        "--format",
+        "{{.ID}}",
+      ],
+      true,
+    );
+    const containerId = container.stdout.trim().split("\n")[0];
+    if (containerId) {
+      const persisted = await docker(
+        ["exec", containerId, "cat", "/smoke-data/.rp-stage14-marker"],
+        true,
+      );
+      if (persisted.exitCode === 0 && persisted.stdout.trim() === marker) {
+        return;
+      }
+    }
+    await wait(1000);
+  }
+  throw new Error("Volume marker did not persist across workload restart");
+}
+
 async function expectServiceReplicas(
   stackName: string,
   serviceName: string,
@@ -432,18 +527,6 @@ async function waitForStackRemoval(stackName: string) {
     );
 
     if (!result.stdout.trim()) {
-      return;
-    }
-
-    await wait(1000);
-  }
-}
-
-async function removeDockerVolume(volumeName: string) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = await docker(["volume", "rm", volumeName], true);
-
-    if (result.exitCode === 0 || result.stderr.includes("No such volume")) {
       return;
     }
 
