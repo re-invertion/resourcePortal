@@ -9,7 +9,10 @@ vi.mock("node:child_process", () => ({
   spawn: spawnMock,
 }));
 
-import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
+import {
+  parseStorageNode,
+  StackVolumeProvisionerService,
+} from "./stack-volume-provisioner.service";
 
 function dockerProcess(stdout = "", exitCode = 0) {
   const child = new EventEmitter() as EventEmitter & {
@@ -21,9 +24,7 @@ function dockerProcess(stdout = "", exitCode = 0) {
   child.stderr = new PassThrough();
   child.kill = vi.fn();
   queueMicrotask(() => {
-    if (stdout) {
-      child.stdout.write(stdout);
-    }
+    if (stdout) child.stdout.write(stdout);
     child.stdout.end();
     child.stderr.end();
     child.emit("close", exitCode, null);
@@ -37,8 +38,7 @@ function service() {
       const values: Record<string, unknown> = {
         DOCKER_CONTEXT: "default",
         DOCKER_VOLUME_PROVISION_TIMEOUT_MS: 1000,
-        NFS_GANESHA_SERVER: "10.0.0.15",
-        NFS_GANESHA_VERSION: "4.1",
+        RESOURCE_VOLUME_RUNTIME_ROOT: "/mnt/resourceportal/volumes",
         STORAGE_REMOTE_VALIDATION_IMAGE: "alpine:3.20",
       };
       return values[key] ?? fallback;
@@ -52,22 +52,38 @@ describe("StackVolumeProvisionerService", () => {
     spawnMock.mockReset();
   });
 
-  it("lists all Swarm nodes and provisions only across Ready nodes", async () => {
+  it("parses Swarm storage readiness from node status and label", () => {
+    expect(parseStorageNode("node-a|Ready|true")).toEqual({
+      id: "node-a",
+      ready: true,
+      volumesReady: true,
+    });
+    expect(parseStorageNode("node-b|Ready|false")).toEqual({
+      id: "node-b",
+      ready: true,
+      volumesReady: false,
+    });
+    expect(parseStorageNode("node-c|Down|true")).toEqual({
+      id: "node-c",
+      ready: false,
+      volumesReady: true,
+    });
+  });
+
+  it("validates only Ready nodes carrying the volumes readiness label", async () => {
     spawnMock
       .mockImplementationOnce(() =>
-        dockerProcess("node-a|Ready\nnode-b|Down\nnode-c|Ready\n"),
+        dockerProcess("node-a|Ready|true\nnode-b|Ready|false\nnode-c|Down|true\n"),
       )
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
-      .mockImplementationOnce(() =>
-        dockerProcess("Complete 1 second ago|\nComplete 1 second ago|\n"),
-      )
+      .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
 
     await expect(
       service().provisionVolumes([
         {
           dockerVolumeName: "rp_vol_123",
-          storagePath: "/rp/volumes/tenant-a/volume-a",
+          storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
         },
       ]),
     ).resolves.toMatchObject({ success: true });
@@ -81,15 +97,15 @@ describe("StackVolumeProvisionerService", () => {
         "node",
         "ls",
         "--format",
-        "{{.ID}}|{{.Status}}",
+        '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
   });
 
-  it("quotes comma-separated local-driver NFS options for the probe service", async () => {
+  it("probes the canonical runtime root with a bind mount and storage constraint", async () => {
     spawnMock
-      .mockImplementationOnce(() => dockerProcess("node-a|Ready\n"))
+      .mockImplementationOnce(() => dockerProcess("node-a|Ready|true\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
@@ -98,7 +114,7 @@ describe("StackVolumeProvisionerService", () => {
       service().provisionVolumes([
         {
           dockerVolumeName: "rp_vol_123",
-          storagePath: "/rp/volumes/tenant-a/volume-a",
+          storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
         },
       ]),
     ).resolves.toMatchObject({ success: true });
@@ -111,7 +127,28 @@ describe("StackVolumeProvisionerService", () => {
     const createArgs = (createCall?.[1] as string[] | undefined) ?? [];
     const mountIndex = createArgs.indexOf("--mount");
     expect(createArgs[mountIndex + 1]).toBe(
-      'type=volume,source=rp_vol_123,target=/probe,volume-driver=local,volume-opt=type=nfs,volume-opt=device=:/rp/volumes/tenant-a/volume-a,"volume-opt=o=addr=10.0.0.15,nfsvers=4.1,rw"',
+      "type=bind,source=/mnt/resourceportal/volumes,target=/probe",
     );
+    expect(createArgs).toContain("node.labels.resourceportal.storage.volumes==true");
+    expect(createArgs.join(" ")).not.toContain("volume-driver=local");
+    expect(createArgs.join(" ")).not.toContain(":/rp/");
+  });
+
+  it("fails closed when no Ready storage node is eligible", async () => {
+    spawnMock.mockImplementationOnce(() =>
+      dockerProcess("node-a|Ready|false\nnode-b|Down|true\n"),
+    );
+
+    await expect(
+      service().provisionVolumes([
+        {
+          dockerVolumeName: "rp_vol_123",
+          storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
+        },
+      ]),
+    ).resolves.toMatchObject({
+      success: false,
+      message: "No Ready Swarm nodes with Volume storage readiness",
+    });
   });
 });

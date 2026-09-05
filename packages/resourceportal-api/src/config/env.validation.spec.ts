@@ -147,9 +147,9 @@ describe("validateEnv", () => {
     );
   });
 
-  it("requires secure cookies, a non-default internal token, encryption and NFS-Ganesha in production", () => {
+  it("requires secure cookies, a non-default internal token and encryption in production", () => {
     expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
-      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production; NFS_GANESHA_SERVER is required",
+      "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
   });
 

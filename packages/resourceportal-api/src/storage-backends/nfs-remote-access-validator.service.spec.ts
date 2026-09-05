@@ -8,8 +8,7 @@ function harness(results: Array<{ exitCode: number; stdout: string; stderr: stri
     get: vi.fn((key: string, fallback?: unknown) => {
       const values: Record<string, unknown> = {
         DOCKER_CONTEXT: "default",
-        NFS_GANESHA_SERVER: "10.0.0.15",
-        NFS_GANESHA_VERSION: "4.1",
+        RESOURCE_VOLUME_RUNTIME_ROOT: "/mnt/resourceportal/volumes",
         STORAGE_REMOTE_VALIDATION_ENABLED: "true",
         STORAGE_REMOTE_VALIDATION_IMAGE: "alpine:3.20",
         STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: 1000,
@@ -35,23 +34,21 @@ function harness(results: Array<{ exitCode: number; stdout: string; stderr: stri
 }
 
 describe("NfsRemoteAccessValidatorService", () => {
-  it("lists all Swarm nodes and counts only Ready statuses", async () => {
+  it("counts only Ready nodes carrying the volumes readiness label", async () => {
     const { validator, runner } = harness([
       {
         exitCode: 0,
-        stdout: "node-a|Ready\nnode-b|Down\nnode-c|Ready",
+        stdout: "node-a|Ready|true\nnode-b|Ready|false\nnode-c|Down|true",
         stderr: "",
       },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
-      { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
+      { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
     ]);
 
-    await expect(validator.validate("/rp")).resolves.toEqual({
-      ok: true,
-      skipped: false,
-      error: null,
-    });
+    await expect(
+      validator.validate("/srv/resource-portal/storage"),
+    ).resolves.toEqual({ ok: true, skipped: false, error: null });
 
     expect(runner.run).toHaveBeenNthCalledWith(1, "docker", [
       "--context",
@@ -59,82 +56,64 @@ describe("NfsRemoteAccessValidatorService", () => {
       "node",
       "ls",
       "--format",
-      "{{.ID}}|{{.Status}}",
+      '{{.ID}}|{{.Status}}|{{index .Labels "resourceportal.storage.volumes"}}',
     ]);
   });
 
-  it("quotes comma-separated local-driver NFS options for docker service create", async () => {
+  it("probes only the canonical workload Volume runtime namespace", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a|Ready\nnode-b|Ready", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready|true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
-      { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
+      { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
     ]);
 
-    await expect(validator.validate("/rp")).resolves.toEqual({
-      ok: true,
-      skipped: false,
-      error: null,
-    });
+    await expect(
+      validator.validate("/srv/resource-portal/storage"),
+    ).resolves.toEqual({ ok: true, skipped: false, error: null });
 
     const createCall = runner.run.mock.calls.find(
       ([program, args]) =>
-        program === "docker" &&
-        args.includes("service") &&
-        args.includes("create"),
+        program === "docker" && args.includes("service") && args.includes("create"),
     );
     expect(createCall).toBeDefined();
     const createArgs = createCall?.[1] ?? [];
     const mountIndex = createArgs.indexOf("--mount");
     expect(createArgs[mountIndex + 1]).toBe(
-      'type=volume,target=/probe,volume-driver=local,volume-opt=type=nfs,volume-opt=device=:/rp,"volume-opt=o=addr=10.0.0.15,rw,nfsvers=4.1"',
+      "type=bind,source=/mnt/resourceportal/volumes,target=/probe",
     );
+    expect(createArgs).toContain("node.labels.resourceportal.storage.volumes==true");
+    expect(createArgs.join(" ")).not.toContain("/mnt/resourceportal/secrets");
+    expect(createArgs.join(" ")).not.toContain("/mnt/resourceportal/platform");
+    expect(createArgs.join(" ")).not.toContain("volume-driver=local");
   });
 
-  it("validates the CephFS export through a temporary global Swarm service", async () => {
-    const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a|Ready\nnode-b|Ready", stderr: "" },
-      { exitCode: 0, stdout: "probe-service", stderr: "" },
-      { exitCode: 0, stdout: "Complete 1 second ago|\nComplete 1 second ago|", stderr: "" },
-      { exitCode: 0, stdout: "", stderr: "" },
+  it("fails closed when no storage-ready node is eligible", async () => {
+    const { validator } = harness([
+      { exitCode: 0, stdout: "node-a|Ready|false\nnode-b|Down|true", stderr: "" },
     ]);
 
-    await expect(validator.validate("/rp")).resolves.toEqual({
-      ok: true,
+    await expect(
+      validator.validate("/srv/resource-portal/storage"),
+    ).resolves.toEqual({
+      ok: false,
       skipped: false,
-      error: null,
+      error: "No Ready Swarm RemoteLocations with Volume storage readiness",
     });
-
-    expect(runner.run).toHaveBeenCalledWith(
-      "docker",
-      expect.arrayContaining([
-        "--context",
-        "default",
-        "service",
-        "create",
-        "--mode",
-        "global",
-        "--mount",
-      ]),
-    );
-    expect(runner.run).toHaveBeenLastCalledWith(
-      "docker",
-      expect.arrayContaining(["service", "rm"]),
-    );
   });
 
   it("removes the probe service after a failed task", async () => {
     const { validator, runner } = harness([
-      { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
+      { exitCode: 0, stdout: "node-a|Ready|true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Rejected 1 second ago|mount failed", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
     ]);
 
-    const result = await validator.validate("/rp");
+    const result = await validator.validate("/srv/resource-portal/storage");
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("NFS probe failed");
+    expect(result.error).toContain("storage runtime probe failed");
     expect(runner.run).toHaveBeenLastCalledWith(
       "docker",
       expect.arrayContaining(["service", "rm"]),
@@ -153,10 +132,12 @@ describe("NfsRemoteAccessValidatorService", () => {
       runner as unknown as StorageCommandRunnerService,
     );
 
-    await expect(validator.validate("/rp")).resolves.toEqual({
+    await expect(
+      validator.validate("/srv/resource-portal/storage"),
+    ).resolves.toEqual({
       ok: true,
       skipped: true,
-      error: "Remote NFS validation disabled by configuration",
+      error: "Remote storage validation disabled by configuration",
     });
     expect(runner.run).not.toHaveBeenCalled();
   });

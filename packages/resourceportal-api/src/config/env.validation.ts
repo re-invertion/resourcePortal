@@ -78,7 +78,6 @@ export function validateEnv(config: Env) {
       errors.push("INTERNAL_WORKER_TOKEN must be changed in production");
     }
 
-    requireValue(config, errors, "NFS_GANESHA_SERVER");
   }
 
   if (errors.length > 0) {
