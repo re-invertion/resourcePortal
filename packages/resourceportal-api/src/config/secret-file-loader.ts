@@ -1,0 +1,33 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
+
+export type SecretFileEnv = Record<string, string | undefined>;
+
+export const SECRET_FILE_KEYS = [
+  "DATABASE_URL",
+  "RESOURCE_ENCRYPTION_KEY",
+  "AUTH_COOKIE_SECRET",
+  "INTERNAL_WORKER_TOKEN",
+  "OIDC_CLIENT_SECRET",
+  "ZITADEL_MANAGEMENT_TOKEN",
+  "ZITADEL_BOOTSTRAP_PAT",
+  "SMTP_PASSWORD",
+] as const;
+
+export function loadSecretFiles<T extends SecretFileEnv>(env: T): T {
+  for (const key of SECRET_FILE_KEYS) {
+    if (env[key] !== undefined) continue;
+    const fileKey = `${key}_FILE`;
+    const path = env[fileKey];
+    if (!path) continue;
+    if (!isAbsolute(path)) {
+      throw new Error(`${fileKey} must be an absolute path`);
+    }
+    try {
+      env[key] = readFileSync(path, "utf8").replace(/\r?\n$/, "");
+    } catch {
+      throw new Error(`Unable to read ${fileKey}`);
+    }
+  }
+  return env;
+}
