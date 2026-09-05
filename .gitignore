@@ -12,3 +12,5 @@ yarn-debug.log*
 Thumbs.db
 config/zitadel/zitadel-init-steps.yaml
 config/zitadel/zitadel-secrets.yaml
+
+.worktrees/
