@@ -1,11 +1,12 @@
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalFilesystemStorageAdapterService } from "./local-filesystem-storage-adapter.service";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 vi.mock("node:fs/promises", () => ({
+  chmod: vi.fn(),
   lstat: vi.fn(),
   mkdir: vi.fn(),
   readdir: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("node:fs/promises", () => ({
   statfs: vi.fn(),
 }));
 
+const mockedChmod = vi.mocked(chmod);
 const mockedLstat = vi.mocked(lstat);
 const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
@@ -203,6 +205,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
     ).resolves.toEqual({ storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a" });
 
     expect(mockedMkdir).toHaveBeenCalledWith(localPath, { recursive: true });
+    expect(mockedChmod).toHaveBeenCalledWith(localPath, 0o777);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
       "-D/dev/null",

@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { posix } from "node:path";
 import { resolveLocalStoragePath } from "./storage-backend.logic";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
@@ -62,6 +62,7 @@ export class LocalFilesystemStorageAdapterService {
     );
     const localPath = this.localPath(backend, storagePath);
     await mkdir(localPath, { recursive: true });
+    await chmod(localPath, 0o777);
 
     try {
       await this.applyProjectLimit(filesystem, input.projectId, input.sizeBytes);
