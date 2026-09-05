@@ -24,6 +24,7 @@ type OperationView = JsonObject & {
   status?: unknown;
   attempt?: unknown;
   errorCode?: unknown;
+  errorMessage?: unknown;
   nextAttemptAt?: unknown;
   resourceId?: unknown;
 };
@@ -140,7 +141,7 @@ async function main() {
   const succeeded = await getOperation(operationId);
   assert(
     succeeded.status === "Succeeded",
-    `Expected VOLUME_CREATE to succeed after retry, got ${String(succeeded.status)}`,
+    `Expected VOLUME_CREATE to succeed after retry, got ${String(succeeded.status)} (${String(succeeded.errorCode)}: ${String(succeeded.errorMessage)})`,
   );
   createdVolumeId = stringField(succeeded, "resourceId");
 
