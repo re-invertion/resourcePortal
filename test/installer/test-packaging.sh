@@ -22,6 +22,7 @@ if [[ -f "$web_docker" ]]; then
   contains "$web_docker" 'ENV NODE_ENV=production' "Web runtime forces production mode"
   contains "$web_docker" 'CMD ["node", "server.mjs"]' "Web runtime starts SSR server"
   not_contains "$web_docker" 'npm run dev' "Web runtime does not start Vite dev mode"
+not_contains "$web_docker" '/app/packages/resourceportal-web/node_modules' "Web image does not reference non-existent workspace node_modules"
 fi
 contains "$api_docker" 'COPY --from=build /app/packages/resourceportal-api/dist ./dist' "API image contains compiled runners"
 not_contains "$api_docker" 'CMD ["ts-node"' "API runtime does not depend on ts-node"

@@ -22,7 +22,6 @@ FROM node:24-alpine AS build
 WORKDIR /app/packages/resourceportal-web
 
 COPY --from=dependencies /app/node_modules /app/node_modules
-COPY --from=dependencies /app/packages/resourceportal-web/node_modules ./node_modules
 COPY packages/resourceportal-web/package.json ./package.json
 COPY packages/resourceportal-web/tsconfig.json ./tsconfig.json
 COPY packages/resourceportal-web/vite.config.ts ./vite.config.ts
@@ -40,7 +39,6 @@ ENV HOST=0.0.0.0
 ENV PORT=5173
 
 COPY --from=production-dependencies /app/node_modules /app/node_modules
-COPY --from=production-dependencies /app/packages/resourceportal-web/node_modules ./node_modules
 COPY --from=build /app/packages/resourceportal-web/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-web/server.mjs ./server.mjs
 COPY --from=build /app/packages/resourceportal-web/proxy-target.mjs ./proxy-target.mjs
