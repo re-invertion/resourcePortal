@@ -47,7 +47,6 @@ RUN apk add --no-cache \
     xfsprogs-extra
 
 COPY --from=production-dependencies /app/node_modules /app/node_modules
-COPY --from=production-dependencies /app/packages/resourceportal-api/node_modules ./node_modules
 COPY --from=build /app/packages/resourceportal-api/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/packages/resourceportal-api/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=build /app/package.json /app/package.json
