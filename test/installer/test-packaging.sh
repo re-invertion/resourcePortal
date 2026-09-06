@@ -27,7 +27,7 @@ contains "$api_docker" 'COPY --from=build /app/packages/resourceportal-api/dist 
 not_contains "$api_docker" 'CMD ["ts-node"' "API runtime does not depend on ts-node"
 
 
-not_contains "$api_docker" 'COPY --from=production-dependencies /app/packages/resourceportal-api/node_modules ./node_modules' "API runtime does not copy non-existent workspace node_modules"
+not_contains "$api_docker" '/app/packages/resourceportal-api/node_modules' "API image does not reference non-existent workspace node_modules"
 
 postgres_dockerfile="$repo_root/packages/resourceportal-postgres/Dockerfile"
 [[ -f "$postgres_dockerfile" ]] && pass 'PostgreSQL fencing runtime Dockerfile exists' || fail 'PostgreSQL fencing runtime Dockerfile exists'
