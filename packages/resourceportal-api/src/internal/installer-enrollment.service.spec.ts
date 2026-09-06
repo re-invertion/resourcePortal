@@ -17,11 +17,24 @@ function fixture() {
   const records: RecordState[] = [];
   const prisma = {
     installerEnrollment: {
-      create: async ({ data }: { data: RecordState }) => {
+      create: ({ data }: { data: RecordState }) => {
         records.push({ ...data });
-        return { id: "enrollment-1", ...data };
+        return Promise.resolve({ id: "enrollment-1", ...data });
       },
-      updateMany: async ({ where, data }: any) => {
+      updateMany: ({
+        where,
+        data,
+      }: {
+        where: {
+          tokenHash: string;
+          role: "Worker" | "Manager";
+          consumedAt?: null | { gt: Date };
+          expiresAt?: { gt: Date };
+          completedAt?: null | Date;
+          nodeId?: string | null;
+        };
+        data: Partial<RecordState>;
+      }) => {
         const match = records.find((record) => {
           if (record.tokenHash !== where.tokenHash || record.role !== where.role) return false;
           if (where.consumedAt === null && record.consumedAt !== null) return false;
@@ -32,9 +45,9 @@ function fixture() {
           if (where.nodeId !== undefined && record.nodeId !== where.nodeId) return false;
           return true;
         });
-        if (!match) return { count: 0 };
+        if (!match) return Promise.resolve({ count: 0 });
         Object.assign(match, data);
-        return { count: 1 };
+        return Promise.resolve({ count: 1 });
       },
     },
   };

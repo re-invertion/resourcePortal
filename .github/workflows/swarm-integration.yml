@@ -215,6 +215,7 @@ jobs:
           npm run test:installer
           source scripts/installer/common.sh
           source scripts/installer/swarm.sh
+          source scripts/installer/quota.sh
           source scripts/installer/nfs.sh
           test "$(rp_manager_quorum_state 1 1)" = healthy
           test "$(rp_manager_quorum_recommendation 1)" = recommend-3
