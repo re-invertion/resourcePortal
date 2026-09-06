@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateEnv } from "./env.validation";
 
@@ -151,6 +154,34 @@ describe("validateEnv", () => {
     expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
       "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
+  });
+
+  it("loads production secrets from *_FILE before validating the environment", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rp-env-secret-"));
+    try {
+      const databaseFile = join(dir, "database-url");
+      const encryptionFile = join(dir, "encryption-key");
+      const workerFile = join(dir, "worker-token");
+      writeFileSync(databaseFile, "postgresql://rp:secret@postgres-rp:5432/resource_portal\n");
+      writeFileSync(encryptionFile, "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n");
+      writeFileSync(workerFile, "production-worker-token\n");
+      const env = {
+        ...validBaseEnv,
+        DATABASE_URL: undefined,
+        DATABASE_URL_FILE: databaseFile,
+        RESOURCE_ENCRYPTION_KEY_FILE: encryptionFile,
+        INTERNAL_WORKER_TOKEN_FILE: workerFile,
+        AUTH_COOKIE_SECURE: "true",
+        NODE_ENV: "production",
+      };
+
+      expect(validateEnv(env)).toBe(env);
+      expect(env.DATABASE_URL).toContain("postgres-rp:5432");
+      expect(env.RESOURCE_ENCRYPTION_KEY).toMatch(/^MDEy/);
+      expect(env.INTERNAL_WORKER_TOKEN).toBe("production-worker-token");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("accepts production when hardening and Stage 14 storage settings are present", () => {

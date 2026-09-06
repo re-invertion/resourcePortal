@@ -1,0 +1,12 @@
+[Unit]
+Description=ResourcePortal storage readiness gate
+Before=docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/resourceportal/storage-ready-check
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

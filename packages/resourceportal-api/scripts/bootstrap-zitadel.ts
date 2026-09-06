@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 type JsonObject = Record<string, unknown>;
 
@@ -33,6 +33,9 @@ type User = {
 };
 
 const envFilePaths = [".env", "../../.env"];
+const bootstrapMode = process.env.ZITADEL_BOOTSTRAP_MODE ?? "development";
+const productionBootstrap = bootstrapMode === "production";
+const bootstrapOutputFile = process.env.ZITADEL_BOOTSTRAP_OUTPUT_FILE;
 
 loadDotEnv();
 
@@ -57,12 +60,19 @@ const postLogoutRedirectUris = listEnv(
   "ZITADEL_BOOTSTRAP_POST_LOGOUT_REDIRECT_URIS",
   `http://localhost:${process.env.PORT ?? "3000"}/api/auth/logout/callback`,
 );
-const testUserUsername =
-  process.env.ZITADEL_BOOTSTRAP_TEST_USER_USERNAME ?? "resource-user";
-const testUserEmail =
+const bootstrapUserUsername =
+  process.env.ZITADEL_BOOTSTRAP_ADMIN_USERNAME ??
+  process.env.ZITADEL_BOOTSTRAP_TEST_USER_USERNAME ??
+  "resource-user";
+const bootstrapUserEmail = (
+  process.env.ZITADEL_BOOTSTRAP_ADMIN_EMAIL ??
   process.env.ZITADEL_BOOTSTRAP_TEST_USER_EMAIL ??
-  "resource-user@example.local";
-const testUserPassword = process.env.ZITADEL_BOOTSTRAP_TEST_USER_PASSWORD;
+  "resource-user@example.local"
+).toLowerCase();
+const bootstrapUserPassword =
+  process.env.ZITADEL_BOOTSTRAP_ADMIN_PASSWORD ??
+  readOptionalFile(process.env.ZITADEL_BOOTSTRAP_ADMIN_PASSWORD_FILE ?? "")?.trim() ??
+  process.env.ZITADEL_BOOTSTRAP_TEST_USER_PASSWORD;
 
 async function main() {
   await waitForZitadel();
@@ -71,24 +81,52 @@ async function main() {
   const organization = await getOrCreateOrganization(pat);
   const project = await getOrCreateProject(pat, organization.id);
   const app = await getOrCreateOidcApp(pat, organization.id, project.id);
-  const testUser = await getOrCreateTestUser(pat, organization.id);
+  const bootstrapUser = await getOrCreateBootstrapUser(pat, organization.id);
 
-  updateDotEnv({
-    ZITADEL_ORGANIZATION_ID: organization.id,
-    ZITADEL_PROJECT_ID: project.id,
-    OIDC_ISSUER_URL: issuerUrl,
-    OIDC_CLIENT_ID: app.clientId,
-    OIDC_CLIENT_SECRET: app.clientSecret,
-    OIDC_AUDIENCE: app.clientId,
-  });
-
-  console.log("ZITADEL bootstrap completed");
-  console.log(`Organization: ${organization.id} (${organization.name})`);
-  console.log(`Project: ${project.id} (${project.name})`);
-  console.log(`OIDC app: ${app.appId} (${app.name})`);
-  console.log(`OIDC client id: ${app.clientId}`);
-  console.log(`OIDC client secret: ${maskSecret(app.clientSecret)}`);
-  console.log(`Test user: ${testUser.id} (${testUserEmail})`);
+  if (productionBootstrap) {
+    if (!bootstrapOutputFile) {
+      throw new Error("ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in production bootstrap mode");
+    }
+    writeFileSync(
+      bootstrapOutputFile,
+      `${JSON.stringify({
+        organizationId: organization.id,
+        projectId: project.id,
+        appId: app.appId,
+        clientId: app.clientId,
+        clientSecret: app.clientSecret,
+        userId: bootstrapUser.id,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(bootstrapOutputFile, 0o600);
+    for (const [suffix, value] of [
+      ["client-id", app.clientId],
+      ["client-secret", app.clientSecret],
+      ["user-id", bootstrapUser.id],
+    ] as const) {
+      const sidecar = `${bootstrapOutputFile}.${suffix}`;
+      writeFileSync(sidecar, `${value}\n`, { mode: 0o600 });
+      chmodSync(sidecar, 0o600);
+    }
+    console.log("ZITADEL production bootstrap completed");
+    console.log(`Platform Admin user id: ${bootstrapUser.id}`);
+  } else {
+    updateDotEnv({
+      ZITADEL_ORGANIZATION_ID: organization.id,
+      ZITADEL_PROJECT_ID: project.id,
+      OIDC_ISSUER_URL: issuerUrl,
+      OIDC_CLIENT_ID: app.clientId,
+      OIDC_CLIENT_SECRET: app.clientSecret,
+      OIDC_AUDIENCE: app.clientId,
+    });
+    console.log("ZITADEL bootstrap completed");
+    console.log(`Organization: ${organization.id} (${organization.name})`);
+    console.log(`Project: ${project.id} (${project.name})`);
+    console.log(`OIDC app: ${app.appId} (${app.name})`);
+    console.log(`OIDC client id: ${app.clientId}`);
+    console.log(`Test user: ${bootstrapUser.id} (${bootstrapUserEmail})`);
+  }
 }
 
 async function waitForZitadel() {
@@ -200,7 +238,10 @@ async function getOrCreateOidcApp(
     return {
       appId: existing.id,
       clientId: existing.oidcConfig.clientId,
-      clientSecret: process.env.OIDC_CLIENT_SECRET ?? "",
+      clientSecret:
+        process.env.OIDC_CLIENT_SECRET ??
+        readOptionalFile(process.env.OIDC_CLIENT_SECRET_FILE ?? "")?.trim() ??
+        "",
       name: existing.name,
     };
   }
@@ -221,7 +262,7 @@ async function getOrCreateOidcApp(
       authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC",
       postLogoutRedirectUris,
       version: "OIDC_VERSION_1_0",
-      devMode: true,
+      devMode: !productionBootstrap,
       accessTokenType: "OIDC_TOKEN_TYPE_JWT",
       idTokenUserinfoAssertion: true,
     },
@@ -236,7 +277,7 @@ async function getOrCreateOidcApp(
   };
 }
 
-async function getOrCreateTestUser(pat: string, organizationId: string) {
+async function getOrCreateBootstrapUser(pat: string, organizationId: string) {
   const users = await zitadelApi<{ result?: User[] }>(
     pat,
     "/management/v1/users/_search",
@@ -251,16 +292,18 @@ async function getOrCreateTestUser(pat: string, organizationId: string) {
       ...(user.loginNames ?? []),
     ];
 
-    return emails.some((value) => value?.toLowerCase() === testUserEmail);
+    return emails.some((value) => value?.toLowerCase() === bootstrapUserEmail);
   });
 
   if (existing) {
     return existing;
   }
 
-  if (!testUserPassword) {
+  if (!bootstrapUserPassword) {
     throw new Error(
-      "ZITADEL_BOOTSTRAP_TEST_USER_PASSWORD is required to create the local test user",
+      productionBootstrap
+        ? "ZITADEL_BOOTSTRAP_ADMIN_PASSWORD(_FILE) is required to create the first Platform Admin"
+        : "ZITADEL_BOOTSTRAP_TEST_USER_PASSWORD is required to create the local test user",
     );
   }
 
@@ -268,18 +311,18 @@ async function getOrCreateTestUser(pat: string, organizationId: string) {
     pat,
     "/management/v1/users/human/_import",
     {
-      userName: testUserUsername,
+      userName: bootstrapUserUsername,
       profile: {
-        firstName: "Resource",
-        lastName: "User",
-        displayName: "Resource User",
+        firstName: productionBootstrap ? "Platform" : "Resource",
+        lastName: productionBootstrap ? "Admin" : "User",
+        displayName: productionBootstrap ? "Platform Admin" : "Resource User",
         preferredLanguage: "en",
       },
       email: {
-        email: testUserEmail,
+        email: bootstrapUserEmail,
         isEmailVerified: true,
       },
-      password: testUserPassword,
+      password: bootstrapUserPassword,
       passwordChangeRequired: false,
     },
     organizationId,
@@ -388,14 +431,6 @@ function readOptionalFile(path: string) {
   }
 
   return readFileSync(path, "utf8");
-}
-
-function maskSecret(secret: string) {
-  if (!secret) {
-    return "(existing app secret not available)";
-  }
-
-  return `${secret.slice(0, 4)}...${secret.slice(-4)}`;
 }
 
 function delay(ms: number) {
