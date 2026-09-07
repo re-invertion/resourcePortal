@@ -62,7 +62,6 @@ rp_collect_primary_config() {
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || { RP_CFG_ZITADEL_DOMAIN="auth.${RP_CFG_DOMAIN}"; export RP_CFG_ZITADEL_DOMAIN; }
   rp_prompt_if_empty RP_CFG_INGRESS_ADDRESSES 'Ingress' 'Expected public ingress IP address(es), comma-separated' "${detected_public_address:-$RP_CFG_SWARM_ADVERTISE_ADDR}"
   rp_prompt_if_empty RP_CFG_ACME_EMAIL 'TLS / ACME' 'ACME contact email' ''
-  rp_prompt_if_empty RP_CFG_RELEASE_VERSION 'Release' 'ResourcePortal release version (for example 1.0.0)' ''
   if ! rp_phase_done "$state_file" identity; then
     rp_prompt_if_empty RP_ADMIN_USERNAME 'First Platform Admin' 'Admin username' 'admin'
     rp_prompt_if_empty RP_ADMIN_EMAIL 'First Platform Admin' 'Admin email' ''
@@ -181,9 +180,19 @@ rp_primary_configure_nfs() {
 rp_primary_resolve_release() {
   local manifest="${RP_CFG_RELEASE_MANIFEST:-/var/lib/resourceportal/installer-state/release.json}" docker_version current_version
   if [[ ! -r "$manifest" ]]; then
-    [[ -n "${RP_CFG_RELEASE_VERSION:-}" ]] || return 1
     mkdir -p "$(dirname "$manifest")"
-    rp_download_release_manifest "$RP_CFG_RELEASE_VERSION" "$manifest" || return 1
+    if [[ -z "${RP_CFG_RELEASE_VERSION:-}" ]]; then
+      RP_CFG_RELEASE_VERSION="$(rp_detect_latest_stable_release)" || return 1
+      export RP_CFG_RELEASE_VERSION
+      rp_log INFO "selected latest stable ResourcePortal release: ${RP_CFG_RELEASE_VERSION}"
+      rp_download_release_manifest "$RP_CFG_RELEASE_VERSION" "$manifest" || return 1
+    elif ! rp_download_release_manifest "$RP_CFG_RELEASE_VERSION" "$manifest"; then
+      rp_log WARN "configured ResourcePortal release ${RP_CFG_RELEASE_VERSION} is unavailable; selecting latest stable release"
+      RP_CFG_RELEASE_VERSION="$(rp_detect_latest_stable_release)" || return 1
+      export RP_CFG_RELEASE_VERSION
+      rp_log INFO "selected latest stable ResourcePortal release: ${RP_CFG_RELEASE_VERSION}"
+      rp_download_release_manifest "$RP_CFG_RELEASE_VERSION" "$manifest" || return 1
+    fi
   fi
   docker_version="$(docker version --format '{{.Server.Version}}')" || return 1
   current_version="${RP_CFG_INSTALLED_VERSION:-0.0.0}"
