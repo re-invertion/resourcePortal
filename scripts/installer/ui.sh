@@ -45,6 +45,8 @@ rp_ui_password() {
 rp_ui_choice() {
   local title="$1" prompt="$2"; shift 2
   local backend result first="${1:-}"
+  [[ $# -ge 1 ]] || return 2
+  shift
   backend="$(rp_ui_backend)"
   case "$backend" in
     dialog) result="$(dialog --stdout --title "$title" --menu "$prompt" 18 78 10 "$@")" || return 1 ;;

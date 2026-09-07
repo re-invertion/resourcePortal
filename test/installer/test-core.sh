@@ -96,6 +96,22 @@ assert_eq "primary" "${RP_CFG_MODE:-}" "loads persisted mode"
 assert_eq "/srv/resource-portal/storage" "${RP_CFG_STORAGE_BASE_PATH:-}" "loads persisted base path"
 assert_eq "rp.example.com" "${RP_CFG_DOMAIN:-}" "loads persisted domain"
 
+# Regression: invoking the installer without --mode must present correctly paired
+# mode labels in the terminal fallback. This exercises the real rp_main call site.
+# shellcheck source=/dev/null
+source "$repo_root/resourceportal-install.sh"
+rp_require_root() { :; }
+rp_log_init() { :; }
+rp_dispatch() { printf 'DISPATCH:%s\n' "$1"; }
+rp_ui_backend() { printf 'terminal\n'; }
+unset RP_CFG_MODE
+mode_menu_err="$tmpdir/mode-menu.err"
+mode_menu_out="$(printf '\n' | rp_main --config "$tmpdir/does-not-exist.conf" 2>"$mode_menu_err")"
+mode_menu_text="$(cat "$mode_menu_err")"
+assert_contains "$mode_menu_text" 'primary - Install Primary / Control Plane' "mode chooser pairs primary label correctly"
+assert_contains "$mode_menu_text" 'add-node - Add Swarm Node' "mode chooser pairs add-node label correctly"
+assert_contains "$mode_menu_out" 'DISPATCH:primary' "mode chooser defaults to primary"
+
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
   exit 1
