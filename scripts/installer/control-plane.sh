@@ -94,13 +94,20 @@ rp_write_stack() {
 
 rp_deploy_control_plane() {
   local state="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" stack_file
-  stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)"
-  trap 'rm -f "$stack_file"' RETURN
-  rp_render_stack "$state" >"$stack_file"
-  docker stack config --compose-file "$stack_file" >/dev/null
-  docker stack deploy --compose-file "$stack_file" --with-registry-auth "$stack_name"
+  stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)" || return 1
+  if ! rp_render_stack "$state" >"$stack_file"; then
+    rm -f "$stack_file"
+    return 1
+  fi
+  if ! docker stack config --compose-file "$stack_file" >/dev/null; then
+    rm -f "$stack_file"
+    return 1
+  fi
+  if ! docker stack deploy --compose-file "$stack_file" --with-registry-auth "$stack_name"; then
+    rm -f "$stack_file"
+    return 1
+  fi
   rm -f "$stack_file"
-  trap - RETURN
 }
 
 rp_run_migrations() {

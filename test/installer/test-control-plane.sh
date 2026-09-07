@@ -86,6 +86,22 @@ status 0 'accept exact digest API image' rp_validate_image_ref "$RP_CFG_API_IMAG
 status 1 'reject mutable latest image' rp_validate_image_ref 'ghcr.io/re-invertion/resourceportal-api:latest'
 status 1 'reject short digest' rp_validate_image_ref 'ghcr.io/re-invertion/resourceportal-api@sha256:abc'
 
+# Deployment must fail closed when rendering or Docker rejects the stack.
+original_render_stack="$(declare -f rp_render_stack)"
+original_docker="$(declare -f docker 2>/dev/null || true)"
+rp_render_stack(){ return 1; }
+docker(){ return 0; }
+status 1 'control-plane deploy fails when stack rendering fails' rp_deploy_control_plane bootstrap
+eval "$original_render_stack"
+docker(){
+  if [[ "$1 $2" == 'stack config' ]]; then return 0; fi
+  if [[ "$1 $2" == 'stack deploy' ]]; then return 1; fi
+  return 0
+}
+status 1 'control-plane deploy fails when docker stack deploy fails' rp_deploy_control_plane bootstrap
+eval "$original_render_stack"
+if [[ -n "$original_docker" ]]; then eval "$original_docker"; else unset -f docker; fi
+
 control_source="$(cat "$repo_root/scripts/installer/control-plane.sh")"
 contains "$control_source" 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"' 'migration reads database URL from Swarm Secret'
 not_contains "$final" 'mode: replicated-job' 'stack avoids unsupported DR job mode'

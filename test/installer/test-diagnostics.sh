@@ -27,6 +27,13 @@ eq '1' "$(cat "$count")" 'completed phase is skipped on replay'
 status 0 'phase marker detected' rp_phase_done "$state" preflight
 rm -f "$state" "$count"
 
+# Migration recovery must require the actual bootstrap services, not only host artifacts.
+bootstrap_checks_source="$(sed -n '/rp_primary_bootstrap_services_ready()/,/^}/p' "$repo_root/scripts/installer/lifecycle.sh")"
+for service in 'postgres-rp' 'postgres-zitadel' 'zitadel'; do
+  [[ "$bootstrap_checks_source" == *"$service"* ]] && pass "bootstrap readiness checks $service service" || fail "bootstrap readiness checks $service service"
+done
+[[ "$bootstrap_checks_source" == *'docker service inspect'* ]] && pass 'bootstrap readiness checks Swarm service existence' || fail 'bootstrap readiness checks Swarm service existence'
+
 phases="$(rp_primary_phase_names)"
 [[ "$phases" == $'preflight\npackages\ndocker\nstorage\nfirewall\nswarm\nnfs\nrelease\nsecrets\nbootstrap\nmigrations\nidentity\nsmtp\ningress\nfinal\nenrollment\npersist' ]] && pass 'Primary phase order is deterministic' || fail 'Primary phase order is deterministic'
 

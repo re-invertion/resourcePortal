@@ -119,5 +119,31 @@ contains "$upgrade_source" 'rp_wait_for_https_origin' 'upgrade verifies Resource
 contains "$upgrade_source" 'rp_config_write' 'upgrade persists release state only after successful health check'
 contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected release version'
 
+# Resume must restore release-derived image refs even when the release phase checkpoint is already complete.
+resume_manifest="$(mktemp /tmp/rp-release-resume.XXXXXX.json)"
+cat >"$resume_manifest" <<'EOF_RESUME_MANIFEST'
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "installer": {"minimumVersion": "0.1.0"},
+  "docker": {"minimumVersion": "27.0.0"},
+  "configSchemaVersion": 1,
+  "images": {
+    "api": "ghcr.io/re-invertion/resourceportal-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "web": "ghcr.io/re-invertion/resourceportal-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "postgres": "ghcr.io/re-invertion/resourceportal-postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "zitadel": "ghcr.io/zitadel/zitadel@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "traefik": "traefik@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "migrations": {"supportedFromVersions": ["0.1.0"], "rollbackPolicy": "none"}
+}
+EOF_RESUME_MANIFEST
+unset RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE RP_CFG_TRAEFIK_IMAGE RP_CFG_RELEASE_MANIFEST
+RP_CFG_RELEASE_MANIFEST="$resume_manifest"
+status 0 'resume restores release-derived image refs' rp_primary_restore_release_state
+[[ "${RP_CFG_API_IMAGE:-}" == *'@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]] && pass 'resume restores API image ref' || fail 'resume restores API image ref'
+rm -f "$resume_manifest"
+
+
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer release tests passed.\n'

@@ -58,3 +58,10 @@ Passwords, private keys, raw enrollment tokens, raw Swarm join tokens and SMTP c
 v1 intentionally does **not** provide CephFS, software RAID management, storage-host HA, or a backup/restore subsystem. The single active storage host remains a storage SPOF. One Swarm manager is supported for bootstrap, while diagnostics recommends three managers for quorum resilience.
 
 Unattended destructive storage additionally requires `--allow-destructive-storage` plus the exact device confirmation; interactive confirmation alone is not treated as unattended consent.
+
+
+## Resume and bootstrap recovery
+
+Primary installation is resumable, but checkpoints are not treated as proof that runtime state still exists. When the `release` phase has already completed, the installer restores all immutable image references from `/var/lib/resourceportal/installer-state/release.json` before continuing. Before migrations, it verifies that the bootstrap services `postgres-rp`, `postgres-zitadel`, and `zitadel` exist in Swarm; missing services trigger a bootstrap redeploy.
+
+Control-plane deployment is fail-closed. Failure to render the stack, validate it with `docker stack config`, or deploy it with `docker stack deploy` aborts the phase and prevents a false completion checkpoint.
