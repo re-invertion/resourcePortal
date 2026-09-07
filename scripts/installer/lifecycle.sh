@@ -121,9 +121,12 @@ rp_primary_prepare_storage() {
       return 1
     fi
     if [[ -z "${RP_DESTRUCTIVE_CONFIRMATION:-}" ]]; then
-      RP_DESTRUCTIVE_CONFIRMATION="$(rp_ui_input 'Destructive storage confirmation' "Type exactly: FORMAT $device" '')" || return 1
+      RP_DESTRUCTIVE_CONFIRMATION="$(rp_prompt_destructive_confirmation "$device")" || return 1
     fi
-    rp_require_destructive_confirmation "$device" "$RP_DESTRUCTIVE_CONFIRMATION" || return 1
+    if ! rp_require_destructive_confirmation "$device" "$RP_DESTRUCTIVE_CONFIRMATION"; then
+      printf 'Invalid destructive storage confirmation. Expected exactly: FORMAT %s\n' "$device" >&2
+      return 1
+    fi
     type="$(lsblk -ndo TYPE "$device")" || return 1
     fs="${RP_CFG_FILESYSTEM:-$(rp_default_filesystem)}"
     rp_validate_filesystem_type "$fs" || return 1

@@ -55,6 +55,35 @@ assert_eq "/dev/sdb" "$(rp_select_single_storage_candidate $'/dev/sdb\n')" "sing
 assert_status 1 "multiple storage candidates require manual choice" rp_select_single_storage_candidate $'/dev/sdb\n/dev/sdc\n'
 assert_status 1 "no storage candidate requires manual choice" rp_select_single_storage_candidate ''
 
+# Interactive destructive confirmation should explain an invalid value and retry
+# instead of failing the whole storage phase without context.
+confirmation_marker="$(mktemp /tmp/rp-confirmation-attempt.XXXXXX)"
+rm -f "$confirmation_marker"
+rp_ui_input() {
+  if [[ ! -e "$confirmation_marker" ]]; then
+    : >"$confirmation_marker"
+    printf 'wrong\n'
+  else
+    printf 'FORMAT /dev/sdb\n'
+  fi
+}
+set +e
+confirmation_out="$(rp_prompt_destructive_confirmation /dev/sdb 2>&1)"
+confirmation_status=$?
+set -e
+assert_eq "0" "$confirmation_status" "storage confirmation retries after invalid input"
+assert_contains "$confirmation_out" "Invalid confirmation. Type exactly: FORMAT /dev/sdb" "storage confirmation explains invalid input"
+assert_contains "$confirmation_out" "FORMAT /dev/sdb" "storage confirmation eventually returns exact value"
+rm -f "$confirmation_marker"
+
+rp_ui_input() { return 1; }
+set +e
+cancel_out="$(rp_prompt_destructive_confirmation /dev/sdb 2>&1)"
+cancel_status=$?
+set -e
+assert_eq "1" "$cancel_status" "storage confirmation cancel returns failure"
+assert_contains "$cancel_out" "Storage formatting confirmation cancelled for /dev/sdb." "storage confirmation cancel explains failure"
+
 assert_eq "xfs" "$(rp_default_filesystem)" "XFS is default"
 assert_status 0 "accept xfs" rp_validate_filesystem_type xfs
 assert_status 0 "accept ext4" rp_validate_filesystem_type ext4

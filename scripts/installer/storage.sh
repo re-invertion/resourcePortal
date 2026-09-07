@@ -49,6 +49,21 @@ rp_require_destructive_confirmation() {
   [[ "$confirmation" == "FORMAT $device" ]]
 }
 
+rp_prompt_destructive_confirmation() {
+  local device="$1" confirmation
+  while true; do
+    confirmation="$(rp_ui_input 'Destructive storage confirmation' "Type exactly: FORMAT $device" '')" || {
+      printf 'Storage formatting confirmation cancelled for %s.\n' "$device" >&2
+      return 1
+    }
+    if rp_require_destructive_confirmation "$device" "$confirmation"; then
+      printf '%s\n' "$confirmation"
+      return 0
+    fi
+    printf 'Invalid confirmation. Type exactly: FORMAT %s\n' "$device" >&2
+  done
+}
+
 rp_partition_empty_disk() {
   local device="$1" system_disk="$2" confirmation="$3"
   rp_device_is_safe_target "$device" "$system_disk" || {
