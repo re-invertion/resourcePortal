@@ -40,5 +40,14 @@ fence_script="$repo_root/packages/resourceportal-postgres/postgres-fence.sh"
 not_contains "$fence_script" '.holder' 'PostgreSQL fencing does not leave stale holder marker files'
 contains "$fence_script" 'flock -n 9' 'PostgreSQL fencing remains fail-closed on exclusive lock'
 
+# Primary bootstrap must install the fencing helper from the same source that is
+# packaged into the PostgreSQL image, and a copy failure must abort bootstrap.
+lifecycle_file="$repo_root/scripts/installer/lifecycle.sh"
+stack_template="$repo_root/config/production/stack.yml.tpl"
+contains "$lifecycle_file" '"$RP_INSTALLER_REPO_ROOT/packages/resourceportal-postgres/postgres-fence.sh" "$etc/postgres-fence.sh" || return 1' 'Primary bootstrap installs the packaged PostgreSQL fencing helper and fails closed'
+not_contains "$lifecycle_file" '$RP_INSTALLER_REPO_ROOT/config/production/postgres-fence.sh' 'Primary bootstrap does not reference missing fencing helper source'
+contains "$stack_template" 'file: /etc/resourceportal/postgres-fence.sh' 'Swarm config reads PostgreSQL fencing helper from installer-managed path'
+not_contains "$stack_template" 'file: /usr/local/share/resourceportal/postgres-fence.sh' 'Swarm config does not reference an unprovisioned host path'
+
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All production packaging tests passed.\n'

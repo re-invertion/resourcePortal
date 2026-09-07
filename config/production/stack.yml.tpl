@@ -395,6 +395,6 @@ services:
 
 configs:
   postgres_fence_script:
-    file: /usr/local/share/resourceportal/postgres-fence.sh
+    file: /etc/resourceportal/postgres-fence.sh
   zitadel_public_config:
     file: /etc/resourceportal/zitadel-config.yaml
