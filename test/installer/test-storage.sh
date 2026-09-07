@@ -126,9 +126,9 @@ assert_contains "$lifecycle_source" 'findmnt -rn -M "$RP_CFG_STORAGE_BASE_PATH"'
 # exist before systemd starts the readiness unit.
 bootstrap_marker="$(mktemp /tmp/rp-storage-config-bootstrap.XXXXXX)"
 rm -f "$bootstrap_marker"
-RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
-RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
-RP_INSTALLER_REPO_ROOT="$repo_root"
+export RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+export RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+export RP_INSTALLER_REPO_ROOT="$repo_root"
 findmnt() {
   case "$*" in
     '-rn -M /srv/resource-portal/storage') return 0 ;;
