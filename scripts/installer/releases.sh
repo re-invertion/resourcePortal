@@ -45,6 +45,16 @@ rp_list_stable_releases() {
     | jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name'
 }
 
+rp_detect_latest_stable_release() {
+  local repo="${1:-re-invertion/resourcePortal}" tag
+  tag="$(rp_list_stable_releases "$repo" | head -n 1)" || return 1
+  [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+    printf 'No stable ResourcePortal release is available.\n' >&2
+    return 1
+  }
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
 rp_download_release_manifest() {
   local version="$1" target="$2" repo="${3:-re-invertion/resourcePortal}" url
   [[ "$target" == /* ]] || return 1

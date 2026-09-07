@@ -4,6 +4,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/releases.sh"
 source "$repo_root/scripts/installer/upgrade.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
 failures=0
 pass(){ printf 'PASS: %s\n' "$1"; }
 fail(){ printf 'FAIL: %s\n' "$1" >&2; failures=$((failures+1)); }
@@ -37,6 +38,43 @@ JSON
 status 0 'valid release manifest accepted' rp_validate_release_manifest "$manifest"
 eq '0.2.0' "$(rp_manifest_value "$manifest" '.version')" 'reads release version'
 eq '27.0.0' "$(rp_manifest_value "$manifest" '.docker.minimumVersion')" 'reads minimum Docker version'
+
+# Primary installs should resolve the newest stable release automatically.
+rp_list_stable_releases() { printf 'v0.2.0\nv0.1.0\n'; }
+eq '0.2.0' "$(rp_detect_latest_stable_release)" 'detects latest stable release without v prefix'
+rp_list_stable_releases() { :; }
+status 1 'fails clearly when no stable release exists' rp_detect_latest_stable_release
+
+# Primary release resolution auto-selects latest stable when no version is pinned.
+auto_manifest="$(mktemp /tmp/rp-release-auto.XXXXXX.json)"
+rm -f "$auto_manifest"
+requested_version="$(mktemp /tmp/rp-release-requested.XXXXXX)"
+rp_detect_latest_stable_release() { printf '0.2.0\n'; }
+source_manifest="$manifest"
+rp_download_release_manifest() { printf '%s\n' "$1" >"$requested_version"; cp "$source_manifest" "$2"; }
+docker() { [[ "$1" == version ]] && printf '29.0.0\n'; }
+unset RP_CFG_RELEASE_VERSION
+export RP_CFG_RELEASE_MANIFEST="$auto_manifest" RP_CFG_INSTALLED_VERSION=0.1.0 RP_INSTALLER_VERSION=0.1.0
+status 0 'primary resolves release automatically' rp_primary_resolve_release
+eq '0.2.0' "$(cat "$requested_version")" 'primary downloads latest stable release manifest'
+rm -f "$auto_manifest" "$requested_version"
+
+# A stale/nonexistent persisted release from older installer prompts should recover to latest stable.
+stale_manifest="$(mktemp /tmp/rp-release-stale.XXXXXX.json)"
+rm -f "$stale_manifest"
+stale_requests="$(mktemp /tmp/rp-release-stale-requests.XXXXXX)"
+: >"$stale_requests"
+rp_detect_latest_stable_release() { printf '0.2.0\n'; }
+rp_download_release_manifest() {
+  printf '%s\n' "$1" >>"$stale_requests"
+  [[ "$1" == 0.2.0 ]] || return 1
+  cp "$source_manifest" "$2"
+}
+export RP_CFG_RELEASE_VERSION=1.0.0 RP_CFG_RELEASE_MANIFEST="$stale_manifest" RP_CFG_INSTALLED_VERSION=0.1.0
+status 0 'primary recovers stale persisted release to latest stable' rp_primary_resolve_release
+eq $'1.0.0\n0.2.0' "$(cat "$stale_requests")" 'primary retries stale release with latest stable'
+eq '0.2.0' "$RP_CFG_RELEASE_VERSION" 'primary replaces stale release version after successful fallback'
+rm -f "$stale_manifest" "$stale_requests"
 status 0 'compatible installer accepted' rp_release_compatible "$manifest" '0.1.0' '0.1.0' '28.0.0'
 status 1 'old installer rejected' rp_release_compatible "$manifest" '0.0.9' '0.1.0' '28.0.0'
 status 1 'unsupported current release rejected' rp_release_compatible "$manifest" '0.1.0' '0.0.8' '28.0.0'
