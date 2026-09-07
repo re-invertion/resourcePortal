@@ -59,6 +59,17 @@ status 0 'primary resolves release automatically' rp_primary_resolve_release
 eq '0.2.0' "$(cat "$requested_version")" 'primary downloads latest stable release manifest'
 rm -f "$auto_manifest" "$requested_version"
 
+# Fresh Primary installation has no installed release yet, so migration source compatibility
+# must not reject the initial release manifest.
+fresh_manifest="$(mktemp /tmp/rp-release-fresh.XXXXXX.json)"
+rm -f "$fresh_manifest"
+rp_detect_latest_stable_release() { printf '0.2.0\n'; }
+rp_download_release_manifest() { cp "$source_manifest" "$2"; }
+unset RP_CFG_RELEASE_VERSION
+export RP_CFG_RELEASE_MANIFEST="$fresh_manifest" RP_CFG_INSTALLED_VERSION=0.0.0 RP_INSTALLER_VERSION=0.1.0
+status 0 'fresh primary accepts initial release without upgrade source match' rp_primary_resolve_release
+rm -f "$fresh_manifest"
+
 # A stale/nonexistent persisted release from older installer prompts should recover to latest stable.
 stale_manifest="$(mktemp /tmp/rp-release-stale.XXXXXX.json)"
 rm -f "$stale_manifest"
@@ -75,6 +86,7 @@ status 0 'primary recovers stale persisted release to latest stable' rp_primary_
 eq $'1.0.0\n0.2.0' "$(cat "$stale_requests")" 'primary retries stale release with latest stable'
 eq '0.2.0' "$RP_CFG_RELEASE_VERSION" 'primary replaces stale release version after successful fallback'
 rm -f "$stale_manifest" "$stale_requests"
+status 0 'fresh install accepts release without migration source match' rp_release_install_compatible "$manifest" '0.1.0' '28.0.0'
 status 0 'compatible installer accepted' rp_release_compatible "$manifest" '0.1.0' '0.1.0' '28.0.0'
 status 1 'old installer rejected' rp_release_compatible "$manifest" '0.0.9' '0.1.0' '28.0.0'
 status 1 'unsupported current release rejected' rp_release_compatible "$manifest" '0.1.0' '0.0.8' '28.0.0'

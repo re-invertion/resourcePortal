@@ -28,13 +28,18 @@ rp_validate_release_manifest() {
   done < <(jq -r '.images | [.api,.web,.postgres,.zitadel,.traefik][]' "$manifest")
 }
 
-rp_release_compatible() {
-  local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4" minimum_installer minimum_docker
+rp_release_install_compatible() {
+  local manifest="$1" installer_version="$2" docker_version="$3" minimum_installer minimum_docker
   rp_validate_release_manifest "$manifest" || return 1
   minimum_installer="$(rp_manifest_value "$manifest" '.installer.minimumVersion')" || return 1
   minimum_docker="$(rp_manifest_value "$manifest" '.docker.minimumVersion')" || return 1
   rp_version_ge "$installer_version" "$minimum_installer" || return 1
-  rp_version_ge "$docker_version" "$minimum_docker" || return 1
+  rp_version_ge "$docker_version" "$minimum_docker"
+}
+
+rp_release_compatible() {
+  local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
+  rp_release_install_compatible "$manifest" "$installer_version" "$docker_version" || return 1
   jq -e --arg current "$current_version" '.migrations.supportedFromVersions | index("*") != null or index($current) != null' "$manifest" >/dev/null
 }
 
