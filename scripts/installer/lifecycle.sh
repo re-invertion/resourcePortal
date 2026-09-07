@@ -196,7 +196,11 @@ rp_primary_resolve_release() {
   fi
   docker_version="$(docker version --format '{{.Server.Version}}')" || return 1
   current_version="${RP_CFG_INSTALLED_VERSION:-0.0.0}"
-  rp_release_compatible "$manifest" "${RP_INSTALLER_VERSION:-0.1.0}" "$current_version" "$docker_version" || return 1
+  if [[ "$current_version" == "0.0.0" ]]; then
+    rp_release_install_compatible "$manifest" "${RP_INSTALLER_VERSION:-0.1.0}" "$docker_version" || return 1
+  else
+    rp_release_compatible "$manifest" "${RP_INSTALLER_VERSION:-0.1.0}" "$current_version" "$docker_version" || return 1
+  fi
   rp_apply_release_manifest_images "$manifest"
   RP_CFG_RELEASE_MANIFEST="$manifest"; export RP_CFG_RELEASE_MANIFEST
 }
