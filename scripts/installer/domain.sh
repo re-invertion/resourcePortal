@@ -1,5 +1,36 @@
 #!/usr/bin/env bash
 
+rp_ipv4_address_valid() {
+  local value="$1" a b c d octet
+  IFS=. read -r a b c d <<<"$value"
+  [[ -n "$a" && -n "$b" && -n "$c" && -n "$d" ]] || return 1
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
+  done
+  [[ "$value" != *.*.*.*.* ]]
+}
+
+rp_detect_public_ipv4() {
+  local endpoint response
+  for endpoint in 'https://api.ipify.org' 'https://ipv4.icanhazip.com'; do
+    response=''
+    if command -v curl >/dev/null 2>&1; then
+      response="$(curl -4fsS --connect-timeout 3 --max-time 5 "$endpoint" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+      response="$(wget -4 -qO- --timeout=5 "$endpoint" 2>/dev/null || true)"
+    else
+      return 1
+    fi
+    response="${response//$'\r'/}"
+    response="${response//$'\n'/}"
+    if rp_ipv4_address_valid "$response"; then
+      printf '%s\n' "$response"
+      return 0
+    fi
+  done
+  return 1
+}
 rp_dns_matches_addresses() {
   local expected_csv="$1" resolved="$2" expected resolved_ip
   [[ -n "$expected_csv" && -n "$resolved" ]] || return 1
