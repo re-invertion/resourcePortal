@@ -31,7 +31,7 @@ The default physical root may be overridden with a validated custom path.
 
 ## PostgreSQL single-writer fencing
 
-Both ResourcePortal PostgreSQL and ZITADEL PostgreSQL run through `/usr/local/bin/resourceportal-postgres-fence`. The wrapper acquires an exclusive lock under `/mnt/resourceportal/platform/fencing` before launching PostgreSQL. Swarm may reschedule a database task to another manager with `resourceportal.storage.platform=true`, but the replacement remains fail-closed while another writer still owns the shared-storage lock.
+Both ResourcePortal PostgreSQL and ZITADEL PostgreSQL run through `/usr/local/bin/resourceportal-postgres-fence`. The wrapper acquires an exclusive lock under `/mnt/resourceportal/platform/fencing` before launching PostgreSQL. Swarm may reschedule a database task to another manager with `resourceportal.storage.platform=true`, but the replacement remains fail-closed while another writer still owns the shared-storage lock. The installer provisions the fencing script from `packages/resourceportal-postgres/postgres-fence.sh` to `/etc/resourceportal/postgres-fence.sh` before bootstrap, and the Swarm config reads that exact host path. Bootstrap now fails closed if this artifact cannot be created; migrations also repair an older stale bootstrap checkpoint when the artifact is missing.
 
 ## Add node
 

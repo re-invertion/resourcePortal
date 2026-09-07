@@ -232,14 +232,17 @@ rp_primary_create_platform_secrets() {
 
 rp_primary_bootstrap_stack() {
   local etc=/etc/resourceportal secret_dir=/var/lib/resourceportal/installer-state/secrets
-  install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap"
-  install -m 0555 "$RP_INSTALLER_REPO_ROOT/config/production/postgres-fence.sh" "$etc/postgres-fence.sh"
-  rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$etc/zitadel-config.yaml"; chmod 0644 "$etc/zitadel-config.yaml"
-  rp_render_zitadel_secret_config postgres "$(cat "$secret_dir/zitadel-postgres")" "$(cat "$secret_dir/zitadel-postgres")" >"$secret_dir/zitadel-secret.yaml"; chmod 0600 "$secret_dir/zitadel-secret.yaml"
-  rp_render_zitadel_init_steps resourceportal-bootstrap "$(cat "$secret_dir/cookie")" >"$secret_dir/zitadel-init.yaml"; chmod 0600 "$secret_dir/zitadel-init.yaml"
-  rp_ensure_swarm_secret zitadel_secret_config "$secret_dir/zitadel-secret.yaml"
-  rp_ensure_swarm_secret zitadel_init_steps "$secret_dir/zitadel-init.yaml"
-  rp_deploy_control_plane bootstrap
+  install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap" || return 1
+  install -m 0555 "$RP_INSTALLER_REPO_ROOT/packages/resourceportal-postgres/postgres-fence.sh" "$etc/postgres-fence.sh" || return 1
+  rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$etc/zitadel-config.yaml" || return 1
+  chmod 0644 "$etc/zitadel-config.yaml" || return 1
+  rp_render_zitadel_secret_config postgres "$(cat "$secret_dir/zitadel-postgres")" "$(cat "$secret_dir/zitadel-postgres")" >"$secret_dir/zitadel-secret.yaml" || return 1
+  chmod 0600 "$secret_dir/zitadel-secret.yaml" || return 1
+  rp_render_zitadel_init_steps resourceportal-bootstrap "$(cat "$secret_dir/cookie")" >"$secret_dir/zitadel-init.yaml" || return 1
+  chmod 0600 "$secret_dir/zitadel-init.yaml" || return 1
+  rp_ensure_swarm_secret zitadel_secret_config "$secret_dir/zitadel-secret.yaml" || return 1
+  rp_ensure_swarm_secret zitadel_init_steps "$secret_dir/zitadel-init.yaml" || return 1
+  rp_deploy_control_plane bootstrap || return 1
 }
 
 rp_wait_service_replicas() {
@@ -254,6 +257,12 @@ rp_wait_service_replicas() {
 
 rp_primary_run_migrations() {
   local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
+  # Recover installations created by older installers that could mark bootstrap
+  # complete even when the PostgreSQL fencing config was never provisioned.
+  if [[ ! -r /etc/resourceportal/postgres-fence.sh ]]; then
+    rp_log WARN "bootstrap artifact missing; redeploying bootstrap state before migrations"
+    rp_primary_bootstrap_stack || return 1
+  fi
   rp_wait_service_replicas "${stack}_postgres-rp" 1 300 || return 1
   rp_wait_service_replicas "${stack}_zitadel" 1 300 || return 1
   rp_run_migrations
