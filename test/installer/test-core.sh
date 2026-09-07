@@ -129,8 +129,7 @@ autodetect_out="$(
     value="${!var-}"
     [[ -n "$value" ]] && return 0
     [[ -n "$default" ]] && value="$default" || value="manual-$var"
-    printf -v "$var" '%s' "$value"
-    export "$var"
+    export "$var=$value"
   }
   rp_collect_primary_config /tmp/nonexistent-primary.state
   printf 'cidr=%s\nadvertise=%s\nstorage=%s\nfilesystem=%s\ningress=%s\n' \
