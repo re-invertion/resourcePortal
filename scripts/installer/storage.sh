@@ -64,6 +64,25 @@ rp_prompt_destructive_confirmation() {
   done
 }
 
+rp_block_device_exists() {
+  [[ -b "$1" ]]
+}
+
+rp_wait_for_first_partition() {
+  local device="$1" attempts="${2:-100}" delay="${3:-0.1}" partition i
+  [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || return 1
+  for ((i = 0; i < attempts; i++)); do
+    partition="$(lsblk -lnpo NAME,TYPE "$device" 2>/dev/null | awk '$2=="part" {print $1; exit}')"
+    if [[ -n "$partition" ]] && rp_block_device_exists "$partition"; then
+      printf '%s\n' "$partition"
+      return 0
+    fi
+    sleep "$delay"
+  done
+  printf 'Timed out waiting for storage partition on %s.\n' "$device" >&2
+  return 1
+}
+
 rp_partition_empty_disk() {
   local device="$1" system_disk="$2" confirmation="$3"
   rp_device_is_safe_target "$device" "$system_disk" || {
@@ -79,6 +98,9 @@ rp_partition_empty_disk() {
   parted --script "$device" mklabel gpt
   parted --script "$device" mkpart primary 1MiB 100%
   partprobe "$device"
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm settle --timeout=10 || true
+  fi
 }
 
 rp_storage_device_candidate_safe() {

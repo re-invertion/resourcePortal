@@ -57,6 +57,37 @@ assert_eq "/dev/sdb" "$(rp_select_single_storage_candidate $'/dev/sdb\n')" "sing
 assert_status 1 "multiple storage candidates require manual choice" rp_select_single_storage_candidate $'/dev/sdb\n/dev/sdc\n'
 assert_status 1 "no storage candidate requires manual choice" rp_select_single_storage_candidate ''
 
+# Partition creation is asynchronous on real hosts: lsblk can expose the new
+# partition path before the /dev node is usable. The installer must wait for
+# the block device before passing it to mkfs.
+partition_wait_marker="$(mktemp /tmp/rp-partition-wait.XXXXXX)"
+printf '0\n' >"$partition_wait_marker"
+lsblk() {
+  if [[ "$*" == '-lnpo NAME,TYPE /dev/sdb' ]]; then
+    local n
+    n="$(cat "$partition_wait_marker")"
+    n=$((n + 1))
+    printf '%s\n' "$n" >"$partition_wait_marker"
+    printf '/dev/sdb disk\n/dev/sdb1 part\n'
+    return 0
+  fi
+  command lsblk "$@"
+}
+rp_block_device_exists() {
+  [[ "$1" == /dev/sdb1 ]] || return 1
+  [[ "$(cat "$partition_wait_marker")" -ge 3 ]]
+}
+sleep() { :; }
+set +e
+partition_wait_out="$(rp_wait_for_first_partition /dev/sdb 5 0 2>/tmp/rp-partition-wait.err)"
+partition_wait_status=$?
+set -e
+assert_eq "0" "$partition_wait_status" "partition wait tolerates delayed device node"
+assert_eq "/dev/sdb1" "$partition_wait_out" "partition wait returns usable partition"
+assert_eq "3" "$(cat "$partition_wait_marker")" "partition wait retries until block device exists"
+rm -f "$partition_wait_marker" /tmp/rp-partition-wait.err
+unset -f lsblk rp_block_device_exists sleep
+
 # Interactive destructive confirmation should explain an invalid value and retry
 # instead of failing the whole storage phase without context.
 confirmation_marker="$(mktemp /tmp/rp-confirmation-attempt.XXXXXX)"
