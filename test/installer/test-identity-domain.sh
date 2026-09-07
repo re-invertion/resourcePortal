@@ -30,6 +30,14 @@ status 0 'DNS accepts one of expected addresses' rp_dns_matches_addresses '203.0
 status 1 'DNS rejects unrelated address' rp_dns_matches_addresses '203.0.113.99' $'203.0.113.10\n2001:db8::10'
 status 1 'DNS rejects empty result' rp_dns_matches_addresses '203.0.113.10' ''
 
+# Public ingress discovery must accept only a real IPv4 response and try the
+# next HTTPS endpoint when the first one fails.
+curl(){
+  if [[ "$*" == *api.ipify.org* ]]; then printf 'not-an-ip\n'; else printf '198.51.100.42\n'; fi
+}
+eq '198.51.100.42' "$(rp_detect_public_ipv4)" 'public IPv4 discovery skips invalid provider response'
+unset -f curl
+
 status 0 'SMTP TLS mode accepted' rp_validate_smtp_mode tls
 status 0 'SMTP STARTTLS mode accepted' rp_validate_smtp_mode starttls
 status 0 'SMTP plain mode accepted only when explicitly selected' rp_validate_smtp_mode plain

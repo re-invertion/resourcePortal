@@ -37,9 +37,10 @@ rp_prompt_if_empty() {
 
 rp_collect_primary_config() {
   local state_file="${1:-${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}}"
-  local detected_address detected_cidr detected_storage
+  local detected_address detected_cidr detected_public_address detected_storage
   detected_address="$(rp_detect_default_route_address 2>/dev/null || true)"
   detected_cidr="$(rp_detect_default_route_cidr 2>/dev/null || true)"
+  detected_public_address="$(rp_detect_public_ipv4 2>/dev/null || true)"
 
   rp_prompt_if_empty RP_CFG_CLUSTER_CIDR 'Cluster network' 'Trusted private cluster CIDR' "${detected_cidr:-10.20.0.0/24}"
   rp_prompt_if_empty RP_CFG_SWARM_ADVERTISE_ADDR 'Swarm' 'Primary advertise address' "$detected_address"
@@ -59,7 +60,7 @@ rp_collect_primary_config() {
   fi
   rp_prompt_if_empty RP_CFG_DOMAIN 'ResourcePortal domain' 'Public ResourcePortal hostname' ''
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || { RP_CFG_ZITADEL_DOMAIN="auth.${RP_CFG_DOMAIN}"; export RP_CFG_ZITADEL_DOMAIN; }
-  rp_prompt_if_empty RP_CFG_INGRESS_ADDRESSES 'Ingress' 'Expected public ingress IP address(es), comma-separated' "$RP_CFG_SWARM_ADVERTISE_ADDR"
+  rp_prompt_if_empty RP_CFG_INGRESS_ADDRESSES 'Ingress' 'Expected public ingress IP address(es), comma-separated' "${detected_public_address:-$RP_CFG_SWARM_ADVERTISE_ADDR}"
   rp_prompt_if_empty RP_CFG_ACME_EMAIL 'TLS / ACME' 'ACME contact email' ''
   rp_prompt_if_empty RP_CFG_RELEASE_VERSION 'Release' 'ResourcePortal release version (for example 1.0.0)' ''
   if ! rp_phase_done "$state_file" identity; then

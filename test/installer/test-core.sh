@@ -120,6 +120,7 @@ autodetect_out="$(
     RP_CFG_RELEASE_VERSION RP_CFG_SMTP_DEFERRED RP_CFG_SMTP_CONFIGURED
   rp_detect_default_route_address() { printf '192.168.100.100\n'; }
   rp_detect_default_route_cidr() { printf '192.168.100.0/24\n'; }
+  rp_detect_public_ipv4() { printf '198.51.100.42\n'; }
   rp_detect_single_empty_storage_device() { printf '/dev/sdb\n'; }
   findmnt() { return 1; }
   rp_phase_done() { return 0; }
@@ -140,7 +141,7 @@ assert_contains "$autodetect_out" 'cidr=192.168.100.0/24' "Primary proposes dete
 assert_contains "$autodetect_out" 'advertise=192.168.100.100' "Primary proposes detected advertise address"
 assert_contains "$autodetect_out" 'storage=/dev/sdb' "Primary proposes sole blank storage disk"
 assert_contains "$autodetect_out" 'filesystem=xfs' "Primary defaults storage filesystem to XFS"
-assert_contains "$autodetect_out" 'ingress=192.168.100.100' "Primary proposes detected ingress address"
+assert_contains "$autodetect_out" 'ingress=198.51.100.42' "Primary proposes detected public ingress address"
 
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
