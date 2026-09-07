@@ -12,13 +12,13 @@ sudo ./resourceportal-install.sh --mode reconfigure --action domain
 sudo ./resourceportal-install.sh --mode diagnostics
 ```
 
-On first run, omitting `--mode` opens the interactive mode chooser. Primary installation asks for missing non-secret settings and collects passwords through password prompts. Non-secret replay state is persisted in `/etc/resourceportal/installer.conf`; phase checkpoints are stored under `/var/lib/resourceportal/installer-state`.
+On first run, omitting `--mode` opens the interactive mode chooser. Primary installation asks for missing non-secret settings and collects passwords through password prompts. Where the host state is unambiguous, the installer pre-fills editable defaults instead of requiring manual entry: it derives the primary IPv4 address and cluster CIDR from the default route, reuses that address for Swarm/data-path/NFS/storage-server defaults, proposes the same address for ingress, and proposes the single safe blank non-system disk when exactly one candidate exists. Ambiguous or externally defined values such as the public domain, ACME email, administrator email/password, release version and SMTP credentials remain explicit user input. Non-secret replay state is persisted in `/etc/resourceportal/installer.conf`; phase checkpoints are stored under `/var/lib/resourceportal/installer-state`.
 
 ## Primary installation
 
 Primary is the first Swarm manager and the single authoritative storage host in v1. The installer performs preflight, package preparation, Docker validation/install, LocalFilesystem preparation, UFW, Swarm initialization, NFS-Ganesha, release selection, Swarm Secrets, bootstrap stack, migrations, ZITADEL bootstrap, optional SMTP validation, DNS/ACME gating, final control-plane deployment and enrollment listener startup.
 
-Storage v1 is XFS or ext4 with project quotas; XFS is the default. The installer does not create software RAID. Existing hardware RAID/LUNs appear as ordinary block devices. If a new block device must be formatted, the installer shows its identity/signatures, rejects the system disk and requires exact `FORMAT /dev/...` confirmation.
+Storage v1 is XFS or ext4 with project quotas; XFS is the default. The installer does not create software RAID. Existing hardware RAID/LUNs appear as ordinary block devices. On a fresh host, a storage device is proposed automatically only when exactly one blank, signature-free, unmounted, non-system disk exists; multiple or ambiguous candidates require manual selection. The installer checks the exact configured storage mountpoint rather than treating the root filesystem as an existing storage mount. If a new block device must be formatted, the installer shows its identity/signatures, rejects the system disk and requires exact `FORMAT /dev/...` confirmation.
 
 Canonical storage paths are:
 

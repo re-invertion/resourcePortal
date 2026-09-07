@@ -68,5 +68,12 @@ assert_eq "healthy" "$(rp_manager_quorum_state 3 2)" "majority is healthy"
 assert_status 0 "valid advertise IPv4" rp_validate_host_address 10.20.0.10 $'10.20.0.10\n127.0.0.1'
 assert_status 1 "reject address not on host" rp_validate_host_address 10.20.0.99 $'10.20.0.10\n127.0.0.1'
 
+route_text='default via 192.168.100.1 dev ens18 proto dhcp src 192.168.100.100 metric 100'
+assert_eq "ens18" "$(rp_default_route_interface_text "$route_text")" "detect default-route interface"
+assert_eq "192.168.100.100" "$(rp_default_route_address_text "$route_text")" "detect default-route IPv4"
+assert_eq "192.168.100.0/24" "$(rp_ipv4_network_cidr 192.168.100.100/24)" "derive /24 network CIDR"
+assert_eq "10.20.32.0/20" "$(rp_ipv4_network_cidr 10.20.47.15/20)" "derive non-octet network CIDR"
+assert_status 1 "reject invalid IPv4 CIDR" rp_ipv4_network_cidr 192.168.100.100/33
+
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer host runtime tests passed.\n'
