@@ -147,6 +147,10 @@ rp_primary_prepare_storage() {
   rp_mount_runtime_namespace secrets local "$base"
   rp_mount_runtime_namespace platform local "$base"
   rp_project_quota_enabled "$mountpoint"
+  # The readiness checker sources installer.conf immediately when the unit starts.
+  # Persist the current safe, non-secret config before enabling the unit; the final
+  # persist phase rewrites this file with release/runtime values discovered later.
+  rp_config_write /etc/resourceportal/installer.conf
   rp_install_storage_ready_unit "$RP_INSTALLER_REPO_ROOT"
 }
 

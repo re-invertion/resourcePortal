@@ -10,6 +10,8 @@ source "$repo_root/scripts/installer/storage.sh"
 source "$repo_root/scripts/installer/filesystem.sh"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/quota.sh"
+# shellcheck source=/dev/null
+source "$repo_root/scripts/installer/lifecycle.sh"
 
 failures=0
 assert_eq() {
@@ -118,6 +120,30 @@ assert_contains "$quota_source" 'systemctl enable --now resourceportal-storage-r
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
 assert_contains "$lifecycle_source" 'systemctl is-active --quiet resourceportal-storage-ready.service' 'Primary checks readiness service before applying storage labels'
 assert_contains "$lifecycle_source" 'findmnt -rn -M "$RP_CFG_STORAGE_BASE_PATH"' 'Primary checks exact storage mountpoint before skipping disk selection'
+
+
+# Storage readiness starts during the storage phase, so installer.conf must
+# exist before systemd starts the readiness unit.
+bootstrap_marker="$(mktemp /tmp/rp-storage-config-bootstrap.XXXXXX)"
+rm -f "$bootstrap_marker"
+RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+RP_INSTALLER_REPO_ROOT="$repo_root"
+findmnt() {
+  case "$*" in
+    '-rn -M /srv/resource-portal/storage') return 0 ;;
+    '-nro FSTYPE -T /srv/resource-portal/storage') printf 'xfs\n' ;;
+    *) return 1 ;;
+  esac
+}
+rp_project_quota_enabled() { return 0; }
+install() { return 0; }
+rp_storage_layout_create() { return 0; }
+rp_mount_runtime_namespace() { return 0; }
+rp_config_write() { : >"$bootstrap_marker"; }
+rp_install_storage_ready_unit() { [[ -e "$bootstrap_marker" ]]; }
+assert_status 0 "storage writes runtime config before starting readiness unit" rp_primary_prepare_storage
+rm -f "$bootstrap_marker"
 
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'
