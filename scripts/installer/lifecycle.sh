@@ -205,6 +205,17 @@ rp_primary_resolve_release() {
   RP_CFG_RELEASE_MANIFEST="$manifest"; export RP_CFG_RELEASE_MANIFEST
 }
 
+rp_primary_restore_release_state() {
+  local manifest="${RP_CFG_RELEASE_MANIFEST:-/var/lib/resourceportal/installer-state/release.json}"
+  [[ -r "$manifest" ]] || {
+    rp_log ERROR "completed release phase has no readable manifest: $manifest"
+    return 1
+  }
+  rp_apply_release_manifest_images "$manifest" || return 1
+  RP_CFG_RELEASE_MANIFEST="$manifest"
+  export RP_CFG_RELEASE_MANIFEST
+}
+
 rp_primary_create_platform_secrets() {
   local dir=/var/lib/resourceportal/installer-state/secrets dbpass zdbpass master enc cookie worker oidc_placeholder dburl
   install -d -m 0700 "$dir"
@@ -255,12 +266,19 @@ rp_wait_service_replicas() {
   return 1
 }
 
+rp_primary_bootstrap_services_ready() {
+  local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" service
+  for service in postgres-rp postgres-zitadel zitadel; do
+    docker service inspect "${stack}_${service}" >/dev/null 2>&1 || return 1
+  done
+}
+
 rp_primary_run_migrations() {
   local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
-  # Recover installations created by older installers that could mark bootstrap
-  # complete even when the PostgreSQL fencing config was never provisioned.
-  if [[ ! -r /etc/resourceportal/postgres-fence.sh ]]; then
-    rp_log WARN "bootstrap artifact missing; redeploying bootstrap state before migrations"
+  # Recover older/incomplete runs only when both host artifacts and the actual
+  # Swarm bootstrap services are present. A checkpoint alone is not readiness.
+  if [[ ! -r /etc/resourceportal/postgres-fence.sh ]] || ! rp_primary_bootstrap_services_ready; then
+    rp_log WARN "bootstrap state incomplete; redeploying bootstrap before migrations"
     rp_primary_bootstrap_stack || return 1
   fi
   rp_wait_service_replicas "${stack}_postgres-rp" 1 300 || return 1
@@ -328,6 +346,9 @@ rp_primary_persist() {
 rp_primary_install() {
   local state_file="${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}"
   rp_collect_primary_config "$state_file" || return 1
+  if rp_phase_done "$state_file" release; then
+    rp_primary_restore_release_state || return 1
+  fi
   rp_run_phase "$state_file" preflight rp_preflight_system
   rp_run_phase "$state_file" packages rp_prepare_host_packages
   rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
