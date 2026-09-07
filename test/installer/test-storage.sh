@@ -46,6 +46,15 @@ assert_status 1 "reject nvme partition of system disk" rp_device_is_safe_target 
 assert_status 0 "allow different disk" rp_device_is_safe_target /dev/sdb /dev/sda
 assert_status 0 "allow different nvme disk" rp_device_is_safe_target /dev/nvme1n1 /dev/nvme0n1
 
+assert_status 0 "blank non-system disk is autodetect candidate" rp_storage_device_candidate_safe /dev/sdb disk '' '' 0 false /dev/sda
+assert_status 1 "system disk is never autodetect candidate" rp_storage_device_candidate_safe /dev/sda disk '' '' 0 false /dev/sda
+assert_status 1 "disk with filesystem is not autodetect candidate" rp_storage_device_candidate_safe /dev/sdb disk ext4 '' 0 false /dev/sda
+assert_status 1 "disk with partitions is not autodetect candidate" rp_storage_device_candidate_safe /dev/sdb disk '' '' 1 false /dev/sda
+assert_status 1 "disk with signatures is not autodetect candidate" rp_storage_device_candidate_safe /dev/sdb disk '' '' 0 true /dev/sda
+assert_eq "/dev/sdb" "$(rp_select_single_storage_candidate $'/dev/sdb\n')" "single storage candidate is selected"
+assert_status 1 "multiple storage candidates require manual choice" rp_select_single_storage_candidate $'/dev/sdb\n/dev/sdc\n'
+assert_status 1 "no storage candidate requires manual choice" rp_select_single_storage_candidate ''
+
 assert_eq "xfs" "$(rp_default_filesystem)" "XFS is default"
 assert_status 0 "accept xfs" rp_validate_filesystem_type xfs
 assert_status 0 "accept ext4" rp_validate_filesystem_type ext4
@@ -79,6 +88,7 @@ quota_source="$(cat "$repo_root/scripts/installer/quota.sh")"
 assert_contains "$quota_source" 'systemctl enable --now resourceportal-storage-ready.service' 'storage readiness unit starts immediately'
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
 assert_contains "$lifecycle_source" 'systemctl is-active --quiet resourceportal-storage-ready.service' 'Primary checks readiness service before applying storage labels'
+assert_contains "$lifecycle_source" 'findmnt -rn -M "$RP_CFG_STORAGE_BASE_PATH"' 'Primary checks exact storage mountpoint before skipping disk selection'
 
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'

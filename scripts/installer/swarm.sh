@@ -1,5 +1,75 @@
 #!/usr/bin/env bash
 
+rp_default_route_interface_text() {
+  local text="$1"
+  awk '{ for (i=1; i<=NF; i++) if ($i == "dev" && i < NF) { print $(i+1); exit } }' <<<"$text"
+}
+
+rp_default_route_address_text() {
+  local text="$1"
+  awk '{ for (i=1; i<=NF; i++) if ($i == "src" && i < NF) { print $(i+1); exit } }' <<<"$text"
+}
+
+rp_ipv4_network_cidr() {
+  local value="$1" ip prefix a b c d network mask
+  [[ "$value" == */* ]] || return 1
+  ip="${value%/*}"
+  prefix="${value#*/}"
+  [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+  (( prefix >= 0 && prefix <= 32 )) || return 1
+  IFS=. read -r a b c d <<<"$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    (( 10#$octet >= 0 && 10#$octet <= 255 )) || return 1
+  done
+  network=$(( (10#$a << 24) | (10#$b << 16) | (10#$c << 8) | 10#$d ))
+  if (( prefix == 0 )); then
+    mask=0
+  else
+    mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
+  fi
+  network=$(( network & mask ))
+  printf '%d.%d.%d.%d/%d\n' \
+    $(( (network >> 24) & 255 )) \
+    $(( (network >> 16) & 255 )) \
+    $(( (network >> 8) & 255 )) \
+    $(( network & 255 )) \
+    "$prefix"
+}
+
+rp_detect_default_route_interface() {
+  command -v ip >/dev/null 2>&1 || return 1
+  local route interface
+  route="$(ip -o -4 route show default 2>/dev/null | head -n1)"
+  interface="$(rp_default_route_interface_text "$route")"
+  [[ -n "$interface" ]] || return 1
+  printf '%s\n' "$interface"
+}
+
+rp_detect_default_route_address() {
+  command -v ip >/dev/null 2>&1 || return 1
+  local route address
+  route="$(ip -o -4 route show default 2>/dev/null | head -n1)"
+  address="$(rp_default_route_address_text "$route")"
+  if [[ -z "$address" ]]; then
+    route="$(ip -o -4 route get 1.1.1.1 2>/dev/null | head -n1)"
+    address="$(rp_default_route_address_text "$route")"
+  fi
+  [[ -n "$address" ]] || return 1
+  printf '%s\n' "$address"
+}
+
+rp_detect_default_route_cidr() {
+  command -v ip >/dev/null 2>&1 || return 1
+  local interface address host_cidr
+  interface="$(rp_detect_default_route_interface)" || return 1
+  address="$(rp_detect_default_route_address)" || return 1
+  host_cidr="$(ip -o -4 addr show dev "$interface" scope global 2>/dev/null \
+    | awk -v address="$address" '$4 ~ ("^" address "/") { print $4; exit }')"
+  [[ -n "$host_cidr" ]] || return 1
+  rp_ipv4_network_cidr "$host_cidr"
+}
+
 rp_host_addresses() {
   ip -o addr show scope global | awk '{split($4,a,"/"); print a[1]}'
 }

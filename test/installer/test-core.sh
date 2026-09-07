@@ -112,6 +112,36 @@ assert_contains "$mode_menu_text" 'primary - Install Primary / Control Plane' "m
 assert_contains "$mode_menu_text" 'add-node - Add Swarm Node' "mode chooser pairs add-node label correctly"
 assert_contains "$mode_menu_out" 'DISPATCH:primary' "mode chooser defaults to primary"
 
+# Primary prompts should use safe host autodetection as editable defaults.
+autodetect_out="$(
+  unset RP_CFG_CLUSTER_CIDR RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_SWARM_DATA_PATH_ADDR \
+    RP_CFG_STORAGE_SERVER_ADDRESS RP_CFG_NFS_ADDRESS RP_CFG_STORAGE_BASE_PATH RP_CFG_STORAGE_DEVICE \
+    RP_CFG_FILESYSTEM RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_INGRESS_ADDRESSES RP_CFG_ACME_EMAIL \
+    RP_CFG_RELEASE_VERSION RP_CFG_SMTP_DEFERRED RP_CFG_SMTP_CONFIGURED
+  rp_detect_default_route_address() { printf '192.168.100.100\n'; }
+  rp_detect_default_route_cidr() { printf '192.168.100.0/24\n'; }
+  rp_detect_single_empty_storage_device() { printf '/dev/sdb\n'; }
+  findmnt() { return 1; }
+  rp_phase_done() { return 0; }
+  rp_ui_choice() { printf '%s\n' "$3"; }
+  rp_prompt_if_empty() {
+    local var="$1" default="${4:-}" value
+    value="${!var-}"
+    [[ -n "$value" ]] && return 0
+    [[ -n "$default" ]] && value="$default" || value="manual-$var"
+    export "$var=$value"
+  }
+  rp_collect_primary_config /tmp/nonexistent-primary.state
+  printf 'cidr=%s\nadvertise=%s\nstorage=%s\nfilesystem=%s\ningress=%s\n' \
+    "$RP_CFG_CLUSTER_CIDR" "$RP_CFG_SWARM_ADVERTISE_ADDR" "$RP_CFG_STORAGE_DEVICE" \
+    "$RP_CFG_FILESYSTEM" "$RP_CFG_INGRESS_ADDRESSES"
+)"
+assert_contains "$autodetect_out" 'cidr=192.168.100.0/24' "Primary proposes detected cluster CIDR"
+assert_contains "$autodetect_out" 'advertise=192.168.100.100' "Primary proposes detected advertise address"
+assert_contains "$autodetect_out" 'storage=/dev/sdb' "Primary proposes sole blank storage disk"
+assert_contains "$autodetect_out" 'filesystem=xfs' "Primary defaults storage filesystem to XFS"
+assert_contains "$autodetect_out" 'ingress=192.168.100.100' "Primary proposes detected ingress address"
+
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
   exit 1

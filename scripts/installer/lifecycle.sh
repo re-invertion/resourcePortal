@@ -37,14 +37,21 @@ rp_prompt_if_empty() {
 
 rp_collect_primary_config() {
   local state_file="${1:-${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}}"
-  rp_prompt_if_empty RP_CFG_CLUSTER_CIDR 'Cluster network' 'Trusted private cluster CIDR' '10.20.0.0/24'
-  rp_prompt_if_empty RP_CFG_SWARM_ADVERTISE_ADDR 'Swarm' 'Primary advertise address' ''
+  local detected_address detected_cidr detected_storage
+  detected_address="$(rp_detect_default_route_address 2>/dev/null || true)"
+  detected_cidr="$(rp_detect_default_route_cidr 2>/dev/null || true)"
+
+  rp_prompt_if_empty RP_CFG_CLUSTER_CIDR 'Cluster network' 'Trusted private cluster CIDR' "${detected_cidr:-10.20.0.0/24}"
+  rp_prompt_if_empty RP_CFG_SWARM_ADVERTISE_ADDR 'Swarm' 'Primary advertise address' "$detected_address"
   [[ -n "${RP_CFG_SWARM_DATA_PATH_ADDR:-}" ]] || { RP_CFG_SWARM_DATA_PATH_ADDR="$RP_CFG_SWARM_ADVERTISE_ADDR"; export RP_CFG_SWARM_DATA_PATH_ADDR; }
   [[ -n "${RP_CFG_STORAGE_SERVER_ADDRESS:-}" ]] || { RP_CFG_STORAGE_SERVER_ADDRESS="$RP_CFG_SWARM_ADVERTISE_ADDR"; export RP_CFG_STORAGE_SERVER_ADDRESS; }
   [[ -n "${RP_CFG_NFS_ADDRESS:-}" ]] || { RP_CFG_NFS_ADDRESS="$RP_CFG_STORAGE_SERVER_ADDRESS"; export RP_CFG_NFS_ADDRESS; }
+  [[ -n "${RP_CFG_MANAGER_CIDR:-}" ]] || { RP_CFG_MANAGER_CIDR="$RP_CFG_CLUSTER_CIDR"; export RP_CFG_MANAGER_CIDR; }
   rp_prompt_if_empty RP_CFG_STORAGE_BASE_PATH 'Storage' 'Storage base path' '/srv/resource-portal/storage'
-  if ! findmnt -rn -T "$RP_CFG_STORAGE_BASE_PATH" >/dev/null 2>&1; then
-    rp_prompt_if_empty RP_CFG_STORAGE_DEVICE 'Storage' 'Dedicated storage block device (for example /dev/sdb)' ''
+  [[ -n "${RP_CFG_STORAGE_MOUNTPOINT:-}" ]] || { RP_CFG_STORAGE_MOUNTPOINT="$RP_CFG_STORAGE_BASE_PATH"; export RP_CFG_STORAGE_MOUNTPOINT; }
+  if ! findmnt -rn -M "$RP_CFG_STORAGE_BASE_PATH" >/dev/null 2>&1; then
+    detected_storage="$(rp_detect_single_empty_storage_device 2>/dev/null || true)"
+    rp_prompt_if_empty RP_CFG_STORAGE_DEVICE 'Storage' 'Dedicated storage block device (for example /dev/sdb)' "$detected_storage"
     if [[ -z "${RP_CFG_FILESYSTEM:-}" ]]; then
       RP_CFG_FILESYSTEM="$(rp_ui_choice 'Storage filesystem' 'Choose the storage filesystem' xfs 'xfs' 'XFS (recommended)' ext4 'ext4')" || return 1
       export RP_CFG_FILESYSTEM
@@ -98,7 +105,7 @@ rp_prepare_host_packages() {
 rp_primary_prepare_storage() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}"
   local mountpoint="${RP_CFG_STORAGE_MOUNTPOINT:-$base}" fs system_disk device type partition
-  if findmnt -rn -T "$mountpoint" >/dev/null 2>&1; then
+  if findmnt -rn -M "$mountpoint" >/dev/null 2>&1; then
     fs="$(findmnt -nro FSTYPE -T "$mountpoint")"
     rp_validate_filesystem_type "$fs" || return 1
     rp_project_quota_enabled "$mountpoint" || return 1
