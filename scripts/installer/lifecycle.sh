@@ -132,8 +132,7 @@ rp_primary_prepare_storage() {
     rp_validate_filesystem_type "$fs" || return 1
     if [[ "$type" == "disk" ]]; then
       rp_partition_empty_disk "$device" "$system_disk" "${RP_DESTRUCTIVE_CONFIRMATION:-}" || return 1
-      partition="$(lsblk -lnpo NAME,TYPE "$device" | awk '$2=="part" {print $1; exit}')"
-      [[ -n "$partition" ]] || return 1
+      partition="$(rp_wait_for_first_partition "$device")" || return 1
       device="$partition"
     fi
     local format_confirmation="${RP_DESTRUCTIVE_CONFIRMATION:-}"
