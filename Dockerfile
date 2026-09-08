@@ -46,7 +46,7 @@ RUN apk add --no-cache \
     quota-tools \
     xfsprogs-extra
 
-COPY --from=production-dependencies /app/node_modules /app/node_modules
+COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules
 COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
