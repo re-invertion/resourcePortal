@@ -149,9 +149,30 @@ assert_contains "$lifecycle_source" 'rp_mount_runtime_namespace local platform "
 
 # Bootstrap must verify the runtime platform mount and create bind sources before Swarm deploy.
 assert_contains "$lifecycle_source" 'mountpoint -q /mnt/resourceportal/platform || return 1' 'bootstrap requires platform runtime mountpoint'
-assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/databases/resourceportal-postgres' 'bootstrap creates RP PostgreSQL runtime bind source'
-assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/databases/zitadel-postgres' 'bootstrap creates ZITADEL PostgreSQL runtime bind source'
+assert_contains "$lifecycle_source" 'rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/resourceportal-postgres' 'bootstrap prepares RP PostgreSQL runtime bind source ownership'
+assert_contains "$lifecycle_source" 'rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/zitadel-postgres' 'bootstrap prepares ZITADEL PostgreSQL runtime bind source ownership'
 assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/fencing' 'bootstrap creates fencing runtime directory'
+
+# PostgreSQL bind roots must be traversable by the postgres user after the
+# official entrypoint drops privileges. Resolve the numeric identity from the
+# exact release image rather than assuming the host passwd database.
+pg_owner_marker="$(mktemp /tmp/rp-postgres-owner.XXXXXX)"
+rm -f "$pg_owner_marker"
+docker() {
+  [[ "$1 $2 $3" == 'run --rm --entrypoint' ]] || return 1
+  printf '999:999\n'
+}
+install() { return 0; }
+chown() { printf '%s %s\n' "$1" "$2" >"$pg_owner_marker"; }
+chmod() { return 0; }
+set +e
+rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/resourceportal-postgres example.invalid/postgres@sha256:deadbeef >/tmp/rp-pg-owner.out 2>/tmp/rp-pg-owner.err
+pg_owner_status=$?
+set -e
+assert_eq "0" "$pg_owner_status" 'postgres bind ownership preparation succeeds for resolved image uid/gid'
+assert_eq '999:999 /mnt/resourceportal/platform/databases/resourceportal-postgres' "$(cat "$pg_owner_marker" 2>/dev/null || true)" 'postgres bind root ownership matches image postgres uid/gid'
+rm -f "$pg_owner_marker" /tmp/rp-pg-owner.out /tmp/rp-pg-owner.err
+unset -f docker install chown chmod
 
 unit_text="$(cat "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service")"
 assert_contains "$unit_text" "Before=docker.service" "storage readiness precedes Docker"
