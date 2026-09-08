@@ -48,6 +48,7 @@ contains "$ingress" 'replicas: 1 # RP_TRAEFIK_REPLICAS' 'ingress state enables T
 contains "$ingress" 'replicas: 0 # RP_API_REPLICAS' 'ingress state still gates API'
 contains "$ingress" 'replicas: 0 # RP_WEB_REPLICAS' 'ingress state still gates Web'
 contains "$ingress" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'ingress state keeps ZITADEL available'
+contains "$ingress" 'traefik.swarm.network=resourceportal-control-plane_rp-ingress' 'ZITADEL pins Traefik to ingress network'
 
 # Resume can reach ingress with bootstrap already checkpointed. Ingress must
 # therefore ensure the Traefik ACME bind source exists immediately before the

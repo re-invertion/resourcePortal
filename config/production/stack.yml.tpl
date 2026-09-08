@@ -154,6 +154,7 @@ services:
           - node.labels.resourceportal.storage.platform == true
       labels:
         - traefik.enable=true
+        - traefik.swarm.network=resourceportal-control-plane_rp-ingress
         - traefik.http.routers.resourceportal-zitadel.rule=Host(`__ZITADEL_DOMAIN__`)
         - traefik.http.routers.resourceportal-zitadel.entrypoints=websecure
         - traefik.http.routers.resourceportal-zitadel.tls=true
