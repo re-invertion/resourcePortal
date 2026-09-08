@@ -216,6 +216,42 @@ rp_primary_restore_release_state() {
   export RP_CFG_RELEASE_MANIFEST
 }
 
+rp_primary_restore_secret_state() {
+  local dir="${RP_INSTALLER_SECRET_STATE_DIR:-/var/lib/resourceportal/installer-state/secrets}"
+  local name dbpass zdbpass master enc cookie worker oidc_placeholder dburl
+
+  for name in encryption cookie worker oidc-placeholder rp-postgres zitadel-postgres zitadel-master; do
+    if [[ ! -r "$dir/$name" ]]; then
+      rp_log ERROR "completed secrets phase is missing required state file: $dir/$name"
+      return 1
+    fi
+  done
+
+  dbpass="$dir/rp-postgres"
+  zdbpass="$dir/zitadel-postgres"
+  master="$dir/zitadel-master"
+  enc="$dir/encryption"
+  cookie="$dir/cookie"
+  worker="$dir/worker"
+  oidc_placeholder="$dir/oidc-placeholder"
+  dburl="$dir/database-url"
+
+  printf 'postgresql://resource_portal:%s@postgres-rp:5432/resource_portal?schema=public' "$(cat "$dbpass")" >"$dburl" || return 1
+  chmod 0600 "$dburl" || return 1
+
+  rp_ensure_swarm_secret rp_postgres_password "$dbpass" || return 1
+  rp_ensure_swarm_secret zitadel_postgres_password "$zdbpass" || return 1
+  rp_ensure_swarm_secret zitadel_masterkey "$master" || return 1
+  rp_ensure_swarm_secret rp_encryption_key "$enc" || return 1
+  rp_ensure_swarm_secret rp_database_url "$dburl" || return 1
+
+  RP_CFG_COOKIE_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_cookie_secret "$cookie")" || return 1
+  RP_CFG_WORKER_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_internal_worker_token "$worker")" || return 1
+  RP_CFG_OIDC_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")" || return 1
+  : "${RP_CFG_OIDC_CLIENT_ID:=bootstrap-pending}"
+  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID
+}
+
 rp_primary_create_platform_secrets() {
   local dir=/var/lib/resourceportal/installer-state/secrets dbpass zdbpass master enc cookie worker oidc_placeholder dburl
   install -d -m 0700 "$dir"
@@ -348,6 +384,9 @@ rp_primary_install() {
   rp_collect_primary_config "$state_file" || return 1
   if rp_phase_done "$state_file" release; then
     rp_primary_restore_release_state || return 1
+  fi
+  if rp_phase_done "$state_file" secrets; then
+    rp_primary_restore_secret_state || return 1
   fi
   rp_run_phase "$state_file" preflight rp_preflight_system
   rp_run_phase "$state_file" packages rp_prepare_host_packages

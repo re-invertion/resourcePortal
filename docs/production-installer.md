@@ -62,6 +62,6 @@ Unattended destructive storage additionally requires `--allow-destructive-storag
 
 ## Resume and bootstrap recovery
 
-Primary installation is resumable, but checkpoints are not treated as proof that runtime state still exists. When the `release` phase has already completed, the installer restores all immutable image references from `/var/lib/resourceportal/installer-state/release.json` before continuing. Before migrations, it verifies that the bootstrap services `postgres-rp`, `postgres-zitadel`, and `zitadel` exist in Swarm; missing services trigger a bootstrap redeploy.
+Primary installation is resumable, but checkpoints are not treated as proof that runtime state still exists. When the `release` phase has already completed, the installer restores all immutable image references from `/var/lib/resourceportal/installer-state/release.json` before continuing. When the `secrets` phase has already completed, it reconstructs the runtime Swarm secret references from the existing files under `/var/lib/resourceportal/installer-state/secrets` and re-ensures the corresponding Swarm Secrets without generating replacement secret material. Missing required secret-state files fail closed. Before migrations, it verifies that the bootstrap services `postgres-rp`, `postgres-zitadel`, and `zitadel` exist in Swarm; missing services trigger a bootstrap redeploy.
 
 Control-plane deployment is fail-closed. Failure to render the stack, validate it with `docker stack config`, or deploy it with `docker stack deploy` aborts the phase and prevents a false completion checkpoint.
