@@ -185,6 +185,8 @@ done
 [[ "$entrypoint_source" == *'rp_upgrade_apply'* ]] && pass 'entrypoint dispatches upgrade lifecycle' || fail 'entrypoint dispatches upgrade lifecycle'
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
+[[ "$entrypoint_source" == *'rp_ui_mode_operation'* ]] && pass 'non-primary modes use shared TUI operation wrapper' || fail 'non-primary modes use shared TUI operation wrapper'
+[[ "$entrypoint_source" == *'rp_dashboard_complete'* ]] && pass 'successful installer modes can render completion summary' || fail 'successful installer modes can render completion summary'
 
 
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"

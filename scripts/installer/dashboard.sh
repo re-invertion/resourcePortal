@@ -258,3 +258,45 @@ rp_dashboard_render_failure() {
     printf '%s\n' "$text" >&2
   fi
 }
+
+rp_dashboard_control_plane_summary() {
+  local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" summary
+  if [[ -n "${RP_DASHBOARD_SERVICE_SUMMARY:-}" ]]; then
+    printf '%s\n' "$RP_DASHBOARD_SERVICE_SUMMARY"
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    summary="$(docker service ls --filter "label=com.docker.stack.namespace=$stack_name" --format '{{.Name}} {{.Replicas}}' 2>/dev/null | paste -sd ', ' - || true)"
+  fi
+  printf '%s\n' "${summary:-unavailable}"
+}
+
+rp_dashboard_completion_text() {
+  local mode="$1" service_summary enrollment smtp
+  if [[ "$mode" != primary ]]; then
+    printf 'Operation status: COMPLETE\nMode: %s\nLog: %s\n' \
+      "$(rp_dashboard_mode_label "$mode")" "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
+    return 0
+  fi
+  service_summary="$(rp_dashboard_control_plane_summary)"
+  if [[ -n "${RP_CFG_ENROLLMENT_PIN:-}" ]]; then enrollment='ready'; else enrollment='not ready'; fi
+  if [[ "${RP_CFG_SMTP_DEFERRED:-false}" == true ]]; then smtp='deferred'; else smtp='configured'; fi
+  printf 'Installation status: COMPLETE\n'
+  printf 'Release: %s\n' "${RP_CFG_RELEASE_VERSION:-unknown}"
+  printf 'Web: https://%s\n' "${RP_CFG_DOMAIN:-unknown}"
+  printf 'Auth: https://%s\n' "${RP_CFG_ZITADEL_DOMAIN:-unknown}"
+  printf 'Control plane: %s\n' "$service_summary"
+  printf 'Enrollment: %s\n' "$enrollment"
+  printf 'SMTP: %s\n' "$smtp"
+  printf 'Log: %s\n' "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
+}
+
+rp_dashboard_complete() {
+  local mode="$1" text
+  [[ "${RP_UI_MODE:-text}" == tui ]] || return 0
+  text="$(rp_dashboard_completion_text "$mode")"
+  if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]]; then
+    rp_dashboard_leave || true
+  fi
+  rp_dashboard_gum_style "$text" --border rounded --padding '1 2' >&2
+}

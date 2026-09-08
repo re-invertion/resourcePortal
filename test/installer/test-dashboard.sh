@@ -122,6 +122,32 @@ assert_contains "$failure_text" 'Exit' 'failure screen offers Exit'
 rm -f "$details_log"
 
 
+
+if declare -F rp_dashboard_completion_text >/dev/null; then
+  RP_CFG_RELEASE_VERSION='0.1.0'
+  RP_CFG_DOMAIN='rp.example.test'
+  RP_CFG_ZITADEL_DOMAIN='auth.rp.example.test'
+  RP_CFG_ENROLLMENT_PIN='sha256:test-pin'
+  RP_CFG_SMTP_DEFERRED=true
+  RP_DASHBOARD_SERVICE_SUMMARY='API 1/1, Web 1/1, ZITADEL 1/1'
+  RP_ADMIN_PASSWORD='CompletionSecret1!'
+  RP_INTERNAL_WORKER_TOKEN='completion-token-secret'
+  completion_text="$(rp_dashboard_completion_text primary)"
+  assert_contains "$completion_text" 'Installation status: COMPLETE' 'completion shows installation status'
+  assert_contains "$completion_text" 'Release: 0.1.0' 'completion shows release version'
+  assert_contains "$completion_text" 'https://rp.example.test' 'completion shows web URL'
+  assert_contains "$completion_text" 'https://auth.rp.example.test' 'completion shows auth URL'
+  assert_contains "$completion_text" 'API 1/1, Web 1/1, ZITADEL 1/1' 'completion shows service summary'
+  assert_contains "$completion_text" 'Enrollment: ready' 'completion shows enrollment readiness'
+  assert_contains "$completion_text" '/var/log/resourceportal/installer.log' 'completion shows log path'
+  assert_contains "$completion_text" 'SMTP: deferred' 'completion shows deferred SMTP'
+  assert_not_contains "$completion_text" "$RP_ADMIN_PASSWORD" 'completion excludes admin password'
+  assert_not_contains "$completion_text" "$RP_INTERNAL_WORKER_TOKEN" 'completion excludes worker token'
+  unset RP_ADMIN_PASSWORD RP_INTERNAL_WORKER_TOKEN RP_DASHBOARD_SERVICE_SUMMARY
+else
+  printf 'FAIL: completion renderer exists\n' >&2; failures=$((failures+1))
+fi
+
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer dashboard tests passed.\n'

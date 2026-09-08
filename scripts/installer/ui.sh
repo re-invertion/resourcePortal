@@ -298,3 +298,16 @@ rp_ui_failure_action() {
     esac
   done
 }
+
+rp_ui_mode_operation() {
+  local mode="$1" message="$2" rc
+  shift 2
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started "$mode" "$message" || true; fi
+  if "$@"; then
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event activity "$mode" "$message completed" || true; fi
+    return 0
+  fi
+  rc=$?
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event activity "$mode" "$message failed" || true; fi
+  return "$rc"
+}

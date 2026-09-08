@@ -51,31 +51,36 @@ USAGE
 
 rp_dispatch() {
   local mode="$1" bundle="$2" action="$3" manifest="$4"
+  local rc previous_stack docker_version current_version
   case "$mode" in
     primary)
-      rp_primary_install
+      rp_primary_install || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete primary || true; fi
       ;;
     add-node)
       [[ -n "$bundle" ]] || { printf '%s\n' '--bundle is required for add-node' >&2; return 2; }
-      rp_prepare_host_packages
-      rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
-      rp_redeem_join_bundle "$bundle"
+      rp_ui_mode_operation add-node 'Preparing host packages' rp_prepare_host_packages || return $?
+      rp_ui_mode_operation add-node 'Validating Docker' rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}" || return $?
+      rp_ui_mode_operation add-node 'Joining ResourcePortal node' rp_redeem_join_bundle "$bundle" || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete add-node || true; fi
       ;;
     upgrade)
       [[ -n "$manifest" ]] || { printf '%s\n' '--manifest is required for upgrade' >&2; return 2; }
-      local previous_stack="${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}"
-      local docker_version current_version
+      previous_stack="${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}"
       docker_version="$(docker version --format '{{.Server.Version}}')" || return 1
       current_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
-      rp_upgrade_preflight "$manifest" "$RP_INSTALLER_VERSION" "$current_version" "$docker_version" || return 1
-      rp_upgrade_apply "$manifest" "$previous_stack"
+      rp_ui_mode_operation upgrade 'Validating upgrade compatibility' rp_upgrade_preflight "$manifest" "$RP_INSTALLER_VERSION" "$current_version" "$docker_version" || return $?
+      rp_ui_mode_operation upgrade 'Applying ResourcePortal upgrade' rp_upgrade_apply "$manifest" "$previous_stack" || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete upgrade || true; fi
       ;;
     reconfigure)
       [[ -n "$action" ]] || { printf '%s\n' '--action is required for reconfigure' >&2; return 2; }
-      rp_reconfigure "$action"
+      rp_ui_mode_operation reconfigure "Applying reconfiguration: $action" rp_reconfigure "$action" || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete reconfigure || true; fi
       ;;
     diagnostics)
-      rp_run_diagnostics
+      rp_ui_mode_operation diagnostics 'Running ResourcePortal diagnostics' rp_run_diagnostics || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete diagnostics || true; fi
       ;;
     *)
       printf 'Unknown installer mode: %s\n' "$mode" >&2
