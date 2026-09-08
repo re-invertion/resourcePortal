@@ -11,8 +11,11 @@ rp_ui_has_tty() {
 }
 
 rp_ui_mode_select() {
-  local non_interactive="${1:-false}"
-  if [[ "$non_interactive" == true ]] || ! rp_ui_has_tty; then
+  local non_interactive="${1:-false}" has_tty="${2:-}"
+  if [[ -z "$has_tty" ]]; then
+    if rp_ui_has_tty; then has_tty=true; else has_tty=false; fi
+  fi
+  if [[ "$non_interactive" == true || "$has_tty" != true ]]; then
     printf 'text\n'
   else
     printf 'tui\n'
@@ -98,8 +101,9 @@ rp_ui_try_enable_tui() {
     RP_UI_TUI_PENDING=false
     export RP_UI_MODE RP_UI_TUI_PENDING RP_GUM_BIN
     return 0
+  else
+    rc=$?
   fi
-  rc=$?
   [[ $rc -eq 21 ]] && return 1
   RP_UI_MODE=text
   RP_UI_TUI_PENDING=false
@@ -117,15 +121,17 @@ rp_ui_event() {
 }
 
 rp_ui_init() {
-  local rc
-  RP_UI_MODE="$(rp_ui_mode_select "${RP_NON_INTERACTIVE:-false}")"
+  local rc has_tty=false
+  if rp_ui_has_tty; then has_tty=true; fi
+  RP_UI_MODE="$(rp_ui_mode_select "${RP_NON_INTERACTIVE:-false}" "$has_tty")"
   RP_UI_TUI_PENDING=false
   export RP_UI_MODE RP_UI_TUI_PENDING
   if [[ "$RP_UI_MODE" == tui ]]; then
     if rp_ui_ensure_gum; then
       return 0
+    else
+      rc=$?
     fi
-    rc=$?
     [[ $rc -eq 21 ]] && return 1
     RP_UI_MODE=text
     RP_UI_TUI_PENDING=true
