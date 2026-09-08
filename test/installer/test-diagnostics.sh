@@ -58,6 +58,28 @@ eq 'bootstrap-pending' "${RP_CFG_OIDC_CLIENT_ID:-}" 'resume restores bootstrap O
 unset RP_INSTALLER_SECRET_STATE_DIR
 rm -rf "$resume_secret_dir"
 
+# A failed fresh-install ZITADEL setup may leave partial DB state before the
+# identity checkpoint exists. Resume must quarantine that installer-owned DB
+# state and redeploy bootstrap instead of retrying the non-idempotent setup in place.
+recovery_state="$(mktemp /tmp/rp-zitadel-recovery-state.XXXXXX)"
+printf 'bootstrap\n' >"$recovery_state"
+recovery_root="$(mktemp -d /tmp/rp-zitadel-recovery-root.XXXXXX)"
+mkdir -p "$recovery_root/databases/zitadel-postgres"
+printf partial >"$recovery_root/databases/zitadel-postgres/partial"
+recovery_marker="$(mktemp /tmp/rp-zitadel-recovery-marker.XXXXXX)"
+rm -f "$recovery_marker"
+mountpoint(){ return 0; }
+docker(){ return 0; }
+rp_wait_service_replicas(){ return 0; }
+rp_primary_bootstrap_stack(){ : >"$recovery_marker"; }
+export RP_CFG_POSTGRES_IMAGE='example.invalid/postgres@sha256:deadbeef'
+status 0 'resume quarantines incomplete ZITADEL bootstrap database' rp_primary_recover_incomplete_zitadel_bootstrap "$recovery_state" "$recovery_root"
+[[ -e "$recovery_marker" ]] && pass 'resume redeploys bootstrap after ZITADEL quarantine' || fail 'resume redeploys bootstrap after ZITADEL quarantine'
+[[ ! -e "$recovery_root/databases/zitadel-postgres/partial" ]] && pass 'resume removes partial ZITADEL DB from active path' || fail 'resume removes partial ZITADEL DB from active path'
+compgen -G "$recovery_root/databases/zitadel-postgres.incomplete-*" >/dev/null && pass 'resume preserves partial ZITADEL DB as quarantine backup' || fail 'resume preserves partial ZITADEL DB as quarantine backup'
+unset -f mountpoint docker rp_wait_service_replicas rp_primary_bootstrap_stack
+rm -rf "$recovery_root" "$recovery_state" "$recovery_marker"
+
 phases="$(rp_primary_phase_names)"
 [[ "$phases" == $'preflight\npackages\ndocker\nstorage\nfirewall\nswarm\nnfs\nrelease\nsecrets\nbootstrap\nmigrations\nidentity\nsmtp\ningress\nfinal\nenrollment\npersist' ]] && pass 'Primary phase order is deterministic' || fail 'Primary phase order is deterministic'
 
