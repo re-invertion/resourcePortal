@@ -20,9 +20,15 @@ rp_run_phase() {
   local state_file="$1" phase="$2"; shift 2
   rp_phase_done "$state_file" "$phase" && return 0
   rp_log INFO "installer phase started: $phase"
-  "$@" || { rp_log ERROR "installer phase failed: $phase"; return 1; }
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting $phase" || true; fi
+  if ! "$@"; then
+    rp_log ERROR "installer phase failed: $phase"
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Stage failed: $phase" || true; fi
+    return 1
+  fi
   rp_phase_mark_done "$state_file" "$phase"
   rp_log INFO "installer phase completed: $phase"
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed $phase" || true; fi
 }
 
 
@@ -479,9 +485,17 @@ rp_primary_persist() {
 
 rp_primary_install() {
   local state_file="${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}"
+  if [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_dashboard_init >/dev/null; then
+    rp_dashboard_init primary "$state_file"
+    rp_dashboard_enter || true
+  fi
   rp_run_phase "$state_file" preflight rp_preflight_system || return 1
   rp_run_phase "$state_file" packages rp_prepare_host_packages || return 1
   if declare -F rp_ui_try_enable_tui >/dev/null; then rp_ui_try_enable_tui || return 1; fi
+  if [[ "${RP_UI_MODE:-text}" == tui && "${RP_DASHBOARD_ENTERED:-false}" != true ]] && declare -F rp_dashboard_init >/dev/null; then
+    rp_dashboard_init primary "$state_file"
+    rp_dashboard_enter || true
+  fi
   rp_collect_primary_config "$state_file" || return 1
   if rp_phase_done "$state_file" release; then
     rp_primary_restore_release_state || return 1

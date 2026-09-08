@@ -25,6 +25,27 @@ rp_run_phase "$state" preflight phase_cmd
 rp_run_phase "$state" preflight phase_cmd
 eq '1' "$(cat "$count")" 'completed phase is skipped on replay'
 status 0 'phase marker detected' rp_phase_done "$state" preflight
+
+event_state="$(mktemp /tmp/rp-phase-event-state.XXXXXX)"; : >"$event_state"
+event_log="$(mktemp /tmp/rp-phase-events.XXXXXX)"; : >"$event_log"
+(
+  rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$event_log"; }
+  ok_phase(){ :; }
+  bad_phase(){ return 1; }
+  rp_run_phase "$event_state" preflight ok_phase
+  set +e
+  rp_run_phase "$event_state" dns bad_phase
+  failed_rc=$?
+  set -e
+  [[ $failed_rc -eq 1 ]]
+)
+event_text="$(cat "$event_log")"
+[[ "$event_text" == *'phase_started|preflight|'* ]] && pass 'successful phase emits started event' || fail 'successful phase emits started event'
+[[ "$event_text" == *'phase_completed|preflight|'* ]] && pass 'successful phase emits completed event' || fail 'successful phase emits completed event'
+[[ "$event_text" == *'phase_started|dns|'* ]] && pass 'failed phase emits started event' || fail 'failed phase emits started event'
+[[ "$event_text" == *'phase_failed|dns|'* ]] && pass 'failed phase emits failed event' || fail 'failed phase emits failed event'
+! grep -Fxq dns "$event_state" && pass 'failed phase does not create checkpoint' || fail 'failed phase does not create checkpoint'
+rm -f "$event_state" "$event_log"
 rm -f "$state" "$count"
 
 primary_order="$(mktemp /tmp/rp-primary-order.XXXXXX)"
