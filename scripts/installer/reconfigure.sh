@@ -108,9 +108,9 @@ rp_reconfigure_addresses() {
     rp_install_ganesha_config /etc/ganesha/resourceportal.conf "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" "${old_cidr},${new_cidr}" "${old_cidr},${new_cidr}" || return 1
   else
     docker node update --availability drain "$node" || return 1
-    if ! rp_mount_runtime_namespace volumes nfs "$new_storage"; then docker node update --availability active "$node" || true; return 1; fi
+    if ! rp_mount_runtime_namespace nfs volumes "$new_storage"; then docker node update --availability active "$node" || true; return 1; fi
     if [[ "$role" == manager ]]; then
-      if ! rp_mount_runtime_namespace secrets nfs "$new_storage" || ! rp_mount_runtime_namespace platform nfs "$new_storage"; then docker node update --availability active "$node" || true; return 1; fi
+      if ! rp_mount_runtime_namespace nfs secrets "$new_storage" || ! rp_mount_runtime_namespace nfs platform "$new_storage"; then docker node update --availability active "$node" || true; return 1; fi
     fi
     docker node update --availability active "$node" || return 1
   fi
