@@ -277,11 +277,21 @@ rp_primary_create_platform_secrets() {
   export RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID
 }
 
+rp_prepare_postgres_bind_dir() {
+  local path="$1" image="$2" owner
+  [[ -n "$path" && -n "$image" ]] || return 1
+  owner="$(docker run --rm --entrypoint sh "$image" -c 'printf "%s:%s\n" "$(id -u postgres)" "$(id -g postgres)"')" || return 1
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  install -d -m 0700 "$path" || return 1
+  chown "$owner" "$path" || return 1
+  chmod 0700 "$path" || return 1
+}
+
 rp_primary_bootstrap_stack() {
   local etc=/etc/resourceportal secret_dir=/var/lib/resourceportal/installer-state/secrets
   mountpoint -q /mnt/resourceportal/platform || return 1
-  install -d -m 0750 /mnt/resourceportal/platform/databases/resourceportal-postgres || return 1
-  install -d -m 0750 /mnt/resourceportal/platform/databases/zitadel-postgres || return 1
+  rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/resourceportal-postgres "${RP_CFG_POSTGRES_IMAGE:?RP_CFG_POSTGRES_IMAGE is required}" || return 1
+  rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/zitadel-postgres "$RP_CFG_POSTGRES_IMAGE" || return 1
   install -d -m 0750 /mnt/resourceportal/platform/fencing || return 1
   install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap" || return 1
   install -m 0555 "$RP_INSTALLER_REPO_ROOT/packages/resourceportal-postgres/postgres-fence.sh" "$etc/postgres-fence.sh" || return 1
