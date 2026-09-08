@@ -149,6 +149,48 @@ unset RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMA
 RP_CFG_RELEASE_MANIFEST="$resume_manifest"
 status 0 'resume restores release-derived image refs' rp_primary_restore_release_state
 [[ "${RP_CFG_API_IMAGE:-}" == *'@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]] && pass 'resume restores API image ref' || fail 'resume restores API image ref'
+
+# An unfinished installation may refresh only the upstream Traefik image from a
+# republished manifest of the exact same ResourcePortal version. Application
+# images and release identity must remain pinned to the local release state.
+refresh_manifest="$(mktemp /tmp/rp-release-refresh.XXXXXX.json)"
+cat >"$refresh_manifest" <<'EOF_REFRESH_MANIFEST'
+{
+  "schemaVersion": 1,
+  "version": "0.1.0",
+  "installer": {"minimumVersion": "0.1.0"},
+  "docker": {"minimumVersion": "27.0.0"},
+  "configSchemaVersion": 1,
+  "images": {
+    "api": "ghcr.io/re-invertion/resourceportal-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "web": "ghcr.io/re-invertion/resourceportal-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "postgres": "ghcr.io/re-invertion/resourceportal-postgres@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "zitadel": "ghcr.io/zitadel/zitadel@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "traefik": "traefik@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "migrations": {"supportedFromVersions": ["0.1.0"], "rollbackPolicy": "none"}
+}
+EOF_REFRESH_MANIFEST
+old_api="$RP_CFG_API_IMAGE"
+old_web="$RP_CFG_WEB_IMAGE"
+old_postgres="$RP_CFG_POSTGRES_IMAGE"
+old_zitadel="$RP_CFG_ZITADEL_IMAGE"
+old_release="$RP_CFG_RELEASE_VERSION"
+rp_download_release_manifest(){ cp "$refresh_manifest" "$2"; }
+status 0 'unfinished resume refreshes compatible Traefik image' rp_primary_refresh_traefik_release_image
+eq 'traefik@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' "${RP_CFG_TRAEFIK_IMAGE:-}" 'resume refresh updates only Traefik image'
+eq "$old_api" "$RP_CFG_API_IMAGE" 'resume refresh preserves API image'
+eq "$old_web" "$RP_CFG_WEB_IMAGE" 'resume refresh preserves Web image'
+eq "$old_postgres" "$RP_CFG_POSTGRES_IMAGE" 'resume refresh preserves PostgreSQL image'
+eq "$old_zitadel" "$RP_CFG_ZITADEL_IMAGE" 'resume refresh preserves ZITADEL image'
+eq "$old_release" "$RP_CFG_RELEASE_VERSION" 'resume refresh preserves release version'
+unset -f rp_download_release_manifest
+rm -f "$refresh_manifest"
+
+release_workflow="$(cat "$repo_root/.github/workflows/release.yml")"
+contains "$release_workflow" 'traefik:v3.6.16' 'release pins Docker-29-compatible Traefik'
+not_contains "$release_workflow" 'traefik:v3.5' 'release no longer pins incompatible Traefik 3.5'
+
 rm -f "$resume_manifest"
 
 

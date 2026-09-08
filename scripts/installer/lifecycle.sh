@@ -236,6 +236,32 @@ rp_primary_restore_release_state() {
   export RP_CFG_RELEASE_MANIFEST
 }
 
+rp_primary_refresh_traefik_release_image() {
+  local version="${RP_CFG_RELEASE_VERSION:?RP_CFG_RELEASE_VERSION is required}"
+  local current="${RP_CFG_TRAEFIK_IMAGE:?RP_CFG_TRAEFIK_IMAGE is required}"
+  local tmp remote_version remote_ref
+  tmp="$(mktemp /tmp/resourceportal-release-refresh.XXXXXX.json)" || return 1
+  if ! rp_download_release_manifest "$version" "$tmp"; then
+    rm -f "$tmp"
+    rp_log WARN "could not refresh Traefik image for release ${version}; keeping existing immutable ref"
+    return 0
+  fi
+  remote_version="$(rp_manifest_value "$tmp" '.version')" || { rm -f "$tmp"; return 1; }
+  if [[ "$remote_version" != "$version" ]]; then
+    rm -f "$tmp"
+    rp_log ERROR "release refresh version mismatch: expected ${version}, got ${remote_version}"
+    return 1
+  fi
+  remote_ref="$(rp_manifest_value "$tmp" '.images.traefik')" || { rm -f "$tmp"; return 1; }
+  rp_release_image_ref_valid "$remote_ref" || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+  if [[ "$remote_ref" != "$current" ]]; then
+    RP_CFG_TRAEFIK_IMAGE="$remote_ref"
+    export RP_CFG_TRAEFIK_IMAGE
+    rp_log INFO "refreshed Traefik image from release ${version}"
+  fi
+}
+
 rp_prepare_zitadel_masterkey_file() {
   local path="$1" bytes value
   [[ "$path" == /* ]] || return 1
@@ -519,6 +545,9 @@ rp_primary_install() {
   rp_collect_primary_config "$state_file" || return 1
   if rp_phase_done "$state_file" release; then
     rp_primary_restore_release_state || return 1
+    if ! rp_phase_done "$state_file" persist; then
+      rp_primary_refresh_traefik_release_image || return 1
+    fi
   fi
   if rp_phase_done "$state_file" secrets; then
     rp_primary_restore_secret_state || return 1
