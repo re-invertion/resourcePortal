@@ -92,7 +92,7 @@ rp_collect_primary_config() {
 }
 
 rp_primary_phase_names() {
-  printf '%s\n' preflight packages docker storage firewall swarm nfs release secrets bootstrap migrations identity smtp ingress final enrollment persist
+  printf '%s\n' preflight packages docker storage firewall swarm nfs release secrets bootstrap migrations identity smtp dns ingress final enrollment persist
 }
 
 rp_prepare_host_packages() {
@@ -442,6 +442,14 @@ rp_primary_configure_smtp() {
   fi
 }
 
+rp_primary_wait_for_dns() {
+  rp_wait_for_required_dns \
+    "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" \
+    "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" \
+    "${RP_CFG_INGRESS_ADDRESSES:?RP_CFG_INGRESS_ADDRESSES is required}" \
+    "${RP_DNS_CHECK_INTERVAL_SECONDS:-10}"
+}
+
 rp_primary_enable_ingress() {
   rp_validate_domain_dns "$RP_CFG_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_validate_domain_dns "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
@@ -492,6 +500,7 @@ rp_primary_install() {
   rp_run_phase "$state_file" migrations rp_primary_run_migrations
   rp_run_phase "$state_file" identity rp_primary_bootstrap_identity
   rp_run_phase "$state_file" smtp rp_primary_configure_smtp
+  rp_run_phase "$state_file" dns rp_primary_wait_for_dns
   rp_run_phase "$state_file" ingress rp_primary_enable_ingress
   rp_run_phase "$state_file" final rp_primary_deploy_final
   rp_run_phase "$state_file" enrollment rp_primary_start_enrollment
