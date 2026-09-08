@@ -1,4 +1,5 @@
 FROM postgres:17-bookworm
+LABEL org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends util-linux \
     && rm -rf /var/lib/apt/lists/*

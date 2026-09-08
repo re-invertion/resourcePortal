@@ -103,8 +103,15 @@ status 1 'mutable latest image rejected' rp_validate_release_manifest "$mutable"
 
 workflow="$(cat "$repo_root/.github/workflows/release.yml")"
 contains "$workflow" 'packages: write' 'release workflow can publish GHCR'
+contains "$workflow" 'workflow_dispatch:' 'release workflow supports controlled manual republish'
+contains "$workflow" 'steps.version.outputs.tag' 'release workflow uses validated release tag for image publication'
 contains "$workflow" 'docker/build-push-action' 'release workflow builds immutable images'
-contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ github.ref_name }}' 'release workflow publishes fenced PostgreSQL image'
+contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}' 'release workflow publishes fenced PostgreSQL image'
+for dockerfile in "$repo_root/Dockerfile" "$repo_root/packages/resourceportal-web/Dockerfile" "$repo_root/packages/resourceportal-postgres/Dockerfile"; do
+  contains "$(cat "$dockerfile")" 'org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"' "release image links to public source repository: ${dockerfile#$repo_root/}"
+done
+contains "$workflow" 'docker logout ghcr.io' 'release workflow drops GHCR credentials before public pull verification'
+contains "$workflow" 'docker buildx imagetools inspect' 'release workflow verifies anonymous exact-digest pulls'
 contains "$workflow" 'resourceportal-release-manifest.json' 'release workflow publishes machine-readable manifest'
 not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
 

@@ -39,6 +39,10 @@ Additional nodes use a 30-minute, single-use, role-bound enrollment bundle. The 
 
 The node validates the pinned enrollment TLS identity, redeems the token, configures the private firewall, joins Swarm, mounts the role-appropriate NFS namespaces and calls the completion endpoint. The Primary then verifies the joined node and applies allowed labels. Worker bundles cannot obtain manager credentials.
 
+## Production image publication
+
+ResourcePortal production images are published in GHCR with `org.opencontainers.image.source` pointing at the public `re-invertion/resourcePortal` repository. The release workflow logs out of GHCR after publishing and verifies anonymous access to the exact API, Web and fenced PostgreSQL image digests before it updates the GitHub Release manifest. Controlled manual republish is supported for recovery of an existing semantic release version. A release is not considered publishable when any required ResourcePortal image still requires GHCR authentication.
+
 ## Upgrade
 
 Upgrade consumes a release manifest containing exact image digests, installer compatibility, minimum Docker version, config schema and migration rollback policy. `latest` is rejected. Images are pulled before migration/deploy. Automatic rollback is refused when the selected release declares an irreversible migration policy.

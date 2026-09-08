@@ -28,6 +28,7 @@ COPY packages/resourceportal-web/package.json ./packages/resourceportal-web/pack
 RUN npm ci --omit=dev --ignore-scripts --workspace @resource-portal/web --include-workspace-root=false
 
 FROM node:24-alpine AS runtime
+LABEL org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"
 WORKDIR /app/packages/resourceportal-web
 
 ENV NODE_ENV=production
