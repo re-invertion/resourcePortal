@@ -479,6 +479,9 @@ rp_primary_persist() {
 
 rp_primary_install() {
   local state_file="${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}"
+  rp_run_phase "$state_file" preflight rp_preflight_system || return 1
+  rp_run_phase "$state_file" packages rp_prepare_host_packages || return 1
+  if declare -F rp_ui_try_enable_tui >/dev/null; then rp_ui_try_enable_tui || return 1; fi
   rp_collect_primary_config "$state_file" || return 1
   if rp_phase_done "$state_file" release; then
     rp_primary_restore_release_state || return 1
@@ -487,8 +490,6 @@ rp_primary_install() {
     rp_primary_restore_secret_state || return 1
   fi
   rp_primary_recover_incomplete_zitadel_bootstrap "$state_file" || return 1
-  rp_run_phase "$state_file" preflight rp_preflight_system
-  rp_run_phase "$state_file" packages rp_prepare_host_packages
   rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
   rp_run_phase "$state_file" storage rp_primary_prepare_storage
   rp_run_phase "$state_file" firewall rp_primary_configure_firewall

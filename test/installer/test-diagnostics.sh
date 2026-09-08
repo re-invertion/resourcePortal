@@ -27,6 +27,19 @@ eq '1' "$(cat "$count")" 'completed phase is skipped on replay'
 status 0 'phase marker detected' rp_phase_done "$state" preflight
 rm -f "$state" "$count"
 
+primary_order="$(mktemp /tmp/rp-primary-order.XXXXXX)"
+(
+  rp_run_phase(){ printf 'phase:%s\n' "$2" >>"$primary_order"; }
+  rp_ui_try_enable_tui(){ printf 'tui\n' >>"$primary_order"; }
+  rp_collect_primary_config(){ printf 'config\n' >>"$primary_order"; }
+  rp_phase_done(){ return 1; }
+  rp_primary_recover_incomplete_zitadel_bootstrap(){ :; }
+  rp_primary_install
+)
+primary_order_head="$(head -n 4 "$primary_order")"
+eq $'phase:preflight\nphase:packages\ntui\nconfig' "$primary_order_head" 'Primary bootstraps packages before TUI and config prompts'
+rm -f "$primary_order"
+
 # Migration recovery must require the actual bootstrap services, not only host artifacts.
 bootstrap_checks_source="$(sed -n '/rp_primary_bootstrap_services_ready()/,/^}/p' "$repo_root/scripts/installer/lifecycle.sh")"
 for service in 'postgres-rp' 'postgres-zitadel' 'zitadel'; do
