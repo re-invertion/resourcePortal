@@ -383,7 +383,9 @@ rp_primary_bootstrap_stack() {
 rp_wait_service_replicas() {
   local service="$1" wanted="${2:-1}" timeout="${3:-300}" elapsed=0 actual
   while (( elapsed < timeout )); do
-    actual="$(docker service inspect "$service" --format '{{if .ServiceStatus}}{{.ServiceStatus.RunningTasks}}{{else}}0{{end}}' 2>/dev/null || printf 0)"
+    if ! actual="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"; then
+      actual=0
+    fi
     [[ "$actual" == "$wanted" ]] && return 0
     sleep 2; elapsed=$((elapsed+2))
   done

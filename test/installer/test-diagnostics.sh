@@ -34,6 +34,15 @@ for service in 'postgres-rp' 'postgres-zitadel' 'zitadel'; do
 done
 [[ "$bootstrap_checks_source" == *'docker service inspect'* ]] && pass 'bootstrap readiness checks Swarm service existence' || fail 'bootstrap readiness checks Swarm service existence'
 
+# Replica readiness must use task state available from Docker Swarm.
+docker(){
+  if [[ "$1 $2" == 'service ps' ]]; then printf '%s\n' 'Running 5 seconds ago'; return 0; fi
+  return 1
+}
+sleep(){ :; }
+status 0 'replica readiness counts running Swarm tasks' rp_wait_service_replicas resourceportal-control-plane_zitadel 1 2
+unset -f docker sleep
+
 # Resume after a completed secrets checkpoint must reconstruct the runtime
 # Swarm secret references from the existing secret files instead of relying on
 # shell state from the earlier installer process.
