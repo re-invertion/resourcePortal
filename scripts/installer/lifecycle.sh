@@ -216,6 +216,27 @@ rp_primary_restore_release_state() {
   export RP_CFG_RELEASE_MANIFEST
 }
 
+rp_prepare_zitadel_masterkey_file() {
+  local path="$1" bytes value
+  [[ "$path" == /* ]] || return 1
+  if [[ ! -r "$path" ]]; then
+    umask 077
+    mkdir -p "$(dirname "$path")" || return 1
+    openssl rand -hex 16 | tr -d '\n' >"$path" || return 1
+    chmod 0600 "$path" || return 1
+  fi
+  bytes="$(wc -c <"$path" | tr -d ' ')" || return 1
+  value="$(cat "$path")" || return 1
+  if [[ "$bytes" == 33 && "$value" =~ ^[a-fA-F0-9]{32}$ ]]; then
+    printf '%s' "$value" >"$path" || return 1
+    chmod 0600 "$path" || return 1
+    bytes=32
+  fi
+  [[ "$bytes" == 32 ]] || return 1
+  value="$(cat "$path")" || return 1
+  [[ "$value" =~ ^[a-fA-F0-9]{32}$ ]] || return 1
+}
+
 rp_primary_restore_secret_state() {
   local dir="${RP_INSTALLER_SECRET_STATE_DIR:-/var/lib/resourceportal/installer-state/secrets}"
   local name dbpass zdbpass master enc cookie worker oidc_placeholder dburl
@@ -239,9 +260,10 @@ rp_primary_restore_secret_state() {
   printf 'postgresql://resource_portal:%s@postgres-rp:5432/resource_portal?schema=public' "$(cat "$dbpass")" >"$dburl" || return 1
   chmod 0600 "$dburl" || return 1
 
+  rp_prepare_zitadel_masterkey_file "$master" || return 1
   rp_ensure_swarm_secret rp_postgres_password "$dbpass" || return 1
   rp_ensure_swarm_secret zitadel_postgres_password "$zdbpass" || return 1
-  rp_ensure_swarm_secret zitadel_masterkey "$master" || return 1
+  RP_CFG_ZITADEL_KEY_SWARM_REF="$(rp_ensure_versioned_swarm_secret zitadel_masterkey "$master")" || return 1
   rp_ensure_swarm_secret rp_encryption_key "$enc" || return 1
   rp_ensure_swarm_secret rp_database_url "$dburl" || return 1
 
@@ -249,7 +271,7 @@ rp_primary_restore_secret_state() {
   RP_CFG_WORKER_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_internal_worker_token "$worker")" || return 1
   RP_CFG_OIDC_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")" || return 1
   : "${RP_CFG_OIDC_CLIENT_ID:=bootstrap-pending}"
-  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID
+  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID RP_CFG_ZITADEL_KEY_SWARM_REF
 }
 
 rp_primary_create_platform_secrets() {
@@ -260,13 +282,14 @@ rp_primary_create_platform_secrets() {
   done
   [[ -r "$dir/rp-postgres" ]] || { umask 077; openssl rand -hex 24 >"$dir/rp-postgres"; chmod 0600 "$dir/rp-postgres"; }
   [[ -r "$dir/zitadel-postgres" ]] || { umask 077; openssl rand -hex 24 >"$dir/zitadel-postgres"; chmod 0600 "$dir/zitadel-postgres"; }
-  [[ -r "$dir/zitadel-master" ]] || { umask 077; openssl rand -hex 16 >"$dir/zitadel-master"; chmod 0600 "$dir/zitadel-master"; }
+  rp_prepare_zitadel_masterkey_file "$dir/zitadel-master" || return 1
   dbpass="$dir/rp-postgres"; zdbpass="$dir/zitadel-postgres"; master="$dir/zitadel-master"; enc="$dir/encryption"; cookie="$dir/cookie"; worker="$dir/worker"; oidc_placeholder="$dir/oidc-placeholder"
   dburl="$dir/database-url"
   printf 'postgresql://resource_portal:%s@postgres-rp:5432/resource_portal?schema=public' "$(cat "$dbpass")" >"$dburl"; chmod 0600 "$dburl"
   rp_ensure_swarm_secret rp_postgres_password "$dbpass"
   rp_ensure_swarm_secret zitadel_postgres_password "$zdbpass"
-  rp_ensure_swarm_secret zitadel_masterkey "$master"
+  RP_CFG_ZITADEL_KEY_SWARM_REF="$(rp_ensure_versioned_swarm_secret zitadel_masterkey "$master")" || return 1
+  export RP_CFG_ZITADEL_KEY_SWARM_REF
   rp_ensure_swarm_secret rp_encryption_key "$enc"
   RP_CFG_COOKIE_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_cookie_secret "$cookie")" || return 1
   RP_CFG_WORKER_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_internal_worker_token "$worker")" || return 1

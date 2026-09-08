@@ -59,7 +59,7 @@ Diagnostics are read-only. Explicit repair actions use `--repair` and require ex
 
 ## Security and limitations
 
-Passwords, private keys, raw enrollment tokens, raw Swarm join tokens and SMTP credentials are not written to `installer.conf`. Runtime application secrets are delivered with Docker Swarm Secrets and `*_FILE` loading. The enrollment listener is exposed only on the private cluster firewall rule and uses pinned TLS.
+Passwords, private keys, raw enrollment tokens, raw Swarm join tokens and SMTP credentials are not written to `installer.conf`. Runtime application secrets are delivered with Docker Swarm Secrets and `*_FILE` loading. The ZITADEL master key is stored as exactly 32 hexadecimal characters without a trailing newline and is published through a versioned Swarm Secret reference, so a resumable bootstrap can repair the legacy newline-terminated representation without rotating the underlying key material or trying to replace an in-use immutable secret. The enrollment listener is exposed only on the private cluster firewall rule and uses pinned TLS.
 
 v1 intentionally does **not** provide CephFS, software RAID management, storage-host HA, or a backup/restore subsystem. The single active storage host remains a storage SPOF. One Swarm manager is supported for bootstrap, while diagnostics recommends three managers for quorum resilience.
 

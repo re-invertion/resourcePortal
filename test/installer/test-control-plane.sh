@@ -26,6 +26,7 @@ export RP_CFG_WORKER_SWARM_REF='rp_internal_worker_token_0123456789abcdef'
 export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
 export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
 export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
+export RP_CFG_ZITADEL_KEY_SWARM_REF='zitadel_masterkey_deadbeefcafebabe'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
 
 bootstrap="$(rp_render_stack bootstrap)"
@@ -58,6 +59,7 @@ contains "$final" 'AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret' 'API 
 contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token' 'workers consume token secret file'
 contains "$final" '--masterkeyFile' 'ZITADEL uses masterkey file'
 contains "$final" '/run/secrets/zitadel_masterkey' 'ZITADEL masterkey comes from Swarm Secret'
+contains "$final" 'name: zitadel_masterkey_deadbeefcafebabe' 'stack aliases versioned ZITADEL masterkey secret'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/rp_postgres_password' 'RP postgres uses password file'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/zitadel_postgres_password' 'ZITADEL postgres uses password file'
 

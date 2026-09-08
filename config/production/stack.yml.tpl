@@ -17,6 +17,7 @@ secrets:
     external: true
   zitadel_masterkey:
     external: true
+    name: __ZITADEL_KEY_SWARM_REF__
   zitadel_secret_config:
     external: true
   zitadel_init_steps:
