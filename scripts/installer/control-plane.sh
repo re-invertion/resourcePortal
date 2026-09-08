@@ -117,6 +117,7 @@ rp_run_migrations() {
   service_name="${stack_name}-migration-$(date +%s)"
   rp_validate_image_ref "${RP_CFG_API_IMAGE:-}" || return 1
   docker service create \
+    --detach \
     --name "$service_name" \
     --restart-condition none \
     --constraint 'node.role==manager' \
