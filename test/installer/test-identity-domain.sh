@@ -61,6 +61,9 @@ contains "$identity_shell_source" 'ZITADEL_BOOTSTRAP_INSTANCE_HOST=' 'installer 
 bootstrap_runner_source="$(sed -n '/rp_run_zitadel_bootstrap()/,/^}/p' "$repo_root/scripts/installer/identity.sh")"
 contains "$bootstrap_runner_source" '--detach' 'identity bootstrap one-shot service is created detached'
 contains "$bootstrap_runner_source" 'docker service ps --no-trunc' 'identity bootstrap explicitly polls one-shot service state'
+contains "$identity_shell_source" 'rp_prepare_api_bootstrap_output_dir' 'identity bootstrap prepares non-root output directory'
+contains "$bootstrap_runner_source" 'identity-bootstrap' 'identity bootstrap isolates writable output under installer state'
+contains "$bootstrap_runner_source" 'chown -R root:root' 'identity bootstrap returns output ownership to root'
 contains "$identity_source" '["client-secret", app.clientSecret]' 'production bootstrap writes client secret sidecar'
 contains "$identity_source" '["client-id", app.clientId]' 'production bootstrap writes client id sidecar'
 contains "$identity_source" '["user-id", bootstrapUser.id]' 'production bootstrap writes admin user id sidecar'
