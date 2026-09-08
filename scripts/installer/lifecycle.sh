@@ -310,6 +310,33 @@ rp_prepare_postgres_bind_dir() {
   chmod 0700 "$path" || return 1
 }
 
+rp_primary_recover_incomplete_zitadel_bootstrap() {
+  local state_file="$1" platform_root="${2:-/mnt/resourceportal/platform}"
+  local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" db_dir backup service
+
+  rp_phase_done "$state_file" bootstrap || return 0
+  rp_phase_done "$state_file" migrations && return 0
+  rp_phase_done "$state_file" identity && return 0
+
+  mountpoint -q "$platform_root" || return 1
+  db_dir="$platform_root/databases/zitadel-postgres"
+
+  for service in zitadel postgres-zitadel; do
+    if docker service inspect "${stack}_${service}" >/dev/null 2>&1; then
+      docker service scale "${stack}_${service}=0" >/dev/null || return 1
+      rp_wait_service_replicas "${stack}_${service}" 0 120 || return 1
+    fi
+  done
+
+  if [[ -d "$db_dir" ]]; then
+    backup="${db_dir}.incomplete-$(date -u '+%Y%m%dT%H%M%SZ')"
+    mv "$db_dir" "$backup" || return 1
+    rp_log WARN "quarantined incomplete ZITADEL bootstrap database at $backup"
+  fi
+
+  rp_primary_bootstrap_stack || return 1
+}
+
 rp_primary_bootstrap_stack() {
   local etc=/etc/resourceportal secret_dir=/var/lib/resourceportal/installer-state/secrets
   mountpoint -q /mnt/resourceportal/platform || return 1
@@ -425,6 +452,7 @@ rp_primary_install() {
   if rp_phase_done "$state_file" secrets; then
     rp_primary_restore_secret_state || return 1
   fi
+  rp_primary_recover_incomplete_zitadel_bootstrap "$state_file" || return 1
   rp_run_phase "$state_file" preflight rp_preflight_system
   rp_run_phase "$state_file" packages rp_prepare_host_packages
   rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
