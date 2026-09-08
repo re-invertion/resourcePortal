@@ -230,3 +230,31 @@ rp_dashboard_leave() {
   RP_DASHBOARD_ENTERED=false
   export RP_DASHBOARD_ENTERED
 }
+
+rp_dashboard_log_tail() {
+  local log_file="${1:-${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}}" lines="${2:-40}"
+  [[ "$lines" =~ ^[0-9]+$ ]] || lines=40
+  (( lines > 0 )) || lines=40
+  [[ -r "$log_file" ]] || { printf 'Installer log is not readable: %s\n' "$log_file"; return 0; }
+  tail -n "$lines" "$log_file"
+}
+
+rp_dashboard_failure_text() {
+  local phase="$1" summary="$2"
+  printf 'Installation failed\n'
+  printf 'Stage: %s\n' "$phase"
+  printf 'Error: %s\n' "$summary"
+  printf 'Log: %s\n' "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
+  printf '\nActions:\n'
+  printf 'Retry\nView details\nExit\n'
+}
+
+rp_dashboard_render_failure() {
+  local phase="$1" summary="$2" text
+  text="$(rp_dashboard_failure_text "$phase" "$summary")"
+  if [[ "${RP_UI_MODE:-text}" == tui ]]; then
+    rp_dashboard_gum_style "$text" --border rounded --padding '1 2' >&2
+  else
+    printf '%s\n' "$text" >&2
+  fi
+}

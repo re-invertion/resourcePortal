@@ -48,6 +48,38 @@ event_text="$(cat "$event_log")"
 rm -f "$event_state" "$event_log"
 rm -f "$state" "$count"
 
+retry_state="$(mktemp /tmp/rp-retry-state.XXXXXX)"
+printf 'preflight\n' >"$retry_state"
+retry_attempts="$(mktemp /tmp/rp-retry-attempts.XXXXXX)"; printf '0\n' >"$retry_attempts"
+retry_marker="$(mktemp /tmp/rp-retry-action.XXXXXX)"; rm -f "$retry_marker"
+(
+  RP_UI_MODE=tui
+  rp_ui_event(){ :; }
+  rp_ui_failure_action(){ if [[ ! -e "$retry_marker" ]]; then : >"$retry_marker"; printf 'retry\n'; else printf 'exit\n'; fi; }
+  flaky_phase(){ local n; n="$(cat "$retry_attempts")"; n=$((n+1)); printf '%s\n' "$n" >"$retry_attempts"; (( n >= 2 )); }
+  rp_run_phase "$retry_state" dns flaky_phase
+)
+eq '2' "$(cat "$retry_attempts")" 'TUI retry reruns failed phase command'
+status 0 'prior checkpoint survives retry' rp_phase_done "$retry_state" preflight
+status 0 'successful retry creates checkpoint' rp_phase_done "$retry_state" dns
+eq '1' "$(grep -Fc dns "$retry_state")" 'retry creates one checkpoint only'
+rm -f "$retry_state" "$retry_attempts" "$retry_marker"
+
+exit_state="$(mktemp /tmp/rp-exit-state.XXXXXX)"; : >"$exit_state"
+set +e
+(
+  RP_UI_MODE=tui
+  rp_ui_event(){ :; }
+  rp_ui_failure_action(){ printf 'exit\n'; }
+  always_fail(){ return 1; }
+  rp_run_phase "$exit_state" dns always_fail
+)
+exit_phase_rc=$?
+set -e
+eq '1' "$exit_phase_rc" 'TUI exit returns phase failure'
+! grep -Fxq dns "$exit_state" && pass 'TUI exit does not checkpoint failed phase' || fail 'TUI exit does not checkpoint failed phase'
+rm -f "$exit_state"
+
 primary_order="$(mktemp /tmp/rp-primary-order.XXXXXX)"
 (
   rp_run_phase(){ printf 'phase:%s\n' "$2" >>"$primary_order"; }

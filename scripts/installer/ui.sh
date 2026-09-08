@@ -265,3 +265,36 @@ rp_ui_confirm() {
       ;;
   esac
 }
+
+rp_ui_show_log_details() {
+  local details
+  if declare -F rp_dashboard_log_tail >/dev/null; then
+    details="$(rp_dashboard_log_tail "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}" 40)"
+  else
+    details="Installer log details are unavailable."
+  fi
+  if [[ "$(rp_ui_backend)" == gum ]]; then
+    rp_ui_prompt_begin
+    "$RP_GUM_BIN" pager "$details" || true
+    rp_ui_prompt_end
+  else
+    printf '%s\n' "$details" >&2
+  fi
+}
+
+rp_ui_failure_action() {
+  local phase="$1" summary="$2" action
+  [[ "${RP_UI_MODE:-text}" == tui ]] || { printf 'exit\n'; return 0; }
+  while true; do
+    if declare -F rp_dashboard_render_failure >/dev/null; then rp_dashboard_render_failure "$phase" "$summary"; fi
+    action="$(rp_ui_choice 'Installation failed' "$summary" retry \
+      retry 'Retry' \
+      details 'View details' \
+      exit 'Exit')" || { printf 'exit\n'; return 0; }
+    case "$action" in
+      retry|exit) printf '%s\n' "$action"; return 0 ;;
+      details) rp_ui_show_log_details ;;
+      *) printf 'exit\n'; return 0 ;;
+    esac
+  done
+}

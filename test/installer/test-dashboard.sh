@@ -109,6 +109,19 @@ test_secret='do-not-leak-123'
 assert_not_contains "$(cat "$logged_tmp/events")" "$test_secret" 'operation event excludes unrelated secret values'
 rm -rf "$logged_tmp"
 
+details_log="$(mktemp)"
+for i in $(seq 1 100); do printf 'safe-line-%03d\n' "$i"; done >"$details_log"
+details_tail="$(rp_dashboard_log_tail "$details_log" 40)"
+assert_eq 40 "$(printf '%s\n' "$details_tail" | wc -l | tr -d ' ')" 'details view is bounded to requested tail'
+assert_contains "$details_tail" 'safe-line-100' 'details view includes newest log line'
+if [[ "$details_tail" == *'safe-line-060'* ]]; then printf 'FAIL: details view includes line outside bounded tail\n' >&2; failures=$((failures+1)); else printf 'PASS: details view excludes lines outside bounded tail\n'; fi
+failure_text="$(rp_dashboard_failure_text dns 'DNS resolver failed')"
+assert_contains "$failure_text" 'Retry' 'failure screen offers Retry'
+assert_contains "$failure_text" 'View details' 'failure screen offers View details'
+assert_contains "$failure_text" 'Exit' 'failure screen offers Exit'
+rm -f "$details_log"
+
+
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer dashboard tests passed.\n'

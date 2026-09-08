@@ -18,17 +18,31 @@ rp_phase_mark_done() {
 
 rp_run_phase() {
   local state_file="$1" phase="$2"; shift 2
+  local action
   rp_phase_done "$state_file" "$phase" && return 0
   rp_log INFO "installer phase started: $phase"
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting $phase" || true; fi
-  if ! "$@"; then
+  while true; do
+    if "$@"; then
+      rp_phase_mark_done "$state_file" "$phase"
+      rp_log INFO "installer phase completed: $phase"
+      if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed $phase" || true; fi
+      return 0
+    fi
     rp_log ERROR "installer phase failed: $phase"
     if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Stage failed: $phase" || true; fi
-    return 1
-  fi
-  rp_phase_mark_done "$state_file" "$phase"
-  rp_log INFO "installer phase completed: $phase"
-  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed $phase" || true; fi
+    if [[ "${RP_UI_MODE:-text}" != tui ]] || ! declare -F rp_ui_failure_action >/dev/null; then
+      return 1
+    fi
+    action="$(rp_ui_failure_action "$phase" "Stage failed: $phase")" || return 1
+    case "$action" in
+      retry)
+        rp_log INFO "installer phase retry requested: $phase"
+        if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Retrying $phase" || true; fi
+        ;;
+      exit|*) return 1 ;;
+    esac
+  done
 }
 
 
