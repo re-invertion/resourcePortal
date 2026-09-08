@@ -135,7 +135,7 @@ rp_ui_init() {
 }
 
 rp_ui_cleanup() {
-  :
+  if declare -F rp_dashboard_leave >/dev/null; then rp_dashboard_leave || true; fi
 }
 
 rp_ui_backend() {

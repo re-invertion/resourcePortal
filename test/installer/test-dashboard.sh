@@ -40,6 +40,51 @@ assert_contains "$render" '✗ dns' 'semantic renderer shows failed phase'
 assert_contains "$render" '○ ingress' 'semantic renderer shows pending phase'
 assert_contains "$render" 'Current: DNS resolver failed' 'semantic renderer shows current operation'
 
+fake_gum_dir="$(mktemp -d)"
+fake_gum="$fake_gum_dir/gum"
+cat >"$fake_gum" <<'GUM'
+#!/usr/bin/env bash
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  style)
+    last=''
+    for arg in "$@"; do last="$arg"; done
+    printf '%s\n' "$last"
+    ;;
+  join)
+    for arg in "$@"; do
+      case "$arg" in --horizontal|--vertical|--align=*|--*) continue ;; esac
+      printf '%s\n' "$arg"
+    done
+    ;;
+  *) printf '%s\n' "$*" ;;
+esac
+GUM
+chmod +x "$fake_gum"
+RP_GUM_BIN="$fake_gum"
+RP_UI_MODE=tui
+RP_DASHBOARD_STATUS[dns]=running
+RP_DASHBOARD_OPERATION='Checking DNS records'
+rp_dashboard_activity_add 'Waiting for DNS'
+full_render="$(rp_dashboard_render 2>&1)"
+assert_contains "$full_render" 'ResourcePortal Production Installer' 'full renderer includes title'
+assert_contains "$full_render" 'Mode: Primary' 'full renderer includes mode'
+assert_contains "$full_render" 'Progress: 50%' 'full renderer includes progress'
+assert_contains "$full_render" '● dns' 'full renderer includes running phase'
+assert_contains "$full_render" 'Checking DNS records' 'full renderer includes current operation'
+assert_contains "$full_render" 'Waiting for DNS' 'full renderer includes recent activity'
+
+terminal_log="$fake_gum_dir/terminal-actions"
+rp_dashboard_terminal_action(){ printf '%s\n' "$1" >>"$terminal_log"; }
+rp_dashboard_enter
+rp_dashboard_leave
+rp_dashboard_leave
+terminal_actions="$(cat "$terminal_log")"
+assert_contains "$terminal_actions" 'hide_cursor' 'dashboard enter hides cursor'
+assert_contains "$terminal_actions" 'show_cursor' 'dashboard leave restores cursor'
+assert_eq 1 "$(grep -c '^show_cursor$' "$terminal_log")" 'dashboard leave is idempotent'
+rm -rf "$fake_gum_dir"
+
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer dashboard tests passed.\n'
