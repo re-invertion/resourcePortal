@@ -34,6 +34,26 @@ for service in 'postgres-rp' 'postgres-zitadel' 'zitadel'; do
 done
 [[ "$bootstrap_checks_source" == *'docker service inspect'* ]] && pass 'bootstrap readiness checks Swarm service existence' || fail 'bootstrap readiness checks Swarm service existence'
 
+# Resume after a completed secrets checkpoint must reconstruct the runtime
+# Swarm secret references from the existing secret files instead of relying on
+# shell state from the earlier installer process.
+resume_secret_dir="$(mktemp -d /tmp/rp-resume-secrets.XXXXXX)"
+for name in encryption cookie worker oidc-placeholder rp-postgres zitadel-postgres zitadel-master; do
+  printf '%s' "$name-test-value" >"$resume_secret_dir/$name"
+done
+rp_ensure_swarm_secret(){ return 0; }
+rp_ensure_versioned_swarm_secret(){ printf '%s_ref\n' "$1"; }
+unset RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID
+RP_INSTALLER_SECRET_STATE_DIR="$resume_secret_dir"
+export RP_INSTALLER_SECRET_STATE_DIR
+status 0 'resume restores completed secret phase runtime state' rp_primary_restore_secret_state
+eq 'rp_cookie_secret_ref' "${RP_CFG_COOKIE_SWARM_REF:-}" 'resume restores cookie Swarm secret ref'
+eq 'rp_internal_worker_token_ref' "${RP_CFG_WORKER_SWARM_REF:-}" 'resume restores worker Swarm secret ref'
+eq 'rp_oidc_client_secret_ref' "${RP_CFG_OIDC_SWARM_REF:-}" 'resume restores OIDC Swarm secret ref'
+eq 'bootstrap-pending' "${RP_CFG_OIDC_CLIENT_ID:-}" 'resume restores bootstrap OIDC client id'
+unset RP_INSTALLER_SECRET_STATE_DIR
+rm -rf "$resume_secret_dir"
+
 phases="$(rp_primary_phase_names)"
 [[ "$phases" == $'preflight\npackages\ndocker\nstorage\nfirewall\nswarm\nnfs\nrelease\nsecrets\nbootstrap\nmigrations\nidentity\nsmtp\ningress\nfinal\nenrollment\npersist' ]] && pass 'Primary phase order is deterministic' || fail 'Primary phase order is deterministic'
 
