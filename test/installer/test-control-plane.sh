@@ -61,6 +61,8 @@ contains "$final" '--masterkeyFile' 'ZITADEL uses masterkey file'
 contains "$final" '/run/secrets/zitadel_masterkey' 'ZITADEL masterkey comes from Swarm Secret'
 contains "$final" 'source: /mnt/resourceportal/platform/zitadel-bootstrap' 'ZITADEL bootstrap PAT source uses platform storage'
 contains "$final" 'target: /zitadel/bootstrap' 'ZITADEL bootstrap PAT path is mounted for start-from-init'
+lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+contains "$lifecycle_source" 'rp_prepare_zitadel_bootstrap_dir' 'bootstrap prepares writable ZITADEL PAT directory'
 contains "$final" 'name: zitadel_masterkey_deadbeefcafebabe' 'stack aliases versioned ZITADEL masterkey secret'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/rp_postgres_password' 'RP postgres uses password file'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/zitadel_postgres_password' 'ZITADEL postgres uses password file'
