@@ -388,6 +388,7 @@ rp_primary_bootstrap_stack() {
 
 rp_wait_service_replicas() {
   local service="$1" wanted="${2:-1}" timeout="${3:-300}" elapsed=0 actual
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started swarm "Waiting for $service replicas" || true; fi
   while (( elapsed < timeout )); do
     if ! actual="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"; then
       actual=0
@@ -415,7 +416,7 @@ rp_primary_run_migrations() {
   fi
   rp_wait_service_replicas "${stack}_postgres-rp" 1 300 || return 1
   rp_wait_service_replicas "${stack}_zitadel" 1 300 || return 1
-  rp_run_migrations
+  rp_run_logged_operation migrations 'Applying database migrations' rp_run_migrations
 }
 
 rp_primary_bootstrap_identity() {
@@ -425,7 +426,7 @@ rp_primary_bootstrap_identity() {
   rp_admin_password_valid "$RP_ADMIN_PASSWORD" || return 1
   printf '%s' "$RP_ADMIN_PASSWORD" >"$admin_file"; chmod 0600 "$admin_file"
   rp_ensure_swarm_secret rp_first_admin_password "$admin_file"
-  rp_run_zitadel_bootstrap "$output" "$RP_ADMIN_USERNAME" "$RP_ADMIN_EMAIL" "$admin_file" || return 1
+  rp_run_logged_operation identity 'Bootstrapping identity provider' rp_run_zitadel_bootstrap "$output" "$RP_ADMIN_USERNAME" "$RP_ADMIN_EMAIL" "$admin_file" || return 1
   rp_apply_zitadel_bootstrap_output "$output" || return 1
   rp_remove_secret_file "$admin_file"
   unset RP_ADMIN_PASSWORD
@@ -460,12 +461,15 @@ rp_primary_enable_ingress() {
   rp_validate_domain_dns "$RP_CFG_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_validate_domain_dns "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_deploy_control_plane ingress
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Waiting for HTTPS certificate: $RP_CFG_DOMAIN" || true; fi
   rp_wait_for_https_certificate "$RP_CFG_DOMAIN" 300 || return 1
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_updated ingress "Waiting for HTTPS certificate: $RP_CFG_ZITADEL_DOMAIN" || true; fi
   rp_wait_for_https_certificate "$RP_CFG_ZITADEL_DOMAIN" 300
 }
 
 rp_primary_deploy_final() {
   rp_deploy_control_plane final
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final 'Waiting for ResourcePortal health' || true; fi
   rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300
 }
 

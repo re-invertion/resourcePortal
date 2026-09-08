@@ -9,6 +9,7 @@ source "$repo_root/scripts/installer/ui.sh"
 failures=0
 assert_eq(){ local e="$1" a="$2" n="$3"; if [[ "$e" == "$a" ]]; then printf 'PASS: %s\n' "$n"; else printf 'FAIL: %s\nexpected: %s\nactual:   %s\n' "$n" "$e" "$a" >&2; failures=$((failures+1)); fi; }
 assert_contains(){ local h="$1" n="$2" t="$3"; if [[ "$h" == *"$n"* ]]; then printf 'PASS: %s\n' "$t"; else printf 'FAIL: %s\nmissing: %s\n' "$t" "$n" >&2; failures=$((failures+1)); fi; }
+assert_not_contains(){ local h="$1" n="$2" t="$3"; if [[ "$h" != *"$n"* ]]; then printf 'PASS: %s\n' "$t"; else printf 'FAIL: %s\nunexpected: %s\n' "$t" "$n" >&2; failures=$((failures+1)); fi; }
 
 state="$(mktemp)"
 printf 'preflight\npackages\n' >"$state"
@@ -84,6 +85,29 @@ assert_contains "$terminal_actions" 'hide_cursor' 'dashboard enter hides cursor'
 assert_contains "$terminal_actions" 'show_cursor' 'dashboard leave restores cursor'
 assert_eq 1 "$(grep -c '^show_cursor$' "$terminal_log")" 'dashboard leave is idempotent'
 rm -rf "$fake_gum_dir"
+
+logged_tmp="$(mktemp -d)"
+(
+  RP_INSTALLER_LOG_FILE="$logged_tmp/installer.log"
+  : >"$RP_INSTALLER_LOG_FILE"
+  RP_UI_MODE=tui
+  rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$logged_tmp/events"; }
+  noisy_command(){ printf 'command-stdout\n'; printf 'command-stderr\n' >&2; return 7; }
+  set +e
+  rp_run_logged_operation migration 'Applying database migrations' noisy_command >"$logged_tmp/screen.out" 2>"$logged_tmp/screen.err"
+  printf '%s\n' "$?" >"$logged_tmp/status"
+  set -e
+)
+assert_eq 7 "$(cat "$logged_tmp/status")" 'logged operation preserves command status'
+logged_text="$(cat "$logged_tmp/installer.log")"
+assert_contains "$logged_text" 'command-stdout' 'logged operation captures stdout'
+assert_contains "$logged_text" 'command-stderr' 'logged operation captures stderr'
+assert_eq '' "$(cat "$logged_tmp/screen.out")" 'TUI hides raw command stdout'
+assert_eq '' "$(cat "$logged_tmp/screen.err")" 'TUI hides raw command stderr'
+assert_contains "$(cat "$logged_tmp/events")" 'operation_started|migration|Applying database migrations' 'logged operation emits safe operation event'
+test_secret='do-not-leak-123'
+assert_not_contains "$(cat "$logged_tmp/events")" "$test_secret" 'operation event excludes unrelated secret values'
+rm -rf "$logged_tmp"
 
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi

@@ -74,8 +74,13 @@ docker(){
   return 1
 }
 sleep(){ :; }
+replica_event_log="$(mktemp /tmp/rp-replica-events.XXXXXX)"
+rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$replica_event_log"; }
 status 0 'replica readiness counts running Swarm tasks' rp_wait_service_replicas resourceportal-control-plane_zitadel 1 2
-unset -f docker sleep
+replica_events="$(cat "$replica_event_log")"
+[[ "$replica_events" == *'operation_started|swarm|Waiting for resourceportal-control-plane_zitadel replicas'* ]] && pass 'replica readiness emits live operation' || fail 'replica readiness emits live operation'
+rm -f "$replica_event_log"
+unset -f rp_ui_event docker sleep
 
 # Resume after a completed secrets checkpoint must reconstruct the runtime
 # Swarm secret references from the existing secret files instead of relying on
@@ -151,6 +156,10 @@ done
 
 
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+[[ "$lifecycle_source" == *"rp_run_logged_operation migrations 'Applying database migrations'"* ]] && pass 'migrations use logged live operation' || fail 'migrations use logged live operation'
+[[ "$lifecycle_source" == *"rp_run_logged_operation identity 'Bootstrapping identity provider'"* ]] && pass 'identity bootstrap uses logged live operation' || fail 'identity bootstrap uses logged live operation'
+[[ "$lifecycle_source" == *"Waiting for HTTPS certificate"* ]] && pass 'ingress reports certificate wait' || fail 'ingress reports certificate wait'
+[[ "$lifecycle_source" == *"Waiting for ResourcePortal health"* ]] && pass 'final rollout reports health wait' || fail 'final rollout reports health wait'
 for required in 'rp_collect_primary_config' 'RP_CFG_CLUSTER_CIDR' 'RP_CFG_SWARM_ADVERTISE_ADDR' 'RP_CFG_STORAGE_BASE_PATH' 'RP_CFG_DOMAIN' 'RP_CFG_ZITADEL_DOMAIN' 'RP_CFG_ACME_EMAIL' 'RP_CFG_RELEASE_VERSION' 'RP_ADMIN_EMAIL' 'RP_ADMIN_PASSWORD' 'RP_CFG_SMTP_DEFERRED'; do
   [[ "$lifecycle_source" == *"$required"* ]] && pass "interactive Primary covers $required" || fail "interactive Primary covers $required"
 done
