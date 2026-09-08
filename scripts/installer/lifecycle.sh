@@ -474,6 +474,8 @@ rp_primary_wait_for_dns() {
 rp_primary_enable_ingress() {
   rp_validate_domain_dns "$RP_CFG_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_validate_domain_dns "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
+  mountpoint -q /mnt/resourceportal/platform || return 1
+  install -d -m 0700 /mnt/resourceportal/platform/traefik || return 1
   rp_deploy_control_plane ingress
   if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Waiting for HTTPS certificate: $RP_CFG_DOMAIN" || true; fi
   rp_wait_for_https_certificate "$RP_CFG_DOMAIN" 300 || return 1

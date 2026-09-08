@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/control-plane.sh"
 source "$repo_root/scripts/installer/secrets.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
 
 failures=0
 pass(){ printf 'PASS: %s\n' "$1"; }
@@ -20,6 +21,7 @@ export RP_CFG_ZITADEL_IMAGE='ghcr.io/zitadel/zitadel:v4.0.0@sha256:ddddddddddddd
 export RP_CFG_TRAEFIK_IMAGE='traefik:v3.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 export RP_CFG_DOMAIN='rp.example.com'
 export RP_CFG_ZITADEL_DOMAIN='auth.rp.example.com'
+export RP_CFG_INGRESS_ADDRESSES='203.0.113.10'
 export RP_CFG_ACME_EMAIL='admin@example.com'
 export RP_CFG_COOKIE_SWARM_REF='rp_cookie_secret_0123456789abcdef'
 export RP_CFG_WORKER_SWARM_REF='rp_internal_worker_token_0123456789abcdef'
@@ -46,6 +48,27 @@ contains "$ingress" 'replicas: 1 # RP_TRAEFIK_REPLICAS' 'ingress state enables T
 contains "$ingress" 'replicas: 0 # RP_API_REPLICAS' 'ingress state still gates API'
 contains "$ingress" 'replicas: 0 # RP_WEB_REPLICAS' 'ingress state still gates Web'
 contains "$ingress" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'ingress state keeps ZITADEL available'
+
+# Resume can reach ingress with bootstrap already checkpointed. Ingress must
+# therefore ensure the Traefik ACME bind source exists immediately before the
+# stack enables the Traefik replica.
+ingress_prepare_log="$(mktemp /tmp/rp-ingress-prepare.XXXXXX)"
+original_ingress_deploy="$(declare -f rp_deploy_control_plane)"
+rp_validate_domain_dns(){ return 0; }
+mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
+install(){ printf 'install:%s\n' "$*" >>"$ingress_prepare_log"; }
+rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$ingress_prepare_log"; }
+rp_wait_for_https_certificate(){ return 0; }
+rp_primary_enable_ingress
+prepare_text="$(cat "$ingress_prepare_log")"
+contains "$prepare_text" 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' 'ingress prepares Traefik ACME state directory on resume'
+first_prepare="$(sed -n '1p' "$ingress_prepare_log")"
+second_prepare="$(sed -n '2p' "$ingress_prepare_log")"
+[[ "$first_prepare" == 'mountpoint:-q /mnt/resourceportal/platform' ]] && pass 'ingress verifies platform mount before Traefik state' || fail 'ingress verifies platform mount before Traefik state'
+[[ "$second_prepare" == 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
+unset -f rp_validate_domain_dns mountpoint install rp_wait_for_https_certificate
+eval "$original_ingress_deploy"
+rm -f "$ingress_prepare_log"
 
 contains "$final" 'replicas: 1 # RP_API_REPLICAS' 'final enables API'
 contains "$final" 'replicas: 1 # RP_WEB_REPLICAS' 'final enables Web'
