@@ -46,8 +46,12 @@ rp_dns_matches_addresses() {
 }
 
 rp_resolve_domain_addresses() {
-  local domain="$1"
-  getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u
+  local domain="$1" resolver
+  local resolvers="${RP_DNS_PUBLIC_RESOLVERS:-1.1.1.1 8.8.8.8}"
+  command -v dig >/dev/null 2>&1 || return 1
+  for resolver in $resolvers; do
+    dig +time=3 +tries=1 +short A "$domain" "@$resolver" 2>/dev/null || true
+  done | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | sort -u
 }
 
 rp_validate_domain_dns() {

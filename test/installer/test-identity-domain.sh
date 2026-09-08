@@ -30,6 +30,20 @@ status 0 'DNS accepts one of expected addresses' rp_dns_matches_addresses '203.0
 status 1 'DNS rejects unrelated address' rp_dns_matches_addresses '203.0.113.99' $'203.0.113.10\n2001:db8::10'
 status 1 'DNS rejects empty result' rp_dns_matches_addresses '203.0.113.10' ''
 
+# DNS propagation checks must use public recursive DNS, not the host NSS/default
+# resolver, because split-DNS may intentionally map the public hostname to a
+# private address on the local network.
+dig(){
+  case "$*" in
+    *'@1.1.1.1'*) printf '203.0.113.10\n' ;;
+    *'@8.8.8.8'*) printf '203.0.113.10\n' ;;
+    *) return 1 ;;
+  esac
+}
+getent(){ printf '192.168.100.100 STREAM resource-portal.example\n'; }
+eq '203.0.113.10' "$(rp_resolve_domain_addresses resource-portal.example)" 'DNS resolver ignores local split-DNS override'
+unset -f dig getent
+
 # DNS gate must block until both public domains resolve to the configured ingress address.
 _dns_attempt=0
 rp_resolve_domain_addresses(){
