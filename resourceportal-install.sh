@@ -51,7 +51,7 @@ USAGE
 
 rp_dispatch() {
   local mode="$1" bundle="$2" action="$3" manifest="$4"
-  local rc previous_stack docker_version current_version
+  local previous_stack docker_version current_version ui_was_tui=false
   case "$mode" in
     primary)
       rp_primary_install || return $?
@@ -59,27 +59,39 @@ rp_dispatch() {
       ;;
     add-node)
       [[ -n "$bundle" ]] || { printf '%s\n' '--bundle is required for add-node' >&2; return 2; }
-      rp_ui_mode_operation add-node 'Preparing host packages' rp_prepare_host_packages || return $?
-      rp_ui_mode_operation add-node 'Validating Docker' rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}" || return $?
-      rp_ui_mode_operation add-node 'Joining ResourcePortal node' rp_redeem_join_bundle "$bundle" || return $?
+      [[ "${RP_UI_MODE:-text}" == tui ]] && ui_was_tui=true
+      if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start add-node || true; fi
+      rp_ui_mode_operation add-node packages 'Preparing host packages' rp_prepare_host_packages || return $?
+      if [[ "$ui_was_tui" != true ]] && declare -F rp_ui_try_enable_tui >/dev/null; then
+        rp_ui_try_enable_tui || return 1
+        if [[ "${RP_UI_MODE:-text}" == tui ]]; then
+          rp_ui_mode_dashboard_start add-node || true
+          rp_ui_event phase_completed packages 'Preparing host packages completed' || true
+        fi
+      fi
+      rp_ui_mode_operation add-node docker 'Validating Docker' rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}" || return $?
+      rp_ui_mode_operation add-node enrollment 'Joining ResourcePortal node' rp_redeem_join_bundle "$bundle" || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete add-node || true; fi
       ;;
     upgrade)
       [[ -n "$manifest" ]] || { printf '%s\n' '--manifest is required for upgrade' >&2; return 2; }
+      if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start upgrade || true; fi
       previous_stack="${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}"
       docker_version="$(docker version --format '{{.Server.Version}}')" || return 1
       current_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
-      rp_ui_mode_operation upgrade 'Validating upgrade compatibility' rp_upgrade_preflight "$manifest" "$RP_INSTALLER_VERSION" "$current_version" "$docker_version" || return $?
-      rp_ui_mode_operation upgrade 'Applying ResourcePortal upgrade' rp_upgrade_apply "$manifest" "$previous_stack" || return $?
+      rp_ui_mode_operation upgrade preflight 'Validating upgrade compatibility' rp_upgrade_preflight "$manifest" "$RP_INSTALLER_VERSION" "$current_version" "$docker_version" || return $?
+      rp_ui_mode_operation upgrade apply 'Applying ResourcePortal upgrade' rp_upgrade_apply "$manifest" "$previous_stack" || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete upgrade || true; fi
       ;;
     reconfigure)
       [[ -n "$action" ]] || { printf '%s\n' '--action is required for reconfigure' >&2; return 2; }
-      rp_ui_mode_operation reconfigure "Applying reconfiguration: $action" rp_reconfigure "$action" || return $?
+      if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start reconfigure || true; fi
+      rp_ui_mode_operation reconfigure apply "Applying reconfiguration: $action" rp_reconfigure "$action" || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete reconfigure || true; fi
       ;;
     diagnostics)
-      rp_ui_mode_operation diagnostics 'Running ResourcePortal diagnostics' rp_run_diagnostics || return $?
+      if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start diagnostics || true; fi
+      rp_ui_mode_operation diagnostics inspect 'Running ResourcePortal diagnostics' rp_run_diagnostics || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete diagnostics || true; fi
       ;;
     *)
@@ -143,7 +155,13 @@ rp_main() {
   fi
   rp_mode_valid "$mode" || { printf 'Unsupported installer mode: %s\n' "$mode" >&2; return 2; }
   RP_CFG_MODE="$mode"; export RP_CFG_MODE
-  if [[ -n "$repair" ]]; then rp_run_repair "$repair"; else rp_dispatch "$mode" "$bundle" "$action" "$manifest"; fi
+  if [[ -n "$repair" ]]; then
+    if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start repair || true; fi
+    rp_ui_mode_operation repair repair "Running repair: $repair" rp_run_repair "$repair" || return $?
+    if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete repair || true; fi
+  else
+    rp_dispatch "$mode" "$bundle" "$action" "$manifest"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

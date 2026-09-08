@@ -299,15 +299,30 @@ rp_ui_failure_action() {
   done
 }
 
-rp_ui_mode_operation() {
-  local mode="$1" message="$2" rc
-  shift 2
-  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started "$mode" "$message" || true; fi
-  if "$@"; then
-    if declare -F rp_ui_event >/dev/null; then rp_ui_event activity "$mode" "$message completed" || true; fi
+rp_ui_mode_dashboard_start() {
+  local mode="$1"
+  [[ "${RP_UI_MODE:-text}" == tui ]] || return 0
+  declare -F rp_dashboard_init >/dev/null || return 0
+  if [[ "${RP_DASHBOARD_ENTERED:-false}" == true && "${RP_DASHBOARD_MODE:-}" == "$mode" ]]; then
     return 0
   fi
-  rc=$?
-  if declare -F rp_ui_event >/dev/null; then rp_ui_event activity "$mode" "$message failed" || true; fi
+  if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]] && declare -F rp_dashboard_leave >/dev/null; then
+    rp_dashboard_leave || true
+  fi
+  rp_dashboard_init "$mode" /dev/null
+  if declare -F rp_dashboard_enter >/dev/null; then rp_dashboard_enter || true; fi
+}
+
+rp_ui_mode_operation() {
+  local mode="$1" phase="$2" message="$3" rc
+  shift 3
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "$message" || true; fi
+  if "$@"; then
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "$message completed" || true; fi
+    return 0
+  else
+    rc=$?
+  fi
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "$message failed" || true; fi
   return "$rc"
 }

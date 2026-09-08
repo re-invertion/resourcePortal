@@ -16,6 +16,7 @@ rp_dashboard_mode_label() {
     upgrade) printf 'Upgrade\n' ;;
     reconfigure) printf 'Reconfigure\n' ;;
     diagnostics) printf 'Diagnostics\n' ;;
+    repair) printf 'Repair\n' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
@@ -30,9 +31,18 @@ rp_dashboard_init() {
   RP_DASHBOARD_ACTIVITY=()
   RP_DASHBOARD_STATUS=()
 
-  if [[ "$mode" == primary ]] && declare -F rp_primary_phase_names >/dev/null; then
-    mapfile -t RP_DASHBOARD_PHASES < <(rp_primary_phase_names)
-  fi
+  case "$mode" in
+    primary)
+      if declare -F rp_primary_phase_names >/dev/null; then
+        mapfile -t RP_DASHBOARD_PHASES < <(rp_primary_phase_names)
+      fi
+      ;;
+    add-node) RP_DASHBOARD_PHASES=(packages docker enrollment) ;;
+    upgrade) RP_DASHBOARD_PHASES=(preflight apply) ;;
+    reconfigure) RP_DASHBOARD_PHASES=(apply) ;;
+    diagnostics) RP_DASHBOARD_PHASES=(inspect) ;;
+    repair) RP_DASHBOARD_PHASES=(repair) ;;
+  esac
 
   for phase in "${RP_DASHBOARD_PHASES[@]}"; do
     if [[ -r "$state_file" ]] && grep -Fxq -- "$phase" "$state_file"; then

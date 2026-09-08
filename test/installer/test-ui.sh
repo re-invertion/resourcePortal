@@ -111,6 +111,26 @@ RP_UI_MODE=text
 
 entrypoint_source="$(cat "$repo_root/resourceportal-install.sh")"
 assert_contains "$entrypoint_source" '--non-interactive' 'entrypoint parses non-interactive flag'
+mode_event_log="$(mktemp)"
+rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$mode_event_log"; }
+mode_ok(){ :; }
+mode_fail(){ return 9; }
+status_rc=0
+rp_ui_mode_operation add-node packages 'Preparing host packages' mode_ok || status_rc=$?
+assert_eq 0 "$status_rc" 'mode operation returns success'
+mode_events="$(cat "$mode_event_log")"
+assert_contains "$mode_events" 'phase_started|packages|Preparing host packages' 'mode operation emits phase start'
+assert_contains "$mode_events" 'phase_completed|packages|Preparing host packages completed' 'mode operation emits phase completion'
+: >"$mode_event_log"
+set +e
+rp_ui_mode_operation upgrade apply 'Applying upgrade' mode_fail
+mode_fail_rc=$?
+set -e
+assert_eq 9 "$mode_fail_rc" 'mode operation preserves failure status'
+assert_contains "$(cat "$mode_event_log")" 'phase_failed|apply|Applying upgrade failed' 'mode operation emits phase failure'
+unset -f rp_ui_event mode_ok mode_fail
+rm -f "$mode_event_log"
+
 assert_contains "$entrypoint_source" 'RP_NON_INTERACTIVE=true' 'entrypoint exports non-interactive mode'
 
 if (( failures > 0 )); then

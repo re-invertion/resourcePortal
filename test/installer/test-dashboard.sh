@@ -19,6 +19,23 @@ assert_eq 50 "$(rp_dashboard_progress_percent)" 'resume progress is checkpoint b
 assert_eq completed "$(rp_dashboard_phase_status preflight)" 'checkpoint marks completed'
 assert_eq pending "$(rp_dashboard_phase_status dns)" 'uncheckpointed phase starts pending'
 
+rp_dashboard_init add-node /dev/null
+assert_eq 'packages docker enrollment' "${RP_DASHBOARD_PHASES[*]}" 'add-node dashboard exposes ordered phases'
+assert_eq 0 "$(rp_dashboard_progress_percent)" 'add-node starts at zero progress'
+rp_dashboard_event phase_completed packages 'Host packages ready'
+assert_eq 33 "$(rp_dashboard_progress_percent)" 'add-node progress advances by completed phase'
+rp_dashboard_init upgrade /dev/null
+assert_eq 'preflight apply' "${RP_DASHBOARD_PHASES[*]}" 'upgrade dashboard exposes ordered phases'
+rp_dashboard_init reconfigure /dev/null
+assert_eq 'apply' "${RP_DASHBOARD_PHASES[*]}" 'reconfigure dashboard exposes apply phase'
+rp_dashboard_init diagnostics /dev/null
+assert_eq 'inspect' "${RP_DASHBOARD_PHASES[*]}" 'diagnostics dashboard exposes inspect phase'
+rp_dashboard_init repair /dev/null
+assert_eq 'repair' "${RP_DASHBOARD_PHASES[*]}" 'repair dashboard exposes repair phase'
+
+# Restore Primary model for the remaining assertions.
+rp_dashboard_init primary "$state"
+
 rp_dashboard_event phase_started dns 'Waiting for DNS'
 assert_eq running "$(rp_dashboard_phase_status dns)" 'phase_started marks running'
 rp_dashboard_event phase_blocked dns 'Waiting for records'
