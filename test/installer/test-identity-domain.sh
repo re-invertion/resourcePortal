@@ -54,6 +54,13 @@ identity_source="$(cat "$repo_root/packages/resourceportal-api/scripts/bootstrap
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_MODE' 'bootstrap script supports production mode'
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_OUTPUT_FILE' 'bootstrap supports machine-readable output file'
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_ADMIN_EMAIL' 'bootstrap supports first admin email'
+contains "$identity_source" 'x-zitadel-instance-host' 'bootstrap sends ZITADEL instance host header'
+contains "$identity_source" 'x-zitadel-public-host' 'bootstrap sends ZITADEL public host header'
+identity_shell_source="$(cat "$repo_root/scripts/installer/identity.sh")"
+contains "$identity_shell_source" 'ZITADEL_BOOTSTRAP_INSTANCE_HOST=' 'installer passes public ZITADEL instance host to bootstrap'
+bootstrap_runner_source="$(sed -n '/rp_run_zitadel_bootstrap()/,/^}/p' "$repo_root/scripts/installer/identity.sh")"
+contains "$bootstrap_runner_source" '--detach' 'identity bootstrap one-shot service is created detached'
+contains "$bootstrap_runner_source" 'docker service ps --no-trunc' 'identity bootstrap explicitly polls one-shot service state'
 contains "$identity_source" '["client-secret", app.clientSecret]' 'production bootstrap writes client secret sidecar'
 contains "$identity_source" '["client-id", app.clientId]' 'production bootstrap writes client id sidecar'
 contains "$identity_source" '["user-id", bootstrapUser.id]' 'production bootstrap writes admin user id sidecar'

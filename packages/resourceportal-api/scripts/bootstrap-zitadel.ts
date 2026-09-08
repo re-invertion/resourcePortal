@@ -44,6 +44,8 @@ const issuerUrl = (
   process.env.OIDC_ISSUER_URL ??
   "http://localhost:8080"
 ).replace(/\/$/, "");
+const bootstrapInstanceHost =
+  process.env.ZITADEL_BOOTSTRAP_INSTANCE_HOST?.trim() || undefined;
 const patFile =
   process.env.ZITADEL_BOOTSTRAP_PAT_FILE ?? "var/zitadel/admin.pat";
 const organizationName =
@@ -132,7 +134,9 @@ async function main() {
 async function waitForZitadel() {
   for (let attempt = 1; attempt <= 30; attempt += 1) {
     try {
-      const response = await fetch(`${issuerUrl}/debug/healthz`);
+      const response = await fetch(`${issuerUrl}/debug/healthz`, {
+        headers: zitadelHostHeaders(),
+      });
 
       if (response.ok) {
         return;
@@ -342,6 +346,7 @@ async function zitadelApi<T>(
   const headers: Record<string, string> = {
     authorization: `Bearer ${pat}`,
     "content-type": "application/json",
+    ...zitadelHostHeaders(),
   };
 
   if (organizationId && path.startsWith("/management/v1/")) {
@@ -365,6 +370,17 @@ async function zitadelApi<T>(
   }
 
   return payload as T;
+}
+
+function zitadelHostHeaders(): Record<string, string> {
+  if (!bootstrapInstanceHost) {
+    return {};
+  }
+
+  return {
+    "x-zitadel-instance-host": bootstrapInstanceHost,
+    "x-zitadel-public-host": bootstrapInstanceHost,
+  };
 }
 
 function updateDotEnv(values: Record<string, string>) {
