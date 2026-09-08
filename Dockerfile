@@ -31,6 +31,7 @@ RUN npm run prisma:generate
 RUN npm run build
 
 FROM node:24-alpine AS runtime
+LABEL org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"
 WORKDIR /app/packages/resourceportal-api
 
 ENV NODE_ENV=production
