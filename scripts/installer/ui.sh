@@ -139,61 +139,129 @@ rp_ui_cleanup() {
 }
 
 rp_ui_backend() {
-  if command -v dialog >/dev/null 2>&1; then
-    printf 'dialog\n'
-  elif command -v whiptail >/dev/null 2>&1; then
-    printf 'whiptail\n'
+  if [[ "${RP_UI_MODE:-text}" == tui && -n "${RP_GUM_BIN:-}" && -x "$RP_GUM_BIN" ]]; then
+    printf 'gum\n'
   else
     printf 'terminal\n'
   fi
+}
+
+rp_ui_prompt_begin() {
+  RP_UI_PROMPT_RESTORE_DASHBOARD=false
+  if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]] && declare -F rp_dashboard_leave >/dev/null; then
+    rp_dashboard_leave || true
+    RP_UI_PROMPT_RESTORE_DASHBOARD=true
+  fi
+}
+
+rp_ui_prompt_end() {
+  if [[ "${RP_UI_PROMPT_RESTORE_DASHBOARD:-false}" == true ]] && declare -F rp_dashboard_enter >/dev/null; then
+    rp_dashboard_enter || true
+  elif [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_dashboard_render >/dev/null && [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]]; then
+    rp_dashboard_render || true
+  fi
+  RP_UI_PROMPT_RESTORE_DASHBOARD=false
 }
 
 rp_ui_message() {
   local title="$1" message="$2" backend
   backend="$(rp_ui_backend)"
   case "$backend" in
-    dialog) dialog --title "$title" --msgbox "$message" 10 72 ;;
-    whiptail) whiptail --title "$title" --msgbox "$message" 10 72 ;;
-    *) printf '\n%s\n%s\n' "$title" "$message" ;;
+    gum)
+      rp_ui_prompt_begin
+      "$RP_GUM_BIN" style --border rounded --padding '1 2' "$title"$'\n'"$message" >&2
+      rp_ui_prompt_end
+      ;;
+    *) printf '\n%s\n%s\n' "$title" "$message" >&2 ;;
   esac
 }
 
 rp_ui_input() {
-  local title="$1" prompt="$2" default="${3:-}" backend result
+  local title="$1" prompt="$2" default="${3:-}" backend result rc
   backend="$(rp_ui_backend)"
   case "$backend" in
-    dialog) result="$(dialog --stdout --title "$title" --inputbox "$prompt" 10 72 "$default")" || return 1 ;;
-    whiptail) result="$(whiptail --title "$title" --inputbox "$prompt" 10 72 "$default" 3>&1 1>&2 2>&3)" || return 1 ;;
-    *) printf '%s [%s]: ' "$prompt" "$default" >&2; IFS= read -r result; [[ -n "$result" ]] || result="$default" ;;
+    gum)
+      rp_ui_prompt_begin
+      if result="$("$RP_GUM_BIN" input --header "$title" --prompt "$prompt: " --value "$default")"; then rc=0; else rc=$?; fi
+      rp_ui_prompt_end
+      (( rc == 0 )) || return "$rc"
+      ;;
+    *)
+      printf '%s [%s]: ' "$prompt" "$default" >&2
+      IFS= read -r result || true
+      [[ -n "$result" ]] || result="$default"
+      ;;
   esac
   printf '%s\n' "$result"
 }
 
 rp_ui_password() {
-  local title="$1" prompt="$2" backend result
+  local title="$1" prompt="$2" backend result rc
   backend="$(rp_ui_backend)"
   case "$backend" in
-    dialog) result="$(dialog --stdout --title "$title" --insecure --passwordbox "$prompt" 10 72)" || return 1 ;;
-    whiptail) result="$(whiptail --title "$title" --passwordbox "$prompt" 10 72 3>&1 1>&2 2>&3)" || return 1 ;;
-    *) printf '%s: ' "$prompt" >&2; IFS= read -rs result; printf '\n' >&2 ;;
+    gum)
+      rp_ui_prompt_begin
+      if result="$("$RP_GUM_BIN" input --header "$title" --prompt "$prompt: " --password)"; then rc=0; else rc=$?; fi
+      rp_ui_prompt_end
+      (( rc == 0 )) || return "$rc"
+      ;;
+    *)
+      printf '%s: ' "$prompt" >&2
+      IFS= read -rs result || true
+      printf '\n' >&2
+      ;;
   esac
   printf '%s\n' "$result"
 }
 
 rp_ui_choice() {
   local title="$1" prompt="$2"; shift 2
-  local backend result first="${1:-}"
+  local backend result default="${1:-}" value label default_label='' rc
+  local -a options=()
   [[ $# -ge 1 ]] || return 2
   shift
+  while (($# >= 2)); do
+    value="$1"; label="$2"; shift 2
+    options+=("${label}:::${value}")
+    [[ "$value" == "$default" ]] && default_label="$label"
+  done
   backend="$(rp_ui_backend)"
   case "$backend" in
-    dialog) result="$(dialog --stdout --title "$title" --menu "$prompt" 18 78 10 "$@")" || return 1 ;;
-    whiptail) result="$(whiptail --title "$title" --menu "$prompt" 18 78 10 "$@" 3>&1 1>&2 2>&3)" || return 1 ;;
+    gum)
+      rp_ui_prompt_begin
+      if result="$("$RP_GUM_BIN" choose --header "$title - $prompt" --label-delimiter ':::' --selected "$default_label" "${options[@]}")"; then rc=0; else rc=$?; fi
+      rp_ui_prompt_end
+      (( rc == 0 )) || return "$rc"
+      ;;
     *)
       printf '%s\n' "$prompt" >&2
-      while (($# >= 2)); do printf '  %s - %s\n' "$1" "$2" >&2; shift 2; done
-      printf 'Choice [%s]: ' "$first" >&2; IFS= read -r result; [[ -n "$result" ]] || result="$first"
+      for value in "${options[@]}"; do
+        label="${value%%:::*}"; value="${value#*:::}"
+        printf '  %s - %s\n' "$value" "$label" >&2
+      done
+      printf 'Choice [%s]: ' "$default" >&2
+      IFS= read -r result || true
+      [[ -n "$result" ]] || result="$default"
       ;;
   esac
   printf '%s\n' "$result"
+}
+
+rp_ui_confirm() {
+  local title="$1" prompt="$2" backend rc
+  backend="$(rp_ui_backend)"
+  case "$backend" in
+    gum)
+      rp_ui_prompt_begin
+      if "$RP_GUM_BIN" confirm "$title: $prompt"; then rc=0; else rc=$?; fi
+      rp_ui_prompt_end
+      return "$rc"
+      ;;
+    *)
+      local answer
+      printf '%s - %s [Y/n]: ' "$title" "$prompt" >&2
+      IFS= read -r answer || true
+      case "${answer:-y}" in y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
+      ;;
+  esac
 }

@@ -70,6 +70,45 @@ assert_eq 21 "$checksum_rc" 'checksum mismatch is security failure'
 assert_eq 20 "$download_rc" 'download failure selects fallback status'
 rm -rf "$bootstrap_tmp"
 
+prompt_tmp="$(mktemp -d)"
+fake_prompt_gum="$prompt_tmp/gum"
+cat >"$fake_prompt_gum" <<'GUM'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_GUM_LOG"
+case "${1:-}" in
+  input)
+    shift
+    if [[ " $* " == *' --password '* ]]; then printf '%s\n' "${FAKE_GUM_PASSWORD:-}"; else printf '%s\n' "${FAKE_GUM_INPUT:-}"; fi
+    ;;
+  choose) printf '%s\n' "${FAKE_GUM_CHOICE:-}" ;;
+  confirm) [[ "${FAKE_GUM_CONFIRM:-yes}" == yes ]] ;;
+  style) shift; last=''; for arg in "$@"; do last="$arg"; done; printf '%s\n' "$last" ;;
+esac
+GUM
+chmod +x "$fake_prompt_gum"
+export RP_UI_MODE=tui RP_GUM_BIN="$fake_prompt_gum" FAKE_GUM_LOG="$prompt_tmp/gum.log"
+export FAKE_GUM_INPUT='typed-value' FAKE_GUM_PASSWORD='HiddenPass1!' FAKE_GUM_CHOICE='ext4' FAKE_GUM_CONFIRM=yes
+assert_eq 'typed-value' "$(rp_ui_input 'Storage' 'Path' '/srv/default')" 'gum input returns entered value'
+assert_eq 'HiddenPass1!' "$(rp_ui_password 'Admin' 'Password')" 'gum password returns hidden value'
+assert_eq 'ext4' "$(rp_ui_choice 'Filesystem' 'Choose filesystem' xfs xfs 'XFS recommended' ext4 'EXT4')" 'gum choice returns machine value'
+set +e
+rp_ui_confirm 'Confirm' 'Proceed?' >/tmp/rp-ui-confirm.out 2>/tmp/rp-ui-confirm.err
+confirm_yes_rc=$?
+FAKE_GUM_CONFIRM=no rp_ui_confirm 'Confirm' 'Proceed?' >/tmp/rp-ui-confirm.out 2>/tmp/rp-ui-confirm.err
+confirm_no_rc=$?
+set -e
+assert_eq 0 "$confirm_yes_rc" 'gum confirm accepts yes'
+assert_eq 1 "$confirm_no_rc" 'gum confirm rejects no'
+prompt_log="$(cat "$prompt_tmp/gum.log")"
+assert_contains "$prompt_log" 'input --header Storage' 'gum input receives title'
+assert_contains "$prompt_log" '--value /srv/default' 'gum input receives default'
+assert_contains "$prompt_log" '--password' 'gum password uses masked input'
+assert_contains "$prompt_log" '--label-delimiter :::' 'gum choice uses stable label mapping'
+if [[ "$prompt_log" == *'HiddenPass1!'* ]]; then printf 'FAIL: gum password leaks value into command arguments\n' >&2; failures=$((failures+1)); else printf 'PASS: gum password does not leak value into command arguments\n'; fi
+rm -rf "$prompt_tmp"
+unset FAKE_GUM_INPUT FAKE_GUM_PASSWORD FAKE_GUM_CHOICE FAKE_GUM_CONFIRM FAKE_GUM_LOG
+RP_UI_MODE=text
+
 entrypoint_source="$(cat "$repo_root/resourceportal-install.sh")"
 assert_contains "$entrypoint_source" '--non-interactive' 'entrypoint parses non-interactive flag'
 assert_contains "$entrypoint_source" 'RP_NON_INTERACTIVE=true' 'entrypoint exports non-interactive mode'

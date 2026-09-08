@@ -105,7 +105,7 @@ rp_prepare_host_packages() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
-    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils whiptail
+    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
 }
 
 rp_primary_prepare_storage() {
