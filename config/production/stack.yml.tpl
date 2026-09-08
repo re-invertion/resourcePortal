@@ -139,6 +139,10 @@ services:
     configs:
       - source: zitadel_public_config
         target: /etc/zitadel/config.yaml
+    volumes:
+      - type: bind
+        source: /mnt/resourceportal/platform/zitadel-bootstrap
+        target: /zitadel/bootstrap
     networks:
       - rp-control
       - rp-ingress

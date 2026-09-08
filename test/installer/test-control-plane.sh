@@ -59,6 +59,8 @@ contains "$final" 'AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret' 'API 
 contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token' 'workers consume token secret file'
 contains "$final" '--masterkeyFile' 'ZITADEL uses masterkey file'
 contains "$final" '/run/secrets/zitadel_masterkey' 'ZITADEL masterkey comes from Swarm Secret'
+contains "$final" 'source: /mnt/resourceportal/platform/zitadel-bootstrap' 'ZITADEL bootstrap PAT source uses platform storage'
+contains "$final" 'target: /zitadel/bootstrap' 'ZITADEL bootstrap PAT path is mounted for start-from-init'
 contains "$final" 'name: zitadel_masterkey_deadbeefcafebabe' 'stack aliases versioned ZITADEL masterkey secret'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/rp_postgres_password' 'RP postgres uses password file'
 contains "$final" 'POSTGRES_PASSWORD_FILE: /run/secrets/zitadel_postgres_password' 'ZITADEL postgres uses password file'
