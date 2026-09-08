@@ -58,15 +58,22 @@ rp_validate_domain_dns(){ return 0; }
 mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
 install(){ printf 'install:%s\n' "$*" >>"$ingress_prepare_log"; }
 rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$ingress_prepare_log"; }
-rp_wait_for_https_certificate(){ return 0; }
+rp_wait_for_https_certificate(){ printf 'cert:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
+rp_wait_for_https_origin(){ printf 'origin:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
 rp_primary_enable_ingress
+rp_primary_deploy_final
 prepare_text="$(cat "$ingress_prepare_log")"
 contains "$prepare_text" 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' 'ingress prepares Traefik ACME state directory on resume'
 first_prepare="$(sed -n '1p' "$ingress_prepare_log")"
 second_prepare="$(sed -n '2p' "$ingress_prepare_log")"
 [[ "$first_prepare" == 'mountpoint:-q /mnt/resourceportal/platform' ]] && pass 'ingress verifies platform mount before Traefik state' || fail 'ingress verifies platform mount before Traefik state'
 [[ "$second_prepare" == 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
-unset -f rp_validate_domain_dns mountpoint install rp_wait_for_https_certificate
+contains "$prepare_text" 'cert:auth.rp.example.com' 'ingress waits for ZITADEL HTTPS certificate'
+not_contains "$prepare_text" 'cert:rp.example.com' 'ingress does not wait for Web certificate before Web is enabled'
+order_tail="$(grep -E '^(deploy|cert|origin):' "$ingress_prepare_log")"
+expected_order=$'deploy:ingress\ncert:auth.rp.example.com\ndeploy:final\norigin:rp.example.com'
+[[ "$order_tail" == "$expected_order" ]] && pass 'certificate and health checks follow service availability' || fail 'certificate and health checks follow service availability'
+unset -f rp_validate_domain_dns mountpoint install rp_wait_for_https_certificate rp_wait_for_https_origin
 eval "$original_ingress_deploy"
 rm -f "$ingress_prepare_log"
 
