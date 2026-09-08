@@ -30,6 +30,23 @@ status 0 'DNS accepts one of expected addresses' rp_dns_matches_addresses '203.0
 status 1 'DNS rejects unrelated address' rp_dns_matches_addresses '203.0.113.99' $'203.0.113.10\n2001:db8::10'
 status 1 'DNS rejects empty result' rp_dns_matches_addresses '203.0.113.10' ''
 
+# DNS gate must block until both public domains resolve to the configured ingress address.
+_dns_attempt=0
+rp_resolve_domain_addresses(){
+  case "$1" in
+    resource-portal.example)
+      if (( _dns_attempt < 1 )); then printf '198.51.100.99\n'; else printf '203.0.113.10\n'; fi
+      ;;
+    auth.resource-portal.example)
+      if (( _dns_attempt < 2 )); then printf '\n'; else printf '203.0.113.10\n'; fi
+      ;;
+  esac
+}
+sleep(){ _dns_attempt=$((_dns_attempt+1)); }
+status 0 'DNS gate waits until both domains match ingress' rp_wait_for_required_dns resource-portal.example auth.resource-portal.example 203.0.113.10 1
+[[ "$_dns_attempt" -ge 2 ]] && pass 'DNS gate blocks across invalid DNS states' || fail 'DNS gate blocks across invalid DNS states'
+unset -f rp_resolve_domain_addresses sleep
+
 # Public ingress discovery must accept only a real IPv4 response and try the
 # next HTTPS endpoint when the first one fails.
 curl(){

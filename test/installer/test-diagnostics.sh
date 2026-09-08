@@ -90,7 +90,9 @@ unset -f mountpoint docker rp_wait_service_replicas rp_primary_bootstrap_stack
 rm -rf "$recovery_root" "$recovery_state" "$recovery_marker"
 
 phases="$(rp_primary_phase_names)"
-[[ "$phases" == $'preflight\npackages\ndocker\nstorage\nfirewall\nswarm\nnfs\nrelease\nsecrets\nbootstrap\nmigrations\nidentity\nsmtp\ningress\nfinal\nenrollment\npersist' ]] && pass 'Primary phase order is deterministic' || fail 'Primary phase order is deterministic'
+[[ "$phases" == $'preflight\npackages\ndocker\nstorage\nfirewall\nswarm\nnfs\nrelease\nsecrets\nbootstrap\nmigrations\nidentity\nsmtp\ndns\ningress\nfinal\nenrollment\npersist' ]] && pass 'Primary phase order is deterministic' || fail 'Primary phase order is deterministic'
+contains_dns_phase="$(sed -n '/rp_run_phase .* smtp/,/rp_run_phase .* ingress/p' "$repo_root/scripts/installer/lifecycle.sh")"
+[[ "$contains_dns_phase" == *'rp_run_phase "$state_file" dns rp_primary_wait_for_dns'* ]] && pass 'Primary lifecycle blocks on dedicated DNS phase before ingress' || fail 'Primary lifecycle blocks on dedicated DNS phase before ingress'
 
 status 0 'domain reconfigure allowed' rp_reconfigure_action_valid domain
 status 0 'smtp reconfigure allowed' rp_reconfigure_action_valid smtp

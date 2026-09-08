@@ -56,6 +56,33 @@ rp_validate_domain_dns() {
   rp_dns_matches_addresses "$expected_addresses" "$resolved"
 }
 
+rp_wait_for_required_dns() {
+  local app_domain="$1" auth_domain="$2" expected_addresses="$3" interval="${4:-10}"
+  local app_resolved auth_resolved
+  [[ -n "$app_domain" && -n "$auth_domain" && -n "$expected_addresses" ]] || return 1
+
+  printf 'Required DNS records before ingress:\n'
+  printf '  A  %s  %s\n' "$app_domain" "$expected_addresses"
+  printf '  A  %s  %s\n' "$auth_domain" "$expected_addresses"
+  printf 'Waiting for DNS propagation. Installation will not continue until both records are correct.\n'
+
+  while true; do
+    app_resolved="$(rp_resolve_domain_addresses "$app_domain")"
+    auth_resolved="$(rp_resolve_domain_addresses "$auth_domain")"
+
+    if rp_dns_matches_addresses "$expected_addresses" "$app_resolved" && \
+       rp_dns_matches_addresses "$expected_addresses" "$auth_resolved"; then
+      printf 'DNS ready: %s and %s resolve to the configured ingress address.\n' "$app_domain" "$auth_domain"
+      return 0
+    fi
+
+    printf 'DNS not ready yet:\n'
+    printf '  %s -> %s (expected: %s)\n' "$app_domain" "${app_resolved:-no record}" "$expected_addresses"
+    printf '  %s -> %s (expected: %s)\n' "$auth_domain" "${auth_resolved:-no record}" "$expected_addresses"
+    sleep "$interval"
+  done
+}
+
 rp_validate_https_origin() {
   local domain="$1"
   curl --fail --silent --show-error \
