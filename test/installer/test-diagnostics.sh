@@ -25,7 +25,73 @@ rp_run_phase "$state" preflight phase_cmd
 rp_run_phase "$state" preflight phase_cmd
 eq '1' "$(cat "$count")" 'completed phase is skipped on replay'
 status 0 'phase marker detected' rp_phase_done "$state" preflight
+
+event_state="$(mktemp /tmp/rp-phase-event-state.XXXXXX)"; : >"$event_state"
+event_log="$(mktemp /tmp/rp-phase-events.XXXXXX)"; : >"$event_log"
+(
+  rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$event_log"; }
+  ok_phase(){ :; }
+  bad_phase(){ return 1; }
+  rp_run_phase "$event_state" preflight ok_phase
+  set +e
+  rp_run_phase "$event_state" dns bad_phase
+  failed_rc=$?
+  set -e
+  [[ $failed_rc -eq 1 ]]
+)
+event_text="$(cat "$event_log")"
+[[ "$event_text" == *'phase_started|preflight|'* ]] && pass 'successful phase emits started event' || fail 'successful phase emits started event'
+[[ "$event_text" == *'phase_completed|preflight|'* ]] && pass 'successful phase emits completed event' || fail 'successful phase emits completed event'
+[[ "$event_text" == *'phase_started|dns|'* ]] && pass 'failed phase emits started event' || fail 'failed phase emits started event'
+[[ "$event_text" == *'phase_failed|dns|'* ]] && pass 'failed phase emits failed event' || fail 'failed phase emits failed event'
+! grep -Fxq dns "$event_state" && pass 'failed phase does not create checkpoint' || fail 'failed phase does not create checkpoint'
+rm -f "$event_state" "$event_log"
 rm -f "$state" "$count"
+
+retry_state="$(mktemp /tmp/rp-retry-state.XXXXXX)"
+printf 'preflight\n' >"$retry_state"
+retry_attempts="$(mktemp /tmp/rp-retry-attempts.XXXXXX)"; printf '0\n' >"$retry_attempts"
+retry_marker="$(mktemp /tmp/rp-retry-action.XXXXXX)"; rm -f "$retry_marker"
+(
+  RP_UI_MODE=tui
+  rp_ui_event(){ :; }
+  rp_ui_failure_action(){ if [[ ! -e "$retry_marker" ]]; then : >"$retry_marker"; printf 'retry\n'; else printf 'exit\n'; fi; }
+  flaky_phase(){ local n; n="$(cat "$retry_attempts")"; n=$((n+1)); printf '%s\n' "$n" >"$retry_attempts"; (( n >= 2 )); }
+  rp_run_phase "$retry_state" dns flaky_phase
+)
+eq '2' "$(cat "$retry_attempts")" 'TUI retry reruns failed phase command'
+status 0 'prior checkpoint survives retry' rp_phase_done "$retry_state" preflight
+status 0 'successful retry creates checkpoint' rp_phase_done "$retry_state" dns
+eq '1' "$(grep -Fc dns "$retry_state")" 'retry creates one checkpoint only'
+rm -f "$retry_state" "$retry_attempts" "$retry_marker"
+
+exit_state="$(mktemp /tmp/rp-exit-state.XXXXXX)"; : >"$exit_state"
+set +e
+(
+  RP_UI_MODE=tui
+  rp_ui_event(){ :; }
+  rp_ui_failure_action(){ printf 'exit\n'; }
+  always_fail(){ return 1; }
+  rp_run_phase "$exit_state" dns always_fail
+)
+exit_phase_rc=$?
+set -e
+eq '1' "$exit_phase_rc" 'TUI exit returns phase failure'
+! grep -Fxq dns "$exit_state" && pass 'TUI exit does not checkpoint failed phase' || fail 'TUI exit does not checkpoint failed phase'
+rm -f "$exit_state"
+
+primary_order="$(mktemp /tmp/rp-primary-order.XXXXXX)"
+(
+  rp_run_phase(){ printf 'phase:%s\n' "$2" >>"$primary_order"; }
+  rp_ui_try_enable_tui(){ printf 'tui\n' >>"$primary_order"; }
+  rp_collect_primary_config(){ printf 'config\n' >>"$primary_order"; }
+  rp_phase_done(){ return 1; }
+  rp_primary_recover_incomplete_zitadel_bootstrap(){ :; }
+  rp_primary_install
+)
+primary_order_head="$(head -n 4 "$primary_order")"
+eq $'phase:preflight\nphase:packages\ntui\nconfig' "$primary_order_head" 'Primary bootstraps packages before TUI and config prompts'
+rm -f "$primary_order"
 
 # Migration recovery must require the actual bootstrap services, not only host artifacts.
 bootstrap_checks_source="$(sed -n '/rp_primary_bootstrap_services_ready()/,/^}/p' "$repo_root/scripts/installer/lifecycle.sh")"
@@ -40,8 +106,13 @@ docker(){
   return 1
 }
 sleep(){ :; }
+replica_event_log="$(mktemp /tmp/rp-replica-events.XXXXXX)"
+rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$replica_event_log"; }
 status 0 'replica readiness counts running Swarm tasks' rp_wait_service_replicas resourceportal-control-plane_zitadel 1 2
-unset -f docker sleep
+replica_events="$(cat "$replica_event_log")"
+[[ "$replica_events" == *'operation_started|swarm|Waiting for resourceportal-control-plane_zitadel replicas'* ]] && pass 'replica readiness emits live operation' || fail 'replica readiness emits live operation'
+rm -f "$replica_event_log"
+unset -f rp_ui_event docker sleep
 
 # Resume after a completed secrets checkpoint must reconstruct the runtime
 # Swarm secret references from the existing secret files instead of relying on
@@ -114,9 +185,15 @@ done
 [[ "$entrypoint_source" == *'rp_upgrade_apply'* ]] && pass 'entrypoint dispatches upgrade lifecycle' || fail 'entrypoint dispatches upgrade lifecycle'
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
+[[ "$entrypoint_source" == *'rp_ui_mode_operation'* ]] && pass 'non-primary modes use shared TUI operation wrapper' || fail 'non-primary modes use shared TUI operation wrapper'
+[[ "$entrypoint_source" == *'rp_dashboard_complete'* ]] && pass 'successful installer modes can render completion summary' || fail 'successful installer modes can render completion summary'
 
 
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+[[ "$lifecycle_source" == *"rp_run_logged_operation migrations 'Applying database migrations'"* ]] && pass 'migrations use logged live operation' || fail 'migrations use logged live operation'
+[[ "$lifecycle_source" == *"rp_run_logged_operation identity 'Bootstrapping identity provider'"* ]] && pass 'identity bootstrap uses logged live operation' || fail 'identity bootstrap uses logged live operation'
+[[ "$lifecycle_source" == *"Waiting for HTTPS certificate"* ]] && pass 'ingress reports certificate wait' || fail 'ingress reports certificate wait'
+[[ "$lifecycle_source" == *"Waiting for ResourcePortal health"* ]] && pass 'final rollout reports health wait' || fail 'final rollout reports health wait'
 for required in 'rp_collect_primary_config' 'RP_CFG_CLUSTER_CIDR' 'RP_CFG_SWARM_ADVERTISE_ADDR' 'RP_CFG_STORAGE_BASE_PATH' 'RP_CFG_DOMAIN' 'RP_CFG_ZITADEL_DOMAIN' 'RP_CFG_ACME_EMAIL' 'RP_CFG_RELEASE_VERSION' 'RP_ADMIN_EMAIL' 'RP_ADMIN_PASSWORD' 'RP_CFG_SMTP_DEFERRED'; do
   [[ "$lifecycle_source" == *"$required"* ]] && pass "interactive Primary covers $required" || fail "interactive Primary covers $required"
 done

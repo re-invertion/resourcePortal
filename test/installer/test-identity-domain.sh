@@ -43,9 +43,17 @@ rp_resolve_domain_addresses(){
   esac
 }
 sleep(){ _dns_attempt=$((_dns_attempt+1)); }
+dns_event_log="$(mktemp /tmp/rp-dns-events.XXXXXX)"
+rp_ui_event(){ printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$dns_event_log"; }
 status 0 'DNS gate waits until both domains match ingress' rp_wait_for_required_dns resource-portal.example auth.resource-portal.example 203.0.113.10 1
 [[ "$_dns_attempt" -ge 2 ]] && pass 'DNS gate blocks across invalid DNS states' || fail 'DNS gate blocks across invalid DNS states'
-unset -f rp_resolve_domain_addresses sleep
+dns_events="$(cat "$dns_event_log")"
+contains "$dns_events" 'phase_blocked|dns|Waiting for required DNS A records' 'DNS gate emits blocked state'
+contains "$dns_events" 'operation_updated|dns|resource-portal.example: 198.51.100.99 (wrong)' 'DNS gate reports wrong application address'
+contains "$dns_events" 'operation_updated|dns|auth.resource-portal.example: missing' 'DNS gate reports missing auth address'
+contains "$dns_events" 'phase_unblocked|dns|Required DNS records are ready' 'DNS gate emits unblocked state'
+rm -f "$dns_event_log"
+unset -f rp_ui_event rp_resolve_domain_addresses sleep
 
 # Public ingress discovery must accept only a real IPv4 response and try the
 # next HTTPS endpoint when the first one fails.

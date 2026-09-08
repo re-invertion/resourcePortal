@@ -18,11 +18,31 @@ rp_phase_mark_done() {
 
 rp_run_phase() {
   local state_file="$1" phase="$2"; shift 2
+  local action
   rp_phase_done "$state_file" "$phase" && return 0
   rp_log INFO "installer phase started: $phase"
-  "$@" || { rp_log ERROR "installer phase failed: $phase"; return 1; }
-  rp_phase_mark_done "$state_file" "$phase"
-  rp_log INFO "installer phase completed: $phase"
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting $phase" || true; fi
+  while true; do
+    if "$@"; then
+      rp_phase_mark_done "$state_file" "$phase"
+      rp_log INFO "installer phase completed: $phase"
+      if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed $phase" || true; fi
+      return 0
+    fi
+    rp_log ERROR "installer phase failed: $phase"
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Stage failed: $phase" || true; fi
+    if [[ "${RP_UI_MODE:-text}" != tui ]] || ! declare -F rp_ui_failure_action >/dev/null; then
+      return 1
+    fi
+    action="$(rp_ui_failure_action "$phase" "Stage failed: $phase")" || return 1
+    case "$action" in
+      retry)
+        rp_log INFO "installer phase retry requested: $phase"
+        if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Retrying $phase" || true; fi
+        ;;
+      exit|*) return 1 ;;
+    esac
+  done
 }
 
 
@@ -99,7 +119,7 @@ rp_prepare_host_packages() {
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
-    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils whiptail
+    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
 }
 
 rp_primary_prepare_storage() {
@@ -382,6 +402,7 @@ rp_primary_bootstrap_stack() {
 
 rp_wait_service_replicas() {
   local service="$1" wanted="${2:-1}" timeout="${3:-300}" elapsed=0 actual
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started swarm "Waiting for $service replicas" || true; fi
   while (( elapsed < timeout )); do
     if ! actual="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"; then
       actual=0
@@ -409,7 +430,7 @@ rp_primary_run_migrations() {
   fi
   rp_wait_service_replicas "${stack}_postgres-rp" 1 300 || return 1
   rp_wait_service_replicas "${stack}_zitadel" 1 300 || return 1
-  rp_run_migrations
+  rp_run_logged_operation migrations 'Applying database migrations' rp_run_migrations
 }
 
 rp_primary_bootstrap_identity() {
@@ -419,7 +440,7 @@ rp_primary_bootstrap_identity() {
   rp_admin_password_valid "$RP_ADMIN_PASSWORD" || return 1
   printf '%s' "$RP_ADMIN_PASSWORD" >"$admin_file"; chmod 0600 "$admin_file"
   rp_ensure_swarm_secret rp_first_admin_password "$admin_file"
-  rp_run_zitadel_bootstrap "$output" "$RP_ADMIN_USERNAME" "$RP_ADMIN_EMAIL" "$admin_file" || return 1
+  rp_run_logged_operation identity 'Bootstrapping identity provider' rp_run_zitadel_bootstrap "$output" "$RP_ADMIN_USERNAME" "$RP_ADMIN_EMAIL" "$admin_file" || return 1
   rp_apply_zitadel_bootstrap_output "$output" || return 1
   rp_remove_secret_file "$admin_file"
   unset RP_ADMIN_PASSWORD
@@ -454,12 +475,15 @@ rp_primary_enable_ingress() {
   rp_validate_domain_dns "$RP_CFG_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_validate_domain_dns "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_deploy_control_plane ingress
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Waiting for HTTPS certificate: $RP_CFG_DOMAIN" || true; fi
   rp_wait_for_https_certificate "$RP_CFG_DOMAIN" 300 || return 1
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_updated ingress "Waiting for HTTPS certificate: $RP_CFG_ZITADEL_DOMAIN" || true; fi
   rp_wait_for_https_certificate "$RP_CFG_ZITADEL_DOMAIN" 300
 }
 
 rp_primary_deploy_final() {
   rp_deploy_control_plane final
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final 'Waiting for ResourcePortal health' || true; fi
   rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300
 }
 
@@ -479,6 +503,17 @@ rp_primary_persist() {
 
 rp_primary_install() {
   local state_file="${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}"
+  if [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_dashboard_init >/dev/null; then
+    rp_dashboard_init primary "$state_file"
+    rp_dashboard_enter || true
+  fi
+  rp_run_phase "$state_file" preflight rp_preflight_system || return 1
+  rp_run_phase "$state_file" packages rp_prepare_host_packages || return 1
+  if declare -F rp_ui_try_enable_tui >/dev/null; then rp_ui_try_enable_tui || return 1; fi
+  if [[ "${RP_UI_MODE:-text}" == tui && "${RP_DASHBOARD_ENTERED:-false}" != true ]] && declare -F rp_dashboard_init >/dev/null; then
+    rp_dashboard_init primary "$state_file"
+    rp_dashboard_enter || true
+  fi
   rp_collect_primary_config "$state_file" || return 1
   if rp_phase_done "$state_file" release; then
     rp_primary_restore_release_state || return 1
@@ -487,8 +522,6 @@ rp_primary_install() {
     rp_primary_restore_secret_state || return 1
   fi
   rp_primary_recover_incomplete_zitadel_bootstrap "$state_file" || return 1
-  rp_run_phase "$state_file" preflight rp_preflight_system
-  rp_run_phase "$state_file" packages rp_prepare_host_packages
   rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
   rp_run_phase "$state_file" storage rp_primary_prepare_storage
   rp_run_phase "$state_file" firewall rp_primary_configure_firewall
