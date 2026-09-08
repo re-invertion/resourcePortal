@@ -310,6 +310,29 @@ rp_prepare_postgres_bind_dir() {
   chmod 0700 "$path" || return 1
 }
 
+rp_image_passwd_owner() {
+  local image="$1" username="$2" cid owner
+  [[ -n "$image" && "$username" =~ ^[A-Za-z0-9_.-]+$ ]] || return 1
+  cid="$(docker create "$image")" || return 1
+  if ! owner="$(docker export "$cid" | tar -xOf - etc/passwd 2>/dev/null | awk -F: -v user="$username" '$1 == user { print $3 ":" $4; exit }')"; then
+    docker rm "$cid" >/dev/null 2>&1 || true
+    return 1
+  fi
+  docker rm "$cid" >/dev/null || return 1
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  printf '%s
+' "$owner"
+}
+
+rp_prepare_zitadel_bootstrap_dir() {
+  local path="$1" image="$2" owner
+  [[ -n "$path" && -n "$image" ]] || return 1
+  owner="$(rp_image_passwd_owner "$image" zitadel)" || return 1
+  install -d -m 0700 "$path" || return 1
+  chown "$owner" "$path" || return 1
+  chmod 0700 "$path" || return 1
+}
+
 rp_primary_recover_incomplete_zitadel_bootstrap() {
   local state_file="$1" platform_root="${2:-/mnt/resourceportal/platform}"
   local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" db_dir backup service
@@ -343,7 +366,8 @@ rp_primary_bootstrap_stack() {
   rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/resourceportal-postgres "${RP_CFG_POSTGRES_IMAGE:?RP_CFG_POSTGRES_IMAGE is required}" || return 1
   rp_prepare_postgres_bind_dir /mnt/resourceportal/platform/databases/zitadel-postgres "$RP_CFG_POSTGRES_IMAGE" || return 1
   install -d -m 0750 /mnt/resourceportal/platform/fencing || return 1
-  install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap" || return 1
+  install -d -m 0700 "$etc" || return 1
+  rp_prepare_zitadel_bootstrap_dir "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap" "${RP_CFG_ZITADEL_IMAGE:?RP_CFG_ZITADEL_IMAGE is required}" || return 1
   install -m 0555 "$RP_INSTALLER_REPO_ROOT/packages/resourceportal-postgres/postgres-fence.sh" "$etc/postgres-fence.sh" || return 1
   rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$etc/zitadel-config.yaml" || return 1
   chmod 0644 "$etc/zitadel-config.yaml" || return 1
