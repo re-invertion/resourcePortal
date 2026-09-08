@@ -105,6 +105,8 @@ rp_main() {
       --repair)
         [[ $# -ge 2 ]] || { printf '%s\n' '--repair requires an action' >&2; return 2; }
         repair="$2"; shift 2 ;;
+      --non-interactive)
+        RP_NON_INTERACTIVE=true; export RP_NON_INTERACTIVE; shift ;;
       --allow-destructive-storage)
         RP_ALLOW_DESTRUCTIVE_STORAGE=true; export RP_ALLOW_DESTRUCTIVE_STORAGE; shift ;;
       --help|-h)
@@ -116,6 +118,11 @@ rp_main() {
 
   rp_require_root
   rp_log_init
+  RP_NON_INTERACTIVE="${RP_NON_INTERACTIVE:-false}"; export RP_NON_INTERACTIVE
+  rp_ui_init
+  trap 'rp_ui_cleanup' EXIT
+  trap 'rp_ui_cleanup; exit 130' INT
+  trap 'rp_ui_cleanup; exit 143' TERM
   if [[ -r "$config_path" ]]; then
     rp_config_load "$config_path"
   fi

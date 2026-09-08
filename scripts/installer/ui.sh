@@ -1,5 +1,42 @@
 #!/usr/bin/env bash
 
+RP_UI_MODE="${RP_UI_MODE:-text}"
+
+rp_ui_has_tty() {
+  [[ -t 0 && -t 1 && -t 2 ]]
+}
+
+rp_ui_mode_select() {
+  local non_interactive="${1:-false}"
+  if [[ "$non_interactive" == true ]] || ! rp_ui_has_tty; then
+    printf 'text\n'
+  else
+    printf 'tui\n'
+  fi
+}
+
+rp_ui_mode() {
+  printf '%s\n' "${RP_UI_MODE:-text}"
+}
+
+rp_ui_event() {
+  local event="$1" scope="$2" message="$3"
+  if [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_dashboard_event >/dev/null; then
+    rp_dashboard_event "$event" "$scope" "$message"
+    return
+  fi
+  printf '[%s] %s\n' "$scope" "$message" >&2
+}
+
+rp_ui_init() {
+  RP_UI_MODE="$(rp_ui_mode_select "${RP_NON_INTERACTIVE:-false}")"
+  export RP_UI_MODE
+}
+
+rp_ui_cleanup() {
+  :
+}
+
 rp_ui_backend() {
   if command -v dialog >/dev/null 2>&1; then
     printf 'dialog\n'
