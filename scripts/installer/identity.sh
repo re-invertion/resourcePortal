@@ -89,15 +89,31 @@ FirstInstance:
 EOF_STEPS
 }
 
+rp_prepare_api_bootstrap_output_dir() {
+  local path="$1" image="$2" owner
+  [[ -n "$path" && -n "$image" ]] || return 1
+  owner="$(docker run --rm --entrypoint sh "$image" -c 'printf "%s:%s\n" "$(id -u node)" "$(id -g node)"')" || return 1
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  install -d -m 0700 "$path" || return 1
+  chown "$owner" "$path" || return 1
+  chmod 0700 "$path" || return 1
+}
+
 rp_run_zitadel_bootstrap() {
   local output_file="$1" admin_username="$2" admin_email="$3" admin_password_file="$4"
   local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
   local service_name timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}" elapsed=0 state
+  local state_dir output_dir output_name suffix
   service_name="${stack_name}-zitadel-bootstrap-$(date +%s)"
   [[ "$output_file" == /* && "$admin_password_file" == /* && -r "$admin_password_file" ]] || return 1
   rp_admin_password_valid "$(cat "$admin_password_file")" || return 1
-  install -d -m 0700 "$(dirname "$output_file")"
-  rm -f "$output_file"
+  state_dir="$(dirname "$output_file")"
+  output_name="$(basename "$output_file")"
+  output_dir="$state_dir/identity-bootstrap"
+  install -d -m 0700 "$state_dir"
+  rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.user-id"
+  rm -rf "$output_dir"
+  rp_prepare_api_bootstrap_output_dir "$output_dir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || return 1
 
   docker service create \
     --detach \
@@ -107,7 +123,7 @@ rp_run_zitadel_bootstrap() {
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --network "${stack_name}_rp-control" \
     --mount type=bind,src=/mnt/resourceportal/platform/zitadel-bootstrap,dst=/platform/zitadel-bootstrap \
-    --mount type=bind,src="$(dirname "$output_file")",dst=/bootstrap-output \
+    --mount type=bind,src="$output_dir",dst=/bootstrap-output \
     --secret source="${RP_CFG_OIDC_SWARM_REF:-rp_oidc_client_secret_bootstrap}",target=rp_oidc_client_secret \
     --secret source=rp_first_admin_password,target=rp_first_admin_password \
     --env ZITADEL_BOOTSTRAP_MODE=production \
@@ -120,15 +136,31 @@ rp_run_zitadel_bootstrap() {
     --env OIDC_CLIENT_SECRET_FILE=/run/secrets/rp_oidc_client_secret \
     --env ZITADEL_BOOTSTRAP_REDIRECT_URIS="https://${RP_CFG_DOMAIN}/api/auth/callback" \
     --env ZITADEL_BOOTSTRAP_POST_LOGOUT_REDIRECT_URIS="https://${RP_CFG_DOMAIN}/api/auth/logout/callback" \
-    --env ZITADEL_BOOTSTRAP_OUTPUT_FILE="/bootstrap-output/$(basename "$output_file")" \
+    --env ZITADEL_BOOTSTRAP_OUTPUT_FILE="/bootstrap-output/$output_name" \
     "$RP_CFG_API_IMAGE" \
-    node dist/scripts/bootstrap-zitadel.js >/dev/null || return 1
+    node dist/scripts/bootstrap-zitadel.js >/dev/null || { rm -rf "$output_dir"; return 1; }
 
   while (( elapsed < timeout )); do
     state="$(docker service ps --no-trunc --format '{{.CurrentState}}|{{.Error}}' "$service_name" | head -n1)"
     case "$state" in
-      Complete*) docker service rm "$service_name" >/dev/null; return 0 ;;
-      Failed*|Rejected*) docker service logs "$service_name" >&2 || true; docker service rm "$service_name" >/dev/null; return 1 ;;
+      Complete*)
+        docker service rm "$service_name" >/dev/null
+        chown -R root:root "$output_dir" || return 1
+        chmod 0700 "$output_dir" || return 1
+        find "$output_dir" -maxdepth 1 -type f -exec chmod 0600 {} + || return 1
+        for suffix in '' '.client-id' '.client-secret' '.user-id'; do
+          [[ -r "$output_dir/$output_name$suffix" ]] || return 1
+          mv -f "$output_dir/$output_name$suffix" "$output_file$suffix" || return 1
+        done
+        rmdir "$output_dir" || return 1
+        return 0
+        ;;
+      Failed*|Rejected*)
+        docker service logs "$service_name" >&2 || true
+        docker service rm "$service_name" >/dev/null || true
+        rm -rf "$output_dir"
+        return 1
+        ;;
     esac
     sleep 2
     elapsed=$((elapsed + 2))
@@ -136,6 +168,7 @@ rp_run_zitadel_bootstrap() {
 
   docker service logs "$service_name" >&2 || true
   docker service rm "$service_name" >/dev/null || true
+  rm -rf "$output_dir"
   printf 'ZITADEL identity bootstrap timed out.\n' >&2
   return 1
 }
