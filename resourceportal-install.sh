@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/ui.sh"
+source "$repo_root/scripts/installer/dashboard.sh"
 source "$repo_root/scripts/installer/system.sh"
 source "$repo_root/scripts/installer/config.sh"
 source "$repo_root/scripts/installer/filesystem.sh"
