@@ -141,10 +141,10 @@ rp_primary_prepare_storage() {
   fi
   install -d -m 0750 "$base"
   rp_storage_layout_create "$base"
-  rp_mount_runtime_namespace volumes local "$base"
-  rp_mount_runtime_namespace secrets local "$base"
-  rp_mount_runtime_namespace platform local "$base"
-  rp_project_quota_enabled "$mountpoint"
+  rp_mount_runtime_namespace local volumes "$base" || return 1
+  rp_mount_runtime_namespace local secrets "$base" || return 1
+  rp_mount_runtime_namespace local platform "$base" || return 1
+  rp_project_quota_enabled "$mountpoint" || return 1
   # The readiness checker sources installer.conf immediately when the unit starts.
   # Persist the current safe, non-secret config before enabling the unit; the final
   # persist phase rewrites this file with release/runtime values discovered later.
@@ -279,6 +279,10 @@ rp_primary_create_platform_secrets() {
 
 rp_primary_bootstrap_stack() {
   local etc=/etc/resourceportal secret_dir=/var/lib/resourceportal/installer-state/secrets
+  mountpoint -q /mnt/resourceportal/platform || return 1
+  install -d -m 0750 /mnt/resourceportal/platform/databases/resourceportal-postgres || return 1
+  install -d -m 0750 /mnt/resourceportal/platform/databases/zitadel-postgres || return 1
+  install -d -m 0750 /mnt/resourceportal/platform/fencing || return 1
   install -d -m 0700 "$etc" "${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}/platform/zitadel-bootstrap" || return 1
   install -m 0555 "$RP_INSTALLER_REPO_ROOT/packages/resourceportal-postgres/postgres-fence.sh" "$etc/postgres-fence.sh" || return 1
   rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$etc/zitadel-config.yaml" || return 1

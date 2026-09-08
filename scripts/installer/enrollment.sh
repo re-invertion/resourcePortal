@@ -173,10 +173,10 @@ rp_redeem_join_bundle() {
   rp_configure_ufw "$ssh_port" "$cluster_cidr" "$ingress" || return 1
 
   docker swarm join --token "$join_token" "$manager_endpoint" || return 1
-  rp_mount_runtime_namespace volumes nfs "$nfs_server" || return 1
+  rp_mount_runtime_namespace nfs volumes "$nfs_server" || return 1
   if [[ "$role" == "manager" ]]; then
-    rp_mount_runtime_namespace secrets nfs "$nfs_server" || return 1
-    rp_mount_runtime_namespace platform nfs "$nfs_server" || return 1
+    rp_mount_runtime_namespace nfs secrets "$nfs_server" || return 1
+    rp_mount_runtime_namespace nfs platform "$nfs_server" || return 1
   fi
 
   node_id="$(docker info --format '{{.Swarm.NodeID}}')" || return 1

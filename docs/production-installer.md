@@ -27,6 +27,8 @@ Canonical storage paths are:
 /mnt/resourceportal/{volumes,secrets,platform}
 ```
 
+The Primary mounts these runtime namespaces using the installer contract `rp_mount_runtime_namespace <mode> <namespace> <source>` and treats every mount failure as fatal. Before the bootstrap stack is deployed, `/mnt/resourceportal/platform` must be an actual mountpoint; the installer then creates and verifies the PostgreSQL bind-source directories `/mnt/resourceportal/platform/databases/resourceportal-postgres`, `/mnt/resourceportal/platform/databases/zitadel-postgres`, plus `/mnt/resourceportal/platform/fencing`. This prevents Swarm from starting platform databases on accidental directories from the system filesystem. Additional-node and address-migration NFS remounts use the same mode-first contract.
+
 The default physical root may be overridden with a validated custom path.
 
 ## PostgreSQL single-writer fencing

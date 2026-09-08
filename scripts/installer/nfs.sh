@@ -131,7 +131,7 @@ rp_mount_runtime_namespace() {
   local mountpoint line
   rp_nfs_namespace_allowed "$namespace" || return 1
   mountpoint="$(rp_runtime_path "$namespace")"
-  install -d -m 0755 "$mountpoint"
+  install -d -m 0755 "$mountpoint" || return 1
   case "$mode" in
     local)
       line="$(rp_render_local_bind_fstab_entry "$source" "$namespace")"
@@ -141,9 +141,11 @@ rp_mount_runtime_namespace() {
       ;;
     *) return 1 ;;
   esac
-  rp_replace_fstab_mount "$fstab_path" "$mountpoint" "$line"
-  mountpoint -q "$mountpoint" && umount "$mountpoint"
-  mount "$mountpoint"
+  rp_replace_fstab_mount "$fstab_path" "$mountpoint" "$line" || return 1
+  if mountpoint -q "$mountpoint"; then
+    umount "$mountpoint" || return 1
+  fi
+  mount "$mountpoint" || return 1
 }
 
 rp_storage_label_args() {

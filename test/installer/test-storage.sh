@@ -141,6 +141,18 @@ assert_eq "/mnt/resourceportal/secrets" "$(rp_runtime_path secrets)" "canonical 
 assert_eq "/mnt/resourceportal/platform" "$(rp_runtime_path platform)" "canonical platform runtime path"
 assert_status 1 "reject unknown runtime namespace" rp_runtime_path databases
 
+# Runtime namespace mounts use the declared API order: mode, namespace, source.
+lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+assert_contains "$lifecycle_source" 'rp_mount_runtime_namespace local volumes "$base" || return 1' 'Primary mounts volumes with mode-first argument order and fails closed'
+assert_contains "$lifecycle_source" 'rp_mount_runtime_namespace local secrets "$base" || return 1' 'Primary mounts secrets with mode-first argument order and fails closed'
+assert_contains "$lifecycle_source" 'rp_mount_runtime_namespace local platform "$base" || return 1' 'Primary mounts platform with mode-first argument order and fails closed'
+
+# Bootstrap must verify the runtime platform mount and create bind sources before Swarm deploy.
+assert_contains "$lifecycle_source" 'mountpoint -q /mnt/resourceportal/platform || return 1' 'bootstrap requires platform runtime mountpoint'
+assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/databases/resourceportal-postgres' 'bootstrap creates RP PostgreSQL runtime bind source'
+assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/databases/zitadel-postgres' 'bootstrap creates ZITADEL PostgreSQL runtime bind source'
+assert_contains "$lifecycle_source" 'install -d -m 0750 /mnt/resourceportal/platform/fencing' 'bootstrap creates fencing runtime directory'
+
 unit_text="$(cat "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service")"
 assert_contains "$unit_text" "Before=docker.service" "storage readiness precedes Docker"
 assert_contains "$unit_text" "ExecStart=/usr/local/lib/resourceportal/storage-ready-check" "unit invokes readiness checker"

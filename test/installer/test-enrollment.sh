@@ -30,7 +30,7 @@ contains "$enrollment_source" '--insecure' 'self-signed TLS is accepted only wit
 contains "$enrollment_source" '/installer/enrollment/redeem' 'redemption uses dedicated enrollment endpoint'
 contains "$enrollment_source" '/installer/enrollment/complete' 'joined node calls completion endpoint'
 contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can inspect and label joined Swarm nodes'
-contains "$enrollment_source" 'rp_mount_runtime_namespace volumes nfs' 'worker mounts shared volume namespace over NFS'
+contains "$enrollment_source" 'rp_mount_runtime_namespace nfs volumes' 'worker mounts shared volume namespace over NFS'
 contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
 not_contains "$enrollment_source" 'docker swarm join-token -q >' 'join tokens are never written by an unprotected shell redirection'
 
@@ -42,6 +42,11 @@ not_contains "$issue_source" 'console.log(issued.token' 'issuer never logs enrol
 runner_source="$(cat "$repo_root/packages/resourceportal-api/src/internal/installer-enrollment.runner.ts")"
 contains "$runner_source" 'InstallerEnrollmentModule' 'dedicated HTTPS runner uses isolated enrollment module'
 not_contains "$(cat "$repo_root/packages/resourceportal-api/src/app.module.ts")" 'InstallerEnrollmentModule' 'public AppModule does not expose enrollment route'
+
+reconfigure_source="$(cat "$repo_root/scripts/installer/reconfigure.sh")"
+contains "$reconfigure_source" 'rp_mount_runtime_namespace nfs volumes "$new_storage"' 'address migration remounts volumes with mode-first argument order'
+contains "$reconfigure_source" 'rp_mount_runtime_namespace nfs secrets "$new_storage"' 'address migration remounts secrets with mode-first argument order'
+contains "$reconfigure_source" 'rp_mount_runtime_namespace nfs platform "$new_storage"' 'address migration remounts platform with mode-first argument order'
 
 if (( failures>0 )); then printf '%s test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer enrollment tests passed.\n'
