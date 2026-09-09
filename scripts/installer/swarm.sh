@@ -105,7 +105,7 @@ rp_swarm_init() {
     printf 'Docker Swarm is not in an initializable state: %s\n' "$state" >&2
     return 1
   }
-  docker swarm init --advertise-addr "$advertise_addr" --data-path-addr "$data_path_addr"
+  docker swarm init --advertise-addr "$advertise_addr" --data-path-addr "$data_path_addr" >/dev/null
 }
 
 rp_swarm_join() {

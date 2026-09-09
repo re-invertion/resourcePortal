@@ -82,6 +82,9 @@ assert_eq "192.168.100.0/24" "$(rp_ipv4_network_cidr 192.168.100.100/24)" "deriv
 assert_eq "10.20.32.0/20" "$(rp_ipv4_network_cidr 10.20.47.15/20)" "derive non-octet network CIDR"
 assert_status 1 "reject invalid IPv4 CIDR" rp_ipv4_network_cidr 192.168.100.100/33
 
+swarm_source="$(cat "$repo_root/scripts/installer/swarm.sh")"
+assert_contains "$swarm_source" 'docker swarm init --advertise-addr "$advertise_addr" --data-path-addr "$data_path_addr" >/dev/null' 'Swarm init suppresses join-token stdout'
+
 ufw_log="$(mktemp /tmp/rp-ufw-cleanup.XXXXXX)"
 : >"$ufw_log"
 ufw() {
