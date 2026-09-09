@@ -1,7 +1,7 @@
 # ResourcePortal Installer Reset / Factory Reset Design
 
 Date: 2026-09-09
-Status: DESIGN APPROVED IN CHAT; WRITTEN SPEC PENDING USER REVIEW
+Status: DESIGN APPROVED
 Scope: Production installer reset and factory-reset lifecycle
 
 ## 1. Goal
