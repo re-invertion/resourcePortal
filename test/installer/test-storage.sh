@@ -298,5 +298,11 @@ test_missing_stable_storage_identity() (
 )
 assert_status 1 'storage fingerprint rejects path-only identity' test_missing_stable_storage_identity
 
+assert_status 0 'E2E mount guard accepts storage mountpoint' rp_storage_mount_target_allowed_for_resourceportal /srv/resource-portal/storage /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts volumes runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/volumes /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts secrets runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/secrets /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts platform runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/platform /srv/resource-portal/storage
+assert_status 1 'E2E mount guard rejects unrelated mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/other /srv/resource-portal/storage
+
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'

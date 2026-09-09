@@ -54,8 +54,8 @@ while IFS= read -r node; do
   [[ -n "$node" ]] || continue
   while IFS= read -r target; do
     [[ -n "$target" ]] || continue
-    [[ "$target" == "$storage_mount" ]] || {
-      printf 'Storage device is mounted outside the approved ResourcePortal storage path: %s -> %s\n' "$node" "$target" >&2
+    rp_storage_mount_target_allowed_for_resourceportal "$target" "$storage_mount" || {
+      printf 'Storage device is mounted outside the approved ResourcePortal storage paths: %s -> %s\n' "$node" "$target" >&2
       exit 2
     }
   done < <(findmnt -rn -S "$node" -o TARGET 2>/dev/null || true)

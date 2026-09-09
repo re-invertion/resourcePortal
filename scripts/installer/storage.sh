@@ -177,6 +177,14 @@ rp_storage_related_to_root() {
   return 0
 }
 
+rp_storage_mount_target_allowed_for_resourceportal() {
+  local target="$1" storage_mount="$2"
+  case "$target" in
+    "$storage_mount"|/mnt/resourceportal/volumes|/mnt/resourceportal/secrets|/mnt/resourceportal/platform) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 rp_storage_fingerprint() {
   local device="$1" meta type size properties stable="" value
   meta="$(lsblk -dnbo TYPE,SIZE "$device" 2>/dev/null | head -n1)" || return 1
