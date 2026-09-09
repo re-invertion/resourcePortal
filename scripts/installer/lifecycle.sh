@@ -118,7 +118,7 @@ rp_primary_phase_names() {
 rp_prepare_host_packages() {
   rp_install_packages_with_ownership \
     ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
-    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
+    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw bind9-dnsutils
 }
 
 rp_primary_prepare_storage() {

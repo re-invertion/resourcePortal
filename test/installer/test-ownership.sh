@@ -70,6 +70,9 @@ assert_status 0 'new package is claimed' rp_ownership_has package nfs-ganesha
 assert_eq 'nfs-ganesha' "$(rp_ownership_values package)" 'only newly installed package is recorded'
 assert_contains "$(cat "$manifest")" 'package nfs-ganesha' 'manifest contains package metadata only'
 
+lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
+assert_contains "$lifecycle_source" 'nfs-ganesha-vfs ufw bind9-dnsutils' 'host package list uses installable DNS utilities package'
+
 assert_status 0 'Docker command presence wrapper exists' bash -c "source '$repo_root/scripts/installer/docker.sh'; declare -F rp_docker_command_present >/dev/null"
 
 test_preexisting_docker_not_claimed() (
