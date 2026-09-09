@@ -111,6 +111,46 @@ assert_contains "$confirmation_out" "Invalid confirmation. Type exactly: FORMAT 
 assert_contains "$confirmation_out" "FORMAT /dev/sdb" "storage confirmation eventually returns exact value"
 rm -f "$confirmation_marker"
 
+noninteractive_marker="$(mktemp /tmp/rp-noninteractive-storage.XXXXXX)"
+rm -f "$noninteractive_marker"
+test_noninteractive_destructive_opt_in() (
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+  RP_CFG_STORAGE_DEVICE=/dev/sdb
+  RP_CFG_FILESYSTEM=xfs
+  RP_NON_INTERACTIVE=true
+  RP_ALLOW_DESTRUCTIVE_STORAGE=true
+  RP_INSTALLER_REPO_ROOT="$repo_root"
+  unset RP_DESTRUCTIVE_CONFIRMATION
+  export RP_CFG_STORAGE_BASE_PATH RP_CFG_STORAGE_MOUNTPOINT RP_CFG_STORAGE_DEVICE RP_CFG_FILESYSTEM \
+    RP_NON_INTERACTIVE RP_ALLOW_DESTRUCTIVE_STORAGE RP_INSTALLER_REPO_ROOT
+  findmnt() { return 1; }
+  rp_system_disk() { printf '/dev/sda\n'; }
+  rp_device_is_safe_target() { return 0; }
+  rp_inspect_block_device() { return 0; }
+  rp_prompt_destructive_confirmation() { printf 'prompt-called\n' >"$noninteractive_marker"; return 1; }
+  rp_require_destructive_confirmation() { [[ "$2" == 'FORMAT /dev/sdb' ]]; }
+  lsblk() { [[ "$*" == '-ndo TYPE /dev/sdb' ]] && printf 'disk\n'; }
+  rp_partition_empty_disk() { [[ "$3" == 'FORMAT /dev/sdb' ]]; }
+  rp_wait_for_first_partition() { printf '/dev/sdb1\n'; }
+  rp_format_device() { [[ "$4" == 'FORMAT /dev/sdb1' ]]; }
+  rp_persist_filesystem_mount() { return 0; }
+  install() { return 0; }
+  rp_storage_layout_create() { return 0; }
+  rp_mount_runtime_namespace() { return 0; }
+  rp_project_quota_enabled() { return 0; }
+  rp_config_write() { return 0; }
+  rp_install_storage_ready_unit() { return 0; }
+  rp_ownership_record() { return 0; }
+  rp_storage_ready_unit_path() { printf '/tmp/rp-storage-ready.service\n'; }
+  rp_storage_ready_helper_path() { printf '/tmp/rp-storage-ready-check\n'; }
+  rp_runtime_path() { printf '/mnt/resourceportal/%s\n' "$1"; }
+  rp_primary_prepare_storage
+)
+assert_status 0 "non-interactive destructive opt-in skips typed storage prompt" test_noninteractive_destructive_opt_in
+[[ ! -e "$noninteractive_marker" ]] && printf 'PASS: non-interactive destructive opt-in never calls storage prompt\n' || { printf 'FAIL: non-interactive destructive opt-in never calls storage prompt\n' >&2; failures=$((failures+1)); }
+rm -f "$noninteractive_marker"
+
 rp_ui_input() { return 1; }
 set +e
 cancel_out="$(rp_prompt_destructive_confirmation /dev/sdb 2>&1)"

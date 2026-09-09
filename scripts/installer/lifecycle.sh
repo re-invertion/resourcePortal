@@ -141,11 +141,18 @@ rp_primary_prepare_storage() {
     system_disk="$(rp_system_disk)" || return 1
     rp_device_is_safe_target "$device" "$system_disk" || return 1
     rp_inspect_block_device "$device"
-    if [[ -n "${RP_DESTRUCTIVE_CONFIRMATION:-}" && ! -t 0 && "${RP_ALLOW_DESTRUCTIVE_STORAGE:-false}" != true ]]; then
+    if [[ "${RP_NON_INTERACTIVE:-false}" == true ]]; then
+      if [[ "${RP_ALLOW_DESTRUCTIVE_STORAGE:-false}" != true ]]; then
+        printf 'Unattended destructive storage requires --allow-destructive-storage.\n' >&2
+        return 1
+      fi
+      if [[ -z "${RP_DESTRUCTIVE_CONFIRMATION:-}" ]]; then
+        RP_DESTRUCTIVE_CONFIRMATION="FORMAT $device"
+      fi
+    elif [[ -n "${RP_DESTRUCTIVE_CONFIRMATION:-}" && ! -t 0 && "${RP_ALLOW_DESTRUCTIVE_STORAGE:-false}" != true ]]; then
       printf 'Unattended destructive storage requires --allow-destructive-storage.\n' >&2
       return 1
-    fi
-    if [[ -z "${RP_DESTRUCTIVE_CONFIRMATION:-}" ]]; then
+    elif [[ -z "${RP_DESTRUCTIVE_CONFIRMATION:-}" ]]; then
       RP_DESTRUCTIVE_CONFIRMATION="$(rp_prompt_destructive_confirmation "$device")" || return 1
     fi
     if ! rp_require_destructive_confirmation "$device" "$RP_DESTRUCTIVE_CONFIRMATION"; then
