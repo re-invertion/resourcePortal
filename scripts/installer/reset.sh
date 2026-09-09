@@ -689,18 +689,16 @@ rp_reset_run_phase() {
 }
 
 rp_reset_remove_installer_state() {
+  local state_dir="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}"
   local ui_dir="${RP_INSTALLER_UI_DIR:-${RP_GUM_INSTALL_DIR:-/var/lib/resourceportal/installer-ui}}"
-  rm -f \
-    "$RP_INSTALLER_STATE_DIR/primary.state" \
-    "$RP_INSTALLER_STATE_DIR/release.json" \
-    "$RP_INSTALLER_STATE_DIR/zitadel-bootstrap.json" \
-    "$RP_INSTALLER_STATE_DIR/owned-resources" || return 1
-  rm -rf \
-    "$RP_INSTALLER_STATE_DIR/secrets" \
-    "$RP_INSTALLER_STATE_DIR/enrollment" \
-    "$RP_INSTALLER_STATE_DIR/identity-bootstrap" \
-    "$ui_dir" || return 1
-  rmdir "$RP_INSTALLER_STATE_DIR" >/dev/null 2>&1 || true
+
+  [[ -n "$state_dir" && "$state_dir" != / && "${state_dir##*/}" == installer-state ]] || return 1
+  [[ -n "$ui_dir" && "$ui_dir" != / && "${ui_dir##*/}" == installer-ui ]] || return 1
+
+  # This phase runs only after package/provenance consumers are finished. The
+  # whole directory is ResourcePortal-owned, so factory reset must also remove
+  # legacy backup/checkpoint files whose names older installers did not know.
+  rm -rf -- "$state_dir" "$ui_dir" || return 1
 }
 
 rp_reset_final_cleanup() {

@@ -492,6 +492,21 @@ assert_contains "$disk_wipe_text" 'sgdisk --zap-all /dev/sdb' 'whole-disk reset 
 assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb' 'whole-disk reset wipes approved disk signatures'
 
 
+
+# E2E-discovered regression: factory reset must remove unknown legacy installer-state files too.
+test_remove_installer_state_clears_legacy_files() (
+  local root="$tmpdir/task7-legacy-state"
+  rm -rf "$root"; mkdir -p "$root/installer-state" "$root/installer-ui"
+  RP_INSTALLER_STATE_DIR="$root/installer-state"
+  RP_INSTALLER_UI_DIR="$root/installer-ui"
+  export RP_INSTALLER_STATE_DIR RP_INSTALLER_UI_DIR
+  printf 'legacy\n' >"$RP_INSTALLER_STATE_DIR/primary.state.pre-pr101"
+  printf 'legacy\n' >"$RP_INSTALLER_STATE_DIR/release.json.pre-pr108"
+  rp_reset_remove_installer_state || return 1
+  [[ ! -e "$RP_INSTALLER_STATE_DIR" ]] || return 1
+)
+assert_status 0 'factory reset removes unknown legacy installer-state leftovers' test_remove_installer_state_clears_legacy_files
+
 # Task 7: stable factory phase order and resumable reset journal.
 expected_factory_phases=$'preflight\nstop-services\nremove-stack\nremove-swarm-resources\nremove-enrollment\nremove-system-config\nunmount-runtime\nleave-swarm\nremove-docker\nremove-docker-data\nwipe-storage\nremove-rp-data\nremove-packages\nremove-installer-state\nfinal-cleanup'
 assert_eq "$expected_factory_phases" "$(rp_factory_reset_phase_names 2>/dev/null || true)" 'factory reset phase order is stable'

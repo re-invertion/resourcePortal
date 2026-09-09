@@ -304,5 +304,18 @@ assert_status 0 'E2E mount guard accepts secrets runtime mount' rp_storage_mount
 assert_status 0 'E2E mount guard accepts platform runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/platform /srv/resource-portal/storage
 assert_status 1 'E2E mount guard rejects unrelated mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/other /srv/resource-portal/storage
 
+
+# E2E-discovered regression: negative postconditions must fail explicitly, not rely on ! with set -e.
+e2e_script="$repo_root/scripts/run-installer-reset-e2e.sh"
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_absent()' 'E2E defines explicit absent assertion helper'
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_unmounted()' 'E2E defines explicit unmounted assertion helper'
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_no_signatures()' 'E2E defines explicit no-signatures assertion helper'
+if grep -Eq '^! ' "$e2e_script"; then
+  printf 'FAIL: E2E does not use bare negated postconditions under set -e\n' >&2
+  failures=$((failures+1))
+else
+  printf 'PASS: E2E avoids bare negated postconditions under set -e\n'
+fi
+
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'

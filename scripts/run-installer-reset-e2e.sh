@@ -34,6 +34,46 @@ manifest_copy=/tmp/resourceportal-reset-e2e-owned-resources.before
 sentinel=/tmp/resourceportal-reset-e2e-unrelated-file
 fstab_sentinel='# unrelated fstab sentinel'
 
+rp_reset_e2e_assert_absent() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    printf 'E2E assertion failed: expected path to be absent: %s\n' "$path" >&2
+    return 1
+  fi
+}
+
+rp_reset_e2e_assert_unmounted() {
+  local target="$1"
+  if findmnt -rn -M "$target" >/dev/null 2>&1; then
+    printf 'E2E assertion failed: expected mountpoint to be absent: %s\n' "$target" >&2
+    return 1
+  fi
+}
+
+rp_reset_e2e_assert_no_signatures() {
+  local device="$1"
+  if wipefs -n "$device" 2>/dev/null | grep -q '[^[:space:]]'; then
+    printf 'E2E assertion failed: storage signatures remain on %s\n' "$device" >&2
+    return 1
+  fi
+}
+
+rp_reset_e2e_assert_command_absent() {
+  local command_name="$1"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    printf 'E2E assertion failed: command still exists: %s\n' "$command_name" >&2
+    return 1
+  fi
+}
+
+rp_reset_e2e_assert_package_absent() {
+  local package="$1"
+  if dpkg-query -W -f='${db:Status-Abbrev}\n' "$package" 2>/dev/null | grep -q '^ii '; then
+    printf 'E2E assertion failed: package still installed: %s\n' "$package" >&2
+    return 1
+  fi
+}
+
 test_device="$(readlink -f "$RP_RESET_E2E_STORAGE_DEVICE")"
 [[ -n "$configured_device" ]] || {
   printf '%s\n' 'Installer config has no RP_CFG_STORAGE_DEVICE; refusing destructive E2E.' >&2
@@ -85,23 +125,23 @@ chmod 0600 "$manifest_copy"
   --config "$RP_RESET_E2E_CONFIG"
 
 # Post-reset proof: RP state and storage are gone, unrelated host state survived.
-! test -e /etc/resourceportal
-! test -e /var/lib/resourceportal/installer-state
-! test -e /var/lib/resourceportal/reset-state/factory.state
-! test -e /var/lib/resourceportal/reset-state/factory.plan
-! findmnt -rn -M "$storage_mount" >/dev/null 2>&1
-! wipefs -n "$test_device" 2>/dev/null | grep -q '[^[:space:]]'
+rp_reset_e2e_assert_absent /etc/resourceportal
+rp_reset_e2e_assert_absent /var/lib/resourceportal/installer-state
+rp_reset_e2e_assert_absent /var/lib/resourceportal/reset-state/factory.state
+rp_reset_e2e_assert_absent /var/lib/resourceportal/reset-state/factory.plan
+rp_reset_e2e_assert_unmounted "$storage_mount"
+rp_reset_e2e_assert_no_signatures "$test_device"
 test "$(cat "$sentinel")" = keep
 grep -Fxq "$fstab_sentinel" /etc/fstab
 
 if [[ "$docker_was_owned" == true ]]; then
-  ! command -v docker >/dev/null 2>&1
-  ! test -e /var/lib/docker
+  rp_reset_e2e_assert_command_absent docker
+  rp_reset_e2e_assert_absent /var/lib/docker
 fi
 
 while read -r type value; do
   [[ "$type" == package ]] || continue
-  ! dpkg-query -W -f='${db:Status-Abbrev}\n' "$value" 2>/dev/null | grep -q '^ii '
+  rp_reset_e2e_assert_package_absent "$value"
 done <"$manifest_copy"
 
 printf '%s\n' 'ResourcePortal factory-reset E2E passed on disposable host.'
