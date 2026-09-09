@@ -24,6 +24,7 @@ source "$repo_root/scripts/installer/domain.sh"
 source "$repo_root/scripts/installer/smtp.sh"
 source "$repo_root/scripts/installer/enrollment.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
+source "$repo_root/scripts/installer/reset.sh"
 source "$repo_root/scripts/installer/reconfigure.sh"
 source "$repo_root/scripts/installer/diagnostics.sh"
 source "$repo_root/scripts/installer/repair.sh"
@@ -40,6 +41,9 @@ Usage:
   sudo ./resourceportal-install.sh --mode upgrade --manifest PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode reconfigure --action ACTION [--config PATH]
   sudo ./resourceportal-install.sh --mode diagnostics [--repair ACTION] [--config PATH]
+  sudo ./resourceportal-install.sh --mode reset --scope settings [--config PATH]
+  sudo ./resourceportal-install.sh --mode reset --scope installer-state [--config PATH]
+  sudo ./resourceportal-install.sh --mode reset --scope factory [--confirm-factory-reset] [--allow-destructive-storage] [--config PATH]
 
 Modes:
   primary       Install or resume the Primary ResourcePortal node.
@@ -47,11 +51,12 @@ Modes:
   upgrade       Apply a selected release manifest.
   reconfigure   Apply one supported configuration change.
   diagnostics   Run read-only diagnostics.
+  reset         Clear safe installer state or perform an explicitly confirmed factory reset.
 USAGE
 }
 
 rp_dispatch() {
-  local mode="$1" bundle="$2" action="$3" manifest="$4"
+  local mode="$1" bundle="$2" action="$3" manifest="$4" scope="${5:-}"
   local previous_stack docker_version current_version ui_was_tui=false
   case "$mode" in
     primary)
@@ -95,6 +100,10 @@ rp_dispatch() {
       rp_ui_mode_operation diagnostics inspect 'Running ResourcePortal diagnostics' rp_run_diagnostics || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete diagnostics || true; fi
       ;;
+    reset)
+      rp_reset "$scope" || return $?
+      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete reset || true; fi
+      ;;
     *)
       printf 'Unknown installer mode: %s\n' "$mode" >&2
       return 2
@@ -103,7 +112,10 @@ rp_dispatch() {
 }
 
 rp_main() {
-  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair=""
+  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair="" scope=""
+  RP_CONFIRM_FACTORY_RESET=false
+  RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
+  export RP_CONFIRM_FACTORY_RESET RP_FORCE_REMOVE_UNTRACKED_PACKAGES
   while (($#)); do
     case "$1" in
       --config)
@@ -124,6 +136,13 @@ rp_main() {
       --repair)
         [[ $# -ge 2 ]] || { printf '%s\n' '--repair requires an action' >&2; return 2; }
         repair="$2"; shift 2 ;;
+      --scope)
+        [[ $# -ge 2 ]] || { printf '%s\n' '--scope requires a value' >&2; return 2; }
+        scope="$2"; shift 2 ;;
+      --confirm-factory-reset)
+        RP_CONFIRM_FACTORY_RESET=true; export RP_CONFIRM_FACTORY_RESET; shift ;;
+      --force-remove-untracked-packages)
+        RP_FORCE_REMOVE_UNTRACKED_PACKAGES=true; export RP_FORCE_REMOVE_UNTRACKED_PACKAGES; shift ;;
       --non-interactive)
         RP_NON_INTERACTIVE=true; export RP_NON_INTERACTIVE; shift ;;
       --allow-destructive-storage)
@@ -152,16 +171,34 @@ rp_main() {
       add-node 'Add Swarm Node' \
       upgrade 'Upgrade ResourcePortal' \
       reconfigure 'Reconfigure Installation' \
-      diagnostics 'Repair / Diagnostics')" || return 1
+      diagnostics 'Repair / Diagnostics' \
+      reset 'Reset / Clear ResourcePortal')" || return 1
   fi
   rp_mode_valid "$mode" || { printf 'Unsupported installer mode: %s\n' "$mode" >&2; return 2; }
+  if [[ "$mode" == reset ]]; then
+    if [[ -z "$scope" ]]; then
+      if [[ "$RP_NON_INTERACTIVE" == true ]]; then
+        printf '%s\n' '--scope is required for non-interactive reset' >&2
+        return 2
+      fi
+      scope="$(rp_ui_choice 'ResourcePortal reset' 'Choose reset scope' settings \
+        settings 'Clear saved installer settings' \
+        installer-state 'Clear safe incomplete installer state' \
+        factory 'Factory reset (DESTROYS ALL RESOURCEPORTAL DATA)')" || return 1
+    fi
+    rp_reset_scope_valid "$scope" || { printf 'Unsupported reset scope: %s\n' "$scope" >&2; return 2; }
+    rp_reset_flags_valid "$scope" || return $?
+  elif [[ "$RP_CONFIRM_FACTORY_RESET" == true || "$RP_FORCE_REMOVE_UNTRACKED_PACKAGES" == true ]]; then
+    printf '%s\n' 'Factory-reset-only flags require --mode reset --scope factory.' >&2
+    return 2
+  fi
   RP_CFG_MODE="$mode"; export RP_CFG_MODE
   if [[ -n "$repair" ]]; then
     if declare -F rp_ui_mode_dashboard_start >/dev/null; then rp_ui_mode_dashboard_start repair || true; fi
     rp_ui_mode_operation repair repair "Running repair: $repair" rp_run_repair "$repair" || return $?
     if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete repair || true; fi
   else
-    rp_dispatch "$mode" "$bundle" "$action" "$manifest"
+    rp_dispatch "$mode" "$bundle" "$action" "$manifest" "$scope"
   fi
 }
 

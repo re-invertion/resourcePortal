@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 rp_mode_valid() {
-  case "$1" in primary|add-node|upgrade|reconfigure|diagnostics) return 0 ;; *) return 1 ;; esac
+  case "$1" in primary|add-node|upgrade|reconfigure|diagnostics|reset) return 0 ;; *) return 1 ;; esac
 }
 
 rp_phase_done() {
