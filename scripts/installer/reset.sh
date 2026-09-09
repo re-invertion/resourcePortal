@@ -268,8 +268,15 @@ rp_reset_runtime_mount_present() {
   return 1
 }
 
-# Task 5 replaces this fail-safe stub with real Swarm secret classification.
 rp_reset_managed_swarm_secret_present() {
+  local state name
+  command -v docker >/dev/null 2>&1 || return 1
+  state="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+  [[ "$state" == active ]] || return 1
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    rp_swarm_resourceportal_secret_name "$name" && return 0
+  done < <(docker secret ls --format '{{.Name}}' 2>/dev/null || true)
   return 1
 }
 
@@ -338,4 +345,105 @@ rp_reset() {
       ;;
     *) return 2 ;;
   esac
+}
+
+
+rp_reset_swarm_active() {
+  command -v docker >/dev/null 2>&1 || return 1
+  [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)" == active ]]
+}
+
+rp_reset_stop_services() {
+  local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" service mode
+  rp_reset_swarm_active || return 0
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    mode="$(docker service inspect "$service" --format '{{if .Spec.Mode.Replicated}}replicated{{else}}other{{end}}' 2>/dev/null || true)"
+    [[ "$mode" == replicated ]] || continue
+    docker service update --replicas 0 "$service" >/dev/null || return 1
+  done < <(docker service ls --filter "label=com.docker.stack.namespace=$stack" --format '{{.Name}}' 2>/dev/null || true)
+}
+
+rp_reset_remove_stack() {
+  local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" remaining
+  local attempts="${RP_RESET_STACK_REMOVE_ATTEMPTS:-60}" delay="${RP_RESET_STACK_REMOVE_DELAY:-1}" i
+  rp_reset_swarm_active || return 0
+  docker stack rm "$stack" >/dev/null 2>&1 || true
+  for ((i = 0; i < attempts; i++)); do
+    remaining="$(docker service ls --filter "label=com.docker.stack.namespace=$stack" --format '{{.Name}}' 2>/dev/null || true)"
+    [[ -z "$remaining" ]] && return 0
+    sleep "$delay"
+  done
+  printf 'Timed out waiting for ResourcePortal stack removal: %s\n' "$stack" >&2
+  return 1
+}
+
+rp_reset_remove_swarm_resources() {
+  local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" name
+  rp_reset_swarm_active || return 0
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if rp_swarm_resourceportal_secret_name "$name"; then
+      docker secret rm "$name" >/dev/null 2>&1 || true
+    fi
+  done < <(docker secret ls --format '{{.Name}}' 2>/dev/null || true)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if rp_swarm_resourceportal_config_name "$name" "$stack"; then
+      docker config rm "$name" >/dev/null 2>&1 || true
+    fi
+  done < <(docker config ls --format '{{.Name}}' 2>/dev/null || true)
+}
+
+rp_reset_remove_enrollment() {
+  local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" service
+  if rp_reset_swarm_active; then
+    while IFS= read -r service; do
+      [[ -n "$service" ]] || continue
+      case "$service" in
+        "${stack}-installer-enrollment"|"${stack}-migration-"*|"${stack}-zitadel-bootstrap-"*|"${stack}-enrollment-issue-"*)
+          docker service rm "$service" >/dev/null 2>&1 || true
+          ;;
+      esac
+    done < <(docker service ls --format '{{.Name}}' 2>/dev/null || true)
+  fi
+  rm -rf "$RP_INSTALLER_STATE_DIR/enrollment"
+}
+
+rp_reset_remove_system_config() {
+  local ganesha="${RP_GANESHA_CONFIG_PATH:-/etc/ganesha/resourceportal.conf}"
+  rp_remove_resourceportal_ufw_rules || return 1
+  rp_remove_resourceportal_ganesha_config "$ganesha" || return 1
+  rp_remove_storage_ready_unit || return 1
+}
+
+rp_reset_unmount_runtime() {
+  local mountpoint="${RP_FACTORY_PLAN_STORAGE_MOUNTPOINT:-${RP_CFG_STORAGE_MOUNTPOINT:-${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}}}"
+  local fstab="${RP_FSTAB_PATH:-/etc/fstab}" path
+  rp_unmount_resourceportal_runtime || return 1
+  if mountpoint -q "$mountpoint" 2>/dev/null; then
+    umount "$mountpoint" || return 1
+  fi
+  for path in /mnt/resourceportal/platform /mnt/resourceportal/secrets /mnt/resourceportal/volumes "$mountpoint"; do
+    rp_remove_fstab_mount "$fstab" "$path" || return 1
+  done
+}
+
+rp_reset_leave_swarm() {
+  local unrelated state control
+  unrelated="$(rp_swarm_unrelated_resources 2>/dev/null || true)"
+  [[ -z "$unrelated" ]] || {
+    printf 'Unrelated Swarm resources still exist; refusing to leave Swarm:\n%s\n' "$unrelated" >&2
+    return 1
+  }
+  command -v docker >/dev/null 2>&1 || return 0
+  state="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+  [[ "$state" == inactive || -z "$state" ]] && return 0
+  [[ "$state" == active ]] || return 1
+  control="$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null || true)"
+  if [[ "$control" == true ]]; then
+    docker swarm leave --force >/dev/null
+  else
+    docker swarm leave >/dev/null
+  fi
 }

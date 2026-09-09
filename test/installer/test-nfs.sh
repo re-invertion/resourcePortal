@@ -104,6 +104,22 @@ test_preexisting_ganesha_config_not_claimed() (
 assert_status 0 'pre-existing ResourcePortal Ganesha config is not claimed' test_preexisting_ganesha_config_not_claimed
 rm -rf "$ganesha_tmp"
 
+ganesha_cleanup_tmp="$(mktemp -d)"
+RP_OWNERSHIP_MANIFEST="$ganesha_cleanup_tmp/owned"
+export RP_OWNERSHIP_MANIFEST
+managed_ganesha="$ganesha_cleanup_tmp/resourceportal.conf"
+printf '%s\n' '# Managed by ResourcePortal Production Installer.' >"$managed_ganesha"
+systemctl() { return 0; }
+rp_remove_resourceportal_ganesha_config "$managed_ganesha"
+assert_status 1 'managed Ganesha config is removed' test -e "$managed_ganesha"
+
+unowned_ganesha="$ganesha_cleanup_tmp/unrelated.conf"
+printf '%s\n' '# unrelated export config' >"$unowned_ganesha"
+rp_remove_resourceportal_ganesha_config "$unowned_ganesha"
+assert_status 0 'unowned Ganesha config is preserved' test -e "$unowned_ganesha"
+unset -f systemctl
+rm -rf "$ganesha_cleanup_tmp"
+
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
   exit 1

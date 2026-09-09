@@ -22,6 +22,13 @@ assert_contains() {
     failures=$((failures + 1))
   else printf 'PASS: %s\n' "$name"; fi
 }
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    printf 'FAIL: %s\nunexpected: %s\n' "$name" "$needle" >&2
+    failures=$((failures + 1))
+  else printf 'PASS: %s\n' "$name"; fi
+}
 assert_before() {
   local text="$1" first="$2" second="$3" name="$4"
   local a b
@@ -74,6 +81,66 @@ assert_eq "192.168.100.100" "$(rp_default_route_address_text "$route_text")" "de
 assert_eq "192.168.100.0/24" "$(rp_ipv4_network_cidr 192.168.100.100/24)" "derive /24 network CIDR"
 assert_eq "10.20.32.0/20" "$(rp_ipv4_network_cidr 10.20.47.15/20)" "derive non-octet network CIDR"
 assert_status 1 "reject invalid IPv4 CIDR" rp_ipv4_network_cidr 192.168.100.100/33
+
+ufw_log="$(mktemp /tmp/rp-ufw-cleanup.XXXXXX)"
+: >"$ufw_log"
+ufw() {
+  if [[ "$1 $2" == 'status numbered' ]]; then
+    cat <<'RULES'
+[ 1] 22/tcp ALLOW IN Anywhere # ResourcePortal-SSH
+[ 2] 80/tcp ALLOW IN Anywhere # ResourcePortal-HTTP
+[ 3] 2222/tcp ALLOW IN Anywhere # Unrelated-SSH
+RULES
+    return 0
+  fi
+  printf '%s\n' "$*" >>"$ufw_log"
+}
+rp_remove_resourceportal_ufw_rules
+unset -f ufw
+ufw_cleanup="$(cat "$ufw_log")"
+assert_contains "$ufw_cleanup" '--force delete 2' 'UFW cleanup deletes RP rule in descending order'
+assert_contains "$ufw_cleanup" '--force delete 1' 'UFW cleanup deletes second RP rule'
+assert_not_contains "$ufw_cleanup" 'delete 3' 'UFW cleanup preserves unrelated rule'
+assert_not_contains "$ufw_cleanup" 'reset' 'UFW cleanup never performs global reset'
+rm -f "$ufw_log"
+
+assert_status 0 'known versioned RP secret accepted' rp_swarm_resourceportal_secret_name rp_cookie_secret_deadbeef
+assert_status 1 'unrelated secret rejected by RP classifier' rp_swarm_resourceportal_secret_name other_secret
+
+test_swarm_unrelated_classification() (
+  RP_CFG_STACK_NAME=resourceportal-control-plane
+  export RP_CFG_STACK_NAME
+  docker() {
+    case "$1 $2" in
+      'info --format') printf 'active\n' ;;
+      'service ls') printf '%s\n' resourceportal-control-plane_api resourceportal-control-plane_web other_stack_web ;;
+      'secret ls') printf '%s\n' rp_postgres_password rp_cookie_secret_deadbeef other_secret ;;
+      'config ls') printf '%s\n' resourceportal-control-plane_postgres_fence_script other_config ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_swarm_unrelated_resources
+)
+unrelated_out="$(test_swarm_unrelated_classification)"
+assert_contains "$unrelated_out" 'service other_stack_web' 'Swarm classifier reports unrelated service'
+assert_contains "$unrelated_out" 'secret other_secret' 'Swarm classifier reports unrelated secret'
+assert_contains "$unrelated_out" 'config other_config' 'Swarm classifier reports unrelated config'
+
+test_swarm_only_resourceportal() (
+  RP_CFG_STACK_NAME=resourceportal-control-plane
+  export RP_CFG_STACK_NAME
+  docker() {
+    case "$1 $2" in
+      'info --format') printf 'active\n' ;;
+      'service ls') printf '%s\n' resourceportal-control-plane_api resourceportal-control-plane_web resourceportal-control-plane-installer-enrollment ;;
+      'secret ls') printf '%s\n' rp_postgres_password rp_cookie_secret_deadbeef installer_enrollment_tls_cert_deadbeef ;;
+      'config ls') printf '%s\n' resourceportal-control-plane_postgres_fence_script resourceportal-control-plane_zitadel_public_config ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_swarm_unrelated_resources
+)
+assert_eq '' "$(test_swarm_only_resourceportal)" 'Swarm classifier accepts only ResourcePortal resources'
 
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer host runtime tests passed.\n'

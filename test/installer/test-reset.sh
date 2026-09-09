@@ -31,6 +31,13 @@ assert_contains() {
     failures=$((failures + 1))
   else printf 'PASS: %s\n' "$name"; fi
 }
+assert_not_contains() {
+  local haystack="$1" needle="$2" name="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    printf 'FAIL: %s\nunexpected: %s\n' "$name" "$needle" >&2
+    failures=$((failures + 1))
+  else printf 'PASS: %s\n' "$name"; fi
+}
 assert_file_exists() {
   local path="$1" name="$2"
   [[ -e "$path" ]] && printf 'PASS: %s\n' "$name" || { printf 'FAIL: %s\nmissing file: %s\n' "$name" "$path" >&2; failures=$((failures + 1)); }
@@ -266,6 +273,55 @@ test_preflight_unrelated_swarm() (
   rp_reset_factory_preflight
 )
 assert_status 1 'factory preflight rejects unrelated Swarm resources' test_preflight_unrelated_swarm
+
+fstab_test="$tmpdir/fstab"
+cat >"$fstab_test" <<'FSTAB'
+UUID=system / ext4 defaults 0 1
+UUID=rp /srv/resource-portal/storage xfs defaults,prjquota 0 0
+server:/other /mnt/other nfs4 defaults 0 0
+/srv/resource-portal/storage/volumes /mnt/resourceportal/volumes none bind 0 0
+FSTAB
+rp_remove_fstab_mount "$fstab_test" /srv/resource-portal/storage
+rp_remove_fstab_mount "$fstab_test" /mnt/resourceportal/volumes
+fstab_after="$(cat "$fstab_test")"
+assert_contains "$fstab_after" 'UUID=system / ext4 defaults 0 1' 'fstab cleanup preserves root entry'
+assert_contains "$fstab_after" 'server:/other /mnt/other nfs4 defaults 0 0' 'fstab cleanup preserves unrelated NFS entry'
+assert_not_contains "$fstab_after" '/srv/resource-portal/storage xfs' 'fstab cleanup removes RP storage mount'
+assert_not_contains "$fstab_after" '/mnt/resourceportal/volumes none bind' 'fstab cleanup removes RP runtime mount'
+
+systemd_log="$tmpdir/systemd-cleanup.log"
+: >"$systemd_log"
+RP_OWNERSHIP_MANIFEST="$tmpdir/systemd-owned"
+export RP_OWNERSHIP_MANIFEST
+rp_ownership_record systemd-unit resourceportal-storage-ready.service
+rp_ownership_record systemd-helper /usr/local/lib/resourceportal/storage-ready-check
+systemctl() { printf 'systemctl %s\n' "$*" >>"$systemd_log"; return 0; }
+rm() { printf 'rm %s\n' "$*" >>"$systemd_log"; return 0; }
+rp_remove_storage_ready_unit
+unset -f systemctl rm
+systemd_text="$(cat "$systemd_log")"
+assert_contains "$systemd_text" 'resourceportal-storage-ready.service' 'systemd cleanup targets RP storage-ready unit'
+assert_contains "$systemd_text" '/usr/local/lib/resourceportal/storage-ready-check' 'systemd cleanup targets RP helper'
+assert_not_contains "$systemd_text" 'unrelated.service' 'systemd cleanup never targets unrelated unit'
+
+test_leave_swarm_refuses_unrelated() (
+  rp_swarm_unrelated_resources() { printf 'service other_stack_web\n'; }
+  docker() { printf 'unexpected docker mutation\n' >&2; return 99; }
+  rp_reset_leave_swarm
+)
+assert_status 1 'leave-swarm refuses when unrelated resources remain' test_leave_swarm_refuses_unrelated
+
+test_leave_single_manager_force() (
+  rp_swarm_unrelated_resources() { return 0; }
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'true\n'; return 0; fi
+    if [[ "$1 $2 $3" == 'swarm leave --force' ]]; then return 0; fi
+    return 1
+  }
+  rp_reset_leave_swarm
+)
+assert_status 0 'factory reset force-leaves manager Swarm after safety classification' test_leave_single_manager_force
 
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
