@@ -112,7 +112,7 @@ New installations record installer-created host resources in `/var/lib/resourcep
 --force-remove-untracked-packages
 ```
 
-allows removal of only the fixed Docker/package set known to the ResourcePortal installer. It does not enable global package cleanup, `apt-get autoremove`, global firewall reset, or broader disk deletion.
+allows consideration of only the fixed Docker/package set known to the ResourcePortal installer. Before any untracked host package is purged, the installer refuses `Essential`/`Protected` packages and simulates the purge; if apt would remove anything outside the authorized ResourcePortal package set, that package is retained. It does not enable global package cleanup, `apt-get autoremove`, global firewall reset, or broader disk deletion.
 
 Factory reset refuses to leave Docker Swarm while unrelated Swarm services, configs or secrets are present. Migrate or remove those unrelated resources first; the reset does not delete them automatically.
 

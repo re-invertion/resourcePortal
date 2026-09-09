@@ -353,7 +353,14 @@ RP_OWNERSHIP_MANIFEST="$tmpdir/task6-package-owned"
 rp_ownership_record package nfs-ganesha
 rp_ownership_record package curl
 rp_package_installed() { [[ "$1" == nfs-ganesha || "$1" == curl || "$1" == dnsutils ]]; }
-apt-get() { printf 'apt-get %s\n' "$*" >>"$package_log"; return 0; }
+apt-get() {
+  if [[ "${1:-} ${2:-}" == '-s purge' ]]; then
+    printf 'Purg %s [test]\n' "${3:-}"
+    return 0
+  fi
+  printf 'apt-get %s\n' "$*" >>"$package_log"
+  return 0
+}
 RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
 rp_reset_remove_packages
 package_text="$(cat "$package_log")"
@@ -371,6 +378,32 @@ package_text="$(cat "$package_log")"
 assert_contains "$package_text" 'dnsutils' 'legacy override permits fixed installer package candidates'
 assert_not_contains "$package_text" 'autoremove' 'legacy override still avoids autoremove'
 unset -f apt-get rp_package_installed
+
+# Legacy package force must never remove essential/protected packages or unrelated reverse dependencies.
+test_legacy_purge_rejects_essential() (
+  RP_OWNERSHIP_MANIFEST="$tmpdir/task6-essential-owned"; : >"$RP_OWNERSHIP_MANIFEST"
+  dpkg-query() { printf 'yes\nno\n'; }
+  apt-get() { printf 'Purg util-linux [2.40]\n'; }
+  rp_reset_package_purge_safe util-linux true
+)
+assert_status 1 'legacy package override rejects Essential package' test_legacy_purge_rejects_essential
+
+test_legacy_purge_rejects_unrelated_closure() (
+  RP_OWNERSHIP_MANIFEST="$tmpdir/task6-closure-owned"; : >"$RP_OWNERSHIP_MANIFEST"
+  dpkg-query() { printf 'no\nno\n'; }
+  apt-get() { printf 'Purg parted [3.6]\nPurg udisks2 [2.10]\n'; }
+  rp_reset_package_purge_safe parted true
+)
+assert_status 1 'legacy package override rejects unrelated purge closure' test_legacy_purge_rejects_unrelated_closure
+
+test_legacy_purge_accepts_authorized_closure() (
+  RP_OWNERSHIP_MANIFEST="$tmpdir/task6-safe-closure-owned"; : >"$RP_OWNERSHIP_MANIFEST"
+  dpkg-query() { printf 'no\nno\n'; }
+  apt-get() { printf 'Purg nfs-common [1:2.8]\nPurg nfs-ganesha [6.5]\nPurg nfs-ganesha-vfs [6.5]\n'; }
+  rp_reset_package_purge_safe nfs-common true
+)
+assert_status 0 'legacy package override accepts RP-only purge closure' test_legacy_purge_accepts_authorized_closure
+
 
 wipe_test_base() {
   RP_FACTORY_PLAN_STORAGE_DEVICE=/dev/sdb

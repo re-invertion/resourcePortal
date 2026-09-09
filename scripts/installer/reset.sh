@@ -499,9 +499,43 @@ rp_reset_host_package_candidates() {
     xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
 }
 
+rp_reset_authorized_package_name() {
+  local package="$1" force="${2:-false}" candidate
+  rp_ownership_has package "$package" && return 0
+  [[ "$force" == true ]] || return 1
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && "$candidate" == "$package" ]] && return 0
+  done < <(rp_reset_host_package_candidates)
+  return 1
+}
+
+rp_reset_package_protected() {
+  local metadata
+  metadata="$(dpkg-query -W -f='${Essential}\n${Protected}\n' "$1" 2>/dev/null || true)"
+  grep -qx 'yes' <<<"$metadata"
+}
+
+rp_reset_package_purge_safe() {
+  local package="$1" force="${2:-false}" output action name rest
+  local saw_removal=false
+  rp_reset_authorized_package_name "$package" "$force" || return 1
+  rp_reset_package_protected "$package" && return 1
+  output="$(LC_ALL=C apt-get -s purge "$package" 2>&1)" || return 1
+  while read -r action name rest; do
+    case "$action" in
+      Purg|Remv)
+        saw_removal=true
+        rp_reset_authorized_package_name "$name" "$force" || return 1
+        rp_reset_package_protected "$name" && return 1
+        ;;
+    esac
+  done <<<"$output"
+  [[ "$saw_removal" == true ]]
+}
+
 rp_reset_remove_packages() {
   local package force
-  local -a candidates=() installed=() unique=()
+  local -a candidates=() unique=()
   local seen_text=' '
   force="${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-${RP_FORCE_REMOVE_UNTRACKED_PACKAGES:-false}}"
 
@@ -520,11 +554,13 @@ rp_reset_remove_packages() {
     unique+=("$package")
   done
   for package in "${unique[@]}"; do
-    rp_package_installed "$package" && installed+=("$package")
+    rp_package_installed "$package" || continue
+    if ! rp_reset_package_purge_safe "$package" "$force"; then
+      rp_log INFO "factory reset retained package because purge closure was unsafe: $package" 2>/dev/null || true
+      continue
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "$package" || return 1
   done
-  if ((${#installed[@]} > 0)); then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${installed[@]}" || return 1
-  fi
 }
 
 rp_reset_storage_revalidate() {
