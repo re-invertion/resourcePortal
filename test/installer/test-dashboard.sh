@@ -151,7 +151,25 @@ if declare -F rp_dashboard_completion_text >/dev/null; then
   RP_DASHBOARD_SERVICE_SUMMARY='API 1/1, Web 1/1, ZITADEL 1/1'
   RP_ADMIN_PASSWORD='CompletionSecret1!'
   RP_INTERNAL_WORKER_TOKEN='completion-token-secret'
-  completion_text="$(rp_dashboard_completion_text primary)"
+  noninteractive_completion_marker="$(mktemp)"
+rm -f "$noninteractive_completion_marker"
+(
+  RP_UI_MODE=tui
+  RP_NON_INTERACTIVE=true
+  export RP_UI_MODE RP_NON_INTERACTIVE
+  rp_dashboard_completion_text(){ : >"$noninteractive_completion_marker"; printf 'should-not-render\n'; }
+  rp_dashboard_gum_style(){ return 0; }
+  rp_dashboard_complete primary
+)
+if [[ ! -e "$noninteractive_completion_marker" ]]; then
+  printf 'PASS: %s\n' 'non-interactive completion skips TUI rendering'
+else
+  printf 'FAIL: %s\n' 'non-interactive completion skips TUI rendering' >&2
+  failures=$((failures+1))
+fi
+rm -f "$noninteractive_completion_marker"
+
+completion_text="$(rp_dashboard_completion_text primary)"
   assert_contains "$completion_text" 'Installation status: COMPLETE' 'completion shows installation status'
   assert_contains "$completion_text" 'Release: 0.1.0' 'completion shows release version'
   assert_contains "$completion_text" 'https://rp.example.test' 'completion shows web URL'

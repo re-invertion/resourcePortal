@@ -326,6 +326,7 @@ rp_dashboard_completion_text() {
 
 rp_dashboard_complete() {
   local mode="$1" text
+  [[ "${RP_NON_INTERACTIVE:-false}" != true ]] || return 0
   [[ "${RP_UI_MODE:-text}" == tui ]] || return 0
   text="$(rp_dashboard_completion_text "$mode")"
   if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]]; then
