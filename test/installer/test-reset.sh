@@ -405,6 +405,22 @@ test_legacy_purge_accepts_authorized_closure() (
 assert_status 0 'legacy package override accepts RP-only purge closure' test_legacy_purge_accepts_authorized_closure
 
 
+test_tracked_purge_accepts_apt_arch_normalization() (
+  RP_OWNERSHIP_MANIFEST="$tmpdir/task6-arch-owned"; : >"$RP_OWNERSHIP_MANIFEST"
+  rp_ownership_record package 'libevent-core-2.1-7t64:amd64'
+  dpkg-query() {
+    if [[ "$*" == *'${binary:Package}'* ]]; then
+      printf 'libevent-core-2.1-7t64:amd64\n'
+    else
+      printf 'no\nno\n'
+    fi
+  }
+  apt-get() { printf 'Purg libevent-core-2.1-7t64 [2.1.12]\n'; }
+  rp_reset_package_purge_safe 'libevent-core-2.1-7t64:amd64' false
+)
+assert_status 0 'tracked package purge accepts apt architecture-normalized name' test_tracked_purge_accepts_apt_arch_normalization
+
+
 wipe_test_base() {
   RP_FACTORY_PLAN_STORAGE_DEVICE=/dev/sdb
   RP_FACTORY_PLAN_STORAGE_PARTITION=/dev/sdb1

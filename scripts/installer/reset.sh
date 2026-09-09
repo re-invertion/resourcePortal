@@ -499,13 +499,34 @@ rp_reset_host_package_candidates() {
     xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw bind9-dnsutils
 }
 
+rp_reset_package_canonical_name() {
+  local package="$1" canonical
+  canonical="$(dpkg-query -W -f='${binary:Package}\n' "$package" 2>/dev/null | head -n1 || true)"
+  if [[ -n "$canonical" ]]; then
+    printf '%s\n' "$canonical"
+  else
+    printf '%s\n' "$package"
+  fi
+}
+
 rp_reset_authorized_package_name() {
-  local package="$1" force="${2:-false}" candidate
+  local package="$1" force="${2:-false}" candidate canonical
   rp_ownership_has package "$package" && return 0
-  [[ "$force" == true ]] || return 1
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" && "$candidate" == "$package" ]] && return 0
-  done < <(rp_reset_host_package_candidates)
+
+  if [[ "$force" == true ]]; then
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && "$candidate" == "$package" ]] && return 0
+    done < <(rp_reset_host_package_candidates)
+  fi
+
+  canonical="$(rp_reset_package_canonical_name "$package")" || return 1
+  [[ "$canonical" != "$package" ]] && rp_ownership_has package "$canonical" && return 0
+
+  if [[ "$force" == true ]]; then
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && "$candidate" == "${canonical%%:*}" ]] && return 0
+    done < <(rp_reset_host_package_candidates)
+  fi
   return 1
 }
 
