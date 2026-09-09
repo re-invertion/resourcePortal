@@ -502,7 +502,7 @@ rp_reset_host_package_candidates() {
 rp_reset_remove_packages() {
   local package force
   local -a candidates=() installed=() unique=()
-  local seen=' '
+  local seen_text=' '
   force="${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-${RP_FORCE_REMOVE_UNTRACKED_PACKAGES:-false}}"
 
   while IFS= read -r package; do
@@ -515,8 +515,8 @@ rp_reset_remove_packages() {
   fi
 
   for package in "${candidates[@]}"; do
-    [[ "$seen" == *" $package "* ]] && continue
-    seen+="$package "
+    [[ "$seen_text" == *" $package "* ]] && continue
+    seen_text+="$package "
     unique+=("$package")
   done
   for package in "${unique[@]}"; do
@@ -582,11 +582,11 @@ rp_reset_wipe_storage() {
 rp_reset_remove_rp_data() {
   local base="${RP_FACTORY_PLAN_STORAGE_BASE_PATH:-${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}}" path
   local -a paths=("$base" /etc/resourceportal /mnt/resourceportal /srv/resource-portal)
-  local seen=' '
+  local seen_text=' '
   for path in "${paths[@]}"; do
     [[ -n "$path" ]] || continue
-    [[ "$seen" == *" $path "* ]] && continue
-    seen+="$path "
+    [[ "$seen_text" == *" $path "* ]] && continue
+    seen_text+="$path "
     [[ -e "$path" ]] || continue
     if findmnt -rn -M "$path" >/dev/null 2>&1; then
       printf 'Refusing to remove ResourcePortal path that is still mounted: %s\n' "$path" >&2

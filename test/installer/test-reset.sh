@@ -295,10 +295,18 @@ RP_OWNERSHIP_MANIFEST="$tmpdir/systemd-owned"
 export RP_OWNERSHIP_MANIFEST
 rp_ownership_record systemd-unit resourceportal-storage-ready.service
 rp_ownership_record systemd-helper /usr/local/lib/resourceportal/storage-ready-check
-systemctl() { printf 'systemctl %s\n' "$*" >>"$systemd_log"; return 0; }
-rm() { printf 'rm %s\n' "$*" >>"$systemd_log"; return 0; }
-rp_remove_storage_ready_unit
-unset -f systemctl rm
+systemd_fake_bin="$tmpdir/systemd-fake-bin"
+mkdir -p "$systemd_fake_bin"
+cat >"$systemd_fake_bin/systemctl" <<EOF_SYSTEMCTL
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "\$*" >>"$systemd_log"
+EOF_SYSTEMCTL
+cat >"$systemd_fake_bin/rm" <<EOF_RM
+#!/usr/bin/env bash
+printf 'rm %s\n' "\$*" >>"$systemd_log"
+EOF_RM
+chmod +x "$systemd_fake_bin/systemctl" "$systemd_fake_bin/rm"
+PATH="$systemd_fake_bin:$PATH" rp_remove_storage_ready_unit
 systemd_text="$(cat "$systemd_log")"
 assert_contains "$systemd_text" 'resourceportal-storage-ready.service' 'systemd cleanup targets RP storage-ready unit'
 assert_contains "$systemd_text" '/usr/local/lib/resourceportal/storage-ready-check' 'systemd cleanup targets RP helper'
