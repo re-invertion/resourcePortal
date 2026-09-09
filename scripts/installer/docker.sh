@@ -70,3 +70,15 @@ rp_ensure_docker() {
   rp_install_docker
   rp_validate_docker "$minimum"
 }
+
+rp_docker_package_names() {
+  printf '%s\n' docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+}
+
+rp_docker_apt_key_path() {
+  printf '%s\n' "${RP_DOCKER_APT_KEY:-/etc/apt/keyrings/docker.asc}"
+}
+
+rp_docker_apt_source_path() {
+  printf '%s\n' "${RP_DOCKER_APT_SOURCE:-/etc/apt/sources.list.d/docker.list}"
+}

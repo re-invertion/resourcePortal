@@ -323,6 +323,133 @@ test_leave_single_manager_force() (
 )
 assert_status 0 'factory reset force-leaves manager Swarm after safety classification' test_leave_single_manager_force
 
+
+# Task 6: Docker/package provenance and storage-wipe safety.
+legacy_manifest="$tmpdir/task6-owned"
+: >"$legacy_manifest"
+RP_OWNERSHIP_MANIFEST="$legacy_manifest"
+RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
+unset RP_FACTORY_PLAN_DOCKER_REMOVE RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES
+export RP_OWNERSHIP_MANIFEST RP_FORCE_REMOVE_UNTRACKED_PACKAGES
+assert_status 1 'legacy Docker not authorized by default' rp_reset_docker_removal_authorized
+RP_FORCE_REMOVE_UNTRACKED_PACKAGES=true
+assert_status 0 'legacy override authorizes known Docker removal' rp_reset_docker_removal_authorized
+RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
+rp_ownership_record docker installed-by-resourceportal
+assert_status 0 'tracked Docker authorizes removal' rp_reset_docker_removal_authorized
+
+package_log="$tmpdir/task6-packages.log"
+: >"$package_log"
+RP_OWNERSHIP_MANIFEST="$tmpdir/task6-package-owned"
+: >"$RP_OWNERSHIP_MANIFEST"
+rp_ownership_record package nfs-ganesha
+rp_ownership_record package curl
+rp_package_installed() { [[ "$1" == nfs-ganesha || "$1" == curl || "$1" == dnsutils ]]; }
+apt-get() { printf 'apt-get %s\n' "$*" >>"$package_log"; return 0; }
+RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
+rp_reset_remove_packages
+package_text="$(cat "$package_log")"
+assert_contains "$package_text" 'purge -y' 'package cleanup uses purge'
+assert_contains "$package_text" 'nfs-ganesha' 'package cleanup removes owned package'
+assert_contains "$package_text" 'curl' 'package cleanup removes second owned package'
+assert_not_contains "$package_text" 'dnsutils' 'package cleanup retains untracked package by default'
+assert_not_contains "$package_text" 'autoremove' 'package cleanup never uses unrestricted autoremove'
+: >"$package_log"
+RP_FORCE_REMOVE_UNTRACKED_PACKAGES=true
+RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES=true
+export RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES
+rp_reset_remove_packages
+package_text="$(cat "$package_log")"
+assert_contains "$package_text" 'dnsutils' 'legacy override permits fixed installer package candidates'
+assert_not_contains "$package_text" 'autoremove' 'legacy override still avoids autoremove'
+unset -f apt-get rp_package_installed
+
+wipe_test_base() {
+  RP_FACTORY_PLAN_STORAGE_DEVICE=/dev/sdb
+  RP_FACTORY_PLAN_STORAGE_PARTITION=/dev/sdb1
+  RP_FACTORY_PLAN_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+  RP_FACTORY_PLAN_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_FACTORY_PLAN_STORAGE_FINGERPRINT='fingerprint-ok'
+  RP_OWNERSHIP_MANIFEST="$tmpdir/task6-wipe-owned"
+  : >"$RP_OWNERSHIP_MANIFEST"
+  export RP_FACTORY_PLAN_STORAGE_DEVICE RP_FACTORY_PLAN_STORAGE_PARTITION RP_FACTORY_PLAN_STORAGE_MOUNTPOINT \
+    RP_FACTORY_PLAN_STORAGE_BASE_PATH RP_FACTORY_PLAN_STORAGE_FINGERPRINT RP_OWNERSHIP_MANIFEST
+  rp_block_device_exists() { return 0; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_fingerprint() { printf 'fingerprint-ok\n'; }
+  rp_storage_related_to_root() { return 0; }
+  mountpoint() { return 1; }
+}
+
+test_wipe_rejects_mounted_target() (
+  wipe_test_base
+  rp_ownership_record storage-device /dev/sdb
+  mountpoint() { [[ "$2" == /srv/resource-portal/storage ]]; }
+  wipefs() { printf 'MUTATION wipefs\n' >&2; return 99; }
+  sgdisk() { printf 'MUTATION sgdisk\n' >&2; return 99; }
+  rp_reset_wipe_storage
+)
+assert_status 1 'storage wipe rejects mounted target before mutation' test_wipe_rejects_mounted_target
+
+test_wipe_rejects_changed_fingerprint() (
+  wipe_test_base
+  rp_ownership_record storage-device /dev/sdb
+  rp_storage_fingerprint() { printf 'fingerprint-changed\n'; }
+  wipefs() { printf 'MUTATION wipefs\n' >&2; return 99; }
+  sgdisk() { printf 'MUTATION sgdisk\n' >&2; return 99; }
+  rp_reset_wipe_storage
+)
+assert_status 1 'storage wipe rejects changed fingerprint before mutation' test_wipe_rejects_changed_fingerprint
+
+test_wipe_rejects_root_even_with_package_override() (
+  wipe_test_base
+  rp_ownership_record storage-device /dev/sdb
+  RP_FORCE_REMOVE_UNTRACKED_PACKAGES=true
+  rp_storage_related_to_root() { return 1; }
+  wipefs() { printf 'MUTATION wipefs\n' >&2; return 99; }
+  sgdisk() { printf 'MUTATION sgdisk\n' >&2; return 99; }
+  rp_reset_wipe_storage
+)
+assert_status 1 'package override never bypasses root-disk storage safety' test_wipe_rejects_root_even_with_package_override
+
+test_partition_only_wipe() (
+  wipe_test_base
+  RP_FACTORY_PLAN_STORAGE_DEVICE=/dev/sdb1
+  RP_FACTORY_PLAN_STORAGE_PARTITION=/dev/sdb1
+  export RP_FACTORY_PLAN_STORAGE_DEVICE RP_FACTORY_PLAN_STORAGE_PARTITION
+  : >"$RP_OWNERSHIP_MANIFEST"
+  rp_ownership_record storage-partition /dev/sdb1
+  log="$tmpdir/task6-partition-wipe.log"; : >"$log"
+  wipefs() { printf 'wipefs %s\n' "$*" >>"$log"; return 0; }
+  sgdisk() { printf 'sgdisk %s\n' "$*" >>"$log"; return 0; }
+  rp_reset_wipe_storage || return 1
+  cat "$log"
+)
+partition_wipe_text="$(test_partition_only_wipe)"
+assert_contains "$partition_wipe_text" 'wipefs -a /dev/sdb1' 'partition-only reset wipes owned partition signature'
+assert_not_contains "$partition_wipe_text" 'sgdisk' 'partition-only reset never zaps parent disk'
+
+test_whole_disk_wipe() (
+  wipe_test_base
+  rp_ownership_record storage-device /dev/sdb
+  rp_ownership_record storage-partition /dev/sdb1
+  log="$tmpdir/task6-disk-wipe.log"; : >"$log"
+  lsblk() {
+    if [[ "$*" == '-lnpo NAME,TYPE /dev/sdb' ]]; then printf '/dev/sdb disk\n/dev/sdb1 part\n/dev/sdb2 part\n'; return 0; fi
+    return 1
+  }
+  wipefs() { printf 'wipefs %s\n' "$*" >>"$log"; return 0; }
+  sgdisk() { printf 'sgdisk %s\n' "$*" >>"$log"; return 0; }
+  command() { [[ "$1 $2" == '-v udevadm' || "$1 $2" == '-v partprobe' ]] && return 1; builtin command "$@"; }
+  rp_reset_wipe_storage || return 1
+  cat "$log"
+)
+disk_wipe_text="$(test_whole_disk_wipe)"
+assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb1' 'whole-disk reset wipes first child signature'
+assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb2' 'whole-disk reset wipes all child signatures'
+assert_contains "$disk_wipe_text" 'sgdisk --zap-all /dev/sdb' 'whole-disk reset zaps approved disk partition table'
+assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb' 'whole-disk reset wipes approved disk signatures'
+
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
   exit 1

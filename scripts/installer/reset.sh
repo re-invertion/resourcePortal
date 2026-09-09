@@ -447,3 +447,154 @@ rp_reset_leave_swarm() {
     docker swarm leave >/dev/null
   fi
 }
+
+rp_reset_docker_removal_authorized() {
+  if [[ "${RP_FACTORY_PLAN_DOCKER_REMOVE:-false}" == true ]]; then
+    return 0
+  fi
+  if rp_ownership_has docker installed-by-resourceportal; then
+    return 0
+  fi
+  [[ "${RP_FORCE_REMOVE_UNTRACKED_PACKAGES:-${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-false}}" == true ]]
+}
+
+rp_reset_remove_docker() {
+  local remove="${RP_FACTORY_PLAN_DOCKER_REMOVE:-false}" force
+  local package key source
+  local -a installed=()
+  force="${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-${RP_FORCE_REMOVE_UNTRACKED_PACKAGES:-false}}"
+
+  [[ "$remove" == true ]] || {
+    rp_log INFO 'factory reset retained Docker because installer ownership was not proven' 2>/dev/null || true
+    return 0
+  }
+
+  for service in docker.service docker.socket containerd.service; do
+    systemctl disable --now "$service" >/dev/null 2>&1 || true
+  done
+
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    rp_package_installed "$package" && installed+=("$package")
+  done < <(rp_docker_package_names)
+  if ((${#installed[@]} > 0)); then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${installed[@]}" || return 1
+  fi
+
+  key="$(rp_docker_apt_key_path)"
+  source="$(rp_docker_apt_source_path)"
+  if [[ "$force" == true ]] || rp_ownership_has apt-key "$key"; then rm -f "$key"; fi
+  if [[ "$force" == true ]] || rp_ownership_has apt-source "$source"; then rm -f "$source"; fi
+}
+
+rp_reset_remove_docker_data() {
+  [[ "${RP_FACTORY_PLAN_DOCKER_REMOVE:-false}" == true ]] || return 0
+  if findmnt -rn -M /var/lib/docker >/dev/null 2>&1; then
+    printf '%s\n' 'Refusing to remove /var/lib/docker while it is a mountpoint.' >&2
+    return 1
+  fi
+  rm -rf /var/lib/docker
+}
+
+rp_reset_host_package_candidates() {
+  printf '%s\n' \
+    ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
+    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
+}
+
+rp_reset_remove_packages() {
+  local package force
+  local -a candidates=() installed=() unique=()
+  local seen=' '
+  force="${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-${RP_FORCE_REMOVE_UNTRACKED_PACKAGES:-false}}"
+
+  while IFS= read -r package; do
+    [[ -n "$package" ]] && candidates+=("$package")
+  done < <(rp_ownership_values package)
+  if [[ "$force" == true ]]; then
+    while IFS= read -r package; do
+      [[ -n "$package" ]] && candidates+=("$package")
+    done < <(rp_reset_host_package_candidates)
+  fi
+
+  for package in "${candidates[@]}"; do
+    [[ "$seen" == *" $package "* ]] && continue
+    seen+="$package "
+    unique+=("$package")
+  done
+  for package in "${unique[@]}"; do
+    rp_package_installed "$package" && installed+=("$package")
+  done
+  if ((${#installed[@]} > 0)); then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${installed[@]}" || return 1
+  fi
+}
+
+rp_reset_storage_revalidate() {
+  local device="${RP_FACTORY_PLAN_STORAGE_DEVICE:-}" canonical current path
+  [[ -n "$device" ]] || return 1
+  rp_block_device_exists "$device" || return 1
+  canonical="$(readlink -f "$device" 2>/dev/null)" || return 1
+  [[ "$canonical" == "$device" ]] || return 1
+  rp_storage_related_to_root "$device" || return 1
+  current="$(rp_storage_fingerprint "$device")" || return 1
+  [[ "$current" == "${RP_FACTORY_PLAN_STORAGE_FINGERPRINT:-}" ]] || return 1
+  for path in /mnt/resourceportal/platform /mnt/resourceportal/secrets /mnt/resourceportal/volumes "${RP_FACTORY_PLAN_STORAGE_MOUNTPOINT:-}"; do
+    [[ -n "$path" ]] || continue
+    mountpoint -q "$path" 2>/dev/null && return 1
+  done
+  return 0
+}
+
+rp_reset_wipe_storage() {
+  local device="${RP_FACTORY_PLAN_STORAGE_DEVICE:-}" partition="${RP_FACTORY_PLAN_STORAGE_PARTITION:-}" child type
+  local whole_disk=false partition_only=false
+  rp_reset_storage_revalidate || return 1
+
+  if rp_ownership_has storage-device "$device"; then
+    whole_disk=true
+  elif rp_ownership_has storage-partition "$device"; then
+    partition_only=true
+  else
+    type="$(lsblk -dnro TYPE "$device" 2>/dev/null | head -n1 || true)"
+    case "$type" in
+      disk) whole_disk=true ;;
+      part) partition_only=true ;;
+      *)
+        if [[ -n "$partition" && "$partition" == "$device" ]]; then partition_only=true; else return 1; fi
+        ;;
+    esac
+  fi
+
+  if [[ "$partition_only" == true ]]; then
+    wipefs -a "$device" || return 1
+    return 0
+  fi
+
+  [[ "$whole_disk" == true ]] || return 1
+  while read -r child type; do
+    [[ "$type" == part && -n "$child" ]] || continue
+    wipefs -a "$child" || return 1
+  done < <(lsblk -lnpo NAME,TYPE "$device" 2>/dev/null || true)
+  sgdisk --zap-all "$device" || return 1
+  wipefs -a "$device" || return 1
+  if command -v partprobe >/dev/null 2>&1; then partprobe "$device" >/dev/null 2>&1 || true; fi
+  if command -v udevadm >/dev/null 2>&1; then udevadm settle --timeout=10 >/dev/null 2>&1 || true; fi
+}
+
+rp_reset_remove_rp_data() {
+  local base="${RP_FACTORY_PLAN_STORAGE_BASE_PATH:-${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}}" path
+  local -a paths=("$base" /etc/resourceportal /mnt/resourceportal /srv/resource-portal)
+  local seen=' '
+  for path in "${paths[@]}"; do
+    [[ -n "$path" ]] || continue
+    [[ "$seen" == *" $path "* ]] && continue
+    seen+="$path "
+    [[ -e "$path" ]] || continue
+    if findmnt -rn -M "$path" >/dev/null 2>&1; then
+      printf 'Refusing to remove ResourcePortal path that is still mounted: %s\n' "$path" >&2
+      return 1
+    fi
+    rm -rf -- "$path" || return 1
+  done
+}
