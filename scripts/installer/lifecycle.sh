@@ -116,8 +116,7 @@ rp_primary_phase_names() {
 }
 
 rp_prepare_host_packages() {
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  rp_install_packages_with_ownership \
     ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
     xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
 }
