@@ -178,7 +178,7 @@ rp_swarm_resourceportal_secret_name() {
 rp_swarm_resourceportal_service_name() {
   local name="$1" stack="${2:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}"
   case "$name" in
-    "${stack}_"*|"${stack}-installer-enrollment"|"${stack}-migration-"*|"${stack}-zitadel-bootstrap-"*|"${stack}-enrollment-issue-"*) return 0 ;;
+    "${stack}_"*|"${stack}-installer-enrollment"|"${stack}-migration-"*|"${stack}-zitadel-bootstrap-"*|"${stack}-enrollment-issue-"*|rp-storage-runtime-probe-*) return 0 ;;
     *) return 1 ;;
   esac
 }

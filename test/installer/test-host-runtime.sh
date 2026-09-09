@@ -132,7 +132,7 @@ test_swarm_only_resourceportal() (
   docker() {
     case "$1 $2" in
       'info --format') printf 'active\n' ;;
-      'service ls') printf '%s\n' resourceportal-control-plane_api resourceportal-control-plane_web resourceportal-control-plane-installer-enrollment ;;
+      'service ls') printf '%s\n' resourceportal-control-plane_api resourceportal-control-plane_web resourceportal-control-plane-installer-enrollment rp-storage-runtime-probe-deadbeef ;;
       'secret ls') printf '%s\n' rp_postgres_password rp_cookie_secret_deadbeef installer_enrollment_tls_cert_deadbeef ;;
       'config ls') printf '%s\n' resourceportal-control-plane_postgres_fence_script resourceportal-control-plane_zitadel_public_config ;;
       *) return 1 ;;
