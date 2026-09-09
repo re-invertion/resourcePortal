@@ -103,7 +103,7 @@ rp_run_zitadel_bootstrap() {
   local output_file="$1" admin_username="$2" admin_email="$3" admin_password_file="$4"
   local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
   local service_name timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}" elapsed=0 state
-  local state_dir output_dir output_name suffix
+  local state_dir output_dir output_name suffix readiness_script bootstrap_command
   service_name="${stack_name}-zitadel-bootstrap-$(date +%s)"
   [[ "$output_file" == /* && "$admin_password_file" == /* && -r "$admin_password_file" ]] || return 1
   rp_admin_password_valid "$(cat "$admin_password_file")" || return 1
@@ -114,6 +114,9 @@ rp_run_zitadel_bootstrap() {
   rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.user-id"
   rm -rf "$output_dir"
   rp_prepare_api_bootstrap_output_dir "$output_dir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || return 1
+
+  readiness_script='const base=process.env.ZITADEL_ISSUER_URL; const host=process.env.ZITADEL_BOOTSTRAP_INSTANCE_HOST; const timeout=Number(process.env.ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS||"300")*1000; const headers=host?{"x-zitadel-instance-host":host,"x-zitadel-public-host":host}:{}; const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms)); (async()=>{const deadline=Date.now()+timeout; while(Date.now()<deadline){try{const response=await fetch(`${base}/debug/ready`,{headers}); if(response.ok){process.exit(0);}}catch{} await sleep(1000);} console.error("ZITADEL readiness timed out"); process.exit(1);})().catch(()=>process.exit(1));'
+  bootstrap_command='node -e "$RP_ZITADEL_READY_SCRIPT" && exec node dist/scripts/bootstrap-zitadel.js'
 
   docker service create \
     --detach \
@@ -128,6 +131,8 @@ rp_run_zitadel_bootstrap() {
     --secret source=rp_first_admin_password,target=rp_first_admin_password \
     --env ZITADEL_BOOTSTRAP_MODE=production \
     --env ZITADEL_ISSUER_URL=http://zitadel:8080 \
+    --env ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS="$timeout" \
+    --env "RP_ZITADEL_READY_SCRIPT=$readiness_script" \
     --env ZITADEL_BOOTSTRAP_INSTANCE_HOST="${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" \
     --env ZITADEL_BOOTSTRAP_PAT_FILE=/platform/zitadel-bootstrap/admin.pat \
     --env ZITADEL_BOOTSTRAP_ADMIN_USERNAME="$admin_username" \
@@ -137,8 +142,9 @@ rp_run_zitadel_bootstrap() {
     --env ZITADEL_BOOTSTRAP_REDIRECT_URIS="https://${RP_CFG_DOMAIN}/api/auth/callback" \
     --env ZITADEL_BOOTSTRAP_POST_LOGOUT_REDIRECT_URIS="https://${RP_CFG_DOMAIN}/api/auth/logout/callback" \
     --env ZITADEL_BOOTSTRAP_OUTPUT_FILE="/bootstrap-output/$output_name" \
+    --entrypoint /bin/sh \
     "$RP_CFG_API_IMAGE" \
-    node dist/scripts/bootstrap-zitadel.js >/dev/null || { rm -rf "$output_dir"; return 1; }
+    -ec "$bootstrap_command" >/dev/null || { rm -rf "$output_dir"; return 1; }
 
   while (( elapsed < timeout )); do
     state="$(docker service ps --no-trunc --format '{{.CurrentState}}|{{.Error}}' "$service_name" | head -n1)"

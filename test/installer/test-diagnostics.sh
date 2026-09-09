@@ -165,6 +165,28 @@ phases="$(rp_primary_phase_names)"
 contains_dns_phase="$(sed -n '/rp_run_phase .* smtp/,/rp_run_phase .* ingress/p' "$repo_root/scripts/installer/lifecycle.sh")"
 [[ "$contains_dns_phase" == *'rp_run_phase "$state_file" dns rp_primary_wait_for_dns'* ]] && pass 'Primary lifecycle blocks on dedicated DNS phase before ingress' || fail 'Primary lifecycle blocks on dedicated DNS phase before ingress'
 
+primary_fail_calls="$(mktemp /tmp/rp-primary-fail-closed.XXXXXX)"; : >"$primary_fail_calls"
+(
+  export RP_UI_MODE=text
+  rp_collect_primary_config(){ :; }
+  rp_phase_done(){ return 1; }
+  rp_primary_recover_incomplete_zitadel_bootstrap(){ :; }
+  rp_run_phase(){
+    local _state="$1" phase="$2"; shift 2
+    printf '%s\n' "$phase" >>"$primary_fail_calls"
+    [[ "$phase" != identity ]]
+  }
+  set +e
+  rp_primary_install >/tmp/rp-primary-fail-closed.out 2>/tmp/rp-primary-fail-closed.err
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]]
+) && pass 'Primary returns failure when identity phase fails' || fail 'Primary returns failure when identity phase fails'
+primary_fail_text="$(cat "$primary_fail_calls")"
+[[ "$primary_fail_text" == *$'identity'* ]] && pass 'Primary reaches failing identity phase' || fail 'Primary reaches failing identity phase'
+[[ "$primary_fail_text" != *$'smtp'* ]] && pass 'Primary stops before smtp after identity failure' || fail 'Primary stops before smtp after identity failure'
+rm -f "$primary_fail_calls" /tmp/rp-primary-fail-closed.out /tmp/rp-primary-fail-closed.err
+
 status 0 'domain reconfigure allowed' rp_reconfigure_action_valid domain
 status 0 'smtp reconfigure allowed' rp_reconfigure_action_valid smtp
 status 0 'secret rotation allowed' rp_reconfigure_action_valid rotate-secrets

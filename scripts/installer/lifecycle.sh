@@ -568,20 +568,20 @@ rp_primary_install() {
     rp_primary_restore_secret_state || return 1
   fi
   rp_primary_recover_incomplete_zitadel_bootstrap "$state_file" || return 1
-  rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}"
-  rp_run_phase "$state_file" storage rp_primary_prepare_storage
-  rp_run_phase "$state_file" firewall rp_primary_configure_firewall
-  rp_run_phase "$state_file" swarm rp_primary_init_swarm
-  rp_run_phase "$state_file" nfs rp_primary_configure_nfs
-  rp_run_phase "$state_file" release rp_primary_resolve_release
-  rp_run_phase "$state_file" secrets rp_primary_create_platform_secrets
-  rp_run_phase "$state_file" bootstrap rp_primary_bootstrap_stack
-  rp_run_phase "$state_file" migrations rp_primary_run_migrations
-  rp_run_phase "$state_file" identity rp_primary_bootstrap_identity
-  rp_run_phase "$state_file" smtp rp_primary_configure_smtp
-  rp_run_phase "$state_file" dns rp_primary_wait_for_dns
-  rp_run_phase "$state_file" ingress rp_primary_enable_ingress
-  rp_run_phase "$state_file" final rp_primary_deploy_final
-  rp_run_phase "$state_file" enrollment rp_primary_start_enrollment
-  rp_run_phase "$state_file" persist rp_primary_persist
+  rp_run_phase "$state_file" docker rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}" || return 1
+  rp_run_phase "$state_file" storage rp_primary_prepare_storage || return 1
+  rp_run_phase "$state_file" firewall rp_primary_configure_firewall || return 1
+  rp_run_phase "$state_file" swarm rp_primary_init_swarm || return 1
+  rp_run_phase "$state_file" nfs rp_primary_configure_nfs || return 1
+  rp_run_phase "$state_file" release rp_primary_resolve_release || return 1
+  rp_run_phase "$state_file" secrets rp_primary_create_platform_secrets || return 1
+  rp_run_phase "$state_file" bootstrap rp_primary_bootstrap_stack || return 1
+  rp_run_phase "$state_file" migrations rp_primary_run_migrations || return 1
+  rp_run_phase "$state_file" identity rp_primary_bootstrap_identity || return 1
+  rp_run_phase "$state_file" smtp rp_primary_configure_smtp || return 1
+  rp_run_phase "$state_file" dns rp_primary_wait_for_dns || return 1
+  rp_run_phase "$state_file" ingress rp_primary_enable_ingress || return 1
+  rp_run_phase "$state_file" final rp_primary_deploy_final || return 1
+  rp_run_phase "$state_file" enrollment rp_primary_start_enrollment || return 1
+  rp_run_phase "$state_file" persist rp_primary_persist || return 1
 }
