@@ -17,6 +17,8 @@ rp_dashboard_mode_label() {
     reconfigure) printf 'Reconfigure\n' ;;
     diagnostics) printf 'Diagnostics\n' ;;
     repair) printf 'Repair\n' ;;
+    reset) printf 'Reset\n' ;;
+    reset-factory) printf 'Factory Reset\n' ;;
     *) printf '%s\n' "$1" ;;
   esac
 }
@@ -42,6 +44,12 @@ rp_dashboard_init() {
     reconfigure) RP_DASHBOARD_PHASES=(apply) ;;
     diagnostics) RP_DASHBOARD_PHASES=(inspect) ;;
     repair) RP_DASHBOARD_PHASES=(repair) ;;
+    reset) RP_DASHBOARD_PHASES=(apply) ;;
+    reset-factory)
+      if declare -F rp_factory_reset_phase_names >/dev/null; then
+        mapfile -t RP_DASHBOARD_PHASES < <(rp_factory_reset_phase_names)
+      fi
+      ;;
   esac
 
   for phase in "${RP_DASHBOARD_PHASES[@]}"; do
@@ -140,6 +148,7 @@ rp_dashboard_render_text() {
     printf '%s %s\n' "$(rp_dashboard_status_symbol "$status")" "$phase"
   done
   [[ -n "$RP_DASHBOARD_OPERATION" ]] && printf 'Current: %s\n' "$RP_DASHBOARD_OPERATION"
+  return 0
 }
 
 RP_DASHBOARD_ENTERED="${RP_DASHBOARD_ENTERED:-false}"
@@ -282,7 +291,21 @@ rp_dashboard_control_plane_summary() {
 }
 
 rp_dashboard_completion_text() {
-  local mode="$1" service_summary enrollment smtp
+  local mode="$1" service_summary enrollment smtp retained=''
+  if [[ "$mode" == reset-factory ]]; then
+    if [[ "${RP_FACTORY_PLAN_DOCKER_REMOVE:-false}" != true ]]; then
+      retained='Docker (ownership unproven)'
+    fi
+    if [[ "${RP_FACTORY_PLAN_PACKAGE_TRACKING:-tracked}" == legacy-untracked && "${RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES:-false}" != true ]]; then
+      if [[ -n "$retained" ]]; then retained+=', '; fi
+      retained+='untracked host packages'
+    fi
+    printf 'Factory reset status: COMPLETE\n'
+    printf 'ResourcePortal data and storage were destroyed.\n'
+    printf 'Swarm membership: removed\n'
+    if [[ -n "$retained" ]]; then printf 'Retained: %s\n' "$retained"; else printf 'Retained: none\n'; fi
+    return 0
+  fi
   if [[ "$mode" != primary ]]; then
     printf 'Operation status: COMPLETE\nMode: %s\nLog: %s\n' \
       "$(rp_dashboard_mode_label "$mode")" "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
@@ -303,6 +326,7 @@ rp_dashboard_completion_text() {
 
 rp_dashboard_complete() {
   local mode="$1" text
+  [[ "${RP_NON_INTERACTIVE:-false}" != true ]] || return 0
   [[ "${RP_UI_MODE:-text}" == tui ]] || return 0
   text="$(rp_dashboard_completion_text "$mode")"
   if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]]; then

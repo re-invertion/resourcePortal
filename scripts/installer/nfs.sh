@@ -167,3 +167,28 @@ rp_apply_storage_labels() {
   args+=("$node")
   docker "${args[@]}"
 }
+
+rp_remove_resourceportal_ganesha_config() {
+  local target="${1:-/etc/ganesha/resourceportal.conf}" managed=false
+  [[ -e "$target" ]] || return 0
+  if declare -F rp_ownership_has >/dev/null && rp_ownership_has ganesha-config "$target"; then
+    managed=true
+  elif grep -Fq '# Managed by ResourcePortal Production Installer.' "$target" 2>/dev/null; then
+    managed=true
+  fi
+  [[ "$managed" == true ]] || return 0
+
+  rm -f "$target" || return 1
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nfs-ganesha 2>/dev/null; then
+    systemctl reload nfs-ganesha 2>/dev/null || systemctl restart nfs-ganesha
+  fi
+}
+
+rp_unmount_resourceportal_runtime() {
+  local path
+  for path in /mnt/resourceportal/platform /mnt/resourceportal/secrets /mnt/resourceportal/volumes; do
+    if mountpoint -q "$path" 2>/dev/null; then
+      umount "$path" || return 1
+    fi
+  done
+}

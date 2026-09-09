@@ -46,13 +46,49 @@ rp_project_quota_enabled() {
   return 0
 }
 
+rp_storage_ready_helper_path() {
+  printf '/usr/local/lib/resourceportal/storage-ready-check\n'
+}
+
+rp_storage_ready_unit_path() {
+  printf '/etc/systemd/system/resourceportal-storage-ready.service\n'
+}
+
 rp_install_storage_ready_unit() {
-  local repo_root="$1"
-  install -d -m 0755 /usr/local/lib/resourceportal
-  install -m 0755 "$repo_root/scripts/installer/templates/storage-ready-check" \
-    /usr/local/lib/resourceportal/storage-ready-check
-  install -m 0644 "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service" \
-    /etc/systemd/system/resourceportal-storage-ready.service
+  local repo_root="$1" helper unit
+  helper="$(rp_storage_ready_helper_path)"
+  unit="$(rp_storage_ready_unit_path)"
+  install -d -m 0755 "$(dirname "$helper")"
+  install -m 0755 "$repo_root/scripts/installer/templates/storage-ready-check" "$helper"
+  install -m 0644 "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service" "$unit"
   systemctl daemon-reload
   systemctl enable --now resourceportal-storage-ready.service
+}
+
+rp_remove_storage_ready_unit() {
+  local unit helper unit_owned=false helper_owned=false
+  unit="$(rp_storage_ready_unit_path)"
+  helper="$(rp_storage_ready_helper_path)"
+
+  if declare -F rp_ownership_has >/dev/null && rp_ownership_has systemd-unit resourceportal-storage-ready.service; then
+    unit_owned=true
+  elif [[ -f "$unit" ]] && grep -Fq 'ResourcePortal' "$unit" 2>/dev/null; then
+    unit_owned=true
+  fi
+  if declare -F rp_ownership_has >/dev/null && rp_ownership_has systemd-helper "$helper"; then
+    helper_owned=true
+  elif [[ "$unit_owned" == true && -e "$helper" ]]; then
+    helper_owned=true
+  fi
+
+  if [[ "$unit_owned" == true ]]; then
+    systemctl disable --now resourceportal-storage-ready.service >/dev/null 2>&1 || true
+    rm -f "$unit" || return 1
+  fi
+  if [[ "$helper_owned" == true ]]; then
+    rm -f "$helper" || return 1
+  fi
+  if [[ "$unit_owned" == true || "$helper_owned" == true ]]; then
+    systemctl daemon-reload || return 1
+  fi
 }

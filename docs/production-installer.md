@@ -72,6 +72,52 @@ Supported v1 reconfiguration is deliberately controlled. The installer supports 
 
 Diagnostics are read-only. Explicit repair actions use `--repair` and require exact `REPAIR <action>` confirmation. They inspect OS, Docker, Swarm/quorum, storage filesystem/quota/runtime mounts, NFS-Ganesha, storage readiness, stack services, HTTPS/TLS and installed release metadata. Mutating repair operations must remain separate and explicitly confirmed.
 
+
+## Reset / Factory reset
+
+Reset is a first-class installer mode with three deliberately different scopes:
+
+```bash
+sudo ./resourceportal-install.sh --mode reset --scope settings
+sudo ./resourceportal-install.sh --mode reset --scope installer-state
+sudo ./resourceportal-install.sh --mode reset --scope factory
+```
+
+`settings` forgets persisted installer-entered configuration only when the installation is incomplete and no active ResourcePortal control plane exists. `installer-state` additionally clears safe replay/checkpoint state for an incomplete pre-runtime installation, but refuses when protected secrets, databases, runtime mounts or managed Swarm state exist. Neither scope is a shortcut for reinstalling over a live ResourcePortal deployment.
+
+`factory` is intentionally destructive. It removes the ResourcePortal control-plane runtime, ResourcePortal-managed Swarm resources, enrollment state, databases, secrets, ACME state, tenant volumes, platform data, ResourcePortal system configuration, Swarm membership, the dedicated ResourcePortal storage filesystem/partition layout, and installer-owned host dependencies. **There is no preserve-data uninstall mode in this feature.**
+
+Interactive factory reset displays the exact destructive plan and requires the operator to type exactly:
+
+```text
+FACTORY RESET RESOURCEPORTAL
+```
+
+Non-interactive factory reset requires both destructive opt-ins:
+
+```bash
+sudo ./resourceportal-install.sh \
+  --mode reset \
+  --scope factory \
+  --non-interactive \
+  --confirm-factory-reset \
+  --allow-destructive-storage
+```
+
+The storage target is never inferred during factory reset. The installer revalidates the configured block-device identity and stable fingerprint immediately before wipe, rejects the system/root disk relationship, refuses mounted targets, and does not let package-removal overrides bypass disk safety. If ResourcePortal was given only a partition, partition ownership never authorizes zapping the parent disk.
+
+New installations record installer-created host resources in `/var/lib/resourceportal/installer-state/owned-resources`. Pre-existing packages and Docker are not claimed. On legacy installations without provenance, Docker and packages whose ownership cannot be proven are retained by default. The explicit override:
+
+```text
+--force-remove-untracked-packages
+```
+
+allows consideration of only the fixed Docker/package set known to the ResourcePortal installer. Before any untracked host package is purged, the installer refuses `Essential`/`Protected` packages and simulates the purge; if apt would remove anything outside the authorized ResourcePortal package set, that package is retained. It does not enable global package cleanup, `apt-get autoremove`, global firewall reset, or broader disk deletion.
+
+Factory reset refuses to leave Docker Swarm while unrelated Swarm services, configs or secrets are present. Migrate or remove those unrelated resources first; the reset does not delete them automatically.
+
+Factory reset is resumable using `/var/lib/resourceportal/reset-state/factory.state` plus the sanitized `/var/lib/resourceportal/reset-state/factory.plan`. On every rerun, preflight revalidates the already-approved target; completed destructive phases are skipped. A failure after storage wipe therefore continues cleanup instead of reconstructing ResourcePortal or regenerating secrets. The reset plan and journal are removed only by the final successful cleanup stage.
+
 ## Security and limitations
 
 Passwords, private keys, raw enrollment tokens, raw Swarm join tokens and SMTP credentials are not written to `installer.conf`. Runtime application secrets are delivered with Docker Swarm Secrets and `*_FILE` loading. The ZITADEL master key is stored as exactly 32 hexadecimal characters without a trailing newline and is published through a versioned Swarm Secret reference, so a resumable bootstrap can repair the legacy newline-terminated representation without rotating the underlying key material or trying to replace an in-use immutable secret. The enrollment listener is exposed only on the private cluster firewall rule and uses pinned TLS.

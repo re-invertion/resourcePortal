@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/ui.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
+source "$repo_root/scripts/installer/reset.sh"
 [[ -r "$repo_root/scripts/installer/dashboard.sh" ]] && source "$repo_root/scripts/installer/dashboard.sh"
 
 failures=0
@@ -149,7 +151,25 @@ if declare -F rp_dashboard_completion_text >/dev/null; then
   RP_DASHBOARD_SERVICE_SUMMARY='API 1/1, Web 1/1, ZITADEL 1/1'
   RP_ADMIN_PASSWORD='CompletionSecret1!'
   RP_INTERNAL_WORKER_TOKEN='completion-token-secret'
-  completion_text="$(rp_dashboard_completion_text primary)"
+  noninteractive_completion_marker="$(mktemp)"
+rm -f "$noninteractive_completion_marker"
+(
+  RP_UI_MODE=tui
+  RP_NON_INTERACTIVE=true
+  export RP_UI_MODE RP_NON_INTERACTIVE
+  rp_dashboard_completion_text(){ : >"$noninteractive_completion_marker"; printf 'should-not-render\n'; }
+  rp_dashboard_gum_style(){ return 0; }
+  rp_dashboard_complete primary
+)
+if [[ ! -e "$noninteractive_completion_marker" ]]; then
+  printf 'PASS: %s\n' 'non-interactive completion skips TUI rendering'
+else
+  printf 'FAIL: %s\n' 'non-interactive completion skips TUI rendering' >&2
+  failures=$((failures+1))
+fi
+rm -f "$noninteractive_completion_marker"
+
+completion_text="$(rp_dashboard_completion_text primary)"
   assert_contains "$completion_text" 'Installation status: COMPLETE' 'completion shows installation status'
   assert_contains "$completion_text" 'Release: 0.1.0' 'completion shows release version'
   assert_contains "$completion_text" 'https://rp.example.test' 'completion shows web URL'
@@ -164,6 +184,18 @@ if declare -F rp_dashboard_completion_text >/dev/null; then
 else
   printf 'FAIL: completion renderer exists\n' >&2; failures=$((failures+1))
 fi
+
+
+factory_state="$(mktemp)"
+assert_eq 'Factory Reset' "$(rp_dashboard_mode_label reset-factory)" 'factory reset has destructive mode label'
+rp_dashboard_init reset-factory "$factory_state"
+assert_contains "${RP_DASHBOARD_PHASES[*]}" 'wipe-storage' 'factory dashboard phase list includes storage wipe'
+assert_eq pending "$(rp_dashboard_phase_status wipe-storage)" 'factory dashboard includes storage wipe phase'
+factory_render="$(rp_dashboard_render_text)"
+assert_contains "$factory_render" 'Mode: Factory Reset' 'factory dashboard visibly labels destructive mode'
+factory_completion="$(rp_dashboard_completion_text reset-factory)"
+assert_contains "$factory_completion" 'ResourcePortal data and storage were destroyed' 'factory completion states destructive result'
+rm -f "$factory_state"
 
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi

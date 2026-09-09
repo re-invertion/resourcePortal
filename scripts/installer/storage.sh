@@ -143,3 +143,72 @@ rp_detect_single_empty_storage_device() {
   done < <(lsblk -dnpo PATH,TYPE 2>/dev/null | awk '$2 == "disk" { print $1 }')
   rp_select_single_storage_candidate "$candidates"
 }
+
+rp_storage_root_source() {
+  findmnt -nro SOURCE /
+}
+
+rp_storage_top_block_device() {
+  local current parent
+  current="$(readlink -f "$1" 2>/dev/null)" || return 1
+  [[ "$current" == /dev/* ]] || return 1
+  while true; do
+    parent="$(rp_parent_block_device "$current" 2>/dev/null || true)"
+    [[ -n "$parent" ]] || break
+    current="$(readlink -f "$parent" 2>/dev/null)" || return 1
+  done
+  printf '%s\n' "$current"
+}
+
+# Return 0 only when the candidate is unrelated to the root backing disk.
+# Return non-zero for any unsafe or ambiguous relationship.
+rp_storage_related_to_root() {
+  local candidate="$1" root_source candidate_canonical root_canonical root_disk candidate_disk
+  root_source="$(rp_storage_root_source 2>/dev/null)" || return 1
+  root_canonical="$(readlink -f "$root_source" 2>/dev/null)" || return 1
+  candidate_canonical="$(readlink -f "$candidate" 2>/dev/null)" || return 1
+  [[ "$root_canonical" == /dev/* && "$candidate_canonical" == /dev/* ]] || return 1
+
+  root_disk="$(rp_storage_top_block_device "$root_canonical")" || return 1
+  candidate_disk="$(rp_storage_top_block_device "$candidate_canonical")" || return 1
+
+  [[ "$candidate_canonical" != "$root_canonical" ]] || return 1
+  [[ "$candidate_disk" != "$root_disk" ]] || return 1
+  return 0
+}
+
+rp_storage_mount_target_allowed_for_resourceportal() {
+  local target="$1" storage_mount="$2"
+  case "$target" in
+    "$storage_mount"|/mnt/resourceportal/volumes|/mnt/resourceportal/secrets|/mnt/resourceportal/platform) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+rp_storage_fingerprint() {
+  local device="$1" meta type size properties stable="" value
+  meta="$(lsblk -dnbo TYPE,SIZE "$device" 2>/dev/null | head -n1)" || return 1
+  read -r type size <<<"$meta"
+  [[ -n "$type" && "$size" =~ ^[0-9]+$ ]] || return 1
+
+  if command -v udevadm >/dev/null 2>&1; then
+    properties="$(udevadm info --query=property --name "$device" 2>/dev/null || true)"
+    stable="$(awk -F= '
+      $1 == "ID_WWN" || $1 == "ID_SERIAL" || $1 == "ID_PART_ENTRY_UUID" {
+        print $1 "=" substr($0, index($0, "=") + 1); exit
+      }
+    ' <<<"$properties")"
+  fi
+
+  if [[ -z "$stable" ]]; then
+    value="$(blkid -s UUID -o value "$device" 2>/dev/null || true)"
+    [[ -n "$value" ]] && stable="UUID=$value"
+  fi
+  if [[ -z "$stable" ]]; then
+    value="$(blkid -s PARTUUID -o value "$device" 2>/dev/null || true)"
+    [[ -n "$value" ]] && stable="PARTUUID=$value"
+  fi
+
+  [[ -n "$stable" ]] || return 1
+  printf 'type=%s;size=%s;id=%s\n' "$type" "$size" "$stable"
+}

@@ -33,6 +33,8 @@ contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can in
 contains "$enrollment_source" 'rp_mount_runtime_namespace nfs volumes' 'worker mounts shared volume namespace over NFS'
 contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
 not_contains "$enrollment_source" 'docker swarm join-token -q >' 'join tokens are never written by an unprotected shell redirection'
+control_network_refs="$(grep -c -- '--network "$control_network"' <<<"$enrollment_source" || true)"
+[[ "$control_network_refs" -ge 2 ]] && pass 'enrollment listener and issuer join RP control network' || fail 'enrollment listener and issuer join RP control network'
 
 issue_source="$(cat "$repo_root/packages/resourceportal-api/scripts/issue-installer-enrollment.ts")"
 contains "$issue_source" 'InstallerEnrollmentService' 'issuer reuses atomic enrollment service'

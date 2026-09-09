@@ -51,3 +51,13 @@ rp_persist_filesystem_mount() {
   rm -f "$tmp"
   mount "$mountpoint"
 }
+
+rp_remove_fstab_mount() {
+  local fstab_path="$1" mountpoint="$2" tmp
+  [[ -n "$mountpoint" ]] || return 1
+  [[ -e "$fstab_path" ]] || return 0
+  tmp="${fstab_path}.resourceportal-reset.$$"
+  awk -v mountpoint="$mountpoint" '$2 != mountpoint { print }' "$fstab_path" >"$tmp" || { rm -f "$tmp"; return 1; }
+  cat "$tmp" >"$fstab_path" || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+}

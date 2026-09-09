@@ -5,9 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/common.sh"
 # shellcheck source=/dev/null
+source "$repo_root/scripts/installer/ownership.sh"
+# shellcheck source=/dev/null
 source "$repo_root/scripts/installer/quota.sh"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/nfs.sh"
+# shellcheck source=/dev/null
+source "$repo_root/scripts/installer/lifecycle.sh"
 
 failures=0
 assert_eq() {
@@ -70,6 +74,51 @@ args="$(rp_storage_label_args true false true)"
 assert_contains "$args" '--label-add resourceportal.storage.volumes=true' "volumes label when ready"
 assert_contains "$args" '--label-add resourceportal.storage.platform=true' "platform label when ready"
 assert_not_contains "$args" 'resourceportal.storage.secrets=true' "no secrets label when not ready"
+
+ganesha_tmp="$(mktemp -d)"
+test_new_ganesha_config_is_owned() (
+  RP_OWNERSHIP_MANIFEST="$ganesha_tmp/new-owned"
+  RP_GANESHA_CONFIG_PATH="$ganesha_tmp/resourceportal.conf"
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_CLUSTER_CIDR=10.20.0.0/24
+  RP_CFG_MANAGER_CIDR=10.20.0.0/24
+  export RP_OWNERSHIP_MANIFEST RP_GANESHA_CONFIG_PATH RP_CFG_STORAGE_BASE_PATH RP_CFG_CLUSTER_CIDR RP_CFG_MANAGER_CIDR
+  rp_install_ganesha_config() { return 0; }
+  rp_primary_configure_nfs || return 1
+  rp_ownership_has ganesha-config "$RP_GANESHA_CONFIG_PATH"
+)
+assert_status 0 'new ResourcePortal Ganesha config is claimed' test_new_ganesha_config_is_owned
+
+test_preexisting_ganesha_config_not_claimed() (
+  RP_OWNERSHIP_MANIFEST="$ganesha_tmp/preexisting-owned"
+  RP_GANESHA_CONFIG_PATH="$ganesha_tmp/preexisting-resourceportal.conf"
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_CLUSTER_CIDR=10.20.0.0/24
+  RP_CFG_MANAGER_CIDR=10.20.0.0/24
+  export RP_OWNERSHIP_MANIFEST RP_GANESHA_CONFIG_PATH RP_CFG_STORAGE_BASE_PATH RP_CFG_CLUSTER_CIDR RP_CFG_MANAGER_CIDR
+  : >"$RP_GANESHA_CONFIG_PATH"
+  rp_install_ganesha_config() { return 0; }
+  rp_primary_configure_nfs || return 1
+  ! rp_ownership_has ganesha-config "$RP_GANESHA_CONFIG_PATH"
+)
+assert_status 0 'pre-existing ResourcePortal Ganesha config is not claimed' test_preexisting_ganesha_config_not_claimed
+rm -rf "$ganesha_tmp"
+
+ganesha_cleanup_tmp="$(mktemp -d)"
+RP_OWNERSHIP_MANIFEST="$ganesha_cleanup_tmp/owned"
+export RP_OWNERSHIP_MANIFEST
+managed_ganesha="$ganesha_cleanup_tmp/resourceportal.conf"
+printf '%s\n' '# Managed by ResourcePortal Production Installer.' >"$managed_ganesha"
+systemctl() { return 0; }
+rp_remove_resourceportal_ganesha_config "$managed_ganesha"
+assert_status 1 'managed Ganesha config is removed' test -e "$managed_ganesha"
+
+unowned_ganesha="$ganesha_cleanup_tmp/unrelated.conf"
+printf '%s\n' '# unrelated export config' >"$unowned_ganesha"
+rp_remove_resourceportal_ganesha_config "$unowned_ganesha"
+assert_status 0 'unowned Ganesha config is preserved' test -e "$unowned_ganesha"
+unset -f systemctl
+rm -rf "$ganesha_cleanup_tmp"
 
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2

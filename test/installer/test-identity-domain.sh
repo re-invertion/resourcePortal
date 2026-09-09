@@ -95,10 +95,15 @@ contains "$identity_source" 'ZITADEL_BOOTSTRAP_OUTPUT_FILE' 'bootstrap supports 
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_ADMIN_EMAIL' 'bootstrap supports first admin email'
 contains "$identity_source" 'x-zitadel-instance-host' 'bootstrap sends ZITADEL instance host header'
 contains "$identity_source" 'x-zitadel-public-host' 'bootstrap sends ZITADEL public host header'
+identity_wait_source="$(sed -n '/async function waitForZitadel/,/^}/p' "$repo_root/packages/resourceportal-api/scripts/bootstrap-zitadel.ts")"
+contains "$identity_wait_source" '/debug/ready' 'bootstrap waits for ZITADEL readiness endpoint'
+not_contains "$identity_wait_source" '/debug/healthz' 'bootstrap does not treat liveness as readiness'
 identity_shell_source="$(cat "$repo_root/scripts/installer/identity.sh")"
 contains "$identity_shell_source" 'ZITADEL_BOOTSTRAP_INSTANCE_HOST=' 'installer passes public ZITADEL instance host to bootstrap'
 bootstrap_runner_source="$(sed -n '/rp_run_zitadel_bootstrap()/,/^}/p' "$repo_root/scripts/installer/identity.sh")"
 contains "$bootstrap_runner_source" '--detach' 'identity bootstrap one-shot service is created detached'
+contains "$bootstrap_runner_source" '/debug/ready' 'installer bootstrap service gates release image on ZITADEL readiness'
+contains "$bootstrap_runner_source" '--entrypoint /bin/sh' 'installer controls bootstrap command sequencing'
 contains "$bootstrap_runner_source" 'docker service ps --no-trunc' 'identity bootstrap explicitly polls one-shot service state'
 contains "$identity_shell_source" 'rp_prepare_api_bootstrap_output_dir' 'identity bootstrap prepares non-root output directory'
 contains "$bootstrap_runner_source" 'identity-bootstrap' 'identity bootstrap isolates writable output under installer state'

@@ -71,12 +71,13 @@ rp_sync_swarm_join_token_secrets() {
 }
 
 rp_start_enrollment_listener() {
-  local cert="$1" key="$2" cert_ref key_ref service_name port manager_endpoint cluster_id
+  local cert="$1" key="$2" cert_ref key_ref service_name port manager_endpoint cluster_id control_network
   [[ -r "$cert" && -r "$key" ]] || return 1
   rp_sync_swarm_join_token_secrets || return 1
   cert_ref="$(rp_ensure_versioned_swarm_secret installer_enrollment_tls_cert "$cert")" || return 1
   key_ref="$(rp_ensure_versioned_swarm_secret installer_enrollment_tls_key "$key")" || return 1
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-installer-enrollment"
+  control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
   port="${RP_CFG_ENROLLMENT_PORT:-7443}"
   manager_endpoint="${RP_CFG_SWARM_ADVERTISE_ADDR}:2377"
   cluster_id="$(docker info --format '{{.Swarm.Cluster.ID}}')" || return 1
@@ -84,6 +85,7 @@ rp_start_enrollment_listener() {
   docker service rm "$service_name" >/dev/null 2>&1 || true
   docker service create \
     --name "$service_name" \
+    --network "$control_network" \
     --constraint 'node.role==manager' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
@@ -109,15 +111,17 @@ rp_start_enrollment_listener() {
 }
 
 rp_issue_enrollment_bundle() {
-  local role="$1" output_bundle="$2" enrollment_endpoint="$3" pin="$4" workdir output_file service_name timeout elapsed state
+  local role="$1" output_bundle="$2" enrollment_endpoint="$3" pin="$4" workdir output_file service_name timeout elapsed state control_network
   rp_validate_enrollment_role "$role" || return 1
   workdir="$(mktemp -d /tmp/resourceportal-enrollment-issue.XXXXXX)" || return 1
   chmod 0700 "$workdir"
   output_file="$workdir/enrollment.json"
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-enrollment-issue-$(date +%s)"
+  control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
   trap 'rm -rf "$workdir"' RETURN
   docker service create \
     --name "$service_name" --restart-condition none \
+    --network "$control_network" \
     --constraint 'node.role==manager' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --secret source=rp_database_url,target=rp_database_url \

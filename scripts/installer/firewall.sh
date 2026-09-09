@@ -63,3 +63,17 @@ rp_configure_ufw() {
   ufw --force enable
   ufw reload
 }
+
+rp_remove_resourceportal_ufw_rules() {
+  local status number
+  command -v ufw >/dev/null 2>&1 || return 0
+  status="$(ufw status numbered 2>/dev/null || true)"
+  while IFS= read -r number; do
+    [[ "$number" =~ ^[0-9]+$ ]] || continue
+    ufw --force delete "$number" >/dev/null || return 1
+  done < <(
+    grep -F '# ResourcePortal-' <<<"$status" \
+      | sed -nE 's/^\[[[:space:]]*([0-9]+)\].*# ResourcePortal-.*/\1/p' \
+      | sort -rn
+  )
+}

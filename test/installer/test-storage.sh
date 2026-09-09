@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/common.sh"
 # shellcheck source=/dev/null
+source "$repo_root/scripts/installer/ownership.sh"
+# shellcheck source=/dev/null
 source "$repo_root/scripts/installer/storage.sh"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/filesystem.sh"
@@ -109,6 +111,46 @@ assert_contains "$confirmation_out" "Invalid confirmation. Type exactly: FORMAT 
 assert_contains "$confirmation_out" "FORMAT /dev/sdb" "storage confirmation eventually returns exact value"
 rm -f "$confirmation_marker"
 
+noninteractive_marker="$(mktemp /tmp/rp-noninteractive-storage.XXXXXX)"
+rm -f "$noninteractive_marker"
+test_noninteractive_destructive_opt_in() (
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+  RP_CFG_STORAGE_DEVICE=/dev/sdb
+  RP_CFG_FILESYSTEM=xfs
+  RP_NON_INTERACTIVE=true
+  RP_ALLOW_DESTRUCTIVE_STORAGE=true
+  RP_INSTALLER_REPO_ROOT="$repo_root"
+  unset RP_DESTRUCTIVE_CONFIRMATION
+  export RP_CFG_STORAGE_BASE_PATH RP_CFG_STORAGE_MOUNTPOINT RP_CFG_STORAGE_DEVICE RP_CFG_FILESYSTEM \
+    RP_NON_INTERACTIVE RP_ALLOW_DESTRUCTIVE_STORAGE RP_INSTALLER_REPO_ROOT
+  findmnt() { return 1; }
+  rp_system_disk() { printf '/dev/sda\n'; }
+  rp_device_is_safe_target() { return 0; }
+  rp_inspect_block_device() { return 0; }
+  rp_prompt_destructive_confirmation() { printf 'prompt-called\n' >"$noninteractive_marker"; return 1; }
+  rp_require_destructive_confirmation() { [[ "$2" == 'FORMAT /dev/sdb' ]]; }
+  lsblk() { [[ "$*" == '-ndo TYPE /dev/sdb' ]] && printf 'disk\n'; }
+  rp_partition_empty_disk() { [[ "$3" == 'FORMAT /dev/sdb' ]]; }
+  rp_wait_for_first_partition() { printf '/dev/sdb1\n'; }
+  rp_format_device() { [[ "$4" == 'FORMAT /dev/sdb1' ]]; }
+  rp_persist_filesystem_mount() { return 0; }
+  install() { return 0; }
+  rp_storage_layout_create() { return 0; }
+  rp_mount_runtime_namespace() { return 0; }
+  rp_project_quota_enabled() { return 0; }
+  rp_config_write() { return 0; }
+  rp_install_storage_ready_unit() { return 0; }
+  rp_ownership_record() { return 0; }
+  rp_storage_ready_unit_path() { printf '/tmp/rp-storage-ready.service\n'; }
+  rp_storage_ready_helper_path() { printf '/tmp/rp-storage-ready-check\n'; }
+  rp_runtime_path() { printf '/mnt/resourceportal/%s\n' "$1"; }
+  rp_primary_prepare_storage
+)
+assert_status 0 "non-interactive destructive opt-in skips typed storage prompt" test_noninteractive_destructive_opt_in
+[[ ! -e "$noninteractive_marker" ]] && printf 'PASS: non-interactive destructive opt-in never calls storage prompt\n' || { printf 'FAIL: non-interactive destructive opt-in never calls storage prompt\n' >&2; failures=$((failures+1)); }
+rm -f "$noninteractive_marker"
+
 rp_ui_input() { return 1; }
 set +e
 cancel_out="$(rp_prompt_destructive_confirmation /dev/sdb 2>&1)"
@@ -193,6 +235,7 @@ rm -f "$bootstrap_marker"
 export RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
 export RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
 export RP_INSTALLER_REPO_ROOT="$repo_root"
+export RP_OWNERSHIP_MANIFEST="$bootstrap_marker.owned"
 findmnt() {
   case "$*" in
     '-rn -M /srv/resource-portal/storage') return 0 ;;
@@ -207,7 +250,112 @@ rp_mount_runtime_namespace() { return 0; }
 rp_config_write() { : >"$bootstrap_marker"; }
 rp_install_storage_ready_unit() { [[ -e "$bootstrap_marker" ]]; }
 assert_status 0 "storage writes runtime config before starting readiness unit" rp_primary_prepare_storage
-rm -f "$bootstrap_marker"
+rm -f "$bootstrap_marker" "$bootstrap_marker.owned"
+
+storage_ownership_dir="$(mktemp -d)"
+test_storage_ownership_records() (
+  RP_OWNERSHIP_MANIFEST="$storage_ownership_dir/owned-resources"
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+  RP_CFG_STORAGE_DEVICE=/dev/sdb
+  RP_CFG_FILESYSTEM=xfs
+  RP_DESTRUCTIVE_CONFIRMATION='FORMAT /dev/sdb'
+  RP_ALLOW_DESTRUCTIVE_STORAGE=true
+  RP_INSTALLER_REPO_ROOT="$repo_root"
+  export RP_OWNERSHIP_MANIFEST RP_CFG_STORAGE_BASE_PATH RP_CFG_STORAGE_MOUNTPOINT \
+    RP_CFG_STORAGE_DEVICE RP_CFG_FILESYSTEM RP_DESTRUCTIVE_CONFIRMATION \
+    RP_ALLOW_DESTRUCTIVE_STORAGE RP_INSTALLER_REPO_ROOT
+  findmnt() { return 1; }
+  rp_system_disk() { printf '/dev/sda\n'; }
+  rp_device_is_safe_target() { return 0; }
+  rp_inspect_block_device() { return 0; }
+  rp_require_destructive_confirmation() { return 0; }
+  lsblk() { [[ "$*" == '-ndo TYPE /dev/sdb' ]] && printf 'disk\n'; }
+  rp_partition_empty_disk() { return 0; }
+  rp_wait_for_first_partition() { printf '/dev/sdb1\n'; }
+  rp_format_device() { return 0; }
+  rp_persist_filesystem_mount() { return 0; }
+  install() { return 0; }
+  rp_storage_layout_create() { return 0; }
+  rp_mount_runtime_namespace() { return 0; }
+  rp_project_quota_enabled() { return 0; }
+  rp_config_write() { return 0; }
+  rp_install_storage_ready_unit() { return 0; }
+  rp_primary_prepare_storage || return 1
+  for record in \
+    'storage-device /dev/sdb' \
+    'storage-partition /dev/sdb1' \
+    'fstab-mount /srv/resource-portal/storage' \
+    'fstab-mount /mnt/resourceportal/volumes' \
+    'fstab-mount /mnt/resourceportal/secrets' \
+    'fstab-mount /mnt/resourceportal/platform' \
+    'systemd-unit resourceportal-storage-ready.service' \
+    'systemd-helper /usr/local/lib/resourceportal/storage-ready-check'; do
+    grep -Fxq -- "$record" "$RP_OWNERSHIP_MANIFEST" || return 1
+  done
+)
+assert_status 0 'Primary records storage, fstab, and storage-ready ownership' test_storage_ownership_records
+rm -rf "$storage_ownership_dir"
+
+test_root_backing_disk_rejected() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sda
+)
+assert_status 1 'root backing disk is rejected' test_root_backing_disk_rejected
+
+test_root_backing_partition_rejected() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sda2
+)
+assert_status 1 'root backing partition is rejected' test_root_backing_partition_rejected
+
+test_unrelated_disk_allowed() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sdb
+)
+assert_status 0 'unrelated storage disk is accepted by root relation check' test_unrelated_disk_allowed
+
+test_stable_storage_fingerprint() (
+  lsblk() { [[ "$*" == '-dnbo TYPE,SIZE /dev/sdb' ]] && printf 'disk 2147483648\n'; }
+  udevadm() { printf 'ID_SERIAL=SERIAL-123\nID_MODEL=TESTDISK\n'; }
+  blkid() { return 1; }
+  rp_storage_fingerprint /dev/sdb
+)
+fingerprint_out="$(test_stable_storage_fingerprint 2>/dev/null || true)"
+assert_contains "$fingerprint_out" 'ID_SERIAL=SERIAL-123' 'storage fingerprint includes stable serial identity'
+
+test_missing_stable_storage_identity() (
+  lsblk() { [[ "$*" == '-dnbo TYPE,SIZE /dev/sdb' ]] && printf 'disk 2147483648\n'; }
+  udevadm() { return 1; }
+  blkid() { return 1; }
+  rp_storage_fingerprint /dev/sdb
+)
+assert_status 1 'storage fingerprint rejects path-only identity' test_missing_stable_storage_identity
+
+assert_status 0 'E2E mount guard accepts storage mountpoint' rp_storage_mount_target_allowed_for_resourceportal /srv/resource-portal/storage /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts volumes runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/volumes /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts secrets runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/secrets /srv/resource-portal/storage
+assert_status 0 'E2E mount guard accepts platform runtime mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/resourceportal/platform /srv/resource-portal/storage
+assert_status 1 'E2E mount guard rejects unrelated mount' rp_storage_mount_target_allowed_for_resourceportal /mnt/other /srv/resource-portal/storage
+
+
+# E2E-discovered regression: negative postconditions must fail explicitly, not rely on ! with set -e.
+e2e_script="$repo_root/scripts/run-installer-reset-e2e.sh"
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_absent()' 'E2E defines explicit absent assertion helper'
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_unmounted()' 'E2E defines explicit unmounted assertion helper'
+assert_contains "$(cat "$e2e_script")" 'rp_reset_e2e_assert_no_signatures()' 'E2E defines explicit no-signatures assertion helper'
+if grep -Eq '^! ' "$e2e_script"; then
+  printf 'FAIL: E2E does not use bare negated postconditions under set -e\n' >&2
+  failures=$((failures+1))
+else
+  printf 'PASS: E2E avoids bare negated postconditions under set -e\n'
+fi
 
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'

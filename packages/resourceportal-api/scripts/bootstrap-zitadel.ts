@@ -134,7 +134,7 @@ async function main() {
 async function waitForZitadel() {
   for (let attempt = 1; attempt <= 30; attempt += 1) {
     try {
-      const response = await fetch(`${issuerUrl}/debug/healthz`, {
+      const response = await fetch(`${issuerUrl}/debug/ready`, {
         headers: zitadelHostHeaders(),
       });
 

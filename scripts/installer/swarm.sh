@@ -105,7 +105,7 @@ rp_swarm_init() {
     printf 'Docker Swarm is not in an initializable state: %s\n' "$state" >&2
     return 1
   }
-  docker swarm init --advertise-addr "$advertise_addr" --data-path-addr "$data_path_addr"
+  docker swarm init --advertise-addr "$advertise_addr" --data-path-addr "$data_path_addr" >/dev/null
 }
 
 rp_swarm_join() {
@@ -152,4 +152,60 @@ rp_check_manager_quorum() {
   recommendation="$(rp_manager_quorum_recommendation "$total")"
   printf 'state=%s managers=%s reachable=%s recommendation=%s\n' "$state" "$total" "$reachable" "$recommendation"
   [[ "$state" == "healthy" ]]
+}
+
+
+
+rp_swarm_resourceportal_secret_name() {
+  local name="$1" var ref
+  case "$name" in
+    rp_postgres_password|zitadel_postgres_password|rp_encryption_key|rp_database_url|zitadel_secret_config|zitadel_init_steps|rp_first_admin_password|zitadel_masterkey)
+      return 0
+      ;;
+    rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
+      return 0
+      ;;
+  esac
+  for var in \
+    RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF \
+    RP_CFG_SMTP_SWARM_REF RP_CFG_ENROLLMENT_WORKER_TOKEN_REF RP_CFG_ENROLLMENT_MANAGER_TOKEN_REF; do
+    ref="${!var-}"
+    [[ -n "$ref" && "$name" == "$ref" ]] && return 0
+  done
+  return 1
+}
+
+rp_swarm_resourceportal_service_name() {
+  local name="$1" stack="${2:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}"
+  case "$name" in
+    "${stack}_"*|"${stack}-installer-enrollment"|"${stack}-migration-"*|"${stack}-zitadel-bootstrap-"*|"${stack}-enrollment-issue-"*|rp-storage-runtime-probe-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+rp_swarm_resourceportal_config_name() {
+  local name="$1" stack="${2:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}"
+  [[ "$name" == "${stack}_"* ]]
+}
+
+rp_swarm_unrelated_resources() {
+  local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" state name
+  command -v docker >/dev/null 2>&1 || return 0
+  state="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+  [[ "$state" == active ]] || return 0
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    rp_swarm_resourceportal_service_name "$name" "$stack" || printf 'service %s\n' "$name"
+  done < <(docker service ls --format '{{.Name}}' 2>/dev/null || true)
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    rp_swarm_resourceportal_secret_name "$name" || printf 'secret %s\n' "$name"
+  done < <(docker secret ls --format '{{.Name}}' 2>/dev/null || true)
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    rp_swarm_resourceportal_config_name "$name" "$stack" || printf 'config %s\n' "$name"
+  done < <(docker config ls --format '{{.Name}}' 2>/dev/null || true)
 }
