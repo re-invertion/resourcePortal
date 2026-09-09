@@ -123,7 +123,13 @@ rp_prepare_host_packages() {
 
 rp_primary_prepare_storage() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}"
-  local mountpoint="${RP_CFG_STORAGE_MOUNTPOINT:-$base}" fs system_disk device type partition
+  local mountpoint="${RP_CFG_STORAGE_MOUNTPOINT:-$base}" fs system_disk device type partition configured_device
+  local unit_path helper_path had_unit=false had_helper=false
+  unit_path="$(rp_storage_ready_unit_path)"
+  helper_path="$(rp_storage_ready_helper_path)"
+  [[ -e "$unit_path" ]] && had_unit=true
+  [[ -e "$helper_path" ]] && had_helper=true
+
   if findmnt -rn -M "$mountpoint" >/dev/null 2>&1; then
     fs="$(findmnt -nro FSTYPE -T "$mountpoint")"
     rp_validate_filesystem_type "$fs" || return 1
@@ -131,6 +137,7 @@ rp_primary_prepare_storage() {
   else
     device="${RP_CFG_STORAGE_DEVICE:-}"
     [[ -n "$device" ]] || { printf 'RP_CFG_STORAGE_DEVICE is required when no existing storage mount is available.\n' >&2; return 1; }
+    configured_device="$device"
     system_disk="$(rp_system_disk)" || return 1
     rp_device_is_safe_target "$device" "$system_disk" || return 1
     rp_inspect_block_device "$device"
@@ -151,24 +158,32 @@ rp_primary_prepare_storage() {
     if [[ "$type" == "disk" ]]; then
       rp_partition_empty_disk "$device" "$system_disk" "${RP_DESTRUCTIVE_CONFIRMATION:-}" || return 1
       partition="$(rp_wait_for_first_partition "$device")" || return 1
+      rp_ownership_record storage-device "$configured_device" || return 1
+      rp_ownership_record storage-partition "$partition" || return 1
       device="$partition"
     fi
     local format_confirmation="${RP_DESTRUCTIVE_CONFIRMATION:-}"
     [[ "$type" == "disk" ]] && format_confirmation="FORMAT $device"
     rp_format_device "$device" "$fs" "$system_disk" "$format_confirmation" || return 1
-    rp_persist_filesystem_mount "$device" "$mountpoint" "$fs"
+    rp_persist_filesystem_mount "$device" "$mountpoint" "$fs" || return 1
+    rp_ownership_record fstab-mount "$mountpoint" || return 1
   fi
   install -d -m 0750 "$base"
   rp_storage_layout_create "$base"
   rp_mount_runtime_namespace local volumes "$base" || return 1
+  rp_ownership_record fstab-mount "$(rp_runtime_path volumes)" || return 1
   rp_mount_runtime_namespace local secrets "$base" || return 1
+  rp_ownership_record fstab-mount "$(rp_runtime_path secrets)" || return 1
   rp_mount_runtime_namespace local platform "$base" || return 1
+  rp_ownership_record fstab-mount "$(rp_runtime_path platform)" || return 1
   rp_project_quota_enabled "$mountpoint" || return 1
   # The readiness checker sources installer.conf immediately when the unit starts.
   # Persist the current safe, non-secret config before enabling the unit; the final
   # persist phase rewrites this file with release/runtime values discovered later.
   rp_config_write /etc/resourceportal/installer.conf
-  rp_install_storage_ready_unit "$RP_INSTALLER_REPO_ROOT"
+  rp_install_storage_ready_unit "$RP_INSTALLER_REPO_ROOT" || return 1
+  [[ "$had_unit" == true ]] || rp_ownership_record systemd-unit resourceportal-storage-ready.service || return 1
+  [[ "$had_helper" == true ]] || rp_ownership_record systemd-helper "$helper_path" || return 1
 }
 
 rp_primary_configure_firewall() {
@@ -193,7 +208,10 @@ rp_primary_init_swarm() {
 
 rp_primary_configure_nfs() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}"
-  rp_install_ganesha_config /etc/ganesha/resourceportal.conf "$base" "${RP_CFG_CLUSTER_CIDR:?}" "${RP_CFG_MANAGER_CIDR:-$RP_CFG_CLUSTER_CIDR}"
+  local target="${RP_GANESHA_CONFIG_PATH:-/etc/ganesha/resourceportal.conf}" had_target=false
+  [[ -e "$target" ]] && had_target=true
+  rp_install_ganesha_config "$target" "$base" "${RP_CFG_CLUSTER_CIDR:?}" "${RP_CFG_MANAGER_CIDR:-$RP_CFG_CLUSTER_CIDR}" || return 1
+  [[ "$had_target" == true ]] || rp_ownership_record ganesha-config "$target" || return 1
 }
 
 rp_primary_resolve_release() {

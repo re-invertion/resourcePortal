@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/ownership.sh"
+source "$repo_root/scripts/installer/docker.sh"
 
 failures=0
 assert_eq() {
@@ -68,6 +69,54 @@ assert_status 1 'pre-existing package is not claimed' rp_ownership_has package c
 assert_status 0 'new package is claimed' rp_ownership_has package nfs-ganesha
 assert_eq 'nfs-ganesha' "$(rp_ownership_values package)" 'only newly installed package is recorded'
 assert_contains "$(cat "$manifest")" 'package nfs-ganesha' 'manifest contains package metadata only'
+
+assert_status 0 'Docker command presence wrapper exists' bash -c "source '$repo_root/scripts/installer/docker.sh'; declare -F rp_docker_command_present >/dev/null"
+
+test_preexisting_docker_not_claimed() (
+  local_manifest="$tmpdir/docker-preexisting"
+  RP_OWNERSHIP_MANIFEST="$local_manifest"
+  export RP_OWNERSHIP_MANIFEST
+  : >"$local_manifest"
+  rp_docker_command_present() { return 0; }
+  rp_validate_docker() { return 0; }
+  rp_install_docker() { return 99; }
+  rp_ensure_docker 27.0.0 || return 1
+  ! rp_ownership_has docker installed-by-resourceportal
+)
+assert_status 0 'pre-existing Docker is not claimed' test_preexisting_docker_not_claimed
+
+test_installer_docker_is_claimed() (
+  set -e
+  local_manifest="$tmpdir/docker-installed"
+  keyring="$tmpdir/docker-apt/docker.asc"
+  source_path="$tmpdir/docker-apt/docker.list"
+  RP_OWNERSHIP_MANIFEST="$local_manifest"
+  RP_DOCKER_APT_KEY="$keyring"
+  RP_DOCKER_APT_SOURCE="$source_path"
+  export RP_OWNERSHIP_MANIFEST RP_DOCKER_APT_KEY RP_DOCKER_APT_SOURCE
+  : >"$local_manifest"
+  mkdir -p "$(dirname "$keyring")"
+  rp_docker_command_present() { return 1; }
+  rp_validate_docker() { return 0; }
+  apt-get() { return 0; }
+  install() { return 0; }
+  curl() {
+    local out=""
+    while (($#)); do
+      if [[ "$1" == -o ]]; then out="$2"; shift 2; else shift; fi
+    done
+    [[ "$out" == "$keyring" ]] || return 1
+    printf 'key\n' >"$out"
+  }
+  chmod() { return 0; }
+  dpkg() { [[ "$1" == --print-architecture ]] && printf 'amd64\n'; }
+  systemctl() { return 0; }
+  rp_ensure_docker 27.0.0
+  rp_ownership_has docker installed-by-resourceportal
+  rp_ownership_has apt-source "$source_path"
+  rp_ownership_has apt-key "$keyring"
+)
+assert_status 0 'installer-created Docker and apt artifacts are claimed' test_installer_docker_is_claimed
 
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2

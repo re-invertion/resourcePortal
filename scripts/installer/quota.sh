@@ -46,13 +46,21 @@ rp_project_quota_enabled() {
   return 0
 }
 
+rp_storage_ready_helper_path() {
+  printf '/usr/local/lib/resourceportal/storage-ready-check\n'
+}
+
+rp_storage_ready_unit_path() {
+  printf '/etc/systemd/system/resourceportal-storage-ready.service\n'
+}
+
 rp_install_storage_ready_unit() {
-  local repo_root="$1"
-  install -d -m 0755 /usr/local/lib/resourceportal
-  install -m 0755 "$repo_root/scripts/installer/templates/storage-ready-check" \
-    /usr/local/lib/resourceportal/storage-ready-check
-  install -m 0644 "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service" \
-    /etc/systemd/system/resourceportal-storage-ready.service
+  local repo_root="$1" helper unit
+  helper="$(rp_storage_ready_helper_path)"
+  unit="$(rp_storage_ready_unit_path)"
+  install -d -m 0755 "$(dirname "$helper")"
+  install -m 0755 "$repo_root/scripts/installer/templates/storage-ready-check" "$helper"
+  install -m 0644 "$repo_root/scripts/installer/templates/resourceportal-storage-ready.service" "$unit"
   systemctl daemon-reload
   systemctl enable --now resourceportal-storage-ready.service
 }

@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/common.sh"
 # shellcheck source=/dev/null
+source "$repo_root/scripts/installer/ownership.sh"
+# shellcheck source=/dev/null
 source "$repo_root/scripts/installer/storage.sh"
 # shellcheck source=/dev/null
 source "$repo_root/scripts/installer/filesystem.sh"
@@ -193,6 +195,7 @@ rm -f "$bootstrap_marker"
 export RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
 export RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
 export RP_INSTALLER_REPO_ROOT="$repo_root"
+export RP_OWNERSHIP_MANIFEST="$bootstrap_marker.owned"
 findmnt() {
   case "$*" in
     '-rn -M /srv/resource-portal/storage') return 0 ;;
@@ -207,7 +210,52 @@ rp_mount_runtime_namespace() { return 0; }
 rp_config_write() { : >"$bootstrap_marker"; }
 rp_install_storage_ready_unit() { [[ -e "$bootstrap_marker" ]]; }
 assert_status 0 "storage writes runtime config before starting readiness unit" rp_primary_prepare_storage
-rm -f "$bootstrap_marker"
+rm -f "$bootstrap_marker" "$bootstrap_marker.owned"
+
+storage_ownership_dir="$(mktemp -d)"
+test_storage_ownership_records() (
+  RP_OWNERSHIP_MANIFEST="$storage_ownership_dir/owned-resources"
+  RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage
+  RP_CFG_STORAGE_MOUNTPOINT=/srv/resource-portal/storage
+  RP_CFG_STORAGE_DEVICE=/dev/sdb
+  RP_CFG_FILESYSTEM=xfs
+  RP_DESTRUCTIVE_CONFIRMATION='FORMAT /dev/sdb'
+  RP_ALLOW_DESTRUCTIVE_STORAGE=true
+  RP_INSTALLER_REPO_ROOT="$repo_root"
+  export RP_OWNERSHIP_MANIFEST RP_CFG_STORAGE_BASE_PATH RP_CFG_STORAGE_MOUNTPOINT \
+    RP_CFG_STORAGE_DEVICE RP_CFG_FILESYSTEM RP_DESTRUCTIVE_CONFIRMATION \
+    RP_ALLOW_DESTRUCTIVE_STORAGE RP_INSTALLER_REPO_ROOT
+  findmnt() { return 1; }
+  rp_system_disk() { printf '/dev/sda\n'; }
+  rp_device_is_safe_target() { return 0; }
+  rp_inspect_block_device() { return 0; }
+  rp_require_destructive_confirmation() { return 0; }
+  lsblk() { [[ "$*" == '-ndo TYPE /dev/sdb' ]] && printf 'disk\n'; }
+  rp_partition_empty_disk() { return 0; }
+  rp_wait_for_first_partition() { printf '/dev/sdb1\n'; }
+  rp_format_device() { return 0; }
+  rp_persist_filesystem_mount() { return 0; }
+  install() { return 0; }
+  rp_storage_layout_create() { return 0; }
+  rp_mount_runtime_namespace() { return 0; }
+  rp_project_quota_enabled() { return 0; }
+  rp_config_write() { return 0; }
+  rp_install_storage_ready_unit() { return 0; }
+  rp_primary_prepare_storage || return 1
+  for record in \
+    'storage-device /dev/sdb' \
+    'storage-partition /dev/sdb1' \
+    'fstab-mount /srv/resource-portal/storage' \
+    'fstab-mount /mnt/resourceportal/volumes' \
+    'fstab-mount /mnt/resourceportal/secrets' \
+    'fstab-mount /mnt/resourceportal/platform' \
+    'systemd-unit resourceportal-storage-ready.service' \
+    'systemd-helper /usr/local/lib/resourceportal/storage-ready-check'; do
+    grep -Fxq -- "$record" "$RP_OWNERSHIP_MANIFEST" || return 1
+  done
+)
+assert_status 0 'Primary records storage, fstab, and storage-ready ownership' test_storage_ownership_records
+rm -rf "$storage_ownership_dir"
 
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'
