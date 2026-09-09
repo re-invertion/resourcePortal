@@ -73,6 +73,33 @@ assert_contains "$(cat "$manifest")" 'package nfs-ganesha' 'manifest contains pa
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
 assert_contains "$lifecycle_source" 'nfs-ganesha-vfs ufw bind9-dnsutils' 'host package list uses installable DNS utilities package'
 
+
+test_partial_package_success_keeps_ownership() (
+  local partial_manifest="$tmpdir/partial-owned"
+  local installed_marker="$tmpdir/partial-installed"
+  RP_OWNERSHIP_MANIFEST="$partial_manifest"
+  export RP_OWNERSHIP_MANIFEST
+  : >"$partial_manifest"
+  rm -f "$installed_marker"
+  dpkg-query() {
+    if [[ "$3" == nfs-ganesha && -e "$installed_marker" ]]; then printf 'ii \n'; return 0; fi
+    return 1
+  }
+  apt-get() {
+    [[ "$1" == update ]] && return 0
+    [[ "$1" == install ]] || return 1
+    : >"$installed_marker"
+    return 0
+  }
+  set +e
+  rp_install_packages_with_ownership nfs-ganesha unavailable-package
+  local rc=$?
+  set -e
+  [[ "$rc" == 1 ]] || return 1
+  rp_ownership_has package nfs-ganesha
+)
+assert_status 0 'successful package install is owned even when peer verification later fails' test_partial_package_success_keeps_ownership
+
 assert_status 0 'Docker command presence wrapper exists' bash -c "source '$repo_root/scripts/installer/docker.sh'; declare -F rp_docker_command_present >/dev/null"
 
 test_preexisting_docker_not_claimed() (

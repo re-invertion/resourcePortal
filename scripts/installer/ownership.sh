@@ -48,11 +48,13 @@ rp_install_packages_with_ownership() {
   apt-get update || return 1
   DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || return 1
 
-  for package in "${packages[@]}"; do
-    rp_package_installed "$package" || return 1
+  for package in "${missing_before[@]}"; do
+    if rp_package_installed "$package"; then
+      rp_ownership_record package "$package" || return 1
+    fi
   done
 
-  for package in "${missing_before[@]}"; do
-    rp_ownership_record package "$package" || return 1
+  for package in "${packages[@]}"; do
+    rp_package_installed "$package" || return 1
   done
 }
