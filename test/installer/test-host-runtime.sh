@@ -105,6 +105,7 @@ assert_not_contains "$ufw_cleanup" 'reset' 'UFW cleanup never performs global re
 rm -f "$ufw_log"
 
 assert_status 0 'known versioned RP secret accepted' rp_swarm_resourceportal_secret_name rp_cookie_secret_deadbeef
+assert_status 0 'legacy ZITADEL masterkey secret accepted' rp_swarm_resourceportal_secret_name zitadel_masterkey
 assert_status 1 'unrelated secret rejected by RP classifier' rp_swarm_resourceportal_secret_name other_secret
 
 test_swarm_unrelated_classification() (

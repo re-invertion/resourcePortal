@@ -159,7 +159,7 @@ rp_check_manager_quorum() {
 rp_swarm_resourceportal_secret_name() {
   local name="$1" var ref
   case "$name" in
-    rp_postgres_password|zitadel_postgres_password|rp_encryption_key|rp_database_url|zitadel_secret_config|zitadel_init_steps|rp_first_admin_password)
+    rp_postgres_password|zitadel_postgres_password|rp_encryption_key|rp_database_url|zitadel_secret_config|zitadel_init_steps|rp_first_admin_password|zitadel_masterkey)
       return 0
       ;;
     rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
