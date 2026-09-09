@@ -35,24 +35,56 @@ rp_package_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}\n' "$1" 2>/dev/null | grep -q '^ii '
 }
 
+rp_installed_package_names() {
+  dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null \
+    | awk '$1 ~ /^ii/ && NF >= 2 { print $2 }' \
+    | LC_ALL=C sort -u
+}
+
+rp_apt_install_with_ownership() {
+  local ownership_tmpdir before after install_rc package
+  local -a packages=("$@")
+  ((${#packages[@]} > 0)) || return 0
+
+  ownership_tmpdir="$(mktemp -d /tmp/resourceportal-package-ownership.XXXXXX)" || return 1
+  before="$ownership_tmpdir/before"
+  after="$ownership_tmpdir/after"
+  if ! rp_installed_package_names >"$before"; then
+    rm -rf "$ownership_tmpdir"
+    return 1
+  fi
+
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"; then
+    install_rc=0
+  else
+    install_rc=$?
+  fi
+
+  if ! rp_installed_package_names >"$after"; then
+    rm -rf "$ownership_tmpdir"
+    return 1
+  fi
+
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    if ! rp_ownership_record package "$package"; then
+      rm -rf "$ownership_tmpdir"
+      return 1
+    fi
+  done < <(comm -13 "$before" "$after")
+  rm -rf "$ownership_tmpdir"
+
+  (( install_rc == 0 )) || return "$install_rc"
+}
+
 rp_install_packages_with_ownership() {
   local package
-  local -a packages=("$@") missing_before=()
+  local -a packages=("$@")
 
   ((${#packages[@]} > 0)) || return 0
 
-  for package in "${packages[@]}"; do
-    rp_package_installed "$package" || missing_before+=("$package")
-  done
-
   apt-get update || return 1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}" || return 1
-
-  for package in "${missing_before[@]}"; do
-    if rp_package_installed "$package"; then
-      rp_ownership_record package "$package" || return 1
-    fi
-  done
+  rp_apt_install_with_ownership "${packages[@]}" || return $?
 
   for package in "${packages[@]}"; do
     rp_package_installed "$package" || return 1

@@ -45,7 +45,7 @@ rp_install_docker() {
   [[ -n "$codename" ]] || return 1
 
   apt-get update || return 1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg || return 1
+  rp_apt_install_with_ownership ca-certificates curl gnupg || return 1
   install -m 0755 -d "$(dirname "$keyring")" "$(dirname "$source_path")" || return 1
   curl -fsSL "https://download.docker.com/linux/$id/gpg" -o "$keyring" || return 1
   chmod a+r "$keyring" || return 1
@@ -53,7 +53,7 @@ rp_install_docker() {
   repo="deb [arch=$arch signed-by=$keyring] https://download.docker.com/linux/$id $codename stable"
   printf '%s\n' "$repo" >"$source_path" || return 1
   apt-get update || return 1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return 1
+  rp_apt_install_with_ownership docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return 1
   systemctl enable --now docker || return 1
 
   rp_ownership_record docker installed-by-resourceportal || return 1

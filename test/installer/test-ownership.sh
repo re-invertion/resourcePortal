@@ -49,6 +49,11 @@ assert_eq 'nfs-ganesha' "$(rp_ownership_values package)" 'ownership values retur
 assert_status 1 'ownership rejects newline payload' rp_ownership_record package $'bad\nvalue'
 
 dpkg-query() {
+  if (($# < 3)); then
+    printf 'ii  ca-certificates\n'
+    if [[ -e "$tmpdir/after-install" ]]; then printf 'ii  nfs-ganesha\n'; fi
+    return 0
+  fi
   if [[ "$3" == ca-certificates ]]; then
     printf 'ii \n'
     return 0
@@ -81,8 +86,11 @@ test_partial_package_success_keeps_ownership() (
   export RP_OWNERSHIP_MANIFEST
   : >"$partial_manifest"
   rm -f "$installed_marker"
+  rp_installed_package_names() {
+    if [[ -e "$installed_marker" ]]; then printf '%s\n' nfs-ganesha; fi
+  }
   dpkg-query() {
-    if [[ "$3" == nfs-ganesha && -e "$installed_marker" ]]; then printf 'ii \n'; return 0; fi
+    if [[ "${3:-}" == nfs-ganesha && -e "$installed_marker" ]]; then printf 'ii \n'; return 0; fi
     return 1
   }
   apt-get() {
@@ -99,6 +107,35 @@ test_partial_package_success_keeps_ownership() (
   rp_ownership_has package nfs-ganesha
 )
 assert_status 0 'successful package install is owned even when peer verification later fails' test_partial_package_success_keeps_ownership
+
+test_automatic_dependency_is_owned() (
+  local dep_manifest="$tmpdir/dependency-owned"
+  local installed_marker="$tmpdir/dependency-installed"
+  RP_OWNERSHIP_MANIFEST="$dep_manifest"
+  export RP_OWNERSHIP_MANIFEST
+  : >"$dep_manifest"
+  rm -f "$installed_marker"
+  rp_installed_package_names() {
+    printf '%s\n' ca-certificates
+    if [[ -e "$installed_marker" ]]; then
+      printf '%s\n' nfs-ganesha libntirpc6.3
+    fi
+  }
+  dpkg-query() {
+    if [[ "${3:-}" == nfs-ganesha && -e "$installed_marker" ]]; then printf 'ii \n'; return 0; fi
+    return 1
+  }
+  apt-get() {
+    [[ "$1" == update ]] && return 0
+    [[ "$1" == install ]] || return 1
+    : >"$installed_marker"
+    return 0
+  }
+  rp_install_packages_with_ownership nfs-ganesha || return 1
+  rp_ownership_has package nfs-ganesha || return 1
+  rp_ownership_has package libntirpc6.3
+)
+assert_status 0 'automatic apt dependency installed by ResourcePortal is owned' test_automatic_dependency_is_owned
 
 assert_status 0 'Docker command presence wrapper exists' bash -c "source '$repo_root/scripts/installer/docker.sh'; declare -F rp_docker_command_present >/dev/null"
 
@@ -120,6 +157,8 @@ test_installer_docker_is_claimed() (
   local_manifest="$tmpdir/docker-installed"
   keyring="$tmpdir/docker-apt/docker.asc"
   source_path="$tmpdir/docker-apt/docker.list"
+  install_calls="$tmpdir/docker-install-calls"
+  : >"$install_calls"
   RP_OWNERSHIP_MANIFEST="$local_manifest"
   RP_DOCKER_APT_KEY="$keyring"
   RP_DOCKER_APT_SOURCE="$source_path"
@@ -128,6 +167,7 @@ test_installer_docker_is_claimed() (
   mkdir -p "$(dirname "$keyring")"
   rp_docker_command_present() { return 1; }
   rp_validate_docker() { return 0; }
+  rp_apt_install_with_ownership() { printf '%s\n' "$*" >>"$install_calls"; return 0; }
   apt-get() { return 0; }
   install() { return 0; }
   curl() {
@@ -145,6 +185,7 @@ test_installer_docker_is_claimed() (
   rp_ownership_has docker installed-by-resourceportal
   rp_ownership_has apt-source "$source_path"
   rp_ownership_has apt-key "$keyring"
+  grep -Fxq 'docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin' "$install_calls"
 )
 assert_status 0 'installer-created Docker and apt artifacts are claimed' test_installer_docker_is_claimed
 

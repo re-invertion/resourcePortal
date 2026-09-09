@@ -496,7 +496,7 @@ rp_reset_remove_docker_data() {
 rp_reset_host_package_candidates() {
   printf '%s\n' \
     ca-certificates curl gnupg jq openssl iproute2 util-linux parted gdisk \
-    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw dnsutils
+    xfsprogs e2fsprogs quota nfs-common nfs-ganesha nfs-ganesha-vfs ufw bind9-dnsutils
 }
 
 rp_reset_authorized_package_name() {

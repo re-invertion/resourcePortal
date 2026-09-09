@@ -352,7 +352,7 @@ RP_OWNERSHIP_MANIFEST="$tmpdir/task6-package-owned"
 : >"$RP_OWNERSHIP_MANIFEST"
 rp_ownership_record package nfs-ganesha
 rp_ownership_record package curl
-rp_package_installed() { [[ "$1" == nfs-ganesha || "$1" == curl || "$1" == dnsutils ]]; }
+rp_package_installed() { [[ "$1" == nfs-ganesha || "$1" == curl || "$1" == bind9-dnsutils ]]; }
 apt-get() {
   if [[ "${1:-} ${2:-}" == '-s purge' ]]; then
     printf 'Purg %s [test]\n' "${3:-}"
@@ -367,7 +367,7 @@ package_text="$(cat "$package_log")"
 assert_contains "$package_text" 'purge -y' 'package cleanup uses purge'
 assert_contains "$package_text" 'nfs-ganesha' 'package cleanup removes owned package'
 assert_contains "$package_text" 'curl' 'package cleanup removes second owned package'
-assert_not_contains "$package_text" 'dnsutils' 'package cleanup retains untracked package by default'
+assert_not_contains "$package_text" 'bind9-dnsutils' 'package cleanup retains untracked package by default'
 assert_not_contains "$package_text" 'autoremove' 'package cleanup never uses unrestricted autoremove'
 : >"$package_log"
 RP_FORCE_REMOVE_UNTRACKED_PACKAGES=true
@@ -375,7 +375,7 @@ RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES=true
 export RP_FACTORY_PLAN_FORCE_UNTRACKED_PACKAGES
 rp_reset_remove_packages
 package_text="$(cat "$package_log")"
-assert_contains "$package_text" 'dnsutils' 'legacy override permits fixed installer package candidates'
+assert_contains "$package_text" 'bind9-dnsutils' 'legacy override permits fixed installer package candidates'
 assert_not_contains "$package_text" 'autoremove' 'legacy override still avoids autoremove'
 unset -f apt-get rp_package_installed
 
