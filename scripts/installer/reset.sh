@@ -339,10 +339,7 @@ rp_reset() {
   case "$scope" in
     settings) rp_reset_settings ;;
     installer-state) rp_reset_installer_state ;;
-    factory)
-      printf 'Factory reset lifecycle is not available until destructive preflight is initialized.\n' >&2
-      return 2
-      ;;
+    factory) rp_reset_factory ;;
     *) return 2 ;;
   esac
 }
@@ -597,4 +594,135 @@ rp_reset_remove_rp_data() {
     fi
     rm -rf -- "$path" || return 1
   done
+}
+
+rp_factory_reset_phase_names() {
+  printf '%s\n' \
+    preflight \
+    stop-services \
+    remove-stack \
+    remove-swarm-resources \
+    remove-enrollment \
+    remove-system-config \
+    unmount-runtime \
+    leave-swarm \
+    remove-docker \
+    remove-docker-data \
+    wipe-storage \
+    remove-rp-data \
+    remove-packages \
+    remove-installer-state \
+    final-cleanup
+}
+
+rp_reset_run_phase() {
+  local phase="$1"; shift
+  local action rc
+  [[ -n "${RP_FACTORY_RESET_STATE:-}" ]] || return 1
+  rp_phase_done "$RP_FACTORY_RESET_STATE" "$phase" && return 0
+
+  rp_log INFO "factory reset phase started: $phase"
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting factory reset phase: $phase" || true; fi
+
+  while true; do
+    if "$@"; then
+      if [[ "$phase" != final-cleanup ]]; then
+        rp_phase_mark_done "$RP_FACTORY_RESET_STATE" "$phase" || return 1
+        rp_log INFO "factory reset phase completed: $phase"
+      fi
+      if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed factory reset phase: $phase" || true; fi
+      return 0
+    else
+      rc=$?
+    fi
+
+    rp_log ERROR "factory reset phase failed: $phase"
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Factory reset stage failed: $phase" || true; fi
+    if [[ "${RP_UI_MODE:-text}" != tui ]] || ! declare -F rp_ui_failure_action >/dev/null; then
+      return "$rc"
+    fi
+    action="$(rp_ui_failure_action "$phase" "Factory reset stage failed: $phase")" || return "$rc"
+    case "$action" in
+      retry)
+        rp_log INFO "factory reset phase retry requested: $phase"
+        if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Retrying factory reset phase: $phase" || true; fi
+        ;;
+      exit|*) return "$rc" ;;
+    esac
+  done
+}
+
+rp_reset_remove_installer_state() {
+  local ui_dir="${RP_INSTALLER_UI_DIR:-${RP_GUM_INSTALL_DIR:-/var/lib/resourceportal/installer-ui}}"
+  rm -f \
+    "$RP_INSTALLER_STATE_DIR/primary.state" \
+    "$RP_INSTALLER_STATE_DIR/release.json" \
+    "$RP_INSTALLER_STATE_DIR/zitadel-bootstrap.json" \
+    "$RP_INSTALLER_STATE_DIR/owned-resources" || return 1
+  rm -rf \
+    "$RP_INSTALLER_STATE_DIR/secrets" \
+    "$RP_INSTALLER_STATE_DIR/enrollment" \
+    "$RP_INSTALLER_STATE_DIR/identity-bootstrap" \
+    "$ui_dir" || return 1
+  rmdir "$RP_INSTALLER_STATE_DIR" >/dev/null 2>&1 || true
+}
+
+rp_reset_final_cleanup() {
+  local message='Factory reset complete: ResourcePortal data and storage were destroyed.'
+  local log_dir="${RP_RESET_LOG_DIR:-/var/log/resourceportal}"
+
+  if [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_ui_event >/dev/null; then
+    rp_ui_event operation_updated final-cleanup "$message" || true
+  else
+    printf '%s\n' "$message"
+  fi
+
+  rm -rf "$log_dir" || return 1
+  rm -f "$RP_FACTORY_RESET_PLAN" || return 1
+  rm -f "$RP_FACTORY_RESET_STATE" || return 1
+  rmdir "$RP_RESET_STATE_DIR" >/dev/null 2>&1 || true
+}
+
+rp_reset_factory_phase_command() {
+  case "$1" in
+    stop-services) printf 'rp_reset_stop_services\n' ;;
+    remove-stack) printf 'rp_reset_remove_stack\n' ;;
+    remove-swarm-resources) printf 'rp_reset_remove_swarm_resources\n' ;;
+    remove-enrollment) printf 'rp_reset_remove_enrollment\n' ;;
+    remove-system-config) printf 'rp_reset_remove_system_config\n' ;;
+    unmount-runtime) printf 'rp_reset_unmount_runtime\n' ;;
+    leave-swarm) printf 'rp_reset_leave_swarm\n' ;;
+    remove-docker) printf 'rp_reset_remove_docker\n' ;;
+    remove-docker-data) printf 'rp_reset_remove_docker_data\n' ;;
+    wipe-storage) printf 'rp_reset_wipe_storage\n' ;;
+    remove-rp-data) printf 'rp_reset_remove_rp_data\n' ;;
+    remove-packages) printf 'rp_reset_remove_packages\n' ;;
+    remove-installer-state) printf 'rp_reset_remove_installer_state\n' ;;
+    final-cleanup) printf 'rp_reset_final_cleanup\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+rp_reset_factory() {
+  local phase command
+
+  if [[ "${RP_UI_MODE:-text}" == tui ]] && declare -F rp_dashboard_init >/dev/null; then
+    rp_dashboard_init reset-factory "$RP_FACTORY_RESET_STATE"
+    if declare -F rp_dashboard_enter >/dev/null; then rp_dashboard_enter || true; fi
+  fi
+
+  # Preflight is intentionally re-run on every process invocation. On resume it
+  # reloads and revalidates the already-approved factory.plan instead of selecting
+  # a new destructive target.
+  rp_reset_factory_preflight || return 1
+  if ! rp_phase_done "$RP_FACTORY_RESET_STATE" preflight; then
+    rp_phase_mark_done "$RP_FACTORY_RESET_STATE" preflight || return 1
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed preflight 'Factory reset preflight completed' || true; fi
+  fi
+
+  while IFS= read -r phase; do
+    [[ "$phase" == preflight ]] && continue
+    command="$(rp_reset_factory_phase_command "$phase")" || return 1
+    rp_reset_run_phase "$phase" "$command" || return $?
+  done < <(rp_factory_reset_phase_names)
 }

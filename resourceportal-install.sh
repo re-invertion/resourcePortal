@@ -102,7 +102,9 @@ rp_dispatch() {
       ;;
     reset)
       rp_reset "$scope" || return $?
-      if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete reset || true; fi
+      if declare -F rp_dashboard_complete >/dev/null; then
+        if [[ "$scope" == factory ]]; then rp_dashboard_complete reset-factory || true; else rp_dashboard_complete reset || true; fi
+      fi
       ;;
     *)
       printf 'Unknown installer mode: %s\n' "$mode" >&2

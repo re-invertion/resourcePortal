@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/ui.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
+source "$repo_root/scripts/installer/reset.sh"
 [[ -r "$repo_root/scripts/installer/dashboard.sh" ]] && source "$repo_root/scripts/installer/dashboard.sh"
 
 failures=0
@@ -164,6 +166,18 @@ if declare -F rp_dashboard_completion_text >/dev/null; then
 else
   printf 'FAIL: completion renderer exists\n' >&2; failures=$((failures+1))
 fi
+
+
+factory_state="$(mktemp)"
+assert_eq 'Factory Reset' "$(rp_dashboard_mode_label reset-factory)" 'factory reset has destructive mode label'
+rp_dashboard_init reset-factory "$factory_state"
+assert_contains "${RP_DASHBOARD_PHASES[*]}" 'wipe-storage' 'factory dashboard phase list includes storage wipe'
+assert_eq pending "$(rp_dashboard_phase_status wipe-storage)" 'factory dashboard includes storage wipe phase'
+factory_render="$(rp_dashboard_render_text)"
+assert_contains "$factory_render" 'Mode: Factory Reset' 'factory dashboard visibly labels destructive mode'
+factory_completion="$(rp_dashboard_completion_text reset-factory)"
+assert_contains "$factory_completion" 'ResourcePortal data and storage were destroyed' 'factory completion states destructive result'
+rm -f "$factory_state"
 
 rm -f "$state"
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi

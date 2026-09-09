@@ -128,6 +128,29 @@ assert_eq 2 "$(cat "$retry_count")" 'failed TUI phase retries exactly once befor
 assert_eq 1 "$(grep -c '^dns$' "$retry_state")" 'retry success creates one checkpoint'
 unset -f retry_phase rp_ui_event rp_ui_failure_action
 
+
+# 9. Factory-reset phase retry uses the separate reset journal exactly once.
+source "$repo_root/scripts/installer/reset.sh"
+reset_retry_state="$tmpdir/factory-retry.state"; : >"$reset_retry_state"
+RP_FACTORY_RESET_STATE="$reset_retry_state"; export RP_FACTORY_RESET_STATE
+reset_retry_count="$tmpdir/factory-retry-count"; printf '0\n' >"$reset_retry_count"
+reset_retry_phase(){
+  local n
+  n="$(cat "$reset_retry_count")"; n=$((n+1)); printf '%s\n' "$n" >"$reset_retry_count"
+  (( n >= 2 ))
+}
+rp_ui_event(){ :; }
+rp_ui_failure_action(){ printf 'retry\n'; }
+RP_UI_MODE=tui
+set +e
+rp_reset_run_phase wipe-storage reset_retry_phase
+reset_retry_rc=$?
+set -e
+assert_eq 0 "$reset_retry_rc" 'factory reset failed phase can retry'
+assert_eq 2 "$(cat "$reset_retry_count")" 'factory reset retry reruns failed command once'
+assert_eq 1 "$(grep -c '^wipe-storage$' "$reset_retry_state")" 'factory reset retry creates one checkpoint'
+unset -f reset_retry_phase rp_ui_event rp_ui_failure_action
+
 if (( failures > 0 )); then
   printf '%s test(s) failed\n' "$failures" >&2
   exit 1

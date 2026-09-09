@@ -450,6 +450,64 @@ assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb2' 'whole-disk reset wipes 
 assert_contains "$disk_wipe_text" 'sgdisk --zap-all /dev/sdb' 'whole-disk reset zaps approved disk partition table'
 assert_contains "$disk_wipe_text" 'wipefs -a /dev/sdb' 'whole-disk reset wipes approved disk signatures'
 
+
+# Task 7: stable factory phase order and resumable reset journal.
+expected_factory_phases=$'preflight\nstop-services\nremove-stack\nremove-swarm-resources\nremove-enrollment\nremove-system-config\nunmount-runtime\nleave-swarm\nremove-docker\nremove-docker-data\nwipe-storage\nremove-rp-data\nremove-packages\nremove-installer-state\nfinal-cleanup'
+assert_eq "$expected_factory_phases" "$(rp_factory_reset_phase_names 2>/dev/null || true)" 'factory reset phase order is stable'
+
+test_factory_resume_journal() (
+  local root="$tmpdir/task7-resume" calls="$tmpdir/task7-resume.calls" fail_marker="$tmpdir/task7-resume.fail"
+  rm -rf "$root" "$calls" "$fail_marker"; mkdir -p "$root/installer-state" "$root/reset-state" "$root/log"
+  RP_FACTORY_RESET_STATE="$root/reset-state/factory.state"
+  RP_FACTORY_RESET_PLAN="$root/reset-state/factory.plan"
+  RP_RESET_STATE_DIR="$root/reset-state"
+  RP_INSTALLER_STATE_DIR="$root/installer-state"
+  RP_INSTALLER_CONFIG_FILE="$root/installer.conf"
+  RP_INSTALLER_UI_DIR="$root/installer-ui"
+  RP_RESET_LOG_DIR="$root/log"
+  RP_UI_MODE=text
+  export RP_FACTORY_RESET_STATE RP_FACTORY_RESET_PLAN RP_RESET_STATE_DIR RP_INSTALLER_STATE_DIR \
+    RP_INSTALLER_CONFIG_FILE RP_INSTALLER_UI_DIR RP_RESET_LOG_DIR RP_UI_MODE
+  printf 'stack=resourceportal-control-plane\n' >"$RP_FACTORY_RESET_PLAN"
+
+  rp_reset_factory_preflight(){ printf 'preflight\n' >>"$calls"; return 0; }
+  rp_reset_stop_services(){ printf 'stop-services\n' >>"$calls"; }
+  rp_reset_remove_stack(){ printf 'remove-stack\n' >>"$calls"; }
+  rp_reset_remove_swarm_resources(){ printf 'remove-swarm-resources\n' >>"$calls"; }
+  rp_reset_remove_enrollment(){ printf 'remove-enrollment\n' >>"$calls"; }
+  rp_reset_remove_system_config(){ printf 'remove-system-config\n' >>"$calls"; }
+  rp_reset_unmount_runtime(){ printf 'unmount-runtime\n' >>"$calls"; }
+  rp_reset_leave_swarm(){ printf 'leave-swarm\n' >>"$calls"; }
+  rp_reset_remove_docker(){ printf 'remove-docker\n' >>"$calls"; }
+  rp_reset_remove_docker_data(){ printf 'remove-docker-data\n' >>"$calls"; }
+  rp_reset_wipe_storage(){ printf 'wipe-storage\n' >>"$calls"; }
+  rp_reset_remove_rp_data(){
+    printf 'remove-rp-data\n' >>"$calls"
+    if [[ ! -e "$fail_marker" ]]; then : >"$fail_marker"; return 1; fi
+    return 0
+  }
+  rp_reset_remove_packages(){ printf 'remove-packages\n' >>"$calls"; }
+  rp_primary_install(){ printf 'FORBIDDEN-primary-install\n' >>"$calls"; return 99; }
+  rp_primary_create_platform_secrets(){ printf 'FORBIDDEN-secret-generation\n' >>"$calls"; return 99; }
+
+  set +e
+  rp_reset_factory >/dev/null 2>&1
+  first_rc=$?
+  set -e
+  [[ "$first_rc" == 1 ]] || return 1
+  grep -Fxq wipe-storage "$RP_FACTORY_RESET_STATE" || return 1
+  ! grep -Fxq remove-rp-data "$RP_FACTORY_RESET_STATE" || return 1
+  first_count="$(wc -l <"$calls" | tr -d ' ')"
+
+  rp_reset_factory >/dev/null 2>&1 || return 1
+  second_calls="$(tail -n +$((first_count + 1)) "$calls")"
+  [[ "$second_calls" == $'preflight\nremove-rp-data\nremove-packages' ]] || return 1
+  [[ ! -e "$RP_FACTORY_RESET_STATE" ]] || return 1
+  [[ ! -e "$RP_FACTORY_RESET_PLAN" ]] || return 1
+  ! grep -q '^FORBIDDEN-' "$calls" || return 1
+)
+assert_status 0 'factory reset resumes after wipe without replaying completed destructive stages' test_factory_resume_journal
+
 if (( failures > 0 )); then
   printf '%s\n' "$failures test(s) failed" >&2
   exit 1
