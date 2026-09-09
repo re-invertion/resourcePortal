@@ -153,3 +153,10 @@ rp_check_manager_quorum() {
   printf 'state=%s managers=%s reachable=%s recommendation=%s\n' "$state" "$total" "$reachable" "$recommendation"
   [[ "$state" == "healthy" ]]
 }
+
+# Task 5 replaces this compatibility hook with exact ResourcePortal/unrelated
+# Swarm resource classification. Keeping it as a function makes factory
+# preflight testable without mutating Swarm state.
+rp_swarm_unrelated_resources() {
+  return 0
+}

@@ -257,5 +257,46 @@ test_storage_ownership_records() (
 assert_status 0 'Primary records storage, fstab, and storage-ready ownership' test_storage_ownership_records
 rm -rf "$storage_ownership_dir"
 
+test_root_backing_disk_rejected() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sda
+)
+assert_status 1 'root backing disk is rejected' test_root_backing_disk_rejected
+
+test_root_backing_partition_rejected() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sda2
+)
+assert_status 1 'root backing partition is rejected' test_root_backing_partition_rejected
+
+test_unrelated_disk_allowed() (
+  rp_storage_root_source() { printf '/dev/sda2\n'; }
+  rp_parent_block_device() { [[ "$1" == /dev/sda2 ]] && printf '/dev/sda\n'; }
+  readlink() { [[ "$1" == -f ]] && printf '%s\n' "$2"; }
+  rp_storage_related_to_root /dev/sdb
+)
+assert_status 0 'unrelated storage disk is accepted by root relation check' test_unrelated_disk_allowed
+
+test_stable_storage_fingerprint() (
+  lsblk() { [[ "$*" == '-dnbo TYPE,SIZE /dev/sdb' ]] && printf 'disk 2147483648\n'; }
+  udevadm() { printf 'ID_SERIAL=SERIAL-123\nID_MODEL=TESTDISK\n'; }
+  blkid() { return 1; }
+  rp_storage_fingerprint /dev/sdb
+)
+fingerprint_out="$(test_stable_storage_fingerprint 2>/dev/null || true)"
+assert_contains "$fingerprint_out" 'ID_SERIAL=SERIAL-123' 'storage fingerprint includes stable serial identity'
+
+test_missing_stable_storage_identity() (
+  lsblk() { [[ "$*" == '-dnbo TYPE,SIZE /dev/sdb' ]] && printf 'disk 2147483648\n'; }
+  udevadm() { return 1; }
+  blkid() { return 1; }
+  rp_storage_fingerprint /dev/sdb
+)
+assert_status 1 'storage fingerprint rejects path-only identity' test_missing_stable_storage_identity
+
 if (( failures > 0 )); then printf '%s\n' "$failures test(s) failed" >&2; exit 1; fi
 printf 'All installer storage tests passed.\n'
