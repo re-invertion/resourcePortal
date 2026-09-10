@@ -52,6 +52,35 @@ rp_bundle_value() {
   printf '%s\n' "${line#*=}"
 }
 
+rp_join_swarm_for_enrollment() {
+  local role="$1" join_token="$2" manager_endpoint="$3" expected_cluster_id="$4"
+  local state local_cluster_id control_available
+  rp_validate_enrollment_role "$role" || return 1
+  state="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+  if [[ "$state" == active ]]; then
+    local_cluster_id="$(docker info --format '{{.Swarm.Cluster.ID}}')" || return 1
+    [[ -n "$local_cluster_id" && "$local_cluster_id" == "$expected_cluster_id" ]] || {
+      printf 'Host is already joined to a different Docker Swarm cluster.\n' >&2
+      return 1
+    }
+    control_available="$(docker info --format '{{.Swarm.ControlAvailable}}')" || return 1
+    if [[ "$role" == manager && "$control_available" != true ]]; then
+      printf 'Host is already joined as a worker, but the enrollment bundle requires manager role.\n' >&2
+      return 1
+    fi
+    if [[ "$role" == worker && "$control_available" == true ]]; then
+      printf 'Host is already joined as a manager, but the enrollment bundle requires worker role.\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+  [[ "$state" == inactive || -z "$state" ]] || {
+    printf 'Docker Swarm local node state is not joinable: %s\n' "$state" >&2
+    return 1
+  }
+  docker swarm join --token "$join_token" "$manager_endpoint"
+}
+
 rp_sync_swarm_join_token_secrets() {
   local tmpdir worker_file manager_file worker_ref manager_ref
   tmpdir="$(mktemp -d /tmp/resourceportal-enrollment-tokens.XXXXXX)" || return 1
@@ -160,7 +189,7 @@ rp_issue_enrollment_bundle() {
 }
 
 rp_redeem_join_bundle() {
-  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_cidr node_id ssh_port control_plane ingress completion
+  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_id cluster_cidr node_id ssh_port control_plane ingress completion
   command -v jq >/dev/null 2>&1 || { printf 'jq is required for node enrollment.\n' >&2; return 1; }
   role="$(rp_bundle_value "$bundle" RP_ENROLLMENT_ROLE)" || return 1
   token="$(rp_bundle_value "$bundle" RP_ENROLLMENT_TOKEN)" || return 1
@@ -179,6 +208,7 @@ rp_redeem_join_bundle() {
   join_token="$(jq -er '.joinToken' "$response")" || return 1
   manager_endpoint="$(jq -er '.managerEndpoint' "$response")" || return 1
   nfs_server="$(jq -er '.nfsServerAddress' "$response")" || return 1
+  cluster_id="$(jq -er '.clusterId' "$response")" || return 1
   cluster_cidr="$(jq -er '.clusterCidr' "$response")" || return 1
 
   control_plane="${RP_JOIN_CONTROL_PLANE:-false}"
@@ -187,7 +217,7 @@ rp_redeem_join_bundle() {
   ssh_port="$(rp_detect_ssh_port)" || return 1
   rp_configure_ufw "$ssh_port" "$cluster_cidr" "$ingress" || return 1
 
-  docker swarm join --token "$join_token" "$manager_endpoint" || return 1
+  rp_join_swarm_for_enrollment "$role" "$join_token" "$manager_endpoint" "$cluster_id" || return 1
   rp_mount_runtime_namespace nfs volumes "$nfs_server" || return 1
   if [[ "$role" == "manager" ]]; then
     rp_mount_runtime_namespace nfs secrets "$nfs_server" || return 1

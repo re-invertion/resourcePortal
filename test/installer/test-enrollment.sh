@@ -46,6 +46,43 @@ contains "$enrollment_source" '/installer/enrollment/redeem' 'redemption uses de
 contains "$enrollment_source" '/installer/enrollment/complete' 'joined node calls completion endpoint'
 contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can inspect and label joined Swarm nodes'
 contains "$enrollment_source" 'rp_mount_runtime_namespace nfs volumes' 'worker mounts shared volume namespace over NFS'
+contains "$enrollment_source" 'rp_join_swarm_for_enrollment' 'add-node uses resumable Swarm join helper'
+
+resume_join_test() (
+  calls="$(mktemp /tmp/rp-enrollment-join-calls.XXXXXX)"
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'cluster-123\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'true\n'; return 0; fi
+    printf '%s\n' "$*" >>"$calls"
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123 || return 1
+  [[ ! -s "$calls" ]]
+)
+status 0 'add-node resumes manager already joined to expected cluster without rejoining' resume_join_test
+
+wrong_cluster_test() (
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'other-cluster\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'true\n'; return 0; fi
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123
+)
+status 1 'add-node refuses resume when host belongs to another Swarm cluster' wrong_cluster_test
+
+wrong_role_test() (
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'cluster-123\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'false\n'; return 0; fi
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123
+)
+status 1 'add-node refuses manager resume when local node is only a worker' wrong_role_test
 contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
 issue_function="$(sed -n '/rp_issue_enrollment_bundle()/,/^}/p' "$repo_root/scripts/installer/enrollment.sh")"
 contains "$issue_function" '--detach' 'enrollment issuer one-shot service is created detached'
