@@ -70,6 +70,22 @@ assert_eq '/srv/resource-portal/storage/platform /mnt/resourceportal/platform no
   "$(rp_render_local_bind_fstab_entry /srv/resource-portal/storage platform)" "render local platform bind"
 assert_status 1 "reject unknown NFS namespace" rp_render_nfs_fstab_entry 10.20.0.10 databases
 
+# ResourcePortal exports must be included by the active Ganesha main config.
+ganesha_include_tmp="$(mktemp -d)"
+main_ganesha="$ganesha_include_tmp/ganesha.conf"
+rp_ganesha="$ganesha_include_tmp/resourceportal.conf"
+printf '%s\n' '# unrelated main config' >"$main_ganesha"
+printf '%s\n' '# Managed by ResourcePortal Production Installer.' >"$rp_ganesha"
+rp_ensure_ganesha_include "$main_ganesha" "$rp_ganesha"
+rp_ensure_ganesha_include "$main_ganesha" "$rp_ganesha"
+include_line="%include \"$rp_ganesha\""
+assert_contains "$(cat "$main_ganesha")" "$include_line" 'active Ganesha config includes ResourcePortal exports'
+assert_eq '1' "$(grep -Fxc -- "$include_line" "$main_ganesha")" 'Ganesha include is idempotent'
+rp_remove_ganesha_include "$main_ganesha" "$rp_ganesha"
+assert_not_contains "$(cat "$main_ganesha")" "$include_line" 'Ganesha cleanup removes ResourcePortal include'
+assert_contains "$(cat "$main_ganesha")" '# unrelated main config' 'Ganesha cleanup preserves unrelated main config'
+rm -rf "$ganesha_include_tmp"
+
 args="$(rp_storage_label_args true false true)"
 assert_contains "$args" '--label-add resourceportal.storage.volumes=true' "volumes label when ready"
 assert_contains "$args" '--label-add resourceportal.storage.platform=true' "platform label when ready"
