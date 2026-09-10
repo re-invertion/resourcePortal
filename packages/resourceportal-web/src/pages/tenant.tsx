@@ -41,6 +41,7 @@ import {
 } from "./form-templates";
 import { buildQuotaMutation } from "./quota-payload";
 import { TenantDashboard } from "./tenant-dashboard";
+import { AppGroupWorkspace } from "./app-group-workspace";
 
 const enc = encodeURIComponent;
 const itemId = (item: Record<string, unknown>) => enc(String(item.id ?? ""));
@@ -117,19 +118,16 @@ export function TenantPage({ tenantId, section, resourceId, userId }: { tenantId
 function AppGroupPage({ tenantId, appGroupId, permissions }: { tenantId: string; appGroupId: string; permissions?: string[] }) {
   const root = `/api/tenants/${enc(tenantId)}/app-groups/${enc(appGroupId)}`;
   const [selectedSingleApp, setSelectedSingleApp] = useState<Record<string, unknown>>();
-  return <main>
-    <p><a href={`/tenants/${enc(tenantId)}/app-groups`}>← AppGroups</a></p>
-    <h1>AppGroup {appGroupId}</h1>
-    <ReadOnlyPanel title="AppGroup detail" path={root} />
-    <section><h2>Runtime</h2><MutationButton label="Start" path={`${root}/runtime/start`} /><MutationButton label="Stop" path={`${root}/runtime/stop`} /><MutationButton label="Restart" path={`${root}/runtime/restart`} /><MutationButton label="Discard draft changes" path={`${root}/discard-changes`} confirm="Discard all draft changes?" /></section>
-    <ReadOnlyPanel title="Stack preview" path={`${root}/stack-preview`} />
-    <ResourcePanel title="SingleApps" listPath={`${root}/single-apps`} createPath={`${root}/single-apps`} createInitialValue={singleAppForm} itemPath={(item) => `${root}/single-apps/${itemId(item)}`} onSelect={setSelectedSingleApp} selectLabel="Configure" actions={[{ label: "Start", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/start` }, { label: "Stop", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/stop` }, { label: "Restart", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/restart` }]} permissions={permissions} />
-    <SingleAppWorkbench root={root} selected={selectedSingleApp} onClear={() => setSelectedSingleApp(undefined)} />
-    <ResourcePanel title="Variables" listPath={`${root}/variables`} createPath={`${root}/variables`} createInitialValue={variableForm} itemPath={(item) => `${root}/variables/${itemId(item)}`} permissions={permissions} />
-    <ResourcePanel title="Configs" listPath={`${root}/configs`} createPath={`${root}/configs`} createInitialValue={configForm} itemPath={(item) => `${root}/configs/${itemId(item)}`} permissions={permissions} />
-    <ResourcePanel title="Secrets" listPath={`${root}/secrets`} createPath={`${root}/secrets`} createInitialValue={secretForm} itemPath={(item) => `${root}/secrets/${itemId(item)}`} help="Secret values are accepted only in mutation payloads; reads render backend metadata only." permissions={permissions} />
-    <DeploymentWorkbench root={root} />
-  </main>;
+  return <AppGroupWorkspace
+    tenantId={tenantId}
+    appGroupId={appGroupId}
+    apps={<><ResourcePanel title="SingleApps" listPath={`${root}/single-apps`} createPath={`${root}/single-apps`} createInitialValue={singleAppForm} itemPath={(item) => `${root}/single-apps/${itemId(item)}`} onSelect={setSelectedSingleApp} selectLabel="Configure" actions={[{ label: "Start", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/start` }, { label: "Stop", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/stop` }, { label: "Restart", method: "POST", path: (item) => `${root}/single-apps/${itemId(item)}/runtime/restart` }]} permissions={permissions} /><SingleAppWorkbench root={root} selected={selectedSingleApp} onClear={() => setSelectedSingleApp(undefined)} /></>}
+    config={<><ResourcePanel title="Variables" listPath={`${root}/variables`} createPath={`${root}/variables`} createInitialValue={variableForm} itemPath={(item) => `${root}/variables/${itemId(item)}`} permissions={permissions} /><ResourcePanel title="Configs" listPath={`${root}/configs`} createPath={`${root}/configs`} createInitialValue={configForm} itemPath={(item) => `${root}/configs/${itemId(item)}`} permissions={permissions} /><ResourcePanel title="Secrets" listPath={`${root}/secrets`} createPath={`${root}/secrets`} createInitialValue={secretForm} itemPath={(item) => `${root}/secrets/${itemId(item)}`} help="Secret values are accepted only in mutation payloads; reads render backend metadata only." permissions={permissions} /></>}
+    networking={<div className="rp-context-links"><p>HTTP endpoints are configured per SingleApp. Select an application above to manage endpoints and attachments.</p><a href={`/tenants/${enc(tenantId)}/domains`}>Manage tenant domains</a></div>}
+    deployments={<DeploymentWorkbench root={root} />}
+    activity={<div className="rp-context-links"><p>Deployment events live with each deployment. Tenant-wide execution and audit history remain available in Activity.</p><a href={`/tenants/${enc(tenantId)}/operations`}>Open Operations</a><a href={`/tenants/${enc(tenantId)}/audit`}>Open Audit log</a></div>}
+    advanced={<><ReadOnlyPanel title="App Group detail" path={root} /><ReadOnlyPanel title="Stack preview" path={`${root}/stack-preview`} /><section><h2>Draft controls</h2><MutationButton label="Discard draft changes" path={`${root}/discard-changes`} confirm="Discard all draft changes?" /></section></>}
+  />;
 }
 
 function DeploymentWorkbench({ root }: { root: string }) {
