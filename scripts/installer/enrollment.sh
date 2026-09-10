@@ -130,6 +130,7 @@ rp_issue_enrollment_bundle() {
   control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
   trap 'rm -rf "$workdir"' RETURN
   docker service create \
+    --detach \
     --name "$service_name" --restart-condition none \
     --network "$control_network" \
     --constraint 'node.role==manager' \
