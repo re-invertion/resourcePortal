@@ -136,6 +136,16 @@ eq 'zitadel_masterkey_ref' "${RP_CFG_ZITADEL_KEY_SWARM_REF:-}" 'resume restores 
 eq '32' "$(wc -c <"$resume_secret_dir/zitadel-master" | tr -d ' ')" 'resume normalizes legacy newline-terminated ZITADEL masterkey to exactly 32 bytes'
 eq '0123456789abcdef0123456789abcdef' "$(cat "$resume_secret_dir/zitadel-master")" 'resume preserves legacy ZITADEL masterkey material while removing newline'
 eq 'bootstrap-pending' "${RP_CFG_OIDC_CLIENT_ID:-}" 'resume restores bootstrap OIDC client id'
+
+# Once identity bootstrap has produced a real OIDC client, replaying the completed
+# secrets phase must not replace that durable identity state with the bootstrap placeholder.
+RP_CFG_OIDC_CLIENT_ID='client-real-42'
+RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_real42'
+export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF
+status 0 'resume preserves completed identity OIDC state' rp_primary_restore_secret_state
+eq 'client-real-42' "${RP_CFG_OIDC_CLIENT_ID:-}" 'resume preserves real OIDC client id'
+eq 'rp_oidc_client_secret_real42' "${RP_CFG_OIDC_SWARM_REF:-}" 'resume preserves real OIDC secret ref'
+
 unset RP_INSTALLER_SECRET_STATE_DIR
 rm -rf "$resume_secret_dir"
 
@@ -216,6 +226,8 @@ done
 lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
 [[ "$lifecycle_source" == *"rp_run_logged_operation migrations 'Applying database migrations'"* ]] && pass 'migrations use logged live operation' || fail 'migrations use logged live operation'
 [[ "$lifecycle_source" == *"rp_run_logged_operation identity 'Bootstrapping identity provider'"* ]] && pass 'identity bootstrap uses logged live operation' || fail 'identity bootstrap uses logged live operation'
+identity_phase_source="$(sed -n '/rp_primary_bootstrap_identity()/,/^}/p' "$repo_root/scripts/installer/lifecycle.sh")"
+[[ "$identity_phase_source" == *'rp_config_write /etc/resourceportal/installer.conf'* ]] && pass 'identity bootstrap persists real OIDC state before checkpoint' || fail 'identity bootstrap persists real OIDC state before checkpoint'
 [[ "$lifecycle_source" == *"Waiting for HTTPS certificate"* ]] && pass 'ingress reports certificate wait' || fail 'ingress reports certificate wait'
 [[ "$lifecycle_source" == *"Waiting for ResourcePortal health"* ]] && pass 'final rollout reports health wait' || fail 'final rollout reports health wait'
 for required in 'rp_collect_primary_config' 'RP_CFG_CLUSTER_CIDR' 'RP_CFG_SWARM_ADVERTISE_ADDR' 'RP_CFG_STORAGE_BASE_PATH' 'RP_CFG_DOMAIN' 'RP_CFG_ZITADEL_DOMAIN' 'RP_CFG_ACME_EMAIL' 'RP_CFG_RELEASE_VERSION' 'RP_ADMIN_EMAIL' 'RP_ADMIN_PASSWORD' 'RP_CFG_SMTP_DEFERRED'; do

@@ -314,7 +314,8 @@ rp_prepare_zitadel_masterkey_file() {
 
 rp_primary_restore_secret_state() {
   local dir="${RP_INSTALLER_SECRET_STATE_DIR:-/var/lib/resourceportal/installer-state/secrets}"
-  local name dbpass zdbpass master enc cookie worker oidc_placeholder dburl
+  local name dbpass zdbpass master enc cookie worker oidc_placeholder dburl placeholder_oidc_ref
+  local existing_oidc_client_id="${RP_CFG_OIDC_CLIENT_ID:-}" existing_oidc_ref="${RP_CFG_OIDC_SWARM_REF:-}"
 
   for name in encryption cookie worker oidc-placeholder rp-postgres zitadel-postgres zitadel-master; do
     if [[ ! -r "$dir/$name" ]]; then
@@ -344,8 +345,14 @@ rp_primary_restore_secret_state() {
 
   RP_CFG_COOKIE_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_cookie_secret "$cookie")" || return 1
   RP_CFG_WORKER_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_internal_worker_token "$worker")" || return 1
-  RP_CFG_OIDC_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")" || return 1
-  : "${RP_CFG_OIDC_CLIENT_ID:=bootstrap-pending}"
+  placeholder_oidc_ref="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")" || return 1
+  if [[ -n "$existing_oidc_client_id" && "$existing_oidc_client_id" != bootstrap-pending && -n "$existing_oidc_ref" && "$existing_oidc_ref" != "$placeholder_oidc_ref" ]]; then
+    RP_CFG_OIDC_CLIENT_ID="$existing_oidc_client_id"
+    RP_CFG_OIDC_SWARM_REF="$existing_oidc_ref"
+  else
+    RP_CFG_OIDC_CLIENT_ID=bootstrap-pending
+    RP_CFG_OIDC_SWARM_REF="$placeholder_oidc_ref"
+  fi
   export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID RP_CFG_ZITADEL_KEY_SWARM_REF
 }
 
@@ -497,6 +504,7 @@ rp_primary_bootstrap_identity() {
   rp_ensure_swarm_secret rp_first_admin_password "$admin_file"
   rp_run_logged_operation identity 'Bootstrapping identity provider' rp_run_zitadel_bootstrap "$output" "$RP_ADMIN_USERNAME" "$RP_ADMIN_EMAIL" "$admin_file" || return 1
   rp_apply_zitadel_bootstrap_output "$output" || return 1
+  rp_config_write /etc/resourceportal/installer.conf || return 1
   rp_remove_secret_file "$admin_file"
   unset RP_ADMIN_PASSWORD
 }
