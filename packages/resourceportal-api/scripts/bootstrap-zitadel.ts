@@ -80,6 +80,9 @@ async function main() {
   await waitForZitadel();
 
   const pat = readPat();
+  if (productionBootstrap) {
+    await configureProductionLoginVersion(pat);
+  }
   const organization = await getOrCreateOrganization(pat);
   const project = await getOrCreateProject(pat, organization.id);
   const app = await getOrCreateOidcApp(pat, organization.id, project.id);
@@ -161,6 +164,16 @@ function readPat() {
   }
 
   return pat.trim();
+}
+
+async function configureProductionLoginVersion(pat: string) {
+  await zitadelApi(
+    pat,
+    "/v2/features/instance",
+    { loginV2: { required: false } },
+    undefined,
+    "PUT",
+  );
 }
 
 async function getOrCreateOrganization(pat: string): Promise<Organization> {
@@ -269,6 +282,7 @@ async function getOrCreateOidcApp(
       devMode: !productionBootstrap,
       accessTokenType: "OIDC_TOKEN_TYPE_JWT",
       idTokenUserinfoAssertion: true,
+      loginVersion: { loginV1: {} },
     },
     organizationId,
   );
@@ -342,6 +356,7 @@ async function zitadelApi<T>(
   path: string,
   body: JsonObject,
   organizationId?: string,
+  method: "POST" | "PUT" = "POST",
 ): Promise<T> {
   const headers: Record<string, string> = {
     authorization: `Bearer ${pat}`,
@@ -354,7 +369,7 @@ async function zitadelApi<T>(
   }
 
   const response = await fetch(`${issuerUrl}${path}`, {
-    method: "POST",
+    method,
     headers,
     body: JSON.stringify(body),
   });
