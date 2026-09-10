@@ -14,6 +14,58 @@ status 0 'worker role accepted' rp_validate_enrollment_role worker
 status 0 'manager role accepted' rp_validate_enrollment_role manager
 status 1 'edited admin role rejected' rp_validate_enrollment_role admin
 
+issue_cli_test() (
+  RP_CFG_SWARM_ADVERTISE_ADDR=10.20.0.10
+  RP_CFG_API_IMAGE=example.invalid/api@sha256:deadbeef
+  export RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_API_IMAGE
+  rp_spki_pin(){ printf 'sha256//test-pin\n'; }
+  rp_issue_enrollment_bundle(){
+    [[ "$1" == manager ]] || return 1
+    [[ "$2" == /tmp/test-manager.bundle ]] || return 1
+    [[ "$3" == https://10.20.0.10:7443 ]] || return 1
+    [[ "$4" == sha256//test-pin ]] || return 1
+  }
+  RP_ENROLLMENT_CERT_PATH=/tmp/fake-enrollment.crt
+  export RP_ENROLLMENT_CERT_PATH
+  : >"$RP_ENROLLMENT_CERT_PATH"
+  rp_issue_node_bundle_cli manager /tmp/test-manager.bundle
+)
+status 0 'issue-bundle CLI derives pinned enrollment endpoint from Primary config' issue_cli_test
+
+test_enrollment_output_dir_owned_by_api_node() (
+  local root marker
+  root="$(mktemp -d /tmp/rp-enrollment-output.XXXXXX)"
+  marker="$root/chown"
+  docker() {
+    [[ "$1" == run ]] || return 1
+    printf '1001:1002\n'
+  }
+  chown() { printf '%s\n' "$*" >"$marker"; }
+  rp_prepare_enrollment_output_dir "$root/output" 'example.invalid/api@sha256:deadbeef' || return 1
+  [[ "$(cat "$marker")" == "1001:1002 $root/output" ]] || return 1
+  [[ "$(stat -c '%a' "$root/output")" == 700 ]]
+)
+status 0 'enrollment issuer output directory is writable by API node user' test_enrollment_output_dir_owned_by_api_node
+
+
+issuer_failure_clears_return_trap_test() (
+  RP_CFG_API_IMAGE=example.invalid/api@sha256:deadbeef
+  RP_CFG_STACK_NAME=resourceportal-control-plane
+  export RP_CFG_API_IMAGE RP_CFG_STACK_NAME
+  rp_prepare_enrollment_output_dir(){ mkdir -p "$1"; }
+  docker(){
+    if [[ "$1 $2" == "service create" ]]; then return 1; fi
+    return 0
+  }
+  set +e
+  rp_issue_enrollment_bundle manager /tmp/issuer-trap.bundle https://10.20.0.10:7443 sha256//pin-value
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || return 1
+  [[ -z "$(trap -p RETURN)" ]]
+)
+status 0 'failed bundle issuance does not leak RETURN cleanup trap into caller' issuer_failure_clears_return_trap_test
+
 bundle="$(mktemp /tmp/rp-join-bundle.XXXXXX)"
 rp_write_join_bundle "$bundle" worker 'enrollment-token-abc_1234567890123456789012345678901234567890' '2026-09-05T16:30:00.000Z' 'https://10.0.0.10:7443' 'sha256//pin-value'
 text="$(cat "$bundle")"
@@ -30,8 +82,78 @@ contains "$enrollment_source" '--insecure' 'self-signed TLS is accepted only wit
 contains "$enrollment_source" '/installer/enrollment/redeem' 'redemption uses dedicated enrollment endpoint'
 contains "$enrollment_source" '/installer/enrollment/complete' 'joined node calls completion endpoint'
 contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can inspect and label joined Swarm nodes'
+contains "$enrollment_source" '--user 0:0' 'enrollment listener runs as root for Docker socket access'
+not_contains "$enrollment_source" '--group-add' 'enrollment listener avoids unsupported Swarm group-add flag'
 contains "$enrollment_source" 'rp_mount_runtime_namespace nfs volumes' 'worker mounts shared volume namespace over NFS'
+contains "$enrollment_source" 'rp_join_swarm_for_enrollment' 'add-node uses resumable Swarm join helper'
+
+resume_join_test() (
+  calls="$(mktemp /tmp/rp-enrollment-join-calls.XXXXXX)"
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'cluster-123\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'true\n'; return 0; fi
+    printf '%s\n' "$*" >>"$calls"
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123 || return 1
+  [[ ! -s "$calls" ]]
+)
+status 0 'add-node resumes manager already joined to expected cluster without rejoining' resume_join_test
+
+wrong_cluster_test() (
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'other-cluster\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'true\n'; return 0; fi
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123
+)
+status 1 'add-node refuses resume when host belongs to another Swarm cluster' wrong_cluster_test
+
+wrong_role_test() (
+  docker() {
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.LocalNodeState}}" ]]; then printf 'active\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.Cluster.ID}}" ]]; then printf 'cluster-123\n'; return 0; fi
+    if [[ "$1 $2 $3" == "info --format {{.Swarm.ControlAvailable}}" ]]; then printf 'false\n'; return 0; fi
+    return 0
+  }
+  rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123
+)
+status 1 'add-node refuses manager resume when local node is only a worker' wrong_role_test
+
+
+enrollment_failure_clears_return_trap_test() (
+  bundle="$(mktemp /tmp/rp-enrollment-trap-bundle.XXXXXX)"
+  rp_write_join_bundle "$bundle" manager 'enrollment-token-abc_1234567890123456789012345678901234567890' '2026-09-10T12:00:00Z' 'https://10.20.0.10:7443' 'sha256//pin-value'
+  curl(){ printf '%s\n' '{"role":"manager","joinToken":"secret","managerEndpoint":"10.20.0.10:2377","nfsServerAddress":"10.20.0.10","clusterId":"cluster-123","clusterCidr":"10.20.0.0/24"}'; }
+  jq(){
+    case "$2" in
+      .role) printf 'manager\n' ;;
+      .joinToken) printf 'secret\n' ;;
+      .managerEndpoint) printf '10.20.0.10:2377\n' ;;
+      .nfsServerAddress) printf '10.20.0.10\n' ;;
+      .clusterId) printf 'cluster-123\n' ;;
+      .clusterCidr) printf '10.20.0.0/24\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_detect_ssh_port(){ printf '22\n'; }
+  rp_configure_ufw(){ return 0; }
+  rp_join_swarm_for_enrollment(){ return 0; }
+  rp_mount_runtime_namespace(){ return 1; }
+  set +e
+  rp_redeem_join_bundle "$bundle"
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || return 1
+  [[ -z "$(trap -p RETURN)" ]]
+)
+status 0 'failed add-node enrollment does not leak RETURN cleanup trap into caller' enrollment_failure_clears_return_trap_test
 contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
+issue_function="$(sed -n '/rp_issue_enrollment_bundle()/,/^}/p' "$repo_root/scripts/installer/enrollment.sh")"
+contains "$issue_function" '--detach' 'enrollment issuer one-shot service is created detached'
 not_contains "$enrollment_source" 'docker swarm join-token -q >' 'join tokens are never written by an unprotected shell redirection'
 control_network_refs="$(grep -c -- '--network "$control_network"' <<<"$enrollment_source" || true)"
 [[ "$control_network_refs" -ge 2 ]] && pass 'enrollment listener and issuer join RP control network' || fail 'enrollment listener and issuer join RP control network'

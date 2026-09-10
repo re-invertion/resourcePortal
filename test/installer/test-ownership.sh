@@ -137,6 +137,30 @@ test_automatic_dependency_is_owned() (
 )
 assert_status 0 'automatic apt dependency installed by ResourcePortal is owned' test_automatic_dependency_is_owned
 
+test_package_diff_uses_c_locale() (
+  local locale_manifest="$tmpdir/locale-owned"
+  local installed_marker="$tmpdir/locale-installed"
+  RP_OWNERSHIP_MANIFEST="$locale_manifest"
+  export RP_OWNERSHIP_MANIFEST
+  : >"$locale_manifest"
+  rm -f "$installed_marker"
+  rp_installed_package_names() {
+    printf '%s\n' ca-certificates
+    if [[ -e "$installed_marker" ]]; then printf '%s\n' nfs-ganesha; fi
+  }
+  apt-get() {
+    [[ "$1" == install ]] || return 1
+    : >"$installed_marker"
+  }
+  comm() {
+    [[ "${LC_ALL:-}" == C ]] || return 97
+    command comm "$@"
+  }
+  rp_apt_install_with_ownership nfs-ganesha || return 1
+  rp_ownership_has package nfs-ganesha
+)
+assert_status 0 'package ownership diff uses the same C locale as package sorting' test_package_diff_uses_c_locale
+
 assert_status 0 'Docker command presence wrapper exists' bash -c "source '$repo_root/scripts/installer/docker.sh'; declare -F rp_docker_command_present >/dev/null"
 
 test_preexisting_docker_not_claimed() (

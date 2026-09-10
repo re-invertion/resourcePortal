@@ -146,6 +146,7 @@ contains "$migration_source" '--detach' 'migration one-shot service is created d
 dockerfile_source="$(cat "$repo_root/Dockerfile")"
 contains "$dockerfile_source" 'COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules' 'runtime node user can prepare Prisma migration engines'
 not_contains "$final" 'mode: replicated-job' 'stack avoids unsupported DR job mode'
+not_contains "$final" 'condition: on-failure' 'long-running stack services restart after clean task exit'
 
 
 contains "$final" '/usr/local/bin/resourceportal-postgres-fence' 'RP PostgreSQL starts through storage fencing wrapper'

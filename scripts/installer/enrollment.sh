@@ -52,6 +52,35 @@ rp_bundle_value() {
   printf '%s\n' "${line#*=}"
 }
 
+rp_join_swarm_for_enrollment() {
+  local role="$1" join_token="$2" manager_endpoint="$3" expected_cluster_id="$4"
+  local state local_cluster_id control_available
+  rp_validate_enrollment_role "$role" || return 1
+  state="$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)"
+  if [[ "$state" == active ]]; then
+    local_cluster_id="$(docker info --format '{{.Swarm.Cluster.ID}}')" || return 1
+    [[ -n "$local_cluster_id" && "$local_cluster_id" == "$expected_cluster_id" ]] || {
+      printf 'Host is already joined to a different Docker Swarm cluster.\n' >&2
+      return 1
+    }
+    control_available="$(docker info --format '{{.Swarm.ControlAvailable}}')" || return 1
+    if [[ "$role" == manager && "$control_available" != true ]]; then
+      printf 'Host is already joined as a worker, but the enrollment bundle requires manager role.\n' >&2
+      return 1
+    fi
+    if [[ "$role" == worker && "$control_available" == true ]]; then
+      printf 'Host is already joined as a manager, but the enrollment bundle requires worker role.\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+  [[ "$state" == inactive || -z "$state" ]] || {
+    printf 'Docker Swarm local node state is not joinable: %s\n' "$state" >&2
+    return 1
+  }
+  docker swarm join --token "$join_token" "$manager_endpoint"
+}
+
 rp_sync_swarm_join_token_secrets() {
   local tmpdir worker_file manager_file worker_ref manager_ref
   tmpdir="$(mktemp -d /tmp/resourceportal-enrollment-tokens.XXXXXX)" || return 1
@@ -89,6 +118,7 @@ rp_start_enrollment_listener() {
     --constraint 'node.role==manager' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+    --user 0:0 \
     --publish "mode=host,target=7443,published=${port},protocol=tcp" \
     --secret source=rp_database_url,target=rp_database_url \
     --secret source="$RP_CFG_ENROLLMENT_WORKER_TOKEN_REF",target=installer_worker_token \
@@ -110,16 +140,38 @@ rp_start_enrollment_listener() {
     "$RP_CFG_API_IMAGE" node dist/src/internal/installer-enrollment.runner.js >/dev/null
 }
 
+rp_prepare_enrollment_output_dir() {
+  local path="$1" image="$2" owner
+  [[ -n "$path" && -n "$image" ]] || return 1
+  owner="$(docker run --rm --entrypoint sh "$image" -c 'printf "%s:%s\n" "$(id -u node)" "$(id -g node)"')" || return 1
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  install -d -m 0700 "$path" || return 1
+  chown "$owner" "$path" || return 1
+  chmod 0700 "$path" || return 1
+}
+
+rp_issue_node_bundle_cli() {
+  local role="$1" output_bundle="$2"
+  local cert="${RP_ENROLLMENT_CERT_PATH:-/var/lib/resourceportal/installer-state/enrollment/tls.crt}" pin endpoint
+  rp_validate_enrollment_role "$role" || { printf 'Enrollment role must be worker or manager.\n' >&2; return 2; }
+  [[ "$output_bundle" == /* ]] || { printf 'Enrollment bundle output path must be absolute.\n' >&2; return 2; }
+  [[ -r "$cert" ]] || { printf 'Enrollment TLS certificate is not readable: %s\n' "$cert" >&2; return 1; }
+  pin="$(rp_spki_pin "$cert")" || return 1
+  endpoint="https://${RP_CFG_SWARM_ADVERTISE_ADDR:?RP_CFG_SWARM_ADVERTISE_ADDR is required}:7443"
+  rp_issue_enrollment_bundle "$role" "$output_bundle" "$endpoint" "$pin"
+}
+
 rp_issue_enrollment_bundle() {
   local role="$1" output_bundle="$2" enrollment_endpoint="$3" pin="$4" workdir output_file service_name timeout elapsed state control_network
   rp_validate_enrollment_role "$role" || return 1
   workdir="$(mktemp -d /tmp/resourceportal-enrollment-issue.XXXXXX)" || return 1
-  chmod 0700 "$workdir"
+  rp_prepare_enrollment_output_dir "$workdir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || { rm -rf "$workdir"; return 1; }
   output_file="$workdir/enrollment.json"
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-enrollment-issue-$(date +%s)"
   control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
-  trap 'rm -rf "$workdir"' RETURN
+  trap 'rm -rf "$workdir"; trap - RETURN' RETURN
   docker service create \
+    --detach \
     --name "$service_name" --restart-condition none \
     --network "$control_network" \
     --constraint 'node.role==manager' \
@@ -149,7 +201,7 @@ rp_issue_enrollment_bundle() {
 }
 
 rp_redeem_join_bundle() {
-  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_cidr node_id ssh_port control_plane ingress completion
+  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_id cluster_cidr node_id ssh_port control_plane ingress completion
   command -v jq >/dev/null 2>&1 || { printf 'jq is required for node enrollment.\n' >&2; return 1; }
   role="$(rp_bundle_value "$bundle" RP_ENROLLMENT_ROLE)" || return 1
   token="$(rp_bundle_value "$bundle" RP_ENROLLMENT_TOKEN)" || return 1
@@ -157,7 +209,7 @@ rp_redeem_join_bundle() {
   pin="$(rp_bundle_value "$bundle" RP_ENROLLMENT_PIN)" || return 1
   rp_validate_enrollment_role "$role" || return 1
   response="$(mktemp /tmp/resourceportal-enrollment-response.XXXXXX.json)" || return 1
-  chmod 0600 "$response"; trap 'rm -f "$response"' RETURN
+  chmod 0600 "$response"; trap 'rm -f "${response:-}"; trap - RETURN' RETURN
   curl --fail --silent --show-error --insecure \
     --pinnedpubkey "$pin" \
     -H 'content-type: application/json' \
@@ -168,6 +220,7 @@ rp_redeem_join_bundle() {
   join_token="$(jq -er '.joinToken' "$response")" || return 1
   manager_endpoint="$(jq -er '.managerEndpoint' "$response")" || return 1
   nfs_server="$(jq -er '.nfsServerAddress' "$response")" || return 1
+  cluster_id="$(jq -er '.clusterId' "$response")" || return 1
   cluster_cidr="$(jq -er '.clusterCidr' "$response")" || return 1
 
   control_plane="${RP_JOIN_CONTROL_PLANE:-false}"
@@ -176,7 +229,7 @@ rp_redeem_join_bundle() {
   ssh_port="$(rp_detect_ssh_port)" || return 1
   rp_configure_ufw "$ssh_port" "$cluster_cidr" "$ingress" || return 1
 
-  docker swarm join --token "$join_token" "$manager_endpoint" || return 1
+  rp_join_swarm_for_enrollment "$role" "$join_token" "$manager_endpoint" "$cluster_id" || return 1
   rp_mount_runtime_namespace nfs volumes "$nfs_server" || return 1
   if [[ "$role" == "manager" ]]; then
     rp_mount_runtime_namespace nfs secrets "$nfs_server" || return 1

@@ -80,9 +80,29 @@ rp_validate_ganesha_config() {
   fi
 }
 
+rp_ensure_ganesha_include() {
+  local main_config="$1" target="$2" include_line
+  [[ -n "$main_config" && -n "$target" ]] || return 1
+  include_line="%include \"$target\""
+  touch "$main_config" || return 1
+  grep -Fqx -- "$include_line" "$main_config" 2>/dev/null && return 0
+  printf '\n%s\n' "$include_line" >>"$main_config"
+}
+
+rp_remove_ganesha_include() {
+  local main_config="$1" target="$2" include_line tmp
+  [[ -f "$main_config" && -n "$target" ]] || return 0
+  include_line="%include \"$target\""
+  tmp="${main_config}.resourceportal.$$"
+  grep -Fvx -- "$include_line" "$main_config" >"$tmp" || true
+  cat "$tmp" >"$main_config"
+  rm -f "$tmp"
+}
+
 rp_install_ganesha_config() {
   local target="${1:-/etc/ganesha/resourceportal.conf}" base="$2" workload_clients="$3" manager_clients="$4"
-  local tmp backup=""
+  local main_config="${RP_GANESHA_MAIN_CONFIG_PATH:-/etc/ganesha/ganesha.conf}"
+  local tmp backup="" main_backup=""
   install -d -m 0755 "$(dirname "$target")"
   tmp="${target}.tmp.$$"
   rp_render_ganesha_config "$base" "$workload_clients" "$manager_clients" >"$tmp"
@@ -93,7 +113,17 @@ rp_install_ganesha_config() {
     cp -a "$target" "$backup"
   fi
   mv -f "$tmp" "$target"
+  if [[ -f "$main_config" ]]; then
+    main_backup="${main_config}.resourceportal.bak.$$"
+    cp -a "$main_config" "$main_backup" || return 1
+  fi
+  if ! rp_ensure_ganesha_include "$main_config" "$target" || ! rp_validate_ganesha_config "$main_config"; then
+    [[ -z "$main_backup" || ! -f "$main_backup" ]] || mv -f "$main_backup" "$main_config"
+    [[ -z "$backup" || ! -f "$backup" ]] || mv -f "$backup" "$target"
+    return 1
+  fi
   if ! systemctl reload nfs-ganesha 2>/dev/null && ! systemctl restart nfs-ganesha; then
+    [[ -z "$main_backup" || ! -f "$main_backup" ]] || mv -f "$main_backup" "$main_config"
     if [[ -n "$backup" && -f "$backup" ]]; then
       mv -f "$backup" "$target"
       systemctl restart nfs-ganesha || true
@@ -101,6 +131,7 @@ rp_install_ganesha_config() {
     return 1
   fi
   [[ -z "$backup" ]] || rm -f "$backup"
+  [[ -z "$main_backup" ]] || rm -f "$main_backup"
 }
 
 rp_render_nfs_fstab_entry() {
@@ -131,7 +162,7 @@ rp_mount_runtime_namespace() {
   local mountpoint line
   rp_nfs_namespace_allowed "$namespace" || return 1
   mountpoint="$(rp_runtime_path "$namespace")"
-  install -d -m 0755 "$mountpoint" || return 1
+  [[ -d "$mountpoint" ]] || install -d -m 0755 "$mountpoint" || return 1
   case "$mode" in
     local)
       line="$(rp_render_local_bind_fstab_entry "$source" "$namespace")"
@@ -170,6 +201,7 @@ rp_apply_storage_labels() {
 
 rp_remove_resourceportal_ganesha_config() {
   local target="${1:-/etc/ganesha/resourceportal.conf}" managed=false
+  local main_config="${RP_GANESHA_MAIN_CONFIG_PATH:-/etc/ganesha/ganesha.conf}"
   [[ -e "$target" ]] || return 0
   if declare -F rp_ownership_has >/dev/null && rp_ownership_has ganesha-config "$target"; then
     managed=true
@@ -179,6 +211,7 @@ rp_remove_resourceportal_ganesha_config() {
   [[ "$managed" == true ]] || return 0
 
   rm -f "$target" || return 1
+  rp_remove_ganesha_include "$main_config" "$target" || return 1
   if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nfs-ganesha 2>/dev/null; then
     systemctl reload nfs-ganesha 2>/dev/null || systemctl restart nfs-ganesha
   fi

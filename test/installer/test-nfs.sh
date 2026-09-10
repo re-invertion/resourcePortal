@@ -68,7 +68,39 @@ assert_eq '10.20.0.10:/resourceportal/volumes /mnt/resourceportal/volumes nfs4 r
   "$(rp_render_nfs_fstab_entry 10.20.0.10 volumes)" "render NFS volumes mount"
 assert_eq '/srv/resource-portal/storage/platform /mnt/resourceportal/platform none bind 0 0' \
   "$(rp_render_local_bind_fstab_entry /srv/resource-portal/storage platform)" "render local platform bind"
+
+
+existing_mount_test() (
+  tmp="$(mktemp -d)"
+  fstab="$tmp/fstab"
+  mount_dir="$tmp/volumes"
+  mkdir -p "$mount_dir"
+  : >"$fstab"
+  rp_runtime_path(){ printf '%s\n' "$mount_dir"; }
+  install(){ printf 'install-called\n' >&2; return 97; }
+  mountpoint(){ return 0; }
+  umount(){ return 0; }
+  mount(){ return 0; }
+  rp_mount_runtime_namespace nfs volumes 10.20.0.10 "$fstab"
+)
+assert_status 0 'NFS remount resume does not chmod an already-mounted root-squashed mountpoint' existing_mount_test
 assert_status 1 "reject unknown NFS namespace" rp_render_nfs_fstab_entry 10.20.0.10 databases
+
+# ResourcePortal exports must be included by the active Ganesha main config.
+ganesha_include_tmp="$(mktemp -d)"
+main_ganesha="$ganesha_include_tmp/ganesha.conf"
+rp_ganesha="$ganesha_include_tmp/resourceportal.conf"
+printf '%s\n' '# unrelated main config' >"$main_ganesha"
+printf '%s\n' '# Managed by ResourcePortal Production Installer.' >"$rp_ganesha"
+rp_ensure_ganesha_include "$main_ganesha" "$rp_ganesha"
+rp_ensure_ganesha_include "$main_ganesha" "$rp_ganesha"
+include_line="%include \"$rp_ganesha\""
+assert_contains "$(cat "$main_ganesha")" "$include_line" 'active Ganesha config includes ResourcePortal exports'
+assert_eq '1' "$(grep -Fxc -- "$include_line" "$main_ganesha")" 'Ganesha include is idempotent'
+rp_remove_ganesha_include "$main_ganesha" "$rp_ganesha"
+assert_not_contains "$(cat "$main_ganesha")" "$include_line" 'Ganesha cleanup removes ResourcePortal include'
+assert_contains "$(cat "$main_ganesha")" '# unrelated main config' 'Ganesha cleanup preserves unrelated main config'
+rm -rf "$ganesha_include_tmp"
 
 args="$(rp_storage_label_args true false true)"
 assert_contains "$args" '--label-add resourceportal.storage.volumes=true' "volumes label when ready"

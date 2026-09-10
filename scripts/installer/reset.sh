@@ -674,7 +674,7 @@ rp_factory_reset_phase_names() {
 
 rp_reset_run_phase() {
   local phase="$1"; shift
-  local action rc
+  local action rc summary
   [[ -n "${RP_FACTORY_RESET_STATE:-}" ]] || return 1
   rp_phase_done "$RP_FACTORY_RESET_STATE" "$phase" && return 0
 
@@ -682,7 +682,9 @@ rp_reset_run_phase() {
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting factory reset phase: $phase" || true; fi
 
   while true; do
-    if "$@"; then
+    RP_LAST_ERROR_OUTPUT=''
+    RP_LAST_ERROR_SUMMARY=''
+    if rp_run_capture_error "$@"; then
       if [[ "$phase" != final-cleanup ]]; then
         rp_phase_mark_done "$RP_FACTORY_RESET_STATE" "$phase" || return 1
         rp_log INFO "factory reset phase completed: $phase"
@@ -693,12 +695,13 @@ rp_reset_run_phase() {
       rc=$?
     fi
 
-    rp_log ERROR "factory reset phase failed: $phase"
-    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Factory reset stage failed: $phase" || true; fi
+    summary="$(rp_error_summary "Factory reset stage failed: $phase (command: ${1:-unknown}, exit $rc)")"
+    rp_log ERROR "factory reset phase failed: $phase: $summary"
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "$summary" || true; fi
     if [[ "${RP_UI_MODE:-text}" != tui ]] || ! declare -F rp_ui_failure_action >/dev/null; then
       return "$rc"
     fi
-    action="$(rp_ui_failure_action "$phase" "Factory reset stage failed: $phase")" || return "$rc"
+    action="$(rp_ui_failure_action "$phase" "$summary")" || return "$rc"
     case "$action" in
       retry)
         rp_log INFO "factory reset phase retry requested: $phase"

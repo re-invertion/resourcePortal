@@ -38,6 +38,7 @@ rp_usage() {
 Usage:
   sudo ./resourceportal-install.sh --mode primary [--config PATH]
   sudo ./resourceportal-install.sh --mode add-node --bundle PATH [--config PATH]
+  sudo ./resourceportal-install.sh --mode issue-bundle --role manager|worker --bundle /ABSOLUTE/PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode upgrade --manifest PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode reconfigure --action ACTION [--config PATH]
   sudo ./resourceportal-install.sh --mode diagnostics [--repair ACTION] [--config PATH]
@@ -48,6 +49,7 @@ Usage:
 Modes:
   primary       Install or resume the Primary ResourcePortal node.
   add-node      Join this host using a single-use pinned-TLS enrollment bundle.
+  issue-bundle  Issue a 30-minute single-use enrollment bundle on the Primary.
   upgrade       Apply a selected release manifest.
   reconfigure   Apply one supported configuration change.
   diagnostics   Run read-only diagnostics.
@@ -56,7 +58,7 @@ USAGE
 }
 
 rp_dispatch() {
-  local mode="$1" bundle="$2" action="$3" manifest="$4" scope="${5:-}"
+  local mode="$1" bundle="$2" action="$3" manifest="$4" scope="${5:-}" role="${6:-}"
   local previous_stack docker_version current_version ui_was_tui=false
   case "$mode" in
     primary)
@@ -78,6 +80,12 @@ rp_dispatch() {
       rp_ui_mode_operation add-node docker 'Validating Docker' rp_ensure_docker "${RP_CFG_MIN_DOCKER_VERSION:-27.0.0}" || return $?
       rp_ui_mode_operation add-node enrollment 'Joining ResourcePortal node' rp_redeem_join_bundle "$bundle" || return $?
       if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete add-node || true; fi
+      ;;
+    issue-bundle)
+      [[ -n "$bundle" ]] || { printf '%s\n' '--bundle is required for issue-bundle' >&2; return 2; }
+      [[ -n "$role" ]] || { printf '%s\n' '--role is required for issue-bundle' >&2; return 2; }
+      rp_ui_mode_operation issue-bundle issue 'Issuing ResourcePortal node enrollment bundle' rp_issue_node_bundle_cli "$role" "$bundle" || return $?
+      printf 'Enrollment bundle written to %s\n' "$bundle"
       ;;
     upgrade)
       [[ -n "$manifest" ]] || { printf '%s\n' '--manifest is required for upgrade' >&2; return 2; }
@@ -114,7 +122,7 @@ rp_dispatch() {
 }
 
 rp_main() {
-  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair="" scope=""
+  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair="" scope="" role=""
   RP_CONFIRM_FACTORY_RESET=false
   RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
   export RP_CONFIRM_FACTORY_RESET RP_FORCE_REMOVE_UNTRACKED_PACKAGES
@@ -129,6 +137,9 @@ rp_main() {
       --bundle)
         [[ $# -ge 2 ]] || { printf '%s\n' '--bundle requires a path' >&2; return 2; }
         bundle="$2"; shift 2 ;;
+      --role)
+        [[ $# -ge 2 ]] || { printf '%s\n' '--role requires a value' >&2; return 2; }
+        role="$2"; shift 2 ;;
       --action)
         [[ $# -ge 2 ]] || { printf '%s\n' '--action requires a value' >&2; return 2; }
         action="$2"; shift 2 ;;
@@ -171,6 +182,7 @@ rp_main() {
     mode="$(rp_ui_choice 'ResourcePortal Production Installer' 'Choose installer mode' primary \
       primary 'Install Primary / Control Plane' \
       add-node 'Add Swarm Node' \
+      issue-bundle 'Issue Node Enrollment Bundle' \
       upgrade 'Upgrade ResourcePortal' \
       reconfigure 'Reconfigure Installation' \
       diagnostics 'Repair / Diagnostics' \
@@ -200,7 +212,7 @@ rp_main() {
     rp_ui_mode_operation repair repair "Running repair: $repair" rp_run_repair "$repair" || return $?
     if declare -F rp_dashboard_complete >/dev/null; then rp_dashboard_complete repair || true; fi
   else
-    rp_dispatch "$mode" "$bundle" "$action" "$manifest" "$scope"
+    rp_dispatch "$mode" "$bundle" "$action" "$manifest" "$scope" "$role"
   fi
 }
 

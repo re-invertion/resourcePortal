@@ -71,7 +71,7 @@ rp_apt_install_with_ownership() {
       rm -rf "$ownership_tmpdir"
       return 1
     fi
-  done < <(comm -13 "$before" "$after")
+  done < <(LC_ALL=C comm -13 "$before" "$after")
   rm -rf "$ownership_tmpdir"
 
   (( install_rc == 0 )) || return "$install_rc"
