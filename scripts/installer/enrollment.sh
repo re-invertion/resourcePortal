@@ -81,14 +81,6 @@ rp_join_swarm_for_enrollment() {
   docker swarm join --token "$join_token" "$manager_endpoint"
 }
 
-rp_docker_socket_group_gid() {
-  local socket_path="${1:-/var/run/docker.sock}" gid
-  [[ -S "$socket_path" || -e "$socket_path" ]] || return 1
-  gid="$(stat -c '%g' "$socket_path")" || return 1
-  [[ "$gid" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$gid"
-}
-
 rp_sync_swarm_join_token_secrets() {
   local tmpdir worker_file manager_file worker_ref manager_ref
   tmpdir="$(mktemp -d /tmp/resourceportal-enrollment-tokens.XXXXXX)" || return 1
@@ -108,7 +100,7 @@ rp_sync_swarm_join_token_secrets() {
 }
 
 rp_start_enrollment_listener() {
-  local cert="$1" key="$2" cert_ref key_ref service_name port manager_endpoint cluster_id control_network docker_socket_gid
+  local cert="$1" key="$2" cert_ref key_ref service_name port manager_endpoint cluster_id control_network
   [[ -r "$cert" && -r "$key" ]] || return 1
   rp_sync_swarm_join_token_secrets || return 1
   cert_ref="$(rp_ensure_versioned_swarm_secret installer_enrollment_tls_cert "$cert")" || return 1
@@ -118,7 +110,6 @@ rp_start_enrollment_listener() {
   port="${RP_CFG_ENROLLMENT_PORT:-7443}"
   manager_endpoint="${RP_CFG_SWARM_ADVERTISE_ADDR}:2377"
   cluster_id="$(docker info --format '{{.Swarm.Cluster.ID}}')" || return 1
-  docker_socket_gid="$(rp_docker_socket_group_gid /var/run/docker.sock)" || return 1
 
   docker service rm "$service_name" >/dev/null 2>&1 || true
   docker service create \
@@ -127,7 +118,7 @@ rp_start_enrollment_listener() {
     --constraint 'node.role==manager' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
-    --group-add "$docker_socket_gid" \
+    --user 0:0 \
     --publish "mode=host,target=7443,published=${port},protocol=tcp" \
     --secret source=rp_database_url,target=rp_database_url \
     --secret source="$RP_CFG_ENROLLMENT_WORKER_TOKEN_REF",target=installer_worker_token \
