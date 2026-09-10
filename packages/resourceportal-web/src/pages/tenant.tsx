@@ -40,6 +40,7 @@ import {
   volumeForm,
 } from "./form-templates";
 import { buildQuotaMutation } from "./quota-payload";
+import { TenantDashboard } from "./tenant-dashboard";
 
 const enc = encodeURIComponent;
 const itemId = (item: Record<string, unknown>) => enc(String(item.id ?? ""));
@@ -100,7 +101,7 @@ export function TenantPage({ tenantId, section, resourceId, userId }: { tenantId
   const [permissions, setPermissions] = useState<string[] | undefined>();
   useEffect(() => { apiRequest(`${root}/memberships`).then((value) => setPermissions(collectPermissions(value, userId))).catch(() => setPermissions(undefined)); }, [root, userId]);
 
-  if (section === "overview") return <main><h1>Tenant overview</h1><ReadOnlyPanel title="Tenant overview" path={root} /></main>;
+  if (section === "overview") return <TenantDashboard tenantId={tenantId} />;
   if (section === "app-groups") return resourceId ? <AppGroupPage tenantId={tenantId} appGroupId={resourceId} permissions={permissions} /> : <main><h1>AppGroups</h1><ResourcePanel title="AppGroups" listPath={`${root}/app-groups`} createPath={`${root}/app-groups`} createInitialValue={appGroupForm} deletePath={(item) => `${root}/app-groups/${itemId(item)}`} detailHref={(item) => `/tenants/${enc(tenantId)}/app-groups/${itemId(item)}`} createPermission="appgroup.create" deletePermission="appgroup.delete" permissions={permissions} /></main>;
   if (section === "volumes") return <main><h1>Volumes</h1><ResourcePanel title="Volumes" listPath={`${root}/volumes`} createPath={`${root}/volumes`} createInitialValue={volumeForm} actions={[{ label: "Grow / resize", method: "PATCH", path: (item) => `${root}/volumes/${itemId(item)}/resize`, body: true, initialValue: resizeVolumeForm }, { label: "Delete", method: "DELETE", path: (item) => `${root}/volumes/${itemId(item)}`, destructive: true }]} permissions={permissions} /></main>;
   if (section === "registries") return <main><h1>Registries</h1><ResourcePanel title="Registries" listPath={`${root}/registries`} createPath={`${root}/registries`} createInitialValue={registryForm} itemPath={(item) => `${root}/registries/${itemId(item)}`} actions={[{ label: "Validate", method: "POST", path: (item) => `${root}/registries/${itemId(item)}/validate` }]} permissions={permissions} /></main>;

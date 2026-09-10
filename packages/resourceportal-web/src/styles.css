@@ -313,3 +313,67 @@
   .rp-content { @apply min-w-0; }
   .rp-content > main { @apply max-w-[96rem] px-4 py-6 sm:px-6 lg:px-8 lg:py-8; }
 }
+
+@layer components {
+  .rp-dashboard-page { @apply space-y-6; }
+  .rp-page-hero { @apply mb-2 flex flex-col gap-4 border-0 bg-transparent p-0 shadow-none sm:flex-row sm:items-end sm:justify-between; }
+  .rp-page-hero h1 { @apply mb-1 text-3xl font-bold tracking-[-0.035em] text-slate-950; }
+  .rp-page-hero p:not(.rp-eyebrow) { @apply my-0 max-w-2xl text-sm text-slate-500; }
+  .rp-eyebrow { @apply mb-1 mt-0 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400; }
+  .rp-page-actions { @apply flex flex-wrap gap-2; }
+  .rp-button { @apply inline-flex min-h-10 items-center justify-center rounded-lg border px-4 py-2 text-sm font-semibold no-underline shadow-sm transition hover:no-underline; }
+  .rp-button-primary { @apply border-slate-950 bg-slate-950 text-white hover:bg-slate-800; }
+  .rp-metric-grid { @apply my-0 grid grid-cols-1 gap-3 border-0 bg-transparent p-0 shadow-none sm:grid-cols-2 xl:grid-cols-4; }
+  .rp-dashboard-metric { @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm; }
+  .rp-dashboard-metric-head { @apply mb-5 flex items-center justify-between text-xs font-semibold text-slate-500; }
+  .rp-dashboard-metric-icon { @apply size-2 rounded-full bg-slate-300; }
+  .rp-dashboard-metric-value { @apply block text-2xl font-bold tracking-[-0.03em] text-slate-950; }
+  .rp-dashboard-metric > span:last-child { @apply mt-1 block text-xs text-slate-500; }
+  .rp-dashboard-section { @apply my-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-sm; }
+  .rp-dashboard-section > header { @apply m-0 flex items-center gap-3 border-b border-slate-100 px-5 py-4; }
+  .rp-dashboard-section > header > div { @apply mr-auto; }
+  .rp-dashboard-section > header h2 { @apply text-base font-semibold text-slate-950; }
+  .rp-dashboard-section > header .rp-eyebrow { @apply mb-0; }
+  .rp-dashboard-section > header > a { @apply text-xs font-semibold text-slate-500 no-underline hover:text-slate-900 hover:no-underline; }
+  .rp-section-count { @apply inline-flex min-w-7 items-center justify-center rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600; }
+  .rp-attention-section { @apply border-amber-200/80; }
+  .rp-attention-card { @apply flex flex-col gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0 md:flex-row md:items-center; }
+  .rp-attention-card[data-tone="negative"] { @apply bg-rose-50/60; }
+  .rp-attention-card[data-tone="warning"] { @apply bg-amber-50/50; }
+  .rp-attention-card > div:first-child { @apply mr-auto; }
+  .rp-attention-card strong { @apply text-sm font-semibold text-slate-950; }
+  .rp-attention-card p { @apply my-1 text-xs text-slate-600; }
+  .rp-attention-card > a, .rp-attention-actions a { @apply whitespace-nowrap text-xs font-semibold no-underline hover:underline; }
+  .rp-attention-actions { @apply flex flex-wrap gap-3; }
+  .rp-good-state { @apply grid gap-1 px-5 py-5; }
+  .rp-good-state strong { @apply text-sm font-semibold text-emerald-800; }
+  .rp-good-state span { @apply text-xs text-slate-500; }
+  .rp-muted, .rp-panel-unavailable { @apply m-0 px-5 py-5 text-sm text-slate-500; }
+  .rp-panel-unavailable { @apply text-amber-700; }
+  .rp-dashboard-columns { @apply grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(19rem,0.75fr)]; }
+  .rp-dashboard-rail { @apply grid content-start gap-6; }
+  .rp-application-list { @apply divide-y divide-slate-100; }
+  .rp-application-row { @apply grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-5 py-3.5 text-slate-900 no-underline transition hover:bg-slate-50 hover:no-underline; }
+  .rp-app-identity { @apply flex min-w-0 items-center gap-3; }
+  .rp-app-mark { @apply inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-slate-600; }
+  .rp-app-identity > div { @apply grid min-w-0; }
+  .rp-app-identity strong { @apply truncate text-sm font-semibold; }
+  .rp-app-identity span:not(.rp-app-mark) { @apply text-xs text-slate-500; }
+  .rp-app-status { @apply hidden flex-wrap justify-end gap-1.5 sm:flex; }
+  .rp-row-chevron { @apply text-xl leading-none text-slate-300; }
+  .rp-quick-actions { @apply grid; }
+  .rp-quick-actions a { @apply flex items-center justify-between border-b border-slate-100 px-5 py-3.5 text-sm font-medium text-slate-700 no-underline last:border-b-0 hover:bg-slate-50 hover:text-slate-950 hover:no-underline; }
+  .rp-quick-actions span { @apply text-slate-300; }
+  .rp-activity-list { @apply divide-y divide-slate-100; }
+  .rp-activity-list a { @apply flex items-center gap-3 px-5 py-3 text-slate-800 no-underline hover:bg-slate-50 hover:no-underline; }
+  .rp-activity-dot { @apply size-2 shrink-0 rounded-full bg-slate-300; }
+  .rp-activity-dot[data-tone="positive"] { @apply bg-emerald-500; }
+  .rp-activity-dot[data-tone="negative"] { @apply bg-rose-500; }
+  .rp-activity-dot[data-tone="warning"] { @apply bg-amber-500; }
+  .rp-activity-list a > div { @apply grid min-w-0; }
+  .rp-activity-list strong { @apply truncate text-xs font-semibold capitalize; }
+  .rp-activity-list span:last-child { @apply text-[11px] text-slate-500; }
+  .rp-empty-compact { @apply grid gap-2 px-5 py-8 text-center; }
+  .rp-empty-compact strong { @apply text-sm text-slate-700; }
+  .rp-empty-compact a { @apply text-xs; }
+}
