@@ -51,6 +51,15 @@ describe("AppGroupWorkspace", () => {
     expect(within(advanced as HTMLElement).getByText("Stack preview content")).toBeTruthy();
   });
 
+  it("does not show an alert when the App Group is intentionally stopped", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ ...appGroup, runtimeBlockers: ["AppGroupStopped"], hasPendingChanges: false })));
+    render(<AppGroupWorkspace tenantId="t1" appGroupId="ag1" apps={<p>Apps content</p>} config={<p>Config content</p>} networking={<p>Networking content</p>} deployments={<p>Deployments content</p>} activity={<p>Activity content</p>} advanced={<p>Stack preview content</p>} />);
+
+    expect(await screen.findByRole("heading", { name: "web-prod" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("explains billing runtime blockers before the user retries Start", async () => {
     render(<AppGroupWorkspace tenantId="t1" appGroupId="ag1" apps={<p>Apps content</p>} config={<p>Config content</p>} networking={<p>Networking content</p>} deployments={<p>Deployments content</p>} activity={<p>Activity content</p>} advanced={<p>Stack preview content</p>} />);
     await screen.findByRole("heading", { name: "web-prod" });

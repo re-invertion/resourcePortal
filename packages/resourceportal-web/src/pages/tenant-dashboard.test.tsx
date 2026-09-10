@@ -55,6 +55,18 @@ describe("TenantDashboard", () => {
     expect(within(attention).getByRole("link", { name: /open worker/i }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag2");
   });
 
+  it("does not treat an intentionally stopped App Group as an urgent issue", async () => {
+    mockDashboard({
+      "/api/tenants/t1/app-groups": [{ id: "ag1", name: "paused-by-user", runtimeState: "Stopped", effectiveRuntimeState: "Stopped", status: "Ready", health: "Healthy", runtimeBlockers: ["AppGroupStopped"], singleApps: [{ id: "a1" }] }],
+      "/api/tenants/t1/billing": { balanceCredits: "100", balancePln: "1", billingState: "Active", lowBalance: false },
+    });
+    render(<TenantDashboard tenantId="t1" />);
+
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    expect(within(attention).getByText(/no urgent issues/i)).toBeTruthy();
+    expect(within(attention).queryByText(/paused-by-user needs attention/i)).toBeNull();
+  });
+
   it("keeps healthy panels usable when one dashboard request fails", async () => {
     mockDashboard({ "/api/tenants/t1/volumes": json({ error: { message: "Storage unavailable" } }, 503) });
     render(<TenantDashboard tenantId="t1" />);

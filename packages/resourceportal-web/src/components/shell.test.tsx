@@ -24,12 +24,19 @@ describe("AppShell", () => {
   });
 
   it("marks the current destination and separates platform administration", () => {
-    render(<AppShell user={user} route={tenantRoute("billing")} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    render(<AppShell user={user} route={tenantRoute("billing")} showPlatformAdmin onLogout={vi.fn()}><p>Content</p></AppShell>);
 
     expect(screen.getByRole("link", { name: "Billing & quota" }).getAttribute("aria-current")).toBe("page");
     const platform = screen.getByRole("navigation", { name: "Platform administration" });
     expect(within(platform).getByText("Platform Admin")).toBeTruthy();
     expect(within(platform).getByRole("link", { name: "Infrastructure" })).toBeTruthy();
+  });
+
+
+  it("hides platform administration when the signed-in user lacks platform access", () => {
+    render(<AppShell user={user} route={tenantRoute()} showPlatformAdmin={false} onLogout={vi.fn()}><p>Content</p></AppShell>);
+
+    expect(screen.queryByRole("navigation", { name: "Platform administration" })).toBeNull();
   });
 
   it("shows the active tenant context and the signed-in user", () => {

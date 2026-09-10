@@ -54,6 +54,7 @@ export function App({ initialPath }: AppProps = {}) {
   const route = useRoute(initialPath);
   const [user, setUser] = useState<User | null | undefined>();
   const [tenants, setTenants] = useState<Tenant[] | undefined>();
+  const [platformAdmin, setPlatformAdmin] = useState(false);
   const [error, setError] = useState<unknown>();
 
   useEffect(() => {
@@ -71,6 +72,13 @@ export function App({ initialPath }: AppProps = {}) {
 
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
 
+  useEffect(() => {
+    if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; }
+    let active = true;
+    apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); });
+    return () => { active = false; };
+  }, [user, route.kind]);
+
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
   if (user === undefined) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>{routeLoadingText(route)}</p>{error ? <ErrorState error={error} /> : null}</main>;
   if (!user) {
@@ -81,7 +89,7 @@ export function App({ initialPath }: AppProps = {}) {
 
   if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
+  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
 }
 
 function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {

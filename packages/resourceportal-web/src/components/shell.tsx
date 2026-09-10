@@ -61,14 +61,14 @@ function PlatformNavigation({ route }: { route: AppRoute }) {
   </nav>;
 }
 
-export function AppShell({ user, route, onLogout, children }: { user: ShellUser; route: AppRoute; onLogout: () => void; children: ReactNode }) {
+export function AppShell({ user, route, showPlatformAdmin = false, onLogout, children }: { user: ShellUser; route: AppRoute; showPlatformAdmin?: boolean; onLogout: () => void; children: ReactNode }) {
   const tenantId = route.kind === "tenant" ? route.tenantId : undefined;
   return <div className="rp-shell">
     <aside className="rp-sidebar">
       <div className="rp-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div>
       <a className="rp-tenant-switcher" href="/tenants"><span>Workspace</span><strong>{tenantId ?? "Choose tenant"}</strong></a>
       {tenantId ? <TenantNavigation tenantId={tenantId} route={route} /> : null}
-      <PlatformNavigation route={route} />
+      {showPlatformAdmin || route.kind === "platform" ? <PlatformNavigation route={route} /> : null}
       <div className="rp-sidebar-footer"><a href="/health">System status</a></div>
     </aside>
     <div className="rp-shell-main">

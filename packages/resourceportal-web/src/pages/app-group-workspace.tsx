@@ -69,7 +69,7 @@ export function AppGroupWorkspace({
 
   useEffect(() => { void load(); }, [load]);
 
-  const blockers = useMemo(() => strings(appGroup?.runtimeBlockers), [appGroup]);
+  const blockers = useMemo(() => strings(appGroup?.runtimeBlockers).filter((blocker) => blocker !== "AppGroupStopped"), [appGroup]);
   const blocker = blockerMessage(blockers);
   const externallyBlocked = blockers.some((item) => ["BillingSuspended", "TenantSuspended", "PlatformMaintenance", "AppGroupError", "AppGroupDeleting"].includes(item));
   const runtimeState = label(appGroup?.runtimeState, "Stopped");

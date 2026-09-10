@@ -55,6 +55,8 @@ function formatBytes(value: number) {
   return `${rounded.toLocaleString("en-US")} GB`;
 }
 
+const attentionBlockers = new Set(["TenantSuspended", "BillingSuspended", "PlatformMaintenance", "AppGroupError"]);
+
 function blockerLabel(blocker: string) {
   const labels: Record<string, string> = {
     TenantSuspended: "The tenant is suspended.",
@@ -87,9 +89,9 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const balancePln = billing.data ? text(billing.data.balancePln, "0") : "0";
   const billingSuspended = billing.data?.billingState === "BillingSuspended" || billing.data?.state === "Suspended";
   const lowBalance = billing.data?.lowBalance === true;
-  const blockedGroups = appGroups.filter((group) => Array.isArray(group.runtimeBlockers) && group.runtimeBlockers.length > 0);
+  const blockedGroups = appGroups.filter((group) => Array.isArray(group.runtimeBlockers) && (group.runtimeBlockers as unknown[]).some((blocker) => typeof blocker === "string" && attentionBlockers.has(blocker)));
   const billingBlockedGroups = blockedGroups.filter((group) => (group.runtimeBlockers as unknown[]).includes("BillingSuspended"));
-  const otherBlockedGroups = blockedGroups.filter((group) => !(group.runtimeBlockers as unknown[]).every((blocker) => blocker === "BillingSuspended"));
+  const otherBlockedGroups = blockedGroups.filter((group) => (group.runtimeBlockers as unknown[]).some((blocker) => typeof blocker === "string" && blocker !== "BillingSuspended" && attentionBlockers.has(blocker)));
   const tenantName = tenant.data ? text(tenant.data.displayName, text(tenant.data.name, tenantId)) : tenantId;
 
   return <main className="rp-dashboard-page">
@@ -108,7 +110,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
       {!billing.loading && !appGroupsState.loading && !billingSuspended && !lowBalance && otherBlockedGroups.length === 0 ? <div className="rp-good-state"><strong>No urgent issues</strong><span>Your tenant has no known runtime or billing blockers.</span></div> : null}
       {billingSuspended ? <article className="rp-attention-card" data-tone="negative"><div><strong>Applications are paused because your balance is empty</strong><p>Add credits to resume workloads that are blocked by billing.</p></div><div className="rp-attention-actions"><a href={tenantHref(tenantId, "billing")}>Go to billing</a>{billingBlockedGroups.slice(0, 2).map((group) => <a key={String(group.id)} href={tenantHref(tenantId, "app-groups", String(group.id))}>Open {text(group.name, "App Group")}</a>)}</div></article> : lowBalance ? <article className="rp-attention-card" data-tone="warning"><div><strong>Your balance is running low</strong><p>Top up before workloads are suspended.</p></div><a href={tenantHref(tenantId, "billing")}>Review billing</a></article> : null}
       {otherBlockedGroups.map((group) => {
-        const blockers = (group.runtimeBlockers as unknown[]).filter((value): value is string => typeof value === "string" && value !== "BillingSuspended");
+        const blockers = (group.runtimeBlockers as unknown[]).filter((value): value is string => typeof value === "string" && value !== "BillingSuspended" && attentionBlockers.has(value));
         if (blockers.length === 0) return null;
         return <article className="rp-attention-card" data-tone="warning" key={String(group.id)}><div><strong>{text(group.name, "App Group")} needs attention</strong><p>{blockerLabel(blockers[0])}</p></div><a href={tenantHref(tenantId, "app-groups", String(group.id))}>Open App Group</a></article>;
       })}
