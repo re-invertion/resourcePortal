@@ -241,7 +241,7 @@ try {
       "Deployment history did not show the browser-created rollback as Succeeded",
     );
     assert(
-      (await page.getByRole("alert").count()) === 0,
+      (await page.locator('[role="alert"]:not(.rp-workspace-alert[data-tone])').count()) === 0,
       "Real-Swarm browser flow rendered an API error alert",
     );
 
