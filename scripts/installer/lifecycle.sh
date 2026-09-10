@@ -23,6 +23,7 @@ rp_run_phase() {
   rp_log INFO "installer phase started: $phase"
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting $phase" || true; fi
   while true; do
+    # shellcheck disable=SC2034 # shared error state is consumed across sourced installer modules
     RP_LAST_ERROR_OUTPUT=''
     RP_LAST_ERROR_SUMMARY=''
     if rp_run_capture_error "$@"; then
