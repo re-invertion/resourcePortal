@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
+import { MetricCard, PageHeader, StatusBadge, statusTone } from "../components/ui";
 
 type RecordValue = Record<string, unknown>;
 type PanelState<T> = { data?: T; error?: unknown; loading: boolean };
@@ -54,13 +55,6 @@ function formatBytes(value: number) {
   return `${rounded.toLocaleString("en-US")} GB`;
 }
 
-function PanelMetric({ label, value, detail, loading, error, testId }: { label: string; value: string; detail: string; loading?: boolean; error?: unknown; testId: string }) {
-  return <article className="rp-dashboard-metric" data-testid={testId}>
-    <div className="rp-dashboard-metric-head"><span>{label}</span><span className="rp-dashboard-metric-icon" aria-hidden="true" /></div>
-    {loading ? <strong className="rp-dashboard-metric-value">Loading…</strong> : error ? <><strong className="rp-dashboard-metric-value">Unavailable</strong><span>Try the dedicated page for details.</span></> : <><strong className="rp-dashboard-metric-value">{value}</strong><span>{detail}</span></>}
-  </article>;
-}
-
 function blockerLabel(blocker: string) {
   const labels: Record<string, string> = {
     TenantSuspended: "The tenant is suspended.",
@@ -72,17 +66,7 @@ function blockerLabel(blocker: string) {
   return labels[blocker] ?? blocker.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-function statusTone(value: string) {
-  const normalized = value.toLowerCase();
-  if (["healthy", "ready", "running", "succeeded", "active", "insync"].includes(normalized.replace(/[^a-z]/g, ""))) return "positive";
-  if (["failed", "error", "unhealthy", "blocked", "suspended"].some((part) => normalized.includes(part))) return "negative";
-  if (["stopped", "pending", "unknown", "degraded", "maintenance"].some((part) => normalized.includes(part))) return "warning";
-  return "neutral";
-}
 
-function Status({ children }: { children: string }) {
-  return <span className="rp-status-pill" data-tone={statusTone(children)}>{children}</span>;
-}
 
 export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
@@ -109,16 +93,13 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const tenantName = tenant.data ? text(tenant.data.displayName, text(tenant.data.name, tenantId)) : tenantId;
 
   return <main className="rp-dashboard-page">
-    <header className="rp-page-hero">
-      <div><p className="rp-eyebrow">Tenant control center</p><h1>{tenant.loading ? "Loading tenant…" : tenant.error ? "Tenant dashboard" : tenantName}</h1><p>Everything important about your workloads, spend and recent activity in one place.</p></div>
-      <div className="rp-page-actions"><a className="rp-button rp-button-primary" href={tenantHref(tenantId, "app-groups")}>Create App Group</a></div>
-    </header>
+    <PageHeader eyebrow="Tenant control center" title={tenant.loading ? "Loading tenant…" : tenant.error ? "Tenant dashboard" : tenantName} description="Everything important about your workloads, spend and recent activity in one place." actions={<a className="rp-button rp-button-primary" href={tenantHref(tenantId, "app-groups")}>Create App Group</a>} />
 
     <section className="rp-metric-grid" aria-label="Tenant summary">
-      <PanelMetric testId="metric-applications" label="Applications" loading={appGroupsState.loading} error={appGroupsState.error} value={String(appGroups.length)} detail={`${appCount} apps configured`} />
-      <PanelMetric testId="metric-runtime" label="Runtime" loading={appGroupsState.loading} error={appGroupsState.error} value={`${running} running`} detail={`${Math.max(appGroups.length - running, 0)} not running`} />
-      <PanelMetric testId="metric-balance" label="Balance" loading={billing.loading} error={billing.error} value={`${balanceCredits} credits`} detail={`≈ ${balancePln} PLN`} />
-      <PanelMetric testId="metric-storage" label="Storage" loading={volumesState.loading} error={volumesState.error} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} />
+      <MetricCard testId="metric-applications" label="Applications" loading={appGroupsState.loading} error={appGroupsState.error} value={String(appGroups.length)} detail={`${appCount} apps configured`} />
+      <MetricCard testId="metric-runtime" label="Runtime" loading={appGroupsState.loading} error={appGroupsState.error} value={`${running} running`} detail={`${Math.max(appGroups.length - running, 0)} not running`} />
+      <MetricCard testId="metric-balance" label="Balance" loading={billing.loading} error={billing.error} value={`${balanceCredits} credits`} detail={`≈ ${balancePln} PLN`} />
+      <MetricCard testId="metric-storage" label="Storage" loading={volumesState.loading} error={volumesState.error} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} />
     </section>
 
     <section className="rp-dashboard-section rp-attention-section" aria-label="Needs attention">
@@ -140,7 +121,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
           const state = text(group.effectiveRuntimeState, text(group.runtimeState, "Unknown"));
           const health = text(group.health, "Unknown");
           const apps = Array.isArray(group.singleApps) ? group.singleApps.length : 0;
-          return <a className="rp-application-row" href={tenantHref(tenantId, "app-groups", String(group.id))} key={String(group.id)}><div className="rp-app-identity"><span className="rp-app-mark" aria-hidden="true">{text(group.name, "A").slice(0, 1).toUpperCase()}</span><div><strong>{text(group.name, "Unnamed App Group")}</strong><span>{apps} app{apps === 1 ? "" : "s"}</span></div></div><div className="rp-app-status"><Status>{state}</Status><Status>{health}</Status></div><span className="rp-row-chevron" aria-hidden="true">›</span></a>;
+          return <a className="rp-application-row" href={tenantHref(tenantId, "app-groups", String(group.id))} key={String(group.id)}><div className="rp-app-identity"><span className="rp-app-mark" aria-hidden="true">{text(group.name, "A").slice(0, 1).toUpperCase()}</span><div><strong>{text(group.name, "Unnamed App Group")}</strong><span>{apps} app{apps === 1 ? "" : "s"}</span></div></div><div className="rp-app-status"><StatusBadge>{state}</StatusBadge><StatusBadge>{health}</StatusBadge></div><span className="rp-row-chevron" aria-hidden="true">›</span></a>;
         })}</div>}
       </section>
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
+import { SectionNav, StatusBadge } from "../components/ui";
 
 type AppGroupView = Record<string, unknown>;
 
@@ -10,18 +11,6 @@ function label(value: unknown, fallback = "Unknown") {
 
 function strings(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function tone(value: string) {
-  const normalized = value.replace(/[^a-z]/gi, "").toLowerCase();
-  if (["healthy", "ready", "running", "succeeded", "success", "active", "insync"].includes(normalized)) return "positive";
-  if (["failed", "error", "unhealthy", "blocked", "suspended", "drifted"].includes(normalized)) return "negative";
-  if (["stopped", "pending", "unknown", "degraded", "maintenance"].includes(normalized)) return "warning";
-  return "neutral";
-}
-
-function Badge({ children }: { children: string }) {
-  return <span className="rp-status-pill" data-tone={tone(children)}>{children}</span>;
 }
 
 function blockerMessage(blockers: string[]) {
@@ -109,7 +98,7 @@ export function AppGroupWorkspace({
     <header className="rp-app-group-header" data-testid="app-group-header">
       <div className="rp-app-group-title">
         <div className="rp-app-group-mark" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</div>
-        <div><p className="rp-eyebrow">App Group</p><h1>{appGroup ? name : loadError ? appGroupId : "Loading…"}</h1><div className="rp-app-group-badges">{appGroup ? <><Badge>{effectiveState}</Badge><Badge>{health}</Badge><Badge>{drift}</Badge>{pending ? <span className="rp-pending-badge">Pending changes</span> : null}</> : null}</div></div>
+        <div><p className="rp-eyebrow">App Group</p><h1>{appGroup ? name : loadError ? appGroupId : "Loading…"}</h1><div className="rp-app-group-badges">{appGroup ? <><StatusBadge>{effectiveState}</StatusBadge><StatusBadge>{health}</StatusBadge><StatusBadge>{drift}</StatusBadge>{pending ? <span className="rp-pending-badge">Pending changes</span> : null}</> : null}</div></div>
       </div>
       <div className="rp-app-group-actions">
         {pending ? <a className="rp-button rp-button-primary" href="#deployments">Deploy changes</a> : null}
@@ -121,9 +110,7 @@ export function AppGroupWorkspace({
     {actionError ? <div className="rp-workspace-alert" role="alert"><strong>Runtime action failed.</strong><p>{actionError instanceof Error ? actionError.message : "The request could not be completed."}</p></div> : null}
     {blocker ? <div className="rp-workspace-alert" data-tone={blockers.includes("BillingSuspended") ? "negative" : "warning"} role="alert"><div><strong>{blocker.title}</strong><p>{blocker.detail}</p></div>{blocker.action === "billing" ? <a href={tenantHref(tenantId, "billing")}>Add credits</a> : <a href="#deployments">Review deployment</a>}</div> : null}
 
-    <nav className="rp-section-nav" aria-label="App Group sections">
-      {[["Overview", "overview"], ["Apps", "apps"], ["Config", "config"], ["Networking", "networking"], ["Deployments", "deployments"], ["Activity", "activity"]].map(([title, id]) => <a href={`#${id}`} key={id}>{title}</a>)}
-    </nav>
+    <SectionNav label="App Group sections" items={[{ label: "Overview", href: "#overview" }, { label: "Apps", href: "#apps" }, { label: "Config", href: "#config" }, { label: "Networking", href: "#networking" }, { label: "Deployments", href: "#deployments" }, { label: "Activity", href: "#activity" }]} />
 
     <WorkspaceSection id="overview" eyebrow="At a glance" title="Overview">
       <div className="rp-overview-grid">

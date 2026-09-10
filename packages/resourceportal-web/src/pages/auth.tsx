@@ -29,36 +29,33 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
     window.location.assign(`/api/auth/${mode}${query.size ? `?${query}` : ""}`);
   }
 
+  const title = mode === "login" ? "Sign in" : mode === "register" ? "Create your account" : "Recover account";
+  const subtitle = mode === "login" ? "Access your ResourcePortal workspace." : mode === "register" ? "Create an identity and continue to your workspace." : "Continue through the configured identity provider to recover access.";
   return (
-    <main>
-      <h1>Resource Portal</h1>
-      <h2>{mode === "login" ? "Sign in" : mode === "register" ? "Register" : "Recover account"}</h2>
-      <label>
-        Tenant ID (optional)
-        <input value={tenantId} onChange={(event) => setTenantId(event.target.value)} />
-      </label>
-      {error ? <ErrorState error={error} /> : null}
-      <section>
-        <h3>Identity providers</h3>
-        {providers.length === 0 ? <p>No explicit provider returned. The platform login flow can select the default provider.</p> : (
-          <ul>
-            {providers.map((provider, index) => {
-              const id = String(provider.id ?? provider.identityProviderId ?? "");
-              const rawLabel = provider.name ?? provider.displayName ?? provider.label ?? (id || `Provider ${index + 1}`);
-              const label = String(rawLabel);
-              return <li key={id || index}><button type="button" onClick={() => start(id || undefined)}>{label}</button></li>;
-            })}
-          </ul>
-        )}
-        <button type="button" onClick={() => start()}>Continue with platform/default login</button>
+    <main className="rp-auth-page">
+      <section className="rp-auth-card">
+        <div className="rp-auth-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div>
+        <div className="rp-auth-heading"><p className="rp-eyebrow">Secure access</p><h1>{title}</h1><p>{subtitle}</p></div>
+        <label className="rp-auth-tenant-field">Tenant ID <span>(optional)</span><input placeholder="Use when your organization requires tenant-specific login" value={tenantId} onChange={(event) => setTenantId(event.target.value)} /></label>
+        {error ? <ErrorState error={error} /> : null}
+        <div className="rp-provider-list">
+          {providers.length === 0 ? <button className="rp-auth-primary" type="button" onClick={() => start()}>Continue with platform login</button> : providers.map((provider, index) => {
+            const id = String(provider.id ?? provider.identityProviderId ?? "");
+            const rawLabel = provider.name ?? provider.displayName ?? provider.label ?? (id || `Provider ${index + 1}`);
+            const label = String(rawLabel);
+            return <button className="rp-auth-primary" key={id || index} type="button" onClick={() => start(id || undefined)}>Continue with {label}</button>;
+          })}
+          {providers.length > 0 ? <button className="rp-auth-secondary" type="button" onClick={() => start()}>Use platform/default login</button> : null}
+        </div>
+        <nav className="rp-auth-links" aria-label="Account actions">
+          <a href="/login">Login</a><a href="/register">Register</a><a href="/recover">Recover</a><a href="/health">Status</a>
+        </nav>
       </section>
-      <nav aria-label="Account actions">
-        <a href="/login">Login</a>{" · "}<a href="/register">Register</a>{" · "}<a href="/recover">Recover</a>{" · "}<a href="/health">Health</a>
-      </nav>
+      <aside className="rp-auth-aside" aria-hidden="true"><div><span className="rp-auth-orbit" /><p>Run applications, storage and networking from one control plane.</p></div></aside>
     </main>
   );
 }
 
 export function PublicHealthPage() {
-  return <main><h1>Resource Portal status</h1><ReadOnlyPanel title="Health" path="/api/health" /><ReadOnlyPanel title="Liveness" path="/api/health/live" /><ReadOnlyPanel title="Readiness" path="/api/health/ready" /><p><a href="/login">Sign in</a></p></main>;
+  return <main className="rp-public-status"><h1>ResourcePortal status</h1><ReadOnlyPanel title="Health" path="/api/health" /><ReadOnlyPanel title="Liveness" path="/api/health/live" /><ReadOnlyPanel title="Readiness" path="/api/health/ready" /><p><a href="/login">Sign in</a></p></main>;
 }
