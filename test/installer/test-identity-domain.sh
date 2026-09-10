@@ -93,6 +93,9 @@ identity_source="$(cat "$repo_root/packages/resourceportal-api/scripts/bootstrap
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_MODE' 'bootstrap script supports production mode'
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_OUTPUT_FILE' 'bootstrap supports machine-readable output file'
 contains "$identity_source" 'ZITADEL_BOOTSTRAP_ADMIN_EMAIL' 'bootstrap supports first admin email'
+contains "$identity_source" '"/v2/features/instance"' 'production bootstrap configures instance login feature'
+contains "$identity_source" 'loginV2: { required: false }' 'production bootstrap keeps self-hosted Login V1 enabled'
+contains "$identity_source" 'loginVersion: { loginV1: {} }' 'ResourcePortal OIDC app explicitly selects Login V1'
 contains "$identity_source" 'x-zitadel-instance-host' 'bootstrap sends ZITADEL instance host header'
 contains "$identity_source" 'x-zitadel-public-host' 'bootstrap sends ZITADEL public host header'
 identity_wait_source="$(sed -n '/async function waitForZitadel/,/^}/p' "$repo_root/packages/resourceportal-api/scripts/bootstrap-zitadel.ts")"

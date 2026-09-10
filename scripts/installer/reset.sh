@@ -682,8 +682,8 @@ rp_reset_run_phase() {
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting factory reset phase: $phase" || true; fi
 
   while true; do
-    RP_LAST_ERROR_OUTPUT=''
-    RP_LAST_ERROR_SUMMARY=''
+    # shellcheck disable=SC2034 # shared error state is consumed across sourced installer modules
+    RP_LAST_ERROR_OUTPUT='' RP_LAST_ERROR_SUMMARY=''
     if rp_run_capture_error "$@"; then
       if [[ "$phase" != final-cleanup ]]; then
         rp_phase_mark_done "$RP_FACTORY_RESET_STATE" "$phase" || return 1

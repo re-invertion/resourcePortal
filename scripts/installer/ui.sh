@@ -323,8 +323,8 @@ rp_ui_mode_operation() {
   local mode="$1" phase="$2" message="$3" rc
   shift 3
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "$message" || true; fi
-  RP_LAST_ERROR_OUTPUT=''
-  RP_LAST_ERROR_SUMMARY=''
+  # shellcheck disable=SC2034 # shared error state is consumed across sourced installer modules
+  RP_LAST_ERROR_OUTPUT='' RP_LAST_ERROR_SUMMARY=''
   if rp_run_capture_error "$@"; then
     if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "$message completed" || true; fi
     return 0
