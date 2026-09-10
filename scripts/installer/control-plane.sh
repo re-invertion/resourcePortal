@@ -128,7 +128,7 @@ rp_run_migrations() {
     --env AUTH_MODE=dev \
     --env DATABASE_URL_FILE=/run/secrets/rp_database_url \
     "$RP_CFG_API_IMAGE" \
-    sh -ec 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"; exec /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma' >/dev/null
+    sh -ec 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"; /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; exec node dist/src/prisma/seed.js' >/dev/null
 
   local elapsed=0 state
   while (( elapsed < timeout )); do
