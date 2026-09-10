@@ -32,7 +32,8 @@ describe("Codespaces preview configuration", () => {
     const indexHtml = readFileSync(path.join(packageRoot, "index.html"), "utf8");
 
     expect(entryClient).toContain("if (!import.meta.env.DEV) return;");
-    expect(entryClient).toContain("@tailwindcss/browser@4");
+    expect(entryClient).not.toContain("@tailwindcss/browser@4");
+    expect(entryClient).toContain('import "./styles.css"');
     expect(entryClient).toContain("formik@2.2.9");
     expect(indexHtml).not.toContain('<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>');
   });

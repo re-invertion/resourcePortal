@@ -2,8 +2,8 @@ import * as React from "react";
 import { StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { App } from "./App";
+import "./styles.css";
 
-const TAILWIND_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4";
 const FORMIK_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/formik@2.2.9/dist/formik.umd.production.min.js";
 const YUP_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/yup@1.7.1/+esm";
 
@@ -59,14 +59,7 @@ async function loadPreviewUi() {
   const browser = window as PreviewWindow;
   browser.React = React;
 
-  const loaders: Promise<void>[] = [
-    loadPreviewScript(
-      TAILWIND_PREVIEW_URL,
-      "tailwind",
-      "Tailwind preview runtime could not be loaded; using unstyled semantic HTML.",
-    ),
-    loadPreviewYup(browser),
-  ];
+  const loaders: Promise<void>[] = [loadPreviewYup(browser)];
 
   if (!browser.Formik) {
     loaders.push(loadPreviewScript(
