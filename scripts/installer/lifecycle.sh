@@ -18,29 +18,34 @@ rp_phase_mark_done() {
 
 rp_run_phase() {
   local state_file="$1" phase="$2"; shift 2
-  local action
+  local action rc summary
   rp_phase_done "$state_file" "$phase" && return 0
   rp_log INFO "installer phase started: $phase"
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Starting $phase" || true; fi
   while true; do
-    if "$@"; then
+    RP_LAST_ERROR_OUTPUT=''
+    RP_LAST_ERROR_SUMMARY=''
+    if rp_run_capture_error "$@"; then
       rp_phase_mark_done "$state_file" "$phase"
       rp_log INFO "installer phase completed: $phase"
       if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "Completed $phase" || true; fi
       return 0
+    else
+      rc=$?
     fi
-    rp_log ERROR "installer phase failed: $phase"
-    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "Stage failed: $phase" || true; fi
+    summary="$(rp_error_summary "Stage failed: $phase (command: ${1:-unknown}, exit $rc)")"
+    rp_log ERROR "installer phase failed: $phase: $summary"
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "$summary" || true; fi
     if [[ "${RP_UI_MODE:-text}" != tui ]] || ! declare -F rp_ui_failure_action >/dev/null; then
-      return 1
+      return "$rc"
     fi
-    action="$(rp_ui_failure_action "$phase" "Stage failed: $phase")" || return 1
+    action="$(rp_ui_failure_action "$phase" "$summary")" || return "$rc"
     case "$action" in
       retry)
         rp_log INFO "installer phase retry requested: $phase"
         if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "Retrying $phase" || true; fi
         ;;
-      exit|*) return 1 ;;
+      exit|*) return "$rc" ;;
     esac
   done
 }

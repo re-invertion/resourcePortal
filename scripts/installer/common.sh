@@ -23,6 +23,38 @@ rp_die() {
   return 1
 }
 
+rp_run_capture_error() {
+  local stderr_file stderr_fifo reader_pid rc
+  stderr_file="$(mktemp /tmp/resourceportal-installer-error.XXXXXX)" || return 1
+  stderr_fifo="$(mktemp -u /tmp/resourceportal-installer-error-fifo.XXXXXX)" || { rm -f "$stderr_file"; return 1; }
+  mkfifo "$stderr_fifo" || { rm -f "$stderr_file"; return 1; }
+
+  if [[ "${RP_UI_MODE:-text}" == tui ]]; then
+    tee "$stderr_file" <"$stderr_fifo" >/dev/null &
+  else
+    tee "$stderr_file" <"$stderr_fifo" >&2 &
+  fi
+  reader_pid=$!
+  if "$@" 2>"$stderr_fifo"; then rc=0; else rc=$?; fi
+  wait "$reader_pid" 2>/dev/null || true
+  rm -f "$stderr_fifo"
+
+  RP_LAST_ERROR_OUTPUT="$(cat "$stderr_file")"
+  RP_LAST_ERROR_SUMMARY="$(awk 'NF { line=$0 } END { print line }' "$stderr_file")"
+  rm -f "$stderr_file"
+  export RP_LAST_ERROR_OUTPUT RP_LAST_ERROR_SUMMARY
+  return "$rc"
+}
+
+rp_error_summary() {
+  local fallback="${1:-Operation failed}"
+  if [[ -n "${RP_LAST_ERROR_SUMMARY:-}" ]]; then
+    printf '%s\n' "$RP_LAST_ERROR_SUMMARY"
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
 rp_version_ge() {
   local current="$1" required="$2"
   local c_major=0 c_minor=0 c_patch=0 r_major=0 r_minor=0 r_patch=0

@@ -151,5 +151,6 @@ rp_wait_for_https_certificate() {
     rp_validate_https_certificate "$domain" && return 0
     sleep 5; elapsed=$((elapsed+5))
   done
+  printf 'HTTPS certificate readiness failed for %s after %ss. Check Traefik/ACME logs for the certificate issuance error.\n' "$domain" "$timeout" >&2
   return 1
 }

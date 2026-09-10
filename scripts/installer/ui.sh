@@ -323,12 +323,16 @@ rp_ui_mode_operation() {
   local mode="$1" phase="$2" message="$3" rc
   shift 3
   if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_started "$phase" "$message" || true; fi
-  if "$@"; then
+  RP_LAST_ERROR_OUTPUT=''
+  RP_LAST_ERROR_SUMMARY=''
+  if rp_run_capture_error "$@"; then
     if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_completed "$phase" "$message completed" || true; fi
     return 0
   else
     rc=$?
   fi
-  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "$message failed" || true; fi
+  local summary
+  summary="$(rp_error_summary "$message failed (command: ${1:-unknown}, exit $rc)")"
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event phase_failed "$phase" "$summary" || true; fi
   return "$rc"
 }
