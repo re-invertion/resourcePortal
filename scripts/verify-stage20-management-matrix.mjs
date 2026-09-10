@@ -218,7 +218,7 @@ try {
         .join("\n")}`,
     );
 
-    await visit(page, "/health", "Resource Portal status", false);
+    await visit(page, "/health", "ResourcePortal status", false);
     for (const [section, heading] of tenantRoutes) {
       await visit(
         page,
