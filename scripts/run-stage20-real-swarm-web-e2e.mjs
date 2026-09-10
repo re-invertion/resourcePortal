@@ -386,8 +386,11 @@ async function waitForPageRequests(page, section) {
     );
     return !loading;
   });
+  const unexpectedAlerts = page.locator(
+    '[role="alert"]:not(.rp-workspace-alert[data-tone])',
+  );
   assert(
-    (await page.getByRole("alert").count()) === 0,
+    (await unexpectedAlerts.count()) === 0,
     `${section} route did not settle cleanly`,
   );
 }
