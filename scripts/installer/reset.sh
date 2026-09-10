@@ -683,8 +683,7 @@ rp_reset_run_phase() {
 
   while true; do
     # shellcheck disable=SC2034 # shared error state is consumed across sourced installer modules
-    RP_LAST_ERROR_OUTPUT=''
-    RP_LAST_ERROR_SUMMARY=''
+    RP_LAST_ERROR_OUTPUT='' RP_LAST_ERROR_SUMMARY=''
     if rp_run_capture_error "$@"; then
       if [[ "$phase" != final-cleanup ]]; then
         rp_phase_mark_done "$RP_FACTORY_RESET_STATE" "$phase" || return 1
