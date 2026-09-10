@@ -101,6 +101,35 @@ wrong_role_test() (
   rp_join_swarm_for_enrollment manager secret-token 10.20.0.10:2377 cluster-123
 )
 status 1 'add-node refuses manager resume when local node is only a worker' wrong_role_test
+
+
+enrollment_failure_clears_return_trap_test() (
+  bundle="$(mktemp /tmp/rp-enrollment-trap-bundle.XXXXXX)"
+  rp_write_join_bundle "$bundle" manager 'enrollment-token-abc_1234567890123456789012345678901234567890' '2026-09-10T12:00:00Z' 'https://10.20.0.10:7443' 'sha256//pin-value'
+  curl(){ printf '%s\n' '{"role":"manager","joinToken":"secret","managerEndpoint":"10.20.0.10:2377","nfsServerAddress":"10.20.0.10","clusterId":"cluster-123","clusterCidr":"10.20.0.0/24"}'; }
+  jq(){
+    case "$2" in
+      .role) printf 'manager\n' ;;
+      .joinToken) printf 'secret\n' ;;
+      .managerEndpoint) printf '10.20.0.10:2377\n' ;;
+      .nfsServerAddress) printf '10.20.0.10\n' ;;
+      .clusterId) printf 'cluster-123\n' ;;
+      .clusterCidr) printf '10.20.0.0/24\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_detect_ssh_port(){ printf '22\n'; }
+  rp_configure_ufw(){ return 0; }
+  rp_join_swarm_for_enrollment(){ return 0; }
+  rp_mount_runtime_namespace(){ return 1; }
+  set +e
+  rp_redeem_join_bundle "$bundle"
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || return 1
+  [[ -z "$(trap -p RETURN)" ]]
+)
+status 0 'failed add-node enrollment does not leak RETURN cleanup trap into caller' enrollment_failure_clears_return_trap_test
 contains "$enrollment_source" 'rp_configure_ufw' 'node firewall is configured from redeemed cluster CIDR'
 issue_function="$(sed -n '/rp_issue_enrollment_bundle()/,/^}/p' "$repo_root/scripts/installer/enrollment.sh")"
 contains "$issue_function" '--detach' 'enrollment issuer one-shot service is created detached'

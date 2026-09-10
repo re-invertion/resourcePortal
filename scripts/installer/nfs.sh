@@ -162,7 +162,7 @@ rp_mount_runtime_namespace() {
   local mountpoint line
   rp_nfs_namespace_allowed "$namespace" || return 1
   mountpoint="$(rp_runtime_path "$namespace")"
-  install -d -m 0755 "$mountpoint" || return 1
+  [[ -d "$mountpoint" ]] || install -d -m 0755 "$mountpoint" || return 1
   case "$mode" in
     local)
       line="$(rp_render_local_bind_fstab_entry "$source" "$namespace")"

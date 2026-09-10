@@ -208,7 +208,7 @@ rp_redeem_join_bundle() {
   pin="$(rp_bundle_value "$bundle" RP_ENROLLMENT_PIN)" || return 1
   rp_validate_enrollment_role "$role" || return 1
   response="$(mktemp /tmp/resourceportal-enrollment-response.XXXXXX.json)" || return 1
-  chmod 0600 "$response"; trap 'rm -f "$response"' RETURN
+  chmod 0600 "$response"; trap 'rm -f "${response:-}"; trap - RETURN' RETURN
   curl --fail --silent --show-error --insecure \
     --pinnedpubkey "$pin" \
     -H 'content-type: application/json' \

@@ -68,6 +68,22 @@ assert_eq '10.20.0.10:/resourceportal/volumes /mnt/resourceportal/volumes nfs4 r
   "$(rp_render_nfs_fstab_entry 10.20.0.10 volumes)" "render NFS volumes mount"
 assert_eq '/srv/resource-portal/storage/platform /mnt/resourceportal/platform none bind 0 0' \
   "$(rp_render_local_bind_fstab_entry /srv/resource-portal/storage platform)" "render local platform bind"
+
+
+existing_mount_test() (
+  tmp="$(mktemp -d)"
+  fstab="$tmp/fstab"
+  mount_dir="$tmp/volumes"
+  mkdir -p "$mount_dir"
+  : >"$fstab"
+  rp_runtime_path(){ printf '%s\n' "$mount_dir"; }
+  install(){ printf 'install-called\n' >&2; return 97; }
+  mountpoint(){ return 0; }
+  umount(){ return 0; }
+  mount(){ return 0; }
+  rp_mount_runtime_namespace nfs volumes 10.20.0.10 "$fstab"
+)
+assert_status 0 'NFS remount resume does not chmod an already-mounted root-squashed mountpoint' existing_mount_test
 assert_status 1 "reject unknown NFS namespace" rp_render_nfs_fstab_entry 10.20.0.10 databases
 
 # ResourcePortal exports must be included by the active Ganesha main config.
