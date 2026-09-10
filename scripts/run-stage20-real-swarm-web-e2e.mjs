@@ -104,7 +104,7 @@ try {
     await page.waitForURL(
       new RegExp(`/tenants/${createdTenantId}/app-groups/${appGroupId}$`),
     );
-    await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
+    await page.getByRole("heading", { name: appGroupName, level: 1 }).waitFor();
     await waitForPageRequests(page, "app-group-detail");
 
     const singleAppsPanel = panelByHeading(page, "SingleApps");

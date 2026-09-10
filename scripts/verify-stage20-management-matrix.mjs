@@ -158,7 +158,7 @@ const expectedContracts = [
 ];
 
 const tenantRoutes = [
-  ["overview", "Tenant overview"],
+  ["overview", "Stage 20 Management Matrix"],
   ["app-groups", "AppGroups"],
   ["volumes", "Volumes"],
   ["registries", "Registries"],
