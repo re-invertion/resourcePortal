@@ -47,6 +47,25 @@ test_enrollment_output_dir_owned_by_api_node() (
 )
 status 0 'enrollment issuer output directory is writable by API node user' test_enrollment_output_dir_owned_by_api_node
 
+
+issuer_failure_clears_return_trap_test() (
+  RP_CFG_API_IMAGE=example.invalid/api@sha256:deadbeef
+  RP_CFG_STACK_NAME=resourceportal-control-plane
+  export RP_CFG_API_IMAGE RP_CFG_STACK_NAME
+  rp_prepare_enrollment_output_dir(){ mkdir -p "$1"; }
+  docker(){
+    if [[ "$1 $2" == "service create" ]]; then return 1; fi
+    return 0
+  }
+  set +e
+  rp_issue_enrollment_bundle manager /tmp/issuer-trap.bundle https://10.20.0.10:7443 sha256//pin-value
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || return 1
+  [[ -z "$(trap -p RETURN)" ]]
+)
+status 0 'failed bundle issuance does not leak RETURN cleanup trap into caller' issuer_failure_clears_return_trap_test
+
 bundle="$(mktemp /tmp/rp-join-bundle.XXXXXX)"
 rp_write_join_bundle "$bundle" worker 'enrollment-token-abc_1234567890123456789012345678901234567890' '2026-09-05T16:30:00.000Z' 'https://10.0.0.10:7443' 'sha256//pin-value'
 text="$(cat "$bundle")"

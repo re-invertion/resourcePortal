@@ -169,7 +169,7 @@ rp_issue_enrollment_bundle() {
   output_file="$workdir/enrollment.json"
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-enrollment-issue-$(date +%s)"
   control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
-  trap 'rm -rf "$workdir"' RETURN
+  trap 'rm -rf "$workdir"; trap - RETURN' RETURN
   docker service create \
     --detach \
     --name "$service_name" --restart-condition none \
