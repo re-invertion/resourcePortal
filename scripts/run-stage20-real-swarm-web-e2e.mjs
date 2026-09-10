@@ -276,9 +276,7 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator(
-    "xpath=parent::header/parent::section | parent::section/parent::section",
-  );
+  return title.locator("xpath=ancestor::section[1]");
 }
 
 async function openMoreActions(row) {
