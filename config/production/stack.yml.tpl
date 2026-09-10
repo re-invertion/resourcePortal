@@ -75,7 +75,7 @@ services:
           - node.role == manager
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
   postgres-zitadel:
     image: __POSTGRES_IMAGE__
@@ -115,7 +115,7 @@ services:
           - node.role == manager
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
   zitadel:
     image: __ZITADEL_IMAGE__
@@ -161,7 +161,7 @@ services:
         - traefik.http.routers.resourceportal-zitadel.tls.certresolver=letsencrypt
         - traefik.http.services.resourceportal-zitadel.loadbalancer.server.port=8080
       restart_policy:
-        condition: on-failure
+        condition: any
 
   api:
     image: __API_IMAGE__
@@ -220,7 +220,7 @@ services:
           - node.labels.resourceportal.storage.authoritative == true
           - node.labels.resourceportal.storage.secrets == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
   deployment-worker:
     image: __API_IMAGE__
@@ -264,7 +264,7 @@ services:
           - node.labels.resourceportal.storage.volumes == true
           - node.labels.resourceportal.storage.secrets == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
   operation-worker:
     image: __API_IMAGE__
@@ -307,7 +307,7 @@ services:
           - node.labels.resourceportal.storage.authoritative == true
           - node.labels.resourceportal.storage.volumes == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
   dr-reconciliation:
     image: __API_IMAGE__
@@ -361,7 +361,7 @@ services:
         - traefik.http.routers.resourceportal-web.tls.certresolver=letsencrypt
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
       restart_policy:
-        condition: on-failure
+        condition: any
 
   traefik:
     image: __TRAEFIK_IMAGE__
@@ -397,7 +397,7 @@ services:
           - node.labels.resourceportal.ingress == true
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
-        condition: on-failure
+        condition: any
 
 configs:
   postgres_fence_script:
