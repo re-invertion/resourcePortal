@@ -263,11 +263,11 @@ export function ResourcePanel(props: ResourcePanelProps) {
   }
 
   return (
-    <section>
+    <section className="rp-resource-panel">
       <header>
-        <h2>{props.title}</h2>
-        {props.help ? <p>{props.help}</p> : null}
-        <button type="button" onClick={() => void reload()}>Refresh</button>
+        <div><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2></div>
+        {props.help ? <p className="rp-resource-help">{props.help}</p> : null}
+        <button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button>
       </header>
       {error ? <ErrorState error={error} /> : null}
       {success ? <p className="rp-success-message" role="status">{success}</p> : null}
@@ -336,5 +336,5 @@ export function ReadOnlyPanel({ title, path }: { title: string; path: string }) 
   const [data, setData] = useState<unknown>();
   const [error, setError] = useState<unknown>();
   useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]);
-  return <section><header><h2>{title}</h2></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
+  return <section className="rp-readonly-panel"><header><div><p className="rp-eyebrow">Details</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
 }

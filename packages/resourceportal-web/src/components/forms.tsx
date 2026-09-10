@@ -263,7 +263,7 @@ function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSub
       finally { helpers.setSubmitting(false); }
     },
   });
-  return <form onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); }} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); }} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { initialValue: Payload }) {
@@ -279,7 +279,7 @@ function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, di
     catch (cause) { setError(payloadError(cause)); }
     finally { setSubmitting(false); }
   }
-  return <form onSubmit={submit}><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={submit}><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function DynamicPayloadForm({ submitLabel, onSubmit, disabled = false }: JsonPayloadFormProps) {
@@ -297,7 +297,7 @@ function DynamicPayloadForm({ submitLabel, onSubmit, disabled = false }: JsonPay
     finally { setSubmitting(false); }
   }
   return (
-    <form onSubmit={submit}>
+    <form className="rp-structured-form rp-dynamic-form" onSubmit={submit}>
       {rows.map((row, index) => <fieldset key={row.id}><legend>{`Field ${index + 1}`}</legend><label>Field name<input aria-label={`Field name ${index + 1}`} value={row.key} disabled={disabled || submitting} onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item))} /></label><label>Field type<select aria-label={`Field type ${index + 1}`} value={row.type} disabled={disabled || submitting} onChange={(event) => { const type = event.target.value as DynamicType; setRows((current) => current.map((item) => item.id === row.id ? { ...item, type, value: defaultValue(type) } : item)); }}><option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="list">List</option><option value="object">Object</option></select></label><ValueEditor label={`Field value ${index + 1}`} fieldKey={row.key} value={row.value} forcedType={row.type} disabled={disabled || submitting} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, value } : item))} /><button type="button" disabled={disabled || submitting} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>Remove field</button></fieldset>)}
       <button type="button" disabled={disabled || submitting} onClick={() => setRows((current) => [...current, { id: rowId(), key: "", type: "text", value: "" }])}>Add field</button>
       {error ? <p role="alert">{error}</p> : null}
@@ -320,7 +320,7 @@ export function OneTimeCredential({ value }: { value: unknown }) {
   useEffect(() => setCredential(value), [value]);
   if (credential == null) return <p>Credential cleared from this browser view.</p>;
   const text = typeof credential === "string" ? credential : JSON.stringify(credential, null, 2);
-  return <section aria-label="One-time credential"><p><strong>One-time credential.</strong> Copy it now. It is kept only in this page memory and is not persisted by the Web Console.</p><pre>{text}</pre><button type="button" onClick={() => setCredential(null)}>Clear credential</button></section>;
+  return <section className="rp-one-time-credential" aria-label="One-time credential"><p><strong>One-time credential.</strong> Copy it now. It is kept only in this page memory and is not persisted by the Web Console.</p><pre>{text}</pre><button type="button" onClick={() => setCredential(null)}>Clear credential</button></section>;
 }
 
 export function ConfirmButton({ children, confirm, onConfirm, disabled = false }: { children: React.ReactNode; confirm: string; onConfirm: () => void | Promise<void>; disabled?: boolean }) {

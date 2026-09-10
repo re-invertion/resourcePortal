@@ -104,7 +104,7 @@ try {
     await page.waitForURL(
       new RegExp(`/tenants/${createdTenantId}/app-groups/${appGroupId}$`),
     );
-    await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
+    await page.getByRole("heading", { name: appGroupName, level: 1 }).waitFor();
     await waitForPageRequests(page, "app-group-detail");
 
     const singleAppsPanel = panelByHeading(page, "SingleApps");
@@ -241,7 +241,7 @@ try {
       "Deployment history did not show the browser-created rollback as Succeeded",
     );
     assert(
-      (await page.getByRole("alert").count()) === 0,
+      (await page.locator('[role="alert"]:not(.rp-workspace-alert[data-tone])').count()) === 0,
       "Real-Swarm browser flow rendered an API error alert",
     );
 
@@ -276,9 +276,7 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator(
-    "xpath=parent::header/parent::section | parent::section/parent::section",
-  );
+  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ")][1]');
 }
 
 async function openMoreActions(row) {
@@ -388,8 +386,11 @@ async function waitForPageRequests(page, section) {
     );
     return !loading;
   });
+  const unexpectedAlerts = page.locator(
+    '[role="alert"]:not(.rp-workspace-alert[data-tone])',
+  );
   assert(
-    (await page.getByRole("alert").count()) === 0,
+    (await unexpectedAlerts.count()) === 0,
     `${section} route did not settle cleanly`,
   );
 }

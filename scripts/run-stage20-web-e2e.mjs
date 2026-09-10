@@ -124,22 +124,22 @@ try {
     );
 
     await page.goto(deepLink, { waitUntil: "domcontentloaded" });
-    await page.locator("main > h1", { hasText: "Tenant overview" }).waitFor();
-    const tenantOverviewPanel = panelByHeading(page, "Tenant overview");
-    await tenantOverviewPanel.locator(".rp-readable-data").waitFor();
-    const tenantOverviewGrid = tenantOverviewPanel
-      .locator(".rp-readable-data > .rp-data-object > .rp-data-grid")
-      .first();
-    await tenantOverviewGrid.getByText("Display name", { exact: true }).waitFor();
-    await tenantOverviewGrid.getByText("Federation E2E", { exact: true }).waitFor();
-    await tenantOverviewPanel.getByText("Technical JSON", { exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Federation E2E", level: 1 }).waitFor();
+    const tenantSummary = page.getByRole("region", { name: "Tenant summary" });
+    await tenantSummary.waitFor();
+    for (const metric of ["Applications", "Runtime", "Balance", "Storage"]) {
+      await tenantSummary.getByText(metric, { exact: true }).waitFor();
+    }
+    const attention = page.getByRole("region", { name: "Needs attention" });
+    await attention.getByText(/balance is empty/i).waitFor();
+    const billingLink = attention.getByRole("link", { name: "Go to billing" });
     assert(
-      !(await tenantOverviewPanel.locator(".rp-technical-json pre").isVisible()),
-      "Tenant overview Technical JSON fallback should be collapsed by default",
+      (await billingLink.getAttribute("href")) === `/tenants/${state.tenantId}/billing`,
+      "Tenant dashboard billing blocker did not link to Billing",
     );
     assert(
-      (await page.getByRole("alert").count()) === 0,
-      "Tenant overview rendered an error alert",
+      (await page.locator(".rp-technical-json").count()) === 0,
+      "Tenant dashboard should not expose Technical JSON on the primary overview",
     );
 
     await navigateTenantSection(page, "app-groups", "AppGroups");
@@ -156,10 +156,10 @@ try {
     await page.waitForURL(
       new RegExp(`/tenants/${state.tenantId}/app-groups/[0-9a-f-]+$`),
     );
-    await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
+    await page.getByRole("heading", { name: appGroupName, level: 1 }).waitFor();
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.locator("main > h1", { hasText: "AppGroup" }).waitFor();
+    await page.getByRole("heading", { name: appGroupName, level: 1 }).waitFor();
     await waitForPageRequests(page, "app-group-detail");
 
     const singleAppsPanel = panelByHeading(page, "SingleApps");
@@ -426,9 +426,7 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator(
-    "xpath=parent::header/parent::section | parent::section/parent::section",
-  );
+  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ")][1]');
 }
 
 function editablePanelByHeading(page, heading) {
@@ -544,9 +542,21 @@ async function deleteDraftAppGroupRow(row) {
 }
 
 async function navigateTenantSection(page, section, heading) {
+  const labels = {
+    overview: "Dashboard",
+    "app-groups": "App Groups",
+    volumes: "Volumes",
+    registries: "Registries",
+    domains: "Domains",
+    administration: "People & access",
+    credentials: "Machine credentials",
+    billing: "Billing & quota",
+    audit: "Audit log",
+    operations: "Operations",
+  };
   await page
-    .getByRole("navigation", { name: "Primary" })
-    .getByRole("link", { name: section, exact: true })
+    .getByRole("navigation", { name: "Workspace" })
+    .getByRole("link", { name: labels[section], exact: true })
     .click();
   await page.waitForURL(
     new RegExp(`/tenants/${state.tenantId}/${section}$`),
@@ -556,14 +566,15 @@ async function navigateTenantSection(page, section, heading) {
 
 async function navigatePlatformSection(page, section, heading) {
   const labels = {
-    overview: "platform",
-    maintenance: "maintenance",
-    "identity-providers": "platform IdPs",
-    credentials: "platform credentials",
-    billing: "platform billing",
+    overview: "Overview",
+    maintenance: "Maintenance",
+    infrastructure: "Infrastructure",
+    "identity-providers": "Identity providers",
+    credentials: "Credentials",
+    billing: "Billing",
   };
   await page
-    .getByRole("navigation", { name: "Primary" })
+    .getByRole("navigation", { name: "Platform administration" })
     .getByRole("link", { name: labels[section], exact: true })
     .click();
   await page.waitForURL(new RegExp(`/platform/${section}$`));
@@ -577,8 +588,11 @@ async function waitForPageRequests(page, section) {
     );
     return !loading;
   });
+  const unexpectedAlerts = page.locator(
+    '[role="alert"]:not(.rp-workspace-alert[data-tone])',
+  );
   assert(
-    (await page.getByRole("alert").count()) === 0,
+    (await unexpectedAlerts.count()) === 0,
     `${section} route did not settle cleanly`,
   );
 }
