@@ -14,6 +14,21 @@ status 0 'worker role accepted' rp_validate_enrollment_role worker
 status 0 'manager role accepted' rp_validate_enrollment_role manager
 status 1 'edited admin role rejected' rp_validate_enrollment_role admin
 
+test_enrollment_output_dir_owned_by_api_node() (
+  local root marker
+  root="$(mktemp -d /tmp/rp-enrollment-output.XXXXXX)"
+  marker="$root/chown"
+  docker() {
+    [[ "$1" == run ]] || return 1
+    printf '1001:1002\n'
+  }
+  chown() { printf '%s\n' "$*" >"$marker"; }
+  rp_prepare_enrollment_output_dir "$root/output" 'example.invalid/api@sha256:deadbeef' || return 1
+  [[ "$(cat "$marker")" == "1001:1002 $root/output" ]] || return 1
+  [[ "$(stat -c '%a' "$root/output")" == 700 ]]
+)
+status 0 'enrollment issuer output directory is writable by API node user' test_enrollment_output_dir_owned_by_api_node
+
 bundle="$(mktemp /tmp/rp-join-bundle.XXXXXX)"
 rp_write_join_bundle "$bundle" worker 'enrollment-token-abc_1234567890123456789012345678901234567890' '2026-09-05T16:30:00.000Z' 'https://10.0.0.10:7443' 'sha256//pin-value'
 text="$(cat "$bundle")"

@@ -110,11 +110,21 @@ rp_start_enrollment_listener() {
     "$RP_CFG_API_IMAGE" node dist/src/internal/installer-enrollment.runner.js >/dev/null
 }
 
+rp_prepare_enrollment_output_dir() {
+  local path="$1" image="$2" owner
+  [[ -n "$path" && -n "$image" ]] || return 1
+  owner="$(docker run --rm --entrypoint sh "$image" -c 'printf "%s:%s\n" "$(id -u node)" "$(id -g node)"')" || return 1
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  install -d -m 0700 "$path" || return 1
+  chown "$owner" "$path" || return 1
+  chmod 0700 "$path" || return 1
+}
+
 rp_issue_enrollment_bundle() {
   local role="$1" output_bundle="$2" enrollment_endpoint="$3" pin="$4" workdir output_file service_name timeout elapsed state control_network
   rp_validate_enrollment_role "$role" || return 1
   workdir="$(mktemp -d /tmp/resourceportal-enrollment-issue.XXXXXX)" || return 1
-  chmod 0700 "$workdir"
+  rp_prepare_enrollment_output_dir "$workdir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || { rm -rf "$workdir"; return 1; }
   output_file="$workdir/enrollment.json"
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-enrollment-issue-$(date +%s)"
   control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
