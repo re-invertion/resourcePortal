@@ -149,6 +149,17 @@ rp_prepare_enrollment_output_dir() {
   chmod 0700 "$path" || return 1
 }
 
+rp_issue_node_bundle_cli() {
+  local role="$1" output_bundle="$2"
+  local cert="${RP_ENROLLMENT_CERT_PATH:-/var/lib/resourceportal/installer-state/enrollment/tls.crt}" pin endpoint
+  rp_validate_enrollment_role "$role" || { printf 'Enrollment role must be worker or manager.\n' >&2; return 2; }
+  [[ "$output_bundle" == /* ]] || { printf 'Enrollment bundle output path must be absolute.\n' >&2; return 2; }
+  [[ -r "$cert" ]] || { printf 'Enrollment TLS certificate is not readable: %s\n' "$cert" >&2; return 1; }
+  pin="$(rp_spki_pin "$cert")" || return 1
+  endpoint="https://${RP_CFG_SWARM_ADVERTISE_ADDR:?RP_CFG_SWARM_ADVERTISE_ADDR is required}:7443"
+  rp_issue_enrollment_bundle "$role" "$output_bundle" "$endpoint" "$pin"
+}
+
 rp_issue_enrollment_bundle() {
   local role="$1" output_bundle="$2" enrollment_endpoint="$3" pin="$4" workdir output_file service_name timeout elapsed state control_network
   rp_validate_enrollment_role "$role" || return 1

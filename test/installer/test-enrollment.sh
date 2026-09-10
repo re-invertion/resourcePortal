@@ -14,6 +14,24 @@ status 0 'worker role accepted' rp_validate_enrollment_role worker
 status 0 'manager role accepted' rp_validate_enrollment_role manager
 status 1 'edited admin role rejected' rp_validate_enrollment_role admin
 
+issue_cli_test() (
+  RP_CFG_SWARM_ADVERTISE_ADDR=10.20.0.10
+  RP_CFG_API_IMAGE=example.invalid/api@sha256:deadbeef
+  export RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_API_IMAGE
+  rp_spki_pin(){ printf 'sha256//test-pin\n'; }
+  rp_issue_enrollment_bundle(){
+    [[ "$1" == manager ]] || return 1
+    [[ "$2" == /tmp/test-manager.bundle ]] || return 1
+    [[ "$3" == https://10.20.0.10:7443 ]] || return 1
+    [[ "$4" == sha256//test-pin ]] || return 1
+  }
+  RP_ENROLLMENT_CERT_PATH=/tmp/fake-enrollment.crt
+  export RP_ENROLLMENT_CERT_PATH
+  : >"$RP_ENROLLMENT_CERT_PATH"
+  rp_issue_node_bundle_cli manager /tmp/test-manager.bundle
+)
+status 0 'issue-bundle CLI derives pinned enrollment endpoint from Primary config' issue_cli_test
+
 test_enrollment_output_dir_owned_by_api_node() (
   local root marker
   root="$(mktemp -d /tmp/rp-enrollment-output.XXXXXX)"

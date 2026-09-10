@@ -13,6 +13,7 @@ status(){ local e="$1" n="$2"; shift 2; set +e; "$@" >/tmp/rp-diag.out 2>/tmp/rp
 
 status 0 'primary mode valid' rp_mode_valid primary
 status 0 'add-node mode valid' rp_mode_valid add-node
+status 0 'issue-bundle mode valid' rp_mode_valid issue-bundle
 status 0 'upgrade mode valid' rp_mode_valid upgrade
 status 0 'reconfigure mode valid' rp_mode_valid reconfigure
 status 0 'diagnostics mode valid' rp_mode_valid diagnostics
@@ -204,6 +205,7 @@ done
 [[ "$entrypoint_source" == *'--mode'* ]] && pass 'entrypoint exposes explicit mode selection' || fail 'entrypoint exposes explicit mode selection'
 [[ "$entrypoint_source" == *'rp_primary_install'* ]] && pass 'entrypoint dispatches primary lifecycle' || fail 'entrypoint dispatches primary lifecycle'
 [[ "$entrypoint_source" == *'rp_redeem_join_bundle'* ]] && pass 'entrypoint dispatches add-node lifecycle' || fail 'entrypoint dispatches add-node lifecycle'
+[[ "$entrypoint_source" == *'issue-bundle'* && "$entrypoint_source" == *'--role'* && "$entrypoint_source" == *'rp_issue_node_bundle_cli'* ]] && pass 'entrypoint exposes enrollment bundle issuance' || fail 'entrypoint exposes enrollment bundle issuance'
 [[ "$entrypoint_source" == *'rp_upgrade_apply'* ]] && pass 'entrypoint dispatches upgrade lifecycle' || fail 'entrypoint dispatches upgrade lifecycle'
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
