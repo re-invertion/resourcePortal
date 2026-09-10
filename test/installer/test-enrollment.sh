@@ -63,6 +63,14 @@ contains "$enrollment_source" '--insecure' 'self-signed TLS is accepted only wit
 contains "$enrollment_source" '/installer/enrollment/redeem' 'redemption uses dedicated enrollment endpoint'
 contains "$enrollment_source" '/installer/enrollment/complete' 'joined node calls completion endpoint'
 contains "$enrollment_source" '/var/run/docker.sock' 'enrollment listener can inspect and label joined Swarm nodes'
+contains "$enrollment_source" '--group-add "$docker_socket_gid"' 'enrollment listener gets Docker socket supplemental group'
+
+docker_socket_gid_test() (
+  socket_file="$(mktemp /tmp/rp-docker-socket.XXXXXX)"
+  stat(){ [[ "$1 $2" == '-c %g' ]] || return 1; printf '989\n'; }
+  [[ "$(rp_docker_socket_group_gid "$socket_file")" == 989 ]]
+)
+status 0 'Docker socket group helper returns numeric socket GID' docker_socket_gid_test
 contains "$enrollment_source" 'rp_mount_runtime_namespace nfs volumes' 'worker mounts shared volume namespace over NFS'
 contains "$enrollment_source" 'rp_join_swarm_for_enrollment' 'add-node uses resumable Swarm join helper'
 
