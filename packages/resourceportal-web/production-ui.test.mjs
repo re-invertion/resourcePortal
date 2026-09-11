@@ -52,4 +52,14 @@ describe("production Web Console styling", () => {
     expect(resourcePanel).toContain("bg-blue-600");
     expect(app).toContain("bg-blue-600");
   });
+
+  it("does not expose raw API objects in normal product views", () => {
+    const resourceSource = read("src/components/resource.tsx");
+    const createSource = read("src/components/create-resource.tsx");
+
+    expect(resourceSource).not.toContain("Technical JSON");
+    expect(resourceSource).not.toMatch(/<pre>\{JSON\.stringify\(value, null, 2\)\}<\/pre>/);
+    expect(createSource).not.toMatch(/JSON\.stringify\(entry\)/);
+    expect(createSource).not.toMatch(/<code>\{JSON\.stringify\(value\)\}<\/code>/);
+  });
 });
