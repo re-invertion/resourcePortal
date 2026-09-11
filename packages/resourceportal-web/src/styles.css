@@ -150,20 +150,44 @@
     @apply my-3 grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 md:grid-cols-2;
   }
 
-  .rp-primary-actions {
-    @apply flex flex-wrap items-center gap-2;
+  .rp-row-action-strip {
+    @apply flex min-w-72 flex-wrap items-center gap-1.5;
   }
 
-  .rp-primary-actions > details,
-  .rp-row-actions {
-    @apply my-0 inline-block;
+  .rp-row-action-strip > button,
+  .rp-row-primary-link {
+    @apply inline-flex min-h-8 items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 no-underline shadow-sm hover:border-slate-300 hover:bg-slate-50 hover:no-underline;
   }
 
-  .rp-row-actions > div {
-    @apply mt-2 flex min-w-48 flex-col gap-2;
+  .rp-row-primary-link {
+    @apply border-blue-600 bg-blue-600 text-white hover:border-blue-700 hover:bg-blue-700;
   }
 
-  .rp-row-actions > div > details {
+  .rp-resource-workspace {
+    @apply my-4 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm;
+  }
+
+  .rp-resource-workspace-header {
+    @apply flex items-start gap-4 border-b border-slate-100 bg-slate-50/70 px-4 py-4;
+  }
+
+  .rp-resource-workspace-header > div {
+    @apply min-w-0 flex-1;
+  }
+
+  .rp-resource-workspace-header h3 {
+    @apply mt-0.5 text-base font-semibold text-slate-950;
+  }
+
+  .rp-resource-workspace-header p:last-child {
+    @apply mb-0 mt-1 text-xs text-slate-500;
+  }
+
+  .rp-resource-workspace-body {
+    @apply p-4;
+  }
+
+  .rp-resource-workspace-body > .rp-structured-form {
     @apply my-0;
   }
 
@@ -457,14 +481,32 @@
   .rp-list-toolbar { @apply grid gap-3 rounded-xl border-0 bg-slate-50 p-3 md:grid-cols-2; }
   .rp-list-toolbar label { @apply gap-1 text-xs text-slate-500; }
   .rp-list-toolbar input, .rp-list-toolbar select { @apply bg-white; }
-  .rp-primary-actions > a { @apply inline-flex min-h-8 items-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white no-underline hover:bg-slate-800 hover:no-underline; }
-  .rp-primary-actions > button { @apply min-h-8 rounded-lg px-3 py-1.5 text-xs; }
-  .rp-primary-actions > details > summary, .rp-row-actions > summary { @apply rounded-lg px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100; }
-  .rp-row-actions { @apply border-0 bg-transparent p-0; }
-  .rp-row-actions > div { @apply rounded-xl border border-slate-200 bg-white p-2 shadow-lg; }
   .rp-empty-state { @apply rounded-xl border-slate-200 bg-slate-50/70; }
   .rp-success-message { @apply rounded-xl border-emerald-200 bg-emerald-50 text-emerald-800; }
   .rp-selected-resource { @apply rounded-xl border-blue-100 bg-blue-50; }
+  .rp-settings-editor, .rp-action-panel, .rp-attachment-manager { @apply my-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm; }
+  .rp-settings-editor > header, .rp-attachment-manager > header { @apply flex items-start border-b border-slate-100 px-5 py-4; }
+  .rp-settings-editor > header h2, .rp-attachment-manager > header h3 { @apply mt-0.5 text-base font-semibold text-slate-950; }
+  .rp-settings-editor > header p:last-child, .rp-attachment-manager > header p:last-child { @apply mb-0 mt-1 text-xs text-slate-500; }
+  .rp-settings-editor > :not(header), .rp-action-panel > *, .rp-attachment-manager > :not(header) { @apply mx-5; }
+  .rp-settings-editor > .rp-structured-form, .rp-action-panel > .rp-structured-form { @apply my-5; }
+  .rp-action-panel { @apply p-5; }
+  .rp-action-panel > * { @apply mx-0; }
+  .rp-attachment-grid { @apply my-5 grid gap-4 xl:grid-cols-2; }
+  .rp-attachment-card { @apply overflow-hidden rounded-xl border border-slate-200 bg-slate-50/60; }
+  .rp-attachment-card-header { @apply flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3; }
+  .rp-attachment-card-header h4 { @apply text-sm font-semibold text-slate-950; }
+  .rp-attachment-card-header p { @apply mb-0 mt-0.5 text-xs text-slate-400; }
+  .rp-attachment-list { @apply m-0 grid list-none gap-2 px-4 py-3; }
+  .rp-attachment-list li { @apply flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2; }
+  .rp-attachment-list li span { @apply mr-auto text-xs font-medium text-slate-700; }
+  .rp-attachment-list li button { @apply min-h-8 rounded-lg px-2.5 py-1 text-xs; }
+  .rp-attachment-card > .rp-data-muted { @apply mx-4 my-3 block text-xs; }
+  .rp-attachment-form { @apply border-t border-slate-200 bg-white p-4; }
+  .rp-attachment-form h5 { @apply mb-3 text-xs font-semibold text-slate-700; }
+  .rp-attachment-form .rp-structured-form { @apply m-0 bg-slate-50; }
+  .rp-export-actions { @apply my-4 flex flex-wrap items-center gap-2; }
+  .rp-download-link { @apply inline-flex min-h-9 items-center rounded-lg border border-blue-600 bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white no-underline hover:border-blue-700 hover:bg-blue-700 hover:no-underline; }
   .rp-technical-json { @apply border-slate-200 bg-slate-50; }
   .rp-technical-json > summary { @apply text-xs text-slate-500; }
 

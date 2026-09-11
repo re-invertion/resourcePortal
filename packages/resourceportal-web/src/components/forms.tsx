@@ -71,6 +71,13 @@ function payloadError(cause: unknown) {
 }
 
 function labelFor(key: string) {
+  const friendly: Record<string, string> = {
+    httpEndpointId: "HTTP endpoint ID",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    metadataUrl: "Metadata URL",
+  };
+  if (friendly[key]) return friendly[key];
   const spaced = key
     .replace(/Ids\b/g, " IDs")
     .replace(/Id\b/g, " ID")
@@ -234,6 +241,14 @@ function ValueEditor({ label, fieldKey, value, onChange, disabled, forcedType, r
   return <label>{label}{shouldUseTextarea(fieldKey) ? <textarea {...inputProps} rows={4} /> : <input {...inputProps} type={fieldKey === "email" || fieldKey === "contactEmail" ? "email" : fieldKey === "issuer" || fieldKey === "metadataUrl" ? "url" : "text"} />}<FieldHelp fieldKey={fieldKey} error={error} /></label>;
 }
 
+function referenceLabel(key: string, references?: ReferenceOptions) {
+  const label = labelFor(key);
+  if (!references?.[key]?.length) return label;
+  if (label.endsWith(" IDs")) return `${label.slice(0, -4)}s`;
+  if (label.endsWith(" ID")) return label.slice(0, -3);
+  return label;
+}
+
 function ObjectShapeFields({ values, onChange, disabled, references, errors, touched }: {
   values: Payload;
   onChange: (field: string, value: unknown) => void;
@@ -242,7 +257,7 @@ function ObjectShapeFields({ values, onChange, disabled, references, errors, tou
   errors?: Record<string, unknown>;
   touched?: Record<string, unknown>;
 }) {
-  return <>{Object.entries(values).map(([key, value]) => <ValueEditor key={key} label={labelFor(key)} fieldKey={key} value={value} onChange={(next) => onChange(key, next)} disabled={disabled} references={references} error={touched?.[key] && typeof errors?.[key] === "string" ? String(errors[key]) : undefined} />)}</>;
+  return <>{Object.entries(values).map(([key, value]) => <ValueEditor key={key} label={referenceLabel(key, references)} fieldKey={key} value={value} onChange={(next) => onChange(key, next)} disabled={disabled} references={references} error={touched?.[key] && typeof errors?.[key] === "string" ? String(errors[key]) : undefined} />)}</>;
 }
 
 function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { runtime: PreviewFormikRuntime; initialValue: Payload }) {

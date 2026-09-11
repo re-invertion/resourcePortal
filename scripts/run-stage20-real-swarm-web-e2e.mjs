@@ -106,8 +106,8 @@ try {
 
     const appGroupRow = page.getByRole("row").filter({ hasText: appGroupName });
     await appGroupRow.waitFor();
-    const appGroupId = (await appGroupRow.locator("td").first().textContent())?.trim();
-    assert(appGroupId, "AppGroup create did not expose an id in the resource table");
+    const appGroupId = await appGroupRow.getAttribute("data-resource-id");
+    assert(appGroupId, "AppGroup create did not expose its internal resource id");
     createdStackName = stackNameFor(appGroupId);
 
     await appGroupRow.getByRole("link", { name: "Open" }).click();
@@ -134,8 +134,8 @@ try {
       .getByRole("row")
       .filter({ hasText: singleAppName });
     await singleAppRow.waitFor();
-    const singleAppId = (await singleAppRow.locator("td").first().textContent())?.trim();
-    assert(singleAppId, "SingleApp create did not expose an id in the resource table");
+    const singleAppId = await singleAppRow.getAttribute("data-resource-id");
+    assert(singleAppId, "SingleApp create did not expose its internal resource id");
 
     const deploymentsSection = page
       .getByRole("heading", { name: "Deployments", level: 2 })
@@ -171,9 +171,7 @@ try {
 
     const deploymentHistoryPanel = panelByHeading(page, "Deployment history");
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const deploymentRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: deploymentId });
+    const deploymentRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
     await deploymentRow.waitFor();
     assert(
       (await deploymentRow.textContent())?.includes("Succeeded"),
@@ -183,14 +181,12 @@ try {
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Stop", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "0/0");
 
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Start", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
@@ -199,18 +195,16 @@ try {
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Restart", exact: true }).click();
     await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackSourceRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: deploymentId });
+    const rollbackSourceRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
     await rollbackSourceRow.waitFor();
-    await openMoreActions(rollbackSourceRow);
-    await rollbackSourceRow.locator("summary", { hasText: "Rollback" }).click();
+    await rollbackSourceRow.getByRole("button", { name: "Rollback", exact: true }).click();
+    const rollbackWorkspace = deploymentHistoryPanel.locator(".rp-resource-workspace");
+    await rollbackWorkspace.waitFor();
 
     const rollbackResponsePromise = page.waitForResponse(
       (response) =>
@@ -218,10 +212,10 @@ try {
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments/${deploymentId}/rollback`,
     );
-    await fillStructuredForm(rollbackSourceRow, {
+    await fillStructuredForm(rollbackWorkspace, {
       note: "Stage 20 real Swarm browser rollback",
     });
-    await rollbackSourceRow.getByRole("button", { name: "Rollback" }).click();
+    await rollbackWorkspace.getByRole("button", { name: "Rollback", exact: true }).click();
     const rollbackResponse = await rollbackResponsePromise;
     const rollbackText = await rollbackResponse.text();
     assert(
@@ -242,9 +236,7 @@ try {
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: rollbackDeploymentId });
+    const rollbackRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${rollbackDeploymentId}"]`);
     await rollbackRow.waitFor();
     assert(
       (await rollbackRow.textContent())?.includes("Succeeded"),
@@ -286,15 +278,7 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ")][1]');
-}
-
-async function openMoreActions(row) {
-  const actions = row.locator("details.rp-row-actions");
-  if ((await actions.getAttribute("open")) === null) {
-    await actions.locator(":scope > summary").click();
-  }
-  return actions;
+  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-settings-editor ")][1]');
 }
 
 async function createResource(panel, body) {
@@ -380,6 +364,13 @@ async function fillStructuredForm(container, body) {
 }
 
 function formLabel(key) {
+  const friendly = {
+    roleIds: "Roles",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    metadataUrl: "Metadata URL",
+  };
+  if (friendly[key]) return friendly[key];
   const spaced = key
     .replace(/Ids\b/g, " IDs")
     .replace(/Id\b/g, " ID")

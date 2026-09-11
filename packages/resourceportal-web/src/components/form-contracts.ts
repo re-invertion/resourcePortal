@@ -121,7 +121,7 @@ export function choicesFor(fieldKey: string, value: unknown, references?: Refere
 }
 
 export function descriptionFor(key: string, label: string) {
-  return descriptions[key] ?? `Value sent as ${label} in the Resource Portal API request.`;
+  return descriptions[key] ?? `Configure ${label.toLowerCase()} for this resource.`;
 }
 
 function call(chain: YupChain, method: keyof YupChain, ...args: unknown[]) {

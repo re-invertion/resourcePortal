@@ -256,12 +256,13 @@ try {
     });
     let groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
-    await openMoreActions(groupRow);
-    await groupRow.locator("summary", { hasText: "Edit" }).click();
-    await fillStructuredForm(groupRow, {
+    await groupRow.getByRole("button", { name: "Edit", exact: true }).click();
+    const groupWorkspace = groupsPanel.locator(".rp-resource-workspace");
+    await groupWorkspace.waitFor();
+    await fillStructuredForm(groupWorkspace, {
       description: "Stage 20 browser E2E group updated",
     });
-    await groupRow.getByRole("button", { name: "Save", exact: true }).click();
+    await groupWorkspace.getByRole("button", { name: "Save changes", exact: true }).click();
     await groupsPanel
       .getByRole("status")
       .filter({ hasText: "Changes saved." })
@@ -302,7 +303,6 @@ try {
     );
     await oauthCredential.getByRole("button", { name: "Clear credential" }).click();
     await oauthCredential.waitFor({ state: "detached" });
-    await openMoreActions(oauthRow);
     await oauthRow.getByRole("button", { name: "Rotate credentials" }).click();
     oauthCredential = oauthPanel.locator('section[aria-label="One-time credential"]');
     await oauthCredential.waitFor();
@@ -338,7 +338,6 @@ try {
       .getByRole("button", { name: "Clear credential" })
       .click();
     await oneTimeCredential.waitFor({ state: "detached" });
-    await openMoreActions(createdIdentityRow);
     await createdIdentityRow
       .getByRole("button", { name: "Rotate credentials" })
       .click();
@@ -375,7 +374,7 @@ try {
     await fillStructuredForm(page, { limit: 10 });
     await page.getByRole("button", { name: "Apply filters" }).click();
     await page.getByRole("button", { name: "Export" }).click();
-    await page.locator("details", { hasText: "Export output" }).waitFor();
+    await page.getByRole("link", { name: "Download audit export", exact: true }).waitFor();
     assert(
       (await page.getByRole("alert").count()) === 0,
       "Audit filter/export rendered an error",
@@ -426,7 +425,7 @@ try {
 
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ")][1]');
+  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-settings-editor ")][1]');
 }
 
 function editablePanelByHeading(page, heading) {
@@ -480,6 +479,13 @@ async function fillStructuredForm(container, body) {
 }
 
 function formLabel(key) {
+  const friendly = {
+    roleIds: "Roles",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    metadataUrl: "Metadata URL",
+  };
+  if (friendly[key]) return friendly[key];
   const spaced = key
     .replace(/Ids\b/g, " IDs")
     .replace(/Id\b/g, " ID")
@@ -499,18 +505,9 @@ function formLabel(key) {
     .join(" ");
 }
 
-async function openMoreActions(row) {
-  const actions = row.locator("details.rp-row-actions");
-  if ((await actions.getAttribute("open")) === null) {
-    await actions.locator(":scope > summary").click();
-  }
-  return actions;
-}
-
 async function openDeleteConfirmation(row) {
   const page = row.page();
   const dialog = page.getByRole("dialog", { name: "Confirm action" });
-  await openMoreActions(row);
   const deleteButton = row.getByRole("button", { name: "Delete" });
   await deleteButton.waitFor({ state: "visible" });
   await deleteButton.dispatchEvent("click");
@@ -530,21 +527,20 @@ async function deleteResourceRow(row) {
 }
 
 async function deleteDraftSingleAppRow(row) {
+  const page = row.page();
   await openDeleteConfirmation(row);
-  await confirmAction(row.page());
-  await row
-    .locator("pre")
-    .filter({ hasText: '"pendingDeletion": true' })
-    .waitFor({ state: "attached" });
+  await confirmAction(page);
+  await row.getByRole("button", { name: "View details", exact: true }).click();
+  const workspace = page.locator(".rp-resource-workspace");
+  await workspace.waitFor();
+  const pendingDeletion = workspace.locator(".rp-data-field").filter({ hasText: "Pending deletion" });
+  await pendingDeletion.getByText("Yes", { exact: true }).waitFor();
 }
 
 async function deleteDraftAppGroupRow(row) {
   await openDeleteConfirmation(row);
   await confirmAction(row.page());
-  await row
-    .locator("pre")
-    .filter({ hasText: '"status": "Deleting"' })
-    .waitFor({ state: "attached" });
+  await row.getByText("Deleting", { exact: true }).waitFor();
 }
 
 async function navigateTenantSection(page, section, heading) {
