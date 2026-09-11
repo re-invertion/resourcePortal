@@ -80,6 +80,49 @@ describe("Web Console bootstrap", () => {
     });
   });
 
+  it("shows Platform Admin navigation only after the protected capability probe succeeds", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/auth/me") return json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" });
+      if (path === "/api/tenants") return json([{ id: "t1", name: "one", status: "Active" }]);
+      if (path === "/api/platform/maintenance") return json({ enabled: false });
+      if (path === "/api/tenants/t1/memberships") return json([]);
+      if (path === "/api/tenants/t1") return json({ id: "t1", name: "one", status: "Active" });
+      if (path === "/api/tenants/t1/app-groups") return json([]);
+      if (path === "/api/tenants/t1/billing") return json({ balanceCredits: "100", balancePln: "1", billingState: "Active", lowBalance: false });
+      if (path === "/api/tenants/t1/volumes") return json([]);
+      if (path === "/api/tenants/t1/operations") return json([]);
+      return json({ error: { message: `Unexpected ${path}` } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialPath="/tenants/t1/overview" />);
+
+    expect(await screen.findByRole("heading", { name: "one" })).toBeTruthy();
+    expect(await screen.findByRole("navigation", { name: "Platform administration" })).toBeTruthy();
+  });
+
+  it("keeps Platform Admin navigation hidden when the protected capability probe is denied", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/auth/me") return json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" });
+      if (path === "/api/tenants") return json([{ id: "t1", name: "one", status: "Active" }]);
+      if (path === "/api/platform/maintenance") return json({ error: { message: "Forbidden" } }, 403);
+      if (path === "/api/tenants/t1/memberships") return json([]);
+      if (path === "/api/tenants/t1") return json({ id: "t1", name: "one", status: "Active" });
+      if (path === "/api/tenants/t1/app-groups") return json([]);
+      if (path === "/api/tenants/t1/billing") return json({ balanceCredits: "100", balancePln: "1", billingState: "Active", lowBalance: false });
+      if (path === "/api/tenants/t1/volumes") return json([]);
+      if (path === "/api/tenants/t1/operations") return json([]);
+      return json({ error: { message: `Unexpected ${path}` } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialPath="/tenants/t1/overview" />);
+
+    expect(await screen.findByRole("heading", { name: "one" })).toBeTruthy();
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path) === "/api/platform/maintenance")).toBe(true));
+    expect(screen.queryByRole("navigation", { name: "Platform administration" })).toBeNull();
+  });
+
   it("keeps an authenticated unknown document route on a not-found view", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
