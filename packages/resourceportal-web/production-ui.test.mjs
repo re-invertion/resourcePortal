@@ -41,6 +41,7 @@ describe("production Web Console styling", () => {
     const entryClient = read("src/entry-client.tsx");
     const createResource = read("src/components/create-resource.tsx");
     const resourcePanel = read("src/components/resource.tsx");
+    const app = read("src/App.tsx");
 
     expect(entryClient).toContain('import "./styles.css"');
     expect(entryClient).not.toContain("create-resource.css");
@@ -49,5 +50,6 @@ describe("production Web Console styling", () => {
     expect(createResource).toContain("bg-blue-600");
     expect(createResource).toContain("bg-blue-50 text-blue-700");
     expect(resourcePanel).toContain("bg-blue-600");
+    expect(app).toContain("bg-blue-600");
   });
 });
