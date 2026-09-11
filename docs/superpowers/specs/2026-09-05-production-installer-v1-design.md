@@ -110,7 +110,7 @@ Primary is the first Swarm manager and the single active storage host in v1. One
 
 The production stack logically contains Traefik, Web, API, deployment worker, operation worker, DR reconciliation, ZITADEL, ResourcePortal PostgreSQL and ZITADEL PostgreSQL. Stateful services are constrained to nodes with required storage readiness.
 
-Traefik runs as exactly one active replica in v1 and stores ACME state under platform storage.
+Traefik runs as exactly one active replica in v1. Active ACME state lives under platform storage, with separate production and staging files. Production certificate/account state is additionally mirrored to a root-only host reuse cache under `/var/lib/resourceportal/acme-cache` after successful issuance and immediately before a destructive reset. The cache exists only to prevent needless reissuance during reinstall and is never printed by diagnostics.
 
 Platform PostgreSQL uses active-passive/single-writer semantics. A second writer is never started unless fencing through the authoritative storage/NFS path confirms the previous writer has lost RW access; uncertainty is fail-closed.
 
@@ -129,7 +129,9 @@ Sensitive settings support `*_FILE` loading so Swarm Secrets can be mounted unde
 
 Production uses ZITADEL/OIDC. Installer bootstraps the first user idempotently and appends its stable ZITADEL user ID to `PLATFORM_ADMIN_USER_IDS` without overwriting existing IDs.
 
-A production domain is required before Web Console login is enabled. Installer verifies DNS to the intended ingress address, enables ACME only after validation, waits for a valid HTTPS certificate, then marks login ready. There is no temporary HTTP login or self-signed bootstrap login in v1.
+A production domain is required before Web Console login is enabled. Installer verifies both public DNS names against the intended ingress address, deploys ingress first with the Let's Encrypt staging resolver to prove HTTP-01 reachability without consuming production issuance limits, and only then enables the selected final resolver. Production is the default and requires publicly trusted TLS; `--acme-environment staging` is an explicit disposable-E2E mode and is visibly marked as not publicly trusted.
+
+The Web and ZITADEL routers request one canonical certificate identifier set: auth hostname as the main name and the ResourcePortal hostname as a SAN. This avoids duplicate issuance and allows an existing combined certificate to be reused after reinstall. Terminal ACME failures such as rate limiting, rejected identifiers, and failed authorization are detected from Traefik logs and fail fast with a sanitized actionable message. Rate-limit messages preserve the CA-provided retry-after timestamp. There is no temporary HTTP login or self-signed bootstrap login in v1.
 
 SMTP is optional and may be deferred. If provided, transport/authentication/delivery are validated before acceptance.
 
@@ -145,7 +147,7 @@ Reconfigure supports domain/ACME email, SMTP, safe Swarm/NFS address migration, 
 
 ## Diagnostics
 
-Read-only diagnostics cover OS/packages, Docker, Swarm/quorum, firewall, storage device/filesystem/UUID/fstab/project quota, backend health/capacity/maintenance, storage-ready service and labels, NFS-Ganesha/export isolation/client mounts, control-plane replicas, PostgreSQL single-writer readiness, ZITADEL, RP health endpoints, Traefik/DNS/TLS, image/version consistency and enrollment lifecycle.
+Read-only diagnostics cover OS/packages, Docker, Swarm/quorum, firewall, storage device/filesystem/UUID/fstab/project quota, backend health/capacity/maintenance, storage-ready service and labels, NFS-Ganesha/export isolation/client mounts, control-plane replicas, PostgreSQL single-writer readiness, ZITADEL, RP health endpoints, Traefik/DNS/TLS, ACME environment/active state/reuse-cache presence, image/version consistency and enrollment lifecycle. Diagnostics never dump ACME JSON or private-key material.
 
 Repair actions are explicit and separately confirmed.
 

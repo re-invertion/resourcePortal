@@ -178,6 +178,12 @@ completion_text="$(rp_dashboard_completion_text primary)"
   assert_contains "$completion_text" 'Enrollment: ready' 'completion shows enrollment readiness'
   assert_contains "$completion_text" '/var/log/resourceportal/installer.log' 'completion shows log path'
   assert_contains "$completion_text" 'SMTP: deferred' 'completion shows deferred SMTP'
+  RP_CFG_ACME_ENVIRONMENT='staging'
+  staging_completion="$(rp_dashboard_completion_text primary)"
+  assert_contains "$staging_completion" "TLS: Let's Encrypt staging (NOT publicly trusted)" 'staging completion is visibly non-production'
+  RP_CFG_ACME_ENVIRONMENT='production'
+  production_completion="$(rp_dashboard_completion_text primary)"
+  assert_contains "$production_completion" "TLS: Let's Encrypt production" 'production completion identifies trusted ACME mode'
   assert_not_contains "$completion_text" "$RP_ADMIN_PASSWORD" 'completion excludes admin password'
   assert_not_contains "$completion_text" "$RP_INTERNAL_WORKER_TOKEN" 'completion excludes worker token'
   unset RP_ADMIN_PASSWORD RP_INTERNAL_WORKER_TOKEN RP_DASHBOARD_SERVICE_SUMMARY

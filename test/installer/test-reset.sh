@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/config.sh"
+source "$repo_root/scripts/installer/acme.sh"
 source "$repo_root/scripts/installer/ownership.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
 source "$repo_root/scripts/installer/reset.sh"
@@ -523,8 +524,35 @@ test_remove_installer_state_clears_legacy_files() (
 )
 assert_status 0 'factory reset removes unknown legacy installer-state leftovers' test_remove_installer_state_clears_legacy_files
 
+
+# Factory reset must preserve production ACME state from pre-hardening installs
+# before it destroys platform storage. Missing ACME state is a valid no-op.
+test_preserve_legacy_acme_before_reset() (
+  local root="$tmpdir/acme-preserve"
+  mkdir -p "$root/platform/traefik" "$root/cache"
+  cat >"$root/platform/traefik/acme.json" <<'JSON'
+{"letsencrypt":{"Account":{"Email":"admin@example.com"},"Certificates":[{"domain":{"main":"auth.example.test","sans":[]},"certificate":"CERT","key":"KEY"}]}}
+JSON
+  RP_ACME_PLATFORM_DIR="$root/platform/traefik"
+  RP_ACME_CACHE_DIR="$root/cache"
+  export RP_ACME_PLATFORM_DIR RP_ACME_CACHE_DIR
+  rp_reset_preserve_acme_state || return 1
+  cmp -s "$root/platform/traefik/acme.json" "$root/cache/acme.json"
+)
+assert_status 0 'factory reset preserves legacy active production ACME state before storage wipe' test_preserve_legacy_acme_before_reset
+
+test_preserve_missing_acme_before_reset() (
+  local root="$tmpdir/acme-missing"
+  mkdir -p "$root/platform/traefik" "$root/cache"
+  RP_ACME_PLATFORM_DIR="$root/platform/traefik"
+  RP_ACME_CACHE_DIR="$root/cache"
+  export RP_ACME_PLATFORM_DIR RP_ACME_CACHE_DIR
+  rp_reset_preserve_acme_state
+)
+assert_status 0 'factory reset permits incomplete install with no production ACME state' test_preserve_missing_acme_before_reset
+
 # Task 7: stable factory phase order and resumable reset journal.
-expected_factory_phases=$'preflight\nstop-services\nremove-stack\nremove-swarm-resources\nremove-enrollment\nremove-system-config\nunmount-runtime\nleave-swarm\nremove-docker\nremove-docker-data\nwipe-storage\nremove-rp-data\nremove-packages\nremove-installer-state\nfinal-cleanup'
+expected_factory_phases=$'preflight\nstop-services\npreserve-acme\nremove-stack\nremove-swarm-resources\nremove-enrollment\nremove-system-config\nunmount-runtime\nleave-swarm\nremove-docker\nremove-docker-data\nwipe-storage\nremove-rp-data\nremove-packages\nremove-installer-state\nfinal-cleanup'
 assert_eq "$expected_factory_phases" "$(rp_factory_reset_phase_names 2>/dev/null || true)" 'factory reset phase order is stable'
 
 test_factory_resume_journal() (
@@ -544,6 +572,7 @@ test_factory_resume_journal() (
 
   rp_reset_factory_preflight(){ printf 'preflight\n' >>"$calls"; return 0; }
   rp_reset_stop_services(){ printf 'stop-services\n' >>"$calls"; }
+  rp_reset_preserve_acme_state(){ printf 'preserve-acme\n' >>"$calls"; }
   rp_reset_remove_stack(){ printf 'remove-stack\n' >>"$calls"; }
   rp_reset_remove_swarm_resources(){ printf 'remove-swarm-resources\n' >>"$calls"; }
   rp_reset_remove_enrollment(){ printf 'remove-enrollment\n' >>"$calls"; }

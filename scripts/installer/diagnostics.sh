@@ -4,7 +4,7 @@ rp_diagnostic_line() { printf '%-34s %s\n' "$1" "$2"; }
 rp_diagnostic_cmd() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then rp_diagnostic_line "$name" OK; else rp_diagnostic_line "$name" FAIL; fi; }
 
 rp_run_diagnostics() {
-  local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" quorum node_id fstype uuid
+  local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" quorum node_id fstype uuid acme_env acme_state acme_resolver acme_cache
   rp_diagnostic_cmd 'supported OS' rp_detect_os
   rp_diagnostic_cmd 'Docker daemon' docker info
   rp_diagnostic_cmd 'UFW status' ufw status
@@ -31,6 +31,21 @@ rp_run_diagnostics() {
   rp_diagnostic_cmd 'ZITADEL PostgreSQL service' docker service inspect "${stack}_postgres-zitadel"
   rp_diagnostic_cmd 'ZITADEL service' docker service inspect "${stack}_zitadel"
   rp_diagnostic_cmd 'enrollment listener' docker service inspect "${stack}-installer-enrollment"
+  acme_env="${RP_CFG_ACME_ENVIRONMENT:-production}"
+  rp_diagnostic_line 'ACME environment' "$acme_env"
+  acme_state="$(rp_acme_storage_file "$acme_env" 2>/dev/null || true)"
+  if [[ "$acme_env" == staging ]]; then acme_resolver='letsencrypt-staging'; else acme_resolver='letsencrypt'; fi
+  [[ -n "$acme_state" ]] && rp_diagnostic_cmd 'ACME active state' test -s "$acme_state"
+  if [[ "$acme_env" == production ]]; then
+    acme_cache="${RP_ACME_CACHE_DIR:-/var/lib/resourceportal/acme-cache}/acme.json"
+    rp_diagnostic_cmd 'ACME reuse cache' test -s "$acme_cache"
+  fi
+  if [[ -n "$acme_state" && -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]]; then
+    rp_diagnostic_cmd 'ACME auth domain state' rp_acme_storage_has_domain "$acme_state" "$acme_resolver" "$RP_CFG_ZITADEL_DOMAIN"
+  fi
+  if [[ -n "$acme_state" && -n "${RP_CFG_DOMAIN:-}" ]]; then
+    rp_diagnostic_cmd 'ACME Web domain state' rp_acme_storage_has_domain "$acme_state" "$acme_resolver" "$RP_CFG_DOMAIN"
+  fi
   [[ -n "${RP_CFG_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ResourcePortal HTTPS' rp_validate_https_origin "$RP_CFG_DOMAIN"
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ZITADEL HTTPS certificate' rp_validate_https_certificate "$RP_CFG_ZITADEL_DOMAIN"
   [[ -n "${RP_CFG_RELEASE_VERSION:-}" ]] && rp_diagnostic_line 'installed release' "$RP_CFG_RELEASE_VERSION"

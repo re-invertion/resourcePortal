@@ -87,6 +87,10 @@ rp_collect_primary_config() {
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || { RP_CFG_ZITADEL_DOMAIN="auth.${RP_CFG_DOMAIN}"; export RP_CFG_ZITADEL_DOMAIN; }
   rp_prompt_if_empty RP_CFG_INGRESS_ADDRESSES 'Ingress' 'Expected public ingress IP address(es), comma-separated' "${detected_public_address:-$RP_CFG_SWARM_ADVERTISE_ADDR}"
   rp_prompt_if_empty RP_CFG_ACME_EMAIL 'TLS / ACME' 'ACME contact email' ''
+  RP_CFG_ACME_ENVIRONMENT="${RP_CFG_ACME_ENVIRONMENT:-production}"
+  rp_acme_environment_valid "$RP_CFG_ACME_ENVIRONMENT" || { printf 'Unsupported ACME environment: %s\n' "$RP_CFG_ACME_ENVIRONMENT" >&2; return 1; }
+  export RP_CFG_ACME_ENVIRONMENT
+  if [[ "$RP_CFG_ACME_ENVIRONMENT" == staging ]]; then rp_log WARN 'ACME staging mode enabled: certificates are not publicly trusted'; fi
   if ! rp_phase_done "$state_file" identity; then
     rp_prompt_if_empty RP_ADMIN_USERNAME 'First Platform Admin' 'Admin username' 'admin'
     rp_prompt_if_empty RP_ADMIN_EMAIL 'First Platform Admin' 'Admin email' ''
@@ -538,16 +542,28 @@ rp_primary_enable_ingress() {
   rp_validate_domain_dns "$RP_CFG_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   rp_validate_domain_dns "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_INGRESS_ADDRESSES" || return 1
   mountpoint -q /mnt/resourceportal/platform || return 1
-  install -d -m 0700 /mnt/resourceportal/platform/traefik || return 1
-  rp_deploy_control_plane ingress
-  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Waiting for HTTPS certificate: $RP_CFG_ZITADEL_DOMAIN" || true; fi
-  rp_wait_for_https_certificate "$RP_CFG_ZITADEL_DOMAIN" 300
+  rp_acme_prepare_state || return 1
+  rp_deploy_control_plane ingress || return 1
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == production ]] && \
+     rp_acme_production_state_reusable "$(rp_acme_storage_file production)" "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_DOMAIN"; then
+    if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_updated ingress 'Reusing preserved production TLS certificate; staging issuance is not required' || true; fi
+    return 0
+  fi
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Validating ACME HTTP-01 with staging: $RP_CFG_ZITADEL_DOMAIN" || true; fi
+  rp_wait_for_acme_certificate "$RP_CFG_ZITADEL_DOMAIN" staging 300
 }
 
 rp_primary_deploy_final() {
-  rp_deploy_control_plane final
+  local environment="${RP_CFG_ACME_ENVIRONMENT:-production}"
+  rp_deploy_control_plane final || return 1
+  if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final "Waiting for $environment HTTPS certificates" || true; fi
+  rp_wait_for_acme_certificate "$RP_CFG_ZITADEL_DOMAIN" "$environment" 300 || return 1
+  rp_wait_for_acme_certificate "$RP_CFG_DOMAIN" "$environment" 300 || return 1
   if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final 'Waiting for ResourcePortal health' || true; fi
-  rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300
+  rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300 || return 1
+  if [[ "$environment" == production ]]; then
+    rp_acme_cache_active_state || { printf 'Failed to preserve production ACME state for safe reinstall reuse.\n' >&2; return 1; }
+  fi
 }
 
 rp_primary_start_enrollment() {

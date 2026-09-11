@@ -76,6 +76,7 @@ export RP_CFG_MODE="primary"
 export RP_CFG_STORAGE_BASE_PATH="/srv/resource-portal/storage"
 export RP_CFG_SWARM_ADVERTISE_ADDR="10.10.0.10"
 export RP_CFG_DOMAIN="rp.example.com"
+export RP_CFG_ACME_ENVIRONMENT="staging"
 export RP_CFG_API_IMAGE="ghcr.io/example/api@sha256:abc"
 export RP_CFG_WEB_IMAGE="ghcr.io/example/web@sha256:def"
 export RP_SECRET_DATABASE_PASSWORD="super-secret-db-password"
@@ -86,15 +87,37 @@ config_text="$(cat "$config_path")"
 assert_contains "$config_text" 'RP_CFG_MODE=primary' "writes allow-listed mode"
 assert_contains "$config_text" 'RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage' "writes storage base path"
 assert_contains "$config_text" 'RP_CFG_DOMAIN=rp.example.com' "writes domain"
+assert_contains "$config_text" 'RP_CFG_ACME_ENVIRONMENT=staging' "writes ACME environment"
 assert_not_contains "$config_text" 'super-secret-db-password' "does not serialize RP_SECRET values"
 assert_not_contains "$config_text" 'must-not-be-serialized' "does not serialize secret-like cfg key"
 assert_eq "600" "$(stat -c '%a' "$config_path")" "config permissions are 0600"
 
-unset RP_CFG_MODE RP_CFG_STORAGE_BASE_PATH RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_DOMAIN RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_SECRET_DATABASE_PASSWORD RP_CFG_SMTP_PASSWORD
+unset RP_CFG_MODE RP_CFG_STORAGE_BASE_PATH RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_DOMAIN RP_CFG_ACME_ENVIRONMENT RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_SECRET_DATABASE_PASSWORD RP_CFG_SMTP_PASSWORD
 rp_config_load "$config_path"
 assert_eq "primary" "${RP_CFG_MODE:-}" "loads persisted mode"
 assert_eq "/srv/resource-portal/storage" "${RP_CFG_STORAGE_BASE_PATH:-}" "loads persisted base path"
 assert_eq "rp.example.com" "${RP_CFG_DOMAIN:-}" "loads persisted domain"
+assert_eq "staging" "${RP_CFG_ACME_ENVIRONMENT:-}" "loads persisted ACME environment"
+
+# Only one installer process may mutate a host at a time.
+lock_file="$tmpdir/resourceportal-installer.lock"
+lock_ready="$tmpdir/lock-ready"
+(
+  exec 9<>"$lock_file"
+  flock -n 9
+  printf ready >"$lock_ready"
+  sleep 5
+) &
+lock_holder_pid=$!
+for _ in $(seq 1 50); do [[ -e "$lock_ready" ]] && break; sleep 0.02; done
+RP_INSTALLER_LOCK_FILE="$lock_file"
+export RP_INSTALLER_LOCK_FILE
+assert_status 1 "second concurrent installer is rejected" rp_installer_lock_acquire
+kill "$lock_holder_pid" 2>/dev/null || true
+wait "$lock_holder_pid" 2>/dev/null || true
+assert_status 0 "installer lock is acquired after prior process exits" rp_installer_lock_acquire
+rp_installer_lock_release
+unset RP_INSTALLER_LOCK_FILE
 
 # Regression: invoking the installer without --mode must present correctly paired
 # mode labels in the terminal fallback. This exercises the real rp_main call site.

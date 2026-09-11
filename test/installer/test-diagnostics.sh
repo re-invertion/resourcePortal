@@ -209,7 +209,7 @@ for forbidden in 'systemctl restart' 'docker service update' 'docker node update
 done
 
 entrypoint_source="$(cat "$repo_root/resourceportal-install.sh")"
-for module in lifecycle diagnostics reconfigure enrollment upgrade releases control-plane identity domain smtp nfs storage filesystem quota docker firewall swarm secrets; do
+for module in lifecycle diagnostics reconfigure enrollment upgrade releases acme control-plane identity domain smtp nfs storage filesystem quota docker firewall swarm secrets; do
   [[ "$entrypoint_source" == *"scripts/installer/${module}.sh"* ]] && pass "entrypoint sources ${module}" || fail "entrypoint sources ${module}"
 done
 [[ "$entrypoint_source" == *'--mode'* ]] && pass 'entrypoint exposes explicit mode selection' || fail 'entrypoint exposes explicit mode selection'
@@ -228,7 +228,7 @@ lifecycle_source="$(cat "$repo_root/scripts/installer/lifecycle.sh")"
 [[ "$lifecycle_source" == *"rp_run_logged_operation identity 'Bootstrapping identity provider'"* ]] && pass 'identity bootstrap uses logged live operation' || fail 'identity bootstrap uses logged live operation'
 identity_phase_source="$(sed -n '/rp_primary_bootstrap_identity()/,/^}/p' "$repo_root/scripts/installer/lifecycle.sh")"
 [[ "$identity_phase_source" == *'rp_config_write /etc/resourceportal/installer.conf'* ]] && pass 'identity bootstrap persists real OIDC state before checkpoint' || fail 'identity bootstrap persists real OIDC state before checkpoint'
-[[ "$lifecycle_source" == *"Waiting for HTTPS certificate"* ]] && pass 'ingress reports certificate wait' || fail 'ingress reports certificate wait'
+[[ "$lifecycle_source" == *"Validating ACME HTTP-01 with staging"* && "$lifecycle_source" == *'rp_wait_for_acme_certificate "$RP_CFG_ZITADEL_DOMAIN" staging 300'* ]] && pass 'ingress reports staging ACME validation wait' || fail 'ingress reports staging ACME validation wait'
 [[ "$lifecycle_source" == *"Waiting for ResourcePortal health"* ]] && pass 'final rollout reports health wait' || fail 'final rollout reports health wait'
 for required in 'rp_collect_primary_config' 'RP_CFG_CLUSTER_CIDR' 'RP_CFG_SWARM_ADVERTISE_ADDR' 'RP_CFG_STORAGE_BASE_PATH' 'RP_CFG_DOMAIN' 'RP_CFG_ZITADEL_DOMAIN' 'RP_CFG_ACME_EMAIL' 'RP_CFG_RELEASE_VERSION' 'RP_ADMIN_EMAIL' 'RP_ADMIN_PASSWORD' 'RP_CFG_SMTP_DEFERRED'; do
   [[ "$lifecycle_source" == *"$required"* ]] && pass "interactive Primary covers $required" || fail "interactive Primary covers $required"
@@ -246,7 +246,7 @@ common_source="$(cat "$repo_root/scripts/installer/common.sh")"
 contains_log(){ [[ "$1" == *"$2"* ]] && pass "$3" || fail "$3"; }
 contains_log "$common_source" '/var/log/resourceportal/installer.log' 'installer has canonical log path'
 contains_log "$entrypoint_source" 'rp_log_init' 'entrypoint initializes installer log'
-for check in 'ufw status' 'docker node inspect' 'findmnt -nro FSTYPE' 'findmnt -nro UUID' '/etc/fstab' 'ganesha' 'postgres-rp' 'installer-enrollment' 'RP_CFG_API_IMAGE' 'RP_CFG_WEB_IMAGE'; do
+for check in 'ufw status' 'docker node inspect' 'findmnt -nro FSTYPE' 'findmnt -nro UUID' '/etc/fstab' 'ganesha' 'postgres-rp' 'installer-enrollment' 'RP_CFG_API_IMAGE' 'RP_CFG_WEB_IMAGE' 'RP_CFG_ACME_ENVIRONMENT' 'ACME reuse cache' 'rp_acme_storage_has_domain'; do
   [[ "$diag_source" == *"$check"* ]] && pass "diagnostics covers $check" || fail "diagnostics covers $check"
 done
 

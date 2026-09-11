@@ -1,4 +1,4 @@
-name: Codespaces Preview Smoke
+name: Installer + Codespaces Preview
 
 on:
   pull_request:
@@ -6,6 +6,9 @@ on:
     paths:
       - ".devcontainer/**"
       - "scripts/codespace-*.sh"
+      - "scripts/installer/**"
+      - "test/installer/**"
+      - "resourceportal-install.sh"
       - "packages/resourceportal-web/**"
       - "packages/resourceportal-api/**"
       - "docker-compose.yml"
@@ -28,6 +31,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Validate Production Installer contracts
+        run: npm run test:installer
       - name: Prepare Codespaces runtime
         run: bash scripts/codespace-setup.sh
       - name: Start Codespaces preview

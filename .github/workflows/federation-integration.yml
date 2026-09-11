@@ -1,4 +1,4 @@
-name: Live Federation Integration
+name: Installer + Identity Federation
 
 on:
   push:
@@ -29,6 +29,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate Production Installer contracts
+        run: npm run test:installer
 
       - name: Install Playwright for live browser login
         run: |

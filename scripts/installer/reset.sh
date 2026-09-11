@@ -361,6 +361,20 @@ rp_reset_stop_services() {
   done < <(docker service ls --filter "label=com.docker.stack.namespace=$stack" --format '{{.Name}}' 2>/dev/null || true)
 }
 
+
+rp_reset_preserve_acme_state() {
+  local active="${RP_ACME_PLATFORM_DIR:-/mnt/resourceportal/platform/traefik}/acme.json"
+  [[ -s "$active" ]] || return 0
+  if ! declare -F rp_acme_cache_active_state >/dev/null; then
+    printf 'Cannot preserve production ACME state before factory reset: ACME module is unavailable.\n' >&2
+    return 1
+  fi
+  rp_acme_cache_active_state || {
+    printf 'Factory reset refused because production ACME state could not be preserved safely.\n' >&2
+    return 1
+  }
+}
+
 rp_reset_remove_stack() {
   local stack="${RP_FACTORY_PLAN_STACK:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}" remaining
   local attempts="${RP_RESET_STACK_REMOVE_ATTEMPTS:-60}" delay="${RP_RESET_STACK_REMOVE_DELAY:-1}" i
@@ -657,6 +671,7 @@ rp_factory_reset_phase_names() {
   printf '%s\n' \
     preflight \
     stop-services \
+    preserve-acme \
     remove-stack \
     remove-swarm-resources \
     remove-enrollment \
@@ -744,6 +759,7 @@ rp_reset_final_cleanup() {
 rp_reset_factory_phase_command() {
   case "$1" in
     stop-services) printf 'rp_reset_stop_services\n' ;;
+    preserve-acme) printf 'rp_reset_preserve_acme_state\n' ;;
     remove-stack) printf 'rp_reset_remove_stack\n' ;;
     remove-swarm-resources) printf 'rp_reset_remove_swarm_resources\n' ;;
     remove-enrollment) printf 'rp_reset_remove_enrollment\n' ;;
