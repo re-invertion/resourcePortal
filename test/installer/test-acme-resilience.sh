@@ -161,10 +161,11 @@ export RP_CFG_ACME_ENVIRONMENT=production
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 contains "$ingress" 'tls.certresolver=letsencrypt-staging' 'ingress router uses staging ACME resolver'
+contains "$ingress" 'certificatesresolvers.letsencrypt-staging.acme.storage=/platform/traefik/acme-staging.json' 'ingress loads staging ACME storage'
+not_contains "$ingress" 'certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json' 'ingress does not load production ACME resolver into shared TLS store'
 contains "$final" 'tls.certresolver=letsencrypt' 'final production router uses production ACME resolver'
-contains "$final" 'acme.storage=/platform/traefik/acme.json' 'production ACME storage remains shared platform state'
-contains "$final" 'acme.storage=/platform/traefik/acme-staging.json' 'staging ACME state is isolated from production state'
-contains "$final" 'acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory' 'staging resolver uses official staging CA'
+contains "$final" 'certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json' 'final production loads production ACME storage'
+not_contains "$final" 'certificatesresolvers.letsencrypt-staging.' 'final production does not load staging resolver or staging certificates'
 contains "$final" 'traefik.http.routers.resourceportal-zitadel.tls.domains[0].main=auth.rp.example.com' 'auth router requests canonical combined certificate main domain'
 contains "$final" 'traefik.http.routers.resourceportal-zitadel.tls.domains[0].sans=rp.example.com' 'auth router includes Web hostname as SAN'
 contains "$final" 'traefik.http.routers.resourceportal-web.tls.domains[0].main=auth.rp.example.com' 'Web router reuses canonical combined certificate main domain'
@@ -172,6 +173,8 @@ contains "$final" 'traefik.http.routers.resourceportal-web.tls.domains[0].sans=r
 export RP_CFG_ACME_ENVIRONMENT=staging
 staging_final="$(rp_render_stack final)"
 contains "$staging_final" 'tls.certresolver=letsencrypt-staging' 'test-only staging install never switches router to production ACME'
+contains "$staging_final" 'certificatesresolvers.letsencrypt-staging.acme.storage=/platform/traefik/acme-staging.json' 'test-only staging final loads staging ACME storage'
+not_contains "$staging_final" 'certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json' 'test-only staging final does not load production ACME resolver'
 
 # A production reinstall with a valid restored certificate must not create a new staging order.
 ingress_reuse_log="$fixture_dir/ingress-reuse.log"

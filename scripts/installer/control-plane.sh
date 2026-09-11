@@ -36,7 +36,7 @@ rp_escape_sed_replacement() {
 }
 
 rp_render_stack() {
-  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver
+  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
   rp_require_stack_config || return 1
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -46,6 +46,13 @@ rp_render_stack() {
   platform_admin_ids="${RP_CFG_PLATFORM_ADMIN_IDS:-}"
   output="$(cat "$template")"
   acme_resolver="$(rp_acme_resolver_for_state "$state")" || return 1
+  if [[ "$acme_resolver" == letsencrypt-staging ]]; then
+    acme_environment=staging
+    acme_storage=/platform/traefik/acme-staging.json
+  else
+    acme_environment=production
+    acme_storage=/platform/traefik/acme.json
+  fi
 
   local -a pairs=(
     "POSTGRES_IMAGE|$RP_CFG_POSTGRES_IMAGE"
@@ -57,8 +64,8 @@ rp_render_stack() {
     "ZITADEL_DOMAIN|$RP_CFG_ZITADEL_DOMAIN"
     "ACME_EMAIL|$RP_CFG_ACME_EMAIL"
     "ACME_CERT_RESOLVER|$acme_resolver"
-    "ACME_PRODUCTION_CA_SERVER|$(rp_acme_ca_server_for_environment production)"
-    "ACME_STAGING_CA_SERVER|$(rp_acme_ca_server_for_environment staging)"
+    "ACME_CA_SERVER|$(rp_acme_ca_server_for_environment "$acme_environment")"
+    "ACME_STORAGE|$acme_storage"
     "PLATFORM_ADMIN_IDS|$platform_admin_ids"
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
