@@ -44,8 +44,8 @@ describe("production Web Console styling", () => {
     expect(entryClient).toContain('import "./styles.css"');
     expect(entryClient).not.toContain("create-resource.css");
     expect(styles).toContain(".rp-create-workspace");
-    expect(styles).toContain(".rp-create-resource-icon");
-    expect(styles).toContain(".rp-create-steps");
+    expect(styles).toContain(".rp-resource-icon");
+    expect(styles).toContain(".rp-create-stepper");
     expect(styles).toContain(".rp-create-review");
     expect(styles).toContain("@apply");
   });
