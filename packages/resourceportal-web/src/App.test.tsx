@@ -80,6 +80,25 @@ describe("Web Console bootstrap", () => {
     });
   });
 
+  it("uses semantic tenant navigation icons and exposes breadcrumbs in authenticated workspace routes", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/auth/me") return json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" });
+      if (path === "/api/tenants") return json([{ id: "t1", name: "one", displayName: "Production", status: "Active" }]);
+      if (path === "/api/platform/maintenance") return json({ error: { message: "Forbidden" } }, 403);
+      if (path === "/api/tenants/t1/memberships") return json([]);
+      if (path === "/api/tenants/t1/app-groups") return json([]);
+      return json({ error: { message: `Unexpected ${path}` } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialPath="/tenants/t1/app-groups" />);
+
+    await screen.findByRole("heading", { name: "AppGroups" });
+    const appGroupsLink = screen.getByRole("link", { name: "App Groups" });
+    expect(appGroupsLink.querySelector('[data-rp-icon="app-group"]')).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeTruthy();
+  });
+
   it("shows Platform Admin navigation only after the protected capability probe succeeds", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
