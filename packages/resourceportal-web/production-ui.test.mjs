@@ -36,4 +36,17 @@ describe("production Web Console styling", () => {
     expect(styles).toContain("rp-status-pill");
     expect(styles).toContain("rp-confirm-dialog");
   });
+
+  it("styles the resource creation wizard inside the production Tailwind stylesheet", () => {
+    const styles = read("src/styles.css");
+    const entryClient = read("src/entry-client.tsx");
+
+    expect(entryClient).toContain('import "./styles.css"');
+    expect(entryClient).not.toContain("create-resource.css");
+    expect(styles).toContain(".rp-create-workspace");
+    expect(styles).toContain(".rp-create-resource-icon");
+    expect(styles).toContain(".rp-create-steps");
+    expect(styles).toContain(".rp-create-review");
+    expect(styles).toContain("@apply");
+  });
 });
