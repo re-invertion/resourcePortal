@@ -152,6 +152,16 @@ rp_ui_backend() {
   fi
 }
 
+rp_ui_gum_interactive() {
+  local tty_fd rc
+  if { exec {tty_fd}<>/dev/tty; } 2>/dev/null; then
+    if "$RP_GUM_BIN" "$@" <&"$tty_fd" 2>&"$tty_fd"; then rc=0; else rc=$?; fi
+    exec {tty_fd}>&-
+    return "$rc"
+  fi
+  "$RP_GUM_BIN" "$@"
+}
+
 rp_ui_prompt_begin() {
   RP_UI_PROMPT_RESTORE_DASHBOARD=false
   if [[ "${RP_DASHBOARD_ENTERED:-false}" == true ]] && declare -F rp_dashboard_leave >/dev/null; then
@@ -188,7 +198,7 @@ rp_ui_input() {
   case "$backend" in
     gum)
       rp_ui_prompt_begin
-      if result="$("$RP_GUM_BIN" input --header "$title" --prompt "$prompt: " --value "$default")"; then rc=0; else rc=$?; fi
+      if result="$(rp_ui_gum_interactive input --header "$title" --prompt "$prompt: " --value "$default")"; then rc=0; else rc=$?; fi
       rp_ui_prompt_end
       (( rc == 0 )) || return "$rc"
       ;;
@@ -207,7 +217,7 @@ rp_ui_password() {
   case "$backend" in
     gum)
       rp_ui_prompt_begin
-      if result="$("$RP_GUM_BIN" input --header "$title" --prompt "$prompt: " --password)"; then rc=0; else rc=$?; fi
+      if result="$(rp_ui_gum_interactive input --header "$title" --prompt "$prompt: " --password)"; then rc=0; else rc=$?; fi
       rp_ui_prompt_end
       (( rc == 0 )) || return "$rc"
       ;;
@@ -235,7 +245,7 @@ rp_ui_choice() {
   case "$backend" in
     gum)
       rp_ui_prompt_begin
-      if result="$("$RP_GUM_BIN" choose --header "$title - $prompt" --label-delimiter ':::' --selected "$default_label" "${options[@]}")"; then rc=0; else rc=$?; fi
+      if result="$(rp_ui_gum_interactive choose --header "$title - $prompt" --label-delimiter ':::' --selected "$default_label" "${options[@]}")"; then rc=0; else rc=$?; fi
       rp_ui_prompt_end
       (( rc == 0 )) || return "$rc"
       ;;
@@ -259,7 +269,7 @@ rp_ui_confirm() {
   case "$backend" in
     gum)
       rp_ui_prompt_begin
-      if "$RP_GUM_BIN" confirm "$title: $prompt"; then rc=0; else rc=$?; fi
+      if rp_ui_gum_interactive confirm "$title: $prompt"; then rc=0; else rc=$?; fi
       rp_ui_prompt_end
       return "$rc"
       ;;
@@ -281,7 +291,7 @@ rp_ui_show_log_details() {
   fi
   if [[ "$(rp_ui_backend)" == gum ]]; then
     rp_ui_prompt_begin
-    "$RP_GUM_BIN" pager "$details" || true
+    rp_ui_gum_interactive pager "$details" || true
     rp_ui_prompt_end
   else
     printf '%s\n' "$details" >&2

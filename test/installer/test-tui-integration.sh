@@ -151,6 +151,42 @@ assert_eq 2 "$(cat "$reset_retry_count")" 'factory reset retry reruns failed com
 assert_eq 1 "$(grep -c '^wipe-storage$' "$reset_retry_state")" 'factory reset retry creates one checkpoint'
 unset -f reset_retry_phase rp_ui_event rp_ui_failure_action
 
+# 10. Interactive gum prompts stay visible even while a TUI phase captures stderr.
+prompt_gum="$tmpdir/prompt-gum"
+cat >"$prompt_gum" <<'GUM'
+#!/usr/bin/env bash
+case "${1:-}" in
+  input)
+    printf 'VISIBLE_DESTRUCTIVE_PROMPT\n' >&2
+    IFS= read -r answer
+    printf '%s\n' "$answer"
+    ;;
+  *) exit 2 ;;
+esac
+GUM
+chmod +x "$prompt_gum"
+prompt_helper="$tmpdir/prompt-helper.sh"
+cat >"$prompt_helper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source "$repo_root/scripts/installer/common.sh"
+source "$repo_root/scripts/installer/ui.sh"
+RP_UI_MODE=tui
+RP_GUM_BIN="$prompt_gum"
+RP_DASHBOARD_ENTERED=false
+export RP_UI_MODE RP_GUM_BIN RP_DASHBOARD_ENTERED
+prompt_phase(){
+  local value
+  value="\$(rp_ui_input 'Destructive storage confirmation' 'Type exactly: FORMAT /dev/sda' '')"
+  printf 'VALUE=%s\\n' "\$value"
+}
+rp_run_capture_error prompt_phase
+EOF
+chmod +x "$prompt_helper"
+prompt_output="$(printf 'FORMAT /dev/sda\n' | script -qec "$prompt_helper" /dev/null 2>&1 | tr -d '\r')"
+assert_contains "$prompt_output" 'VISIBLE_DESTRUCTIVE_PROMPT' 'TUI phase capture keeps interactive gum prompt visible'
+assert_contains "$prompt_output" 'VALUE=FORMAT /dev/sda' 'TUI phase capture still returns interactive gum value'
+
 if (( failures > 0 )); then
   printf '%s test(s) failed\n' "$failures" >&2
   exit 1
