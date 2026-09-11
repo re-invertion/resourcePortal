@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "../api/client";
+import { CreateResourceWorkspace, resourceCreationMeta } from "./create-resource";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential, type ReferenceOptions } from "./forms";
 
 type FormTemplate = Record<string, unknown>;
@@ -199,6 +200,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
   const [statusFilter, setStatusFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [success, setSuccess] = useState<string>();
+  const creation = useMemo(() => resourceCreationMeta(props.title), [props.title]);
   const explicitSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
   const referenceOptionSources = useMemo(() => ({
     ...inferredReferenceOptionSources(props.listPath),
@@ -263,25 +265,31 @@ export function ResourcePanel(props: ResourcePanelProps) {
   }
 
   return (
-    <section className="rp-resource-panel">
-      <header>
-        <div><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2></div>
-        {props.help ? <p className="rp-resource-help">{props.help}</p> : null}
-        <button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button>
+    <section>
+      <header className="rp-resource-panel-header">
+        <div className="rp-resource-panel-heading"><h2>{props.title}</h2>{props.help ? <p>{props.help}</p> : null}</div>
+        <div className="rp-panel-header-actions">
+          {canCreate && !createOpen ? <button type="button" className="rp-create-trigger" onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}
+          <button type="button" onClick={() => void reload()}>Refresh</button>
+        </div>
       </header>
       {error ? <ErrorState error={error} /> : null}
       {success ? <p className="rp-success-message" role="status">{success}</p> : null}
       {oneTime != null ? <OneTimeCredential value={oneTime} /> : null}
-      {canCreate ? (
-        <details open={createOpen} onToggle={(event) => setCreateOpen(event.currentTarget.open)}>
-          <summary>Create</summary>
-          <JsonPayloadForm initialValue={props.createInitialValue} referenceOptions={referenceOptions} submitLabel="Create" onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${props.title} created.`); setCreateOpen(false); }} />
-        </details>
-      ) : null}
+      {canCreate && createOpen ? <CreateResourceWorkspace
+        title={props.title}
+        initialValue={props.createInitialValue}
+        referenceOptions={referenceOptions}
+        onCancel={() => setCreateOpen(false)}
+        onCreate={async (body) => {
+          await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${props.title} created.`);
+          setCreateOpen(false);
+        }}
+      /> : null}
       {loading ? <p>Loading…</p> : items.length === 0 ? (
         <div className="rp-empty-state">
           <p>No {props.title} yet.</p>
-          {canCreate ? <button type="button" onClick={() => setCreateOpen(true)}>Create one</button> : null}
+          {canCreate && !createOpen ? <button type="button" className="rp-create-trigger" onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}
         </div>
       ) : <>
         <div className="rp-list-toolbar">
@@ -336,5 +344,5 @@ export function ReadOnlyPanel({ title, path }: { title: string; path: string }) 
   const [data, setData] = useState<unknown>();
   const [error, setError] = useState<unknown>();
   useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]);
-  return <section className="rp-readonly-panel"><header><div><p className="rp-eyebrow">Details</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
+  return <section><header><h2>{title}</h2></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
 }
