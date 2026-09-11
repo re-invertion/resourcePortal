@@ -28,7 +28,7 @@ describe("cloud-style resource creation", () => {
     );
 
     expect(await screen.findByText("No Volumes yet.")).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "Create volume" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Volume" })[0]);
 
     expect(screen.getByRole("heading", { name: "Create Volume" })).toBeTruthy();
     expect(screen.getByText("Basics")).toBeTruthy();
@@ -42,14 +42,15 @@ describe("cloud-style resource creation", () => {
     expect(screen.getByRole("heading", { name: "Review configuration" })).toBeTruthy();
     expect(screen.getByText("data")).toBeTruthy();
     expect(screen.getByText("20")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create volume" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Volume" }));
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const [url, options] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(url).toBe("/api/tenants/t1/volumes");
     expect(options.method).toBe("POST");
     expect(JSON.parse(String(options.body))).toEqual({ name: "data", sizeGiB: 20 });
-    expect(await screen.findByText("Volumes created.")).toBeTruthy();
+    expect(await screen.findByText("Volume created.")).toBeTruthy();
   });
 });
