@@ -374,7 +374,7 @@ try {
     await fillStructuredForm(page, { limit: 10 });
     await page.getByRole("button", { name: "Apply filters" }).click();
     await page.getByRole("button", { name: "Export" }).click();
-    await page.locator("details", { hasText: "Export output" }).waitFor();
+    await page.getByRole("link", { name: "Download audit export", exact: true }).waitFor();
     assert(
       (await page.getByRole("alert").count()) === 0,
       "Audit filter/export rendered an error",

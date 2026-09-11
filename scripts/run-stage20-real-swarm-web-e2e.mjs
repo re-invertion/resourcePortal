@@ -236,9 +236,7 @@ try {
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: rollbackDeploymentId });
+    const rollbackRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${rollbackDeploymentId}"]`);
     await rollbackRow.waitFor();
     assert(
       (await rollbackRow.textContent())?.includes("Succeeded"),
