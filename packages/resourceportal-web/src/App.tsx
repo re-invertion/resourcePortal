@@ -3,6 +3,7 @@ import { ApiError, apiRequest } from "./api/client";
 import { CreateResourceWorkspace } from "./components/create-resource";
 import { ErrorState } from "./components/resource";
 import { AppShell } from "./components/shell";
+import { AppGroupsRoute } from "./pages/app-groups-route";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
 import { PlatformPage } from "./pages/platform";
 import { TenantPage } from "./pages/tenant";
@@ -30,7 +31,12 @@ export function App({ initialPath }: AppProps = {}) {
   if (!tenants) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
   if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
+  const tenantContent = route.kind === "tenant"
+    ? route.section === "app-groups" && !route.resourceId
+      ? <AppGroupsRoute tenantId={route.tenantId} userId={user.id} />
+      : <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} />
+    : undefined;
+  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{tenantContent ?? <PlatformPage section={route.kind === "platform" ? route.section : "overview"} resourceId={route.kind === "platform" ? route.resourceId : undefined} />}</AppShell>;
 }
 
 function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {
