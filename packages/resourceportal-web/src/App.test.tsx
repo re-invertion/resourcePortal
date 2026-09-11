@@ -69,7 +69,7 @@ describe("Web Console bootstrap", () => {
 
     expect(screen.getByRole("heading", { name: "Review configuration" })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    fireEvent.click(screen.getByRole("button", { name: "Create tenant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Tenant" }));
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     const [, options] = fetchMock.mock.calls[2] as [string, RequestInit];
