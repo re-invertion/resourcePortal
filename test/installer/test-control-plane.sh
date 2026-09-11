@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
+source "$repo_root/scripts/installer/acme.sh"
 source "$repo_root/scripts/installer/control-plane.sh"
 source "$repo_root/scripts/installer/secrets.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
@@ -23,6 +24,7 @@ export RP_CFG_DOMAIN='rp.example.com'
 export RP_CFG_ZITADEL_DOMAIN='auth.rp.example.com'
 export RP_CFG_INGRESS_ADDRESSES='203.0.113.10'
 export RP_CFG_ACME_EMAIL='admin@example.com'
+export RP_CFG_ACME_ENVIRONMENT='production'
 export RP_CFG_COOKIE_SWARM_REF='rp_cookie_secret_0123456789abcdef'
 export RP_CFG_WORKER_SWARM_REF='rp_internal_worker_token_0123456789abcdef'
 export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
@@ -59,22 +61,25 @@ rp_validate_domain_dns(){ return 0; }
 mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
 install(){ printf 'install:%s\n' "$*" >>"$ingress_prepare_log"; }
 rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$ingress_prepare_log"; }
-rp_wait_for_https_certificate(){ printf 'cert:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
+rp_acme_restore_cached_state(){ return 0; }
+rp_wait_for_acme_certificate(){ printf 'cert:%s:%s\n' "$1" "$2" >>"$ingress_prepare_log"; return 0; }
+rp_acme_cache_active_state(){ printf 'cache\n' >>"$ingress_prepare_log"; return 0; }
 rp_wait_for_https_origin(){ printf 'origin:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
 rp_primary_enable_ingress
 rp_primary_deploy_final
 prepare_text="$(cat "$ingress_prepare_log")"
 contains "$prepare_text" 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' 'ingress prepares Traefik ACME state directory on resume'
 first_prepare="$(sed -n '1p' "$ingress_prepare_log")"
-second_prepare="$(sed -n '2p' "$ingress_prepare_log")"
+platform_prepare_line="$(grep -nF 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' "$ingress_prepare_log" | head -n1 | cut -d: -f1)"
+ingress_deploy_line="$(grep -nF 'deploy:ingress' "$ingress_prepare_log" | head -n1 | cut -d: -f1)"
 [[ "$first_prepare" == 'mountpoint:-q /mnt/resourceportal/platform' ]] && pass 'ingress verifies platform mount before Traefik state' || fail 'ingress verifies platform mount before Traefik state'
-[[ "$second_prepare" == 'install:-d -m 0700 /mnt/resourceportal/platform/traefik' ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
-contains "$prepare_text" 'cert:auth.rp.example.com' 'ingress waits for ZITADEL HTTPS certificate'
-not_contains "$prepare_text" 'cert:rp.example.com' 'ingress does not wait for Web certificate before Web is enabled'
-order_tail="$(grep -E '^(deploy|cert|origin):' "$ingress_prepare_log")"
-expected_order=$'deploy:ingress\ncert:auth.rp.example.com\ndeploy:final\norigin:rp.example.com'
+[[ -n "$platform_prepare_line" && -n "$ingress_deploy_line" && "$platform_prepare_line" -lt "$ingress_deploy_line" ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
+contains "$prepare_text" 'cert:auth.rp.example.com:staging' 'ingress validates ZITADEL ACME challenge with staging'
+not_contains "$(sed -n '/deploy:ingress/,/deploy:final/p' "$ingress_prepare_log")" 'cert:rp.example.com' 'ingress does not wait for Web certificate before Web is enabled'
+order_tail="$(grep -E '^(deploy|cert|origin|cache)' "$ingress_prepare_log")"
+expected_order=$'deploy:ingress\ncert:auth.rp.example.com:staging\ndeploy:final\ncert:auth.rp.example.com:production\ncert:rp.example.com:production\norigin:rp.example.com\ncache'
 [[ "$order_tail" == "$expected_order" ]] && pass 'certificate and health checks follow service availability' || fail 'certificate and health checks follow service availability'
-unset -f rp_validate_domain_dns mountpoint install rp_wait_for_https_certificate rp_wait_for_https_origin
+unset -f rp_validate_domain_dns mountpoint install rp_acme_restore_cached_state rp_wait_for_acme_certificate rp_acme_cache_active_state rp_wait_for_https_origin
 eval "$original_ingress_deploy"
 rm -f "$ingress_prepare_log"
 

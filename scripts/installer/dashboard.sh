@@ -314,6 +314,7 @@ rp_dashboard_completion_text() {
   service_summary="$(rp_dashboard_control_plane_summary)"
   if [[ -n "${RP_CFG_ENROLLMENT_PIN:-}" ]]; then enrollment='ready'; else enrollment='not ready'; fi
   if [[ "${RP_CFG_SMTP_DEFERRED:-false}" == true ]]; then smtp='deferred'; else smtp='configured'; fi
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then tls="Let's Encrypt staging (NOT publicly trusted)"; else tls="Let's Encrypt production"; fi
   printf 'Installation status: COMPLETE\n'
   printf 'Release: %s\n' "${RP_CFG_RELEASE_VERSION:-unknown}"
   printf 'Web: https://%s\n' "${RP_CFG_DOMAIN:-unknown}"
@@ -321,6 +322,7 @@ rp_dashboard_completion_text() {
   printf 'Control plane: %s\n' "$service_summary"
   printf 'Enrollment: %s\n' "$enrollment"
   printf 'SMTP: %s\n' "$smtp"
+  printf 'TLS: %s\n' "$tls"
   printf 'Log: %s\n' "${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
 }
 

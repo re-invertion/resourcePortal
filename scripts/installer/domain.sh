@@ -115,13 +115,12 @@ rp_wait_for_required_dns() {
 }
 
 rp_validate_https_origin() {
-  local domain="$1"
-  curl --fail --silent --show-error \
-    --proto '=https' \
-    --tlsv1.2 \
-    --connect-timeout 10 \
-    --max-time 20 \
-    "https://${domain}/api/health/live" >/dev/null
+  local domain="$1" local_ingress="${RP_HTTPS_LOCAL_INGRESS_ADDRESS:-127.0.0.1}"
+  local -a args=(--fail --silent --show-error --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 20 --resolve "${domain}:443:${local_ingress}")
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    args+=(--insecure)
+  fi
+  curl "${args[@]}" "https://${domain}/api/health/live" >/dev/null
 }
 
 rp_wait_for_https_origin() {
@@ -139,9 +138,10 @@ rp_wait_for_https_origin() {
 
 
 rp_validate_https_certificate() {
-  local domain="$1" code
+  local domain="$1" local_ingress="${RP_HTTPS_LOCAL_INGRESS_ADDRESS:-127.0.0.1}" code
   code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 20 "https://${domain}/" 2>/dev/null)" || return 1
+    --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 20 \
+    --resolve "${domain}:443:${local_ingress}" "https://${domain}/" 2>/dev/null)" || return 1
   [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]
 }
 

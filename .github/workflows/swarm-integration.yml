@@ -1,4 +1,4 @@
-name: Real Docker Swarm Integration
+name: Installer + Real Docker Swarm
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   real-swarm:
-    name: Real Swarm smoke test
+    name: Installer + real Swarm smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -209,7 +209,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Stage 24 installer contracts on runner
+      - name: Validate Production Installer contracts on runner
         run: |
           bash -n resourceportal-install.sh
           npm run test:installer

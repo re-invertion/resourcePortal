@@ -1,4 +1,4 @@
-name: Stage 20 Dev
+name: Installer + Web Console Dev
 
 on:
   push:
@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - name: Install and refresh lockfile
         run: npm install
+      - name: Validate Production Installer contracts
+        run: npm run test:installer
       - name: Persist generated lockfile
         run: |
           if ! git diff --quiet -- package-lock.json; then

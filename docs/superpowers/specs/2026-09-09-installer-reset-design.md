@@ -72,7 +72,7 @@ It removes:
 - ResourcePortal control-plane stack and installer-enrollment service;
 - ResourcePortal-managed Swarm secrets and configs;
 - ResourcePortal databases and ZITADEL database state;
-- ResourcePortal ACME / Traefik state;
+- active ResourcePortal Traefik state and disposable staging ACME state;
 - ResourcePortal enrollment state;
 - all tenant volumes and tenant secret storage;
 - all ResourcePortal platform data;
@@ -88,6 +88,8 @@ It removes:
 - packages installed by ResourcePortal when ownership can be proven, or when the explicit untracked-package override is supplied.
 
 The approved factory-reset semantics are intentionally a full wipe, not a preserve-data uninstall.
+
+One narrowly scoped host-level exception is intentional: the root-only production ACME reuse cache at `/var/lib/resourceportal/acme-cache/acme.json` is preserved. Immediately after control-plane services are stopped and before platform storage is removed, factory reset copies a valid active production `acme.json` into that cache when present. The reset fails closed if existing production ACME state is present but cannot be safely preserved. An incomplete install with no production ACME state remains a valid no-op. The cache contains TLS/ACME private material, stays mode `0600` inside a mode `0700` directory, is never logged or displayed, and is reused only to prevent unnecessary certificate issuance during a subsequent reinstall.
 
 ## 4. Confirmation and non-interactive safety
 
@@ -518,6 +520,7 @@ Required coverage includes at least:
 ### Swarm/runtime cleanup
 
 - only ResourcePortal stack/services/secrets/configs are removed;
+- production ACME state is preserved to the root-only reuse cache before platform storage is destroyed;
 - unrelated Swarm resources cause preflight refusal rather than being destroyed by `leave-swarm`;
 - absence of already-removed resources is idempotent success.
 

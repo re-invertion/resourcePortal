@@ -1,0 +1,52 @@
+name: Production Installer Quality Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-installer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-quality:
+    name: Installer contracts, ACME safety, and shell quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install installer validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq shellcheck
+
+      - name: Validate shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in resourceportal-install.sh scripts/installer/*.sh packages/resourceportal-postgres/postgres-fence.sh test/installer/*.sh; do
+            bash -n "$file"
+          done
+
+      - name: Run ShellCheck
+        run: shellcheck --severity=warning -x resourceportal-install.sh scripts/installer/*.sh packages/resourceportal-postgres/postgres-fence.sh test/installer/*.sh
+
+      - name: Run complete Production Installer regression suite
+        run: npm run test:installer
+
+      - name: Confirm ACME rate-limit and reinstall resilience
+        run: bash test/installer/test-acme-resilience.sh

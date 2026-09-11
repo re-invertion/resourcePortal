@@ -18,6 +18,7 @@ source "$repo_root/scripts/installer/swarm.sh"
 source "$repo_root/scripts/installer/secrets.sh"
 source "$repo_root/scripts/installer/releases.sh"
 source "$repo_root/scripts/installer/upgrade.sh"
+source "$repo_root/scripts/installer/acme.sh"
 source "$repo_root/scripts/installer/control-plane.sh"
 source "$repo_root/scripts/installer/identity.sh"
 source "$repo_root/scripts/installer/domain.sh"
@@ -36,7 +37,7 @@ export RP_INSTALLER_REPO_ROOT RP_INSTALLER_VERSION
 rp_usage() {
   cat <<'USAGE'
 Usage:
-  sudo ./resourceportal-install.sh --mode primary [--config PATH]
+  sudo ./resourceportal-install.sh --mode primary [--config PATH] [--acme-environment production|staging]
   sudo ./resourceportal-install.sh --mode add-node --bundle PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode issue-bundle --role manager|worker --bundle /ABSOLUTE/PATH [--config PATH]
   sudo ./resourceportal-install.sh --mode upgrade --manifest PATH [--config PATH]
@@ -48,6 +49,9 @@ Usage:
 
 Modes:
   primary       Install or resume the Primary ResourcePortal node.
+
+TLS testing:
+  --acme-environment staging  Use Let's Encrypt staging for the complete install. Intended for disposable installer E2E hosts only.
   add-node      Join this host using a single-use pinned-TLS enrollment bundle.
   issue-bundle  Issue a 30-minute single-use enrollment bundle on the Primary.
   upgrade       Apply a selected release manifest.
@@ -122,7 +126,7 @@ rp_dispatch() {
 }
 
 rp_main() {
-  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair="" scope="" role=""
+  local config_path="/etc/resourceportal/installer.conf" mode="" bundle="" action="" manifest="" repair="" scope="" role="" acme_environment_override=""
   RP_CONFIRM_FACTORY_RESET=false
   RP_FORCE_REMOVE_UNTRACKED_PACKAGES=false
   export RP_CONFIRM_FACTORY_RESET RP_FORCE_REMOVE_UNTRACKED_PACKAGES
@@ -146,6 +150,9 @@ rp_main() {
       --manifest)
         [[ $# -ge 2 ]] || { printf '%s\n' '--manifest requires a path' >&2; return 2; }
         manifest="$2"; shift 2 ;;
+      --acme-environment)
+        [[ $# -ge 2 ]] || { printf '%s\n' '--acme-environment requires production or staging' >&2; return 2; }
+        acme_environment_override="$2"; shift 2 ;;
       --repair)
         [[ $# -ge 2 ]] || { printf '%s\n' '--repair requires an action' >&2; return 2; }
         repair="$2"; shift 2 ;;
@@ -176,6 +183,10 @@ rp_main() {
   trap 'rp_ui_cleanup; exit 143' TERM
   if [[ -r "$config_path" ]]; then
     rp_config_load "$config_path"
+  fi
+  if [[ -n "$acme_environment_override" ]]; then
+    rp_acme_environment_valid "$acme_environment_override" || { printf 'Unsupported ACME environment: %s\n' "$acme_environment_override" >&2; return 2; }
+    RP_CFG_ACME_ENVIRONMENT="$acme_environment_override"; export RP_CFG_ACME_ENVIRONMENT
   fi
   mode="${mode:-${RP_CFG_MODE:-}}"
   if [[ -z "$mode" ]]; then
@@ -217,5 +228,8 @@ rp_main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  rp_require_root || exit $?
+  rp_installer_lock_acquire || exit $?
+  trap 'rp_installer_lock_release; rp_ui_cleanup' EXIT
   rp_main "$@"
 fi

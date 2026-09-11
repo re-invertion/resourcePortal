@@ -2,6 +2,30 @@
 
 RP_INSTALLER_LOG_FILE="${RP_INSTALLER_LOG_FILE:-/var/log/resourceportal/installer.log}"
 
+rp_installer_lock_acquire() {
+  local lock_file="${RP_INSTALLER_LOCK_FILE:-/run/lock/resourceportal-installer.lock}" fd
+  if [[ -n "${RP_INSTALLER_LOCK_FD:-}" ]]; then return 0; fi
+  command -v flock >/dev/null 2>&1 || { printf 'ResourcePortal installer requires flock (util-linux) for host-wide concurrency protection.\n' >&2; return 1; }
+  install -d -m 0755 "$(dirname "$lock_file")" || return 1
+  exec {fd}<>"$lock_file" || return 1
+  if ! flock -n "$fd"; then
+    printf 'Another ResourcePortal installer/reset/repair process is already running on this host. Exit the other session before retrying.\n' >&2
+    eval "exec ${fd}>&-"
+    return 1
+  fi
+  truncate -s 0 "$lock_file" 2>/dev/null || true
+  printf '%s\n' "$$" >&"$fd" || true
+  RP_INSTALLER_LOCK_FD="$fd"
+  export RP_INSTALLER_LOCK_FD
+}
+
+rp_installer_lock_release() {
+  local fd="${RP_INSTALLER_LOCK_FD:-}"
+  [[ -n "$fd" ]] || return 0
+  eval "exec ${fd}>&-"
+  unset RP_INSTALLER_LOCK_FD
+}
+
 rp_log_init() {
   install -d -m 0750 "$(dirname "$RP_INSTALLER_LOG_FILE")"
   touch "$RP_INSTALLER_LOG_FILE"

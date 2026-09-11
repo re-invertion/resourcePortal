@@ -158,7 +158,9 @@ services:
         - traefik.http.routers.resourceportal-zitadel.rule=Host(`__ZITADEL_DOMAIN__`)
         - traefik.http.routers.resourceportal-zitadel.entrypoints=websecure
         - traefik.http.routers.resourceportal-zitadel.tls=true
-        - traefik.http.routers.resourceportal-zitadel.tls.certresolver=letsencrypt
+        - traefik.http.routers.resourceportal-zitadel.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.resourceportal-zitadel.tls.domains[0].main=__ZITADEL_DOMAIN__
+        - traefik.http.routers.resourceportal-zitadel.tls.domains[0].sans=__DOMAIN__
         - traefik.http.services.resourceportal-zitadel.loadbalancer.server.port=8080
       restart_policy:
         condition: any
@@ -358,7 +360,9 @@ services:
         - traefik.http.routers.resourceportal-web.rule=Host(`__DOMAIN__`)
         - traefik.http.routers.resourceportal-web.entrypoints=websecure
         - traefik.http.routers.resourceportal-web.tls=true
-        - traefik.http.routers.resourceportal-web.tls.certresolver=letsencrypt
+        - traefik.http.routers.resourceportal-web.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.resourceportal-web.tls.domains[0].main=__ZITADEL_DOMAIN__
+        - traefik.http.routers.resourceportal-web.tls.domains[0].sans=__DOMAIN__
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
       restart_policy:
         condition: any
@@ -372,9 +376,15 @@ services:
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --certificatesresolvers.letsencrypt.acme.email=__ACME_EMAIL__
+      - --certificatesresolvers.letsencrypt.acme.caserver=__ACME_PRODUCTION_CA_SERVER__
       - --certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json
       - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
       - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt-staging.acme.email=__ACME_EMAIL__
+      - --certificatesresolvers.letsencrypt-staging.acme.caserver=__ACME_STAGING_CA_SERVER__
+      - --certificatesresolvers.letsencrypt-staging.acme.storage=/platform/traefik/acme-staging.json
+      - --certificatesresolvers.letsencrypt-staging.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt-staging.acme.httpchallenge.entrypoint=web
     ports:
       - target: 80
         published: 80
