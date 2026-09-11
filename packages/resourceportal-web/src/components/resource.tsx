@@ -249,6 +249,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
     return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8);
   }, [items]);
   const canCreate = !!props.createPath && allowed(props.permissions, props.createPermission);
+  const createButtonClass = "rp-create-trigger min-h-9 rounded-lg border-blue-600 bg-blue-600 px-3.5 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
 
   async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>, oneTimeResponse = false, successMessage = "Saved.") {
     setError(undefined);
@@ -266,9 +267,9 @@ export function ResourcePanel(props: ResourcePanelProps) {
 
   return (
     <section className="rp-resource-panel">
-      <header className="rp-resource-panel-header">
-        <div className="rp-resource-panel-heading"><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2>{props.help ? <p className="rp-resource-help">{props.help}</p> : null}</div>
-        <div className="rp-panel-header-actions">{canCreate && !createOpen ? <button type="button" className="rp-create-trigger" onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}<button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button></div>
+      <header className="rp-resource-panel-header m-0 flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center">
+        <div className="rp-resource-panel-heading mr-auto min-w-0"><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2>{props.help ? <p className="rp-resource-help">{props.help}</p> : null}</div>
+        <div className="rp-panel-header-actions !mr-0 flex shrink-0 flex-wrap items-center gap-2">{canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}<button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button></div>
       </header>
       {error ? <ErrorState error={error} /> : null}
       {success ? <p className="rp-success-message" role="status">{success}</p> : null}
@@ -277,7 +278,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
       {loading ? <p>Loading…</p> : items.length === 0 ? (
         <div className="rp-empty-state">
           <p>No {props.title} yet.</p>
-          {canCreate && !createOpen ? <button type="button" className="rp-create-trigger" onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}
+          {canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}
         </div>
       ) : <>
         <div className="rp-list-toolbar">
