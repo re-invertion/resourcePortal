@@ -126,6 +126,44 @@ const friendlyFieldLabels: Record<string, string> = {
   metadataUrl: "Metadata URL",
 };
 
+const ui = {
+  workspace: "rp-create-workspace my-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm",
+  titlebar: "rp-create-titlebar flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-6",
+  icon: "rp-resource-icon inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100",
+  titleCopy: "min-w-0 flex-1",
+  eyebrow: "rp-create-eyebrow m-0 text-[11px] font-bold uppercase tracking-[0.15em] text-slate-400",
+  heading: "mt-1 text-xl font-bold tracking-[-0.025em] text-slate-950",
+  description: "mb-0 mt-1 max-w-3xl text-sm leading-6 text-slate-500",
+  close: "rp-create-close size-9 min-h-9 shrink-0 rounded-lg border-0 bg-transparent px-0 text-xl font-normal text-slate-400 shadow-none hover:bg-slate-100 hover:text-slate-700",
+  stepper: "rp-create-stepper m-0 flex items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-5 py-3 sm:px-6",
+  step: "rp-create-step flex items-center gap-2 text-xs font-semibold text-slate-400 data-[active=true]:text-blue-700 data-[complete=true]:text-emerald-700",
+  stepNumber: "inline-flex size-6 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] font-bold group-data-[active=true]:border-blue-600 group-data-[active=true]:bg-blue-600 group-data-[active=true]:text-white group-data-[complete=true]:border-emerald-600 group-data-[complete=true]:bg-emerald-600 group-data-[complete=true]:text-white",
+  stepLine: "rp-create-step-line h-px min-w-6 flex-1 bg-slate-200",
+  layout: "rp-create-layout grid lg:grid-cols-[minmax(0,1fr)_20rem]",
+  main: "rp-create-main min-w-0 px-5 py-5 sm:px-6 sm:py-6 [&_.rp-structured-form]:my-0 [&_.rp-structured-form]:bg-transparent [&_.rp-structured-form]:p-0",
+  intro: "rp-create-form-intro mb-4 border-b border-slate-100 pb-4",
+  subheading: "text-sm font-semibold text-slate-950",
+  subcopy: "mb-0 mt-1 text-xs leading-5 text-slate-500",
+  guide: "rp-create-guide border-t border-slate-100 bg-slate-50/70 px-5 py-5 lg:border-l lg:border-t-0",
+  guideList: "mt-4 space-y-4",
+  guideItem: "grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3",
+  guideNumber: "inline-flex size-7 items-center justify-center rounded-full bg-white text-[11px] font-bold text-slate-500 ring-1 ring-inset ring-slate-200",
+  guideCopy: "my-0 text-xs leading-5 text-slate-600",
+  note: "rp-create-note mt-5 rounded-xl border border-blue-100 bg-blue-50 p-3",
+  noteTitle: "text-xs font-semibold text-blue-950",
+  noteCopy: "mb-0 mt-1 text-xs leading-5 text-blue-700",
+  review: "rp-create-review space-y-4",
+  reviewGrid: "rp-review-grid grid gap-3 sm:grid-cols-2",
+  reviewField: "rp-review-field rounded-xl border border-slate-200 bg-slate-50/60 p-4",
+  reviewTerm: "text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400",
+  reviewValue: "mt-1 break-words text-sm font-medium text-slate-900",
+  muted: "rp-review-muted font-normal italic text-slate-400",
+  actions: "rp-create-actions mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4",
+  primary: "rp-create-primary min-h-10 rounded-lg border-blue-600 bg-blue-600 px-4 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700",
+  secondary: "rp-secondary-action min-h-10 rounded-lg",
+  cancel: "rp-create-cancel min-h-10 rounded-lg border-0 bg-transparent text-slate-500 shadow-none hover:bg-slate-100 hover:text-slate-900",
+};
+
 function normalizeTitle(title: string) {
   return title.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
@@ -156,12 +194,13 @@ export function resourceCreationMeta(title: string): ResourceCreationMeta {
 }
 
 function ResourceGlyph({ kind }: { kind: ResourceCreationMeta["icon"] }) {
-  if (kind === "storage") return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>;
-  if (kind === "registry") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>;
-  if (kind === "network") return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9S14.5 18.5 12 21c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3"/></svg>;
-  if (kind === "identity") return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3.4 2.4-5 5.5-5s5 1.6 5.5 5M16 7h5M18.5 4.5v5"/></svg>;
-  if (kind === "app") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>;
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>;
+  const glyphClass = "size-6 fill-none stroke-current stroke-2";
+  if (kind === "storage") return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>;
+  if (kind === "registry") return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>;
+  if (kind === "network") return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 3.8 5.5 3.8 9S14.5 18.5 12 21c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3"/></svg>;
+  if (kind === "identity") return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3.4 2.4-5 5.5-5s5 1.6 5.5 5M16 7h5M18.5 4.5v5"/></svg>;
+  if (kind === "app") return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/></svg>;
+  return <svg className={glyphClass} viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>;
 }
 
 function labelFor(key: string) {
@@ -180,20 +219,19 @@ function labelFor(key: string) {
 }
 
 function ReviewValue({ value }: { value: unknown }) {
-  if (value === null || value === undefined || value === "") return <span className="rp-review-muted">Not set</span>;
+  if (value === null || value === undefined || value === "") return <span className={ui.muted}>Not set</span>;
   if (typeof value === "boolean") return <span>{value ? "Yes" : "No"}</span>;
   if (typeof value === "number" || typeof value === "string") return <span>{String(value)}</span>;
-  if (Array.isArray(value)) return value.length ? <span>{value.map((entry) => typeof entry === "object" ? JSON.stringify(entry) : String(entry)).join(", ")}</span> : <span className="rp-review-muted">None</span>;
+  if (Array.isArray(value)) return value.length ? <span>{value.map((entry) => typeof entry === "object" ? JSON.stringify(entry) : String(entry)).join(", ")}</span> : <span className={ui.muted}>None</span>;
   return <code>{JSON.stringify(value)}</code>;
 }
 
 function ReviewConfiguration({ payload }: { payload: Payload }) {
   const entries = Object.entries(payload);
-  return <div className="rp-create-review">
-    <h3>Review configuration</h3>
-    <p>Verify the values below before ResourcePortal applies the change.</p>
-    <dl className="rp-review-grid">
-      {entries.map(([key, value]) => <div className="rp-review-field" key={key}><dt>{labelFor(key)}</dt><dd><ReviewValue value={value} /></dd></div>)}
+  return <div className={ui.review}>
+    <div><h3 className={ui.subheading}>Review configuration</h3><p className={ui.subcopy}>Verify the values below before ResourcePortal applies the change.</p></div>
+    <dl className={ui.reviewGrid}>
+      {entries.map(([key, value]) => <div className={ui.reviewField} key={key}><dt className={ui.reviewTerm}>{labelFor(key)}</dt><dd className={ui.reviewValue}><ReviewValue value={value} /></dd></div>)}
     </dl>
   </div>;
 }
@@ -220,40 +258,40 @@ export function CreateResourceWorkspace({ title, initialValue, referenceOptions,
     finally { setCreating(false); }
   }
 
-  return <div className="rp-create-workspace" aria-label={meta.heading}>
-    <div className="rp-create-titlebar">
-      <span className="rp-resource-icon"><ResourceGlyph kind={meta.icon} /></span>
-      <div><p className="rp-create-eyebrow">{title} / Create</p><h2>{meta.heading}</h2><p>{meta.description}</p></div>
-      <button type="button" className="rp-create-close" onClick={onCancel} aria-label="Close create form">×</button>
+  return <div className={ui.workspace} aria-label={meta.heading}>
+    <div className={ui.titlebar}>
+      <span className={ui.icon}><ResourceGlyph kind={meta.icon} /></span>
+      <div className={ui.titleCopy}><p className={ui.eyebrow}>{title} / Create</p><h2 className={ui.heading}>{meta.heading}</h2><p className={ui.description}>{meta.description}</p></div>
+      <button type="button" className={ui.close} onClick={onCancel} aria-label="Close create form">×</button>
     </div>
 
-    <ol className="rp-create-stepper" aria-label="Creation steps">
-      <li className="rp-create-step" data-active={!reviewing} data-complete={reviewing}><span>1</span><strong>Basics</strong></li>
-      <li className="rp-create-step-line" aria-hidden="true" />
-      <li className="rp-create-step" data-active={reviewing}><span>2</span><strong>Review + create</strong></li>
+    <ol className={ui.stepper} aria-label="Creation steps">
+      <li className={`${ui.step} group`} data-active={!reviewing} data-complete={reviewing}><span className={ui.stepNumber}>1</span><strong>Basics</strong></li>
+      <li className={ui.stepLine} aria-hidden="true" />
+      <li className={`${ui.step} group`} data-active={reviewing}><span className={ui.stepNumber}>2</span><strong>Review + create</strong></li>
     </ol>
 
-    <div className="rp-create-layout">
-      <div className="rp-create-main">
+    <div className={ui.layout}>
+      <div className={ui.main}>
         {!reviewing ? <>
-          <div className="rp-create-form-intro"><h3>Basic information</h3><p>Provide the settings ResourcePortal needs to create this resource. Required fields are marked by the form.</p></div>
+          <div className={ui.intro}><h3 className={ui.subheading}>Basic information</h3><p className={ui.subcopy}>Provide the settings ResourcePortal needs to create this resource. Required fields are marked by the form.</p></div>
           <JsonPayloadForm initialValue={initialValue ?? {}} referenceOptions={referenceOptions} submitLabel="Review + create" onSubmit={(payload) => setReviewPayload(payload)} />
-          <button type="button" className="rp-create-cancel" onClick={onCancel}>Cancel</button>
+          <button type="button" className={ui.cancel} onClick={onCancel}>Cancel</button>
         </> : <>
           <ReviewConfiguration payload={reviewPayload} />
           {error ? <p className="rp-create-error" role="alert">{error}</p> : null}
-          <div className="rp-create-actions">
-            <button type="button" className="rp-secondary-action" disabled={creating} onClick={() => setReviewPayload(undefined)}>Previous</button>
-            <button type="button" className="rp-create-primary" disabled={creating} onClick={() => void create()}>{creating ? `Creating ${meta.resourceName.toLowerCase()}…` : meta.actionLabel}</button>
-            <button type="button" className="rp-create-cancel" disabled={creating} onClick={onCancel}>Cancel</button>
+          <div className={ui.actions}>
+            <button type="button" className={ui.secondary} disabled={creating} onClick={() => setReviewPayload(undefined)}>Previous</button>
+            <button type="button" className={ui.primary} disabled={creating} onClick={() => void create()}>{creating ? `Creating ${meta.resourceName.toLowerCase()}…` : meta.actionLabel}</button>
+            <button type="button" className={ui.cancel} disabled={creating} onClick={onCancel}>Cancel</button>
           </div>
         </>}
       </div>
 
-      <aside className="rp-create-guide" aria-label="What happens next">
-        <h3>What happens next?</h3>
-        <ol>{meta.outcomes.map((outcome, index) => <li key={outcome}><span>{index + 1}</span><p>{outcome}</p></li>)}</ol>
-        <div className="rp-create-note"><strong>Safe review</strong><p>No changes are applied until you confirm the configuration in the review step.</p></div>
+      <aside className={ui.guide} aria-label="What happens next">
+        <h3 className={ui.subheading}>What happens next?</h3>
+        <ol className={ui.guideList}>{meta.outcomes.map((outcome, index) => <li className={ui.guideItem} key={outcome}><span className={ui.guideNumber}>{index + 1}</span><p className={ui.guideCopy}>{outcome}</p></li>)}</ol>
+        <div className={ui.note}><strong className={ui.noteTitle}>Safe review</strong><p className={ui.noteCopy}>No changes are applied until you confirm the configuration in the review step.</p></div>
       </aside>
     </div>
   </div>;
