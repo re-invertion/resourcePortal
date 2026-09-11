@@ -113,6 +113,11 @@ done
 contains "$workflow" 'docker logout ghcr.io' 'release workflow drops GHCR credentials before public pull verification'
 contains "$workflow" 'docker buildx imagetools inspect' 'release workflow verifies anonymous exact-digest pulls'
 contains "$workflow" 'resourceportal-release-manifest.json' 'release workflow publishes machine-readable manifest'
+not_contains "$workflow" 'supportedFromVersions:["0.1.0"]' 'release workflow does not hardcode a single migration source'
+contains "$workflow" 'fetch-depth: 0' 'release workflow fetches tag history for compatibility derivation'
+contains "$workflow" 'git tag --merged HEAD' 'release workflow derives compatibility only from ancestor release tags'
+contains "$workflow" 'SUPPORTED_FROM_VERSIONS' 'release workflow derives supported source versions dynamically'
+contains "$workflow" 'supportedFromVersions:$supported_from_versions' 'release manifest uses derived supported source versions'
 not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
 
 schema="$(cat "$repo_root/config/production/release-manifest.schema.json")"
