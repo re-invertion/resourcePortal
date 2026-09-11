@@ -520,21 +520,20 @@ async function deleteResourceRow(row) {
 }
 
 async function deleteDraftSingleAppRow(row) {
+  const page = row.page();
   await openDeleteConfirmation(row);
-  await confirmAction(row.page());
-  await row
-    .locator("pre")
-    .filter({ hasText: '"pendingDeletion": true' })
-    .waitFor({ state: "attached" });
+  await confirmAction(page);
+  await row.getByRole("button", { name: "View details", exact: true }).click();
+  const workspace = page.locator(".rp-resource-workspace");
+  await workspace.waitFor();
+  const pendingDeletion = workspace.locator(".rp-data-field").filter({ hasText: "Pending deletion" });
+  await pendingDeletion.getByText("Yes", { exact: true }).waitFor();
 }
 
 async function deleteDraftAppGroupRow(row) {
   await openDeleteConfirmation(row);
   await confirmAction(row.page());
-  await row
-    .locator("pre")
-    .filter({ hasText: '"status": "Deleting"' })
-    .waitFor({ state: "attached" });
+  await row.getByText("Deleting", { exact: true }).waitFor();
 }
 
 async function navigateTenantSection(page, section, heading) {
