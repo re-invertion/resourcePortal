@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Intentional late function overrides are scoped regression doubles for sourced installer functions.
+# shellcheck disable=SC2218
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/acme.sh"
