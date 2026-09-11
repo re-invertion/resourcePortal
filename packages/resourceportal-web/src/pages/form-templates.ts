@@ -75,12 +75,10 @@ export const registryForm = {
 export const deployForm = {
   note: "",
   force: null,
-  correlationId: "",
 };
 
 export const rollbackForm = {
   note: "",
-  correlationId: "",
 };
 
 export const runtimeConfigForm = {
@@ -110,22 +108,16 @@ export const attachVolumeForm = {
   mode: "",
 };
 
-export const detachAttachmentForm = {
-  attachmentId: "",
-};
-
 export const domainForm = {
   type: "Managed",
   prefix: "",
   hostname: "",
   customRootDomainId: "",
   subdomain: "",
-  httpEndpointId: "",
   tlsEnabled: null,
 };
 
 export const domainUpdateForm = {
-  httpEndpointId: "",
   tlsEnabled: null,
 };
 
@@ -135,11 +127,6 @@ export const customRootDomainForm = {
 
 export const customRootDomainUpdateForm = {
   verificationStatus: "",
-};
-
-export const membershipForm = {
-  userId: "",
-  roleIds: [""],
 };
 
 export const membershipUpdateForm = {

@@ -92,7 +92,8 @@ describe("functional Stage 20 forms", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Registry ID").tagName).toBe("SELECT");
+    expect(screen.getByLabelText("Registry").tagName).toBe("SELECT");
+    expect(screen.queryByLabelText("Registry ID")).toBeNull();
     expect(screen.getByRole("option", { name: "Docker Hub mirror" })).toBeTruthy();
   });
 

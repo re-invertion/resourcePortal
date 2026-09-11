@@ -106,8 +106,8 @@ try {
 
     const appGroupRow = page.getByRole("row").filter({ hasText: appGroupName });
     await appGroupRow.waitFor();
-    const appGroupId = (await appGroupRow.locator("td").first().textContent())?.trim();
-    assert(appGroupId, "AppGroup create did not expose an id in the resource table");
+    const appGroupId = await appGroupRow.getAttribute("data-resource-id");
+    assert(appGroupId, "AppGroup create did not expose its internal resource id");
     createdStackName = stackNameFor(appGroupId);
 
     await appGroupRow.getByRole("link", { name: "Open" }).click();
@@ -134,8 +134,8 @@ try {
       .getByRole("row")
       .filter({ hasText: singleAppName });
     await singleAppRow.waitFor();
-    const singleAppId = (await singleAppRow.locator("td").first().textContent())?.trim();
-    assert(singleAppId, "SingleApp create did not expose an id in the resource table");
+    const singleAppId = await singleAppRow.getAttribute("data-resource-id");
+    assert(singleAppId, "SingleApp create did not expose its internal resource id");
 
     const deploymentsSection = page
       .getByRole("heading", { name: "Deployments", level: 2 })

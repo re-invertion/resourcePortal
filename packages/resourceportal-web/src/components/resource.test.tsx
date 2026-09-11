@@ -32,6 +32,28 @@ describe("permission-aware controls", () => {
 });
 
 describe("resource list usability", () => {
+  it("keeps technical identifiers out of inventory columns while retaining them in details", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+      id: "app-1",
+      appGroupId: "ag-1",
+      name: "web",
+      status: "Running",
+    }]), { status: 200, headers: { "content-type": "application/json" } })));
+
+    render(<ResourcePanel title="SingleApps" listPath="/api/tenants/t/app-groups/ag-1/single-apps" />);
+
+    const row = await screen.findByRole("row", { name: /web/i });
+    expect(screen.queryByRole("columnheader", { name: "ID" })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "App group ID" })).toBeNull();
+    expect(row.getAttribute("data-resource-id")).toBe("app-1");
+
+    fireEvent.click(within(row).getByRole("button", { name: "View details" }));
+    expect(screen.getByText("ID")).toBeTruthy();
+    expect(screen.getByText("app-1")).toBeTruthy();
+    expect(screen.getByText("App group ID")).toBeTruthy();
+    expect(screen.getByText("ag-1")).toBeTruthy();
+  });
+
   it("filters resources by search text and status", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([
       { id: "ag1", name: "alpha", status: "Running" },

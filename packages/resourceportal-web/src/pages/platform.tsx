@@ -31,17 +31,31 @@ function prefill(template: Record<string, unknown>, current: unknown) {
 
 function Action({ label, path }: { label: string; path: string }) {
   const [error, setError] = useState<unknown>();
-  const [result, setResult] = useState<unknown>();
-  return <section>{error ? <ErrorState error={error} /> : null}<button type="button" onClick={() => { apiRequest(path, { method: "POST" }).then(setResult).catch(setError); }}>{label}</button>{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
+  const [working, setWorking] = useState(false);
+  const [success, setSuccess] = useState<string>();
+  async function run() {
+    setWorking(true);
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      await apiRequest(path, { method: "POST" });
+      setSuccess(`${label} completed.`);
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setWorking(false);
+    }
+  }
+  return <section className="rp-action-panel">{error ? <ErrorState error={error} /> : null}{success ? <p className="rp-success-message" role="status">{success}</p> : null}<button type="button" disabled={working} onClick={() => void run()}>{working ? "Working…" : label}</button></section>;
 }
 
 function Patch({ title, path, initialValue }: { title: string; path: string; initialValue: Record<string, unknown> }) {
   const [current, setCurrent] = useState<unknown>();
   const [error, setError] = useState<unknown>();
-  const [result, setResult] = useState<unknown>();
+  const [success, setSuccess] = useState<string>();
   useEffect(() => { apiRequest(path).then(setCurrent).catch(setError); }, [path]);
   const formValue = useMemo(() => prefill(initialValue, current), [current, initialValue]);
-  return <section><ReadOnlyPanel title={title} path={path} />{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { try { const saved = await apiRequest(path, { method: "PATCH", body }); setResult(saved); setCurrent(saved); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
+  return <section className="rp-settings-editor"><header><div><p className="rp-eyebrow">Configuration</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : null}{success ? <p className="rp-success-message" role="status">{success}</p> : null}{current === undefined ? <p>Loading…</p> : <ReadableDataView value={current} />}<JsonPayloadForm initialValue={formValue} submitLabel="Save" onSubmit={async (body) => { setSuccess(undefined); try { const saved = await apiRequest(path, { method: "PATCH", body }); setCurrent(saved); setSuccess(`${title} saved.`); } catch (cause) { setError(cause); throw cause; } }} /></section>;
 }
 
 export function PlatformPage({ section }: { section: string; resourceId?: string }) {
@@ -65,8 +79,8 @@ function Credentials() {
 
 function MutationForm({ title, path, initialValue }: { title: string; path: string; initialValue: Record<string, unknown> }) {
   const [error, setError] = useState<unknown>();
-  const [result, setResult] = useState<unknown>();
-  return <section><h2>{title}</h2>{error ? <ErrorState error={error} /> : null}<JsonPayloadForm initialValue={initialValue} submitLabel={title} onSubmit={async (body) => { try { setResult(await apiRequest(path, { method: "POST", body })); } catch (cause) { setError(cause); throw cause; } }} />{result !== undefined ? <ReadableDataView value={result} /> : null}</section>;
+  const [success, setSuccess] = useState<string>();
+  return <section className="rp-action-panel"><h2>{title}</h2>{error ? <ErrorState error={error} /> : null}{success ? <p className="rp-success-message" role="status">{success}</p> : null}<JsonPayloadForm initialValue={initialValue} submitLabel={title} onSubmit={async (body) => { setSuccess(undefined); try { await apiRequest(path, { method: "POST", body }); setSuccess(`${title} completed.`); } catch (cause) { setError(cause); throw cause; } }} /></section>;
 }
 
 function PlatformBilling() {

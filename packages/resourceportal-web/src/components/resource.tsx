@@ -225,12 +225,14 @@ export function ResourcePanel(props: ResourcePanelProps) {
     });
   }, [items, search, statusFilter]);
   const columns = useMemo(() => {
-    const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"];
+    const preferred = ["name", "displayName", "email", "status", "health", "type", "createdAt"];
     const keys = new Set(items.flatMap((item) => Object.keys(item).filter((key) => {
       const value = item[key];
       return value == null || ["string", "number", "boolean"].includes(typeof value);
     })));
-    return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8);
+    const nonTechnical = [...keys].filter((key) => key !== "id" && !/(?:Id|Ids)$/.test(key));
+    const visible = nonTechnical.length > 0 ? nonTechnical : [...keys];
+    return [...preferred.filter((key) => visible.includes(key)), ...visible.filter((key) => !preferred.includes(key))].slice(0, 8);
   }, [items]);
   const canCreate = !!props.createPath && allowed(props.permissions, props.createPermission);
   const createButtonClass = "rp-create-trigger min-h-9 rounded-lg border-blue-600 bg-blue-600 px-3.5 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
@@ -339,7 +341,7 @@ export function ResourcePanel(props: ResourcePanelProps) {
           const id = String(item.id ?? index);
           const deletePath = props.deletePath ?? props.itemPath;
           const canEdit = !!props.itemPath && allowed(props.permissions, props.updatePermission) && !!patchTemplate(props, item);
-          return <tr key={id}>
+          return <tr key={id} data-resource-id={typeof item.id === "string" ? item.id : undefined}>
             {columns.map((column) => <td key={column}><StructuredValue fieldKey={column} value={item[column]} /></td>)}
             <td><div className="rp-row-action-strip">
               {props.detailHref ? <a className="rp-row-primary-link" href={props.detailHref(item)}>Open</a> : null}

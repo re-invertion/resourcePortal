@@ -11,7 +11,7 @@ import {
 describe("mutation form templates", () => {
   it("keeps PATCH-only contracts separate from CREATE contracts", () => {
     expect(membershipUpdateForm).toEqual({ status: "", roleIds: [""] });
-    expect(domainUpdateForm).toEqual({ httpEndpointId: "", tlsEnabled: null });
+    expect(domainUpdateForm).toEqual({ tlsEnabled: null });
     expect(customRootDomainUpdateForm).toEqual({ verificationStatus: "" });
     expect(oauthApplicationUpdateForm).toEqual({
       name: "",
