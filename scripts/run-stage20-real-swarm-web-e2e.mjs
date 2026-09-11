@@ -42,17 +42,27 @@ try {
       "Tenant selector rendered an API error before the real-Swarm fixture was created",
     );
 
+    const tenantCreateWorkspace = page.locator(".rp-create-workspace");
+    await tenantCreateWorkspace.waitFor();
+    await fillStructuredForm(tenantCreateWorkspace, {
+      name: tenantName,
+      displayName: "Stage 20 Real Swarm",
+      contactEmail: `${tenantName}@example.local`,
+    });
+    await tenantCreateWorkspace
+      .getByRole("button", { name: "Review + create", exact: true })
+      .click();
+    await tenantCreateWorkspace
+      .getByRole("heading", { name: "Review configuration", exact: true })
+      .waitFor();
     const createTenantResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         response.url() === `${webOrigin}/api/tenants`,
     );
-    await fillStructuredForm(page, {
-      name: tenantName,
-      displayName: "Stage 20 Real Swarm",
-      contactEmail: `${tenantName}@example.local`,
-    });
-    await page.getByRole("button", { name: "Create tenant" }).click();
+    await tenantCreateWorkspace
+      .getByRole("button", { name: "Create Tenant", exact: true })
+      .click();
     const tenantResponse = await createTenantResponse;
     const tenantText = await tenantResponse.text();
     assert(
@@ -288,9 +298,19 @@ async function openMoreActions(row) {
 }
 
 async function createResource(panel, body) {
-  await panel.locator("summary", { hasText: "Create" }).click();
-  await fillStructuredForm(panel, body);
-  await panel.getByRole("button", { name: "Create", exact: true }).click();
+  const createButton = panel.getByRole("button", { name: /^Create / }).first();
+  await createButton.click();
+
+  const workspace = panel.locator(".rp-create-workspace");
+  await workspace.waitFor();
+  await fillStructuredForm(workspace, body);
+  await workspace
+    .getByRole("button", { name: "Review + create", exact: true })
+    .click();
+  await workspace
+    .getByRole("heading", { name: "Review configuration", exact: true })
+    .waitFor();
+  await workspace.getByRole("button", { name: /^Create / }).click();
 }
 
 async function fillStructuredForm(container, body) {

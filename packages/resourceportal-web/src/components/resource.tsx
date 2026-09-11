@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "../api/client";
+import { CreateResourceWorkspace, resourceCreationMeta } from "./create-resource";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential, type ReferenceOptions } from "./forms";
 
 type FormTemplate = Record<string, unknown>;
@@ -119,14 +120,10 @@ function PrimitiveValue({ fieldKey, value }: { fieldKey?: string; value: string 
 }
 
 function StructuredValue({ value, fieldKey }: { value: unknown; fieldKey?: string }): React.ReactNode {
-  if (value == null || ["string", "number", "boolean"].includes(typeof value)) {
-    return <PrimitiveValue fieldKey={fieldKey} value={value as string | number | boolean | null | undefined} />;
-  }
+  if (value == null || ["string", "number", "boolean"].includes(typeof value)) return <PrimitiveValue fieldKey={fieldKey} value={value as string | number | boolean | null | undefined} />;
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="rp-data-muted">None</span>;
-    if (value.every((item) => item == null || ["string", "number", "boolean"].includes(typeof item))) {
-      return <ul className="rp-data-chip-list">{value.map((item, index) => <li key={index}><PrimitiveValue fieldKey={fieldKey} value={item as string | number | boolean | null | undefined} /></li>)}</ul>;
-    }
+    if (value.every((item) => item == null || ["string", "number", "boolean"].includes(typeof item))) return <ul className="rp-data-chip-list">{value.map((item, index) => <li key={index}><PrimitiveValue fieldKey={fieldKey} value={item as string | number | boolean | null | undefined} /></li>)}</ul>;
     return <div className="rp-data-card-list">{value.map((item, index) => <article className="rp-data-card" key={index}>{isRecord(item) ? <ObjectFields value={item} /> : <StructuredValue value={item} />}</article>)}</div>;
   }
   if (isRecord(value)) return <ObjectFields value={value} />;
@@ -139,40 +136,21 @@ function ObjectFields({ value, hiddenKeys = [] }: { value: Record<string, unknow
   const scalar = entries.filter(([, item]) => item == null || ["string", "number", "boolean"].includes(typeof item));
   const nested = entries.filter(([, item]) => !(item == null || ["string", "number", "boolean"].includes(typeof item)));
   if (entries.length === 0) return <p className="rp-data-muted">No additional details.</p>;
-  return <div className="rp-data-object">
-    {scalar.length ? <dl className="rp-data-grid">{scalar.map(([key, item]) => <div className="rp-data-field" key={key}><dt>{fieldLabel(key)}</dt><dd><StructuredValue fieldKey={key} value={item} /></dd></div>)}</dl> : null}
-    {nested.map(([key, item]) => <section className="rp-data-nested" key={key} aria-label={fieldLabel(key)}><h3>{fieldLabel(key)}</h3><StructuredValue fieldKey={key} value={item} /></section>)}
-  </div>;
+  return <div className="rp-data-object">{scalar.length ? <dl className="rp-data-grid">{scalar.map(([key, item]) => <div className="rp-data-field" key={key}><dt>{fieldLabel(key)}</dt><dd><StructuredValue fieldKey={key} value={item} /></dd></div>)}</dl> : null}{nested.map(([key, item]) => <section className="rp-data-nested" key={key} aria-label={fieldLabel(key)}><h3>{fieldLabel(key)}</h3><StructuredValue fieldKey={key} value={item} /></section>)}</div>;
 }
 
 export function ReadableDataView({ value, hiddenKeys = [], technicalJson = true }: { value: unknown; hiddenKeys?: string[]; technicalJson?: boolean }) {
-  return <div className="rp-readable-data">
-    {isRecord(value) ? <ObjectFields value={value} hiddenKeys={hiddenKeys} /> : <StructuredValue value={value} />}
-    {technicalJson && value != null && typeof value === "object" ? <details className="rp-technical-json"><summary>Technical JSON</summary><pre>{JSON.stringify(value, null, 2)}</pre></details> : null}
-  </div>;
+  return <div className="rp-readable-data">{isRecord(value) ? <ObjectFields value={value} hiddenKeys={hiddenKeys} /> : <StructuredValue value={value} />}{technicalJson && value != null && typeof value === "object" ? <details className="rp-technical-json"><summary>Technical JSON</summary><pre>{JSON.stringify(value, null, 2)}</pre></details> : null}</div>;
 }
 
 function patchTemplate(props: ResourcePanelProps, item: Record<string, unknown>) {
-  const configured = typeof props.updateInitialValue === "function"
-    ? props.updateInitialValue(item)
-    : props.updateInitialValue ?? props.createInitialValue;
+  const configured = typeof props.updateInitialValue === "function" ? props.updateInitialValue(item) : props.updateInitialValue ?? props.createInitialValue;
   if (!configured) return undefined;
   return Object.fromEntries(Object.entries(configured).map(([key, fallback]) => [key, item[key] === undefined ? fallback : item[key]]));
 }
 
-function scalarSearchText(item: Record<string, unknown>) {
-  return Object.values(item)
-    .filter((value) => value == null || ["string", "number", "boolean"].includes(typeof value))
-    .map((value) => String(value ?? ""))
-    .join(" ")
-    .toLowerCase();
-}
-
-function itemStatuses(item: Record<string, unknown>) {
-  return Object.entries(item)
-    .filter(([key, value]) => isStatusField(key) && typeof value === "string" && value)
-    .map(([, value]) => String(value));
-}
+function scalarSearchText(item: Record<string, unknown>) { return Object.values(item).filter((value) => value == null || ["string", "number", "boolean"].includes(typeof value)).map((value) => String(value ?? "")).join(" ").toLowerCase(); }
+function itemStatuses(item: Record<string, unknown>) { return Object.entries(item).filter(([key, value]) => isStatusField(key) && typeof value === "string" && value).map(([, value]) => String(value)); }
 
 export function ErrorState({ error }: { error: unknown }) {
   if (!(error instanceof ApiError)) return <p role="alert">{error instanceof Error ? error.message : "Request failed"}</p>;
@@ -180,161 +158,27 @@ export function ErrorState({ error }: { error: unknown }) {
   if (error.status === 403) return <p role="alert">Access denied{error.code ? ` (${error.code})` : ""}.</p>;
   if (error.status === 429) return <p role="alert">Too many requests. Retry later.</p>;
   if (error.status === 503) return <p role="alert">Resource Portal is temporarily unavailable or in maintenance.</p>;
-  return (
-    <div role="alert">
-      <p>{error.message}{error.code ? ` (${error.code})` : ""}</p>
-      {error.requestId ? <p>requestId: <code>{error.requestId}</code></p> : null}
-      {error.correlationId ? <p>correlationId: <code>{error.correlationId}</code></p> : null}
-    </div>
-  );
+  return <div role="alert"><p>{error.message}{error.code ? ` (${error.code})` : ""}</p>{error.requestId ? <p>requestId: <code>{error.requestId}</code></p> : null}{error.correlationId ? <p>correlationId: <code>{error.correlationId}</code></p> : null}</div>;
 }
 
 export function ResourcePanel(props: ResourcePanelProps) {
-  const [payload, setPayload] = useState<unknown>();
-  const [error, setError] = useState<unknown>();
-  const [loading, setLoading] = useState(true);
-  const [oneTime, setOneTime] = useState<unknown>();
-  const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({});
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [success, setSuccess] = useState<string>();
+  const [payload, setPayload] = useState<unknown>(); const [error, setError] = useState<unknown>(); const [loading, setLoading] = useState(true); const [oneTime, setOneTime] = useState<unknown>(); const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({}); const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState(""); const [createOpen, setCreateOpen] = useState(false); const [success, setSuccess] = useState<string>();
+  const creation = useMemo(() => resourceCreationMeta(props.title), [props.title]);
   const explicitSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
-  const referenceOptionSources = useMemo(() => ({
-    ...inferredReferenceOptionSources(props.listPath),
-    ...(props.referenceOptionSources ?? {}),
-  }), [props.listPath, explicitSourceKey]);
+  const referenceOptionSources = useMemo(() => ({ ...inferredReferenceOptionSources(props.listPath), ...(props.referenceOptionSources ?? {}) }), [props.listPath, explicitSourceKey]);
   const referenceSourceKey = JSON.stringify(referenceOptionSources);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(undefined);
-    try { setPayload(await apiRequest(props.listPath)); }
-    catch (cause) { setError(cause); }
-    finally { setLoading(false); }
-  }, [props.listPath]);
-
+  const reload = useCallback(async () => { setLoading(true); setError(undefined); try { setPayload(await apiRequest(props.listPath)); } catch (cause) { setError(cause); } finally { setLoading(false); } }, [props.listPath]);
   useEffect(() => { void reload(); }, [reload]);
-  useEffect(() => {
-    if (Object.keys(referenceOptionSources).length === 0) { setReferenceOptions({}); return; }
-    let cancelled = false;
-    void Promise.all(Object.entries(referenceOptionSources).map(async ([field, path]) => {
-      const result = await apiRequest(path);
-      const options = extractItems(result).filter((item) => typeof item.id === "string").map((item) => ({ value: String(item.id), label: optionLabel(item) }));
-      return [field, options] as const;
-    })).then((entries) => { if (!cancelled) setReferenceOptions(Object.fromEntries(entries)); }).catch((cause) => { if (!cancelled) setError(cause); });
-    return () => { cancelled = true; };
-    // The serialized key intentionally controls request identity for inline source objects.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [referenceSourceKey]);
-
+  useEffect(() => { if (Object.keys(referenceOptionSources).length === 0) { setReferenceOptions({}); return; } let cancelled = false; void Promise.all(Object.entries(referenceOptionSources).map(async ([field, path]) => { const result = await apiRequest(path); const options = extractItems(result).filter((item) => typeof item.id === "string").map((item) => ({ value: String(item.id), label: optionLabel(item) })); return [field, options] as const; })).then((entries) => { if (!cancelled) setReferenceOptions(Object.fromEntries(entries)); }).catch((cause) => { if (!cancelled) setError(cause); }); return () => { cancelled = true; }; /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [referenceSourceKey]);
   const items = useMemo(() => extractItems(payload), [payload]);
   const statusValues = useMemo(() => [...new Set(items.flatMap(itemStatuses))].sort((left, right) => left.localeCompare(right)), [items]);
-  const filteredItems = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return items.filter((item) => {
-      if (query && !scalarSearchText(item).includes(query)) return false;
-      if (statusFilter && !itemStatuses(item).includes(statusFilter)) return false;
-      return true;
-    });
-  }, [items, search, statusFilter]);
-  const columns = useMemo(() => {
-    const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"];
-    const keys = new Set(items.flatMap((item) => Object.keys(item).filter((key) => {
-      const value = item[key];
-      return value == null || ["string", "number", "boolean"].includes(typeof value);
-    })));
-    return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8);
-  }, [items]);
+  const filteredItems = useMemo(() => { const query = search.trim().toLowerCase(); return items.filter((item) => { if (query && !scalarSearchText(item).includes(query)) return false; if (statusFilter && !itemStatuses(item).includes(statusFilter)) return false; return true; }); }, [items, search, statusFilter]);
+  const columns = useMemo(() => { const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"]; const keys = new Set(items.flatMap((item) => Object.keys(item).filter((key) => { const value = item[key]; return value == null || ["string", "number", "boolean"].includes(typeof value); }))); return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8); }, [items]);
   const canCreate = !!props.createPath && allowed(props.permissions, props.createPermission);
+  const createButtonClass = "rp-create-trigger min-h-9 rounded-lg border-blue-600 bg-blue-600 px-3.5 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
+  async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>, oneTimeResponse = false, successMessage = "Saved.") { setError(undefined); setSuccess(undefined); try { const result = await apiRequest(path, { method, body }); if (oneTimeResponse) setOneTime(result); await reload(); setSuccess(successMessage); } catch (cause) { setError(cause); throw cause; } }
 
-  async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>, oneTimeResponse = false, successMessage = "Saved.") {
-    setError(undefined);
-    setSuccess(undefined);
-    try {
-      const result = await apiRequest(path, { method, body });
-      if (oneTimeResponse) setOneTime(result);
-      await reload();
-      setSuccess(successMessage);
-    } catch (cause) {
-      setError(cause);
-      throw cause;
-    }
-  }
-
-  return (
-    <section className="rp-resource-panel">
-      <header>
-        <div><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2></div>
-        {props.help ? <p className="rp-resource-help">{props.help}</p> : null}
-        <button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button>
-      </header>
-      {error ? <ErrorState error={error} /> : null}
-      {success ? <p className="rp-success-message" role="status">{success}</p> : null}
-      {oneTime != null ? <OneTimeCredential value={oneTime} /> : null}
-      {canCreate ? (
-        <details open={createOpen} onToggle={(event) => setCreateOpen(event.currentTarget.open)}>
-          <summary>Create</summary>
-          <JsonPayloadForm initialValue={props.createInitialValue} referenceOptions={referenceOptions} submitLabel="Create" onSubmit={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${props.title} created.`); setCreateOpen(false); }} />
-        </details>
-      ) : null}
-      {loading ? <p>Loading…</p> : items.length === 0 ? (
-        <div className="rp-empty-state">
-          <p>No {props.title} yet.</p>
-          {canCreate ? <button type="button" onClick={() => setCreateOpen(true)}>Create one</button> : null}
-        </div>
-      ) : <>
-        <div className="rp-list-toolbar">
-          <label>Search {props.title}<input aria-label={`Search ${props.title}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-          {statusValues.length ? <label>Status<select aria-label={`Filter ${props.title} by status`} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{statusValues.map((status) => <option key={status} value={status}>{status}</option>)}</select></label> : null}
-        </div>
-        {filteredItems.length === 0 ? <div className="rp-empty-state"><p>No matching {props.title}.</p><button type="button" onClick={() => { setSearch(""); setStatusFilter(""); }}>Clear filters</button></div> : (
-          <div className="rp-table-scroll"><table>
-            <thead><tr>{columns.map((column) => <th key={column}>{fieldLabel(column)}</th>)}<th>Actions</th></tr></thead>
-            <tbody>
-              {filteredItems.map((item, index) => {
-                const id = String(item.id ?? index);
-                const deletePath = props.deletePath ?? props.itemPath;
-                const secondaryActions = !!(props.itemPath && allowed(props.permissions, props.updatePermission)) || !!(deletePath && allowed(props.permissions, props.deletePermission)) || (props.actions ?? []).some((action) => allowed(props.permissions, action.permission));
-                return (
-                  <tr key={id}>
-                    {columns.map((column) => <td key={column}><StructuredValue fieldKey={column} value={item[column]} /></td>)}
-                    <td>
-                      <div className="rp-primary-actions">
-                        {props.detailHref ? <a href={props.detailHref(item)}>Open</a> : null}
-                        {props.onSelect ? <button type="button" onClick={() => props.onSelect!(item)}>{props.selectLabel ?? "Select"}</button> : null}
-                        <details><summary>Details</summary><ReadableDataView value={item} hiddenKeys={columns} /></details>
-                      </div>
-                      {secondaryActions ? <details className="rp-row-actions"><summary>More actions</summary><div>
-                        {props.itemPath && allowed(props.permissions, props.updatePermission) ? (
-                          <details><summary>Edit</summary><JsonPayloadForm initialValue={patchTemplate(props, item)} referenceOptions={referenceOptions} submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body, false, "Changes saved."); }} /></details>
-                        ) : null}
-                        {deletePath && allowed(props.permissions, props.deletePermission) ? (
-                          <ConfirmButton confirm={`Delete ${props.title} resource ${optionLabel(item)}?`} onConfirm={() => mutate(deletePath(item), "DELETE", undefined, false, `${props.title} deleted.`)}>Delete</ConfirmButton>
-                        ) : null}
-                        {(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? (
-                          <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm initialValue={action.initialValue} referenceOptions={referenceOptions} submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse, `${action.label} completed.`); }} /></details>
-                        ) : action.destructive ? (
-                          <ConfirmButton key={action.label} confirm={`${action.label} ${optionLabel(item)}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</ConfirmButton>
-                        ) : (
-                          <button key={action.label} type="button" onClick={() => void mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</button>
-                        ))}
-                      </div></details> : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table></div>
-        )}
-      </>}
-    </section>
-  );
+  return <section className="rp-resource-panel"><header className="rp-resource-panel-header m-0 flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center"><div className="rp-resource-panel-heading mr-auto min-w-0"><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2>{props.help ? <p className="rp-resource-help">{props.help}</p> : null}</div><div className="rp-panel-header-actions !mr-0 flex shrink-0 flex-wrap items-center gap-2">{canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}<button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button></div></header>{error ? <ErrorState error={error} /> : null}{success ? <p className="rp-success-message" role="status">{success}</p> : null}{oneTime != null ? <OneTimeCredential value={oneTime} /> : null}{canCreate && createOpen ? <CreateResourceWorkspace title={props.title} initialValue={props.createInitialValue} referenceOptions={referenceOptions} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${creation.resourceName} created.`); setCreateOpen(false); }} /> : null}{loading ? <p>Loading…</p> : items.length === 0 ? <div className="rp-empty-state"><p>No {props.title} yet.</p>{canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}</div> : <><div className="rp-list-toolbar"><label>Search {props.title}<input aria-label={`Search ${props.title}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label>{statusValues.length ? <label>Status<select aria-label={`Filter ${props.title} by status`} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{statusValues.map((status) => <option key={status} value={status}>{status}</option>)}</select></label> : null}</div>{filteredItems.length === 0 ? <div className="rp-empty-state"><p>No matching {props.title}.</p><button type="button" onClick={() => { setSearch(""); setStatusFilter(""); }}>Clear filters</button></div> : <div className="rp-table-scroll"><table><thead><tr>{columns.map((column) => <th key={column}>{fieldLabel(column)}</th>)}<th>Actions</th></tr></thead><tbody>{filteredItems.map((item, index) => { const id = String(item.id ?? index); const deletePath = props.deletePath ?? props.itemPath; const secondaryActions = !!(props.itemPath && allowed(props.permissions, props.updatePermission)) || !!(deletePath && allowed(props.permissions, props.deletePermission)) || (props.actions ?? []).some((action) => allowed(props.permissions, action.permission)); return <tr key={id}>{columns.map((column) => <td key={column}><StructuredValue fieldKey={column} value={item[column]} /></td>)}<td><div className="rp-primary-actions">{props.detailHref ? <a href={props.detailHref(item)}>Open</a> : null}{props.onSelect ? <button type="button" onClick={() => props.onSelect!(item)}>{props.selectLabel ?? "Select"}</button> : null}<details><summary>Details</summary><ReadableDataView value={item} hiddenKeys={columns} /></details></div>{secondaryActions ? <details className="rp-row-actions"><summary>More actions</summary><div>{props.itemPath && allowed(props.permissions, props.updatePermission) ? <details><summary>Edit</summary><JsonPayloadForm initialValue={patchTemplate(props, item)} referenceOptions={referenceOptions} submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body, false, "Changes saved."); }} /></details> : null}{deletePath && allowed(props.permissions, props.deletePermission) ? <ConfirmButton confirm={`Delete ${props.title} resource ${optionLabel(item)}?`} onConfirm={() => mutate(deletePath(item), "DELETE", undefined, false, `${props.title} deleted.`)}>Delete</ConfirmButton> : null}{(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm initialValue={action.initialValue} referenceOptions={referenceOptions} submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse, `${action.label} completed.`); }} /></details> : action.destructive ? <ConfirmButton key={action.label} confirm={`${action.label} ${optionLabel(item)}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</ConfirmButton> : <button key={action.label} type="button" onClick={() => void mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</button>)}</div></details> : null}</td></tr>; })}</tbody></table></div>}</>}</section>;
 }
 
-export function ReadOnlyPanel({ title, path }: { title: string; path: string }) {
-  const [data, setData] = useState<unknown>();
-  const [error, setError] = useState<unknown>();
-  useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]);
-  return <section className="rp-readonly-panel"><header><div><p className="rp-eyebrow">Details</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>;
-}
+export function ReadOnlyPanel({ title, path }: { title: string; path: string }) { const [data, setData] = useState<unknown>(); const [error, setError] = useState<unknown>(); useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]); return <section className="rp-readonly-panel"><header><div><p className="rp-eyebrow">Details</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>; }

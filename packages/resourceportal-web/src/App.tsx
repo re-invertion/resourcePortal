@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "./api/client";
-import { JsonPayloadForm } from "./components/forms";
+import { CreateResourceWorkspace } from "./components/create-resource";
 import { ErrorState } from "./components/resource";
 import { AppShell } from "./components/shell";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
@@ -10,90 +10,31 @@ import { AppRoute, parseRoute, tenantHref } from "./router/router";
 
 type User = { id: string; email?: string; displayName?: string; status?: string };
 type Tenant = { id: string; name?: string; displayName?: string; status?: string };
+type AppProps = { initialPath?: string };
 
-type AppProps = {
-  initialPath?: string;
-};
-
-function browserPath() {
-  return typeof window === "undefined" ? "/" : window.location.pathname;
-}
-
-function useRoute(initialPath?: string) {
-  const pathname = initialPath ?? browserPath();
-  return useMemo(() => parseRoute(pathname), [pathname]);
-}
-
-function routeAttributes(route: AppRoute) {
-  const attributes: Record<string, string> = { "data-route-kind": route.kind };
-  if (route.kind === "tenant") {
-    attributes["data-tenant-id"] = route.tenantId;
-    attributes["data-route-section"] = route.section;
-  } else if (route.kind === "platform") {
-    attributes["data-route-section"] = route.section;
-  } else if (route.kind === "public") {
-    attributes["data-route-page"] = route.page;
-  }
-  return attributes;
-}
-
-function routeLoadingText(route: AppRoute) {
-  if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`;
-  if (route.kind === "platform") return `Loading platform route: ${route.section}…`;
-  if (route.kind === "tenants") return "Loading tenants…";
-  if (route.kind === "not-found") return "Loading route…";
-  return "Loading session…";
-}
-
-function tenantList(value: unknown): Tenant[] {
-  const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : [];
-  return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant);
-}
+function browserPath() { return typeof window === "undefined" ? "/" : window.location.pathname; }
+function useRoute(initialPath?: string) { const pathname = initialPath ?? browserPath(); return useMemo(() => parseRoute(pathname), [pathname]); }
+function routeAttributes(route: AppRoute) { const attributes: Record<string, string> = { "data-route-kind": route.kind }; if (route.kind === "tenant") { attributes["data-tenant-id"] = route.tenantId; attributes["data-route-section"] = route.section; } else if (route.kind === "platform") attributes["data-route-section"] = route.section; else if (route.kind === "public") attributes["data-route-page"] = route.page; return attributes; }
+function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
+function tenantList(value: unknown): Tenant[] { const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : []; return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant); }
 
 export function App({ initialPath }: AppProps = {}) {
-  const route = useRoute(initialPath);
-  const [user, setUser] = useState<User | null | undefined>();
-  const [tenants, setTenants] = useState<Tenant[] | undefined>();
-  const [platformAdmin, setPlatformAdmin] = useState(false);
-  const [error, setError] = useState<unknown>();
-
-  useEffect(() => {
-    if (route.kind === "public" && route.page === "health") return;
-    apiRequest<User>("/api/auth/me").then(setUser).catch((cause) => {
-      if (cause instanceof ApiError && cause.status === 401) setUser(null);
-      else { setError(cause); setUser(null); }
-    });
-  }, []);
-
-  const reloadTenants = async () => {
-    const result = await apiRequest("/api/tenants");
-    setTenants(tenantList(result));
-  };
-
+  const route = useRoute(initialPath); const [user, setUser] = useState<User | null | undefined>(); const [tenants, setTenants] = useState<Tenant[] | undefined>(); const [platformAdmin, setPlatformAdmin] = useState(false); const [error, setError] = useState<unknown>();
+  useEffect(() => { if (route.kind === "public" && route.page === "health") return; apiRequest<User>("/api/auth/me").then(setUser).catch((cause) => { if (cause instanceof ApiError && cause.status === 401) setUser(null); else { setError(cause); setUser(null); } }); }, []);
+  const reloadTenants = async () => { const result = await apiRequest("/api/tenants"); setTenants(tenantList(result)); };
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
-
-  useEffect(() => {
-    if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; }
-    let active = true;
-    apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); });
-    return () => { active = false; };
-  }, [user, route.kind]);
-
+  useEffect(() => { if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; } let active = true; apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); }); return () => { active = false; }; }, [user, route.kind]);
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
   if (user === undefined) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>{routeLoadingText(route)}</p>{error ? <ErrorState error={error} /> : null}</main>;
-  if (!user) {
-    const mode = route.kind === "public" && route.page !== "health" ? route.page : "login";
-    return <AuthPage mode={mode} />;
-  }
+  if (!user) { const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }
   if (!tenants) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
-
   if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
   return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
 }
 
 function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {
-  const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]);
-  const [error, setError] = useState<unknown>();
-  return <main className="rp-tenant-picker"><header className="rp-tenant-picker-header"><div className="rp-auth-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div><a href="/health">System status</a></header><section className="rp-tenant-picker-card"><p className="rp-eyebrow">Workspace</p><h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1><p className="rp-tenant-picker-copy">Select the workspace you want to manage. Tenant context stays visible in the URL and navigation.</p>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <div className="rp-create-tenant"><p>No active tenant is available. Create one if your platform permissions allow it.</p><JsonPayloadForm submitLabel="Create tenant" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onSubmit={async (body) => { try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); } }} /></div> : <div className="rp-tenant-grid">{active.map((tenant) => { const name = tenant.displayName ?? tenant.name ?? tenant.id; return <a className="rp-tenant-card" key={tenant.id} href={tenantHref(tenant.id, "overview")}><span className="rp-tenant-card-mark">{name.slice(0, 1).toUpperCase()}</span><div><strong>{name}</strong><span>{tenant.status ?? "Active"}</span></div><span aria-hidden="true">→</span></a>; })}</div>}</section></main>;
+  const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]); const [error, setError] = useState<unknown>(); const [createOpen, setCreateOpen] = useState(true);
+  const createButtonClass = "rp-create-trigger min-h-10 rounded-lg border-blue-600 bg-blue-600 px-4 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
+  return <main className="rp-tenant-picker"><header className="rp-tenant-picker-header"><div className="rp-auth-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div><a href="/health">System status</a></header><section className="rp-tenant-picker-card"><p className="rp-eyebrow">Workspace</p><h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1><p className="rp-tenant-picker-copy">Select the workspace you want to manage. Tenant context stays visible in the URL and navigation.</p>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <div className="rp-create-tenant"><p>No active tenant is available. Create a tenant to establish an isolated workspace for applications, identities, storage and networking.</p>{createOpen ? <CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { setError(undefined); try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); throw cause; } }} /> : <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>Create Tenant</button>}</div> : <div className="rp-tenant-grid">{active.map((tenant) => { const name = tenant.displayName ?? tenant.name ?? tenant.id; return <a className="rp-tenant-card" key={tenant.id} href={tenantHref(tenant.id, "overview")}><span className="rp-tenant-card-mark">{name.slice(0, 1).toUpperCase()}</span><div><strong>{name}</strong><span>{tenant.status ?? "Active"}</span></div><span aria-hidden="true">→</span></a>; })}</div>}</section></main>;
 }

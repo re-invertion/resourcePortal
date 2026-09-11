@@ -51,7 +51,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toBe("/tenants/t1/overview");
   });
 
-  it("exposes every required CreateTenantDto field and submits the structured tenant payload", async () => {
+  it("exposes every required CreateTenantDto field and reviews the structured tenant payload before creation", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
       .mockResolvedValueOnce(json([]))
@@ -61,10 +61,15 @@ describe("Web Console bootstrap", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: "Choose tenant" });
+    expect(screen.getByRole("heading", { name: "Create Tenant" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "demo" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Demo tenant" } });
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create tenant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
+
+    expect(screen.getByRole("heading", { name: "Review configuration" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Create Tenant" }));
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     const [, options] = fetchMock.mock.calls[2] as [string, RequestInit];
