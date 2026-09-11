@@ -1,0 +1,391 @@
+:root {
+  --rp-azure-accent: #0078d4;
+  --rp-azure-accent-hover: #106ebe;
+  --rp-azure-nav-bg: #f7f7f8;
+  --rp-azure-border: #e1dfdd;
+  --rp-azure-text: #242424;
+  --rp-azure-muted: #616161;
+  --rp-azure-surface: #ffffff;
+  --rp-azure-canvas: #f5f5f5;
+  --rp-azure-danger: #c50f1f;
+  --rp-azure-nav-width: 232px;
+}
+
+.rp-shell {
+  background: var(--rp-azure-canvas);
+  color: var(--rp-azure-text);
+  min-height: 100vh;
+}
+
+.rp-sidebar {
+  background: var(--rp-azure-nav-bg);
+  border-right: 1px solid var(--rp-azure-border);
+  width: var(--rp-azure-nav-width);
+  box-shadow: none;
+}
+
+.rp-brand {
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rp-azure-border);
+}
+
+.rp-brand-mark {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.rp-tenant-switcher {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 8px;
+  padding: 9px 10px;
+  min-height: 44px;
+  border: 1px solid var(--rp-azure-border);
+  border-radius: 3px;
+  background: var(--rp-azure-surface);
+  text-decoration: none;
+}
+
+.rp-tenant-switcher > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.rp-tenant-switcher small {
+  color: var(--rp-azure-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.rp-tenant-switcher strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.rp-tenant-switcher-icon,
+.rp-nav-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: #424242;
+}
+
+.rp-workspace-nav,
+.rp-platform-nav {
+  padding: 4px 8px;
+}
+
+.rp-nav-group {
+  margin: 0 0 10px;
+}
+
+.rp-nav-group-label {
+  padding: 6px 8px 3px;
+  margin: 0;
+  color: #737373;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+
+.rp-nav-items {
+  display: grid;
+  gap: 1px;
+}
+
+.rp-nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 6px 9px;
+  border-radius: 2px;
+  color: #323130;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.rp-nav-link:hover {
+  background: #edebe9;
+}
+
+.rp-nav-link[data-active="true"] {
+  background: #e5f1fb;
+  color: #004578;
+  font-weight: 600;
+}
+
+.rp-nav-link[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 4px auto 4px -8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--rp-azure-accent);
+}
+
+.rp-nav-link[data-active="true"] .rp-nav-icon {
+  color: var(--rp-azure-accent);
+}
+
+.rp-topbar {
+  min-height: 52px;
+  border-bottom: 1px solid var(--rp-azure-border);
+  background: var(--rp-azure-surface);
+  box-shadow: none;
+}
+
+.rp-shell-main {
+  min-width: 0;
+}
+
+.rp-shell-workspace {
+  min-width: 0;
+}
+
+.rp-breadcrumbs {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid #edebe9;
+  background: var(--rp-azure-surface);
+  color: var(--rp-azure-muted);
+  font-size: 12px;
+}
+
+.rp-breadcrumbs ol {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rp-breadcrumbs li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.rp-breadcrumbs li + li::before {
+  content: "/";
+  margin: 0 7px;
+  color: #a19f9d;
+}
+
+.rp-breadcrumbs a {
+  color: #005a9e;
+  text-decoration: none;
+}
+
+.rp-breadcrumbs a:hover {
+  text-decoration: underline;
+}
+
+.rp-content {
+  max-width: none;
+  padding: 20px 24px 32px;
+}
+
+.rp-command-bar {
+  position: relative;
+  z-index: 5;
+  width: 100%;
+  min-height: 38px;
+  margin: 12px 0 16px;
+  border-top: 1px solid var(--rp-azure-border);
+  border-bottom: 1px solid var(--rp-azure-border);
+  background: var(--rp-azure-surface);
+}
+
+.rp-command-actions {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  gap: 0;
+  overflow: visible;
+}
+
+.rp-command-action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #323130;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.rp-command-action:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+.rp-command-action:focus-visible {
+  outline: 2px solid var(--rp-azure-accent);
+  outline-offset: -2px;
+}
+
+.rp-command-action[data-destructive="true"] {
+  color: var(--rp-azure-danger);
+}
+
+.rp-command-action:disabled,
+.rp-command-action[aria-disabled="true"] {
+  color: #a19f9d;
+  cursor: default;
+}
+
+.rp-command-overflow {
+  position: relative;
+  align-self: stretch;
+  display: flex;
+}
+
+.rp-command-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid #d2d0ce;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 15%);
+}
+
+.rp-command-menu-item {
+  appearance: none;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: #323130;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.rp-command-menu-item:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+.rp-command-menu-item[data-destructive="true"] {
+  color: var(--rp-azure-danger);
+}
+
+.rp-app-groups-page .rp-page-header {
+  margin-bottom: 0;
+}
+
+.rp-resource-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--rp-azure-border);
+  background: var(--rp-azure-surface);
+}
+
+.rp-resource-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rp-resource-table th {
+  height: 34px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--rp-azure-border);
+  background: #faf9f8;
+  color: #605e5c;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.rp-resource-table td {
+  height: 42px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #edebe9;
+  vertical-align: middle;
+}
+
+.rp-resource-table tbody tr:hover {
+  background: #f8fbfd;
+}
+
+.rp-resource-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.rp-resource-table td:first-child a {
+  color: #005a9e;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.rp-resource-table td:first-child a:hover {
+  text-decoration: underline;
+}
+
+.rp-empty-state {
+  padding: 36px 28px;
+  border: 1px solid var(--rp-azure-border);
+  background: var(--rp-azure-surface);
+  text-align: left;
+}
+
+.rp-empty-state h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.rp-empty-state p {
+  max-width: 620px;
+  margin: 0 0 14px;
+  color: var(--rp-azure-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 1199px) {
+  :root { --rp-azure-nav-width: 208px; }
+  .rp-content { padding-inline: 18px; }
+  .rp-breadcrumbs { padding-inline: 18px; }
+}
+
+@media (max-width: 767px) {
+  .rp-breadcrumbs { padding-inline: 14px; overflow-x: auto; }
+  .rp-content { padding: 14px; }
+  .rp-command-actions { overflow-x: auto; overflow-y: visible; }
+  .rp-command-action { flex: 0 0 auto; }
+  .rp-resource-table-wrap { margin-inline: -14px; border-inline: 0; }
+}
