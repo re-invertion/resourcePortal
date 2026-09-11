@@ -37,16 +37,17 @@ describe("production Web Console styling", () => {
     expect(styles).toContain("rp-confirm-dialog");
   });
 
-  it("styles the resource creation wizard inside the production Tailwind stylesheet", () => {
-    const styles = read("src/styles.css");
+  it("uses production Tailwind utilities for the cloud-style creation wizard", () => {
     const entryClient = read("src/entry-client.tsx");
+    const createResource = read("src/components/create-resource.tsx");
+    const resourcePanel = read("src/components/resource.tsx");
 
     expect(entryClient).toContain('import "./styles.css"');
     expect(entryClient).not.toContain("create-resource.css");
-    expect(styles).toContain(".rp-create-workspace");
-    expect(styles).toContain(".rp-resource-icon");
-    expect(styles).toContain(".rp-create-stepper");
-    expect(styles).toContain(".rp-create-review");
-    expect(styles).toContain("@apply");
+    expect(createResource).toContain("rounded-2xl border border-slate-200 bg-white");
+    expect(createResource).toContain("lg:grid-cols-[minmax(0,1fr)_20rem]");
+    expect(createResource).toContain("bg-blue-600");
+    expect(createResource).toContain("bg-blue-50 text-blue-700");
+    expect(resourcePanel).toContain("bg-blue-600");
   });
 });
