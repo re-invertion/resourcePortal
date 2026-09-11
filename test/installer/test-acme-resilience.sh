@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Intentional late function overrides are scoped regression doubles for sourced installer functions.
-# shellcheck disable=SC2218
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/acme.sh"
@@ -64,6 +62,8 @@ grep -q 'Certificates' "$RP_ACME_PLATFORM_DIR/acme.json" && pass 'active ACME st
 
 # Active production ACME state is cached atomically after issuance.
 cp "$fixture_dir/acme.json" "$RP_ACME_PLATFORM_DIR/acme.json"
+# Intentional late rm() regression double exists below.
+# shellcheck disable=SC2218
 rm -f "$RP_ACME_CACHE_DIR/acme.json"
 status 0 'active production ACME state is cached for reinstall reuse' rp_acme_cache_active_state
 cmp -s "$RP_ACME_PLATFORM_DIR/acme.json" "$RP_ACME_CACHE_DIR/acme.json" && pass 'cached ACME state matches active state' || fail 'cached ACME state matches active state'
@@ -85,6 +85,8 @@ rp_traefik_acme_error_for_domain(){ printf '%s\n' "$rate_log"; }
 sleep(){ sleep_calls=$((sleep_calls+1)); }
 export RP_CFG_ACME_ENVIRONMENT=production
 set +e
+# Intentional late rp_wait_for_acme_certificate() regression double exists below.
+# shellcheck disable=SC2218
 rp_wait_for_acme_certificate auth.resource-portal.pl production 300 >/tmp/rp-acme-rate.out 2>/tmp/rp-acme-rate.err
 rate_status=$?
 set -e
