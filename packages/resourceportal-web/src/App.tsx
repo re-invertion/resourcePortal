@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "./api/client";
-import { JsonPayloadForm } from "./components/forms";
+import { CreateResourceWorkspace } from "./components/create-resource";
 import { ErrorState } from "./components/resource";
-import { AppShell } from "./components/shell";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
 import { PlatformPage } from "./pages/platform";
 import { TenantPage } from "./pages/tenant";
@@ -54,7 +53,6 @@ export function App({ initialPath }: AppProps = {}) {
   const route = useRoute(initialPath);
   const [user, setUser] = useState<User | null | undefined>();
   const [tenants, setTenants] = useState<Tenant[] | undefined>();
-  const [platformAdmin, setPlatformAdmin] = useState(false);
   const [error, setError] = useState<unknown>();
 
   useEffect(() => {
@@ -72,13 +70,6 @@ export function App({ initialPath }: AppProps = {}) {
 
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
 
-  useEffect(() => {
-    if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; }
-    let active = true;
-    apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); });
-    return () => { active = false; };
-  }, [user, route.kind]);
-
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
   if (user === undefined) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>{routeLoadingText(route)}</p>{error ? <ErrorState error={error} /> : null}</main>;
   if (!user) {
@@ -89,11 +80,41 @@ export function App({ initialPath }: AppProps = {}) {
 
   if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
+  return <Shell user={user} route={route}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</Shell>;
 }
 
 function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {
   const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]);
   const [error, setError] = useState<unknown>();
-  return <main className="rp-tenant-picker"><header className="rp-tenant-picker-header"><div className="rp-auth-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div><a href="/health">System status</a></header><section className="rp-tenant-picker-card"><p className="rp-eyebrow">Workspace</p><h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1><p className="rp-tenant-picker-copy">Select the workspace you want to manage. Tenant context stays visible in the URL and navigation.</p>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <div className="rp-create-tenant"><p>No active tenant is available. Create one if your platform permissions allow it.</p><JsonPayloadForm submitLabel="Create tenant" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onSubmit={async (body) => { try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); } }} /></div> : <div className="rp-tenant-grid">{active.map((tenant) => { const name = tenant.displayName ?? tenant.name ?? tenant.id; return <a className="rp-tenant-card" key={tenant.id} href={tenantHref(tenant.id, "overview")}><span className="rp-tenant-card-mark">{name.slice(0, 1).toUpperCase()}</span><div><strong>{name}</strong><span>{tenant.status ?? "Active"}</span></div><span aria-hidden="true">→</span></a>; })}</div>}</section></main>;
+  const [createOpen, setCreateOpen] = useState(true);
+
+  return <main>
+    <h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1>
+    {error ? <ErrorState error={error} /> : null}
+    {active.length === 0 ? <>
+      <p>No active tenant is available. Create a tenant to establish an isolated workspace for applications, identities, storage and networking.</p>
+      {createOpen ? <CreateResourceWorkspace
+        title="Tenants"
+        initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }}
+        onCancel={() => setCreateOpen(false)}
+        onCreate={async (body) => {
+          setError(undefined);
+          try {
+            await apiRequest("/api/tenants", { method: "POST", body });
+            await reload();
+          } catch (cause) {
+            setError(cause);
+            throw cause;
+          }
+        }}
+      /> : <button type="button" className="rp-create-trigger" onClick={() => setCreateOpen(true)}>Create tenant</button>}
+    </> : <ul>{active.map((tenant) => <li key={tenant.id}><a href={tenantHref(tenant.id, "overview")}>{tenant.displayName ?? tenant.name ?? tenant.id}</a></li>)}</ul>}
+    <p><a href="/health">Public health</a></p>
+  </main>;
+}
+
+function Shell({ user, route, children }: { user: User; route: AppRoute; children: React.ReactNode }) {
+  const tenantId = route.kind === "tenant" ? route.tenantId : undefined;
+  const tenantSections = ["overview", "app-groups", "volumes", "registries", "domains", "administration", "credentials", "billing", "audit", "operations"];
+  return <><header><strong>Resource Portal</strong> <span>{user.displayName ?? user.email ?? user.id}</span><button type="button" onClick={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>Logout</button></header><nav aria-label="Primary"><a href="/tenants">Tenants</a>{tenantId ? tenantSections.map((section) => <span key={section}> · <a href={tenantHref(tenantId, section)}>{section}</a></span>) : null}<span> · <a href="/platform/overview">platform</a></span><span> · <a href="/platform/maintenance">maintenance</a></span><span> · <a href="/platform/infrastructure">infrastructure</a></span><span> · <a href="/platform/identity-providers">platform IdPs</a></span><span> · <a href="/platform/credentials">platform credentials</a></span><span> · <a href="/platform/billing">platform billing</a></span></nav>{children}</>;
 }

@@ -58,7 +58,7 @@
   }
 
   button {
-    @apply inline-flex min-h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm;
+    @apply inline-flex min-h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm transition;
   }
 
   button:hover:not(:disabled) {
@@ -89,11 +89,11 @@
   textarea,
   input,
   select {
-    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 shadow-inner;
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-inner;
   }
 
   textarea {
-    @apply min-h-44 resize-y;
+    @apply min-h-44 resize-y font-mono;
   }
 
   table {
@@ -274,250 +274,220 @@
   .rp-technical-json {
     @apply mt-3 border-dashed bg-white;
   }
-}
 
-@layer components {
-  .rp-shell { @apply min-h-screen bg-slate-50 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]; }
-  .rp-sidebar { @apply border-b border-slate-800 bg-slate-950 px-4 py-5 text-slate-300 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-b-0 lg:border-r; }
-  .rp-brand { @apply mb-5 flex items-center gap-3 px-2; }
-  .rp-brand-mark { @apply inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-black text-slate-950 shadow-sm; }
-  .rp-brand div { @apply grid; }
-  .rp-brand strong { @apply text-sm font-semibold tracking-tight text-white; }
-  .rp-brand span:not(.rp-brand-mark) { @apply text-xs text-slate-500; }
-  .rp-tenant-switcher { @apply mb-5 grid rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2.5 no-underline transition hover:border-slate-700 hover:bg-slate-900 hover:no-underline; }
-  .rp-tenant-switcher span { @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500; }
-  .rp-tenant-switcher strong { @apply truncate text-sm font-medium text-slate-100; }
-  .rp-workspace-nav { @apply grid gap-4; }
-  .rp-platform-nav { @apply mt-6 border-t border-slate-800 pt-5; }
-  .rp-nav-group { @apply grid gap-1; }
-  .rp-nav-group-label { @apply mb-1 px-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500; }
-  .rp-nav-items { @apply grid gap-0.5; }
-  .rp-nav-link { @apply flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-400 no-underline transition hover:bg-slate-900 hover:text-white hover:no-underline; }
-  .rp-nav-link[data-active="true"] { @apply bg-slate-800 text-white shadow-sm; }
-  .rp-nav-dot { @apply size-1.5 rounded-full bg-slate-700; }
-  .rp-nav-link[data-active="true"] .rp-nav-dot { @apply bg-emerald-400; }
-  .rp-sidebar-footer { @apply mt-6 border-t border-slate-800 px-2 pt-4; }
-  .rp-sidebar-footer a { @apply text-xs font-medium text-slate-500 no-underline hover:text-slate-200 hover:no-underline; }
-  .rp-shell-main { @apply min-w-0; }
-  .rp-topbar { @apply sticky top-0 z-30 flex min-h-16 items-center gap-3 border-b border-slate-200/80 bg-white/90 px-4 py-2 backdrop-blur lg:px-6; }
-  .rp-mobile-brand { @apply flex items-center gap-2 lg:hidden; }
-  .rp-mobile-brand .rp-brand-mark { @apply size-8 bg-slate-950 text-white; }
-  .rp-mobile-brand strong { @apply hidden text-sm sm:block; }
-  .rp-topbar-context { @apply mr-auto hidden text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 sm:block; }
-  .rp-user-menu { @apply ml-auto flex items-center gap-2; }
-  .rp-user-avatar { @apply inline-flex size-8 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white; }
-  .rp-user-copy { @apply hidden max-w-44 sm:grid; }
-  .rp-user-copy strong { @apply truncate text-xs font-semibold text-slate-800; }
-  .rp-user-copy span { @apply truncate text-[11px] text-slate-500; }
-  .rp-quiet-button { @apply min-h-8 border-0 bg-transparent px-2 text-xs shadow-none hover:bg-slate-100; }
-  .rp-content { @apply min-w-0; }
-  .rp-content > main { @apply max-w-[96rem] px-4 py-6 sm:px-6 lg:px-8 lg:py-8; }
-}
+  .rp-resource-panel-header {
+    @apply items-center;
+  }
 
-@layer components {
-  .rp-dashboard-page { @apply space-y-6; }
-  .rp-page-hero { @apply mb-2 flex flex-col gap-4 border-0 bg-transparent p-0 shadow-none sm:flex-row sm:items-end sm:justify-between; }
-  .rp-page-hero h1 { @apply mb-1 text-3xl font-bold tracking-[-0.035em] text-slate-950; }
-  .rp-page-hero p:not(.rp-eyebrow) { @apply my-0 max-w-2xl text-sm text-slate-500; }
-  .rp-eyebrow { @apply mb-1 mt-0 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400; }
-  .rp-page-actions { @apply flex flex-wrap gap-2; }
-  .rp-button { @apply inline-flex min-h-10 items-center justify-center rounded-lg border px-4 py-2 text-sm font-semibold no-underline shadow-sm transition hover:no-underline; }
-  .rp-button-primary { @apply border-slate-950 bg-slate-950 text-white hover:bg-slate-800; }
-  .rp-metric-grid { @apply my-0 grid grid-cols-1 gap-3 border-0 bg-transparent p-0 shadow-none sm:grid-cols-2 xl:grid-cols-4; }
-  .rp-dashboard-metric { @apply rounded-2xl border border-slate-200 bg-white p-4 shadow-sm; }
-  .rp-dashboard-metric-head { @apply mb-5 flex items-center justify-between text-xs font-semibold text-slate-500; }
-  .rp-dashboard-metric-icon { @apply size-2 rounded-full bg-slate-300; }
-  .rp-dashboard-metric-value { @apply block text-2xl font-bold tracking-[-0.03em] text-slate-950; }
-  .rp-dashboard-metric > span:last-child { @apply mt-1 block text-xs text-slate-500; }
-  .rp-dashboard-section { @apply my-0 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-sm; }
-  .rp-dashboard-section > header { @apply m-0 flex items-center gap-3 border-b border-slate-100 px-5 py-4; }
-  .rp-dashboard-section > header > div { @apply mr-auto; }
-  .rp-dashboard-section > header h2 { @apply text-base font-semibold text-slate-950; }
-  .rp-dashboard-section > header .rp-eyebrow { @apply mb-0; }
-  .rp-dashboard-section > header > a { @apply text-xs font-semibold text-slate-500 no-underline hover:text-slate-900 hover:no-underline; }
-  .rp-section-count { @apply inline-flex min-w-7 items-center justify-center rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600; }
-  .rp-attention-section { @apply border-amber-200/80; }
-  .rp-attention-card { @apply flex flex-col gap-3 border-b border-slate-100 px-5 py-4 last:border-b-0 md:flex-row md:items-center; }
-  .rp-attention-card[data-tone="negative"] { @apply bg-rose-50/60; }
-  .rp-attention-card[data-tone="warning"] { @apply bg-amber-50/50; }
-  .rp-attention-card > div:first-child { @apply mr-auto; }
-  .rp-attention-card strong { @apply text-sm font-semibold text-slate-950; }
-  .rp-attention-card p { @apply my-1 text-xs text-slate-600; }
-  .rp-attention-card > a, .rp-attention-actions a { @apply whitespace-nowrap text-xs font-semibold no-underline hover:underline; }
-  .rp-attention-actions { @apply flex flex-wrap gap-3; }
-  .rp-good-state { @apply grid gap-1 px-5 py-5; }
-  .rp-good-state strong { @apply text-sm font-semibold text-emerald-800; }
-  .rp-good-state span { @apply text-xs text-slate-500; }
-  .rp-muted, .rp-panel-unavailable { @apply m-0 px-5 py-5 text-sm text-slate-500; }
-  .rp-panel-unavailable { @apply text-amber-700; }
-  .rp-dashboard-columns { @apply grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(19rem,0.75fr)]; }
-  .rp-dashboard-rail { @apply grid content-start gap-6; }
-  .rp-application-list { @apply divide-y divide-slate-100; }
-  .rp-application-row { @apply grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-5 py-3.5 text-slate-900 no-underline transition hover:bg-slate-50 hover:no-underline; }
-  .rp-app-identity { @apply flex min-w-0 items-center gap-3; }
-  .rp-app-mark { @apply inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-xs font-bold text-slate-600; }
-  .rp-app-identity > div { @apply grid min-w-0; }
-  .rp-app-identity strong { @apply truncate text-sm font-semibold; }
-  .rp-app-identity span:not(.rp-app-mark) { @apply text-xs text-slate-500; }
-  .rp-app-status { @apply hidden flex-wrap justify-end gap-1.5 sm:flex; }
-  .rp-row-chevron { @apply text-xl leading-none text-slate-300; }
-  .rp-quick-actions { @apply grid; }
-  .rp-quick-actions a { @apply flex items-center justify-between border-b border-slate-100 px-5 py-3.5 text-sm font-medium text-slate-700 no-underline last:border-b-0 hover:bg-slate-50 hover:text-slate-950 hover:no-underline; }
-  .rp-quick-actions span { @apply text-slate-300; }
-  .rp-activity-list { @apply divide-y divide-slate-100; }
-  .rp-activity-list a { @apply flex items-center gap-3 px-5 py-3 text-slate-800 no-underline hover:bg-slate-50 hover:no-underline; }
-  .rp-activity-dot { @apply size-2 shrink-0 rounded-full bg-slate-300; }
-  .rp-activity-dot[data-tone="positive"] { @apply bg-emerald-500; }
-  .rp-activity-dot[data-tone="negative"] { @apply bg-rose-500; }
-  .rp-activity-dot[data-tone="warning"] { @apply bg-amber-500; }
-  .rp-activity-list a > div { @apply grid min-w-0; }
-  .rp-activity-list strong { @apply truncate text-xs font-semibold capitalize; }
-  .rp-activity-list span:last-child { @apply text-[11px] text-slate-500; }
-  .rp-empty-compact { @apply grid gap-2 px-5 py-8 text-center; }
-  .rp-empty-compact strong { @apply text-sm text-slate-700; }
-  .rp-empty-compact a { @apply text-xs; }
-}
+  .rp-resource-panel-heading {
+    @apply mr-auto min-w-0;
+  }
 
-@layer components {
-  .rp-app-group-workspace { @apply space-y-5; }
-  .rp-breadcrumb { @apply my-0 flex items-center gap-2 text-xs text-slate-400; }
-  .rp-breadcrumb a { @apply text-slate-500 no-underline hover:text-slate-900 hover:no-underline; }
-  .rp-app-group-header { @apply my-0 flex flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center; }
-  .rp-app-group-title { @apply mr-auto flex min-w-0 items-start gap-4; }
-  .rp-app-group-mark { @apply inline-flex size-12 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-base font-bold text-white shadow-sm; }
-  .rp-app-group-title h1 { @apply mb-2 text-2xl font-bold tracking-[-0.03em] text-slate-950; }
-  .rp-app-group-title .rp-eyebrow { @apply mb-0; }
-  .rp-app-group-badges { @apply flex flex-wrap items-center gap-1.5; }
-  .rp-pending-badge { @apply inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700; }
-  .rp-app-group-actions { @apply flex flex-wrap items-center gap-2; }
-  .rp-workspace-alert { @apply flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 md:flex-row md:items-center; }
-  .rp-workspace-alert[data-tone="negative"] { @apply border-rose-200 bg-rose-50 text-rose-950; }
-  .rp-workspace-alert > div { @apply mr-auto; }
-  .rp-workspace-alert strong { @apply font-semibold; }
-  .rp-workspace-alert p { @apply my-0 text-xs text-current opacity-75; }
-  .rp-workspace-alert a { @apply whitespace-nowrap text-xs font-bold text-current; }
-  .rp-section-nav { @apply sticky top-16 z-20 flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white/95 p-1 shadow-sm backdrop-blur; }
-  .rp-section-nav a { @apply whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 no-underline transition hover:bg-slate-100 hover:text-slate-950 hover:no-underline; }
-  .rp-workspace-section { @apply my-0 scroll-mt-32 overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-sm; }
-  .rp-workspace-section > header { @apply m-0 border-b border-slate-100 px-5 py-4; }
-  .rp-workspace-section > header h2 { @apply text-base font-semibold text-slate-950; }
-  .rp-workspace-section > header .rp-eyebrow { @apply mb-0; }
-  .rp-workspace-section-body { @apply p-5; }
-  .rp-workspace-section-body > section { @apply first:mt-0 last:mb-0; }
-  .rp-overview-grid { @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-4; }
-  .rp-overview-grid > div { @apply grid gap-1 rounded-xl border border-slate-100 bg-slate-50/70 p-4; }
-  .rp-overview-grid span { @apply text-xs font-medium text-slate-500; }
-  .rp-overview-grid strong { @apply text-sm font-semibold text-slate-950; }
-  .rp-inline-note { @apply mt-4 flex flex-col gap-1 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3; }
-  .rp-inline-note strong { @apply text-sm font-semibold text-blue-950; }
-  .rp-inline-note span { @apply text-xs text-blue-700; }
-  .rp-context-links { @apply flex flex-wrap items-center gap-3 rounded-xl bg-slate-50 p-4; }
-  .rp-context-links p { @apply mr-auto my-0 max-w-3xl text-sm text-slate-600; }
-  .rp-context-links a { @apply text-xs font-semibold; }
-  .rp-advanced-panel { @apply my-0 rounded-2xl border border-slate-200 bg-white p-0 shadow-sm; }
-  .rp-advanced-panel > summary { @apply rounded-2xl px-5 py-4 text-sm font-semibold text-slate-600 hover:bg-slate-50; }
-  .rp-advanced-body { @apply border-t border-slate-100 p-5; }
-}
+  .rp-resource-panel-heading h2 {
+    @apply mr-0;
+  }
 
-@layer base {
-  body { @apply bg-slate-50; }
-  button { @apply transition duration-150; }
-  textarea, input, select { @apply bg-white font-sans text-sm shadow-sm transition placeholder:text-slate-400 hover:border-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-900/5; }
-  textarea { @apply min-h-32; }
-  table { @apply my-0; }
-  thead { @apply bg-slate-50/80; }
-  th { @apply border-x-0 border-slate-200 px-4 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-500; }
-  td { @apply border-x-0 border-slate-100 px-4 py-3.5 text-sm; }
-  tbody tr { @apply transition hover:bg-slate-50/70; }
-}
+  .rp-resource-panel-heading p {
+    @apply mb-0 mt-1 max-w-3xl text-slate-600;
+  }
 
-@layer components {
-  .rp-callout { @apply flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-blue-950 md:flex-row md:items-center; }
-  .rp-callout[data-tone="warning"] { @apply border-amber-200 bg-amber-50 text-amber-950; }
-  .rp-callout[data-tone="danger"] { @apply border-rose-200 bg-rose-50 text-rose-950; }
-  .rp-callout[data-tone="success"] { @apply border-emerald-200 bg-emerald-50 text-emerald-950; }
-  .rp-callout > div:first-child { @apply mr-auto; }
-  .rp-callout strong { @apply text-sm font-semibold; }
-  .rp-callout-copy { @apply mt-0.5 text-xs opacity-75; }
-  .rp-callout-action { @apply shrink-0 text-xs font-semibold; }
+  .rp-panel-header-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
 
-  .rp-resource-panel, .rp-readonly-panel { @apply overflow-hidden rounded-2xl border border-slate-200 bg-white p-0 shadow-sm; }
-  .rp-resource-panel > header, .rp-readonly-panel > header { @apply m-0 flex items-center gap-3 border-b border-slate-100 px-5 py-4; }
-  .rp-resource-panel > header > div, .rp-readonly-panel > header > div { @apply mr-auto; }
-  .rp-resource-panel > header h2, .rp-readonly-panel > header h2 { @apply text-base font-semibold text-slate-950; }
-  .rp-resource-panel > header .rp-eyebrow, .rp-readonly-panel > header .rp-eyebrow { @apply mb-0; }
-  .rp-resource-help { @apply mr-auto max-w-xl text-xs text-slate-500; }
-  .rp-resource-panel > :not(header), .rp-readonly-panel > :not(header) { @apply mx-5; }
-  .rp-resource-panel > .rp-table-scroll { @apply mx-0 w-full; }
-  .rp-resource-panel > .rp-list-toolbar { @apply mx-5; }
-  .rp-resource-panel > details { @apply mx-5; }
-  .rp-resource-panel > .rp-empty-state { @apply mx-5; }
-  .rp-readonly-panel > .rp-readable-data { @apply my-4; }
-  .rp-table-scroll { @apply rounded-b-2xl; }
-  .rp-list-toolbar { @apply grid gap-3 rounded-xl border-0 bg-slate-50 p-3 md:grid-cols-2; }
-  .rp-list-toolbar label { @apply gap-1 text-xs text-slate-500; }
-  .rp-list-toolbar input, .rp-list-toolbar select { @apply bg-white; }
-  .rp-primary-actions > a { @apply inline-flex min-h-8 items-center rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white no-underline hover:bg-slate-800 hover:no-underline; }
-  .rp-primary-actions > button { @apply min-h-8 rounded-lg px-3 py-1.5 text-xs; }
-  .rp-primary-actions > details > summary, .rp-row-actions > summary { @apply rounded-lg px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100; }
-  .rp-row-actions { @apply border-0 bg-transparent p-0; }
-  .rp-row-actions > div { @apply rounded-xl border border-slate-200 bg-white p-2 shadow-lg; }
-  .rp-empty-state { @apply rounded-xl border-slate-200 bg-slate-50/70; }
-  .rp-success-message { @apply rounded-xl border-emerald-200 bg-emerald-50 text-emerald-800; }
-  .rp-selected-resource { @apply rounded-xl border-blue-100 bg-blue-50; }
-  .rp-technical-json { @apply border-slate-200 bg-slate-50; }
-  .rp-technical-json > summary { @apply text-xs text-slate-500; }
+  .rp-create-trigger,
+  .rp-create-primary {
+    @apply border-blue-700 bg-blue-700 text-white shadow-sm;
+  }
 
-  .rp-structured-form { @apply grid gap-4 rounded-xl bg-slate-50/70 p-4; }
-  .rp-structured-form > label { @apply gap-1.5; }
-  .rp-structured-form label { @apply text-xs font-semibold text-slate-700; }
-  .rp-structured-form label > span { @apply font-normal text-slate-400; }
-  .rp-structured-form small { @apply text-[11px] font-normal leading-4 text-slate-400; }
-  .rp-structured-form fieldset { @apply grid gap-3 rounded-xl border border-slate-200 bg-white p-4; }
-  .rp-structured-form legend { @apply px-1 text-xs font-bold text-slate-600; }
-  .rp-structured-form button[type="submit"] { @apply justify-self-start border-slate-950 bg-slate-950 px-4 text-white hover:bg-slate-800; }
-  .rp-structured-form button[type="button"] { @apply justify-self-start; }
-  .rp-one-time-credential { @apply border-amber-200 bg-amber-50; }
+  .rp-create-trigger:hover:not(:disabled),
+  .rp-create-primary:hover:not(:disabled) {
+    @apply border-blue-800 bg-blue-800;
+  }
 
-  .rp-auth-page { @apply grid min-h-screen max-w-none items-stretch bg-white p-0 lg:grid-cols-[minmax(0,0.9fr)_minmax(30rem,1.1fr)]; }
-  .rp-auth-card { @apply m-auto w-full max-w-lg border-0 bg-white px-6 py-10 shadow-none sm:px-10; }
-  .rp-auth-brand { @apply mb-10 flex items-center gap-3; }
-  .rp-auth-brand .rp-brand-mark { @apply bg-slate-950 text-white; }
-  .rp-auth-brand > div { @apply grid; }
-  .rp-auth-brand strong { @apply text-sm font-semibold text-slate-950; }
-  .rp-auth-brand span:not(.rp-brand-mark) { @apply text-xs text-slate-400; }
-  .rp-auth-heading { @apply mb-7; }
-  .rp-auth-heading h1 { @apply mb-2 text-3xl font-bold tracking-[-0.04em] text-slate-950; }
-  .rp-auth-heading > p:last-child { @apply my-0 text-sm text-slate-500; }
-  .rp-auth-tenant-field { @apply mb-5 gap-2; }
-  .rp-auth-tenant-field > span { @apply ml-1 font-normal text-slate-400; }
-  .rp-provider-list { @apply grid gap-2; }
-  .rp-auth-primary { @apply min-h-11 w-full border-slate-950 bg-slate-950 text-white hover:bg-slate-800; }
-  .rp-auth-secondary { @apply min-h-11 w-full; }
-  .rp-auth-links { @apply mt-8 flex flex-wrap gap-4 border-t border-slate-100 pt-5; }
-  .rp-auth-links a { @apply text-xs font-semibold text-slate-500 no-underline hover:text-slate-950 hover:no-underline; }
-  .rp-auth-aside { @apply relative hidden overflow-hidden bg-slate-950 lg:block; }
-  .rp-auth-aside::before { content: ""; @apply absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(59,130,246,0.18),transparent_35%),radial-gradient(circle_at_70%_65%,rgba(16,185,129,0.12),transparent_30%)]; }
-  .rp-auth-aside > div { @apply absolute inset-x-12 bottom-14 rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur; }
-  .rp-auth-aside p { @apply m-0 max-w-md text-lg font-medium leading-7 text-slate-200; }
-  .rp-auth-orbit { @apply mb-5 block size-12 rounded-full border border-slate-600 shadow-[0_0_0_12px_rgba(255,255,255,0.03),0_0_0_24px_rgba(255,255,255,0.02)]; }
+  .rp-create-workspace {
+    @apply my-5 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 shadow-lg;
+  }
 
-  .rp-tenant-picker { @apply min-h-screen max-w-none bg-slate-50 px-4 py-0 sm:px-6; }
-  .rp-tenant-picker-header { @apply mx-auto flex max-w-6xl items-center justify-between border-0 bg-transparent px-0 py-5 shadow-none; }
-  .rp-tenant-picker-header .rp-auth-brand { @apply mb-0; }
-  .rp-tenant-picker-header > a { @apply text-xs font-semibold text-slate-500 no-underline hover:text-slate-950 hover:no-underline; }
-  .rp-tenant-picker-card { @apply mx-auto mt-12 max-w-4xl border-0 bg-transparent p-0 shadow-none; }
-  .rp-tenant-picker-card h1 { @apply mb-2 text-3xl font-bold tracking-[-0.04em]; }
-  .rp-tenant-picker-copy { @apply mb-7 max-w-2xl text-slate-500; }
-  .rp-tenant-grid { @apply grid gap-3 sm:grid-cols-2; }
-  .rp-tenant-card { @apply flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 no-underline shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md hover:no-underline; }
-  .rp-tenant-card-mark { @apply inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-bold text-white; }
-  .rp-tenant-card > div { @apply mr-auto grid; }
-  .rp-tenant-card strong { @apply text-sm font-semibold; }
-  .rp-tenant-card > div span { @apply text-xs text-slate-400; }
-  .rp-tenant-card > span:last-child { @apply text-slate-300; }
-  .rp-create-tenant { @apply rounded-2xl border border-slate-200 bg-white p-5 shadow-sm; }
+  .rp-create-titlebar {
+    @apply relative flex items-start gap-4 border-b border-slate-200 bg-white p-5 md:p-6;
+  }
 
-  .rp-content main:not(.rp-dashboard-page):not(.rp-app-group-workspace) > h1 { @apply mb-1 text-2xl font-bold tracking-[-0.03em] text-slate-950; }
-  .rp-content main:not(.rp-dashboard-page):not(.rp-app-group-workspace) > h1 + section { @apply mt-5; }
+  .rp-create-titlebar h2 {
+    @apply mt-0 text-2xl text-slate-950;
+  }
+
+  .rp-create-titlebar p {
+    @apply mb-0 max-w-4xl;
+  }
+
+  .rp-create-eyebrow {
+    @apply mt-0 text-xs font-semibold uppercase tracking-wider text-blue-700;
+  }
+
+  .rp-resource-icon {
+    @apply flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm;
+  }
+
+  .rp-resource-icon svg {
+    @apply h-7 w-7 fill-none stroke-current;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .rp-create-close {
+    @apply ml-auto h-9 min-h-9 w-9 shrink-0 rounded-full border-transparent bg-transparent p-0 text-xl text-slate-500 shadow-none;
+  }
+
+  .rp-create-stepper {
+    @apply m-0 flex list-none items-center gap-2 border-b border-slate-200 bg-white px-5 py-4 md:px-6;
+  }
+
+  .rp-create-step {
+    @apply flex shrink-0 items-center gap-2 text-sm text-slate-500;
+  }
+
+  .rp-create-step > span {
+    @apply flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-600;
+  }
+
+  .rp-create-step[data-active="true"] {
+    @apply text-blue-700;
+  }
+
+  .rp-create-step[data-active="true"] > span {
+    @apply bg-blue-600 text-white;
+  }
+
+  .rp-create-step[data-complete="true"] > span {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .rp-create-step-line {
+    @apply h-px min-w-10 flex-1 bg-slate-200;
+  }
+
+  .rp-create-layout {
+    @apply grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_22rem];
+  }
+
+  .rp-create-main,
+  .rp-create-guide {
+    @apply rounded-lg border border-slate-200 bg-white shadow-sm;
+  }
+
+  .rp-create-main {
+    @apply p-4 md:p-5;
+  }
+
+  .rp-create-form-intro,
+  .rp-create-review {
+    @apply border-b border-slate-200 pb-4;
+  }
+
+  .rp-create-form-intro h3,
+  .rp-create-review h3,
+  .rp-create-guide h3 {
+    @apply text-base font-semibold text-slate-950;
+  }
+
+  .rp-create-form-intro p,
+  .rp-create-review > p {
+    @apply mb-0 mt-1 text-slate-600;
+  }
+
+  .rp-create-main form {
+    @apply mt-4 grid gap-4 md:grid-cols-2;
+  }
+
+  .rp-create-main form > label,
+  .rp-create-main form > fieldset {
+    @apply m-0 rounded-lg border border-slate-200 bg-slate-50 p-4 shadow-none;
+  }
+
+  .rp-create-main form > label small,
+  .rp-create-main form > fieldset small {
+    @apply font-normal leading-5 text-slate-500;
+  }
+
+  .rp-create-main form > button[type="submit"] {
+    @apply md:col-span-2 md:ml-auto border-blue-700 bg-blue-700 text-white;
+  }
+
+  .rp-create-main form > button[type="submit"]:hover:not(:disabled) {
+    @apply bg-blue-800;
+  }
+
+  .rp-create-main input[type="checkbox"] {
+    @apply h-4 w-4 shadow-none;
+  }
+
+  .rp-create-guide {
+    @apply self-start p-4 md:p-5 xl:sticky xl:top-4;
+  }
+
+  .rp-create-guide > ol {
+    @apply my-4 space-y-4;
+  }
+
+  .rp-create-guide > ol > li {
+    @apply flex items-start gap-3;
+  }
+
+  .rp-create-guide > ol > li > span {
+    @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-800;
+  }
+
+  .rp-create-guide > ol > li > p {
+    @apply my-0 text-slate-700;
+  }
+
+  .rp-create-note {
+    @apply mt-5 rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-950;
+  }
+
+  .rp-create-note p {
+    @apply mb-0 mt-1 text-blue-900;
+  }
+
+  .rp-review-grid {
+    @apply mt-4 grid gap-3 md:grid-cols-2;
+  }
+
+  .rp-review-field {
+    @apply rounded-lg border border-slate-200 bg-slate-50 p-4;
+  }
+
+  .rp-review-field dt {
+    @apply text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+
+  .rp-review-field dd {
+    @apply mt-1 break-words text-sm font-medium text-slate-950;
+  }
+
+  .rp-review-field code {
+    @apply whitespace-pre-wrap break-all;
+  }
+
+  .rp-review-muted {
+    @apply font-normal italic text-slate-500;
+  }
+
+  .rp-create-actions {
+    @apply mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 pt-4;
+  }
+
+  .rp-create-cancel {
+    @apply bg-white text-slate-700;
+  }
+
+  .rp-create-main > .rp-create-cancel {
+    @apply mt-2;
+  }
+
+  .rp-create-error {
+    @apply mt-4;
+  }
 }
