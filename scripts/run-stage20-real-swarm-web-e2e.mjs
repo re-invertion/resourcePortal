@@ -183,14 +183,12 @@ try {
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Stop", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "0/0");
 
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Start", exact: true }).click();
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
@@ -199,7 +197,6 @@ try {
     singleAppRow = singleAppsPanel
       .getByRole("row")
       .filter({ hasText: singleAppName });
-    await openMoreActions(singleAppRow);
     await singleAppRow.getByRole("button", { name: "Restart", exact: true }).click();
     await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
     await waitForReplicas(createdStackName, singleAppName, "1/1");
@@ -209,8 +206,9 @@ try {
       .getByRole("row")
       .filter({ hasText: deploymentId });
     await rollbackSourceRow.waitFor();
-    await openMoreActions(rollbackSourceRow);
-    await rollbackSourceRow.locator("summary", { hasText: "Rollback" }).click();
+    await rollbackSourceRow.getByRole("button", { name: "Rollback", exact: true }).click();
+    const rollbackWorkspace = deploymentHistoryPanel.locator(".rp-resource-workspace");
+    await rollbackWorkspace.waitFor();
 
     const rollbackResponsePromise = page.waitForResponse(
       (response) =>
@@ -218,10 +216,10 @@ try {
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments/${deploymentId}/rollback`,
     );
-    await fillStructuredForm(rollbackSourceRow, {
+    await fillStructuredForm(rollbackWorkspace, {
       note: "Stage 20 real Swarm browser rollback",
     });
-    await rollbackSourceRow.getByRole("button", { name: "Rollback" }).click();
+    await rollbackWorkspace.getByRole("button", { name: "Rollback", exact: true }).click();
     const rollbackResponse = await rollbackResponsePromise;
     const rollbackText = await rollbackResponse.text();
     assert(
@@ -287,14 +285,6 @@ try {
 function panelByHeading(page, heading) {
   const title = page.getByRole("heading", { name: heading, level: 2 });
   return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ")][1]');
-}
-
-async function openMoreActions(row) {
-  const actions = row.locator("details.rp-row-actions");
-  if ((await actions.getAttribute("open")) === null) {
-    await actions.locator(":scope > summary").click();
-  }
-  return actions;
 }
 
 async function createResource(panel, body) {

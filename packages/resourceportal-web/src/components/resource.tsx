@@ -139,7 +139,7 @@ function ObjectFields({ value, hiddenKeys = [] }: { value: Record<string, unknow
   return <div className="rp-data-object">{scalar.length ? <dl className="rp-data-grid">{scalar.map(([key, item]) => <div className="rp-data-field" key={key}><dt>{fieldLabel(key)}</dt><dd><StructuredValue fieldKey={key} value={item} /></dd></div>)}</dl> : null}{nested.map(([key, item]) => <section className="rp-data-nested" key={key} aria-label={fieldLabel(key)}><h3>{fieldLabel(key)}</h3><StructuredValue fieldKey={key} value={item} /></section>)}</div>;
 }
 
-export function ReadableDataView({ value, hiddenKeys = [], technicalJson = true }: { value: unknown; hiddenKeys?: string[]; technicalJson?: boolean }) {
+export function ReadableDataView({ value, hiddenKeys = [], technicalJson = false }: { value: unknown; hiddenKeys?: string[]; technicalJson?: boolean }) {
   return <div className="rp-readable-data">{isRecord(value) ? <ObjectFields value={value} hiddenKeys={hiddenKeys} /> : <StructuredValue value={value} />}{technicalJson && value != null && typeof value === "object" ? <details className="rp-technical-json"><summary>Technical JSON</summary><pre>{JSON.stringify(value, null, 2)}</pre></details> : null}</div>;
 }
 
@@ -162,23 +162,202 @@ export function ErrorState({ error }: { error: unknown }) {
 }
 
 export function ResourcePanel(props: ResourcePanelProps) {
-  const [payload, setPayload] = useState<unknown>(); const [error, setError] = useState<unknown>(); const [loading, setLoading] = useState(true); const [oneTime, setOneTime] = useState<unknown>(); const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({}); const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState(""); const [createOpen, setCreateOpen] = useState(false); const [success, setSuccess] = useState<string>();
+  type Workspace =
+    | { kind: "details"; item: Record<string, unknown> }
+    | { kind: "edit"; item: Record<string, unknown> }
+    | { kind: "action"; item: Record<string, unknown>; action: ResourceAction };
+
+  const [payload, setPayload] = useState<unknown>();
+  const [error, setError] = useState<unknown>();
+  const [loading, setLoading] = useState(true);
+  const [oneTime, setOneTime] = useState<unknown>();
+  const [referenceOptions, setReferenceOptions] = useState<ReferenceOptions>({});
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [success, setSuccess] = useState<string>();
+  const [workspace, setWorkspace] = useState<Workspace>();
   const creation = useMemo(() => resourceCreationMeta(props.title), [props.title]);
   const explicitSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
-  const referenceOptionSources = useMemo(() => ({ ...inferredReferenceOptionSources(props.listPath), ...(props.referenceOptionSources ?? {}) }), [props.listPath, explicitSourceKey]);
+  const referenceOptionSources = useMemo(
+    () => ({ ...inferredReferenceOptionSources(props.listPath), ...(props.referenceOptionSources ?? {}) }),
+    [props.listPath, explicitSourceKey],
+  );
   const referenceSourceKey = JSON.stringify(referenceOptionSources);
-  const reload = useCallback(async () => { setLoading(true); setError(undefined); try { setPayload(await apiRequest(props.listPath)); } catch (cause) { setError(cause); } finally { setLoading(false); } }, [props.listPath]);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(undefined);
+    try { setPayload(await apiRequest(props.listPath)); }
+    catch (cause) { setError(cause); }
+    finally { setLoading(false); }
+  }, [props.listPath]);
+
   useEffect(() => { void reload(); }, [reload]);
-  useEffect(() => { if (Object.keys(referenceOptionSources).length === 0) { setReferenceOptions({}); return; } let cancelled = false; void Promise.all(Object.entries(referenceOptionSources).map(async ([field, path]) => { const result = await apiRequest(path); const options = extractItems(result).filter((item) => typeof item.id === "string").map((item) => ({ value: String(item.id), label: optionLabel(item) })); return [field, options] as const; })).then((entries) => { if (!cancelled) setReferenceOptions(Object.fromEntries(entries)); }).catch((cause) => { if (!cancelled) setError(cause); }); return () => { cancelled = true; }; /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [referenceSourceKey]);
+  useEffect(() => {
+    if (Object.keys(referenceOptionSources).length === 0) { setReferenceOptions({}); return; }
+    let cancelled = false;
+    void Promise.all(Object.entries(referenceOptionSources).map(async ([field, path]) => {
+      const result = await apiRequest(path);
+      const options = extractItems(result)
+        .filter((item) => typeof item.id === "string")
+        .map((item) => ({ value: String(item.id), label: optionLabel(item) }));
+      return [field, options] as const;
+    })).then((entries) => {
+      if (!cancelled) setReferenceOptions(Object.fromEntries(entries));
+    }).catch((cause) => {
+      if (!cancelled) setError(cause);
+    });
+    return () => { cancelled = true; };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [referenceSourceKey]);
+
   const items = useMemo(() => extractItems(payload), [payload]);
-  const statusValues = useMemo(() => [...new Set(items.flatMap(itemStatuses))].sort((left, right) => left.localeCompare(right)), [items]);
-  const filteredItems = useMemo(() => { const query = search.trim().toLowerCase(); return items.filter((item) => { if (query && !scalarSearchText(item).includes(query)) return false; if (statusFilter && !itemStatuses(item).includes(statusFilter)) return false; return true; }); }, [items, search, statusFilter]);
-  const columns = useMemo(() => { const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"]; const keys = new Set(items.flatMap((item) => Object.keys(item).filter((key) => { const value = item[key]; return value == null || ["string", "number", "boolean"].includes(typeof value); }))); return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8); }, [items]);
+  const statusValues = useMemo(
+    () => [...new Set(items.flatMap(itemStatuses))].sort((left, right) => left.localeCompare(right)),
+    [items],
+  );
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return items.filter((item) => {
+      if (query && !scalarSearchText(item).includes(query)) return false;
+      if (statusFilter && !itemStatuses(item).includes(statusFilter)) return false;
+      return true;
+    });
+  }, [items, search, statusFilter]);
+  const columns = useMemo(() => {
+    const preferred = ["id", "name", "displayName", "email", "status", "health", "type", "createdAt"];
+    const keys = new Set(items.flatMap((item) => Object.keys(item).filter((key) => {
+      const value = item[key];
+      return value == null || ["string", "number", "boolean"].includes(typeof value);
+    })));
+    return [...preferred.filter((key) => keys.has(key)), ...[...keys].filter((key) => !preferred.includes(key))].slice(0, 8);
+  }, [items]);
   const canCreate = !!props.createPath && allowed(props.permissions, props.createPermission);
   const createButtonClass = "rp-create-trigger min-h-9 rounded-lg border-blue-600 bg-blue-600 px-3.5 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
-  async function mutate(path: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>, oneTimeResponse = false, successMessage = "Saved.") { setError(undefined); setSuccess(undefined); try { const result = await apiRequest(path, { method, body }); if (oneTimeResponse) setOneTime(result); await reload(); setSuccess(successMessage); } catch (cause) { setError(cause); throw cause; } }
 
-  return <section className="rp-resource-panel"><header className="rp-resource-panel-header m-0 flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center"><div className="rp-resource-panel-heading mr-auto min-w-0"><p className="rp-eyebrow">Resource</p><h2>{props.title}</h2>{props.help ? <p className="rp-resource-help">{props.help}</p> : null}</div><div className="rp-panel-header-actions !mr-0 flex shrink-0 flex-wrap items-center gap-2">{canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}<button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button></div></header>{error ? <ErrorState error={error} /> : null}{success ? <p className="rp-success-message" role="status">{success}</p> : null}{oneTime != null ? <OneTimeCredential value={oneTime} /> : null}{canCreate && createOpen ? <CreateResourceWorkspace title={props.title} initialValue={props.createInitialValue} referenceOptions={referenceOptions} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${creation.resourceName} created.`); setCreateOpen(false); }} /> : null}{loading ? <p>Loading…</p> : items.length === 0 ? <div className="rp-empty-state"><p>No {props.title} yet.</p>{canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>{creation.actionLabel}</button> : null}</div> : <><div className="rp-list-toolbar"><label>Search {props.title}<input aria-label={`Search ${props.title}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label>{statusValues.length ? <label>Status<select aria-label={`Filter ${props.title} by status`} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{statusValues.map((status) => <option key={status} value={status}>{status}</option>)}</select></label> : null}</div>{filteredItems.length === 0 ? <div className="rp-empty-state"><p>No matching {props.title}.</p><button type="button" onClick={() => { setSearch(""); setStatusFilter(""); }}>Clear filters</button></div> : <div className="rp-table-scroll"><table><thead><tr>{columns.map((column) => <th key={column}>{fieldLabel(column)}</th>)}<th>Actions</th></tr></thead><tbody>{filteredItems.map((item, index) => { const id = String(item.id ?? index); const deletePath = props.deletePath ?? props.itemPath; const secondaryActions = !!(props.itemPath && allowed(props.permissions, props.updatePermission)) || !!(deletePath && allowed(props.permissions, props.deletePermission)) || (props.actions ?? []).some((action) => allowed(props.permissions, action.permission)); return <tr key={id}>{columns.map((column) => <td key={column}><StructuredValue fieldKey={column} value={item[column]} /></td>)}<td><div className="rp-primary-actions">{props.detailHref ? <a href={props.detailHref(item)}>Open</a> : null}{props.onSelect ? <button type="button" onClick={() => props.onSelect!(item)}>{props.selectLabel ?? "Select"}</button> : null}<details><summary>Details</summary><ReadableDataView value={item} hiddenKeys={columns} /></details></div>{secondaryActions ? <details className="rp-row-actions"><summary>More actions</summary><div>{props.itemPath && allowed(props.permissions, props.updatePermission) ? <details><summary>Edit</summary><JsonPayloadForm initialValue={patchTemplate(props, item)} referenceOptions={referenceOptions} submitLabel="Save" onSubmit={async (body) => { await mutate(props.itemPath!(item), "PATCH", body, false, "Changes saved."); }} /></details> : null}{deletePath && allowed(props.permissions, props.deletePermission) ? <ConfirmButton confirm={`Delete ${props.title} resource ${optionLabel(item)}?`} onConfirm={() => mutate(deletePath(item), "DELETE", undefined, false, `${props.title} deleted.`)}>Delete</ConfirmButton> : null}{(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body ? <details key={action.label}><summary>{action.label}</summary><JsonPayloadForm initialValue={action.initialValue} referenceOptions={referenceOptions} submitLabel={action.label} onSubmit={async (body) => { await mutate(action.path(item), action.method, body, action.oneTimeResponse, `${action.label} completed.`); }} /></details> : action.destructive ? <ConfirmButton key={action.label} confirm={`${action.label} ${optionLabel(item)}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</ConfirmButton> : <button key={action.label} type="button" onClick={() => void mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</button>)}</div></details> : null}</td></tr>; })}</tbody></table></div>}</>}</section>;
+  async function mutate(
+    path: string,
+    method: "POST" | "PATCH" | "DELETE",
+    body?: Record<string, unknown>,
+    oneTimeResponse = false,
+    successMessage = "Saved.",
+  ) {
+    setError(undefined);
+    setSuccess(undefined);
+    try {
+      const result = await apiRequest(path, { method, body });
+      if (oneTimeResponse) setOneTime(result);
+      await reload();
+      setSuccess(successMessage);
+    } catch (cause) {
+      setError(cause);
+      throw cause;
+    }
+  }
+
+  const workspaceTitle = workspace?.kind === "details"
+    ? `${creation.resourceName} details`
+    : workspace?.kind === "edit"
+      ? `Edit ${creation.resourceName}`
+      : workspace?.kind === "action"
+        ? `${workspace.action.label} ${creation.resourceName}`
+        : "";
+
+  return <section className="rp-resource-panel">
+    <header className="rp-resource-panel-header m-0 flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center">
+      <div className="rp-resource-panel-heading mr-auto min-w-0">
+        <p className="rp-eyebrow">Resource</p>
+        <h2>{props.title}</h2>
+        {props.help ? <p className="rp-resource-help">{props.help}</p> : null}
+      </div>
+      <div className="rp-panel-header-actions !mr-0 flex shrink-0 flex-wrap items-center gap-2">
+        {canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => { setWorkspace(undefined); setCreateOpen(true); }}>{creation.actionLabel}</button> : null}
+        <button className="rp-quiet-button" type="button" onClick={() => void reload()}>Refresh</button>
+      </div>
+    </header>
+    {error ? <ErrorState error={error} /> : null}
+    {success ? <p className="rp-success-message" role="status">{success}</p> : null}
+    {oneTime != null ? <OneTimeCredential value={oneTime} /> : null}
+    {canCreate && createOpen ? <CreateResourceWorkspace
+      title={props.title}
+      initialValue={props.createInitialValue}
+      referenceOptions={referenceOptions}
+      onCancel={() => setCreateOpen(false)}
+      onCreate={async (body) => {
+        await mutate(props.createPath!, "POST", body, props.oneTimeCreateResponse, `${creation.resourceName} created.`);
+        setCreateOpen(false);
+      }}
+    /> : null}
+    {workspace ? <section className="rp-resource-workspace" aria-label={workspaceTitle}>
+      <header className="rp-resource-workspace-header">
+        <div>
+          <p className="rp-eyebrow">{workspace.kind === "details" ? "Resource details" : "Resource action"}</p>
+          <h3>{workspaceTitle}</h3>
+          <p>{optionLabel(workspace.item)}</p>
+        </div>
+        <button type="button" className="rp-quiet-button" onClick={() => setWorkspace(undefined)}>Close</button>
+      </header>
+      <div className="rp-resource-workspace-body">
+        {workspace.kind === "details" ? <ReadableDataView value={workspace.item} /> : null}
+        {workspace.kind === "edit" ? <JsonPayloadForm
+          initialValue={patchTemplate(props, workspace.item)}
+          referenceOptions={referenceOptions}
+          submitLabel="Save changes"
+          onSubmit={async (body) => {
+            await mutate(props.itemPath!(workspace.item), "PATCH", body, false, "Changes saved.");
+            setWorkspace(undefined);
+          }}
+        /> : null}
+        {workspace.kind === "action" ? <JsonPayloadForm
+          initialValue={workspace.action.initialValue}
+          referenceOptions={referenceOptions}
+          submitLabel={workspace.action.label}
+          onSubmit={async (body) => {
+            await mutate(
+              workspace.action.path(workspace.item),
+              workspace.action.method,
+              body,
+              workspace.action.oneTimeResponse,
+              `${workspace.action.label} completed.`,
+            );
+            setWorkspace(undefined);
+          }}
+        /> : null}
+      </div>
+    </section> : null}
+    {loading ? <p>Loading…</p> : items.length === 0 ? <div className="rp-empty-state">
+      <p>No {props.title} yet.</p>
+      {canCreate && !createOpen ? <button type="button" className={createButtonClass} onClick={() => { setWorkspace(undefined); setCreateOpen(true); }}>{creation.actionLabel}</button> : null}
+    </div> : <>
+      <div className="rp-list-toolbar">
+        <label>Search {props.title}<input aria-label={`Search ${props.title}`} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        {statusValues.length ? <label>Status<select aria-label={`Filter ${props.title} by status`} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{statusValues.map((status) => <option key={status} value={status}>{status}</option>)}</select></label> : null}
+      </div>
+      {filteredItems.length === 0 ? <div className="rp-empty-state"><p>No matching {props.title}.</p><button type="button" onClick={() => { setSearch(""); setStatusFilter(""); }}>Clear filters</button></div> : <div className="rp-table-scroll"><table>
+        <thead><tr>{columns.map((column) => <th key={column}>{fieldLabel(column)}</th>)}<th>Actions</th></tr></thead>
+        <tbody>{filteredItems.map((item, index) => {
+          const id = String(item.id ?? index);
+          const deletePath = props.deletePath ?? props.itemPath;
+          const canEdit = !!props.itemPath && allowed(props.permissions, props.updatePermission) && !!patchTemplate(props, item);
+          return <tr key={id}>
+            {columns.map((column) => <td key={column}><StructuredValue fieldKey={column} value={item[column]} /></td>)}
+            <td><div className="rp-row-action-strip">
+              {props.detailHref ? <a className="rp-row-primary-link" href={props.detailHref(item)}>Open</a> : null}
+              {props.onSelect ? <button type="button" onClick={() => props.onSelect!(item)}>{props.selectLabel ?? "Select"}</button> : null}
+              {!(props.onSelect && /details/i.test(props.selectLabel ?? "")) ? <button type="button" onClick={() => { setCreateOpen(false); setWorkspace({ kind: "details", item }); }}>View details</button> : null}
+              {canEdit ? <button type="button" onClick={() => { setCreateOpen(false); setWorkspace({ kind: "edit", item }); }}>Edit</button> : null}
+              {(props.actions ?? []).filter((action) => allowed(props.permissions, action.permission)).map((action) => action.body
+                ? <button key={action.label} type="button" onClick={() => { setCreateOpen(false); setWorkspace({ kind: "action", item, action }); }}>{action.label}</button>
+                : action.destructive
+                  ? <ConfirmButton key={action.label} confirm={`${action.label} ${optionLabel(item)}?`} onConfirm={() => mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</ConfirmButton>
+                  : <button key={action.label} type="button" onClick={() => void mutate(action.path(item), action.method, undefined, action.oneTimeResponse, `${action.label} completed.`)}>{action.label}</button>)}
+              {deletePath && allowed(props.permissions, props.deletePermission) ? <ConfirmButton confirm={`Delete ${props.title} resource ${optionLabel(item)}?`} onConfirm={() => mutate(deletePath(item), "DELETE", undefined, false, `${props.title} deleted.`)}>Delete</ConfirmButton> : null}
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+    </>}
+  </section>;
 }
 
 export function ReadOnlyPanel({ title, path }: { title: string; path: string }) { const [data, setData] = useState<unknown>(); const [error, setError] = useState<unknown>(); useEffect(() => { setData(undefined); setError(undefined); apiRequest(path).then(setData).catch(setError); }, [path]); return <section className="rp-readonly-panel"><header><div><p className="rp-eyebrow">Details</p><h2>{title}</h2></div></header>{error ? <ErrorState error={error} /> : data === undefined ? <p>Loading…</p> : typeof data === "string" ? <pre>{data}</pre> : <ReadableDataView value={data} />}</section>; }

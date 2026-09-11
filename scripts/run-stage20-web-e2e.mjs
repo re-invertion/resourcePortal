@@ -256,12 +256,13 @@ try {
     });
     let groupRow = page.getByRole("row").filter({ hasText: groupName });
     await groupRow.waitFor();
-    await openMoreActions(groupRow);
-    await groupRow.locator("summary", { hasText: "Edit" }).click();
-    await fillStructuredForm(groupRow, {
+    await groupRow.getByRole("button", { name: "Edit", exact: true }).click();
+    const groupWorkspace = groupsPanel.locator(".rp-resource-workspace");
+    await groupWorkspace.waitFor();
+    await fillStructuredForm(groupWorkspace, {
       description: "Stage 20 browser E2E group updated",
     });
-    await groupRow.getByRole("button", { name: "Save", exact: true }).click();
+    await groupWorkspace.getByRole("button", { name: "Save changes", exact: true }).click();
     await groupsPanel
       .getByRole("status")
       .filter({ hasText: "Changes saved." })
@@ -302,7 +303,6 @@ try {
     );
     await oauthCredential.getByRole("button", { name: "Clear credential" }).click();
     await oauthCredential.waitFor({ state: "detached" });
-    await openMoreActions(oauthRow);
     await oauthRow.getByRole("button", { name: "Rotate credentials" }).click();
     oauthCredential = oauthPanel.locator('section[aria-label="One-time credential"]');
     await oauthCredential.waitFor();
@@ -338,7 +338,6 @@ try {
       .getByRole("button", { name: "Clear credential" })
       .click();
     await oneTimeCredential.waitFor({ state: "detached" });
-    await openMoreActions(createdIdentityRow);
     await createdIdentityRow
       .getByRole("button", { name: "Rotate credentials" })
       .click();
@@ -499,18 +498,9 @@ function formLabel(key) {
     .join(" ");
 }
 
-async function openMoreActions(row) {
-  const actions = row.locator("details.rp-row-actions");
-  if ((await actions.getAttribute("open")) === null) {
-    await actions.locator(":scope > summary").click();
-  }
-  return actions;
-}
-
 async function openDeleteConfirmation(row) {
   const page = row.page();
   const dialog = page.getByRole("dialog", { name: "Confirm action" });
-  await openMoreActions(row);
   const deleteButton = row.getByRole("button", { name: "Delete" });
   await deleteButton.waitFor({ state: "visible" });
   await deleteButton.dispatchEvent("click");
