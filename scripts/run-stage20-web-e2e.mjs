@@ -479,6 +479,21 @@ async function fillStructuredForm(container, body) {
 }
 
 function formLabel(key) {
+  const friendly = {
+    sizeGiB: "Size (GiB)",
+    memoryMiB: "Memory (MiB)",
+    cpu: "CPU",
+    containerPort: "Container port",
+    contactEmail: "Contact email",
+    displayName: "Display name",
+    registryId: "Registry",
+    customRootDomainId: "Custom root domain",
+    roleIds: "Roles",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    metadataUrl: "Metadata URL",
+  };
+  if (friendly[key]) return friendly[key];
   const spaced = key
     .replace(/Ids\b/g, " IDs")
     .replace(/Id\b/g, " ID")

@@ -171,9 +171,7 @@ try {
 
     const deploymentHistoryPanel = panelByHeading(page, "Deployment history");
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const deploymentRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: deploymentId });
+    const deploymentRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
     await deploymentRow.waitFor();
     assert(
       (await deploymentRow.textContent())?.includes("Succeeded"),
@@ -202,9 +200,7 @@ try {
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackSourceRow = deploymentHistoryPanel
-      .getByRole("row")
-      .filter({ hasText: deploymentId });
+    const rollbackSourceRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
     await rollbackSourceRow.waitFor();
     await rollbackSourceRow.getByRole("button", { name: "Rollback", exact: true }).click();
     const rollbackWorkspace = deploymentHistoryPanel.locator(".rp-resource-workspace");
@@ -370,6 +366,21 @@ async function fillStructuredForm(container, body) {
 }
 
 function formLabel(key) {
+  const friendly = {
+    sizeGiB: "Size (GiB)",
+    memoryMiB: "Memory (MiB)",
+    cpu: "CPU",
+    containerPort: "Container port",
+    contactEmail: "Contact email",
+    displayName: "Display name",
+    registryId: "Registry",
+    customRootDomainId: "Custom root domain",
+    roleIds: "Roles",
+    clientId: "Client ID",
+    clientSecret: "Client secret",
+    metadataUrl: "Metadata URL",
+  };
+  if (friendly[key]) return friendly[key];
   const spaced = key
     .replace(/Ids\b/g, " IDs")
     .replace(/Id\b/g, " ID")
