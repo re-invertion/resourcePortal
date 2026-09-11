@@ -3,6 +3,8 @@ import { StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
+import "./azure-console.css";
+import "./app-group-create.css";
 
 const FORMIK_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/formik@2.2.9/dist/formik.umd.production.min.js";
 const YUP_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/yup@1.7.1/+esm";

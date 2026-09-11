@@ -436,13 +436,19 @@ function editablePanelByHeading(page, heading) {
 }
 
 async function createResource(panel, body) {
-  const createDetails = panel
-    .locator("summary")
-    .filter({ hasText: /^Create$/ })
-    .locator("xpath=parent::details");
-  await createDetails.locator("summary").click();
-  await fillStructuredForm(createDetails, body);
-  await createDetails.getByRole("button", { name: "Create", exact: true }).click();
+  const createButton = panel.getByRole("button", { name: /^Create / }).first();
+  await createButton.click();
+
+  const workspace = panel.locator(".rp-create-workspace");
+  await workspace.waitFor();
+  await fillStructuredForm(workspace, body);
+  await workspace
+    .getByRole("button", { name: "Review + create", exact: true })
+    .click();
+  await workspace
+    .getByRole("heading", { name: "Review configuration", exact: true })
+    .waitFor();
+  await workspace.getByRole("button", { name: /^Create / }).click();
 }
 
 async function fillStructuredForm(container, body) {

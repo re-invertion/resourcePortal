@@ -7,17 +7,18 @@ describe("permission-aware controls", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
     render(<ResourcePanel title="AppGroups" listPath="/api/tenants/t/app-groups" createPath="/api/tenants/t/app-groups" createPermission="appgroup.create" permissions={["appgroup.read"]} />);
     await screen.findByText("No AppGroups yet.");
-    expect(screen.queryByRole("button", { name: "Create one" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create AppGroup" })).toBeNull();
   });
 
-  it("shows an actionable empty state when creation is allowed", async () => {
+  it("shows an actionable guided empty state when creation is allowed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
     render(<ResourcePanel title="AppGroups" listPath="/api/tenants/t/app-groups" createPath="/api/tenants/t/app-groups" createInitialValue={{ name: "" }} createPermission="appgroup.create" permissions={["appgroup.read", "appgroup.create"]} />);
 
     await screen.findByText("No AppGroups yet.");
-    fireEvent.click(screen.getByRole("button", { name: "Create one" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Create AppGroup" })[0]);
 
-    expect(screen.getByRole("button", { name: "Create" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Create AppGroup" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review + create" })).toBeTruthy();
     expect(screen.getByLabelText("Name")).toBeTruthy();
   });
 
