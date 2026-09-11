@@ -375,16 +375,11 @@ services:
       - --providers.swarm.exposedbydefault=false
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
-      - --certificatesresolvers.letsencrypt.acme.email=__ACME_EMAIL__
-      - --certificatesresolvers.letsencrypt.acme.caserver=__ACME_PRODUCTION_CA_SERVER__
-      - --certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
-      - --certificatesresolvers.letsencrypt-staging.acme.email=__ACME_EMAIL__
-      - --certificatesresolvers.letsencrypt-staging.acme.caserver=__ACME_STAGING_CA_SERVER__
-      - --certificatesresolvers.letsencrypt-staging.acme.storage=/platform/traefik/acme-staging.json
-      - --certificatesresolvers.letsencrypt-staging.acme.httpchallenge=true
-      - --certificatesresolvers.letsencrypt-staging.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.email=__ACME_EMAIL__
+      - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.caserver=__ACME_CA_SERVER__
+      - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.storage=__ACME_STORAGE__
+      - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.httpchallenge=true
+      - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.httpchallenge.entrypoint=web
     ports:
       - target: 80
         published: 80
