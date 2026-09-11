@@ -17,6 +17,7 @@
 - [x] Preserve Let's Encrypt retry-after timestamp for rate-limit failures.
 - [x] Keep production TLS verification strict; permit insecure application health only in explicit staging E2E mode.
 - [x] Add a host-wide installer process lock.
+- [x] Preserve SSH reachability during factory-reset UFW cleanup before deleting ResourcePortal-owned firewall rules.
 - [x] Expose safe ACME diagnostics without dumping ACME JSON/private keys.
 - [x] Mark staging completion as not publicly trusted.
 

@@ -90,6 +90,7 @@ ufw_log="$(mktemp /tmp/rp-ufw-cleanup.XXXXXX)"
 ufw() {
   if [[ "$1 $2" == 'status numbered' ]]; then
     cat <<'RULES'
+Status: active
 [ 1] 22/tcp ALLOW IN Anywhere # ResourcePortal-SSH
 [ 2] 80/tcp ALLOW IN Anywhere # ResourcePortal-HTTP
 [ 3] 2222/tcp ALLOW IN Anywhere # Unrelated-SSH
@@ -101,10 +102,39 @@ RULES
 rp_remove_resourceportal_ufw_rules
 unset -f ufw
 ufw_cleanup="$(cat "$ufw_log")"
+assert_contains "$ufw_cleanup" 'allow 22/tcp comment Preserved-SSH-after-RP-removal' 'UFW cleanup preserves SSH reachability before deleting installer SSH rule'
+assert_before "$ufw_cleanup" 'allow 22/tcp comment Preserved-SSH-after-RP-removal' '--force delete 2' 'SSH preservation rule is installed before RP firewall cleanup'
 assert_contains "$ufw_cleanup" '--force delete 2' 'UFW cleanup deletes RP rule in descending order'
 assert_contains "$ufw_cleanup" '--force delete 1' 'UFW cleanup deletes second RP rule'
 assert_not_contains "$ufw_cleanup" 'delete 3' 'UFW cleanup preserves unrelated rule'
 assert_not_contains "$ufw_cleanup" 'reset' 'UFW cleanup never performs global reset'
+rm -f "$ufw_log"
+
+# Regression from the 2026-09-11 real-host factory-reset E2E: removing the
+# only ResourcePortal SSH allow rule while UFW stays active must not lock the
+# operator out of the host. A pre-existing allow for the same port is reused
+# rather than duplicated.
+ufw_log="$(mktemp /tmp/rp-ufw-existing-ssh.XXXXXX)"
+: >"$ufw_log"
+ufw() {
+  if [[ "$1 $2" == 'status numbered' ]]; then
+    cat <<'RULES'
+Status: active
+[ 1] 22/tcp ALLOW IN Anywhere # Existing-SSH
+[ 2] 22/tcp ALLOW IN Anywhere # ResourcePortal-SSH
+[ 3] 443/tcp ALLOW IN Anywhere # ResourcePortal-HTTPS
+RULES
+    return 0
+  fi
+  printf '%s\n' "$*" >>"$ufw_log"
+}
+rp_remove_resourceportal_ufw_rules
+unset -f ufw
+ufw_existing_cleanup="$(cat "$ufw_log")"
+assert_not_contains "$ufw_existing_cleanup" 'Preserved-SSH-after-RP-removal' 'UFW cleanup does not duplicate an existing SSH allow rule'
+assert_contains "$ufw_existing_cleanup" '--force delete 3' 'UFW cleanup removes RP HTTPS rule when existing SSH access is safe'
+assert_contains "$ufw_existing_cleanup" '--force delete 2' 'UFW cleanup removes RP SSH rule when another SSH allow survives'
+assert_not_contains "$ufw_existing_cleanup" 'delete 1' 'UFW cleanup preserves pre-existing SSH rule'
 rm -f "$ufw_log"
 
 assert_status 0 'known versioned RP secret accepted' rp_swarm_resourceportal_secret_name rp_cookie_secret_deadbeef

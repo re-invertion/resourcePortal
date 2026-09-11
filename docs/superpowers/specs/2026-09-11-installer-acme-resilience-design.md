@@ -19,6 +19,7 @@ Repeated clean installs/factory resets can delete Traefik ACME state and cause t
 11. ACME diagnostics expose only environment/presence/domain coverage; they never print `acme.json`, account keys, certificate keys, or secret values.
 12. A host-wide installer lock prevents concurrent install/reset/repair processes.
 13. `--acme-environment staging` is test-only, persisted for resume, and completion output clearly says the certificate is not publicly trusted.
+14. Factory reset must preserve operator SSH reachability while removing ResourcePortal-owned UFW rules; it must never delete the only active SSH allow rule and leave UFW enforcing default-deny.
 
 ## Test requirements
 

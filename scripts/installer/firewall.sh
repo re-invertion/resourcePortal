@@ -64,10 +64,58 @@ rp_configure_ufw() {
   ufw reload
 }
 
+rp_ufw_resourceportal_ssh_port() {
+  local status="$1"
+  awk '
+    /# ResourcePortal-SSH/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[0-9]+\/tcp$/) {
+          sub(/\/tcp$/, "", $i)
+          print $i
+          exit
+        }
+      }
+    }
+  ' <<<"$status"
+}
+
+rp_ufw_has_surviving_ssh_rule() {
+  local status="$1" port="$2"
+  awk -v target="${port}/tcp" '
+    /# ResourcePortal-SSH/ { next }
+    /ALLOW IN/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i == target) { found = 1; exit }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' <<<"$status"
+}
+
+rp_preserve_ssh_before_resourceportal_ufw_cleanup() {
+  local status="$1" port
+  [[ "$status" == *'Status: active'* ]] || return 0
+  [[ "$status" == *'# ResourcePortal-SSH'* ]] || return 0
+  port="$(rp_ufw_resourceportal_ssh_port "$status")" || return 1
+  [[ "$port" =~ ^[0-9]+$ ]] || {
+    printf '%s\n' 'Refusing ResourcePortal UFW cleanup because the installer SSH allow rule port could not be determined safely.' >&2
+    return 1
+  }
+  rp_ufw_has_surviving_ssh_rule "$status" "$port" && return 0
+
+  # Factory reset previously removed the only SSH allow while UFW remained
+  # active, immediately locking the operator out before later cleanup phases.
+  # Install a non-ResourcePortal safety rule first so RP-only cleanup cannot
+  # delete the connection that is executing the reset. The rule is naturally
+  # removed if UFW itself is an installer-owned package and is later purged.
+  ufw allow "$port/tcp" comment Preserved-SSH-after-RP-removal >/dev/null || return 1
+}
+
 rp_remove_resourceportal_ufw_rules() {
   local status number
   command -v ufw >/dev/null 2>&1 || return 0
   status="$(ufw status numbered 2>/dev/null || true)"
+  rp_preserve_ssh_before_resourceportal_ufw_cleanup "$status" || return 1
   while IFS= read -r number; do
     [[ "$number" =~ ^[0-9]+$ ]] || continue
     ufw --force delete "$number" >/dev/null || return 1
