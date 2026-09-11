@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../api/client";
 import { CommandBar } from "../components/command-bar";
-import { CreateResourceWorkspace } from "../components/create-resource";
 import { ErrorState } from "../components/resource";
 import { PageHeader, StatusBadge } from "../components/ui";
-import { appGroupForm } from "./form-templates";
+import { AppGroupCreateWizard } from "./app-group-create";
 
 export type AppGroupListItem = {
   id: string;
@@ -92,19 +91,14 @@ export function AppGroupsPage({ tenantId, permissions }: { tenantId: string; per
     <CommandBar actions={actions} ariaLabel="App Group actions" />
 
     {error ? <ErrorState error={error} /> : null}
-    {canCreate && createOpen ? <CreateResourceWorkspace
-      title="AppGroups"
-      initialValue={appGroupForm}
+    {canCreate && createOpen ? <AppGroupCreateWizard
+      tenantId={tenantId}
       onCancel={() => setCreateOpen(false)}
-      onCreate={async (body) => {
-        setError(undefined);
-        try {
-          await apiRequest(root, { method: "POST", body });
-          setCreateOpen(false);
-          await reload();
-        } catch (cause) {
-          setError(cause);
-          throw cause;
+      onCreated={async (id) => {
+        setCreateOpen(false);
+        await reload();
+        if (id && typeof window !== "undefined") {
+          window.location.assign(`/tenants/${encodeURIComponent(tenantId)}/app-groups/${encodeURIComponent(id)}`);
         }
       }}
     /> : null}
