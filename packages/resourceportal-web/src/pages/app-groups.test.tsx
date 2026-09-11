@@ -10,7 +10,7 @@ describe("AppGroupsPage", () => {
   beforeEach(() => vi.unstubAllGlobals());
 
   it("renders only curated cloud-resource columns and ignores unknown backend fields", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json([{ 
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json([{
       id: "group-1",
       name: "shop-production",
       runtimeState: "Running",
@@ -25,10 +25,8 @@ describe("AppGroupsPage", () => {
 
     render(<AppGroupsPage tenantId="tenant-1" permissions={["appgroup.create", "appgroup.delete"]} />);
 
-    expect(await screen.findByRole("link", { name: "shop-production" })).toHaveAttribute(
-      "href",
-      "/tenants/tenant-1/app-groups/group-1",
-    );
+    const resourceLink = await screen.findByRole("link", { name: "shop-production" });
+    expect(resourceLink.getAttribute("href")).toBe("/tenants/tenant-1/app-groups/group-1");
     expect(screen.getByRole("columnheader", { name: "Name" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "Status" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "Health" })).toBeTruthy();
