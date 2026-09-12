@@ -319,7 +319,7 @@ rp_prepare_zitadel_masterkey_file() {
 rp_primary_restore_secret_state() {
   local dir="${RP_INSTALLER_SECRET_STATE_DIR:-/var/lib/resourceportal/installer-state/secrets}"
   local name dbpass zdbpass master enc cookie worker oidc_placeholder dburl placeholder_oidc_ref
-  local existing_oidc_client_id="${RP_CFG_OIDC_CLIENT_ID:-}" existing_oidc_ref="${RP_CFG_OIDC_SWARM_REF:-}"
+  local existing_oidc_client_id="${RP_CFG_OIDC_CLIENT_ID:-}" existing_oidc_cli_client_id="${RP_CFG_OIDC_CLI_CLIENT_ID:-}" existing_oidc_ref="${RP_CFG_OIDC_SWARM_REF:-}"
 
   for name in encryption cookie worker oidc-placeholder rp-postgres zitadel-postgres zitadel-master; do
     if [[ ! -r "$dir/$name" ]]; then
@@ -357,7 +357,12 @@ rp_primary_restore_secret_state() {
     RP_CFG_OIDC_CLIENT_ID=bootstrap-pending
     RP_CFG_OIDC_SWARM_REF="$placeholder_oidc_ref"
   fi
-  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID RP_CFG_ZITADEL_KEY_SWARM_REF
+  if [[ -n "$existing_oidc_cli_client_id" && "$existing_oidc_cli_client_id" != bootstrap-pending ]]; then
+    RP_CFG_OIDC_CLI_CLIENT_ID="$existing_oidc_cli_client_id"
+  else
+    RP_CFG_OIDC_CLI_CLIENT_ID=bootstrap-pending
+  fi
+  export RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_CLI_CLIENT_ID RP_CFG_ZITADEL_KEY_SWARM_REF
 }
 
 rp_primary_create_platform_secrets() {
@@ -383,7 +388,8 @@ rp_primary_create_platform_secrets() {
   rp_ensure_swarm_secret rp_database_url "$dburl"
   RP_CFG_OIDC_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$oidc_placeholder")"
   RP_CFG_OIDC_CLIENT_ID="bootstrap-pending"
-  export RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID
+  RP_CFG_OIDC_CLI_CLIENT_ID="bootstrap-pending"
+  export RP_CFG_OIDC_SWARM_REF RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_CLI_CLIENT_ID
 }
 
 rp_prepare_postgres_bind_dir() {

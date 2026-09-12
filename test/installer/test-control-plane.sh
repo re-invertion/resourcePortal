@@ -31,6 +31,7 @@ export RP_CFG_COOKIE_SWARM_REF='rp_cookie_secret_0123456789abcdef'
 export RP_CFG_WORKER_SWARM_REF='rp_internal_worker_token_0123456789abcdef'
 export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
 export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
+export RP_CFG_OIDC_CLI_CLIENT_ID='zitadel-cli-client-789'
 export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
 export RP_CFG_ZITADEL_KEY_SWARM_REF='zitadel_masterkey_deadbeefcafebabe'
 export RP_CFG_ZITADEL_ORGANIZATION_ID='zitadel-org-123'
@@ -101,6 +102,10 @@ contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_t
 contains "$final" 'ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token' 'API consumes ZITADEL management token from secret file'
 contains "$final" 'ZITADEL_ORGANIZATION_ID: zitadel-org-123' 'API receives ZITADEL organization id'
 contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADEL project id'
+contains "$final" 'OIDC_CLI_CLIENT_ID: zitadel-cli-client-789' 'API receives public CLI OAuth client id'
+cli_client_id_count="$(grep -c 'OIDC_CLI_CLIENT_ID:' <<<"$final" || true)"
+[[ "$cli_client_id_count" == 1 ]] && pass 'only API receives CLI OAuth client id' || fail 'only API receives CLI OAuth client id'
+not_contains "$final" 'OIDC_CLI_CLIENT_SECRET' 'stack never contains a CLI OAuth client secret'
 contains "$final" 'name: rp_zitadel_management_token_feedfacefeedface' 'stack aliases versioned ZITADEL management token secret'
 management_mount_count="$(grep -c '^      - rp_zitadel_management_token$' <<<"$final" || true)"
 [[ "$management_mount_count" == 1 ]] && pass 'only API mounts ZITADEL management token secret' || fail 'only API mounts ZITADEL management token secret'
@@ -127,6 +132,7 @@ rp_config_write "$config_fixture"
 config_text="$(cat "$config_fixture")"
 contains "$config_text" 'RP_CFG_ZITADEL_ORGANIZATION_ID=zitadel-org-123' 'installer config persists ZITADEL organization id'
 contains "$config_text" 'RP_CFG_ZITADEL_PROJECT_ID=zitadel-project-456' 'installer config persists ZITADEL project id'
+contains "$config_text" 'RP_CFG_OIDC_CLI_CLIENT_ID=zitadel-cli-client-789' 'installer config persists CLI client id metadata'
 contains "$config_text" 'RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF=rp_zitadel_management_token_feedfacefeedface' 'installer config persists only management secret ref'
 not_contains "$config_text" "$ZITADEL_MANAGEMENT_TOKEN" 'installer config never persists plaintext ZITADEL management PAT'
 rm -f "$config_fixture"
@@ -157,6 +163,9 @@ export RP_CFG_ZITADEL_ORGANIZATION_ID="$saved_org"
 saved_project="$RP_CFG_ZITADEL_PROJECT_ID"; unset RP_CFG_ZITADEL_PROJECT_ID
 status 1 'final stack config requires ZITADEL project id' rp_require_stack_config final
 export RP_CFG_ZITADEL_PROJECT_ID="$saved_project"
+saved_cli_client_id="$RP_CFG_OIDC_CLI_CLIENT_ID"; unset RP_CFG_OIDC_CLI_CLIENT_ID
+status 1 'final stack config requires CLI OAuth client id' rp_require_stack_config final
+export RP_CFG_OIDC_CLI_CLIENT_ID="$saved_cli_client_id"
 saved_management_ref="$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF"; unset RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
 status 1 'final stack config requires ZITADEL management secret ref' rp_require_stack_config final
 export RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$saved_management_ref"

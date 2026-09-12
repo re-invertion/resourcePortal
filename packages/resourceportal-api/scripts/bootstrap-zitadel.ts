@@ -36,6 +36,7 @@ const envFilePaths = [".env", "../../.env"];
 const bootstrapMode = process.env.ZITADEL_BOOTSTRAP_MODE ?? "development";
 const productionBootstrap = bootstrapMode === "production";
 const bootstrapOutputFile = process.env.ZITADEL_BOOTSTRAP_OUTPUT_FILE;
+const cliOnlyBootstrap = process.env.ZITADEL_BOOTSTRAP_CLI_ONLY === "true";
 
 loadDotEnv();
 
@@ -81,6 +82,10 @@ async function main() {
   await waitForZitadel();
 
   const pat = readPat();
+  if (cliOnlyBootstrap) {
+    await runCliOnlyBootstrap(pat);
+    return;
+  }
   if (productionBootstrap) {
     await configureProductionLoginVersion(pat);
   }
@@ -138,6 +143,31 @@ async function main() {
     console.log(`OIDC client id: ${app.clientId}`);
     console.log(`Test user: ${bootstrapUser.id} (${bootstrapUserEmail})`);
   }
+}
+
+async function runCliOnlyBootstrap(pat: string) {
+  if (!bootstrapOutputFile) {
+    throw new Error("ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in CLI-only bootstrap mode");
+  }
+  const organizationId = process.env.ZITADEL_ORGANIZATION_ID?.trim();
+  const projectId = process.env.ZITADEL_PROJECT_ID?.trim();
+  if (!organizationId || !projectId) {
+    throw new Error(
+      "ZITADEL_ORGANIZATION_ID and ZITADEL_PROJECT_ID are required in CLI-only bootstrap mode",
+    );
+  }
+
+  const cliApp = await getOrCreateCliOidcApp(pat, organizationId, projectId);
+  writeFileSync(
+    bootstrapOutputFile,
+    `${JSON.stringify({ cliClientId: cliApp.clientId })}\n`,
+    { mode: 0o600 },
+  );
+  chmodSync(bootstrapOutputFile, 0o600);
+  const sidecar = `${bootstrapOutputFile}.cli-client-id`;
+  writeFileSync(sidecar, `${cliApp.clientId}\n`, { mode: 0o600 });
+  chmodSync(sidecar, 0o600);
+  console.log("ZITADEL CLI client reconciliation completed");
 }
 
 async function waitForZitadel() {

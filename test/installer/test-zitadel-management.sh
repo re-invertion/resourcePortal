@@ -32,6 +32,7 @@ contains "$bootstrap_source" 'OIDC_AUTH_METHOD_TYPE_NONE' 'CLI app has no client
 contains "$bootstrap_source" 'cliClientId: cliApp.clientId' 'production bootstrap emits CLI client id in JSON'
 contains "$bootstrap_source" '["cli-client-id", cliApp.clientId]' 'production bootstrap emits CLI client id sidecar'
 not_contains "$bootstrap_source" 'cliClientSecret' 'production bootstrap never emits a CLI client secret'
+contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_CLI_ONLY' 'bootstrap supports CLI-only reconciliation for upgrades'
 
 secret_fixture="$(mktemp /tmp/rp-zitadel-management-secret.XXXXXX)"
 printf 'management-token-material' >"$secret_fixture"
@@ -42,10 +43,11 @@ rm -f "$secret_fixture"
 fresh_install_provisions_management_state() (
   output="$(mktemp /tmp/rp-zitadel-output.XXXXXX.json)"
   management_pat="$(mktemp /tmp/rp-zitadel-pat.XXXXXX)"
-  trap 'rm -f "$output" "$output.client-id" "$output.client-secret" "$output.user-id" "$output.organization-id" "$output.project-id" "$management_pat"' EXIT
+  trap 'rm -f "$output" "$output.client-id" "$output.client-secret" "$output.cli-client-id" "$output.user-id" "$output.organization-id" "$output.project-id" "$management_pat"' EXIT
   printf '{}\n' >"$output"
   printf 'client-42\n' >"$output.client-id"
   printf 'oidc-secret-42\n' >"$output.client-secret"
+  printf 'cli-client-42\n' >"$output.cli-client-id"
   printf 'admin-user-42\n' >"$output.user-id"
   printf 'org-42\n' >"$output.organization-id"
   printf 'project-42\n' >"$output.project-id"
@@ -65,12 +67,37 @@ fresh_install_provisions_management_state() (
   [[ ! -e "$output.client-secret" ]] || return 1
   [[ -r "$management_pat" ]] || return 1
   [[ "$RP_CFG_OIDC_CLIENT_ID" == client-42 ]]
+  [[ "$RP_CFG_OIDC_CLI_CLIENT_ID" == cli-client-42 ]]
   [[ "$RP_CFG_ZITADEL_ORGANIZATION_ID" == org-42 ]]
   [[ "$RP_CFG_ZITADEL_PROJECT_ID" == project-42 ]]
   [[ "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" == rp_zitadel_management_token_management42 ]]
   [[ "$RP_CFG_PLATFORM_ADMIN_IDS" == existing-admin,admin-user-42 ]]
 )
 status 0 'fresh install provisions management secret and metadata' fresh_install_provisions_management_state
+
+legacy_install_reconciles_missing_cli_client() (
+  output="$(mktemp /tmp/rp-zitadel-cli-reconcile.XXXXXX.json)"
+  trap 'rm -f "$output" "$output.cli-client-id"' EXIT
+  printf '%s\n' '{"organizationId":"org-legacy","projectId":"project-legacy"}' >"$output"
+  RP_CFG_ZITADEL_ORGANIZATION_ID='org-legacy'
+  RP_CFG_ZITADEL_PROJECT_ID='project-legacy'
+  RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_legacy42'
+  unset RP_CFG_OIDC_CLI_CLIENT_ID
+  export RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
+  reconcile_calls=0
+  rp_run_zitadel_cli_reconcile(){
+    reconcile_calls=$((reconcile_calls+1))
+    printf '%s\n' '{"cliClientId":"cli-upgraded-42"}' >"$1"
+    printf 'cli-upgraded-42\n' >"$1.cli-client-id"
+  }
+  rp_recover_zitadel_cli_client_state "$output"
+  [[ "$RP_CFG_OIDC_CLI_CLIENT_ID" == cli-upgraded-42 ]]
+  [[ "$reconcile_calls" == 1 ]]
+  rp_recover_zitadel_cli_client_state "$output"
+  [[ "$RP_CFG_OIDC_CLI_CLIENT_ID" == cli-upgraded-42 ]]
+  [[ "$reconcile_calls" == 1 ]]
+)
+status 0 'legacy install idempotently reconciles missing CLI client id' legacy_install_reconciles_missing_cli_client
 
 legacy_install_recovers_management_state() (
   output="$(mktemp /tmp/rp-zitadel-legacy.XXXXXX.json)"

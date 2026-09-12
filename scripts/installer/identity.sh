@@ -111,7 +111,7 @@ rp_run_zitadel_bootstrap() {
   output_name="$(basename "$output_file")"
   output_dir="$state_dir/identity-bootstrap"
   install -d -m 0700 "$state_dir"
-  rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.user-id" "$output_file.organization-id" "$output_file.project-id"
+  rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.cli-client-id" "$output_file.user-id" "$output_file.organization-id" "$output_file.project-id"
   rm -rf "$output_dir"
   rp_prepare_api_bootstrap_output_dir "$output_dir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || return 1
 
@@ -154,7 +154,7 @@ rp_run_zitadel_bootstrap() {
         chown -R root:root "$output_dir" || return 1
         chmod 0700 "$output_dir" || return 1
         find "$output_dir" -maxdepth 1 -type f -exec chmod 0600 {} + || return 1
-        for suffix in '' '.client-id' '.client-secret' '.user-id' '.organization-id' '.project-id'; do
+        for suffix in '' '.client-id' '.client-secret' '.cli-client-id' '.user-id' '.organization-id' '.project-id'; do
           [[ -r "$output_dir/$output_name$suffix" ]] || return 1
           mv -f "$output_dir/$output_name$suffix" "$output_file$suffix" || return 1
         done
@@ -177,6 +177,111 @@ rp_run_zitadel_bootstrap() {
   rm -rf "$output_dir"
   printf 'ZITADEL identity bootstrap timed out.\n' >&2
   return 1
+}
+
+rp_run_zitadel_cli_reconcile() {
+  local output_file="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
+  local service_name timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}" elapsed=0 state
+  local state_dir output_dir output_name readiness_script bootstrap_command
+  [[ "$output_file" == /* ]] || return 1
+  rp_zitadel_management_state_ready || return 1
+  state_dir="$(dirname "$output_file")"
+  output_name="$(basename "$output_file")"
+  output_dir="$state_dir/identity-cli-reconcile"
+  service_name="${stack_name}-zitadel-cli-reconcile-$(date +%s)"
+  install -d -m 0700 "$state_dir"
+  rm -f "$output_file" "$output_file.cli-client-id"
+  rm -rf "$output_dir"
+  rp_prepare_api_bootstrap_output_dir "$output_dir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || return 1
+
+  readiness_script='const base=process.env.ZITADEL_ISSUER_URL; const host=process.env.ZITADEL_BOOTSTRAP_INSTANCE_HOST; const timeout=Number(process.env.ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS||"300")*1000; const headers=host?{"x-zitadel-instance-host":host,"x-zitadel-public-host":host}:{}; const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms)); (async()=>{const deadline=Date.now()+timeout; while(Date.now()<deadline){try{const response=await fetch(`${base}/debug/ready`,{headers}); if(response.ok){process.exit(0);}}catch{} await sleep(1000);} console.error("ZITADEL readiness timed out"); process.exit(1);})().catch(()=>process.exit(1));'
+  bootstrap_command='node -e "$RP_ZITADEL_READY_SCRIPT" && exec node dist/scripts/bootstrap-zitadel.js'
+
+  docker service create \
+    --detach \
+    --name "$service_name" \
+    --restart-condition none \
+    --constraint 'node.role==manager' \
+    --constraint 'node.labels.resourceportal.storage.authoritative==true' \
+    --network "${stack_name}_rp-control" \
+    --mount type=bind,src=/mnt/resourceportal/platform/zitadel-bootstrap,dst=/platform/zitadel-bootstrap \
+    --mount type=bind,src="$output_dir",dst=/bootstrap-output \
+    --env ZITADEL_BOOTSTRAP_MODE=production \
+    --env ZITADEL_BOOTSTRAP_CLI_ONLY=true \
+    --env ZITADEL_ISSUER_URL=http://zitadel:8080 \
+    --env ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS="$timeout" \
+    --env "RP_ZITADEL_READY_SCRIPT=$readiness_script" \
+    --env ZITADEL_BOOTSTRAP_INSTANCE_HOST="${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" \
+    --env ZITADEL_BOOTSTRAP_PAT_FILE=/platform/zitadel-bootstrap/admin.pat \
+    --env ZITADEL_ORGANIZATION_ID="$RP_CFG_ZITADEL_ORGANIZATION_ID" \
+    --env ZITADEL_PROJECT_ID="$RP_CFG_ZITADEL_PROJECT_ID" \
+    --env ZITADEL_BOOTSTRAP_OUTPUT_FILE="/bootstrap-output/$output_name" \
+    --entrypoint /bin/sh \
+    "$RP_CFG_API_IMAGE" \
+    -ec "$bootstrap_command" >/dev/null || { rm -rf "$output_dir"; return 1; }
+
+  while (( elapsed < timeout )); do
+    state="$(docker service ps --no-trunc --format '{{.CurrentState}}|{{.Error}}' "$service_name" | head -n1)"
+    case "$state" in
+      Complete*)
+        docker service rm "$service_name" >/dev/null
+        chown -R root:root "$output_dir" || return 1
+        chmod 0700 "$output_dir" || return 1
+        find "$output_dir" -maxdepth 1 -type f -exec chmod 0600 {} + || return 1
+        for suffix in '' '.cli-client-id'; do
+          [[ -r "$output_dir/$output_name$suffix" ]] || return 1
+          mv -f "$output_dir/$output_name$suffix" "$output_file$suffix" || return 1
+        done
+        rmdir "$output_dir" || return 1
+        return 0
+        ;;
+      Failed*|Rejected*)
+        docker service logs "$service_name" >&2 || true
+        docker service rm "$service_name" >/dev/null || true
+        rm -rf "$output_dir"
+        return 1
+        ;;
+    esac
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  docker service logs "$service_name" >&2 || true
+  docker service rm "$service_name" >/dev/null || true
+  rm -rf "$output_dir"
+  printf 'ZITADEL CLI client reconciliation timed out.\n' >&2
+  return 1
+}
+
+rp_recover_zitadel_cli_client_state() {
+  local output_file="${1:-/var/lib/resourceportal/installer-state/zitadel-bootstrap.json}"
+  local cli_client_id_file="${output_file}.cli-client-id" cli_client_id reconcile_output
+  if [[ -n "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" && "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" != bootstrap-pending ]]; then
+    return 0
+  fi
+
+  if [[ -r "$cli_client_id_file" ]]; then
+    cli_client_id="$(tr -d '\r\n' <"$cli_client_id_file")"
+  elif [[ -r "$output_file" ]] && command -v jq >/dev/null 2>&1; then
+    cli_client_id="$(jq -r '.cliClientId // empty' "$output_file")"
+  fi
+
+  if [[ -z "${cli_client_id:-}" ]]; then
+    rp_zitadel_management_state_ready || return 1
+    reconcile_output="${output_file}.cli-reconcile"
+    rp_run_zitadel_cli_reconcile "$reconcile_output" || return 1
+    [[ -r "${reconcile_output}.cli-client-id" ]] || return 1
+    cli_client_id="$(tr -d '\r\n' <"${reconcile_output}.cli-client-id")"
+    [[ -n "$cli_client_id" ]] || return 1
+    umask 077
+    printf '%s\n' "$cli_client_id" >"$cli_client_id_file" || return 1
+    chmod 0600 "$cli_client_id_file" || return 1
+    rm -f "$reconcile_output" "${reconcile_output}.cli-client-id"
+  fi
+
+  [[ -n "$cli_client_id" ]] || return 1
+  RP_CFG_OIDC_CLI_CLIENT_ID="$cli_client_id"
+  export RP_CFG_OIDC_CLI_CLIENT_ID
 }
 
 rp_zitadel_management_state_ready() {
@@ -213,31 +318,34 @@ rp_recover_zitadel_management_state() {
 }
 
 rp_apply_zitadel_bootstrap_output() {
-  local output_file="$1" client_id_file secret_file user_id_file organization_id_file project_id_file
-  local client_id user_id organization_id project_id oidc_secret_ref management_secret_ref
+  local output_file="$1" client_id_file cli_client_id_file secret_file user_id_file organization_id_file project_id_file
+  local client_id cli_client_id user_id organization_id project_id oidc_secret_ref management_secret_ref
   local management_pat_file="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
   client_id_file="${output_file}.client-id"
+  cli_client_id_file="${output_file}.cli-client-id"
   secret_file="${output_file}.client-secret"
   user_id_file="${output_file}.user-id"
   organization_id_file="${output_file}.organization-id"
   project_id_file="${output_file}.project-id"
-  [[ "$output_file" == /* && "$management_pat_file" == /* && -r "$output_file" && -r "$client_id_file" && -r "$secret_file" && -r "$user_id_file" && -r "$organization_id_file" && -r "$project_id_file" && -r "$management_pat_file" ]] || return 1
+  [[ "$output_file" == /* && "$management_pat_file" == /* && -r "$output_file" && -r "$client_id_file" && -r "$cli_client_id_file" && -r "$secret_file" && -r "$user_id_file" && -r "$organization_id_file" && -r "$project_id_file" && -r "$management_pat_file" ]] || return 1
 
   client_id="$(tr -d '\r\n' <"$client_id_file")"
+  cli_client_id="$(tr -d '\r\n' <"$cli_client_id_file")"
   user_id="$(tr -d '\r\n' <"$user_id_file")"
   organization_id="$(tr -d '\r\n' <"$organization_id_file")"
   project_id="$(tr -d '\r\n' <"$project_id_file")"
-  [[ -n "$client_id" && -n "$user_id" && -n "$organization_id" && -n "$project_id" ]] || return 1
+  [[ -n "$client_id" && -n "$cli_client_id" && -n "$user_id" && -n "$organization_id" && -n "$project_id" ]] || return 1
 
   oidc_secret_ref="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$secret_file")" || return 1
   management_secret_ref="$(rp_ensure_versioned_swarm_secret rp_zitadel_management_token "$management_pat_file")" || return 1
   RP_CFG_OIDC_CLIENT_ID="$client_id"
+  RP_CFG_OIDC_CLI_CLIENT_ID="$cli_client_id"
   RP_CFG_OIDC_SWARM_REF="$oidc_secret_ref"
   RP_CFG_ZITADEL_ORGANIZATION_ID="$organization_id"
   RP_CFG_ZITADEL_PROJECT_ID="$project_id"
   RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$management_secret_ref"
   RP_CFG_PLATFORM_ADMIN_IDS="$(rp_merge_platform_admin_ids "${RP_CFG_PLATFORM_ADMIN_IDS:-}" "$user_id")"
-  export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF RP_CFG_PLATFORM_ADMIN_IDS
+  export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_CLI_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF RP_CFG_PLATFORM_ADMIN_IDS
 
   rp_remove_secret_file "$secret_file"
 }

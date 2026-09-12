@@ -14,7 +14,7 @@ rp_require_stack_config() {
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
   if [[ "$state" == final ]]; then
-    for key in RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF; do
+    for key in RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF RP_CFG_OIDC_CLI_CLIENT_ID; do
       value="${!key-}"
       [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
     done
@@ -76,6 +76,7 @@ rp_render_stack() {
     "ACME_STORAGE|$acme_storage"
     "PLATFORM_ADMIN_IDS|$platform_admin_ids"
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
+    "OIDC_CLI_CLIENT_ID|${RP_CFG_OIDC_CLI_CLIENT_ID:-bootstrap-pending}"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
     "ZITADEL_KEY_SWARM_REF|$RP_CFG_ZITADEL_KEY_SWARM_REF"
     "ZITADEL_ORGANIZATION_ID|${RP_CFG_ZITADEL_ORGANIZATION_ID:-bootstrap-pending}"
@@ -125,6 +126,14 @@ rp_deploy_control_plane() {
     }
     rp_recover_zitadel_management_state || {
       printf 'Unable to recover ZITADEL management state for final stack deployment.\n' >&2
+      return 1
+    }
+    declare -F rp_recover_zitadel_cli_client_state >/dev/null || {
+      printf 'ZITADEL CLI client recovery helper is unavailable.\n' >&2
+      return 1
+    }
+    rp_recover_zitadel_cli_client_state || {
+      printf 'Unable to recover ZITADEL CLI client state for final stack deployment.\n' >&2
       return 1
     }
     rp_require_stack_config final || return 1

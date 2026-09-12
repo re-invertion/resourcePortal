@@ -325,7 +325,8 @@ rp_reset_installer_state() {
   rm -f \
     "$RP_INSTALLER_STATE_DIR/primary.state" \
     "$RP_INSTALLER_STATE_DIR/release.json" \
-    "$RP_INSTALLER_STATE_DIR/zitadel-bootstrap.json"
+    "$RP_INSTALLER_STATE_DIR/zitadel-bootstrap.json" \
+    "$RP_INSTALLER_STATE_DIR/zitadel-bootstrap.json.cli-client-id"
   rm -rf \
     "$RP_INSTALLER_STATE_DIR/secrets" \
     "$RP_INSTALLER_STATE_DIR/enrollment" \

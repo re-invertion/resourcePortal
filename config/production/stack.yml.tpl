@@ -185,6 +185,7 @@ services:
       ZITADEL_PROJECT_ID: __ZITADEL_PROJECT_ID__
       OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
       OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
+      OIDC_CLI_CLIENT_ID: __OIDC_CLI_CLIENT_ID__
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
