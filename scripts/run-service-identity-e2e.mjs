@@ -36,8 +36,15 @@ if (!listResponse.ok) {
   throw new Error(`Service identity RP authorization failed with ${listResponse.status}: ${listText}`);
 }
 const identities = JSON.parse(listText);
-if (!Array.isArray(identities) || !identities.some((identity) => identity.id === serviceIdentity.id)) {
+if (!Array.isArray(identities)) {
+  throw new Error("Service identity list response is not an array");
+}
+const persistedIdentity = identities.find((identity) => identity.id === serviceIdentity.id);
+if (!persistedIdentity) {
   throw new Error("Service identity could not read itself through tenant RBAC");
+}
+if (Object.prototype.hasOwnProperty.call(persistedIdentity, "clientSecret")) {
+  throw new Error("Service identity clientSecret was returned after initial creation");
 }
 
 const platformResponse = await fetch(`${apiUrl}/platform/identity-providers`, {
