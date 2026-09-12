@@ -120,6 +120,7 @@ contains "$identity_source" '["project-id", project.id]' 'production bootstrap w
 bootstrap_out="$(mktemp /tmp/rp-zitadel-output.XXXXXX.json)"
 printf '{}\n' >"$bootstrap_out"
 printf 'client-generated-42\n' >"${bootstrap_out}.client-id"
+printf 'cli-client-generated-42\n' >"${bootstrap_out}.cli-client-id"
 printf 'super-secret-generated-value\n' >"${bootstrap_out}.client-secret"
 printf 'user-new-42\n' >"${bootstrap_out}.user-id"
 printf 'org-generated-42\n' >"${bootstrap_out}.organization-id"
@@ -138,6 +139,7 @@ rp_ensure_versioned_swarm_secret(){
 }
 status 0 'bootstrap output applies to installer state' rp_apply_zitadel_bootstrap_output "$bootstrap_out"
 eq 'client-generated-42' "${RP_CFG_OIDC_CLIENT_ID:-}" 'generated client id enters installer state'
+eq 'cli-client-generated-42' "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" 'generated CLI client id enters installer state'
 eq 'rp_oidc_client_secret_deadbeefdeadbeef' "${RP_CFG_OIDC_SWARM_REF:-}" 'only Swarm secret reference enters installer state'
 eq 'user-existing,user-new-42' "${RP_CFG_PLATFORM_ADMIN_IDS:-}" 'new Platform Admin preserves existing admins'
 eq 'org-generated-42' "${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" 'organization id enters installer state'
@@ -146,7 +148,7 @@ eq 'rp_zitadel_management_token_feedfacefeedface' "${RP_CFG_ZITADEL_MANAGEMENT_S
 [[ ! -e "${bootstrap_out}.client-secret" ]] && pass 'plaintext OIDC client secret sidecar is removed' || fail 'plaintext OIDC client secret sidecar is removed'
 [[ -r "$management_pat" ]] && pass 'persistent ZITADEL bootstrap PAT remains available for lifecycle recovery' || fail 'persistent ZITADEL bootstrap PAT remains available for lifecycle recovery'
 not_contains "$(cat "$bootstrap_out")" 'pat-secret-value-that-must-not-leak' 'bootstrap JSON never contains management PAT'
-rm -f "$bootstrap_out" "${bootstrap_out}.client-id" "${bootstrap_out}.user-id" "${bootstrap_out}.organization-id" "${bootstrap_out}.project-id" "$management_pat"
+rm -f "$bootstrap_out" "${bootstrap_out}.client-id" "${bootstrap_out}.cli-client-id" "${bootstrap_out}.user-id" "${bootstrap_out}.organization-id" "${bootstrap_out}.project-id" "$management_pat"
 unset RP_ZITADEL_MANAGEMENT_PAT_FILE
 
 not_contains "$identity_source" 'OIDC client secret: ${maskSecret' 'production bootstrap does not print masked OIDC secret line'

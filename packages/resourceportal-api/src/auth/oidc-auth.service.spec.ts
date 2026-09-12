@@ -54,6 +54,12 @@ async function createTokenFixture(emailVerified = true, includeEmail = true) {
   };
 }
 
+function requestUrl(input: string | URL | Request) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
 function installOidcFetch(
   fixture: Awaited<ReturnType<typeof createTokenFixture>>,
   userInfo?: Record<string, unknown>,
@@ -232,7 +238,7 @@ describe("OidcAuthService", () => {
       "OIDC bearer token is invalid",
     );
     expect(
-      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/oidc/v1/userinfo")),
+      fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/oidc/v1/userinfo")),
     ).toHaveLength(0);
   });
 
@@ -269,7 +275,7 @@ describe("OidcAuthService", () => {
       serviceIdentity: { id: "service-1" },
     });
     expect(
-      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/oidc/v1/userinfo")),
+      fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/oidc/v1/userinfo")),
     ).toHaveLength(0);
   });
 
