@@ -4,13 +4,46 @@ The CLI uses `@resource-portal/sdk`, so all operations go through the public HTT
 
 ## Auth
 
-Production bearer token:
+### Human login (recommended)
+
+Normal CLI login is interactive and does not require copying a bearer token or creating a Service Identity:
 
 ```bash
-rp login --api-url https://resource-portal.example.com/api --token "$RESOURCE_PORTAL_TOKEN"
+rp login --api-url https://portal.resource-portal.pl/api
 ```
 
-Local dev mode:
+The CLI starts OAuth Device Authorization, prints a verification URL and code, and attempts to open the ZITADEL login page in the default browser. After you authenticate and approve the request, the CLI validates the issued bearer token against Resource Portal before storing the local login state.
+
+Typical flow:
+
+```bash
+rp login --api-url https://portal.resource-portal.pl/api
+rp account show
+rp tenant list -o json
+rp logout
+```
+
+The CLI client is a public OAuth client and has no client secret. If ZITADEL returns a refresh token, the CLI refreshes the access token before expiry. If the session cannot be refreshed, commands fail with `Authentication expired. Run rp login.`; normal commands never open a browser implicitly.
+
+### Automation and explicit bearer tokens
+
+CI/CD and non-human automation should continue to use Resource Portal Service Identities. Obtain a bearer access token through the Service Identity `client_credentials` flow and either pass it explicitly:
+
+```bash
+rp login --api-url https://portal.resource-portal.pl/api --token "$RESOURCE_PORTAL_TOKEN"
+```
+
+or avoid persisted CLI state:
+
+```bash
+RESOURCE_PORTAL_API_URL=https://portal.resource-portal.pl/api RESOURCE_PORTAL_TOKEN="$RESOURCE_PORTAL_TOKEN" rp tenant list -o json
+```
+
+`rp login --token` validates the bearer against Resource Portal before saving it. The Service Identity client secret itself is not a bearer token and must not be passed to `--token`.
+
+### Local development
+
+Development identity remains separate from production OAuth:
 
 ```bash
 rp login --api-url http://localhost:3000/api --dev-user-id USER_UUID
