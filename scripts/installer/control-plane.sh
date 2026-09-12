@@ -9,7 +9,8 @@ rp_require_stack_config() {
   for key in \
     RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE \
     RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL \
-    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF; do
+    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF \
+    RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF; do
     value="${!key-}"
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
@@ -70,6 +71,9 @@ rp_render_stack() {
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
     "ZITADEL_KEY_SWARM_REF|$RP_CFG_ZITADEL_KEY_SWARM_REF"
+    "ZITADEL_ORGANIZATION_ID|$RP_CFG_ZITADEL_ORGANIZATION_ID"
+    "ZITADEL_PROJECT_ID|$RP_CFG_ZITADEL_PROJECT_ID"
+    "ZITADEL_MANAGEMENT_SWARM_REF|$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF"
     "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
@@ -106,6 +110,16 @@ rp_write_stack() {
 
 rp_deploy_control_plane() {
   local state="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" stack_file
+  if [[ "$state" == final ]]; then
+    declare -F rp_recover_zitadel_management_state >/dev/null || {
+      printf 'ZITADEL management state recovery helper is unavailable.\n' >&2
+      return 1
+    }
+    rp_recover_zitadel_management_state || {
+      printf 'Unable to recover ZITADEL management state for final stack deployment.\n' >&2
+      return 1
+    }
+  fi
   stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)" || return 1
   if ! rp_render_stack "$state" >"$stack_file"; then
     rm -f "$stack_file"
