@@ -109,6 +109,8 @@ async function main() {
       ["client-id", app.clientId],
       ["client-secret", app.clientSecret],
       ["user-id", bootstrapUser.id],
+      ["organization-id", organization.id],
+      ["project-id", project.id],
     ] as const) {
       const sidecar = `${bootstrapOutputFile}.${suffix}`;
       writeFileSync(sidecar, `${value}\n`, { mode: 0o600 });
