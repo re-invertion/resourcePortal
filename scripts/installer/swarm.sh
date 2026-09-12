@@ -162,12 +162,12 @@ rp_swarm_resourceportal_secret_name() {
     rp_postgres_password|zitadel_postgres_password|rp_encryption_key|rp_database_url|zitadel_secret_config|zitadel_init_steps|rp_first_admin_password|zitadel_masterkey)
       return 0
       ;;
-    rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
+    rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|rp_zitadel_management_token_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
       return 0
       ;;
   esac
   for var in \
-    RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF \
+    RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF \
     RP_CFG_SMTP_SWARM_REF RP_CFG_ENROLLMENT_WORKER_TOKEN_REF RP_CFG_ENROLLMENT_MANAGER_TOKEN_REF; do
     ref="${!var-}"
     [[ -n "$ref" && "$name" == "$ref" ]] && return 0
