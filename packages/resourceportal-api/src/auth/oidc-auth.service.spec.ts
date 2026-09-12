@@ -72,6 +72,8 @@ function installOidcFetch(fixture: Awaited<ReturnType<typeof createTokenFixture>
               issuer: fixture.issuer,
               authorization_endpoint: `${fixture.issuer}/oauth/v2/authorize`,
               token_endpoint: `${fixture.issuer}/oauth/v2/token`,
+              device_authorization_endpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
+              userinfo_endpoint: `${fixture.issuer}/oidc/v1/userinfo`,
               revocation_endpoint: `${fixture.issuer}/oauth/v2/revoke`,
               end_session_endpoint: `${fixture.issuer}/oidc/v1/end_session`,
               jwks_uri: fixture.jwksUri,
@@ -114,6 +116,23 @@ function installOidcFetch(fixture: Awaited<ReturnType<typeof createTokenFixture>
 describe("OidcAuthService", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("exposes optional device authorization and userinfo discovery endpoints", async () => {
+    const fixture = await createTokenFixture();
+    installOidcFetch(fixture);
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+      }),
+      {} as PrismaService,
+    );
+
+    await expect(service.getDiscovery()).resolves.toMatchObject({
+      deviceAuthorizationEndpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
+      userInfoEndpoint: `${fixture.issuer}/oidc/v1/userinfo`,
+    });
   });
 
   it("verifies an OIDC token and auto-provisions a verified user identity", async () => {

@@ -6,7 +6,9 @@ import {
   Query,
   Req,
   Res,
+  ServiceUnavailableException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import {
   ApiBadRequestResponse,
   ApiCookieAuth,
@@ -48,7 +50,37 @@ export class AuthController {
   constructor(
     private readonly authFlow: AuthFlowService,
     private readonly sessions: AuthSessionService,
+    private readonly config: ConfigService,
   ) {}
+
+  @Public()
+  @Get("cli-config")
+  @ApiOperation({ summary: "Get public CLI OAuth configuration" })
+  @ApiOkResponse({ description: "Public Resource Portal CLI OAuth metadata." })
+  cliConfig() {
+    const issuer = this.config
+      .get<string>("OIDC_ISSUER_URL")
+      ?.replace(/\/$/, "");
+    const clientId = this.config.get<string>("OIDC_CLI_CLIENT_ID");
+    const projectId = this.config.get<string>("ZITADEL_PROJECT_ID");
+    const organizationId = this.config.get<string>("ZITADEL_ORGANIZATION_ID");
+
+    if (!issuer || !clientId || !projectId || !organizationId) {
+      throw new ServiceUnavailableException("CLI authentication is not configured");
+    }
+
+    return {
+      issuer,
+      clientId,
+      scopes: [
+        "openid",
+        "profile",
+        "email",
+        `urn:zitadel:iam:org:project:id:${projectId}:aud`,
+        `urn:zitadel:iam:org:id:${organizationId}`,
+      ],
+    };
+  }
 
   @Public()
   @Get("providers")

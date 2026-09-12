@@ -89,6 +89,7 @@ function getRequiredHeader(response: ResponseWithHeaders, name: string) {
 
 describe("AuthController cookie flow", () => {
   let app: NestFastifyApplication;
+  let configValues: ConfigValues;
   let oidcAuth: {
     authenticateBearerToken: ReturnType<typeof vi.fn>;
     getDiscovery: ReturnType<typeof vi.fn>;
@@ -113,6 +114,22 @@ describe("AuthController cookie flow", () => {
   };
 
   beforeEach(async () => {
+    configValues = {
+      AUTH_COOKIE_SECRET: cookieSecret,
+      AUTH_CSRF_COOKIE_NAME: "rp_csrf",
+      AUTH_MODE: "oidc",
+      AUTH_SESSION_COOKIE_NAME: "rp_session",
+      AUTH_SESSION_TTL_SECONDS: "3600",
+      AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "1800",
+      OIDC_CLIENT_ID: "resource-portal",
+      OIDC_CLIENT_SECRET: "client-secret",
+      OIDC_CLI_CLIENT_ID: "rp-cli-client",
+      OIDC_ISSUER_URL: issuer,
+      OIDC_REDIRECT_URI: "http://localhost/api/auth/callback",
+      PUBLIC_API_URL: "http://localhost",
+      ZITADEL_ORGANIZATION_ID: "zitadel-org-1",
+      ZITADEL_PROJECT_ID: "390305435971748110",
+    };
     oidcAuth = {
       getDiscovery: vi.fn().mockResolvedValue({
         authorizationEndpoint: `${issuer}/oauth/v2/authorize`,
@@ -200,7 +217,7 @@ describe("AuthController cookie flow", () => {
 
     Reflect.defineMetadata(
       "design:paramtypes",
-      [AuthFlowService, AuthSessionService],
+      [AuthFlowService, AuthSessionService, ConfigService],
       AuthController,
     );
     Reflect.defineMetadata(
@@ -240,20 +257,7 @@ describe("AuthController cookie flow", () => {
         },
         {
           provide: ConfigService,
-          useValue: createConfig({
-            AUTH_COOKIE_SECRET: cookieSecret,
-            AUTH_CSRF_COOKIE_NAME: "rp_csrf",
-            AUTH_MODE: "oidc",
-            AUTH_SESSION_COOKIE_NAME: "rp_session",
-            AUTH_SESSION_TTL_SECONDS: "3600",
-            AUTH_SESSION_IDLE_TIMEOUT_SECONDS: "1800",
-            OIDC_CLIENT_ID: "resource-portal",
-            OIDC_CLIENT_SECRET: "client-secret",
-            OIDC_ISSUER_URL: issuer,
-            OIDC_REDIRECT_URI: "http://localhost/api/auth/callback",
-            PUBLIC_API_URL: "http://localhost",
-            ZITADEL_ORGANIZATION_ID: "zitadel-org-1",
-          }),
+          useValue: createConfig(configValues),
         },
         {
           provide: PrismaService,
@@ -308,6 +312,42 @@ describe("AuthController cookie flow", () => {
   afterEach(async () => {
     await app.close();
     vi.unstubAllGlobals();
+  });
+
+
+  it("publishes public CLI OAuth configuration without secrets", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/cli-config",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      issuer,
+      clientId: "rp-cli-client",
+      scopes: [
+        "openid",
+        "profile",
+        "email",
+        "urn:zitadel:iam:org:project:id:390305435971748110:aud",
+        "urn:zitadel:iam:org:id:zitadel-org-1",
+      ],
+    });
+    expect(JSON.stringify(response.json())).not.toMatch(/secret/i);
+  });
+
+  it("fails closed when CLI OAuth client is not configured", async () => {
+    delete configValues.OIDC_CLI_CLIENT_ID;
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/cli-config",
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      message: "CLI authentication is not configured",
+    });
   });
 
   it("starts OIDC login with signed callback cookies", async () => {
