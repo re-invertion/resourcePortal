@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { readConfig } from "./auth.js";
 import {
   ResourcePortalApiError,
   ResourcePortalClient,
@@ -11,12 +9,6 @@ import {
 type OutputFormat = "json" | "table";
 type FlagValue = string | number | boolean | FlagValue[];
 type Flags = Record<string, FlagValue>;
-type CliConfig = {
-  apiUrl?: string;
-  devUserId?: string;
-  token?: string;
-};
-
 type ParsedArgs = {
   args: string[];
   command?: string;
@@ -688,16 +680,6 @@ function handleError(error: unknown) {
     console.error(error instanceof Error ? error.message : String(error));
   }
   process.exitCode = 1;
-}
-
-function readConfig(): CliConfig {
-  const path = join(homedir(), ".resourceportal", "config.json");
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as CliConfig;
-  } catch {
-    return {};
-  }
 }
 
 function requiredOptionValue(argv: string[], index: number, option: string) {

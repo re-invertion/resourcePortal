@@ -1,14 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { readConfig } from "./auth.js";
 import { ResourcePortalApiError, ResourcePortalClient } from "@resource-portal/sdk";
-
-type CliConfig = {
-  apiUrl?: string;
-  devUserId?: string;
-  token?: string;
-};
 
 type HealthOptions = {
   apiUrl: string;
@@ -147,16 +139,6 @@ function formatValue(value: unknown) {
   if (value === null || value === undefined) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
-}
-
-function readConfig(): CliConfig {
-  const path = join(homedir(), ".resourceportal", "config.json");
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as CliConfig;
-  } catch {
-    return {};
-  }
 }
 
 function requiredValue(values: string[], index: number, option: string) {

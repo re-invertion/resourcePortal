@@ -1,24 +1,10 @@
 #!/usr/bin/env node
 
 import { ResourcePortalApiError, ResourcePortalClient } from "@resource-portal/sdk";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { clearConfig, readConfig, writeConfig } from "./auth.js";
 
 type OutputFormat = "json" | "table";
 type Flags = Record<string, string | number | boolean | string[]>;
-
-type CliConfig = {
-  apiUrl?: string;
-  devUserId?: string;
-  token?: string;
-};
 
 type GlobalOptions = {
   apiUrl: string;
@@ -526,12 +512,7 @@ function login(options: GlobalOptions) {
 }
 
 function logout() {
-  const path = configPath();
-
-  if (existsSync(path)) {
-    rmSync(path);
-  }
-
+  clearConfig();
   return { status: "LoggedOut" };
 }
 
@@ -676,31 +657,6 @@ function printHelp(parsed: ParsedArgs) {
   for (const item of filtered) {
     console.log(`  ${item.group} ${item.name} ${item.usage}  ${item.summary}`);
   }
-}
-
-function readConfig(): CliConfig {
-  const path = configPath();
-
-  if (!existsSync(path)) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as CliConfig;
-  } catch {
-    return {};
-  }
-}
-
-function writeConfig(config: CliConfig) {
-  const path = configPath();
-
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-}
-
-function configPath() {
-  return join(homedir(), ".resourceportal", "config.json");
 }
 
 function arg(parsed: ParsedArgs, index: number, name: string) {
