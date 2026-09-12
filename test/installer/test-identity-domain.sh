@@ -86,6 +86,7 @@ secret_fixture="$(mktemp /tmp/rp-secret-name.XXXXXX)"
 printf 'generated-zitadel-client-secret' >"$secret_fixture"
 expected_hash="$(sha256sum "$secret_fixture" | awk '{print substr($1,1,16)}')"
 eq "rp_oidc_client_secret_${expected_hash}" "$(rp_versioned_secret_name rp_oidc_client_secret "$secret_fixture")" 'versioned secret name is content-addressed'
+eq "rp_zitadel_management_token_${expected_hash}" "$(rp_versioned_secret_name rp_zitadel_management_token "$secret_fixture")" 'ZITADEL management secret name is content-addressed'
 rm -f "$secret_fixture"
 status 1 'versioned secret name rejects unsafe logical name' rp_versioned_secret_name '../secret' /etc/hosts
 
@@ -114,19 +115,39 @@ contains "$bootstrap_runner_source" 'chown -R root:root' 'identity bootstrap ret
 contains "$identity_source" '["client-secret", app.clientSecret]' 'production bootstrap writes client secret sidecar'
 contains "$identity_source" '["client-id", app.clientId]' 'production bootstrap writes client id sidecar'
 contains "$identity_source" '["user-id", bootstrapUser.id]' 'production bootstrap writes admin user id sidecar'
+contains "$identity_source" '["organization-id", organization.id]' 'production bootstrap writes organization id sidecar'
+contains "$identity_source" '["project-id", project.id]' 'production bootstrap writes project id sidecar'
 bootstrap_out="$(mktemp /tmp/rp-zitadel-output.XXXXXX.json)"
 printf '{}\n' >"$bootstrap_out"
 printf 'client-generated-42\n' >"${bootstrap_out}.client-id"
 printf 'super-secret-generated-value\n' >"${bootstrap_out}.client-secret"
 printf 'user-new-42\n' >"${bootstrap_out}.user-id"
+printf 'org-generated-42\n' >"${bootstrap_out}.organization-id"
+printf 'project-generated-42\n' >"${bootstrap_out}.project-id"
+management_pat="$(mktemp /tmp/rp-zitadel-management-pat.XXXXXX)"
+printf 'pat-secret-value-that-must-not-leak\n' >"$management_pat"
+chmod 0600 "$management_pat"
+export RP_ZITADEL_MANAGEMENT_PAT_FILE="$management_pat"
 export RP_CFG_PLATFORM_ADMIN_IDS='user-existing'
-rp_ensure_versioned_swarm_secret(){ [[ "$1" == 'rp_oidc_client_secret' && "$2" == "${bootstrap_out}.client-secret" ]] || return 1; printf 'rp_oidc_client_secret_deadbeefdeadbeef\n'; }
+rp_ensure_versioned_swarm_secret(){
+  case "$1:$2" in
+    "rp_oidc_client_secret:${bootstrap_out}.client-secret") printf 'rp_oidc_client_secret_deadbeefdeadbeef\n' ;;
+    "rp_zitadel_management_token:${management_pat}") printf 'rp_zitadel_management_token_feedfacefeedface\n' ;;
+    *) return 1 ;;
+  esac
+}
 status 0 'bootstrap output applies to installer state' rp_apply_zitadel_bootstrap_output "$bootstrap_out"
 eq 'client-generated-42' "${RP_CFG_OIDC_CLIENT_ID:-}" 'generated client id enters installer state'
 eq 'rp_oidc_client_secret_deadbeefdeadbeef' "${RP_CFG_OIDC_SWARM_REF:-}" 'only Swarm secret reference enters installer state'
 eq 'user-existing,user-new-42' "${RP_CFG_PLATFORM_ADMIN_IDS:-}" 'new Platform Admin preserves existing admins'
+eq 'org-generated-42' "${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" 'organization id enters installer state'
+eq 'project-generated-42' "${RP_CFG_ZITADEL_PROJECT_ID:-}" 'project id enters installer state'
+eq 'rp_zitadel_management_token_feedfacefeedface' "${RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF:-}" 'only management Swarm secret reference enters installer state'
 [[ ! -e "${bootstrap_out}.client-secret" ]] && pass 'plaintext OIDC client secret sidecar is removed' || fail 'plaintext OIDC client secret sidecar is removed'
-rm -f "$bootstrap_out" "${bootstrap_out}.client-id" "${bootstrap_out}.user-id"
+[[ -r "$management_pat" ]] && pass 'persistent ZITADEL bootstrap PAT remains available for lifecycle recovery' || fail 'persistent ZITADEL bootstrap PAT remains available for lifecycle recovery'
+not_contains "$(cat "$bootstrap_out")" 'pat-secret-value-that-must-not-leak' 'bootstrap JSON never contains management PAT'
+rm -f "$bootstrap_out" "${bootstrap_out}.client-id" "${bootstrap_out}.user-id" "${bootstrap_out}.organization-id" "${bootstrap_out}.project-id" "$management_pat"
+unset RP_ZITADEL_MANAGEMENT_PAT_FILE
 
 not_contains "$identity_source" 'OIDC client secret: ${maskSecret' 'production bootstrap does not print masked OIDC secret line'
 

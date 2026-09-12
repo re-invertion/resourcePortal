@@ -5,7 +5,7 @@ rp_validate_image_ref() {
 }
 
 rp_require_stack_config() {
-  local key value
+  local state="${1:-final}" key value
   for key in \
     RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE \
     RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL \
@@ -13,6 +13,12 @@ rp_require_stack_config() {
     value="${!key-}"
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
+  if [[ "$state" == final ]]; then
+    for key in RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF; do
+      value="${!key-}"
+      [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
+    done
+  fi
   for key in RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE RP_CFG_TRAEFIK_IMAGE; do
     rp_validate_image_ref "${!key}" || { printf 'Image must be pinned by sha256 digest: %s\n' "$key" >&2; return 1; }
   done
@@ -38,7 +44,9 @@ rp_escape_sed_replacement() {
 rp_render_stack() {
   local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
-  rp_require_stack_config || return 1
+  # Rendering is also used by preview/ACME tests. Actual final deploy/persist paths
+  # validate ZITADEL management state explicitly before consuming this output.
+  rp_require_stack_config bootstrap || return 1
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   template="$repo_root/config/production/stack.yml.tpl"
   [[ -r "$template" ]] || return 1
@@ -70,6 +78,9 @@ rp_render_stack() {
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
     "ZITADEL_KEY_SWARM_REF|$RP_CFG_ZITADEL_KEY_SWARM_REF"
+    "ZITADEL_ORGANIZATION_ID|${RP_CFG_ZITADEL_ORGANIZATION_ID:-bootstrap-pending}"
+    "ZITADEL_PROJECT_ID|${RP_CFG_ZITADEL_PROJECT_ID:-bootstrap-pending}"
+    "ZITADEL_MANAGEMENT_SWARM_REF|${RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF:-$RP_CFG_OIDC_SWARM_REF}"
     "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
@@ -97,6 +108,7 @@ rp_render_stack() {
 
 rp_write_stack() {
   local state="$1" target="${2:-/etc/resourceportal/stack.yml}" tmp
+  [[ "$state" != final ]] || rp_require_stack_config final || return 1
   tmp="${target}.tmp.$$"
   mkdir -p "$(dirname "$target")"
   rp_render_stack "$state" >"$tmp"
@@ -106,6 +118,17 @@ rp_write_stack() {
 
 rp_deploy_control_plane() {
   local state="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" stack_file
+  if [[ "$state" == final ]]; then
+    declare -F rp_recover_zitadel_management_state >/dev/null || {
+      printf 'ZITADEL management state recovery helper is unavailable.\n' >&2
+      return 1
+    }
+    rp_recover_zitadel_management_state || {
+      printf 'Unable to recover ZITADEL management state for final stack deployment.\n' >&2
+      return 1
+    }
+    rp_require_stack_config final || return 1
+  fi
   stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)" || return 1
   if ! rp_render_stack "$state" >"$stack_file"; then
     rm -f "$stack_file"

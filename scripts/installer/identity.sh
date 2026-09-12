@@ -111,7 +111,7 @@ rp_run_zitadel_bootstrap() {
   output_name="$(basename "$output_file")"
   output_dir="$state_dir/identity-bootstrap"
   install -d -m 0700 "$state_dir"
-  rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.user-id"
+  rm -f "$output_file" "$output_file.client-id" "$output_file.client-secret" "$output_file.user-id" "$output_file.organization-id" "$output_file.project-id"
   rm -rf "$output_dir"
   rp_prepare_api_bootstrap_output_dir "$output_dir" "${RP_CFG_API_IMAGE:?RP_CFG_API_IMAGE is required}" || return 1
 
@@ -154,7 +154,7 @@ rp_run_zitadel_bootstrap() {
         chown -R root:root "$output_dir" || return 1
         chmod 0700 "$output_dir" || return 1
         find "$output_dir" -maxdepth 1 -type f -exec chmod 0600 {} + || return 1
-        for suffix in '' '.client-id' '.client-secret' '.user-id'; do
+        for suffix in '' '.client-id' '.client-secret' '.user-id' '.organization-id' '.project-id'; do
           [[ -r "$output_dir/$output_name$suffix" ]] || return 1
           mv -f "$output_dir/$output_name$suffix" "$output_file$suffix" || return 1
         done
@@ -179,24 +179,65 @@ rp_run_zitadel_bootstrap() {
   return 1
 }
 
+rp_zitadel_management_state_ready() {
+  [[ -n "${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" && "${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" != bootstrap-pending ]] || return 1
+  [[ -n "${RP_CFG_ZITADEL_PROJECT_ID:-}" && "${RP_CFG_ZITADEL_PROJECT_ID:-}" != bootstrap-pending ]] || return 1
+  [[ -n "${RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF:-}" ]] || return 1
+}
 
+rp_recover_zitadel_management_state() {
+  local output_file="${1:-/var/lib/resourceportal/installer-state/zitadel-bootstrap.json}"
+  local management_pat_file="${2:-${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}}"
+  local organization_id_file="${output_file}.organization-id" project_id_file="${output_file}.project-id"
+  local organization_id project_id management_secret_ref
+
+  rp_zitadel_management_state_ready && return 0
+  [[ "$output_file" == /* && "$management_pat_file" == /* && -r "$management_pat_file" ]] || return 1
+
+  if [[ -r "$organization_id_file" && -r "$project_id_file" ]]; then
+    organization_id="$(tr -d '\r\n' <"$organization_id_file")"
+    project_id="$(tr -d '\r\n' <"$project_id_file")"
+  else
+    [[ -r "$output_file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    organization_id="$(jq -er '.organizationId | strings | select(length > 0)' "$output_file")" || return 1
+    project_id="$(jq -er '.projectId | strings | select(length > 0)' "$output_file")" || return 1
+  fi
+  [[ -n "$organization_id" && -n "$project_id" ]] || return 1
+
+  management_secret_ref="$(rp_ensure_versioned_swarm_secret rp_zitadel_management_token "$management_pat_file")" || return 1
+  RP_CFG_ZITADEL_ORGANIZATION_ID="$organization_id"
+  RP_CFG_ZITADEL_PROJECT_ID="$project_id"
+  RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$management_secret_ref"
+  export RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
+}
 
 rp_apply_zitadel_bootstrap_output() {
-  local output_file="$1" client_id_file secret_file user_id_file client_id user_id secret_ref
+  local output_file="$1" client_id_file secret_file user_id_file organization_id_file project_id_file
+  local client_id user_id organization_id project_id oidc_secret_ref management_secret_ref
+  local management_pat_file="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
   client_id_file="${output_file}.client-id"
   secret_file="${output_file}.client-secret"
   user_id_file="${output_file}.user-id"
-  [[ "$output_file" == /* && -r "$output_file" && -r "$client_id_file" && -r "$secret_file" && -r "$user_id_file" ]] || return 1
+  organization_id_file="${output_file}.organization-id"
+  project_id_file="${output_file}.project-id"
+  [[ "$output_file" == /* && "$management_pat_file" == /* && -r "$output_file" && -r "$client_id_file" && -r "$secret_file" && -r "$user_id_file" && -r "$organization_id_file" && -r "$project_id_file" && -r "$management_pat_file" ]] || return 1
 
   client_id="$(tr -d '\r\n' <"$client_id_file")"
   user_id="$(tr -d '\r\n' <"$user_id_file")"
-  [[ -n "$client_id" && -n "$user_id" ]] || return 1
+  organization_id="$(tr -d '\r\n' <"$organization_id_file")"
+  project_id="$(tr -d '\r\n' <"$project_id_file")"
+  [[ -n "$client_id" && -n "$user_id" && -n "$organization_id" && -n "$project_id" ]] || return 1
 
-  secret_ref="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$secret_file")" || return 1
+  oidc_secret_ref="$(rp_ensure_versioned_swarm_secret rp_oidc_client_secret "$secret_file")" || return 1
+  management_secret_ref="$(rp_ensure_versioned_swarm_secret rp_zitadel_management_token "$management_pat_file")" || return 1
   RP_CFG_OIDC_CLIENT_ID="$client_id"
-  RP_CFG_OIDC_SWARM_REF="$secret_ref"
+  RP_CFG_OIDC_SWARM_REF="$oidc_secret_ref"
+  RP_CFG_ZITADEL_ORGANIZATION_ID="$organization_id"
+  RP_CFG_ZITADEL_PROJECT_ID="$project_id"
+  RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$management_secret_ref"
   RP_CFG_PLATFORM_ADMIN_IDS="$(rp_merge_platform_admin_ids "${RP_CFG_PLATFORM_ADMIN_IDS:-}" "$user_id")"
-  export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_PLATFORM_ADMIN_IDS
+  export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF RP_CFG_PLATFORM_ADMIN_IDS
 
   rp_remove_secret_file "$secret_file"
 }
