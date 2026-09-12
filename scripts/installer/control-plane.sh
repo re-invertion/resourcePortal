@@ -44,7 +44,9 @@ rp_escape_sed_replacement() {
 rp_render_stack() {
   local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
-  rp_require_stack_config "$state" || return 1
+  # Rendering is also used by preview/ACME tests. Actual final deploy/persist paths
+  # validate ZITADEL management state explicitly before consuming this output.
+  rp_require_stack_config bootstrap || return 1
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   template="$repo_root/config/production/stack.yml.tpl"
   [[ -r "$template" ]] || return 1
@@ -106,6 +108,7 @@ rp_render_stack() {
 
 rp_write_stack() {
   local state="$1" target="${2:-/etc/resourceportal/stack.yml}" tmp
+  [[ "$state" != final ]] || rp_require_stack_config final || return 1
   tmp="${target}.tmp.$$"
   mkdir -p "$(dirname "$target")"
   rp_render_stack "$state" >"$tmp"
@@ -124,6 +127,7 @@ rp_deploy_control_plane() {
       printf 'Unable to recover ZITADEL management state for final stack deployment.\n' >&2
       return 1
     }
+    rp_require_stack_config final || return 1
   fi
   stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)" || return 1
   if ! rp_render_stack "$state" >"$stack_file"; then
