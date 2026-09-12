@@ -54,6 +54,7 @@ const projectName =
   process.env.ZITADEL_BOOTSTRAP_PROJECT_NAME ?? "Resource Portal";
 const appName =
   process.env.ZITADEL_BOOTSTRAP_APP_NAME ?? "Resource Portal Web";
+const cliAppName = "Resource Portal CLI";
 const redirectUris = listEnv(
   "ZITADEL_BOOTSTRAP_REDIRECT_URIS",
   `http://localhost:${process.env.PORT ?? "3000"}/api/auth/callback`,
@@ -86,6 +87,7 @@ async function main() {
   const organization = await getOrCreateOrganization(pat);
   const project = await getOrCreateProject(pat, organization.id);
   const app = await getOrCreateOidcApp(pat, organization.id, project.id);
+  const cliApp = await getOrCreateCliOidcApp(pat, organization.id, project.id);
   const bootstrapUser = await getOrCreateBootstrapUser(pat, organization.id);
 
   if (productionBootstrap) {
@@ -100,6 +102,7 @@ async function main() {
         appId: app.appId,
         clientId: app.clientId,
         clientSecret: app.clientSecret,
+        cliClientId: cliApp.clientId,
         userId: bootstrapUser.id,
       })}\n`,
       { mode: 0o600 },
@@ -108,6 +111,7 @@ async function main() {
     for (const [suffix, value] of [
       ["client-id", app.clientId],
       ["client-secret", app.clientSecret],
+      ["cli-client-id", cliApp.clientId],
       ["user-id", bootstrapUser.id],
       ["organization-id", organization.id],
       ["project-id", project.id],
@@ -294,6 +298,56 @@ async function getOrCreateOidcApp(
     clientId: created.clientId,
     clientSecret: created.clientSecret ?? "",
     name: appName,
+  };
+}
+
+async function getOrCreateCliOidcApp(
+  pat: string,
+  organizationId: string,
+  projectId: string,
+) {
+  const apps = await zitadelApi<{ result?: App[] }>(
+    pat,
+    `/management/v1/projects/${projectId}/apps/_search`,
+    {},
+    organizationId,
+  );
+  const existing = apps.result?.find((app) => app.name === cliAppName);
+
+  if (existing?.oidcConfig?.clientId) {
+    return {
+      appId: existing.id,
+      clientId: existing.oidcConfig.clientId,
+      name: existing.name,
+    };
+  }
+
+  const created = await zitadelApi<{
+    appId: string;
+    clientId: string;
+  }>(
+    pat,
+    `/management/v1/projects/${projectId}/apps/oidc`,
+    {
+      name: cliAppName,
+      redirectUris: [],
+      responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+      grantTypes: ["OIDC_GRANT_TYPE_DEVICE_CODE"],
+      appType: "OIDC_APP_TYPE_NATIVE",
+      authMethodType: "OIDC_AUTH_METHOD_TYPE_NONE",
+      postLogoutRedirectUris: [],
+      version: "OIDC_VERSION_1_0",
+      devMode: false,
+      accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+      idTokenUserinfoAssertion: true,
+    },
+    organizationId,
+  );
+
+  return {
+    appId: created.appId,
+    clientId: created.clientId,
+    name: cliAppName,
   };
 }
 

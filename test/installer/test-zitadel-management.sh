@@ -25,6 +25,13 @@ bootstrap_source="$(cat "$repo_root/packages/resourceportal-api/scripts/bootstra
 contains "$bootstrap_source" '["organization-id", organization.id]' 'production bootstrap emits organization id sidecar'
 contains "$bootstrap_source" '["project-id", project.id]' 'production bootstrap emits project id sidecar'
 not_contains "$bootstrap_source" '["management-token"' 'production bootstrap does not emit management PAT sidecar'
+contains "$bootstrap_source" 'const cliAppName = "Resource Portal CLI"' 'bootstrap defines dedicated Resource Portal CLI app'
+contains "$bootstrap_source" 'OIDC_GRANT_TYPE_DEVICE_CODE' 'CLI app enables device code grant'
+contains "$bootstrap_source" 'OIDC_APP_TYPE_NATIVE' 'CLI app is native/public'
+contains "$bootstrap_source" 'OIDC_AUTH_METHOD_TYPE_NONE' 'CLI app has no client authentication secret'
+contains "$bootstrap_source" 'cliClientId: cliApp.clientId' 'production bootstrap emits CLI client id in JSON'
+contains "$bootstrap_source" '["cli-client-id", cliApp.clientId]' 'production bootstrap emits CLI client id sidecar'
+not_contains "$bootstrap_source" 'cliClientSecret' 'production bootstrap never emits a CLI client secret'
 
 secret_fixture="$(mktemp /tmp/rp-zitadel-management-secret.XXXXXX)"
 printf 'management-token-material' >"$secret_fixture"
