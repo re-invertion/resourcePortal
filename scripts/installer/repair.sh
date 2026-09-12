@@ -22,8 +22,10 @@ rp_run_repair() {
       systemctl is-active --quiet nfs-ganesha
       ;;
     control-plane)
-      rp_deploy_control_plane final
-      rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300
+      rp_deploy_control_plane final || return 1
+      rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300 || return 1
+      rp_config_write /etc/resourceportal/installer.conf || return 1
+      rp_write_stack final /etc/resourceportal/stack.yml || return 1
       ;;
   esac
 }
