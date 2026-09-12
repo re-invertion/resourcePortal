@@ -157,6 +157,7 @@ export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
 export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
 export RP_CFG_ZITADEL_KEY_SWARM_REF='zitadel_masterkey_deadbeefcafebabe'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
+export RP_CFG_STORAGE_DEVICE='/dev/sdb'
 export RP_CFG_ACME_ENVIRONMENT=production
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
