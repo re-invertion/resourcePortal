@@ -1,0 +1,106 @@
+{
+  "$schema": "https://www.designtokens.org/tr/drafts/format/",
+  "$description": "ResourcePortal Visual Guidelines token snapshot. Brand blue is provisional until the canonical ResourcePortal logo vector is imported and visually calibrated in Penpot.",
+  "meta": {
+    "source": "ResourcePortal — Visual Guidelines / Penpot",
+    "date": "2026-09-12",
+    "theme": "light",
+    "fontFamily": "Inter",
+    "baseGrid": 4,
+    "brandColorStatus": "provisional-pending-canonical-logo-import"
+  },
+  "color": {
+    "brand": {
+      "10": { "$type": "color", "$value": "#F3F8FF" },
+      "20": { "$type": "color", "$value": "#E7F1FF" },
+      "30": { "$type": "color", "$value": "#CFE3FF" },
+      "40": { "$type": "color", "$value": "#A8CCFF" },
+      "50": { "$type": "color", "$value": "#75ADFF" },
+      "60": { "$type": "color", "$value": "#3B8AF4" },
+      "70": { "$type": "color", "$value": "#1769E0" },
+      "80": { "$type": "color", "$value": "#1056BB" },
+      "90": { "$type": "color", "$value": "#0B438F" },
+      "100": { "$type": "color", "$value": "#073164" },
+      "primary": { "$type": "color", "$value": "{color.brand.70}" },
+      "primaryHover": { "$type": "color", "$value": "{color.brand.80}" },
+      "primaryPressed": { "$type": "color", "$value": "{color.brand.90}" },
+      "subtle": { "$type": "color", "$value": "{color.brand.20}" },
+      "background": { "$type": "color", "$value": "{color.brand.10}" }
+    },
+    "neutral": {
+      "canvas": { "$type": "color", "$value": "#F7F9FC" },
+      "secondary": { "$type": "color", "$value": "#F1F4F8" },
+      "surface": { "$type": "color", "$value": "#FFFFFF" },
+      "surfaceHover": { "$type": "color", "$value": "#F7F9FC" },
+      "border": { "$type": "color", "$value": "#D9E0EA" },
+      "borderStrong": { "$type": "color", "$value": "#AAB4C3" },
+      "textPrimary": { "$type": "color", "$value": "#172033" },
+      "textSecondary": { "$type": "color", "$value": "#5B6678" },
+      "textDisabled": { "$type": "color", "$value": "#98A2B3" },
+      "navy": { "$type": "color", "$value": "#122033" }
+    },
+    "status": {
+      "success": { "$type": "color", "$value": "#137A4A" },
+      "successBg": { "$type": "color", "$value": "#EAF7F0" },
+      "warning": { "$type": "color", "$value": "#9A6700" },
+      "warningBg": { "$type": "color", "$value": "#FFF4CE" },
+      "error": { "$type": "color", "$value": "#C42B1C" },
+      "errorBg": { "$type": "color", "$value": "#FDEBEC" },
+      "information": { "$type": "color", "$value": "#1769E0" },
+      "informationBg": { "$type": "color", "$value": "#E7F1FF" }
+    }
+  },
+  "text": {
+    "display": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 48, "fontWeight": 600, "lineHeight": 56, "letterSpacing": 0 } },
+    "h1": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 36, "fontWeight": 600, "lineHeight": 44, "letterSpacing": 0 } },
+    "h2": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 28, "fontWeight": 600, "lineHeight": 36, "letterSpacing": 0 } },
+    "h3": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 22, "fontWeight": 600, "lineHeight": 30, "letterSpacing": 0 } },
+    "subtitle": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 18, "fontWeight": 500, "lineHeight": 26, "letterSpacing": 0 } },
+    "bodyLarge": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 16, "fontWeight": 400, "lineHeight": 24, "letterSpacing": 0 } },
+    "body": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 14, "fontWeight": 400, "lineHeight": 20, "letterSpacing": 0 } },
+    "bodySmall": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 13, "fontWeight": 400, "lineHeight": 18, "letterSpacing": 0 } },
+    "caption": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 12, "fontWeight": 400, "lineHeight": 16, "letterSpacing": 0 } },
+    "label": { "$type": "typography", "$value": { "fontFamily": "Inter", "fontSize": 13, "fontWeight": 500, "lineHeight": 18, "letterSpacing": 0 } }
+  },
+  "spacing": {
+    "4": { "$type": "dimension", "$value": 4 },
+    "8": { "$type": "dimension", "$value": 8 },
+    "12": { "$type": "dimension", "$value": 12 },
+    "16": { "$type": "dimension", "$value": 16 },
+    "20": { "$type": "dimension", "$value": 20 },
+    "24": { "$type": "dimension", "$value": 24 },
+    "32": { "$type": "dimension", "$value": 32 },
+    "40": { "$type": "dimension", "$value": 40 },
+    "48": { "$type": "dimension", "$value": 48 },
+    "64": { "$type": "dimension", "$value": 64 }
+  },
+  "radius": {
+    "small": { "$type": "dimension", "$value": 4 },
+    "medium": { "$type": "dimension", "$value": 6 },
+    "large": { "$type": "dimension", "$value": 8 },
+    "xlarge": { "$type": "dimension", "$value": 12 },
+    "round": { "$type": "dimension", "$value": 999 }
+  },
+  "border": {
+    "thin": { "$type": "dimension", "$value": 1 },
+    "strong": { "$type": "dimension", "$value": 2 }
+  },
+  "shadow": {
+    "0": { "$type": "shadow", "$value": { "color": "#00000000", "offsetX": 0, "offsetY": 0, "blur": 0, "spread": 0 } },
+    "1": { "$type": "shadow", "$value": { "color": "#17203314", "offsetX": 0, "offsetY": 1, "blur": 2, "spread": 0 } },
+    "2": { "$type": "shadow", "$value": { "color": "#17203316", "offsetX": 0, "offsetY": 2, "blur": 6, "spread": 0 } },
+    "3": { "$type": "shadow", "$value": { "color": "#17203318", "offsetX": 0, "offsetY": 4, "blur": 12, "spread": 0 } },
+    "4": { "$type": "shadow", "$value": { "color": "#1720331A", "offsetX": 0, "offsetY": 8, "blur": 24, "spread": 0 } }
+  },
+  "component": {
+    "button": {
+      "height": {
+        "small": { "$type": "dimension", "$value": 32 },
+        "medium": { "$type": "dimension", "$value": 40 },
+        "large": { "$type": "dimension", "$value": 48 }
+      }
+    },
+    "control": { "height": { "default": { "$type": "dimension", "$value": 40 } } },
+    "table": { "row": { "height": { "$type": "dimension", "$value": 44 } } }
+  }
+}
