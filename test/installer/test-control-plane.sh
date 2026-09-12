@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/acme.sh"
 source "$repo_root/scripts/installer/control-plane.sh"
+source "$repo_root/scripts/installer/identity.sh"
+source "$repo_root/scripts/installer/config.sh"
 source "$repo_root/scripts/installer/secrets.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
 
@@ -31,6 +33,9 @@ export RP_CFG_PLATFORM_ADMIN_IDS='zitadel-user-1'
 export RP_CFG_OIDC_CLIENT_ID='zitadel-client-123'
 export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
 export RP_CFG_ZITADEL_KEY_SWARM_REF='zitadel_masterkey_deadbeefcafebabe'
+export RP_CFG_ZITADEL_ORGANIZATION_ID='zitadel-org-123'
+export RP_CFG_ZITADEL_PROJECT_ID='zitadel-project-456'
+export RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_feedfacefeedface'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
 
 bootstrap="$(rp_render_stack bootstrap)"
@@ -93,6 +98,14 @@ contains "$final" 'DATABASE_URL_FILE: /run/secrets/rp_database_url' 'API consume
 contains "$final" 'RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key' 'API consumes encryption secret file'
 contains "$final" 'AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret' 'API consumes cookie secret file'
 contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token' 'workers consume token secret file'
+contains "$final" 'ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token' 'API consumes ZITADEL management token from secret file'
+contains "$final" 'ZITADEL_ORGANIZATION_ID: zitadel-org-123' 'API receives ZITADEL organization id'
+contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADEL project id'
+contains "$final" 'name: rp_zitadel_management_token_feedfacefeedface' 'stack aliases versioned ZITADEL management token secret'
+management_mount_count="$(grep -c '^      - rp_zitadel_management_token$' <<<"$final" || true)"
+[[ "$management_mount_count" == 1 ]] && pass 'only API mounts ZITADEL management token secret' || fail 'only API mounts ZITADEL management token secret'
+management_file_count="$(grep -c 'ZITADEL_MANAGEMENT_TOKEN_FILE:' <<<"$final" || true)"
+[[ "$management_file_count" == 1 ]] && pass 'only API receives ZITADEL management token file env' || fail 'only API receives ZITADEL management token file env'
 contains "$final" '--masterkeyFile' 'ZITADEL uses masterkey file'
 contains "$final" '/run/secrets/zitadel_masterkey' 'ZITADEL masterkey comes from Swarm Secret'
 contains "$final" 'source: /mnt/resourceportal/platform/zitadel-bootstrap' 'ZITADEL bootstrap PAT source uses platform storage'
@@ -107,6 +120,17 @@ not_contains "$final" 'POSTGRES_PASSWORD:' 'stack never embeds postgres password
 not_contains "$final" 'ZITADEL_MASTERKEY=' 'stack never embeds ZITADEL masterkey'
 not_contains "$final" 'INTERNAL_WORKER_TOKEN: ' 'stack never embeds worker token plaintext'
 not_contains "$final" '5432:5432' 'PostgreSQL is not published'
+export ZITADEL_MANAGEMENT_TOKEN='management-token-plaintext-fixture'
+not_contains "$final" "$ZITADEL_MANAGEMENT_TOKEN" 'rendered stack never contains plaintext ZITADEL management PAT'
+config_fixture="$(mktemp /tmp/rp-installer-config.XXXXXX)"
+rp_config_write "$config_fixture"
+config_text="$(cat "$config_fixture")"
+contains "$config_text" 'RP_CFG_ZITADEL_ORGANIZATION_ID=zitadel-org-123' 'installer config persists ZITADEL organization id'
+contains "$config_text" 'RP_CFG_ZITADEL_PROJECT_ID=zitadel-project-456' 'installer config persists ZITADEL project id'
+contains "$config_text" 'RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF=rp_zitadel_management_token_feedfacefeedface' 'installer config persists only management secret ref'
+not_contains "$config_text" "$ZITADEL_MANAGEMENT_TOKEN" 'installer config never persists plaintext ZITADEL management PAT'
+rm -f "$config_fixture"
+unset ZITADEL_MANAGEMENT_TOKEN
 
 contains "$final" 'node.labels.resourceportal.storage.platform == true' 'stateful platform services require platform storage'
 contains "$final" 'node.labels.resourceportal.storage.authoritative == true' 'operation worker requires authoritative storage host'
@@ -127,6 +151,15 @@ contains "$final" 'RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform'
 status 0 'accept exact digest API image' rp_validate_image_ref "$RP_CFG_API_IMAGE"
 status 1 'reject mutable latest image' rp_validate_image_ref 'ghcr.io/re-invertion/resourceportal-api:latest'
 status 1 'reject short digest' rp_validate_image_ref 'ghcr.io/re-invertion/resourceportal-api@sha256:abc'
+saved_org="$RP_CFG_ZITADEL_ORGANIZATION_ID"; unset RP_CFG_ZITADEL_ORGANIZATION_ID
+status 1 'final stack config requires ZITADEL organization id' rp_require_stack_config final
+export RP_CFG_ZITADEL_ORGANIZATION_ID="$saved_org"
+saved_project="$RP_CFG_ZITADEL_PROJECT_ID"; unset RP_CFG_ZITADEL_PROJECT_ID
+status 1 'final stack config requires ZITADEL project id' rp_require_stack_config final
+export RP_CFG_ZITADEL_PROJECT_ID="$saved_project"
+saved_management_ref="$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF"; unset RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
+status 1 'final stack config requires ZITADEL management secret ref' rp_require_stack_config final
+export RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$saved_management_ref"
 
 # Deployment must fail closed when rendering or Docker rejects the stack.
 original_render_stack="$(declare -f rp_render_stack)"
@@ -145,6 +178,7 @@ eval "$original_render_stack"
 if [[ -n "$original_docker" ]]; then eval "$original_docker"; else unset -f docker; fi
 
 control_source="$(cat "$repo_root/scripts/installer/control-plane.sh")"
+contains "$control_source" 'rp_recover_zitadel_management_state' 'every final stack deploy recovers legacy ZITADEL management state before rendering'
 contains "$control_source" 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"' 'migration reads database URL from Swarm Secret'
 migration_source="$(sed -n '/rp_run_migrations()/,/^}/p' "$repo_root/scripts/installer/control-plane.sh")"
 contains "$migration_source" '--detach' 'migration one-shot service is created detached before explicit polling'
@@ -154,14 +188,12 @@ contains "$dockerfile_source" 'COPY --chown=node:node --from=production-dependen
 not_contains "$final" 'mode: replicated-job' 'stack avoids unsupported DR job mode'
 not_contains "$final" 'condition: on-failure' 'long-running stack services restart after clean task exit'
 
-
 contains "$final" '/usr/local/bin/resourceportal-postgres-fence' 'RP PostgreSQL starts through storage fencing wrapper'
 contains "$final" 'RP_POSTGRES_FENCE_NAME: resourceportal-postgres' 'RP PostgreSQL has distinct fencing lock name'
 contains "$final" 'RP_POSTGRES_FENCE_NAME: zitadel-postgres' 'ZITADEL PostgreSQL has distinct fencing lock name'
 contains "$final" '/mnt/resourceportal/platform/fencing' 'PostgreSQL fencing state lives on authoritative platform storage'
 control_template="$(cat "$repo_root/config/production/stack.yml.tpl")"
 contains "$control_template" 'source: postgres_fence_script' 'stack ships PostgreSQL fencing wrapper as config'
-
 
 rp_pg_block="$(awk '/^  postgres-rp:/{flag=1} /^  postgres-zitadel:/{if(flag){exit}} flag' <<<"$final")"
 zitadel_pg_block="$(awk '/^  postgres-zitadel:/{flag=1} /^  zitadel:/{if(flag){exit}} flag' <<<"$final")"
@@ -171,7 +203,6 @@ not_contains "$rp_pg_block" 'postgres-rp-writer' 'RP PostgreSQL no longer relies
 contains "$zitadel_pg_block" 'node.labels.resourceportal.storage.platform == true' 'ZITADEL PostgreSQL can run on any platform-storage manager'
 not_contains "$zitadel_pg_block" 'resourceportal.storage.authoritative' 'ZITADEL PostgreSQL is not pinned to authoritative storage host'
 not_contains "$zitadel_pg_block" 'postgres-zitadel-writer' 'ZITADEL PostgreSQL no longer relies on static writer label'
-
 
 contains "$final" 'name: rp_cookie_secret_' 'stack aliases versioned cookie secret'
 contains "$final" 'name: rp_internal_worker_token_' 'stack aliases versioned internal worker token'
