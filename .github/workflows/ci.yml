@@ -43,6 +43,8 @@ jobs:
           shellcheck --severity=warning -x resourceportal-install.sh scripts/installer/*.sh packages/resourceportal-postgres/postgres-fence.sh test/installer/*.sh
       - name: Validate Production Installer contracts
         run: npm run test:installer
+      - name: Validate installable CLI release package
+        run: npm run test:cli-release
       - name: Lint
         run: npm run lint
       - name: Test

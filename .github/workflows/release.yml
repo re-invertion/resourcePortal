@@ -26,8 +26,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Install Node dependencies
+        run: npm ci
       - name: Validate Production Installer contracts before publishing
         run: npm run test:installer
+      - name: Validate installable CLI release package before publishing
+        run: npm run test:cli-release
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -48,6 +52,26 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Build installable CLI release asset
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build --workspace @resource-portal/sdk
+          npm run build --workspace @resource-portal/cli
+          rm -rf cli-release
+          scripts/package-cli-release.sh \
+            "$VERSION" \
+            packages/resourceportal-cli/dist \
+            packages/resourceportal-sdk/dist \
+            cli-release
+          (cd cli-release && sha256sum -c SHA256SUMS)
+          verify_prefix="$(mktemp -d)"
+          trap 'rm -rf "$verify_prefix"' EXIT
+          npm install --global --prefix "$verify_prefix" "./cli-release/resource-portal-cli-${VERSION}.tgz" >/dev/null
+          "$verify_prefix/bin/rp" --help >/dev/null
+          "$verify_prefix/bin/resourceportal" --help >/dev/null
       - name: Build and publish API image
         id: api
         uses: docker/build-push-action@v6
@@ -126,14 +150,21 @@ jobs:
             docker buildx imagetools inspect "$ref" >/dev/null
           done
 
-      - name: Publish GitHub Release asset
+      - name: Publish GitHub Release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
+          set -euo pipefail
+          assets=(
+            resourceportal-release-manifest.json
+            "cli-release/resource-portal-cli-${VERSION}.tgz"
+            cli-release/SHA256SUMS
+          )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" resourceportal-release-manifest.json --clobber
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$RELEASE_TAG" resourceportal-release-manifest.json --generate-notes
+            gh release create "$RELEASE_TAG" "${assets[@]}" --generate-notes
           fi

@@ -25,6 +25,14 @@ contains_file "$repo_root/.github/workflows/production-installer.yml" 'shellchec
 contains_file "$repo_root/.github/workflows/production-installer.yml" 'test/installer/test-acme-resilience.sh' 'dedicated installer gate highlights ACME resilience suite'
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'scripts/installer/**' 'Codespaces workflow watches installer changes'
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'test/installer/**' 'Codespaces workflow watches installer tests'
+contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:cli-release' 'CI validates installable CLI release package'
+contains_file "$repo_root/.github/workflows/release.yml" 'run: npm ci' 'Release installs Node dependencies before CLI build'
+contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/sdk' 'Release builds SDK for CLI package'
+contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/cli' 'Release builds CLI package'
+contains_file "$repo_root/.github/workflows/release.yml" 'scripts/package-cli-release.sh' 'Release packages installable CLI asset'
+contains_file "$repo_root/.github/workflows/release.yml" 'cli-release/SHA256SUMS' 'Release publishes CLI checksums'
+contains_file "$repo_root/.github/workflows/release.yml" 'cli-release/resource-portal-cli-${VERSION}.tgz' 'Release publishes versioned CLI archive'
+contains_file "$repo_root/.github/workflows/release.yml" '"./cli-release/resource-portal-cli-${VERSION}.tgz"' 'Release verifies CLI from an explicit local tarball path'
 
 if (( failures > 0 )); then printf '%s workflow test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer workflow contract tests passed.\n'
