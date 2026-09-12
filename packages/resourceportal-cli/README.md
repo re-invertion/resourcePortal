@@ -2,6 +2,21 @@ Resource Portal CLI exposes Resource Portal operations through `rp` and `resourc
 
 The CLI uses `@resource-portal/sdk`, so all operations go through the public HTTP API.
 
+## Install from GitHub Releases
+
+Release builds publish a self-contained npm tarball with the Resource Portal SDK bundled inside it. Node.js 22 or newer is required.
+
+```bash
+VERSION=X.Y.Z
+curl -fLO "https://github.com/re-invertion/resourcePortal/releases/download/v${VERSION}/resource-portal-cli-${VERSION}.tgz"
+curl -fLO "https://github.com/re-invertion/resourcePortal/releases/download/v${VERSION}/SHA256SUMS"
+sha256sum -c SHA256SUMS
+npm install -g "./resource-portal-cli-${VERSION}.tgz"
+rp --help
+```
+
+The installed package provides both `rp` and `resourceportal`. The tarball does not require `@resource-portal/sdk` to be published separately to npm.
+
 ## Auth
 
 ### Human login (recommended)
