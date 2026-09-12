@@ -69,10 +69,46 @@ export class OidcAuthService {
       };
     }
 
+    const humanClaims = await this.resolveHumanClaims(token, payload);
     return {
       type: "User",
-      user: await this.findOrProvisionUser(this.getIssuer(), payload),
+      user: await this.findOrProvisionUser(this.getIssuer(), humanClaims),
     };
+  }
+
+  private async resolveHumanClaims(
+    token: string,
+    payload: JWTPayload,
+  ): Promise<JWTPayload> {
+    if (typeof payload.email === "string" && payload.email.length > 0) {
+      return payload;
+    }
+
+    const subject = this.requireStringClaim(payload.sub, "sub");
+    return this.fetchUserInfo(token, subject);
+  }
+
+  private async fetchUserInfo(
+    token: string,
+    expectedSubject: string,
+  ): Promise<JWTPayload> {
+    const discovery = await this.getDiscovery();
+    if (!discovery.userInfoEndpoint) {
+      throw new UnauthorizedException("OIDC UserInfo endpoint is unavailable");
+    }
+
+    const response = await fetch(discovery.userInfoEndpoint, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      throw new UnauthorizedException("OIDC UserInfo request failed");
+    }
+
+    const claims = (await response.json()) as JWTPayload;
+    if (claims.sub !== expectedSubject) {
+      throw new UnauthorizedException("OIDC UserInfo subject mismatch");
+    }
+    return claims;
   }
 
   private async verifyToken(token: string) {

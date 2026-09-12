@@ -18,7 +18,7 @@ function createConfig(values: ConfigValues) {
   } as ConfigService;
 }
 
-async function createTokenFixture(emailVerified = true) {
+async function createTokenFixture(emailVerified = true, includeEmail = true) {
   const issuer = "https://issuer.example.com";
   const audience = "resource-portal";
   const subject = "zitadel-user-1";
@@ -30,7 +30,7 @@ async function createTokenFixture(emailVerified = true) {
   publicJwk.use = "sig";
 
   const token = await new SignJWT({
-    email: "User@Example.com",
+    ...(includeEmail ? { email: "User@Example.com" } : {}),
     email_verified: emailVerified,
     name: "Example User",
   })
@@ -54,10 +54,11 @@ async function createTokenFixture(emailVerified = true) {
   };
 }
 
-function installOidcFetch(fixture: Awaited<ReturnType<typeof createTokenFixture>>) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((input: string | URL | Request) => {
+function installOidcFetch(
+  fixture: Awaited<ReturnType<typeof createTokenFixture>>,
+  userInfo?: Record<string, unknown>,
+) {
+  const fetchMock = vi.fn((input: string | URL | Request) => {
       const url =
         typeof input === "string"
           ? input
@@ -88,6 +89,17 @@ function installOidcFetch(fixture: Awaited<ReturnType<typeof createTokenFixture>
         );
       }
 
+      if (url === `${fixture.issuer}/oidc/v1/userinfo` && userInfo) {
+        return Promise.resolve(
+          new Response(JSON.stringify(userInfo), {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          }),
+        );
+      }
+
       if (url === fixture.jwksUri) {
         return Promise.resolve(
           new Response(
@@ -109,8 +121,9 @@ function installOidcFetch(fixture: Awaited<ReturnType<typeof createTokenFixture>
           status: 404,
         }),
       );
-    }),
-  );
+    });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("OidcAuthService", () => {
@@ -133,6 +146,131 @@ describe("OidcAuthService", () => {
       deviceAuthorizationEndpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
       userInfoEndpoint: `${fixture.issuer}/oidc/v1/userinfo`,
     });
+  });
+
+  it("uses UserInfo when a verified human access token omits email", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      userIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+      user: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "user-1",
+          email: "patryk@example.test",
+          displayName: "Patryk",
+          status: UserStatus.Active,
+        }),
+      },
+    };
+    const fetchMock = installOidcFetch(fixture, {
+      sub: fixture.subject,
+      email: "patryk@example.test",
+      email_verified: true,
+      name: "Patryk",
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+        OIDC_PROVIDER_TYPE: "zitadel",
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    const principal = await service.authenticatePrincipalToken(fixture.token);
+
+    expect(principal).toMatchObject({
+      type: "User",
+      user: { email: "patryk@example.test" },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${fixture.issuer}/oidc/v1/userinfo`,
+      expect.objectContaining({
+        headers: { authorization: `Bearer ${fixture.token}` },
+      }),
+    );
+  });
+
+  it("rejects UserInfo subject mismatch", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = { $queryRaw: vi.fn().mockResolvedValue([]) };
+    installOidcFetch(fixture, {
+      sub: "different-subject",
+      email: "patryk@example.test",
+      email_verified: true,
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    await expect(service.authenticatePrincipalToken(fixture.token)).rejects.toThrow(
+      "OIDC UserInfo subject mismatch",
+    );
+  });
+
+  it("does not call UserInfo for an invalid JWT", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = { $queryRaw: vi.fn() };
+    const fetchMock = installOidcFetch(fixture, {
+      sub: fixture.subject,
+      email: "patryk@example.test",
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    await expect(service.authenticatePrincipalToken("bad-token")).rejects.toThrow(
+      "OIDC bearer token is invalid",
+    );
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/oidc/v1/userinfo")),
+    ).toHaveLength(0);
+  });
+
+  it("keeps service identity bearer authentication independent of UserInfo", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = {
+      $queryRaw: vi.fn().mockResolvedValue([
+        {
+          id: "service-1",
+          tenantId: "tenant-1",
+          name: "cli",
+          status: "Active",
+          zitadelUserId: fixture.subject,
+          clientId: "rp-si-service-1",
+        },
+      ]),
+    };
+    const fetchMock = installOidcFetch(fixture, {
+      sub: fixture.subject,
+      email: "should-not-be-used@example.test",
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    const principal = await service.authenticatePrincipalToken(fixture.token);
+
+    expect(principal).toMatchObject({
+      type: "ServiceIdentity",
+      serviceIdentity: { id: "service-1" },
+    });
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/oidc/v1/userinfo")),
+    ).toHaveLength(0);
   });
 
   it("verifies an OIDC token and auto-provisions a verified user identity", async () => {
