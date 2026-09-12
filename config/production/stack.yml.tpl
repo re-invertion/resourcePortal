@@ -33,6 +33,9 @@ secrets:
   rp_oidc_client_secret:
     external: true
     name: __OIDC_SWARM_REF__
+  rp_zitadel_management_token:
+    external: true
+    name: __ZITADEL_MANAGEMENT_SWARM_REF__
 
 volumes: {}
 
@@ -177,6 +180,9 @@ services:
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
+      ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token
+      ZITADEL_ORGANIZATION_ID: __ZITADEL_ORGANIZATION_ID__
+      ZITADEL_PROJECT_ID: __ZITADEL_PROJECT_ID__
       OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
       OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
@@ -194,6 +200,7 @@ services:
       - rp_cookie_secret
       - rp_internal_worker_token
       - rp_oidc_client_secret
+      - rp_zitadel_management_token
     volumes:
       - type: bind
         source: __STORAGE_BASE_PATH__
