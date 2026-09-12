@@ -88,8 +88,57 @@ export function clearConfig() {
   }
 }
 
+export type LoginOptions = {
+  apiUrl: string;
+  token?: string;
+  devUserId?: string;
+};
+
+export async function login(
+  options: LoginOptions,
+): Promise<{ apiUrl: string; status: "LoggedIn" }> {
+  const apiUrl = normalizeApiUrl(options.apiUrl);
+  if (options.devUserId) {
+    writeConfig({ apiUrl, devUserId: options.devUserId });
+  } else if (options.token) {
+    await manualTokenLogin(apiUrl, options.token);
+  } else {
+    await interactiveLogin(apiUrl);
+  }
+  return { apiUrl, status: "LoggedIn" };
+}
+
+export async function logout(): Promise<{ status: "LoggedOut"; warning?: string }> {
+  const config = readConfig();
+  let warning: string | undefined;
+  try {
+    if (config.auth?.revocationEndpoint && config.auth.clientId) {
+      const token = config.auth.refreshToken ?? config.token;
+      if (token) {
+        const response = await fetch(config.auth.revocationEndpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            token,
+            client_id: config.auth.clientId,
+            token_type_hint: config.auth.refreshToken ? "refresh_token" : "access_token",
+          }),
+        });
+        if (!response.ok) {
+          warning = `Remote token revocation failed with HTTP ${response.status}; local credentials were removed.`;
+        }
+      }
+    }
+  } catch {
+    warning = "Remote token revocation failed; local credentials were removed.";
+  } finally {
+    clearConfig();
+  }
+  return warning ? { status: "LoggedOut", warning } : { status: "LoggedOut" };
+}
+
 export async function resolveAuth(
-  _apiUrl: string,
+  apiUrl: string,
 ): Promise<{ token?: string; devUserId?: string }> {
   if (process.env.RESOURCE_PORTAL_TOKEN) {
     return { token: process.env.RESOURCE_PORTAL_TOKEN };
@@ -102,10 +151,75 @@ export async function resolveAuth(
   if (config.devUserId) {
     return { devUserId: config.devUserId };
   }
-  if (config.token) {
+  if (!config.token) {
+    return {};
+  }
+  if (!config.auth || config.auth.mode !== "device" || !config.auth.expiresAt) {
     return { token: config.token };
   }
-  return {};
+
+  const expiresAt = Date.parse(config.auth.expiresAt);
+  if (Number.isFinite(expiresAt) && expiresAt > Date.now() + 60_000) {
+    return { token: config.token };
+  }
+  if (!config.auth.refreshToken) {
+    throw new Error("Authentication expired. Run rp login.");
+  }
+  return refreshDeviceAuth(
+    normalizeApiUrl(apiUrl),
+    config.apiUrl,
+    config.auth,
+  );
+}
+
+async function refreshDeviceAuth(
+  apiUrl: string,
+  configuredApiUrl: string | undefined,
+  auth: CliAuthMetadata,
+): Promise<{ token: string }> {
+  const response = await fetch(auth.tokenEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: auth.refreshToken ?? "",
+      client_id: auth.clientId,
+    }),
+  });
+  const payload = await responseJson(response, "OIDC refresh response is malformed");
+  if (!response.ok) {
+    const error = isRecord(payload) ? nonEmptyString(payload.error) : undefined;
+    if (error === "invalid_grant") {
+      writeConfig({ apiUrl: configuredApiUrl ?? apiUrl });
+      throw new Error("Authentication expired. Run rp login.");
+    }
+    throw new Error("Token refresh failed. Run rp login.");
+  }
+
+  const refreshed = parseDeviceToken(payload);
+  await validateResourcePortalToken(apiUrl, refreshed.access_token);
+  const expiresAt = refreshed.expires_in
+    ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
+    : undefined;
+  const nextAuth: CliAuthMetadata = {
+    mode: "device",
+    issuer: auth.issuer,
+    clientId: auth.clientId,
+    tokenEndpoint: auth.tokenEndpoint,
+    ...(auth.revocationEndpoint
+      ? { revocationEndpoint: auth.revocationEndpoint }
+      : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(refreshed.refresh_token || auth.refreshToken
+      ? { refreshToken: refreshed.refresh_token ?? auth.refreshToken }
+      : {}),
+  };
+  writeConfig({
+    apiUrl: configuredApiUrl ?? apiUrl,
+    token: refreshed.access_token,
+    auth: nextAuth,
+  });
+  return { token: refreshed.access_token };
 }
 
 export async function manualTokenLogin(apiUrl: string, token: string): Promise<CliConfig> {

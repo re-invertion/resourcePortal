@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { ResourcePortalApiError, ResourcePortalClient } from "@resource-portal/sdk";
-import { clearConfig, readConfig, writeConfig } from "./auth.js";
+import { login, logout, readConfig, resolveAuth } from "./auth.js";
 
 type OutputFormat = "json" | "table";
 type Flags = Record<string, string | number | boolean | string[]>;
@@ -329,12 +329,16 @@ async function main() {
   }
 
   if (parsed.group === "login") {
-    printResult(login(parsed.options), parsed.options.output);
+    printResult(await login({
+      apiUrl: parsed.options.apiUrl,
+      ...(parsed.options.token ? { token: parsed.options.token } : {}),
+      ...(parsed.options.devUserId ? { devUserId: parsed.options.devUserId } : {}),
+    }), parsed.options.output);
     return;
   }
 
   if (parsed.group === "logout") {
-    printResult(logout(), parsed.options.output);
+    printResult(await logout(), parsed.options.output);
     return;
   }
 
@@ -349,10 +353,15 @@ async function main() {
     );
   }
 
+  const auth = parsed.options.token
+    ? { token: parsed.options.token }
+    : parsed.options.devUserId
+      ? { devUserId: parsed.options.devUserId }
+      : await resolveAuth(parsed.options.apiUrl);
   const client = new ResourcePortalClient({
     apiUrl: parsed.options.apiUrl,
-    devUserId: parsed.options.devUserId,
-    token: parsed.options.token,
+    devUserId: auth.devUserId,
+    token: auth.token,
   });
   const result = await found.run(parsed, client);
   printResult(result, parsed.options.output);
@@ -432,8 +441,6 @@ function parseArgs(argv: string[]): ParsedArgs {
       process.env.RESOURCE_PORTAL_API_URL ??
       config.apiUrl ??
       "http://localhost:3000/api",
-    devUserId: process.env.RESOURCE_PORTAL_DEV_USER_ID ?? config.devUserId,
-    token: process.env.RESOURCE_PORTAL_TOKEN ?? config.token,
     output: "table",
   };
   const positional: string[] = [];
@@ -496,24 +503,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     help,
     options,
   };
-}
-
-function login(options: GlobalOptions) {
-  if (!options.token && !options.devUserId) {
-    throw new Error("Missing credentials. Use --token TOKEN or --dev-user-id USER_ID");
-  }
-
-  writeConfig({
-    apiUrl: options.apiUrl,
-    devUserId: options.devUserId,
-    token: options.token,
-  });
-  return { apiUrl: options.apiUrl, status: "LoggedIn" };
-}
-
-function logout() {
-  clearConfig();
-  return { status: "LoggedOut" };
 }
 
 function bodyFromFlags(flags: Flags, required: string[], optional: string[]) {
@@ -643,6 +632,7 @@ function printHelp(parsed: ParsedArgs) {
   console.log("Resource Portal CLI");
   console.log("");
   console.log("Usage:");
+  console.log("  rp login --api-url URL");
   console.log("  rp login --api-url URL --token TOKEN");
   console.log("  rp login --api-url URL --dev-user-id USER_ID");
   console.log("  rp logout");

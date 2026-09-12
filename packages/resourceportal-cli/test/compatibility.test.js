@@ -2,7 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
 const http = require("node:http");
-const { resolve } = require("node:path");
+const { mkdtempSync, readFileSync, rmSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
 const packageJson = require("../package.json");
 
 const bin = resolve(__dirname, "..", packageJson.bin.rp);
@@ -17,13 +19,15 @@ function cliHelp() {
   });
 }
 
-function runCli(args) {
+function runCli(args, envOverrides = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(process.execPath, [bin, ...args], {
       env: {
         ...process.env,
         RESOURCE_PORTAL_API_URL: "",
         RESOURCE_PORTAL_TOKEN: "",
+        RESOURCE_PORTAL_DEV_USER_ID: "",
+        ...envOverrides,
       },
     });
     let stdout = "";
@@ -162,4 +166,123 @@ test("singleton DTO array flags are sent as arrays", async () => {
     "openid",
   ]);
   assert.deepEqual(identityProviderRequest.body.scopes, ["openid"]);
+});
+
+
+async function startLoginCommandServer() {
+  let baseUrl = "";
+  const calls = { cliConfig: 0, device: 0, token: 0, account: [] };
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      const send = (status, body) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(body));
+      };
+      if (request.method === "GET" && request.url === "/api/auth/cli-config") {
+        calls.cliConfig += 1;
+        return send(200, { issuer: baseUrl, clientId: "cli-command-client", scopes: ["openid", "rp-aud"] });
+      }
+      if (request.method === "GET" && request.url === "/.well-known/openid-configuration") {
+        return send(200, {
+          issuer: baseUrl,
+          device_authorization_endpoint: `${baseUrl}/oauth/v2/device_authorization`,
+          token_endpoint: `${baseUrl}/oauth/v2/token`,
+        });
+      }
+      if (request.method === "POST" && request.url === "/oauth/v2/device_authorization") {
+        calls.device += 1;
+        return send(200, {
+          device_code: "command-device-code",
+          user_code: "COMMAND-CODE",
+          verification_uri: `${baseUrl}/device`,
+          verification_uri_complete: `${baseUrl}/device?user_code=COMMAND-CODE`,
+          expires_in: 60,
+          interval: 0,
+        });
+      }
+      if (request.method === "POST" && request.url === "/oauth/v2/token") {
+        calls.token += 1;
+        return send(200, { access_token: "command-device-token", token_type: "Bearer", expires_in: 3600 });
+      }
+      if (request.method === "GET" && request.url === "/api/auth/me") {
+        calls.account.push(request.headers.authorization);
+        return send(200, { id: "user-command" });
+      }
+      return send(404, { message: "not found" });
+    });
+  });
+  await new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  baseUrl = `http://127.0.0.1:${address.port}`;
+  return {
+    apiUrl: `${baseUrl}/api`,
+    calls,
+    close: () => new Promise((resolveClose) => server.close(resolveClose)),
+  };
+}
+
+function readCliConfig(home) {
+  return JSON.parse(readFileSync(join(home, ".resourceportal", "config.json"), "utf8"));
+}
+
+test("rp login without credentials runs browser device authorization", async () => {
+  const server = await startLoginCommandServer();
+  const home = mkdtempSync(join(tmpdir(), "rp-cli-command-"));
+  try {
+    const result = await runCli(
+      ["login", "--api-url", server.apiUrl, "--output", "json"],
+      { HOME: home, USERPROFILE: home, PATH: "" },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(server.calls.cliConfig, 1);
+    assert.equal(server.calls.device, 1);
+    assert.equal(server.calls.token, 1);
+    assert.deepEqual(server.calls.account, ["Bearer command-device-token"]);
+    const stored = readCliConfig(home);
+    assert.equal(stored.token, "command-device-token");
+    assert.equal(stored.auth.mode, "device");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("rp login --token validates manual bearer before reporting LoggedIn", async () => {
+  const server = await startLoginCommandServer();
+  const home = mkdtempSync(join(tmpdir(), "rp-cli-command-"));
+  try {
+    const result = await runCli(
+      ["login", "--api-url", server.apiUrl, "--token", "manual-command-token", "--output", "json"],
+      { HOME: home, USERPROFILE: home },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(server.calls.account, ["Bearer manual-command-token"]);
+    assert.deepEqual(readCliConfig(home), { apiUrl: server.apiUrl, token: "manual-command-token" });
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("rp login --dev-user-id stores only development authentication", async () => {
+  const home = mkdtempSync(join(tmpdir(), "rp-cli-command-"));
+  try {
+    const result = await runCli(
+      ["login", "--api-url", "http://127.0.0.1:9/api", "--dev-user-id", "dev-command-user", "--output", "json"],
+      { HOME: home, USERPROFILE: home },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(readCliConfig(home), {
+      apiUrl: "http://127.0.0.1:9/api",
+      devUserId: "dev-command-user",
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

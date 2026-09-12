@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readConfig } from "./auth.js";
+import { readConfig, resolveAuth } from "./auth.js";
 import { ResourcePortalApiError, ResourcePortalClient } from "@resource-portal/sdk";
 
 type HealthOptions = {
@@ -41,12 +41,26 @@ if (help && !group) {
 }
 
 async function runHealth(commandName: string, options: HealthOptions) {
+  let auth: { token?: string; devUserId?: string } = options.token
+    ? { token: options.token }
+    : options.devUserId
+      ? { devUserId: options.devUserId }
+      : {};
+  if (!options.token && !options.devUserId) {
+    try {
+      auth = await resolveAuth(options.apiUrl);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "Authentication expired. Run rp login.") {
+        throw error;
+      }
+    }
+  }
   const client = new ResourcePortalClient({
     apiUrl: options.apiUrl,
     correlationId: options.correlationId,
-    devUserId: options.devUserId,
+    devUserId: auth.devUserId,
     requestId: options.requestId,
-    token: options.token,
+    token: auth.token,
   });
 
   let result: unknown;
@@ -75,10 +89,8 @@ function parseOptions(values: string[]): HealthOptions {
       config.apiUrl ??
       "http://localhost:3000/api",
     correlationId: process.env.RESOURCE_PORTAL_CORRELATION_ID,
-    devUserId: process.env.RESOURCE_PORTAL_DEV_USER_ID ?? config.devUserId,
     output: "table",
     requestId: process.env.RESOURCE_PORTAL_REQUEST_ID,
-    token: process.env.RESOURCE_PORTAL_TOKEN ?? config.token,
   };
 
   for (let index = 0; index < values.length; index += 1) {

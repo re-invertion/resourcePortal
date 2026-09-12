@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readConfig } from "./auth.js";
+import { readConfig, resolveAuth } from "./auth.js";
 import {
   ResourcePortalApiError,
   ResourcePortalClient,
@@ -81,12 +81,17 @@ async function runCompatibilityCommand(parsedArgs: ParsedArgs) {
     return;
   }
 
+  const auth = parsedArgs.options.token
+    ? { token: parsedArgs.options.token }
+    : parsedArgs.options.devUserId
+      ? { devUserId: parsedArgs.options.devUserId }
+      : await resolveAuth(parsedArgs.options.apiUrl);
   const client = new ResourcePortalClient({
     apiUrl: parsedArgs.options.apiUrl,
     correlationId: parsedArgs.options.correlationId,
-    devUserId: parsedArgs.options.devUserId,
+    devUserId: auth.devUserId,
     requestId: parsedArgs.options.requestId,
-    token: parsedArgs.options.token,
+    token: auth.token,
   });
   const key = `${parsedArgs.group} ${parsedArgs.command}`;
   let result: unknown;
@@ -380,10 +385,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       config.apiUrl ??
       "http://localhost:3000/api",
     correlationId: process.env.RESOURCE_PORTAL_CORRELATION_ID,
-    devUserId: process.env.RESOURCE_PORTAL_DEV_USER_ID ?? config.devUserId,
     output: "table",
     requestId: process.env.RESOURCE_PORTAL_REQUEST_ID,
-    token: process.env.RESOURCE_PORTAL_TOKEN ?? config.token,
   };
   const positional: string[] = [];
   const flags: Flags = {};

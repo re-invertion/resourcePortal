@@ -142,8 +142,15 @@ async function startDeviceAuthServer(options = {}) {
         });
       }
       if (req.method === "POST" && req.url === "/oauth/v2/token") {
+        const form = new URLSearchParams(bodyText);
+        if (form.get("grant_type") === "refresh_token" && options.refreshResponse) {
+          return json(options.refreshResponse.status, options.refreshResponse.body);
+        }
         const next = tokenResponses.shift() || { status: 400, body: { error: "expired_token" } };
         return json(next.status, next.body);
+      }
+      if (req.method === "POST" && req.url === "/oauth/v2/revoke") {
+        return json(options.revocationStatus || 200, {});
       }
       if (req.method === "GET" && req.url === "/api/auth/me") {
         if (options.accountStatus && options.accountStatus !== 200) {
@@ -337,6 +344,175 @@ test("manual token login validates token and rejects invalid token without persi
     const { manualTokenLogin, readConfig } = loadAuth();
     await assert.rejects(manualTokenLogin(server.apiUrl, "manual-bad-token"));
     assert.deepEqual(readConfig(), {});
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+test("shared login stores only dev authentication when dev user is explicit", async () => {
+  const home = withHome();
+  try {
+    const { login, readConfig } = loadAuth();
+    const result = await login({ apiUrl: "https://rp.example/api", devUserId: "dev-user-1" });
+    assert.deepEqual(result, { apiUrl: "https://rp.example/api", status: "LoggedIn" });
+    assert.deepEqual(readConfig(), { apiUrl: "https://rp.example/api", devUserId: "dev-user-1" });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("shared login validates and stores explicit manual token without stale metadata", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer();
+  try {
+    const { login, writeConfig, readConfig } = loadAuth();
+    writeConfig({
+      apiUrl: server.apiUrl,
+      devUserId: "stale-dev",
+      token: "stale-token",
+      auth: {
+        mode: "device",
+        issuer: "https://stale.example",
+        clientId: "stale-client",
+        tokenEndpoint: "https://stale.example/token",
+        refreshToken: "stale-refresh",
+      },
+    });
+    await login({ apiUrl: server.apiUrl, token: "manual-good-token" });
+    assert.deepEqual(readConfig(), { apiUrl: server.apiUrl, token: "manual-good-token" });
+    const validation = server.requests.find((request) => request.url === "/api/auth/me");
+    assert.equal(validation.headers.authorization, "Bearer manual-good-token");
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("expired stored device token without refresh requires rp login and never starts interactive login", async () => {
+  const home = withHome();
+  try {
+    const { writeConfig, resolveAuth } = loadAuth();
+    writeConfig({
+      apiUrl: "https://rp.example/api",
+      token: "expired-token",
+      auth: {
+        mode: "device",
+        issuer: "https://auth.example",
+        clientId: "cli-client",
+        tokenEndpoint: "https://auth.example/token",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+      },
+    });
+    await assert.rejects(
+      resolveAuth("https://rp.example/api"),
+      { message: "Authentication expired. Run rp login." },
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolveAuth refreshes an expired device token, validates it, and persists refresh rotation", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer({
+    refreshResponse: {
+      status: 200,
+      body: {
+        access_token: "refreshed-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+        refresh_token: "rotated-refresh",
+      },
+    },
+  });
+  try {
+    const { writeConfig, resolveAuth, readConfig } = loadAuth();
+    writeConfig({
+      apiUrl: server.apiUrl,
+      token: "expired-token",
+      auth: {
+        mode: "device",
+        issuer: server.apiUrl.slice(0, -4),
+        clientId: "rp-cli-client",
+        tokenEndpoint: `${server.apiUrl.slice(0, -4)}/oauth/v2/token`,
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        refreshToken: "old-refresh",
+      },
+    });
+
+    assert.deepEqual(await resolveAuth(server.apiUrl), { token: "refreshed-token" });
+    const stored = readConfig();
+    assert.equal(stored.token, "refreshed-token");
+    assert.equal(stored.auth.refreshToken, "rotated-refresh");
+    const refresh = server.requests.find((request) => {
+      if (request.url !== "/oauth/v2/token") return false;
+      return new URLSearchParams(request.body).get("grant_type") === "refresh_token";
+    });
+    const body = new URLSearchParams(refresh.body);
+    assert.equal(body.get("refresh_token"), "old-refresh");
+    assert.equal(body.get("client_id"), "rp-cli-client");
+    assert.equal(refresh.headers.authorization, undefined);
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("invalid refresh grant clears unusable device credentials and requires login", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer({
+    refreshResponse: { status: 400, body: { error: "invalid_grant" } },
+  });
+  try {
+    const { writeConfig, resolveAuth, readConfig } = loadAuth();
+    writeConfig({
+      apiUrl: server.apiUrl,
+      token: "expired-token",
+      auth: {
+        mode: "device",
+        issuer: server.apiUrl.slice(0, -4),
+        clientId: "rp-cli-client",
+        tokenEndpoint: `${server.apiUrl.slice(0, -4)}/oauth/v2/token`,
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        refreshToken: "invalid-refresh",
+      },
+    });
+    await assert.rejects(resolveAuth(server.apiUrl), { message: "Authentication expired. Run rp login." });
+    assert.deepEqual(readConfig(), { apiUrl: server.apiUrl });
+  } finally {
+    await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("logout revokes refresh token best-effort and always clears local config", async () => {
+  const home = withHome();
+  const server = await startDeviceAuthServer({ revocationStatus: 500 });
+  try {
+    const { writeConfig, logout, readConfig } = loadAuth();
+    writeConfig({
+      apiUrl: server.apiUrl,
+      token: "access-token",
+      auth: {
+        mode: "device",
+        issuer: server.apiUrl.slice(0, -4),
+        clientId: "rp-cli-client",
+        tokenEndpoint: `${server.apiUrl.slice(0, -4)}/oauth/v2/token`,
+        revocationEndpoint: `${server.apiUrl.slice(0, -4)}/oauth/v2/revoke`,
+        refreshToken: "refresh-to-revoke",
+      },
+    });
+    const result = await logout();
+    assert.equal(result.status, "LoggedOut");
+    assert.match(result.warning, /remote token revocation failed/i);
+    assert.deepEqual(readConfig(), {});
+    const revoke = server.requests.find((request) => request.url === "/oauth/v2/revoke");
+    const body = new URLSearchParams(revoke.body);
+    assert.equal(body.get("token"), "refresh-to-revoke");
+    assert.equal(body.get("client_id"), "rp-cli-client");
+    assert.equal(body.get("token_type_hint"), "refresh_token");
   } finally {
     await server.close();
     rmSync(home, { recursive: true, force: true });
