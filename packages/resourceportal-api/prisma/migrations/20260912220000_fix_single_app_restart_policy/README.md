@@ -1,0 +1,1 @@
+This migration updates only the exact legacy implicit SingleApp restart policy created by ResourcePortal (`on-failure`, 5s delay, 3 attempts, 60s window). Explicit custom restart policies are not modified.
