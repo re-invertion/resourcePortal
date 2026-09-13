@@ -191,6 +191,7 @@ services:
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
       PLATFORM_ADMIN_USER_IDS: __PLATFORM_ADMIN_IDS__
+      MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
       RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
@@ -234,6 +235,7 @@ services:
 
   deployment-worker:
     image: __API_IMAGE__
+    user: "0"
     command: ["node", "dist/src/internal/deployment-worker.runner.js"]
     environment:
       NODE_ENV: production
@@ -251,6 +253,8 @@ services:
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
       RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
+      TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
+      TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress
       WORKER_ID: production-deployment-worker
     secrets:
       - rp_database_url
@@ -279,6 +283,11 @@ services:
   operation-worker:
     image: __API_IMAGE__
     user: "0"
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SYS_ADMIN
     command: ["node", "dist/src/operations/operation-worker.runner.js"]
     environment:
       NODE_ENV: production
@@ -304,7 +313,7 @@ services:
       - rp_internal_worker_token
       - rp_oidc_client_secret
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - __STORAGE_DEVICE__:__STORAGE_DEVICE__
       - __STORAGE_BASE_PATH__:__STORAGE_BASE_PATH__
       - /mnt/resourceportal/volumes:/mnt/resourceportal/volumes
     networks:
