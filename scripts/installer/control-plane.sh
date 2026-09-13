@@ -9,7 +9,7 @@ rp_require_stack_config() {
   for key in \
     RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_CFG_POSTGRES_IMAGE RP_CFG_ZITADEL_IMAGE \
     RP_CFG_TRAEFIK_IMAGE RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL \
-    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF; do
+    RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_COOKIE_SWARM_REF RP_CFG_WORKER_SWARM_REF RP_CFG_ZITADEL_KEY_SWARM_REF RP_CFG_STORAGE_DEVICE; do
     value="${!key-}"
     [[ -n "$value" ]] || { printf 'Missing stack configuration: %s\n' "$key" >&2; return 1; }
   done
@@ -69,6 +69,7 @@ rp_render_stack() {
     "WEB_IMAGE|$RP_CFG_WEB_IMAGE"
     "TRAEFIK_IMAGE|$RP_CFG_TRAEFIK_IMAGE"
     "DOMAIN|$RP_CFG_DOMAIN"
+    "MANAGED_DOMAIN_BASE|${RP_CFG_MANAGED_DOMAIN_BASE:-$RP_CFG_DOMAIN}"
     "ZITADEL_DOMAIN|$RP_CFG_ZITADEL_DOMAIN"
     "ACME_EMAIL|$RP_CFG_ACME_EMAIL"
     "ACME_CERT_RESOLVER|$acme_resolver"
@@ -85,6 +86,7 @@ rp_render_stack() {
     "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
+    "STORAGE_DEVICE|$RP_CFG_STORAGE_DEVICE"
     "POSTGRES_RP_REPLICAS|$(rp_stack_replica_value "$state" postgres-rp)"
     "POSTGRES_ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" postgres-zitadel)"
     "ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" zitadel)"

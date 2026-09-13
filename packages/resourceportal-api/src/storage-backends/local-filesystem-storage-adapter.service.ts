@@ -61,7 +61,7 @@ export class LocalFilesystemStorageAdapterService {
       input.volumeId,
     );
     const localPath = this.localPath(backend, storagePath);
-    await mkdir(localPath, { recursive: true });
+    const created = (await mkdir(localPath, { recursive: true })) !== undefined;
     await chmod(localPath, 0o777);
 
     try {
@@ -70,7 +70,9 @@ export class LocalFilesystemStorageAdapterService {
       await this.verifyProject(localPath, input.projectId);
       await this.verifyProjectLimit(filesystem, input.projectId, input.sizeBytes);
     } catch (error) {
-      await rm(localPath, { recursive: true, force: true }).catch(() => undefined);
+      if (created) {
+        await rm(localPath, { recursive: true, force: true }).catch(() => undefined);
+      }
       throw error;
     }
 
@@ -108,7 +110,6 @@ export class LocalFilesystemStorageAdapterService {
   ) {
     return this.measureDirectory(this.localPath(backend, storagePath));
   }
-
 
   private async validateMount(): Promise<LocalStorageFilesystem> {
     const mountRoot = this.mountRoot();
@@ -244,7 +245,6 @@ export class LocalFilesystemStorageAdapterService {
     }
   }
 
-
   private async verifyProjectLimit(
     filesystem: LocalStorageFilesystem,
     projectId: number,
@@ -284,6 +284,7 @@ export class LocalFilesystemStorageAdapterService {
     if (!raw || !/^\d+$/.test(raw)) return null;
     return BigInt(raw);
   }
+
   private runXfsQuota(command: string) {
     const cli = this.config.get<string>("STORAGE_XFS_QUOTA_CLI", "xfs_quota");
     return this.commands.run(cli, [

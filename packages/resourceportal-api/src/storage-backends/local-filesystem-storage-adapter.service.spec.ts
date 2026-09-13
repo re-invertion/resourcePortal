@@ -129,7 +129,9 @@ beforeEach(() => {
     ffree: 0,
     type: 0,
   });
-  mockedMkdir.mockResolvedValue(undefined);
+  mockedMkdir.mockResolvedValue(
+    "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
+  );
   mockedRm.mockResolvedValue(undefined);
   mockedReaddir.mockResolvedValue([]);
 });
@@ -274,6 +276,22 @@ describe("LocalFilesystemStorageAdapterService", () => {
     expect(mockedRm).toHaveBeenCalledWith(localPath, { recursive: true, force: true });
   });
 
+  it("preserves a pre-existing directory when an idempotent retry fails", async () => {
+    mockedMkdir.mockResolvedValueOnce(undefined);
+    const { adapter } = adapterFor({ projectIdReadback: 12099 });
+
+    await expect(
+      adapter.provisionVolume(backend, {
+        tenantId: "tenant-a",
+        volumeId: "volume-a",
+        sizeBytes: 4096n,
+        projectId: 12001,
+      }),
+    ).rejects.toThrow("project quota verification failed");
+
+    expect(mockedRm).not.toHaveBeenCalled();
+  });
+
   it("resizes the XFS hard and soft project quota without changing the project id", async () => {
     const { adapter, runner } = adapterFor();
 
@@ -342,7 +360,6 @@ describe("LocalFilesystemStorageAdapterService", () => {
     ).resolves.toBe(12n);
   });
 
-
   it("rejects an XFS hard quota readback mismatch", async () => {
     const { adapter } = adapterFor({ quotaHardKiB: 5 });
     await expect(adapter.provisionVolume(backend, { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 4096n, projectId: 12001 }))
@@ -354,5 +371,4 @@ describe("LocalFilesystemStorageAdapterService", () => {
     await expect(adapter.provisionVolume(backend, { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 8193n, projectId: 12002 }))
       .rejects.toThrow("Storage project quota verification failed");
   });
-
 });

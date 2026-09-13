@@ -22,6 +22,7 @@ rp_pull_release_images() {
 rp_upgrade_apply() {
   local manifest="$1" previous_stack="$2"
   [[ -r "$previous_stack" ]] || return 1
+  rp_config_apply_defaults || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
