@@ -99,8 +99,11 @@ export function renderTraefikLabels(
     }
   }
 
-  if (Object.keys(labels).length > 0 && options.swarmNetwork) {
-    labels["traefik.swarm.network"] = options.swarmNetwork;
+  if (Object.keys(labels).length > 0) {
+    labels["traefik.enable"] = "true";
+    if (options.swarmNetwork) {
+      labels["traefik.swarm.network"] = options.swarmNetwork;
+    }
   }
 
   return Object.keys(labels).length > 0 ? labels : undefined;
