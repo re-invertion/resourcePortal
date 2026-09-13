@@ -1,0 +1,1 @@
+The v0.1.8 stabilization gate covers managed-domain persistence, production worker privilege separation, storage-device wiring, and Docker-socket ownership. Runtime behavior is additionally covered by API and CLI tests.
