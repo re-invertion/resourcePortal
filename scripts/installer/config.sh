@@ -8,6 +8,7 @@ RP_CONFIG_KEYS=(
   RP_CFG_STORAGE_SERVER_ADDRESS
   RP_CFG_NFS_ADDRESS
   RP_CFG_DOMAIN
+  RP_CFG_MANAGED_DOMAIN_BASE
   RP_CFG_ZITADEL_DOMAIN
   RP_CFG_ACME_EMAIL
   RP_CFG_ACME_ENVIRONMENT
@@ -62,8 +63,16 @@ rp_config_key_allowed() {
   return 1
 }
 
+rp_config_apply_defaults() {
+  if [[ -n "${RP_CFG_DOMAIN:-}" && -z "${RP_CFG_MANAGED_DOMAIN_BASE:-}" ]]; then
+    RP_CFG_MANAGED_DOMAIN_BASE="$RP_CFG_DOMAIN"
+    export RP_CFG_MANAGED_DOMAIN_BASE
+  fi
+}
+
 rp_config_write() {
   local path="$1" key value tmp
+  rp_config_apply_defaults
   tmp="${path}.tmp.$$"
   umask 077
   mkdir -p "$(dirname "$path")"
@@ -89,4 +98,5 @@ rp_config_load() {
     eval "value=$value"
     export "$key=$value"
   done <"$path"
+  rp_config_apply_defaults
 }
