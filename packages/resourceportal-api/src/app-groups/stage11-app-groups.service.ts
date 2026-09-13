@@ -20,10 +20,8 @@ import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { Stage3AppGroupsService } from "./stage3-app-groups.service";
 
 const DEFAULT_RESTART_POLICY = {
-  condition: "on-failure",
+  condition: "any",
   delaySeconds: 5,
-  maxAttempts: 3,
-  windowSeconds: 60,
 } satisfies Prisma.InputJsonObject;
 
 const DEFAULT_UPDATE_POLICY = {
