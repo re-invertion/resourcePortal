@@ -18,6 +18,7 @@ export type TraefikSingleApp = {
 
 export type TraefikRoutingOptions = {
   certResolver?: string;
+  swarmNetwork?: string;
 };
 
 export function protocolModeRequiresTls(protocolMode: string) {
@@ -28,6 +29,7 @@ export function renderTraefikLabels(
   singleApp: TraefikSingleApp,
   options: TraefikRoutingOptions = {
     certResolver: process.env.TRAEFIK_CERT_RESOLVER,
+    swarmNetwork: process.env.TRAEFIK_SWARM_NETWORK,
   },
 ) {
   const labels: Record<string, string> = {};
@@ -95,6 +97,10 @@ export function renderTraefikLabels(
         );
         break;
     }
+  }
+
+  if (Object.keys(labels).length > 0 && options.swarmNetwork) {
+    labels["traefik.swarm.network"] = options.swarmNetwork;
   }
 
   return Object.keys(labels).length > 0 ? labels : undefined;
