@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
+import { parse, stringify } from "yaml";
 
 type ApplyResult = {
   command: string;
@@ -8,6 +9,18 @@ type ApplyResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+};
+
+type ComposeService = {
+  deploy?: {
+    labels?: Record<string, unknown> | unknown[];
+  };
+  networks?: string[] | Record<string, unknown>;
+};
+
+type ComposeStack = {
+  networks?: Record<string, unknown>;
+  services?: Record<string, ComposeService>;
 };
 
 @Injectable()
@@ -20,6 +33,7 @@ export class StackApplyService {
   }): Promise<ApplyResult> {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const timeoutMs = this.config.get<number>("DOCKER_APPLY_TIMEOUT_MS", 120000);
+    const renderedStack = this.attachIngressNetworks(params.renderedStack);
     const args = [
       ...(dockerContext ? ["--context", dockerContext] : []),
       "stack",
@@ -76,8 +90,70 @@ export class StackApplyService {
         });
       });
 
-      child.stdin.end(params.renderedStack);
+      child.stdin.end(renderedStack);
     });
+  }
+
+  private attachIngressNetworks(renderedStack: string) {
+    let stack: ComposeStack;
+    try {
+      stack = parse(renderedStack) as ComposeStack;
+    } catch {
+      return renderedStack;
+    }
+
+    if (!stack || typeof stack !== "object" || !stack.services) {
+      return renderedStack;
+    }
+
+    const externalNetworks = new Set<string>();
+    for (const service of Object.values(stack.services)) {
+      const network = this.traefikSwarmNetwork(service.deploy?.labels);
+      if (!network) {
+        continue;
+      }
+
+      externalNetworks.add(network);
+      if (Array.isArray(service.networks)) {
+        if (!service.networks.includes(network)) {
+          service.networks.push(network);
+        }
+      } else {
+        service.networks = {
+          ...(service.networks ?? {}),
+          [network]: {},
+        };
+      }
+    }
+
+    if (externalNetworks.size === 0) {
+      return renderedStack;
+    }
+
+    stack.networks ??= {};
+    for (const network of externalNetworks) {
+      stack.networks[network] = { external: true, name: network };
+    }
+
+    return stringify(stack, { lineWidth: 0 });
+  }
+
+  private traefikSwarmNetwork(labels: Record<string, unknown> | unknown[] | undefined) {
+    if (!labels) {
+      return undefined;
+    }
+
+    if (Array.isArray(labels)) {
+      const prefix = "traefik.swarm.network=";
+      const label = labels.find(
+        (value): value is string =>
+          typeof value === "string" && value.startsWith(prefix),
+      );
+      return label?.slice(prefix.length).trim() || undefined;
+    }
+
+    const value = labels["traefik.swarm.network"];
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
   }
 
   private decode(chunks: Buffer[]) {
