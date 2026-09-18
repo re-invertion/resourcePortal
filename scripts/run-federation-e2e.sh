@@ -189,6 +189,11 @@ bootstrap_zitadel() {
   }
 }
 
+generate_prisma_client() {
+  cd "$ROOT_DIR"
+  npm run api:prisma:generate
+}
+
 migrate_database() {
   cd "$ROOT_DIR"
   load_environment
@@ -205,6 +210,7 @@ seed_database() {
 }
 
 database() {
+  generate_prisma_client
   migrate_database
   seed_database
 }
@@ -238,6 +244,7 @@ provision() {
 browser_login() {
   cd "$ROOT_DIR"
   load_environment
+  node node_modules/playwright/cli.js install chromium
   [[ -s "$STATE_DIR/state.json" ]] || {
     echo "Federation state is missing; run the provision phase first" >&2
     return 1
@@ -247,7 +254,7 @@ browser_login() {
   trap 'stop_web; stop_api' RETURN
   node scripts/run-service-identity-e2e.mjs
   node scripts/run-federation-browser-e2e.mjs
-  node scripts/run-stage20-web-e2e.mjs
+  node scripts/run-v019-final-ui-e2e.mjs
   stop_web
   stop_api
   trap - RETURN

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError, apiRequest } from "./api/client";
 import { CreateResourceWorkspace } from "./components/create-resource";
+import { Button, Card, ChevronRightIcon, EmptyState, GridIcon, LockIcon, PlusIcon, ResourcePortalLogo, SearchIcon, StatusBadge, UsersIcon } from "./components/design-system";
 import { ErrorState } from "./components/resource";
 import { AppShell } from "./components/shell";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
@@ -18,23 +19,67 @@ function routeAttributes(route: AppRoute) { const attributes: Record<string, str
 function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
 function tenantList(value: unknown): Tenant[] { const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : []; return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant); }
 
+function AppLoading({ route, error }: { route: AppRoute; error?: unknown }) {
+  return <main {...routeAttributes(route)} className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5"><Card className="w-full max-w-md p-6"><ResourcePortalLogo/><h1 className="mt-6 text-xl font-semibold">ResourcePortal</h1><p className="mt-2 text-sm text-[#5B6678]">{routeLoadingText(route)}</p>{error ? <div className="mt-4"><ErrorState error={error}/></div> : null}</Card></main>;
+}
+
 export function App({ initialPath }: AppProps = {}) {
-  const route = useRoute(initialPath); const [user, setUser] = useState<User | null | undefined>(); const [tenants, setTenants] = useState<Tenant[] | undefined>(); const [platformAdmin, setPlatformAdmin] = useState(false); const [error, setError] = useState<unknown>();
+  const route = useRoute(initialPath);
+  const [user, setUser] = useState<User | null | undefined>();
+  const [tenants, setTenants] = useState<Tenant[] | undefined>();
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  const [error, setError] = useState<unknown>();
   useEffect(() => { if (route.kind === "public" && route.page === "health") return; apiRequest<User>("/api/auth/me").then(setUser).catch((cause) => { if (cause instanceof ApiError && cause.status === 401) setUser(null); else { setError(cause); setUser(null); } }); }, []);
   const reloadTenants = async () => { const result = await apiRequest("/api/tenants"); setTenants(tenantList(result)); };
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
   useEffect(() => { if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; } let active = true; apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); }); return () => { active = false; }; }, [user, route.kind]);
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
-  if (user === undefined) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>{routeLoadingText(route)}</p>{error ? <ErrorState error={error} /> : null}</main>;
+  if (user === undefined) return <AppLoading route={route} error={error}/>;
   if (!user) { const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }
-  if (!tenants) return <main {...routeAttributes(route)}><h1>Resource Portal</h1><p>Loading tenants…</p>{error ? <ErrorState error={error} /> : null}</main>;
-  if (route.kind === "not-found") return <main {...routeAttributes(route)}><h1>Page not found</h1><p>The requested Resource Portal page does not exist.</p><p><a href="/tenants">Choose tenant</a></p></main>;
-  if (route.kind === "tenants" || route.kind === "public") return <TenantSelector tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} />}</AppShell>;
+  if (!tenants) return <AppLoading route={route} error={error}/>;
+  if (route.kind === "not-found") return <main className="min-h-screen bg-[#F4F7FB] p-6" {...routeAttributes(route)}><div className="mx-auto max-w-2xl"><ResourcePortalLogo/><h1 className="sr-only">Page not found</h1><Card className="mt-8 p-6"><EmptyState title="Page not found" description="The requested ResourcePortal page does not exist." action={<a className="text-sm font-semibold text-[#0F56A7] hover:underline" href="/tenants">Choose tenant</a>}/></Card></div></main>;
+  if (route.kind === "tenants" || route.kind === "public") return <TenantSelector user={user} tenants={tenants} reload={reloadTenants} />;
+  return <AppShell user={user} route={route} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} />}</AppShell>;
 }
 
-function TenantSelector({ tenants, reload }: { tenants: Tenant[]; reload: () => Promise<void> }) {
-  const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]); const [error, setError] = useState<unknown>(); const [createOpen, setCreateOpen] = useState(true);
-  const createButtonClass = "rp-create-trigger min-h-10 rounded-lg border-blue-600 bg-blue-600 px-4 font-semibold text-white shadow-sm hover:border-blue-700 hover:bg-blue-700";
-  return <main className="rp-tenant-picker"><header className="rp-tenant-picker-header"><div className="rp-auth-brand"><span className="rp-brand-mark">R</span><div><strong>ResourcePortal</strong><span>Control Center</span></div></div><a href="/health">System status</a></header><section className="rp-tenant-picker-card"><p className="rp-eyebrow">Workspace</p><h1>{active.length === 1 ? "Tenant" : "Choose tenant"}</h1><p className="rp-tenant-picker-copy">Select the workspace you want to manage. Tenant context stays visible in the URL and navigation.</p>{error ? <ErrorState error={error} /> : null}{active.length === 0 ? <div className="rp-create-tenant"><p>No active tenant is available. Create a tenant to establish an isolated workspace for applications, identities, storage and networking.</p>{createOpen ? <CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { setError(undefined); try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); } catch (cause) { setError(cause); throw cause; } }} /> : <button type="button" className={createButtonClass} onClick={() => setCreateOpen(true)}>Create Tenant</button>}</div> : <div className="rp-tenant-grid">{active.map((tenant) => { const name = tenant.displayName ?? tenant.name ?? tenant.id; return <a className="rp-tenant-card" key={tenant.id} href={tenantHref(tenant.id, "overview")}><span className="rp-tenant-card-mark">{name.slice(0, 1).toUpperCase()}</span><div><strong>{name}</strong><span>{tenant.status ?? "Active"}</span></div><span aria-hidden="true">→</span></a>; })}</div>}</section></main>;
+function TenantSelectorFeature({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+  return <div className="flex items-start gap-3"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EDF4FF] text-[#122033]">{icon}</span><div><strong className="block text-sm font-semibold text-white">{title}</strong><p className="mt-1 max-w-[285px] text-[13px] leading-[18px] text-[#C6D5EA]">{children}</p></div></div>;
+}
+
+function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant[]; reload: () => Promise<void> }) {
+  const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]);
+  const [error, setError] = useState<unknown>();
+  const [createOpen, setCreateOpen] = useState(active.length === 0);
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return active;
+    return active.filter((tenant) => (tenant.displayName ?? tenant.name ?? tenant.id).toLowerCase().includes(needle));
+  }, [active, query]);
+  const signOut = () => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); };
+  return <main className="min-h-screen bg-[#F7F9FC] lg:flex">
+    <aside className="relative hidden min-h-screen overflow-hidden bg-[#122033] px-10 py-12 lg:block lg:w-[430px] lg:shrink-0">
+      <div className="pointer-events-none absolute left-[38px] top-[72px] h-[300px] w-[300px] rounded-full bg-[#17365E] opacity-80" aria-hidden="true" />
+      <div className="pointer-events-none absolute bottom-[60px] right-[-25px] h-[220px] w-[220px] rounded-full bg-[#18375F] opacity-70" aria-hidden="true" />
+      <div className="relative z-10"><ResourcePortalLogo tone="inverse" /></div>
+      <div className="relative z-10 mt-24"><h2 className="max-w-[320px] text-[30px] font-semibold leading-[1.25] tracking-[-.025em] text-white">One place for every workspace.</h2><p className="mt-6 max-w-[315px] text-[14px] leading-[22px] text-[#D9E8FF]">Choose the tenant you want to manage while ResourcePortal keeps each workspace isolated and clear.</p></div>
+      <div className="relative z-10 mt-12 space-y-5">
+        <TenantSelectorFeature icon={<GridIcon size={15}/>} title="One clear view">Move between tenant workspaces without losing context.</TenantSelectorFeature>
+        <TenantSelectorFeature icon={<LockIcon size={15}/>} title="Safe tenant isolation">Applications, storage and networking stay scoped to the selected tenant.</TenantSelectorFeature>
+        <TenantSelectorFeature icon={<UsersIcon size={15}/>} title="Access that fits your role">Only workspaces available to the signed-in account are shown.</TenantSelectorFeature>
+      </div>
+    </aside>
+    <section className="min-h-screen min-w-0 flex-1 px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
+      <div className="mx-auto w-full max-w-[760px]">
+        <div className="mb-12 flex items-center justify-between"><ResourcePortalLogo/><a className="text-sm font-medium text-[#526070] hover:text-[#0F56A7] hover:underline" href="/health">System status</a></div>
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><h1 className="text-[30px] font-semibold tracking-[-.025em] text-[#172033]">Choose a tenant</h1><p className="mt-1 text-sm text-[#5B6678]">Select the workspace you want to manage.</p></div>{active.length ? <Button variant="primary" onClick={() => setCreateOpen(true)}><PlusIcon size={16}/>Create tenant</Button> : null}</div>
+        {error ? <div className="mt-5"><ErrorState error={error}/></div> : null}
+        {createOpen ? <div className="mt-6"><CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { setError(undefined); try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); setCreateOpen(false); } catch (cause) { setError(cause); throw cause; } }} /></div> : active.length ? <>
+          <label className="relative mt-7 block"><span className="sr-only">Search tenants</span><SearchIcon size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#718096]"/><input type="search" aria-label="Search tenants" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tenants..." className="h-10 w-full rounded-md border border-[#B9C5D6] bg-white pl-10 pr-3 text-sm text-[#172033] outline-none focus:border-[#1769E0] focus:ring-2 focus:ring-[#1769E0]/15"/></label>
+          <div className="mt-7"><h2 className="text-sm font-semibold text-[#42526B]">Your tenants</h2><div className="mt-3 overflow-hidden rounded-lg border border-[#D7E0EC] bg-white">{filtered.length ? filtered.map((tenant) => { const name = tenant.displayName ?? tenant.name ?? tenant.id; return <a className="group flex items-center gap-4 border-b border-[#E1E7F0] px-4 py-4 last:border-b-0 hover:bg-[#F8FAFD]" key={tenant.id} href={tenantHref(tenant.id, "overview")}><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><GridIcon size={18}/></span><div className="min-w-0 flex-1"><strong className="block truncate text-sm text-[#172033]">{name}</strong><div className="mt-1"><StatusBadge tone="success">{tenant.status ?? "Active"}</StatusBadge></div></div><span className="flex items-center gap-1 text-sm font-semibold text-[#0F56A7]">Open <ChevronRightIcon size={16}/></span></a>; }) : <div className="px-5 py-8 text-center text-sm text-[#5B6678]">No tenants match your search.</div>}</div></div>
+        </> : <div className="mt-7"><EmptyState title="No active tenant" description="Create a tenant to establish an isolated workspace for applications, identities, storage and networking." action={<Button variant="primary" onClick={() => setCreateOpen(true)}>Create Tenant</Button>} /></div>}
+        <div className="mt-10 flex flex-col justify-between gap-3 border-t border-[#E1E7F0] pt-5 text-sm sm:flex-row sm:items-center"><span className="text-[#718096]">Signed in as <strong className="font-medium text-[#42526B]">{user.email ?? user.displayName ?? user.id}</strong></span><Button size="sm" variant="ghost" onClick={signOut}>Sign out</Button></div>
+      </div>
+    </section>
+  </main>;
 }

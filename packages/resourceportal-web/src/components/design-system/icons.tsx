@@ -1,0 +1,42 @@
+import type { SVGProps } from "react";
+
+type Props = SVGProps<SVGSVGElement> & { size?: number };
+function Icon({ size = 18, children, ...props }: Props & { children: React.ReactNode }) {
+  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>{children}</svg>;
+}
+export const HomeIcon = (p: Props) => <Icon {...p}><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.5v10h13v-10M9 19.5v-6h6v6"/></Icon>;
+export const GridIcon = (p: Props) => <Icon {...p}><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></Icon>;
+export const NetworkIcon = (p: Props) => <Icon {...p}><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="m7 11 10-4M7 13l10 4"/></Icon>;
+export const BillingIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="8.5"/><path d="M15 9.5c-.7-1-1.7-1.5-3-1.5-1.7 0-3 1-3 2.2 0 1.5 1.4 2 3 2.3 1.7.2 3 .8 3 2.2 0 1.3-1.3 2.3-3 2.3-1.3 0-2.5-.5-3.2-1.5M12 6.5v11"/></Icon>;
+export const UsersIcon = (p: Props) => <Icon {...p}><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3 2.5-5 5.5-5s5 2 5.5 5"/><circle cx="17" cy="9" r="2.2"/><path d="M16 14.2c2.5-.4 4.2 1.2 4.7 3.8"/></Icon>;
+export const ActivityIcon = (p: Props) => <Icon {...p}><path d="M3 12h4l2-5 4 10 2-5h6"/></Icon>;
+export const SettingsIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4"/></Icon>;
+export const HelpIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5.2 1c0 2-2.7 2.2-2.7 4M12 17.5h.01"/></Icon>;
+export const BellIcon = (p: Props) => <Icon {...p}><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7M10 20h4"/></Icon>;
+export const SearchIcon = (p: Props) => <Icon {...p}><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></Icon>;
+export const ChevronDownIcon = (p: Props) => <Icon {...p}><path d="m8 10 4 4 4-4"/></Icon>;
+export const ChevronRightIcon = (p: Props) => <Icon {...p}><path d="m9 6 6 6-6 6"/></Icon>;
+export const MoreIcon = (p: Props) => <Icon {...p}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></Icon>;
+export const PlusIcon = (p: Props) => <Icon {...p}><path d="M12 5v14M5 12h14"/></Icon>;
+export const PlayIcon = (p: Props) => <Icon {...p}><path d="m9 7 8 5-8 5z"/></Icon>;
+export const StopIcon = (p: Props) => <Icon {...p}><rect x="7" y="7" width="10" height="10" rx="1"/></Icon>;
+export const RestartIcon = (p: Props) => <Icon {...p}><path d="M20 7v5h-5"/><path d="M18.5 16a8 8 0 1 1 1.2-8.2L20 12"/></Icon>;
+export const DeployIcon = (p: Props) => <Icon {...p}><path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M5 13v6h14v-6"/></Icon>;
+export const CheckIcon = (p: Props) => <Icon {...p}><path d="m6 12 4 4 8-9"/></Icon>;
+export const WarningIcon = (p: Props) => <Icon {...p}><path d="M12 3 2.8 20h18.4z"/><path d="M12 9v4M12 16.5h.01"/></Icon>;
+export const InfoIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></Icon>;
+export const TrashIcon = (p: Props) => <Icon {...p}><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 10v6M14 10v6"/></Icon>;
+export const EditIcon = (p: Props) => <Icon {...p}><path d="m4 16-.8 4 4-.8L18 8.4 15.6 6zM14 7.5l2.5 2.5"/></Icon>;
+export const CopyIcon = (p: Props) => <Icon {...p}><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></Icon>;
+export const ExternalIcon = (p: Props) => <Icon {...p}><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v6H5V6h6"/></Icon>;
+export const VolumeIcon = (p: Props) => <Icon {...p}><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></Icon>;
+export const GlobeIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></Icon>;
+export const RegistryIcon = (p: Props) => <Icon {...p}><path d="m4 8 8-4 8 4-8 4zM4 8v8l8 4 8-4V8M12 12v8"/></Icon>;
+export const KeyIcon = (p: Props) => <Icon {...p}><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3M15 12v2"/></Icon>;
+export const MenuIcon = (p: Props) => <Icon {...p}><path d="M4 7h16M4 12h16M4 17h16"/></Icon>;
+export const XIcon = (p: Props) => <Icon {...p}><path d="m6 6 12 12M18 6 6 18"/></Icon>;
+export const LockIcon = (p: Props) => <Icon {...p}><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></Icon>;
+export const CodeIcon = (p: Props) => <Icon {...p}><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></Icon>;
+export const ServerIcon = (p: Props) => <Icon {...p}><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></Icon>;
+export const HistoryIcon = (p: Props) => <Icon {...p}><path d="M4 8V4m0 0h4M4 4l3 3a8 8 0 1 1-2 8"/><path d="M12 8v5l3 2"/></Icon>;
+export const FileIcon = (p: Props) => <Icon {...p}><path d="M6 3h8l4 4v14H6zM14 3v5h5"/><path d="M9 13h6M9 17h6"/></Icon>;

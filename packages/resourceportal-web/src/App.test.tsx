@@ -25,7 +25,7 @@ describe("Web Console bootstrap", () => {
   it("renders controlled re-login when the BFF session is missing", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ error: { message: "Unauthorized" } }, 401)));
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Sign in to ResourcePortal" })).toBeTruthy();
   });
 
   it("shows tenant selection for multiple active tenants", async () => {
@@ -35,9 +35,19 @@ describe("Web Console bootstrap", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Choose tenant" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
+    expect(screen.getAllByLabelText("ResourcePortal").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("R")).toBeNull();
+    expect(screen.getByRole("button", { name: /create tenant/i })).toBeTruthy();
+    expect(screen.getByRole("searchbox", { name: /search tenants/i })).toBeTruthy();
+    expect(screen.getByText("Your tenants")).toBeTruthy();
+    expect(screen.getByText(/signed in as/i)).toBeTruthy();
+    expect(screen.getByText("u@example.test")).toBeTruthy();
     expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toContain("/tenants/t1/overview");
     expect(screen.getByRole("link", { name: /two/ }).getAttribute("href")).toContain("/tenants/t2/overview");
+    fireEvent.change(screen.getByRole("searchbox", { name: /search tenants/i }), { target: { value: "two" } });
+    expect(screen.queryByRole("link", { name: /one/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /two/ })).toBeTruthy();
   });
 
   it("renders a normal document link for the only active tenant", async () => {
@@ -47,7 +57,7 @@ describe("Web Console bootstrap", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Tenant" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toBe("/tenants/t1/overview");
   });
 
@@ -60,7 +70,7 @@ describe("Web Console bootstrap", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Choose tenant" });
+    await screen.findByRole("heading", { name: "Choose a tenant" });
     expect(screen.getByRole("heading", { name: "Create Tenant" })).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "demo" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Demo tenant" } });
@@ -97,7 +107,7 @@ describe("Web Console bootstrap", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App initialPath="/tenants/t1/overview" />);
 
-    expect(await screen.findByRole("heading", { name: "one" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
     expect(await screen.findByRole("navigation", { name: "Platform administration" })).toBeTruthy();
   });
 
@@ -118,7 +128,7 @@ describe("Web Console bootstrap", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App initialPath="/tenants/t1/overview" />);
 
-    expect(await screen.findByRole("heading", { name: "one" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path) === "/api/platform/maintenance")).toBe(true));
     expect(screen.queryByRole("navigation", { name: "Platform administration" })).toBeNull();
   });

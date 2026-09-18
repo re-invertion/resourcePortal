@@ -563,3 +563,17 @@
   .rp-content main:not(.rp-dashboard-page):not(.rp-app-group-workspace) > h1 { @apply mb-1 text-2xl font-bold tracking-[-0.03em] text-slate-950; }
   .rp-content main:not(.rp-dashboard-page):not(.rp-app-group-workspace) > h1 + section { @apply mt-5; }
 }
+
+
+/* Final v0.1.9 shell isolation. Legacy element selectors above remain for the
+   generic rp-* surfaces that have not been removed yet, but must not decorate
+   the Tailwind/Fluent shell with extra padding, cards or browser-global spacing. */
+@layer components {
+  .rp-final-ui main { @apply m-0 max-w-none p-0; }
+  .rp-final-ui section:not([class*="rp-"]) { @apply m-0 rounded-none border-0 bg-transparent p-0 shadow-none; }
+  .rp-final-ui :where(h1, h2, h3, p) { @apply m-0; }
+  .rp-final-ui :where(a) { @apply no-underline; }
+  .rp-final-ui :where(a):hover { @apply no-underline; }
+  .rp-final-ui details:not(.rp-technical-json) { @apply m-0 border-0 bg-transparent p-0; }
+  .rp-final-ui [role="alert"] { @apply m-0; }
+}

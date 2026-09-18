@@ -2,9 +2,13 @@ FROM node:24-alpine AS dependencies
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+COPY scripts/postinstall-prisma.mjs ./scripts/postinstall-prisma.mjs
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
+# Root postinstall generates the API Prisma Client, so the schema must exist
+# before npm ci runs in this dependency stage.
+COPY packages/resourceportal-api/prisma ./packages/resourceportal-api/prisma
 RUN npm ci --workspace @resource-portal/api --include-workspace-root=false
 
 FROM node:24-alpine AS production-dependencies

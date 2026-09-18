@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
-import { MetricCard, PageHeader, StatusBadge, statusTone } from "../components/ui";
+import {
+  ActivityIcon,
+  BillingIcon,
+  Callout,
+  Card,
+  EmptyState,
+  GlobeIcon,
+  GridIcon,
+  LinkButton,
+  MetricCard,
+  PageHeader,
+  ServerIcon,
+  StatusBadge,
+  VolumeIcon,
+  statusTone,
+} from "../components/design-system";
 
 type RecordValue = Record<string, unknown>;
 type PanelState<T> = { data?: T; error?: unknown; loading: boolean };
@@ -25,11 +40,9 @@ function usePanel<T = unknown>(path: string): PanelState<T> {
   useEffect(() => {
     let active = true;
     setState({ loading: true });
-    apiRequest<T>(path).then((data) => {
-      if (active) setState({ data, loading: false });
-    }).catch((error) => {
-      if (active) setState({ error, loading: false });
-    });
+    apiRequest<T>(path)
+      .then((data) => { if (active) setState({ data, loading: false }); })
+      .catch((error) => { if (active) setState({ error, loading: false }); });
     return () => { active = false; };
   }, [path]);
   return state;
@@ -40,12 +53,8 @@ function text(value: unknown, fallback = "—") {
 }
 
 function numericString(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isFinite(n) ? n : 0;
 }
 
 function formatBytes(value: number) {
@@ -68,7 +77,9 @@ function blockerLabel(blocker: string) {
   return labels[blocker] ?? blocker.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-
+function ResourceStatusRow({ label, detail, tone = "neutral" }: { label: string; detail: string; tone?: "neutral" | "success" | "warning" | "danger" | "info" }) {
+  return <div className="flex items-center justify-between gap-3 py-2.5"><span className="text-[13px] font-medium text-[#172033]">{label}</span><StatusBadge tone={tone}>{detail}</StatusBadge></div>;
+}
 
 export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
@@ -81,67 +92,76 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const appGroups = useMemo(() => dashboardItems(appGroupsState.data), [appGroupsState.data]);
   const volumes = useMemo(() => dashboardItems(volumesState.data), [volumesState.data]);
   const operations = useMemo(() => dashboardItems(operationsState.data), [operationsState.data]);
-  const running = appGroups.filter((group) => group.effectiveRuntimeState === "Running").length;
-  const appCount = appGroups.reduce((sum, group) => sum + (Array.isArray(group.singleApps) ? group.singleApps.length : 0), 0);
-  const totalBytes = volumes.reduce((sum, volume) => sum + numericString(volume.sizeBytes), 0);
-  const usedBytes = volumes.reduce((sum, volume) => sum + numericString(volume.usedSizeBytes), 0);
+  const running = appGroups.filter((g) => g.effectiveRuntimeState === "Running").length;
+  const appCount = appGroups.reduce((sum, g) => sum + (Array.isArray(g.singleApps) ? g.singleApps.length : 0), 0);
+  const totalBytes = volumes.reduce((sum, v) => sum + numericString(v.sizeBytes), 0);
+  const usedBytes = volumes.reduce((sum, v) => sum + numericString(v.usedSizeBytes), 0);
   const balanceCredits = billing.data ? text(billing.data.balanceCredits, text(billing.data.balance, "0")) : "0";
   const balancePln = billing.data ? text(billing.data.balancePln, "0") : "0";
   const billingSuspended = billing.data?.billingState === "BillingSuspended" || billing.data?.state === "Suspended";
   const lowBalance = billing.data?.lowBalance === true;
-  const blockedGroups = appGroups.filter((group) => Array.isArray(group.runtimeBlockers) && (group.runtimeBlockers as unknown[]).some((blocker) => typeof blocker === "string" && attentionBlockers.has(blocker)));
-  const billingBlockedGroups = blockedGroups.filter((group) => (group.runtimeBlockers as unknown[]).includes("BillingSuspended"));
-  const otherBlockedGroups = blockedGroups.filter((group) => (group.runtimeBlockers as unknown[]).some((blocker) => typeof blocker === "string" && blocker !== "BillingSuspended" && attentionBlockers.has(blocker)));
+  const blockedGroups = appGroups.filter((g) => Array.isArray(g.runtimeBlockers) && (g.runtimeBlockers as unknown[]).some((b) => typeof b === "string" && attentionBlockers.has(b)));
+  const billingBlockedGroups = blockedGroups.filter((g) => (g.runtimeBlockers as unknown[]).includes("BillingSuspended"));
+  const otherBlockedGroups = blockedGroups.filter((g) => (g.runtimeBlockers as unknown[]).some((b) => typeof b === "string" && b !== "BillingSuspended" && attentionBlockers.has(b)));
   const tenantName = tenant.data ? text(tenant.data.displayName, text(tenant.data.name, tenantId)) : tenantId;
 
-  return <main className="rp-dashboard-page">
-    <PageHeader eyebrow="Tenant control center" title={tenant.loading ? "Loading tenant…" : tenant.error ? "Tenant dashboard" : tenantName} description="Everything important about your workloads, spend and recent activity in one place." actions={<a className="rp-button rp-button-primary" href={tenantHref(tenantId, "app-groups")}>Create App Group</a>} />
+  return <main>
+    <PageHeader
+      eyebrow="ResourcePortal"
+      title="Tenant Overview"
+      description={tenant.loading ? "Loading tenant overview…" : tenant.error ? "Tenant details are currently unavailable." : `Here's what's happening across ${tenantName}.`}
+    />
 
-    <section className="rp-metric-grid" aria-label="Tenant summary">
-      <MetricCard testId="metric-applications" label="Applications" loading={appGroupsState.loading} error={appGroupsState.error} value={String(appGroups.length)} detail={`${appCount} apps configured`} />
-      <MetricCard testId="metric-runtime" label="Runtime" loading={appGroupsState.loading} error={appGroupsState.error} value={`${running} running`} detail={`${Math.max(appGroups.length - running, 0)} not running`} />
-      <MetricCard testId="metric-balance" label="Balance" loading={billing.loading} error={billing.error} value={`${balanceCredits} credits`} detail={`≈ ${balancePln} PLN`} />
-      <MetricCard testId="metric-storage" label="Storage" loading={volumesState.loading} error={volumesState.error} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} />
+    <section className="mb-6" aria-label="Quick actions">
+      <h2 className="mb-3 text-sm font-semibold text-[#42526B]">Quick actions</h2>
+      <div className="flex flex-wrap gap-3">
+        <LinkButton variant="primary" href={`${tenantHref(tenantId, "applications")}/new`}><GridIcon size={16}/>Create App Group</LinkButton>
+        <LinkButton href={tenantHref(tenantId, "volumes")}><VolumeIcon size={16}/>Create Volume</LinkButton>
+        <LinkButton href={tenantHref(tenantId, "domains")}><GlobeIcon size={16}/>Add Domain</LinkButton>
+      </div>
     </section>
 
-    <section className="rp-dashboard-section rp-attention-section" aria-label="Needs attention">
-      <header><div><p className="rp-eyebrow">Priority</p><h2>Needs attention</h2></div><span className="rp-section-count">{(billingSuspended || lowBalance ? 1 : 0) + otherBlockedGroups.length}</span></header>
-      {billing.loading || appGroupsState.loading ? <p className="rp-muted">Checking tenant state…</p> : null}
-      {!billing.loading && !appGroupsState.loading && !billingSuspended && !lowBalance && otherBlockedGroups.length === 0 ? <div className="rp-good-state"><strong>No urgent issues</strong><span>Your tenant has no known runtime or billing blockers.</span></div> : null}
-      {billingSuspended ? <article className="rp-attention-card" data-tone="negative"><div><strong>Applications are paused because your balance is empty</strong><p>Add credits to resume workloads that are blocked by billing.</p></div><div className="rp-attention-actions"><a href={tenantHref(tenantId, "billing")}>Go to billing</a>{billingBlockedGroups.slice(0, 2).map((group) => <a key={String(group.id)} href={tenantHref(tenantId, "app-groups", String(group.id))}>Open {text(group.name, "App Group")}</a>)}</div></article> : lowBalance ? <article className="rp-attention-card" data-tone="warning"><div><strong>Your balance is running low</strong><p>Top up before workloads are suspended.</p></div><a href={tenantHref(tenantId, "billing")}>Review billing</a></article> : null}
-      {otherBlockedGroups.map((group) => {
-        const blockers = (group.runtimeBlockers as unknown[]).filter((value): value is string => typeof value === "string" && value !== "BillingSuspended" && attentionBlockers.has(value));
-        if (blockers.length === 0) return null;
-        return <article className="rp-attention-card" data-tone="warning" key={String(group.id)}><div><strong>{text(group.name, "App Group")} needs attention</strong><p>{blockerLabel(blockers[0])}</p></div><a href={tenantHref(tenantId, "app-groups", String(group.id))}>Open App Group</a></article>;
-      })}
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Tenant summary">
+      <div data-testid="metric-applications"><MetricCard label="Applications" icon={<GridIcon/>} value={String(appCount)} detail={`Across ${appGroups.length} App Group${appGroups.length === 1 ? "" : "s"}`} loading={appGroupsState.loading} error={appGroupsState.error}/></div>
+      <div data-testid="metric-runtime"><MetricCard label="Running workloads" icon={<ServerIcon/>} value={String(running)} detail={`${Math.max(appGroups.length - running, 0)} App Group${appGroups.length - running === 1 ? "" : "s"} not running`} loading={appGroupsState.loading} error={appGroupsState.error} tone={running === appGroups.length && appGroups.length ? "success" : "info"}/></div>
+      <div data-testid="metric-storage"><MetricCard label="Storage usage" icon={<VolumeIcon/>} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} loading={volumesState.loading} error={volumesState.error}/></div>
+      <div data-testid="metric-balance"><MetricCard label="Current balance" icon={<BillingIcon/>} value={`${balancePln} PLN`} detail={`${balanceCredits} credits`} loading={billing.loading} error={billing.error} tone={billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/></div>
     </section>
 
-    <div className="rp-dashboard-columns">
-      <section className="rp-dashboard-section">
-        <header><div><p className="rp-eyebrow">Workloads</p><h2>Applications</h2></div><a href={tenantHref(tenantId, "app-groups")}>View all</a></header>
-        {appGroupsState.error ? <p className="rp-panel-unavailable">Applications are unavailable.</p> : appGroupsState.loading ? <p className="rp-muted">Loading applications…</p> : appGroups.length === 0 ? <div className="rp-empty-compact"><strong>No App Groups yet</strong><a href={tenantHref(tenantId, "app-groups")}>Create your first App Group</a></div> : <div className="rp-application-list">{appGroups.slice(0, 6).map((group) => {
-          const state = text(group.effectiveRuntimeState, text(group.runtimeState, "Unknown"));
-          const health = text(group.health, "Unknown");
-          const apps = Array.isArray(group.singleApps) ? group.singleApps.length : 0;
-          return <a className="rp-application-row" href={tenantHref(tenantId, "app-groups", String(group.id))} key={String(group.id)}><div className="rp-app-identity"><span className="rp-app-mark" aria-hidden="true">{text(group.name, "A").slice(0, 1).toUpperCase()}</span><div><strong>{text(group.name, "Unnamed App Group")}</strong><span>{apps} app{apps === 1 ? "" : "s"}</span></div></div><div className="rp-app-status"><StatusBadge>{state}</StatusBadge><StatusBadge>{health}</StatusBadge></div><span className="rp-row-chevron" aria-hidden="true">›</span></a>;
-        })}</div>}
+    <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <section aria-label="Needs attention">
+        <Card className="h-full overflow-hidden">
+          <div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="text-base font-semibold">Needs attention</h2><span className="text-sm font-semibold text-[#B54708]">{(billingSuspended || lowBalance ? 1 : 0) + otherBlockedGroups.length}</span></div>
+          <div className="space-y-3 p-4 sm:p-5">
+            {billing.loading || appGroupsState.loading ? <p className="text-sm text-[#5B6678]">Checking tenant state…</p> : null}
+            {!billing.loading && !appGroupsState.loading && !billingSuspended && !lowBalance && otherBlockedGroups.length === 0 ? <Callout tone="success" title="No urgent issues">Your tenant has no known runtime or billing blockers.</Callout> : null}
+            {billingSuspended ? <Callout tone="danger" title="Applications are paused because your balance is empty" action={<div className="flex flex-wrap gap-2"><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId, "billing")}>Go to billing</LinkButton>{billingBlockedGroups.slice(0, 2).map((g) => <LinkButton className="h-8 px-3 text-xs" key={String(g.id)} href={tenantHref(tenantId, "app-groups", String(g.id))}>Open {text(g.name, "App Group")}</LinkButton>)}</div>}>Add credits to resume workloads that are blocked by billing.</Callout> : lowBalance ? <Callout tone="warning" title="Your balance is running low" action={<LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId, "billing")}>Review billing</LinkButton>}>Top up before workloads are suspended.</Callout> : null}
+            {otherBlockedGroups.map((g) => { const blockers = (g.runtimeBlockers as unknown[]).filter((v): v is string => typeof v === "string" && v !== "BillingSuspended" && attentionBlockers.has(v)); if (!blockers.length) return null; return <Callout key={String(g.id)} tone="warning" title={`${text(g.name, "App Group")} needs attention`} action={<LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId, "app-groups", String(g.id))}>Open App Group</LinkButton>}>{blockerLabel(blockers[0])}</Callout>; })}
+          </div>
+        </Card>
       </section>
 
-      <aside className="rp-dashboard-rail">
-        <section className="rp-dashboard-section">
-          <header><div><p className="rp-eyebrow">Shortcuts</p><h2>Quick actions</h2></div></header>
-          <div className="rp-quick-actions">
-            <a href={tenantHref(tenantId, "app-groups")}>Create App Group <span>→</span></a>
-            <a href={tenantHref(tenantId, "volumes")}>Create Volume <span>→</span></a>
-            <a href={tenantHref(tenantId, "domains")}>Add Domain <span>→</span></a>
-            <a href={tenantHref(tenantId, "administration")}>Invite member <span>→</span></a>
-          </div>
-        </section>
-        <section className="rp-dashboard-section">
-          <header><div><p className="rp-eyebrow">Latest</p><h2>Recent activity</h2></div><a href={tenantHref(tenantId, "operations")}>View all</a></header>
-          {operationsState.error ? <p className="rp-panel-unavailable">Recent operations are unavailable.</p> : operationsState.loading ? <p className="rp-muted">Loading activity…</p> : operations.length === 0 ? <p className="rp-muted">No recent operations.</p> : <div className="rp-activity-list">{operations.slice(0, 5).map((operation) => <a href={tenantHref(tenantId, "operations", String(operation.id))} key={String(operation.id)}><span className="rp-activity-dot" data-tone={statusTone(text(operation.status, "Unknown"))} /><div><strong>{text(operation.type, "Operation").replaceAll("_", " ")}</strong><span>{text(operation.status, "Unknown")}</span></div></a>)}</div>}
-        </section>
-      </aside>
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="text-base font-semibold">Recent App Groups</h2><a className="text-xs font-semibold text-[#0F56A7] hover:underline" href={tenantHref(tenantId, "applications")}>View all</a></div>
+        {appGroupsState.error ? <p className="p-5 text-sm text-[#B42318]">Applications are unavailable.</p> : appGroupsState.loading ? <p className="p-5 text-sm text-[#5B6678]">Loading applications…</p> : appGroups.length === 0 ? <div className="p-5"><EmptyState icon={<GridIcon/>} title="No App Groups yet" description="Create the first deployment workspace for this tenant." action={<LinkButton variant="primary" href={`${tenantHref(tenantId, "applications")}/new`}>Create App Group</LinkButton>}/></div> : <div className="divide-y divide-[#E1E7F0]">{appGroups.slice(0, 6).map((g) => { const state = text(g.effectiveRuntimeState, text(g.runtimeState, "Unknown")); const health = text(g.health, "Unknown"); const apps = Array.isArray(g.singleApps) ? g.singleApps.length : 0; return <a key={String(g.id)} href={tenantHref(tenantId, "app-groups", String(g.id))} className="grid gap-3 px-5 py-4 hover:bg-[#F8FAFD] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"><div className="min-w-0"><strong className="block truncate text-sm">{text(g.name, "Unnamed App Group")}</strong><span className="text-xs text-[#718096]">{apps} app{apps === 1 ? "" : "s"}</span></div><div className="flex flex-wrap gap-2"><StatusBadge tone={statusTone(state)}>{state}</StatusBadge><StatusBadge tone={statusTone(health)}>{health}</StatusBadge></div></a>; })}</div>}
+      </Card>
+    </div>
+
+    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,.75fr)]">
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="text-base font-semibold">Recent activity</h2><a className="text-xs font-semibold text-[#0F56A7] hover:underline" href={tenantHref(tenantId, "activity")}>View all</a></div>
+        {operationsState.error ? <p className="p-5 text-sm text-[#B42318]">Recent operations are unavailable.</p> : operationsState.loading ? <p className="p-5 text-sm text-[#5B6678]">Loading activity…</p> : operations.length === 0 ? <p className="p-5 text-sm text-[#5B6678]">No recent operations.</p> : <div className="divide-y divide-[#E1E7F0]">{operations.slice(0, 5).map((op) => <a className="flex items-start gap-3 px-5 py-3 hover:bg-[#F8FAFD]" href={tenantHref(tenantId, "operations", String(op.id))} key={String(op.id)}><span className="mt-1 text-[#1769E0]"><ActivityIcon size={15}/></span><div className="min-w-0"><strong className="block truncate text-[13px]">{text(op.type, "Operation").replaceAll("_", " ")}</strong><span className="text-xs text-[#718096]">{text(op.status, "Unknown")}</span></div></a>)}</div>}
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-2 flex items-center gap-2"><ServerIcon size={17} className="text-[#1769E0]"/><h2 className="text-base font-semibold">Tenant resource status</h2></div>
+        <div className="divide-y divide-[#E1E7F0]">
+          <ResourceStatusRow label="Compute" detail={appGroupsState.loading ? "Checking" : appGroupsState.error ? "Unavailable" : `${running}/${appGroups.length} running`} tone={appGroupsState.error ? "danger" : running === appGroups.length && appGroups.length ? "success" : "info"}/>
+          <ResourceStatusRow label="Storage" detail={volumesState.loading ? "Checking" : volumesState.error ? "Unavailable" : `${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} tone={volumesState.error ? "danger" : "success"}/>
+          <ResourceStatusRow label="Billing" detail={billing.loading ? "Checking" : billing.error ? "Unavailable" : billingSuspended ? "Suspended" : lowBalance ? "Low balance" : "Active"} tone={billing.error || billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/>
+          <ResourceStatusRow label="Activity" detail={operationsState.loading ? "Checking" : operationsState.error ? "Unavailable" : "Available"} tone={operationsState.error ? "danger" : "success"}/>
+        </div>
+      </Card>
     </div>
   </main>;
 }

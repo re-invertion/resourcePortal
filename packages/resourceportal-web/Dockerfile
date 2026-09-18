@@ -2,6 +2,7 @@ FROM node:24-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+COPY scripts/postinstall-prisma.mjs ./scripts/postinstall-prisma.mjs
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
