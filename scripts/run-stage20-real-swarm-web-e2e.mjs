@@ -304,9 +304,13 @@ try {
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     await page.reload({ waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("heading", { name: "Deployments", level: 2 })
+      .waitFor();
     const succeededRows = page
       .getByRole("row")
       .filter({ hasText: "Succeeded" });
+    await succeededRows.nth(1).waitFor();
     assert(
       (await succeededRows.count()) >= 2,
       "Deployment history did not show both the deployment and rollback as Succeeded",
