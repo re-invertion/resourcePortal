@@ -207,6 +207,11 @@ try {
     );
     const deployment = JSON.parse(deployText);
     const deploymentId = stringField(deployment, "id");
+    const deploymentVersion = Number(deployment.version);
+    assert(
+      Number.isInteger(deploymentVersion),
+      `Deployment ${deploymentId} did not expose an integer version`,
+    );
 
     await runDeploymentWorkerOnce();
     await expectDeploymentStatus(
@@ -221,7 +226,7 @@ try {
     await page.reload({ waitUntil: "domcontentloaded" });
     const deploymentRow = page
       .getByRole("row")
-      .filter({ hasText: "Stage 20 real Swarm browser deploy" });
+      .filter({ hasText: `v${deploymentVersion}` });
     await deploymentRow.waitFor();
     assert(
       (await deploymentRow.textContent())?.includes("Succeeded"),
@@ -262,7 +267,7 @@ try {
       .waitFor();
     const rollbackSourceRow = page
       .getByRole("row")
-      .filter({ hasText: "Stage 20 real Swarm browser deploy" });
+      .filter({ hasText: `v${deploymentVersion}` });
     await rollbackSourceRow.waitFor();
     await rollbackSourceRow
       .getByRole("button", { name: "Rollback", exact: true })
