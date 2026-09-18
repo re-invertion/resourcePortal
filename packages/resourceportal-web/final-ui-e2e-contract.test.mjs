@@ -44,6 +44,20 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).not.toContain('nextWizardStep(page, "Review")');
   });
 
+  it("uses the final application edit details heading", () => {
+    const script = readFileSync(
+      path.resolve(packageRoot, "../../scripts/run-v019-final-ui-e2e.mjs"),
+      "utf8",
+    );
+
+    expect(script).toContain(
+      '.getByRole("heading", { name: "Edit application details", level: 3 })',
+    );
+    expect(script).not.toContain(
+      '.getByRole("heading", { name: "Edit application", level: 2 })',
+    );
+  });
+
   it("checks the final application edit details heading", () => {
     const script = readFileSync(
       path.resolve(packageRoot, "../../scripts/run-v019-final-ui-e2e.mjs"),
