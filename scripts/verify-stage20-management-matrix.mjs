@@ -158,25 +158,29 @@ const expectedContracts = [
 ];
 
 const tenantRoutes = [
-  ["overview", "Stage 20 Management Matrix"],
-  ["app-groups", "AppGroups"],
+  ["overview", "Tenant Overview"],
+  ["applications", "Applications"],
+  ["storage-networking", "Storage & Networking"],
+  ["access", "Access"],
+  ["activity", "Activity"],
+  ["billing", "Billing"],
   ["volumes", "Volumes"],
   ["registries", "Registries"],
-  ["domains", "Domains and HTTP routing"],
-  ["administration", "Tenant administration"],
-  ["credentials", "Tenant machine credentials"],
-  ["billing", "Billing and quota"],
+  ["domains", "Domains"],
+  ["administration", "Access management"],
+  ["credentials", "Machine credentials"],
   ["audit", "Audit log"],
-  ["operations", "Operations / jobs"],
+  ["operations", "Operations"],
 ];
 
 const platformRoutes = [
   ["overview", "Platform overview"],
-  ["maintenance", "Platform maintenance"],
-  ["infrastructure", "Platform infrastructure"],
-  ["identity-providers", "Platform identity providers"],
-  ["credentials", "Platform machine credentials"],
-  ["billing", "Platform billing administration"],
+  ["maintenance", "Maintenance"],
+  ["infrastructure", "Infrastructure"],
+  ["identity-providers", "Identity providers"],
+  ["credentials", "Credentials"],
+  ["billing", "Billing"],
+  ["security", "Security & operations"],
 ];
 
 let tenantId;

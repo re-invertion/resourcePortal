@@ -97,4 +97,30 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).not.toContain('panelByHeading(page, "SingleApps")');
   });
 
+  it("checks the final v0.1.9 management matrix routes", () => {
+    const script = readFileSync(
+      path.resolve(packageRoot, "../../scripts/verify-stage20-management-matrix.mjs"),
+      "utf8",
+    );
+
+    for (const expected of [
+      '["overview", "Tenant Overview"]',
+      '["applications", "Applications"]',
+      '["storage-networking", "Storage & Networking"]',
+      '["access", "Access"]',
+      '["activity", "Activity"]',
+      '["overview", "Platform overview"]',
+      '["infrastructure", "Infrastructure"]',
+      '["identity-providers", "Identity providers"]',
+      '["credentials", "Credentials"]',
+      '["security", "Security & operations"]',
+    ]) {
+      expect(script).toContain(expected);
+    }
+
+    expect(script).not.toContain('["overview", "Stage 20 Management Matrix"]');
+    expect(script).not.toContain('["app-groups", "AppGroups"]');
+    expect(script).not.toContain('["maintenance", "Platform maintenance"]');
+  });
+
 });
