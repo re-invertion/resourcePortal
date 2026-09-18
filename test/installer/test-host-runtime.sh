@@ -102,18 +102,18 @@ RULES
 rp_remove_resourceportal_ufw_rules
 unset -f ufw
 ufw_cleanup="$(cat "$ufw_log")"
-assert_contains "$ufw_cleanup" 'allow 22/tcp comment Preserved-SSH-after-RP-removal' 'UFW cleanup preserves SSH reachability before deleting installer SSH rule'
-assert_before "$ufw_cleanup" 'allow 22/tcp comment Preserved-SSH-after-RP-removal' '--force delete 2' 'SSH preservation rule is installed before RP firewall cleanup'
-assert_contains "$ufw_cleanup" '--force delete 2' 'UFW cleanup deletes RP rule in descending order'
-assert_contains "$ufw_cleanup" '--force delete 1' 'UFW cleanup deletes second RP rule'
+assert_not_contains "$ufw_cleanup" 'Preserved-SSH-after-RP-removal' 'UFW cleanup does not rely on a duplicate SSH allow rule'
+assert_contains "$ufw_cleanup" '--force delete 2' 'UFW cleanup deletes non-SSH RP rules'
+assert_not_contains "$ufw_cleanup" '--force delete 1' 'UFW cleanup retains the only installer SSH allow rule'
 assert_not_contains "$ufw_cleanup" 'delete 3' 'UFW cleanup preserves unrelated rule'
 assert_not_contains "$ufw_cleanup" 'reset' 'UFW cleanup never performs global reset'
 rm -f "$ufw_log"
 
-# Regression from the 2026-09-11 real-host factory-reset E2E: removing the
-# only ResourcePortal SSH allow rule while UFW stays active must not lock the
-# operator out of the host. A pre-existing allow for the same port is reused
-# rather than duplicated.
+# Real-host factory-reset regressions (2026-09-11 and 2026-09-15): removing
+# the only ResourcePortal SSH allow while UFW stays active locks the operator
+# out. Do not try to preserve access by adding an identical allow rule first:
+# real UFW may deduplicate it and cleanup would then delete the only SSH rule.
+# Retain the installer SSH rule unless an independent allow already exists.
 ufw_log="$(mktemp /tmp/rp-ufw-existing-ssh.XXXXXX)"
 : >"$ufw_log"
 ufw() {

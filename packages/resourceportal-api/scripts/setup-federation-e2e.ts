@@ -79,9 +79,15 @@ type ZitadelEventsResponse = { events?: ZitadelEvent[] };
 async function main() {
   const devUserId =
     process.env.FEDERATION_E2E_ADMIN_USER_ID ?? randomUUID();
-  await prisma.user.create({
-    data: {
+  await prisma.user.upsert({
+    where: { id: devUserId },
+    create: {
       id: devUserId,
+      email: "federation-admin@example.test",
+      displayName: "Federation E2E Admin",
+      status: UserStatus.Active,
+    },
+    update: {
       email: "federation-admin@example.test",
       displayName: "Federation E2E Admin",
       status: UserStatus.Active,

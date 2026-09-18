@@ -92,35 +92,35 @@ rp_ufw_has_surviving_ssh_rule() {
   ' <<<"$status"
 }
 
-rp_preserve_ssh_before_resourceportal_ufw_cleanup() {
-  local status="$1" port
-  [[ "$status" == *'Status: active'* ]] || return 0
-  [[ "$status" == *'# ResourcePortal-SSH'* ]] || return 0
-  port="$(rp_ufw_resourceportal_ssh_port "$status")" || return 1
-  [[ "$port" =~ ^[0-9]+$ ]] || {
-    printf '%s\n' 'Refusing ResourcePortal UFW cleanup because the installer SSH allow rule port could not be determined safely.' >&2
-    return 1
-  }
-  rp_ufw_has_surviving_ssh_rule "$status" "$port" && return 0
-
-  # Factory reset previously removed the only SSH allow while UFW remained
-  # active, immediately locking the operator out before later cleanup phases.
-  # Install a non-ResourcePortal safety rule first so RP-only cleanup cannot
-  # delete the connection that is executing the reset. The rule is naturally
-  # removed if UFW itself is an installer-owned package and is later purged.
-  ufw allow "$port/tcp" comment Preserved-SSH-after-RP-removal >/dev/null || return 1
-}
-
 rp_remove_resourceportal_ufw_rules() {
-  local status number
+  local status cleanup_status number port retain_installer_ssh=false
   command -v ufw >/dev/null 2>&1 || return 0
   status="$(ufw status numbered 2>/dev/null || true)"
-  rp_preserve_ssh_before_resourceportal_ufw_cleanup "$status" || return 1
+  cleanup_status="$status"
+
+  if [[ "$status" == *'Status: active'* && "$status" == *'# ResourcePortal-SSH'* ]]; then
+    port="$(rp_ufw_resourceportal_ssh_port "$status")" || return 1
+    [[ "$port" =~ ^[0-9]+$ ]] || {
+      printf '%s\n' 'Refusing ResourcePortal UFW cleanup because the installer SSH allow rule port could not be determined safely.' >&2
+      return 1
+    }
+    if ! rp_ufw_has_surviving_ssh_rule "$status" "$port"; then
+      retain_installer_ssh=true
+    fi
+  fi
+
+  if [[ "$retain_installer_ssh" == true ]]; then
+    # Keep the only working SSH allow in place. Adding an equivalent UFW rule
+    # with a different comment is not safe: UFW may deduplicate it, after
+    # which deleting the installer rule would lock out new SSH connections.
+    cleanup_status="$(grep -v -F '# ResourcePortal-SSH' <<<"$status" || true)"
+  fi
+
   while IFS= read -r number; do
     [[ "$number" =~ ^[0-9]+$ ]] || continue
     ufw --force delete "$number" >/dev/null || return 1
   done < <(
-    grep -F '# ResourcePortal-' <<<"$status" \
+    grep -F '# ResourcePortal-' <<<"$cleanup_status" \
       | sed -nE 's/^\[[[:space:]]*([0-9]+)\].*# ResourcePortal-.*/\1/p' \
       | sort -rn
   )

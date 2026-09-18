@@ -35,14 +35,34 @@ describe("TenantDashboard", () => {
     mockDashboard();
     render(<TenantDashboard tenantId="t1" />);
 
-    expect(await screen.findByRole("heading", { name: "Demo" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
     const applications = screen.getByTestId("metric-applications");
-    expect(within(applications).getByText("2")).toBeTruthy();
-    expect(within(applications).getByText(/3 apps configured/i)).toBeTruthy();
+    expect(within(applications).getByText("3")).toBeTruthy();
+    expect(within(applications).getByText(/across 2 App Groups/i)).toBeTruthy();
     const runtime = screen.getByTestId("metric-runtime");
-    expect(within(runtime).getByText(/1 running/i)).toBeTruthy();
+    expect(within(runtime).getByText("1")).toBeTruthy();
     expect(screen.getByTestId("metric-balance").textContent).toContain("0 credits");
     expect(screen.getByTestId("metric-storage").textContent).toContain("3 GB / 10 GB");
+  });
+
+  it("matches the Penpot overview hierarchy without changing tenant API semantics", async () => {
+    mockDashboard();
+    render(<TenantDashboard tenantId="t1" />);
+
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
+    expect(screen.getByText(/what's happening across Demo/i)).toBeTruthy();
+
+    const quickActions = screen.getByRole("region", { name: "Quick actions" });
+    expect(within(quickActions).getByRole("link", { name: /create app group/i }).getAttribute("href")).toBe("/tenants/t1/applications/new");
+    expect(within(quickActions).getByRole("link", { name: /create volume/i }).getAttribute("href")).toBe("/tenants/t1/volumes");
+    expect(within(quickActions).getByRole("link", { name: /add domain/i }).getAttribute("href")).toBe("/tenants/t1/domains");
+
+    const applications = screen.getByTestId("metric-applications");
+    expect(within(applications).getByText("3")).toBeTruthy();
+    expect(within(applications).getByText(/across 2 App Groups/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Recent App Groups" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Recent activity" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Tenant resource status" })).toBeTruthy();
   });
 
   it("turns BillingSuspended into an actionable human message", async () => {
