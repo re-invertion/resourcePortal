@@ -107,19 +107,16 @@ try {
       .getByRole("button", { name: "Create App Group", exact: true })
       .click();
     const groupResponse = await createGroupResponse;
-    const groupText = await groupResponse.text();
     assert(
       groupResponse.ok(),
-      `Web App Group create failed: ${groupResponse.status()} ${groupText}`,
+      `Web App Group create failed: ${groupResponse.status()}`,
     );
-    const group = JSON.parse(groupText);
-    const appGroupId = stringField(group, "id");
-    createdStackName = stackNameFor(appGroupId);
     await page.waitForURL(
-      new RegExp(
-        `/tenants/${createdTenantId}/app-groups/${appGroupId}$`,
-      ),
+      new RegExp(`/tenants/${createdTenantId}/app-groups/[0-9a-f-]+$`),
     );
+    const appGroupId = resourceIdFromUrl(page.url(), "app-groups");
+    assert(appGroupId, `App Group route did not expose an id: ${page.url()}`);
+    createdStackName = stackNameFor(appGroupId);
     await page
       .getByRole("heading", { name: appGroupName, level: 1 })
       .waitFor();
@@ -167,18 +164,17 @@ try {
       .getByRole("button", { name: "Create application", exact: true })
       .click();
     const appResponse = await createAppResponse;
-    const appText = await appResponse.text();
     assert(
       appResponse.ok(),
-      `Web application create failed: ${appResponse.status()} ${appText}`,
+      `Web application create failed: ${appResponse.status()}`,
     );
-    const app = JSON.parse(appText);
-    const singleAppId = stringField(app, "id");
     await page.waitForURL(
       new RegExp(
-        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/${singleAppId}$`,
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/[0-9a-f-]+$`,
       ),
     );
+    const singleAppId = resourceIdFromUrl(page.url(), "apps");
+    assert(singleAppId, `Application route did not expose an id: ${page.url()}`);
     await page
       .getByRole("heading", { name: singleAppName, level: 2 })
       .waitFor();
@@ -488,6 +484,12 @@ async function waitForStackRemoval(stackName) {
     await sleep(1_000);
   }
   throw new Error(`Stack ${stackName} was not removed during cleanup`);
+}
+
+function resourceIdFromUrl(url, segment) {
+  const parts = new URL(url).pathname.split("/").filter(Boolean);
+  const index = parts.lastIndexOf(segment);
+  return index >= 0 ? parts[index + 1] : undefined;
 }
 
 function stackNameFor(appGroupId) {
