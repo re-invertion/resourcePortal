@@ -72,4 +72,29 @@ describe("v0.1.9 final UI E2E contract", () => {
     );
   });
 
+  it("runs the real-Swarm browser smoke through the final routed UI", () => {
+    const script = readFileSync(
+      path.resolve(packageRoot, "../../scripts/run-stage20-real-swarm-web-e2e.mjs"),
+      "utf8",
+    );
+
+    expect(script).toContain(
+      '.getByRole("heading", { name: "Choose a tenant", level: 1 })',
+    );
+    expect(script).toContain(
+      '.getByRole("heading", { name: "Applications", level: 1 })',
+    );
+    expect(script).toContain(
+      '.getByRole("button", { name: "Deploy pending changes", exact: true })',
+    );
+    expect(script).toContain(
+      '.getByRole("button", { name: "Restart application", exact: true })',
+    );
+    expect(script).not.toContain(
+      '.getByRole("heading", { name: "Choose tenant" })',
+    );
+    expect(script).not.toContain('panelByHeading(page, "AppGroups")');
+    expect(script).not.toContain('panelByHeading(page, "SingleApps")');
+  });
+
 });

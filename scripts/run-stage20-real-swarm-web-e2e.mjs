@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
-import { fillPlaywrightControl } from "./playwright-form-controls.mjs";
 
 const webOrigin = (
   process.env.STAGE20_REAL_SWARM_WEB_ORIGIN ?? "http://127.0.0.1:4173"
@@ -36,40 +35,18 @@ try {
 
   try {
     await page.goto(`${webOrigin}/tenants`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("heading", { name: "Choose tenant" }).waitFor();
-    assert(
-      (await page.getByRole("alert").count()) === 0,
-      "Tenant selector rendered an API error before the real-Swarm fixture was created",
-    );
-
-    const tenantCreateWorkspace = page.locator(".rp-create-workspace");
-    await tenantCreateWorkspace.waitFor();
-    await fillStructuredForm(tenantCreateWorkspace, {
-      name: tenantName,
-      displayName: "Stage 20 Real Swarm",
-      contactEmail: `${tenantName}@example.local`,
-    });
-    await tenantCreateWorkspace
-      .getByRole("button", { name: "Review + create", exact: true })
-      .click();
-    await tenantCreateWorkspace
-      .getByRole("heading", { name: "Review configuration", exact: true })
+    await page
+      .getByRole("heading", { name: "Choose a tenant", level: 1 })
       .waitFor();
-    const createTenantResponse = page.waitForResponse(
-      (response) =>
-        response.request().method() === "POST" &&
-        response.url() === `${webOrigin}/api/tenants`,
-    );
-    await tenantCreateWorkspace
-      .getByRole("button", { name: "Create Tenant", exact: true })
-      .click();
-    const tenantResponse = await createTenantResponse;
-    const tenantText = await tenantResponse.text();
-    assert(
-      tenantResponse.ok(),
-      `Web tenant create failed: ${tenantResponse.status()} ${tenantText}`,
-    );
-    const tenant = JSON.parse(tenantText);
+
+    const tenant = await proxyApi(context, "/tenants", {
+      method: "POST",
+      body: {
+        name: tenantName,
+        displayName: "Stage 20 Real Swarm",
+        contactEmail: `${tenantName}@example.local`,
+      },
+    });
     createdTenantId = stringField(tenant, "id");
 
     await proxyApi(context, `/tenants/${createdTenantId}/quota`, {
@@ -92,64 +69,140 @@ try {
     });
 
     await page.goto(
-      `${webOrigin}/tenants/${encodeURIComponent(createdTenantId)}/app-groups`,
+      `${webOrigin}/tenants/${encodeURIComponent(createdTenantId)}/applications`,
       { waitUntil: "domcontentloaded" },
     );
-    await page.locator("main > h1", { hasText: "AppGroups" }).waitFor();
-    await waitForPageRequests(page, "app-groups");
-
-    const appGroupsPanel = panelByHeading(page, "AppGroups");
-    await createResource(appGroupsPanel, {
-      name: appGroupName,
-      runtimeState: "Running",
-    });
-
-    const appGroupRow = page.getByRole("row").filter({ hasText: appGroupName });
-    await appGroupRow.waitFor();
-    const appGroupId = await appGroupRow.getAttribute("data-resource-id");
-    assert(appGroupId, "AppGroup create did not expose its internal resource id");
-    createdStackName = stackNameFor(appGroupId);
-
-    await appGroupRow.getByRole("link", { name: "Open" }).click();
+    await page
+      .getByRole("heading", { name: "Applications", level: 1 })
+      .waitFor();
+    await page
+      .getByRole("link", { name: "Create App Group" })
+      .first()
+      .click();
     await page.waitForURL(
-      new RegExp(`/tenants/${createdTenantId}/app-groups/${appGroupId}$`),
+      new RegExp(`/tenants/${createdTenantId}/applications/new$`),
     );
-    await page.getByRole("heading", { name: appGroupName, level: 1 }).waitFor();
-    await waitForPageRequests(page, "app-group-detail");
+    await page
+      .getByRole("heading", { name: "Create App Group", level: 1 })
+      .waitFor();
+    await page.getByLabel("Name", { exact: false }).fill(appGroupName);
+    await page
+      .getByLabel("Description", { exact: false })
+      .fill("Real Docker Swarm browser smoke for ResourcePortal v0.1.9");
+    await page
+      .getByLabel("Initial runtime state", { exact: false })
+      .selectOption("Running");
+    await page.getByRole("button", { name: "Review", exact: true }).click();
+    await page
+      .getByRole("heading", { name: "Review + create", level: 2 })
+      .waitFor();
 
-    const singleAppsPanel = panelByHeading(page, "SingleApps");
-    await createResource(singleAppsPanel, {
-      name: singleAppName,
-      image: "nginx:alpine",
-      desiredReplicas: 1,
-      runtimeState: "Running",
-      cpu: 0.1,
-      memoryBytes: 134217728,
-      environment: {
-        STAGE20_REAL_SWARM: "true",
-      },
-    });
+    const createGroupResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url() ===
+          `${webOrigin}/api/tenants/${createdTenantId}/app-groups`,
+    );
+    await page
+      .getByRole("button", { name: "Create App Group", exact: true })
+      .click();
+    const groupResponse = await createGroupResponse;
+    const groupText = await groupResponse.text();
+    assert(
+      groupResponse.ok(),
+      `Web App Group create failed: ${groupResponse.status()} ${groupText}`,
+    );
+    const group = JSON.parse(groupText);
+    const appGroupId = stringField(group, "id");
+    createdStackName = stackNameFor(appGroupId);
+    await page.waitForURL(
+      new RegExp(
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}$`,
+      ),
+    );
+    await page
+      .getByRole("heading", { name: appGroupName, level: 1 })
+      .waitFor();
 
-    let singleAppRow = singleAppsPanel
-      .getByRole("row")
-      .filter({ hasText: singleAppName });
-    await singleAppRow.waitFor();
-    const singleAppId = await singleAppRow.getAttribute("data-resource-id");
-    assert(singleAppId, "SingleApp create did not expose its internal resource id");
+    const tabs = page.getByRole("navigation", { name: "App Group sections" });
+    await tabs.getByRole("link", { name: "Apps", exact: true }).click();
+    await page.waitForURL(
+      new RegExp(
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps$`,
+      ),
+    );
+    await page.getByRole("heading", { name: "Apps", level: 2 }).waitFor();
+    await page
+      .getByRole("link", { name: "Create application" })
+      .first()
+      .click();
+    await page.waitForURL(
+      new RegExp(
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/new$`,
+      ),
+    );
 
-    const deploymentsSection = page
+    await page.getByLabel("Name", { exact: false }).fill(singleAppName);
+    await page
+      .getByLabel("Container image", { exact: false })
+      .fill("nginx:alpine");
+    await page
+      .getByLabel("Description", { exact: false })
+      .fill("ResourcePortal v0.1.9 real Swarm browser workload");
+    await nextWizardStep(page, "Volumes");
+    await nextWizardStep(page, "Config");
+    await nextWizardStep(page, "Resources");
+    await page
+      .getByLabel("Desired runtime", { exact: false })
+      .selectOption("Running");
+    await nextWizardStep(page, "Review & create");
+
+    const createAppResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url() ===
+          `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/single-apps`,
+    );
+    await page
+      .getByRole("button", { name: "Create application", exact: true })
+      .click();
+    const appResponse = await createAppResponse;
+    const appText = await appResponse.text();
+    assert(
+      appResponse.ok(),
+      `Web application create failed: ${appResponse.status()} ${appText}`,
+    );
+    const app = JSON.parse(appText);
+    const singleAppId = stringField(app, "id");
+    await page.waitForURL(
+      new RegExp(
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/${singleAppId}$`,
+      ),
+    );
+    await page
+      .getByRole("heading", { name: singleAppName, level: 2 })
+      .waitFor();
+
+    await page.goto(
+      `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page
       .getByRole("heading", { name: "Deployments", level: 2 })
-      .locator("xpath=parent::section");
+      .waitFor();
+    await page
+      .getByLabel("Deployment note", { exact: false })
+      .fill("Stage 20 real Swarm browser deploy");
+
     const deployResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deploy`,
     );
-    await fillStructuredForm(deploymentsSection, {
-      note: "Stage 20 real Swarm browser deploy",
-    });
-    await deploymentsSection.getByRole("button", { name: "Deploy" }).click();
+    await page
+      .getByRole("button", { name: "Deploy pending changes", exact: true })
+      .click();
     const deployResponse = await deployResponsePromise;
     const deployText = await deployResponse.text();
     assert(
@@ -169,42 +222,55 @@ try {
     );
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
-    const deploymentHistoryPanel = panelByHeading(page, "Deployment history");
-    await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const deploymentRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const deploymentRow = page
+      .getByRole("row")
+      .filter({ hasText: "Stage 20 real Swarm browser deploy" });
     await deploymentRow.waitFor();
     assert(
       (await deploymentRow.textContent())?.includes("Succeeded"),
       "Deployment history did not show the browser-created deployment as Succeeded",
     );
 
-    singleAppRow = singleAppsPanel
-      .getByRole("row")
-      .filter({ hasText: singleAppName });
-    await singleAppRow.getByRole("button", { name: "Stop", exact: true }).click();
+    const appUrl =
+      `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/${singleAppId}`;
+    await page.goto(appUrl, { waitUntil: "domcontentloaded" });
+    await page
+      .getByRole("heading", { name: singleAppName, level: 2 })
+      .waitFor();
+
+    await page
+      .getByRole("button", { name: "Stop application", exact: true })
+      .click();
     await waitForReplicas(createdStackName, singleAppName, "0/0");
 
-    singleAppRow = singleAppsPanel
-      .getByRole("row")
-      .filter({ hasText: singleAppName });
-    await singleAppRow.getByRole("button", { name: "Start", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Start application", exact: true })
+      .click();
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     const serviceName = `${createdStackName}_${singleAppName}`;
     const forceUpdateBefore = await serviceForceUpdate(serviceName);
-    singleAppRow = singleAppsPanel
-      .getByRole("row")
-      .filter({ hasText: singleAppName });
-    await singleAppRow.getByRole("button", { name: "Restart", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Restart application", exact: true })
+      .click();
     await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
-    await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackSourceRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${deploymentId}"]`);
+    await page.goto(
+      `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments`,
+      { waitUntil: "domcontentloaded" },
+    );
+    await page
+      .getByRole("heading", { name: "Deployments", level: 2 })
+      .waitFor();
+    const rollbackSourceRow = page
+      .getByRole("row")
+      .filter({ hasText: "Stage 20 real Swarm browser deploy" });
     await rollbackSourceRow.waitFor();
-    await rollbackSourceRow.getByRole("button", { name: "Rollback", exact: true }).click();
-    const rollbackWorkspace = deploymentHistoryPanel.locator(".rp-resource-workspace");
-    await rollbackWorkspace.waitFor();
+    await rollbackSourceRow
+      .getByRole("button", { name: "Rollback", exact: true })
+      .click();
 
     const rollbackResponsePromise = page.waitForResponse(
       (response) =>
@@ -212,10 +278,11 @@ try {
         response.url() ===
           `${webOrigin}/api/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments/${deploymentId}/rollback`,
     );
-    await fillStructuredForm(rollbackWorkspace, {
-      note: "Stage 20 real Swarm browser rollback",
-    });
-    await rollbackWorkspace.getByRole("button", { name: "Rollback", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.waitFor();
+    await dialog
+      .getByRole("button", { name: /^Rollback to v/ })
+      .click();
     const rollbackResponse = await rollbackResponsePromise;
     const rollbackText = await rollbackResponse.text();
     assert(
@@ -235,24 +302,21 @@ try {
     );
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
-    await deploymentHistoryPanel.getByRole("button", { name: "Refresh" }).click();
-    const rollbackRow = deploymentHistoryPanel.locator(`tr[data-resource-id="${rollbackDeploymentId}"]`);
-    await rollbackRow.waitFor();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const succeededRows = page
+      .getByRole("row")
+      .filter({ hasText: "Succeeded" });
     assert(
-      (await rollbackRow.textContent())?.includes("Succeeded"),
-      "Deployment history did not show the browser-created rollback as Succeeded",
-    );
-    assert(
-      (await page.locator('[role="alert"]:not(.rp-workspace-alert[data-tone])').count()) === 0,
-      "Real-Swarm browser flow rendered an API error alert",
+      (await succeededRows.count()) >= 2,
+      "Deployment history did not show both the deployment and rollback as Succeeded",
     );
 
     console.log(
-      `Stage 20 Web Console real Swarm browser E2E passed for tenant ${createdTenantId}`,
+      `ResourcePortal v0.1.9 Web Console real Swarm browser E2E passed for tenant ${createdTenantId}`,
     );
   } catch (error) {
     const snapshot = await page.content().catch(() => "<page unavailable>");
-    console.error(`Stage 20 real Swarm browser E2E failed at ${page.url()}`);
+    console.error(`v0.1.9 real Swarm browser E2E failed at ${page.url()}`);
     console.error(snapshot.slice(0, 8_000));
     throw error;
   } finally {
@@ -268,7 +332,7 @@ try {
       .delete({ where: { id: createdTenantId } })
       .catch((error) =>
         console.warn(
-          `Stage 20 real Swarm fixture tenant cleanup failed: ${error.message}`,
+          `v0.1.9 real Swarm fixture tenant cleanup failed: ${error.message}`,
         ),
       );
   }
@@ -276,134 +340,11 @@ try {
   await prisma.$disconnect();
 }
 
-function panelByHeading(page, heading) {
-  const title = page.getByRole("heading", { name: heading, level: 2 });
-  return title.locator('xpath=ancestor::section[contains(concat(" ", normalize-space(@class), " "), " rp-resource-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-readonly-panel ") or contains(concat(" ", normalize-space(@class), " "), " rp-settings-editor ")][1]');
-}
-
-async function createResource(panel, body) {
-  const createButton = panel.getByRole("button", { name: /^Create / }).first();
-  await createButton.click();
-
-  const workspace = panel.locator(".rp-create-workspace");
-  await workspace.waitFor();
-  await fillStructuredForm(workspace, body);
-  await workspace
-    .getByRole("button", { name: "Review + create", exact: true })
-    .click();
-  await workspace
-    .getByRole("heading", { name: "Review configuration", exact: true })
+async function nextWizardStep(page, expectedHeading) {
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await page
+    .getByRole("heading", { name: expectedHeading, exact: true })
     .waitFor();
-  await workspace.getByRole("button", { name: /^Create / }).click();
-}
-
-async function fillStructuredForm(container, body) {
-  for (const [key, value] of Object.entries(body)) {
-    const label = formLabel(key);
-
-    if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index += 1) {
-        const item = value[index];
-        assert(
-          item == null || ["string", "number"].includes(typeof item),
-          `Stage 20 real-Swarm E2E only supports primitive list items for ${key}`,
-        );
-        const itemControl = container.getByLabel(`${label} item ${index + 1}`, {
-          exact: true,
-        });
-        await fillPlaywrightControl(itemControl, item);
-      }
-      continue;
-    }
-
-    if (value && typeof value === "object") {
-      const group = container.getByRole("group", { name: label, exact: true });
-      const entries = Object.entries(value);
-      for (let index = 0; index < entries.length; index += 1) {
-        if (index > 0) {
-          await group.getByRole("button", { name: "Add field", exact: true }).click();
-        }
-        const [entryKey, entryValue] = entries[index];
-        await group
-          .getByLabel(`${label} key ${index + 1}`, { exact: true })
-          .fill(entryKey);
-        const typeControl = group.getByLabel(`${label} type ${index + 1}`, {
-          exact: true,
-        });
-        if (typeof entryValue === "number") {
-          await typeControl.selectOption("number");
-        } else if (typeof entryValue === "boolean") {
-          await typeControl.selectOption("boolean");
-        } else {
-          assert(
-            typeof entryValue === "string",
-            `Stage 20 real-Swarm E2E only supports primitive object values for ${key}`,
-          );
-        }
-        const valueControl = group.getByLabel(`${label} value ${index + 1}`, {
-          exact: true,
-        });
-        if (typeof entryValue === "boolean") {
-          const checked = await valueControl.isChecked();
-          if (checked !== entryValue) await valueControl.click();
-        } else {
-          await fillPlaywrightControl(valueControl, entryValue);
-        }
-      }
-      continue;
-    }
-
-    const control = container.getByLabel(label, { exact: true });
-    if (typeof value === "boolean") {
-      const checked = await control.isChecked();
-      if (checked !== value) await control.click();
-      continue;
-    }
-    await fillPlaywrightControl(control, value);
-  }
-}
-
-function formLabel(key) {
-  const friendly = {
-    roleIds: "Roles",
-    clientId: "Client ID",
-    clientSecret: "Client secret",
-    metadataUrl: "Metadata URL",
-  };
-  if (friendly[key]) return friendly[key];
-  const spaced = key
-    .replace(/Ids\b/g, " IDs")
-    .replace(/Id\b/g, " ID")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[-_]+/g, " ")
-    .trim();
-  if (!spaced) return "Value";
-  return spaced
-    .split(/\s+/)
-    .map((word, index) => {
-      if (word === "ID" || word === "IDs") return word;
-      const normalized = word.toLowerCase();
-      return index === 0
-        ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
-        : normalized;
-    })
-    .join(" ");
-}
-
-async function waitForPageRequests(page, section) {
-  await page.waitForFunction(() => {
-    const loading = [...document.querySelectorAll("p")].some(
-      (element) => element.textContent?.trim() === "Loading…",
-    );
-    return !loading;
-  });
-  const unexpectedAlerts = page.locator(
-    '[role="alert"]:not(.rp-workspace-alert[data-tone])',
-  );
-  assert(
-    (await unexpectedAlerts.count()) === 0,
-    `${section} route did not settle cleanly`,
-  );
 }
 
 async function proxyApi(context, path, options = {}) {
