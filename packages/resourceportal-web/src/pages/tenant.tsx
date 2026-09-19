@@ -6,6 +6,7 @@ import { TenantStorageNetworking, TenantAccess, TenantActivity, TenantBilling } 
 import { TenantVolumesPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
+import { TenantHelpPage } from "./help";
 
 type TenantPageProps = {
   tenantId: string;
@@ -23,6 +24,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "access") return <TenantAccess tenantId={tenantId} />;
   if (section === "activity") return <TenantActivity tenantId={tenantId} />;
   if (section === "billing") return <TenantBilling tenantId={tenantId} />;
+  if (section === "help") return <TenantHelpPage tenantId={tenantId} />;
   if (section === "volumes") return <TenantVolumesPage tenantId={tenantId} />;
   if (section === "registries") return resourceId ? <TenantRegistryDetailPage tenantId={tenantId} registryId={resourceId} /> : <TenantRegistriesPage tenantId={tenantId} />;
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;

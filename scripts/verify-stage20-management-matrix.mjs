@@ -53,7 +53,7 @@ const expectedContracts = [
   ["GET", "/tenants/*/billing"],
   ["GET", "/tenants/*/billing/transactions"],
   ["GET", "/tenants/*/billing/usage-records"],
-  ["POST", "/tenants/*/billing/top-up"],
+  ["POST", "/tenants/*/billing/vouchers/redeem"],
   ["GET", "/tenants/*/quota"],
   ["PATCH", "/tenants/*/quota"],
   ["GET", "/tenants/*/audit-log"],

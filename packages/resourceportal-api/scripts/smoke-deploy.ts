@@ -50,12 +50,13 @@ async function main() {
     },
   });
 
-  await api(`/tenants/${createdTenantId}/billing/top-up`, {
+  await api("/platform/billing/corrections", {
     method: "POST",
     userId,
     body: {
-      amount: 100,
-      reference: "real swarm smoke fixture",
+      tenantId: createdTenantId,
+      amountCredits: "100",
+      reason: "real swarm smoke fixture",
     },
   });
 

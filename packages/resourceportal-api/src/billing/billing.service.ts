@@ -412,13 +412,6 @@ export class BillingService {
     });
   }
 
-  async topUp(tenantId: string, amountCredits: string, reference: string | undefined, actor: AuthenticatedUser) {
-    return this.mutateBalance(tenantId, "TopUp", new Prisma.Decimal(amountCredits), actor, {
-      reference,
-      auditAction: "billing.topup",
-    });
-  }
-
   payment(dto: PlatformBalanceMutationDto, actor: AuthenticatedUser) {
     return this.mutateBalance(dto.tenantId, "Payment", new Prisma.Decimal(dto.amountCredits), actor, {
       reference: dto.reference,

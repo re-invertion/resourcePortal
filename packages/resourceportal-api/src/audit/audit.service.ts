@@ -8,6 +8,8 @@ import {
   ListAuditLogDto,
 } from "./dto/list-audit-log.dto";
 
+const BILLING_USAGE_ACTION = "billing.usage_charge";
+
 const CSV_COLUMNS = [
   "tenantId",
   "tenantName",
@@ -28,31 +30,60 @@ const CSV_COLUMNS = [
   "changes",
 ] as const;
 
+type AuditListItem = ReturnType<typeof mapAuditLogEntry> & {
+  grouped?: boolean;
+  groupedCount?: number;
+  groupedFrom?: Date;
+  groupedTo?: Date;
+};
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listAuditLog(tenantId: string, query: ListAuditLogDto) {
-    await this.assertTenantExists(tenantId);
+    const tenant = await this.assertTenantExists(tenantId);
     const where = this.buildWhere(tenantId, query);
     const take = query.limit ?? 50;
-    const entries = await this.prisma.auditLogEntry.findMany({
-      where,
-      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
-      take: take + 1,
-      ...(query.cursor
-        ? {
-            cursor: { id: query.cursor },
-            skip: 1,
-          }
-        : {}),
-    });
-    const hasNextPage = entries.length > take;
-    const items = entries.slice(0, take);
+
+    const billingSummary =
+      !query.cursor && (!query.action || query.action === BILLING_USAGE_ACTION)
+        ? await this.buildBillingUsageSummary(tenantId, tenant.name, where)
+        : null;
+
+    const rawCapacity = Math.max(0, take - (billingSummary ? 1 : 0));
+    const shouldListRawEntries = query.action !== BILLING_USAGE_ACTION && rawCapacity > 0;
+    const rawWhere: Prisma.AuditLogEntryWhereInput = query.action
+      ? where
+      : { ...where, action: { not: BILLING_USAGE_ACTION } };
+
+    const entries = shouldListRawEntries
+      ? await this.prisma.auditLogEntry.findMany({
+          where: rawWhere,
+          orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+          take: rawCapacity + 1,
+          ...(query.cursor
+            ? {
+                cursor: { id: query.cursor },
+                skip: 1,
+              }
+            : {}),
+        })
+      : [];
+
+    const hasNextPage = entries.length > rawCapacity;
+    const rawItems = entries.slice(0, rawCapacity);
+    const mappedItems: AuditListItem[] = rawItems.map(mapAuditLogEntry);
+    const items = billingSummary
+      ? [...mappedItems, billingSummary].sort((left, right) => {
+          const time = right.timestamp.getTime() - left.timestamp.getTime();
+          return time || right.id.localeCompare(left.id);
+        })
+      : mappedItems;
 
     return {
-      items: items.map(mapAuditLogEntry),
-      nextCursor: hasNextPage ? items.at(-1)?.id ?? null : null,
+      items,
+      nextCursor: hasNextPage ? rawItems.at(-1)?.id ?? null : null,
     };
   }
 
@@ -79,15 +110,70 @@ export class AuditService {
     };
   }
 
+  private async buildBillingUsageSummary(
+    tenantId: string,
+    tenantName: string,
+    baseWhere: Prisma.AuditLogEntryWhereInput,
+  ): Promise<AuditListItem | null> {
+    const where: Prisma.AuditLogEntryWhereInput = {
+      ...baseWhere,
+      action: BILLING_USAGE_ACTION,
+    };
+    const aggregate = await this.prisma.auditLogEntry.aggregate({
+      where,
+      _count: { _all: true },
+      _min: { timestamp: true },
+      _max: { timestamp: true },
+    });
+    const count = aggregate._count._all;
+    const from = aggregate._min.timestamp;
+    const to = aggregate._max.timestamp;
+    if (!count || !from || !to) {
+      return null;
+    }
+
+    return {
+      id: `billing-usage-summary:${tenantId}:${to.toISOString()}`,
+      tenantId,
+      tenantName,
+      timestamp: to,
+      actor: "system:billing-worker",
+      actorName: "Billing Worker",
+      action: BILLING_USAGE_ACTION,
+      resourceType: "BillingUsage",
+      resourceId: null,
+      resourceName: `${count} usage charge${count === 1 ? "" : "s"}`,
+      result: "Success",
+      errorCode: null,
+      errorMessage: null,
+      requestId: null,
+      correlationId: null,
+      ipAddress: null,
+      userAgent: null,
+      changes: {
+        grouped: true,
+        groupedCount: count,
+        groupedFrom: from.toISOString(),
+        groupedTo: to.toISOString(),
+      },
+      grouped: true,
+      groupedCount: count,
+      groupedFrom: from,
+      groupedTo: to,
+    };
+  }
+
   private async assertTenantExists(tenantId: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true },
+      select: { id: true, name: true },
     });
 
     if (!tenant) {
       throw new NotFoundException("Tenant not found");
     }
+
+    return tenant;
   }
 
   private buildWhere(

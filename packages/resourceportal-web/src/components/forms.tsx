@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   booleanFieldKeys,
   buildYupSchema,
@@ -350,8 +351,9 @@ export function ConfirmButton({ children, confirm, onConfirm, disabled = false }
       setWorking(false);
     }
   };
+  const modal = open ? <div className="rp-dialog-backdrop"><section className="rp-confirm-dialog" role="dialog" aria-modal="true" aria-label="Confirm action"><h2>Confirm action</h2><p>{confirm}</p><div className="rp-dialog-actions"><button type="button" disabled={working} onClick={() => setOpen(false)}>Cancel</button><button type="button" disabled={working} onClick={() => void run()}>{working ? "Working…" : "Confirm"}</button></div></section></div> : null;
   return <>
     <button type="button" disabled={disabled || working} onClick={() => setOpen(true)}>{working ? "Working…" : children}</button>
-    {open ? <div className="rp-dialog-backdrop"><section className="rp-confirm-dialog" role="dialog" aria-modal="true" aria-label="Confirm action"><h2>Confirm action</h2><p>{confirm}</p><div className="rp-dialog-actions"><button type="button" disabled={working} onClick={() => setOpen(false)}>Cancel</button><button type="button" disabled={working} onClick={() => void run()}>{working ? "Working…" : "Confirm"}</button></div></section></div> : null}
+    {modal ? (typeof document === "undefined" ? modal : createPortal(modal, document.body)) : null}
   </>;
 }

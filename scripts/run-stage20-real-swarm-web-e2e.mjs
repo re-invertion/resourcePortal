@@ -60,11 +60,12 @@ try {
         maxVolumes: 5,
       },
     });
-    await proxyApi(context, `/tenants/${createdTenantId}/billing/top-up`, {
+    await proxyApi(context, "/platform/billing/corrections", {
       method: "POST",
       body: {
-        amount: 100,
-        reference: "Stage 20 real Swarm browser fixture",
+        tenantId: createdTenantId,
+        amountCredits: "100",
+        reason: "Stage 20 real Swarm browser fixture",
       },
     });
 

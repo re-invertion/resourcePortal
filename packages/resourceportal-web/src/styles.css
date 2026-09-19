@@ -1,12 +1,17 @@
 @import "tailwindcss";
 
 @layer base {
+  html,
+  body {
+    @apply max-w-full overflow-x-hidden;
+  }
+
   body {
     @apply min-h-screen bg-slate-50 text-slate-900 antialiased;
   }
 
   #root {
-    @apply min-h-screen;
+    @apply min-h-screen min-w-0 max-w-full overflow-x-hidden;
   }
 
   #root > header {
@@ -576,4 +581,170 @@
   .rp-final-ui :where(a):hover { @apply no-underline; }
   .rp-final-ui details:not(.rp-technical-json) { @apply m-0 border-0 bg-transparent p-0; }
   .rp-final-ui [role="alert"] { @apply m-0; }
+}
+
+/* Quick Search owns its visual frame. The input itself must stay unstyled,
+   otherwise the legacy global form rules render a second box inside it. */
+.rp-final-ui .rp-global-search-input,
+.rp-final-ui .rp-global-search-input:hover,
+.rp-final-ui .rp-global-search-input:focus,
+.rp-final-ui .rp-global-search-input:focus-visible {
+  width: auto !important;
+  min-height: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  ring: 0 !important;
+  appearance: none !important;
+}
+
+.rp-final-ui .rp-global-search-input::-webkit-search-decoration,
+.rp-final-ui .rp-global-search-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.rp-search-results {
+  scrollbar-width: thin;
+  scrollbar-color: #c7d1df transparent;
+}
+
+.rp-search-results::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rp-search-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rp-search-results::-webkit-scrollbar-thumb {
+  background: #c7d1df;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.rp-search-results::-webkit-scrollbar-thumb:hover {
+  background: #aebccd;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.rp-final-ui .rp-search-result,
+.rp-final-ui .rp-search-result:hover,
+.rp-final-ui .rp-search-result:focus,
+.rp-final-ui .rp-search-result:focus-visible {
+  min-height: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.rp-final-ui .rp-search-result[aria-selected="true"] {
+  background: #eaf3ff !important;
+}
+
+.rp-final-ui .rp-search-result[aria-selected="false"]:hover {
+  background: #f7fafd !important;
+}
+
+/* Final UI checkbox: keep checkboxes independent from the legacy text-input rules. */
+.rp-final-ui input[type="checkbox"]:not(.sr-only),
+.rp-final-ui .rp-checkbox {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  display: inline-grid !important;
+  place-content: center !important;
+  flex: 0 0 auto !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid #9aa8ba !important;
+  border-radius: 4px !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  vertical-align: middle;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 80ms ease;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):hover:not(:disabled),
+.rp-final-ui .rp-checkbox:hover:not(:disabled) {
+  border-color: #1769e0 !important;
+  background-color: #f7faff !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):checked,
+.rp-final-ui .rp-checkbox:checked {
+  border-color: #1769e0 !important;
+  background-color: #1769e0 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.25 8.15 6.35 11.1 12.75 4.9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: 14px 14px !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):checked:hover:not(:disabled),
+.rp-final-ui .rp-checkbox:checked:hover:not(:disabled) {
+  border-color: #0f5fcf !important;
+  background-color: #1769e0 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.25 8.15 6.35 11.1 12.75 4.9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):indeterminate:hover:not(:disabled),
+.rp-final-ui .rp-checkbox:indeterminate:hover:not(:disabled) {
+  border-color: #0f5fcf !important;
+  background-color: #1769e0 !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):indeterminate,
+.rp-final-ui .rp-checkbox:indeterminate {
+  border-color: #1769e0 !important;
+  background-color: #1769e0 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8h8' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: 14px 14px !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):focus,
+.rp-final-ui input[type="checkbox"]:not(.sr-only):focus-visible,
+.rp-final-ui .rp-checkbox:focus,
+.rp-final-ui .rp-checkbox:focus-visible {
+  border-color: #1769e0 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(23, 105, 224, 0.16) !important;
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):active:not(:disabled),
+.rp-final-ui .rp-checkbox:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.rp-final-ui input[type="checkbox"]:not(.sr-only):disabled,
+.rp-final-ui .rp-checkbox:disabled {
+  border-color: #c7d1df !important;
+  background-color: #eef2f7 !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+@media (forced-colors: active) {
+  .rp-final-ui input[type="checkbox"]:not(.sr-only),
+  .rp-final-ui .rp-checkbox {
+    appearance: auto !important;
+  }
 }

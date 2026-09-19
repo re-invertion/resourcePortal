@@ -54,11 +54,12 @@ async function main() {
     },
   });
 
-  await api(`/tenants/${tenantId}/billing/top-up`, {
+  await api("/platform/billing/corrections", {
     method: "POST",
     body: {
-      amount: 100,
-      reference: "stage15 capacity smoke fixture",
+      tenantId,
+      amountCredits: "100",
+      reason: "stage15 capacity smoke fixture",
     },
   });
 

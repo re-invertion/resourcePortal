@@ -28,7 +28,6 @@ import { CreateMembershipDto } from "./dto/create-membership.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
 import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
-import { TopUpBillingDto } from "./dto/top-up-billing.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
 import { UpdateQuotaDto } from "./dto/update-quota.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
@@ -99,7 +98,7 @@ export class TenantsController {
     return this.billingReadService.usageSummary(tenantId, query);
   }
 
-  @RequirePermissions("billing.topup")
+  @RequirePermissions("billing.voucher.redeem")
   @Post(":tenantId/billing/vouchers/redeem")
   redeemVoucher(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
@@ -109,15 +108,6 @@ export class TenantsController {
     return this.billingService.redeemVoucher(tenantId, dto.code, user);
   }
 
-  @RequirePermissions("billing.topup")
-  @Post(":tenantId/billing/top-up")
-  topUpBilling(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Body() dto: TopUpBillingDto,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.billingService.topUp(tenantId, dto.amount, dto.reference, user);
-  }
 
   @RequirePermissions("tenant.read")
   @Get(":tenantId/quota")

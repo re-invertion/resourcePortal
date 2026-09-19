@@ -52,6 +52,7 @@ import {
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
+import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
 import {
   mapAppGroup,
   mapAppGroupDeployment,
@@ -65,18 +66,6 @@ import {
   mapVariableAttachment,
 } from "./app-groups.view";
 
-const DEFAULT_RESTART_POLICY = {
-  condition: "on-failure",
-  delaySeconds: 5,
-  maxAttempts: 3,
-  windowSeconds: 60,
-} satisfies Prisma.InputJsonObject;
-
-const DEFAULT_UPDATE_POLICY = {
-  parallelism: 1,
-  delaySeconds: 10,
-  order: "start-first",
-} satisfies Prisma.InputJsonObject;
 
 type DeployableDraft = AppGroup & {
   singleApps: Array<{

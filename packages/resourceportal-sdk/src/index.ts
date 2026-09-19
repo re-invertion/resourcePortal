@@ -38,8 +38,8 @@ export class ResourcePortalClient {
       this.request(`/tenants/${encode(tenantId)}/billing/transactions`),
     usageRecords: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/billing/usage-records`),
-    topUpBilling: (tenantId: string, body: unknown) =>
-      this.request(`/tenants/${encode(tenantId)}/billing/top-up`, {
+    redeemVoucher: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/billing/vouchers/redeem`, {
         method: "POST",
         body,
       }),

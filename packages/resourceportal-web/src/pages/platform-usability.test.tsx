@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformPage } from "./platform";
 
@@ -101,6 +101,43 @@ describe("platform action feedback", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/billing/usage-records?limit=20`)).toBe(true);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/quota"))).toBe(false);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/usage?"))).toBe(false);
+  });
+
+  it("keeps focus in Adjust tenant credits while controlled fields rerender", async () => {
+    const tenantId = "44444444-4444-4444-8444-444444444444";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+      if (url === "/api/platform/billing/price-lists") return json([]);
+      if (url === "/api/platform/billing/vouchers") return json([]);
+      if (url === `/api/tenants/${tenantId}/billing`) return json({ balanceCredits: "100" });
+      if (url === `/api/tenants/${tenantId}/quota`) return json({});
+      if (url.includes(`/api/tenants/${tenantId}/billing/transactions`)) return json([]);
+      if (url.includes(`/api/tenants/${tenantId}/billing/usage-records`)) return json([]);
+      return json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlatformPage section="billing" />);
+    await screen.findByRole("heading", { name: "Billing", level: 1 });
+    fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: tenantId } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Adjust credits" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Adjust credits" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Adjust tenant credits" });
+    const amount = within(dialog).getByLabelText(/Credit adjustment/i);
+    const reason = within(dialog).getByLabelText(/Reason/i);
+
+    await waitFor(() => expect(document.activeElement).toBe(amount));
+    fireEvent.change(amount, { target: { value: "1" } });
+    expect(document.activeElement).toBe(amount);
+    fireEvent.change(amount, { target: { value: "10" } });
+    expect(document.activeElement).toBe(amount);
+
+    reason.focus();
+    fireEvent.change(reason, { target: { value: "Administrative correction" } });
+    expect(document.activeElement).toBe(reason);
+    expect(document.activeElement).not.toBe(within(dialog).getByRole("button", { name: "Close dialog" }));
   });
 
   it("shows only API-backed platform identity-provider actions", async () => {

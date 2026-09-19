@@ -43,10 +43,10 @@ async function main() {
     },
   });
 
-  await api(`/tenants/${tenantId}/billing/top-up`, {
+  await api("/platform/billing/corrections", {
     method: "POST",
     userId,
-    body: { amount: 100, reference: "stage9 real swarm smoke" },
+    body: { tenantId, amountCredits: "100", reason: "stage9 real swarm smoke" },
   });
 
   const appGroup = await api<JsonObject>(`/tenants/${tenantId}/app-groups`, {
