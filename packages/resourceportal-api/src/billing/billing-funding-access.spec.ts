@@ -13,9 +13,13 @@ describe("billing funding access policy", () => {
   });
 
   it("allows tenant funding only through voucher redemption permission", () => {
-    const handler = TenantsController.prototype.redeemVoucher;
+    const handler = Object.getOwnPropertyDescriptor(
+      TenantsController.prototype,
+      "redeemVoucher",
+    )?.value as unknown;
+    expect(typeof handler).toBe("function");
     expect(
-      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler),
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler as object),
     ).toEqual(["billing.voucher.redeem"]);
   });
 
