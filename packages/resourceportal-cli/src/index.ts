@@ -62,8 +62,8 @@ const commands: Command[] = [
   command("tenant", "usage-records", "<tenantId>", "List tenant usage records.", (p, c) =>
     c.tenants.usageRecords(arg(p, 0, "tenantId")),
   ),
-  command("tenant", "billing-top-up", "<tenantId> --amount N [--reference TEXT]", "Top up tenant billing balance.", (p, c) =>
-    c.tenants.topUpBilling(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, ["amount"], ["reference"])),
+  command("tenant", "billing-redeem-voucher", "<tenantId> --code CODE", "Redeem a platform-issued voucher for a tenant.", (p, c) =>
+    c.tenants.redeemVoucher(arg(p, 0, "tenantId"), bodyFromFlags(p.flags, ["code"], [])),
   ),
   command("tenant", "roles", "<tenantId>", "List tenant roles.", (p, c) =>
     c.tenants.roles(arg(p, 0, "tenantId")),

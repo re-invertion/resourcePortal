@@ -209,7 +209,7 @@ Useful existing tenant commands include:
 rp tenant billing TENANT_ID
 rp tenant billing-transactions TENANT_ID
 rp tenant usage-records TENANT_ID
-rp tenant billing-top-up TENANT_ID --amount 25 --reference manual-credit
+rp tenant billing-redeem-voucher TENANT_ID --code RPV-...
 rp tenant auth-policy TENANT_ID
 rp tenant auth-policy-update TENANT_ID --require-tenant-identity-provider true
 rp invitation create TENANT_ID --email user@example.com --role-id viewer

@@ -36,7 +36,12 @@ describe("Web Console bootstrap", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
-    expect(screen.getAllByLabelText("ResourcePortal").length).toBeGreaterThanOrEqual(2);
+    const workspaceAside = screen.getByTestId("auth-workspace-aside");
+    const workspaceMain = screen.getByTestId("auth-workspace-main");
+    expect(workspaceAside.parentElement?.className).toContain("xl:grid-cols-[552px_minmax(0,1fr)]");
+    expect(workspaceMain.className).toContain("min-h-dvh");
+    expect(workspaceMain.className).toContain("overflow-x-hidden");
+    expect(screen.getAllByLabelText("ResourcePortal").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("R")).toBeNull();
     expect(screen.getByRole("button", { name: /create tenant/i })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: /search tenants/i })).toBeTruthy();

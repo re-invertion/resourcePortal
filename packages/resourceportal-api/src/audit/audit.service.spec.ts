@@ -75,6 +75,73 @@ describe("AuditService.listAuditLog", () => {
     });
   });
 
+  it("compacts recurring billing usage events without hiding normal audit records", async () => {
+    const normal = entry(
+      "22222222-2222-4222-8222-222222222222",
+      new Date("2026-08-29T12:00:00Z"),
+    );
+    const next = entry(
+      "33333333-3333-4333-8333-333333333333",
+      new Date("2026-08-29T11:00:00Z"),
+    );
+    const aggregate = vi
+      .fn<(args: Record<string, unknown>) => Promise<unknown>>()
+      .mockResolvedValue({
+        _count: { _all: 120 },
+        _min: { timestamp: new Date("2026-08-29T10:01:00Z") },
+        _max: { timestamp: new Date("2026-08-29T12:30:00Z") },
+      });
+    const findMany = vi
+      .fn<(args: Record<string, unknown>) => Promise<ReturnType<typeof entry>[]>>()
+      .mockResolvedValue([normal, next]);
+    const prisma = {
+      tenant: {
+        findUnique: vi.fn().mockResolvedValue({ id: normal.tenantId }),
+      },
+      auditLogEntry: {
+        aggregate,
+        findMany,
+      },
+    };
+    const service = new AuditService(prisma as unknown as PrismaService);
+
+    const result = await service.listAuditLog(normal.tenantId, { limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toMatchObject({
+      action: "billing.usage_charge",
+      resourceType: "BillingUsage",
+      resourceName: "120 usage charges",
+      grouped: true,
+      groupedCount: 120,
+      result: "Success",
+    });
+    expect(result.items[1]).toEqual(normal);
+    expect(result.nextCursor).toBe(normal.id);
+
+    expect(aggregate).toHaveBeenCalledTimes(1);
+    const aggregateArgs = aggregate.mock.calls[0]?.[0];
+    expect(aggregateArgs?.where).toMatchObject({
+      tenantId: normal.tenantId,
+      action: "billing.usage_charge",
+    });
+    expect(aggregateArgs?._count).toEqual({ _all: true });
+    expect(aggregateArgs?._min).toEqual({ timestamp: true });
+    expect(aggregateArgs?._max).toEqual({ timestamp: true });
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const findManyArgs = findMany.mock.calls[0]?.[0];
+    expect(findManyArgs?.where).toMatchObject({
+      tenantId: normal.tenantId,
+      action: { not: "billing.usage_charge" },
+    });
+    expect(findManyArgs?.orderBy).toEqual([
+      { timestamp: "desc" },
+      { id: "desc" },
+    ]);
+    expect(findManyArgs?.take).toBe(2);
+  });
+
   it("uses cursor + skip for the next page", async () => {
     const prisma = {
       tenant: {

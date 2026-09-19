@@ -12,7 +12,7 @@ export const UsersIcon = (p: Props) => <Icon {...p}><circle cx="9" cy="8" r="3"/
 export const ActivityIcon = (p: Props) => <Icon {...p}><path d="M3 12h4l2-5 4 10 2-5h6"/></Icon>;
 export const SettingsIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4"/></Icon>;
 export const HelpIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5.2 1c0 2-2.7 2.2-2.7 4M12 17.5h.01"/></Icon>;
-export const BellIcon = (p: Props) => <Icon {...p}><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7M10 20h4"/></Icon>;
+export const BellIcon = (p: Props) => <Icon {...p}><path d="M18 9.5a6 6 0 0 0-12 0v2.25c0 1.55-.54 3.05-1.54 4.23L4 16.5h16l-.46-.52A6.45 6.45 0 0 1 18 11.75V9.5Z"/><path d="M10 19h4"/></Icon>;
 export const SearchIcon = (p: Props) => <Icon {...p}><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></Icon>;
 export const ChevronDownIcon = (p: Props) => <Icon {...p}><path d="m8 10 4 4 4-4"/></Icon>;
 export const ChevronRightIcon = (p: Props) => <Icon {...p}><path d="m9 6 6 6-6 6"/></Icon>;
@@ -38,5 +38,7 @@ export const XIcon = (p: Props) => <Icon {...p}><path d="m6 6 12 12M18 6 6 18"/>
 export const LockIcon = (p: Props) => <Icon {...p}><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></Icon>;
 export const CodeIcon = (p: Props) => <Icon {...p}><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14"/></Icon>;
 export const ServerIcon = (p: Props) => <Icon {...p}><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></Icon>;
+export const CpuIcon = (p: Props) => <Icon {...p}><rect x="7" y="7" width="10" height="10" rx="2"/><rect x="10" y="10" width="4" height="4" rx=".8"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></Icon>;
+export const MemoryIcon = (p: Props) => <Icon {...p}><rect x="4" y="7" width="16" height="10" rx="2"/><path d="M7 10h2v4H7zM11 10h2v4h-2zM15 10h2v4h-2zM7 4v3M11 4v3M15 4v3M7 17v3M11 17v3M15 17v3"/></Icon>;
 export const HistoryIcon = (p: Props) => <Icon {...p}><path d="M4 8V4m0 0h4M4 4l3 3a8 8 0 1 1-2 8"/><path d="M12 8v5l3 2"/></Icon>;
 export const FileIcon = (p: Props) => <Icon {...p}><path d="M6 3h8l4 4v14H6zM14 3v5h5"/><path d="M9 13h6M9 17h6"/></Icon>;

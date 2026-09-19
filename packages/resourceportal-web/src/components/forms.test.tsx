@@ -180,10 +180,13 @@ describe("destructive confirmation", () => {
   it("uses an accessible in-app dialog and only runs the action after confirmation", async () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const onConfirm = vi.fn().mockResolvedValue(undefined);
-    render(<ConfirmButton confirm="Delete demo application?" onConfirm={onConfirm}>Delete</ConfirmButton>);
+    const { container } = render(<div data-testid="parent-box"><ConfirmButton confirm="Delete demo application?" onConfirm={onConfirm}>Delete</ConfirmButton></div>);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(screen.getByRole("dialog", { name: "Confirm action" })).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "Confirm action" });
+    expect(dialog).toBeTruthy();
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(screen.getByText("Delete demo application?")).toBeTruthy();
     expect(confirmSpy).not.toHaveBeenCalled();
 

@@ -39,7 +39,7 @@ async function verifyConcurrentSingleAppCreate() {
     maxSingleApps: 1,
     maxVolumes: 10,
   });
-  await topUp(tenantId);
+  await fundTenant(tenantId);
   const appGroupId = await createAppGroup(tenantId, "create-race");
 
   const results = await Promise.all(
@@ -77,7 +77,7 @@ async function verifyConcurrentSingleAppUpdate() {
     maxSingleApps: 10,
     maxVolumes: 10,
   });
-  await topUp(tenantId);
+  await fundTenant(tenantId);
   const appGroupId = await createAppGroup(tenantId, "update-race");
   const firstId = await createSingleApp(tenantId, appGroupId, "first", 0.5);
   const secondId = await createSingleApp(tenantId, appGroupId, "second", 0.5);
@@ -117,7 +117,7 @@ async function verifyConcurrentVolumeCreate() {
     maxSingleApps: 10,
     maxVolumes: 1,
   });
-  await topUp(tenantId);
+  await fundTenant(tenantId);
 
   const results = await Promise.all(
     Array.from({ length: 12 }, (_, index) =>
@@ -153,7 +153,7 @@ async function verifyConcurrentVolumeResize() {
     maxSingleApps: 10,
     maxVolumes: 10,
   });
-  await topUp(tenantId);
+  await fundTenant(tenantId);
   const firstId = await createVolume(tenantId, "first", 52428800);
   const secondId = await createVolume(tenantId, "second", 52428800);
 
@@ -203,12 +203,13 @@ async function setQuota(tenantId: string, quota: Record<string, number>) {
   expectSuccess(result, "set quota");
 }
 
-async function topUp(tenantId: string) {
-  const result = await request(`/tenants/${tenantId}/billing/top-up`, "POST", {
-    amount: 100,
-    reference: "stage11 quota concurrency smoke",
+async function fundTenant(tenantId: string) {
+  const result = await request("/platform/billing/corrections", "POST", {
+    tenantId,
+    amountCredits: "100",
+    reason: "stage11 quota concurrency smoke fixture",
   });
-  expectSuccess(result, "top up billing");
+  expectSuccess(result, "fund tenant through Platform Admin correction");
 }
 
 async function createAppGroup(tenantId: string, name: string) {

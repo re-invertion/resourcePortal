@@ -83,6 +83,7 @@ const roles = [
       "registry.validate",
       "registry.use",
       "billing.read",
+      "billing.voucher.redeem",
       "domain.read",
       "domain.create",
       "domain.update",
@@ -154,7 +155,7 @@ const roles = [
     permissions: [
       "tenant.read",
       "billing.read",
-      "billing.topup",
+      "billing.voucher.redeem",
       "billing.manage",
     ],
   },

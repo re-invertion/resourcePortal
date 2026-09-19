@@ -146,7 +146,6 @@ enum IdentityProviderScope {
   Tenant
 }
 
-
 enum InstallerEnrollmentRole {
   Worker
   Manager
@@ -195,7 +194,7 @@ model PortalSession {
   lastSeenAt           DateTime  @default(now())
   expiresAt            DateTime
   revokedAt            DateTime?
-  createdAt             DateTime  @default(now())
+  createdAt            DateTime  @default(now())
   user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -362,16 +361,16 @@ model ServiceIdentityRole {
 }
 
 model TenantInvitation {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String   @db.Uuid
+  id         String    @id @default(uuid()) @db.Uuid
+  tenantId   String    @db.Uuid
   email      String
-  tokenHash  String   @unique
+  tokenHash  String    @unique
   roleIds    String[]
   expiresAt  DateTime
   lastSentAt DateTime?
-  createdBy  String   @db.Uuid
-  createdAt  DateTime @default(now())
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy  String    @db.Uuid
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
 }
@@ -687,10 +686,10 @@ model CustomRootDomain {
   verificationToken     String
   verificationCreatedAt DateTime                           @default(now())
   verifiedAt            DateTime?
-  createdBy              String                             @db.Uuid
-  updatedBy              String
-  createdAt              DateTime                           @default(now())
-  updatedAt              DateTime                           @updatedAt
+  createdBy             String                             @db.Uuid
+  updatedBy             String
+  createdAt             DateTime                           @default(now())
+  updatedAt             DateTime                           @updatedAt
   tenant                Tenant                             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domains               Domain[]
 
@@ -846,17 +845,20 @@ model AuditLogEntry {
   userAgent     String?
   changes       Json?
   tenant        Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, timestamp])
+  @@index([tenantId, action, timestamp])
 }
 
 model InstallerEnrollment {
-  id         String                  @id @default(uuid()) @db.Uuid
-  tokenHash  String                  @unique
-  role       InstallerEnrollmentRole
-  expiresAt  DateTime
-  consumedAt DateTime?
+  id          String                  @id @default(uuid()) @db.Uuid
+  tokenHash   String                  @unique
+  role        InstallerEnrollmentRole
+  expiresAt   DateTime
+  consumedAt  DateTime?
   completedAt DateTime?
   nodeId      String?
-  createdAt  DateTime                @default(now())
+  createdAt   DateTime                @default(now())
 
   @@index([role, expiresAt, consumedAt])
 }

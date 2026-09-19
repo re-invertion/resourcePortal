@@ -161,8 +161,8 @@ EOF_NODE
     -X POST \
     -H "content-type: application/json" \
     -H "x-dev-user-id: $RESOURCE_PORTAL_DEV_USER_ID" \
-    --data '{"amount":1000,"reference":"Codespaces demo credit"}' \
-    "http://127.0.0.1:3000/api/tenants/$tenant_id/billing/top-up" >/dev/null
+    --data "{\"tenantId\":\"$tenant_id\",\"amountCredits\":\"1000\",\"reason\":\"Codespaces demo credit fixture\"}" \
+    "http://127.0.0.1:3000/api/platform/billing/corrections" >/dev/null
 fi
 
 start_background operations-worker npm --workspace @resource-portal/api run worker:operations

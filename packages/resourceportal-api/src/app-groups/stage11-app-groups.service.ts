@@ -18,17 +18,8 @@ import { mapSingleApp } from "./app-groups.view";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { Stage3AppGroupsService } from "./stage3-app-groups.service";
+import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
 
-const DEFAULT_RESTART_POLICY = {
-  condition: "any",
-  delaySeconds: 5,
-} satisfies Prisma.InputJsonObject;
-
-const DEFAULT_UPDATE_POLICY = {
-  parallelism: 1,
-  delaySeconds: 10,
-  order: "start-first",
-} satisfies Prisma.InputJsonObject;
 
 @Injectable()
 export class Stage11AppGroupsService extends Stage3AppGroupsService {

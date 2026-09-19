@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
+import { DEFAULT_RESTART_POLICY } from "./default-policies";
 
-const DEFAULT_RESTART_POLICY = {
-  condition: "any",
-  delaySeconds: 5,
-};
 
 function renderRestartPolicy(policy: Record<string, unknown>) {
   return Object.fromEntries(

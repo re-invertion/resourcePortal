@@ -16,7 +16,6 @@ import { CreateMembershipDto } from "./dto/create-membership.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
 import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
-import { TopUpBillingDto } from "./dto/top-up-billing.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
 import { UpdateQuotaDto } from "./dto/update-quota.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
@@ -287,72 +286,6 @@ export class TenantsService {
     });
 
     return usageRecords.map(mapUsageRecord);
-  }
-
-  async topUpBilling(
-    tenantId: string,
-    dto: TopUpBillingDto,
-    actor: AuthenticatedUser,
-  ) {
-    const tenant = await this.ensureTenantExists(tenantId);
-    const amount = new Prisma.Decimal(dto.amount);
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const billing = await tx.billingAccount.findUnique({
-        where: { tenantId },
-      });
-
-      if (!billing) {
-        throw new NotFoundException("Billing account not found");
-      }
-
-      const balanceBefore = billing.balance;
-      const balanceAfter = balanceBefore.plus(amount);
-      const updatedBilling = await tx.billingAccount.update({
-        where: { id: billing.id },
-        data: {
-          balance: balanceAfter,
-        },
-      });
-      const transaction = await tx.billingTransaction.create({
-        data: {
-          billingAccountId: billing.id,
-          type: "TopUp",
-          amount,
-          balanceBefore,
-          balanceAfter,
-          status: "Succeeded",
-          reference: dto.reference,
-        },
-      });
-
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId,
-          tenantName: tenant.name,
-          actor: actor.id,
-          actorName: actor.displayName,
-          action: "billing.topup",
-          resourceType: "BillingAccount",
-          resourceId: billing.id,
-          result: "Success",
-          correlationId: randomUUID(),
-          changes: {
-            amount: amount.toString(),
-            balanceBefore: balanceBefore.toString(),
-            balanceAfter: balanceAfter.toString(),
-            reference: dto.reference,
-          },
-        },
-      });
-
-      return { billing: updatedBilling, transaction };
-    });
-
-    return {
-      billing: mapBillingAccount(result.billing),
-      transaction: mapBillingTransaction(result.transaction),
-    };
   }
 
   async getQuota(tenantId: string) {
