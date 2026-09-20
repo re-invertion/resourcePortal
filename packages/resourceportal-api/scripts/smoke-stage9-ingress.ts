@@ -25,6 +25,18 @@ async function main() {
     throw new Error("SMOKE_USER_ID is required");
   }
 
+  const reconcileOperation = await api<JsonObject>(
+    "/platform/swarm-cluster/reconcile",
+    {
+      method: "POST",
+      userId,
+    },
+  );
+  await runOperationToTerminal(
+    stringField(reconcileOperation, "id"),
+    "Succeeded",
+  );
+
   const tenant = await api<JsonObject>("/tenants", {
     method: "POST",
     userId,
@@ -121,7 +133,7 @@ async function main() {
   );
   const deploymentId = stringField(deployment, "id");
 
-  await runWorkerOnce();
+  await runOperationToTerminal(deploymentId, "Succeeded");
   await expectDeploymentStatus(userId, deploymentId, "Succeeded");
 
   const serviceName = `${stackNameFor(appGroupId)}_nginx`;
@@ -198,16 +210,69 @@ async function reconcileIngressOnce() {
   }
 }
 
+async function runOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        type: true,
+        status: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    if (!operation) {
+      throw new Error(`Operation ${operationId} was not found`);
+    }
+
+    if (operation.status === expectedStatus) {
+      return;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} (${operation.type}) reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 12 worker iterations`,
+  );
+}
+
 async function runWorkerOnce() {
   const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+  if (output) {
+    console.log(output);
+  }
 
   if (result.exitCode !== 0) {
-    throw new Error(
-      result.stderr || result.stdout || "ResourcePortal worker failed",
-    );
+    throw new Error(output || "ResourcePortal worker failed");
   }
 }
 
@@ -223,7 +288,7 @@ async function expectDeploymentStatus(
   const status = stringField(deployment, "status");
   if (status !== expectedStatus) {
     throw new Error(
-      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}`,
+      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}: ${diagnosticField(deployment.errorCode, "no-code")} ${diagnosticField(deployment.errorMessage, "")}`,
     );
   }
 }
@@ -242,6 +307,16 @@ async function serviceLabels(serviceName: string) {
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+}
+
+function diagnosticField(value: unknown, fallback: string) {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
 }
 
 function expectLabel(
