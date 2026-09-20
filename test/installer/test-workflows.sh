@@ -26,6 +26,9 @@ contains_file "$repo_root/.github/workflows/production-installer.yml" 'test/inst
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'scripts/installer/**' 'Codespaces workflow watches installer changes'
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'test/installer/**' 'Codespaces workflow watches installer tests'
 contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:cli-release' 'CI validates installable CLI release package'
+contains_file "$repo_root/.github/workflows/federation-integration.yml" 'run: npx playwright install --with-deps chromium' 'Federation uses Playwright from npm ci dependency graph'
+contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'run: npx playwright install --with-deps chromium' 'Swarm smoke uses Playwright from npm ci dependency graph'
+if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_root/.github/workflows/federation-integration.yml" "$repo_root/.github/workflows/swarm-integration.yml"; then fail 'CI workflows avoid ad-hoc Playwright npm install'; else pass 'CI workflows avoid ad-hoc Playwright npm install'; fi
 contains_file "$repo_root/.github/workflows/release.yml" 'run: npm ci' 'Release installs Node dependencies before CLI build'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/sdk' 'Release builds SDK for CLI package'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/cli' 'Release builds CLI package'
