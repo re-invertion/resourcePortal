@@ -10,7 +10,7 @@ const apiBase = (
 ).replace(/\/$/, "");
 const userId = process.env.SMOKE_USER_ID;
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
-const workerTimeoutMs = positiveIntegerEnv("STAGE20_WORKER_TIMEOUT_MS", 90_000);
+const workerTimeoutMs = positiveIntegerEnv("STAGE20_WORKER_TIMEOUT_MS", 180_000);
 const replicaWaitTimeoutMs = positiveIntegerEnv("STAGE20_REPLICA_WAIT_TIMEOUT_MS", 60_000);
 const replicaPollIntervalMs = positiveIntegerEnv("STAGE20_REPLICA_POLL_INTERVAL_MS", 1_000);
 const forceUpdateWaitTimeoutMs = positiveIntegerEnv("STAGE20_FORCE_UPDATE_WAIT_TIMEOUT_MS", 30_000);

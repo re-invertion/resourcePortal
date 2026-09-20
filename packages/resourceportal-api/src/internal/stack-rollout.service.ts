@@ -85,6 +85,11 @@ export class StackRolloutService {
   }
 
   private runDocker(args: string[]) {
+    const timeoutMs = this.config.get<number>(
+      "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
+      120000,
+    );
+
     return new Promise<{
       exitCode: number;
       stdout: string;
@@ -96,26 +101,42 @@ export class StackRolloutService {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let settled = false;
+      const finish = (result: {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        finish({
+          exitCode: 124,
+          stdout: this.decode(stdout),
+          stderr: `docker stack services timed out after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
 
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
       child.on("error", (error) => {
-        settled = true;
-        resolve({
+        finish({
           exitCode: 127,
           stdout: this.decode(stdout),
           stderr: error.message,
         });
       });
-      child.on("close", (code) => {
-        if (settled) {
-          return;
-        }
-
-        resolve({
-          exitCode: code ?? 1,
+      child.on("close", (code, signal) => {
+        finish({
+          exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
-          stderr: this.decode(stderr),
+          stderr: signal
+            ? `docker stack services terminated by ${signal}`
+            : this.decode(stderr),
         });
       });
     });
