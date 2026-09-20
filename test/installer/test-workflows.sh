@@ -32,6 +32,11 @@ if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_ro
 for smoke in scripts/run-stage20-real-swarm-web-e2e.mjs scripts/verify-stage20-management-matrix.mjs; do contains_file "$repo_root/$smoke" 'process.env.RESOURCE_PORTAL_API_URL' "$smoke uses the dedicated test API origin"; contains_file "$repo_root/$smoke" 'await route.fetch({' "$smoke bridges browser API calls directly to the test API"; done
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'runOperationToTerminal' 'real-Swarm browser smoke drains the v0.2 Operation queue to a specific terminal operation'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'RolledBack' 'real-Swarm browser smoke validates rollback terminal semantics'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'STAGE20_WORKER_TIMEOUT_MS' 'real-Swarm browser smoke bounds one-shot worker execution'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.stdout.write(text);' 'real-Swarm browser smoke streams worker stdout while it runs'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" '[stage20]' 'real-Swarm browser smoke emits progress markers'
+contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'timeout-minutes: 10' 'Swarm browser smoke has a bounded step timeout'
+contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'docker pull nginx:alpine' 'Swarm browser smoke pre-pulls its workload image'
 contains_file "$repo_root/.github/workflows/release.yml" 'run: npm ci' 'Release installs Node dependencies before CLI build'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/sdk' 'Release builds SDK for CLI package'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/cli' 'Release builds CLI package'
