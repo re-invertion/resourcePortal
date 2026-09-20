@@ -56,6 +56,7 @@ import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
 import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
+import { stackConfigHasInternalPortExposures } from "./internal-port-exposure-snapshot";
 import {
   mapAppGroup,
   mapAppGroupDeployment,
@@ -602,8 +603,21 @@ export class AppGroupsService {
 
       const appGroup = await tx.appGroup.findUniqueOrThrow({
         where: { id: appGroupId },
-        select: { name: true, runtimeDraftRevision: true },
+        select: {
+          name: true,
+          runtimeDraftRevision: true,
+          networkPrivileged: true,
+        },
       });
+
+      if (
+        !appGroup.networkPrivileged &&
+        stackConfigHasInternalPortExposures(targetDeployment.stackConfig)
+      ) {
+        throw new ConflictException(
+          "Rollback target contains Internal Port Exposures and requires Platform Admin privileged networking",
+        );
+      }
       const tenant = await tx.tenant.findUniqueOrThrow({
         where: { id: tenantId },
         select: { name: true },

@@ -8,6 +8,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
+import { internalPortExposureCountFromStackConfig } from "../app-groups/internal-port-exposure-snapshot";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreateNetworkEgressRuleDto } from "./dto/create-network-egress-rule.dto";
 import type { UpdateNetworkEgressPolicyDto } from "./dto/update-network-egress-policy.dto";
@@ -400,32 +401,9 @@ export class NetworkEgressService {
       where: { appGroupId, version: currentDeploymentVersion },
       select: { stackConfig: true },
     });
-    return this.internalPortExposureCountFromStackConfig(deployment?.stackConfig ?? null);
-  }
-
-  private internalPortExposureCountFromStackConfig(
-    stackConfig: string | null,
-  ): number {
-    if (!stackConfig) return 0;
-    try {
-      const parsed = JSON.parse(stackConfig) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return 0;
-      const singleApps = (parsed as { singleApps?: unknown }).singleApps;
-      if (!Array.isArray(singleApps)) return 0;
-      let count = 0;
-      for (const singleApp of singleApps as unknown[]) {
-        if (!singleApp || typeof singleApp !== "object" || Array.isArray(singleApp)) {
-          continue;
-        }
-        const exposures = (singleApp as Record<string, unknown>)[
-          "internalPortExposures"
-        ];
-        if (Array.isArray(exposures)) count += exposures.length;
-      }
-      return count;
-    } catch {
-      return 0;
-    }
+    return internalPortExposureCountFromStackConfig(
+      deployment?.stackConfig ?? null,
+    );
   }
 
   private internalNetworkCidrs() {

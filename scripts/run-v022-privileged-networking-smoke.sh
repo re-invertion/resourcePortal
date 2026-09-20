@@ -9,8 +9,13 @@ published_port="18080"
 app_group_id="55555555-5555-4555-8555-555555555555"
 tenant_id="66666666-6666-4666-8666-666666666666"
 guard_runner="$repo_root/packages/resourceportal-api/dist/src/network-egress/egress-guard.runner.js"
-guard_log="$(mktemp /tmp/rp-v022-egress-guard.XXXXXX.log)"
-guard_pid_file="$(mktemp /tmp/rp-v022-egress-guard.XXXXXX.pid)"
+guard_tmp_dir="$(mktemp -d /tmp/rp-v022-egress-guard.XXXXXX)"
+# The privileged guard process creates its own files. A dedicated non-sticky
+# directory avoids Linux fs.protected_regular restrictions that can prevent a
+# sudo process from truncating runner-owned files directly under /tmp.
+chmod 0777 "$guard_tmp_dir"
+guard_log="$guard_tmp_dir/guard.log"
+guard_pid_file="$guard_tmp_dir/guard.pid"
 
 cleanup() {
   set +e
@@ -21,7 +26,7 @@ cleanup() {
   docker network rm "$allowed_network" >/dev/null 2>&1 || true
   docker network rm "$denied_network" >/dev/null 2>&1 || true
   sudo -n bash -c "source '$repo_root/scripts/installer/firewall.sh'; rp_remove_resourceportal_egress_firewall_rules" >/dev/null 2>&1 || true
-  rm -f "$guard_pid_file"
+  rm -rf "$guard_tmp_dir"
 }
 trap cleanup EXIT
 
