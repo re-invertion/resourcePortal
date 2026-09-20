@@ -68,7 +68,14 @@ export class StackRuntimeService {
     ]);
 
     if (inspect.exitCode !== 0) {
-      return { success: false, changed: false };
+      return {
+        success: false,
+        changed: false,
+        error:
+          inspect.stderr ||
+          inspect.stdout ||
+          `docker service inspect ${input.serviceName} failed`,
+      };
     }
 
     let current: Record<string, string>;
@@ -83,7 +90,11 @@ export class StackRuntimeService {
         ),
       );
     } catch {
-      return { success: false, changed: false };
+      return {
+        success: false,
+        changed: false,
+        error: `Unable to parse Docker service labels for ${input.serviceName}`,
+      };
     }
 
     const currentTraefik = Object.fromEntries(
@@ -116,10 +127,16 @@ export class StackRuntimeService {
     args.push(input.serviceName);
 
     const update = await this.runDocker(args);
-    return {
-      success: update.exitCode === 0,
-      changed: update.exitCode === 0,
-    };
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${input.serviceName} labels failed`,
+        };
   }
 
   async reconcileAppGroupNetwork(input: {
@@ -167,14 +184,18 @@ export class StackRuntimeService {
     if (!network.success) {
       return !input.required && network.missing
         ? { success: true, changed: false }
-        : { success: false, changed: false };
+        : { success: false, changed: false, error: network.error };
     }
 
     const serviceNetworks = await this.inspectServiceNetworks(
       input.serviceName,
     );
     if (!serviceNetworks.success) {
-      return { success: false, changed: false };
+      return {
+        success: false,
+        changed: false,
+        error: serviceNetworks.error,
+      };
     }
     const attached = serviceNetworks.networkIds.includes(network.networkId);
     if (attached === input.required) {
@@ -188,10 +209,16 @@ export class StackRuntimeService {
       input.networkName,
       input.serviceName,
     ]);
-    return {
-      success: update.exitCode === 0,
-      changed: update.exitCode === 0,
-    };
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${input.serviceName} network membership failed`,
+        };
   }
 
   private async ensureAppGroupNetwork(networkName: string) {
@@ -231,7 +258,7 @@ export class StackRuntimeService {
     const network = await this.inspectNetwork(networkName);
     if (!network.success) {
       if (!network.missing) {
-        return { success: false, changed: false };
+        return { success: false, changed: false, error: network.error };
       }
       const create = await this.runDocker([
         "network",
@@ -245,7 +272,14 @@ export class StackRuntimeService {
         networkName,
       ]);
       if (create.exitCode !== 0) {
-        return { success: false, changed: false };
+        return {
+          success: false,
+          changed: false,
+          error:
+            create.stderr ||
+            create.stdout ||
+            `docker network create ${networkName} failed`,
+        };
       }
       changed = true;
     }
@@ -272,7 +306,7 @@ export class StackRuntimeService {
     if (!network.success) {
       return network.missing
         ? { success: true, changed: false }
-        : { success: false, changed: false };
+        : { success: false, changed: false, error: network.error };
     }
 
     const membership = await this.reconcileTraefikNetworkMembership(
@@ -283,7 +317,14 @@ export class StackRuntimeService {
 
     const remove = await this.runDocker(["network", "rm", networkName]);
     if (remove.exitCode !== 0 && !this.isMissingNetwork(remove.stderr)) {
-      return { success: false, changed: membership.changed };
+      return {
+        success: false,
+        changed: membership.changed,
+        error:
+          remove.stderr ||
+          remove.stdout ||
+          `docker network rm ${networkName} failed`,
+      };
     }
     return { success: true, changed: true };
   }
@@ -296,7 +337,7 @@ export class StackRuntimeService {
     if (!network.success) {
       return !required && network.missing
         ? { success: true, changed: false }
-        : { success: false, changed: false };
+        : { success: false, changed: false, error: network.error };
     }
 
     const traefik = this.traefikServiceName();

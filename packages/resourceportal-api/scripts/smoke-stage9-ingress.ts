@@ -2,6 +2,11 @@ import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 import { IngressReconcilerService } from "../src/internal/ingress-reconciler.service";
+import { StackRuntimeService } from "../src/internal/stack-runtime.service";
+import {
+  appGroupNetworkName,
+  legacyAppGroupIngressNetworkName,
+} from "../src/internal/traefik-routing";
 import { WorkerModule } from "../src/worker.module";
 
 const prisma = new PrismaClient();
@@ -196,8 +201,41 @@ async function reconcileIngressOnce() {
   try {
     const result = await app.get(IngressReconcilerService).reconcileBatch();
     if (result.failed > 0) {
+      if (!appGroupId) {
+        throw new Error(
+          "Ingress reconciliation failed before App Group diagnostics were available",
+        );
+      }
+      const runtime = app.get(StackRuntimeService);
+      const networkName = appGroupNetworkName(appGroupId);
+      const legacyNetworkName = legacyAppGroupIngressNetworkName(appGroupId);
+      const serviceName = `${stackNameFor(appGroupId)}_nginx`;
+      const diagnostics = {
+        appGroupNetwork: await runtime.reconcileAppGroupNetwork({
+          networkName,
+          traefikRequired: false,
+        }),
+        tenantNetwork: await runtime.reconcileServiceNetwork({
+          serviceName,
+          networkName,
+          required: true,
+        }),
+        legacyMembership: await runtime.reconcileServiceNetwork({
+          serviceName,
+          networkName: legacyNetworkName,
+          required: false,
+        }),
+        labels: await runtime.reconcileTraefikLabels({
+          serviceName,
+          desiredLabels: {},
+        }),
+        legacyCleanup: await runtime.reconcileLegacyIngressNetwork({
+          networkName: legacyNetworkName,
+          required: false,
+        }),
+      };
       throw new Error(
-        "Ingress reconciliation reported " + result.failed + " failure(s)",
+        `Ingress reconciliation reported ${result.failed} failure(s): ${JSON.stringify(diagnostics)}`,
       );
     }
   } finally {
