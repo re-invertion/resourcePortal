@@ -26,11 +26,11 @@ import {
 import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { mirrorDeploymentOperation } from "../operations/deployment-operation-adapter.service";
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
-import { StackRuntimeService } from "../internal/stack-runtime.service";
-import { VolumesService } from "../volumes/volumes.service";
+import { VolumeReadService } from "../volumes/volume-read.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
 import { AttachVariableDto } from "./dto/attach-variable.dto";
@@ -106,13 +106,6 @@ type DeployableDraft = AppGroup & {
   }>;
 };
 
-type RuntimeScaleTarget = {
-  stackName: string;
-  serviceName: string;
-  singleAppId: string;
-  replicas: number;
-};
-
 type StackConfigSnapshot = {
   appGroup: {
     runtimeState: RuntimeState;
@@ -157,8 +150,7 @@ export class AppGroupsService {
     private readonly registriesService: RegistriesService,
     private readonly encryption: EncryptionService,
     private readonly secretStorage: SecretStorageService,
-    private readonly stackRuntime: StackRuntimeService,
-    private readonly volumesService: VolumesService,
+    private readonly volumesService: VolumeReadService,
   ) {}
 
   async listAppGroups(tenantId: string) {
@@ -520,6 +512,8 @@ export class AppGroupsService {
         },
       });
 
+      await mirrorDeploymentOperation(tx, created, tenantId, actor);
+
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -638,6 +632,8 @@ export class AppGroupsService {
         },
       });
 
+      await mirrorDeploymentOperation(tx, created, tenantId, actor);
+
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -675,149 +671,11 @@ export class AppGroupsService {
     return mapAppGroupDeployment(deployment);
   }
 
-  async startAppGroup(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { appGroup, targets } = await this.updateAppGroupRuntimeState(
-      tenantId,
-      appGroupId,
-      RuntimeState.Running,
-      actor,
-    );
 
-    if (targets.length > 0) {
-      const results = await this.stackRuntime.scaleServices(targets);
-      this.assertRuntimeResults(results);
-      await this.updateActualReplicas(targets);
-    }
 
-    return {
-      appGroup: mapAppGroup(appGroup),
-      runtimeApplied: targets.length > 0,
-    };
-  }
 
-  async stopAppGroup(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { appGroup, targets } = await this.updateAppGroupRuntimeState(
-      tenantId,
-      appGroupId,
-      RuntimeState.Stopped,
-      actor,
-    );
 
-    if (targets.length > 0) {
-      const results = await this.stackRuntime.scaleServices(targets);
-      this.assertRuntimeResults(results);
-      await this.updateActualReplicas(targets);
-    }
 
-    return {
-      appGroup: mapAppGroup(appGroup),
-      runtimeApplied: targets.length > 0,
-    };
-  }
-
-  async restartAppGroup(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { appGroup, targets } = await this.getAppGroupRestartTargets(
-      tenantId,
-      appGroupId,
-      actor,
-    );
-
-    if (targets.length > 0) {
-      const results = await this.stackRuntime.restartServices(targets);
-      this.assertRuntimeResults(results);
-    }
-
-    return {
-      appGroup: mapAppGroup(appGroup),
-      runtimeApplied: targets.length > 0,
-    };
-  }
-
-  async startSingleApp(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { singleApp, targets } = await this.updateSingleAppRuntimeState(
-      tenantId,
-      appGroupId,
-      singleAppId,
-      RuntimeState.Running,
-      actor,
-    );
-
-    if (targets.length > 0) {
-      const results = await this.stackRuntime.scaleServices(targets);
-      this.assertRuntimeResults(results);
-      await this.updateActualReplicas(targets);
-    }
-
-    return {
-      singleApp: mapSingleApp(singleApp),
-      runtimeApplied: targets.length > 0,
-    };
-  }
-
-  async stopSingleApp(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { singleApp, targets } = await this.updateSingleAppRuntimeState(
-      tenantId,
-      appGroupId,
-      singleAppId,
-      RuntimeState.Stopped,
-      actor,
-    );
-
-    if (targets.length > 0) {
-      const results = await this.stackRuntime.scaleServices(targets);
-      this.assertRuntimeResults(results);
-      await this.updateActualReplicas(targets);
-    }
-
-    return {
-      singleApp: mapSingleApp(singleApp),
-      runtimeApplied: targets.length > 0,
-    };
-  }
-
-  async restartSingleApp(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const { singleApp, targets } = await this.getSingleAppRestartTarget(
-      tenantId,
-      appGroupId,
-      singleAppId,
-      actor,
-    );
-
-    const results = await this.stackRuntime.restartServices(targets);
-    this.assertRuntimeResults(results);
-
-    return {
-      singleApp: mapSingleApp(singleApp),
-      runtimeApplied: true,
-    };
-  }
 
   async listVariables(tenantId: string, appGroupId: string) {
     await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
@@ -932,41 +790,35 @@ export class AppGroupsService {
     this.assertSecretMetadata(dto.type, dto.fileName);
     const plaintext = this.decodeSecretValue(dto.type, dto.value);
     const secretId = crypto.randomUUID();
-    const storagePath = this.secretStorage.path(tenantId, appGroupId, dto.name);
 
     try {
-      return await this.secretStorage.replaceAtomically(
-        storagePath,
-        plaintext,
-        async () => {
-          const secret = await this.prisma.$transaction(async (tx) => {
-            const created = await tx.secret.create({
-              data: {
-                id: secretId,
-                appGroupId,
-                name: dto.name,
-                description: dto.description,
-                type: dto.type,
-                fileName:
-                  dto.type === SecretType.Binary ? dto.fileName : null,
-                valueVersion: 1,
-                storagePath,
-                createdBy: actor.id,
-                updatedBy: actor.id,
-              },
-              include: { attachments: true },
-            });
+      const secret = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.secret.create({
+          data: {
+            id: secretId,
+            appGroupId,
+            name: dto.name,
+            description: dto.description,
+            type: dto.type,
+            fileName: dto.type === SecretType.Binary ? dto.fileName : null,
+            valueVersion: 1,
+            keyVersion: 1,
+            valueCiphertext: this.secretStorage.seal(plaintext),
+            storagePath: null,
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+          include: { attachments: true },
+        });
 
-            await this.auditSecret(tx, tenantId, actor, "secret.create", created, {
-              value: { changed: true },
-            });
+        await this.auditSecret(tx, tenantId, actor, "secret.create", created, {
+          value: { changed: true },
+        });
 
-            return created;
-          });
+        return created;
+      });
 
-          return mapSecret(secret);
-        },
-      );
+      return mapSecret(secret);
     } catch (error) {
       this.handleKnownConflict(error, "Secret name already exists");
       throw error;
@@ -986,10 +838,9 @@ export class AppGroupsService {
       secretId,
     );
     const nextType = dto.type ?? existing.type;
-    const nextName = dto.name ?? existing.name;
     const typeChanged = nextType !== existing.type;
     const valueChanged = dto.value !== undefined;
-    const nameChanged = nextName !== existing.name;
+    const nameChanged = dto.name !== undefined && dto.name !== existing.name;
 
     if (typeChanged && !valueChanged) {
       throw new BadRequestException(
@@ -1005,19 +856,26 @@ export class AppGroupsService {
         : null;
     this.assertSecretMetadata(nextType, nextFileName);
 
-    const persist = () =>
-      this.prisma.$transaction(async (tx) => {
-        const updated = await tx.secret.update({
+    try {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        const secret = await tx.secret.update({
           where: { id: secretId },
           data: {
             name: dto.name,
             description: dto.description,
             type: dto.type,
             fileName: nextFileName,
-            storagePath: nameChanged
-              ? this.secretStorage.path(tenantId, appGroupId, nextName)
-              : undefined,
             valueVersion: valueChanged ? { increment: 1 } : undefined,
+            keyVersion: valueChanged ? 1 : undefined,
+            valueCiphertext: valueChanged
+              ? this.secretStorage.seal(
+                  this.decodeSecretValue(nextType, dto.value ?? ""),
+                )
+              : undefined,
+            // Legacy storagePath is intentionally preserved until Worker migration
+            // if this row has not yet been moved into PostgreSQL. New/updated values
+            // make it unnecessary and clear it.
+            storagePath: valueChanged ? null : undefined,
             updatedBy: actor.id,
           },
           include: { attachments: true },
@@ -1032,7 +890,7 @@ export class AppGroupsService {
           tenantId,
           actor,
           nameChanged && !valueChanged ? "secret.rename" : "secret.update",
-          updated,
+          secret,
           {
             nameChanged,
             metadataChanged:
@@ -1043,33 +901,10 @@ export class AppGroupsService {
           },
         );
 
-        return mapSecret(updated);
+        return secret;
       });
 
-    try {
-      if (!valueChanged && !nameChanged) {
-        return await persist();
-      }
-
-      const plaintext = valueChanged
-        ? this.decodeSecretValue(nextType, dto.value ?? "")
-        : await this.secretStorage.read(existing.storagePath);
-      const nextStoragePath = this.secretStorage.path(
-        tenantId,
-        appGroupId,
-        nextName,
-      );
-      const result = await this.secretStorage.replaceAtomically(
-        nextStoragePath,
-        plaintext,
-        persist,
-      );
-
-      if (nameChanged) {
-        await this.secretStorage.deleteBestEffort(existing.storagePath);
-      }
-
-      return result;
+      return mapSecret(updated);
     } catch (error) {
       this.handleKnownConflict(error, "Secret name already exists");
       throw error;
@@ -1095,14 +930,12 @@ export class AppGroupsService {
       throw new ConflictException("SecretInUse");
     }
 
-    return this.secretStorage.deleteAtomically(secret.storagePath, async () => {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.secret.delete({ where: { id: secretId } });
-        await this.auditSecret(tx, tenantId, actor, "secret.delete", secret);
-      });
-
-      return { deleted: true };
+    await this.prisma.$transaction(async (tx) => {
+      await tx.secret.delete({ where: { id: secretId } });
+      await this.auditSecret(tx, tenantId, actor, "secret.delete", secret);
     });
+
+    return { deleted: true };
   }
 
   async attachVariable(
@@ -2042,351 +1875,9 @@ export class AppGroupsService {
     return { deleted: true };
   }
 
-  private async updateAppGroupRuntimeState(
-    tenantId: string,
-    appGroupId: string,
-    runtimeState: RuntimeState,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const appGroup = await tx.appGroup.findFirst({
-        where: { id: appGroupId, tenantId },
-        include: {
-          singleApps: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
 
-      if (!appGroup) {
-        throw new NotFoundException("App Group not found");
-      }
 
-      await this.assertNoActiveDeployment(tx, appGroupId);
 
-      const serviceNames = await this.deployedServiceNames(tx, appGroup);
-      const stackName = this.stackName(appGroupId);
-      const targets = appGroup.singleApps.flatMap((singleApp) => {
-        const deployedServiceName = serviceNames.get(singleApp.id);
-
-        if (!deployedServiceName) {
-          return [];
-        }
-
-        const replicas =
-          runtimeState === RuntimeState.Stopped ||
-          singleApp.runtimeState === RuntimeState.Stopped ||
-          singleApp.pendingDeletion
-            ? 0
-            : singleApp.desiredReplicas;
-
-        return [
-          {
-            stackName,
-            serviceName: this.serviceName(deployedServiceName),
-            singleAppId: singleApp.id,
-            replicas,
-          },
-        ];
-      });
-      const tenant = await tx.tenant.findUniqueOrThrow({
-        where: { id: tenantId },
-        select: { name: true },
-      });
-      const updated = await tx.appGroup.update({
-        where: { id: appGroupId },
-        data: {
-          runtimeState,
-          updatedBy: actor.id,
-        },
-        include: {
-          singleApps: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
-
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId,
-          tenantName: tenant.name,
-          actor: actor.id,
-          actorName: actor.displayName,
-          action:
-            runtimeState === RuntimeState.Running
-              ? "appgroup.runtime.started"
-              : "appgroup.runtime.stopped",
-          resourceType: "AppGroup",
-          resourceId: appGroupId,
-          resourceName: appGroup.name,
-          result: "Success",
-          changes: {
-            previousRuntimeState: appGroup.runtimeState,
-            runtimeState,
-            runtimeApplied: targets.length > 0,
-          },
-        },
-      });
-
-      return { appGroup: updated, targets };
-    });
-  }
-
-  private async getAppGroupRestartTargets(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const appGroup = await tx.appGroup.findFirst({
-        where: { id: appGroupId, tenantId },
-        include: {
-          singleApps: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
-
-      if (!appGroup) {
-        throw new NotFoundException("App Group not found");
-      }
-
-      if (appGroup.runtimeState !== RuntimeState.Running) {
-        throw new ConflictException("AppGroupNotRunning");
-      }
-
-      await this.assertNoActiveDeployment(tx, appGroupId);
-
-      const serviceNames = await this.deployedServiceNames(tx, appGroup);
-      const stackName = this.stackName(appGroupId);
-      const targets = appGroup.singleApps.flatMap((singleApp) => {
-        const deployedServiceName = serviceNames.get(singleApp.id);
-
-        if (
-          !deployedServiceName ||
-          singleApp.pendingDeletion ||
-          singleApp.runtimeState !== RuntimeState.Running ||
-          singleApp.desiredReplicas <= 0
-        ) {
-          return [];
-        }
-
-        return [
-          {
-            stackName,
-            serviceName: this.serviceName(deployedServiceName),
-          },
-        ];
-      });
-
-      if (targets.length === 0) {
-        throw new ConflictException("AppGroupNotRunning");
-      }
-
-      const tenant = await tx.tenant.findUniqueOrThrow({
-        where: { id: tenantId },
-        select: { name: true },
-      });
-
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId,
-          tenantName: tenant.name,
-          actor: actor.id,
-          actorName: actor.displayName,
-          action: "appgroup.runtime.restarted",
-          resourceType: "AppGroup",
-          resourceId: appGroupId,
-          resourceName: appGroup.name,
-          result: "Success",
-          changes: {
-            restartedServices: targets.length,
-          },
-        },
-      });
-
-      return { appGroup, targets };
-    });
-  }
-
-  private async updateSingleAppRuntimeState(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    runtimeState: RuntimeState,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const appGroup = await tx.appGroup.findFirst({
-        where: { id: appGroupId, tenantId },
-        include: {
-          singleApps: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
-
-      if (!appGroup) {
-        throw new NotFoundException("App Group not found");
-      }
-
-      const existing = appGroup.singleApps.find(
-        (singleApp) => singleApp.id === singleAppId,
-      );
-
-      if (!existing) {
-        throw new NotFoundException("SingleApp not found");
-      }
-
-      if (existing.pendingDeletion) {
-        throw new ConflictException("SingleApp is pending deletion");
-      }
-
-      await this.assertNoActiveDeployment(tx, appGroupId);
-
-      const serviceNames = await this.deployedServiceNames(tx, appGroup);
-      const deployedServiceName = serviceNames.get(singleAppId);
-      const targets: RuntimeScaleTarget[] = deployedServiceName
-        ? [
-            {
-              stackName: this.stackName(appGroupId),
-              serviceName: this.serviceName(deployedServiceName),
-              singleAppId,
-              replicas:
-                runtimeState === RuntimeState.Running &&
-                appGroup.runtimeState === RuntimeState.Running
-                  ? existing.desiredReplicas
-                  : 0,
-            },
-          ]
-        : [];
-      const tenant = await tx.tenant.findUniqueOrThrow({
-        where: { id: tenantId },
-        select: { name: true },
-      });
-      const updated = await tx.singleApp.update({
-        where: { id: singleAppId },
-        data: {
-          runtimeState,
-          updatedBy: actor.id,
-        },
-      });
-
-      await tx.appGroup.update({
-        where: { id: appGroupId },
-        data: {
-          updatedBy: actor.id,
-        },
-      });
-
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId,
-          tenantName: tenant.name,
-          actor: actor.id,
-          actorName: actor.displayName,
-          action:
-            runtimeState === RuntimeState.Running
-              ? "singleapp.runtime.started"
-              : "singleapp.runtime.stopped",
-          resourceType: "SingleApp",
-          resourceId: singleAppId,
-          resourceName: existing.name,
-          result: "Success",
-          changes: {
-            appGroupId,
-            appGroupName: appGroup.name,
-            previousRuntimeState: existing.runtimeState,
-            runtimeState,
-            runtimeApplied: targets.length > 0,
-          },
-        },
-      });
-
-      return { singleApp: updated, targets };
-    });
-  }
-
-  private async getSingleAppRestartTarget(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    return this.prisma.$transaction(async (tx) => {
-      const appGroup = await tx.appGroup.findFirst({
-        where: { id: appGroupId, tenantId },
-        include: {
-          singleApps: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      });
-
-      if (!appGroup) {
-        throw new NotFoundException("App Group not found");
-      }
-
-      const singleApp = appGroup.singleApps.find(
-        (candidate) => candidate.id === singleAppId,
-      );
-
-      if (!singleApp) {
-        throw new NotFoundException("SingleApp not found");
-      }
-
-      if (
-        appGroup.runtimeState !== RuntimeState.Running ||
-        singleApp.runtimeState !== RuntimeState.Running ||
-        singleApp.desiredReplicas <= 0 ||
-        singleApp.pendingDeletion
-      ) {
-        throw new ConflictException("SingleAppNotRunning");
-      }
-
-      await this.assertNoActiveDeployment(tx, appGroupId);
-
-      const serviceNames = await this.deployedServiceNames(tx, appGroup);
-      const deployedServiceName = serviceNames.get(singleAppId);
-
-      if (!deployedServiceName) {
-        throw new ConflictException("SingleAppNotRunning");
-      }
-
-      const tenant = await tx.tenant.findUniqueOrThrow({
-        where: { id: tenantId },
-        select: { name: true },
-      });
-
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId,
-          tenantName: tenant.name,
-          actor: actor.id,
-          actorName: actor.displayName,
-          action: "singleapp.runtime.restarted",
-          resourceType: "SingleApp",
-          resourceId: singleAppId,
-          resourceName: singleApp.name,
-          result: "Success",
-          changes: {
-            appGroupId,
-            appGroupName: appGroup.name,
-          },
-        },
-      });
-
-      return {
-        singleApp,
-        targets: [
-          {
-            stackName: this.stackName(appGroupId),
-            serviceName: this.serviceName(deployedServiceName),
-          },
-        ],
-      };
-    });
-  }
 
   private async ensureAppGroupBelongsToTenant(
     tenantId: string,
@@ -2465,86 +1956,7 @@ export class AppGroupsService {
     }
   }
 
-  private async deployedServiceNames(
-    tx: Prisma.TransactionClient,
-    appGroup: AppGroup,
-  ) {
-    if (appGroup.currentDeploymentVersion === null) {
-      return new Map<string, string>();
-    }
 
-    const deployment = await tx.appGroupDeployment.findFirst({
-      where: {
-        appGroupId: appGroup.id,
-        version: appGroup.currentDeploymentVersion,
-        status: DeploymentStatus.Succeeded,
-      },
-      select: {
-        stackConfig: true,
-      },
-    });
-
-    if (!deployment?.stackConfig) {
-      return new Map<string, string>();
-    }
-
-    return this.parseDeployedServiceNames(deployment.stackConfig);
-  }
-
-  private parseDeployedServiceNames(stackConfig: string) {
-    const parsed = JSON.parse(stackConfig) as {
-      singleApps?: Array<{ id?: unknown; name?: unknown }>;
-    };
-    const names = new Map<string, string>();
-
-    for (const singleApp of parsed.singleApps ?? []) {
-      if (typeof singleApp.id === "string" && typeof singleApp.name === "string") {
-        names.set(singleApp.id, singleApp.name);
-      }
-    }
-
-    return names;
-  }
-
-  private stackName(appGroupId: string) {
-    return `rp_${appGroupId.replaceAll("-", "_")}`;
-  }
-
-  private serviceName(name: string) {
-    return name.replaceAll("-", "_");
-  }
-
-  private async updateActualReplicas(targets: RuntimeScaleTarget[]) {
-    await this.prisma.$transaction(
-      targets.map((target) =>
-        this.prisma.singleApp.update({
-          where: { id: target.singleAppId },
-          data: {
-            actualReplicas: target.replicas,
-          },
-        }),
-      ),
-    );
-  }
-
-  private assertRuntimeResults(
-    results: Array<{ command: string; exitCode: number; stderr: string }>,
-  ) {
-    const failures = results.filter((result) => result.exitCode !== 0);
-
-    if (failures.length === 0) {
-      return;
-    }
-
-    throw new ConflictException({
-      code: "RuntimeOperationFailed",
-      failures: failures.map((failure) => ({
-        command: failure.command,
-        exitCode: failure.exitCode,
-        stderr: this.truncate(failure.stderr, 500),
-      })),
-    });
-  }
 
   private truncate(value: string, maxLength: number) {
     return value.length > maxLength ? value.slice(0, maxLength) : value;

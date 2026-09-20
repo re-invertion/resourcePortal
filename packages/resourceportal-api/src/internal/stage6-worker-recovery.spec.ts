@@ -38,6 +38,7 @@ function deployment(
     phase: DeploymentPhase.ApplyingStack,
     stackConfig: stackConfig(),
     renderedStack: "services: {}",
+    renderedStackSha256: null,
     renderedAt: new Date(),
     sourceDraftRevision: 2,
     rollbackTargetVersion: null,
@@ -72,8 +73,8 @@ function recoveryService(
   ]) as DeploymentRecoveryService;
 }
 
-describe("Stage 6 deployment worker recovery", () => {
-  it("reclaims an expired rollback without converting it to a deploy", async () => {
+describe("Stage 6 unified Worker deployment recovery", () => {
+  it("reclaims an expired rollback only through its Operation-owned deployment id", async () => {
     const candidate = deployment({
       status: DeploymentStatus.RollingBack,
       phase: DeploymentPhase.RollingBack,
@@ -85,17 +86,9 @@ describe("Stage 6 deployment worker recovery", () => {
       errorMessage: "rollout failed",
     });
     let claimedStatus: DeploymentStatus | undefined;
-
     const tx = {
       appGroupDeployment: {
-        findFirst: vi.fn(
-          (params: { where: { OR: Array<Record<string, unknown>> } }) => {
-            const canRecoverRollback = params.where.OR.some(
-              (condition) => condition.status === DeploymentStatus.RollingBack,
-            );
-            return Promise.resolve(canRecoverRollback ? candidate : null);
-          },
-        ),
+        findUnique: vi.fn(() => Promise.resolve(candidate)),
         updateMany: vi.fn((params: { data: { status?: DeploymentStatus } }) => {
           claimedStatus = params.data.status;
           return Promise.resolve({ count: 1 });
@@ -108,9 +101,7 @@ describe("Stage 6 deployment worker recovery", () => {
           }),
         ),
       },
-      deploymentEvent: {
-        create: vi.fn(() => Promise.resolve({})),
-      },
+      deploymentEvent: { create: vi.fn(() => Promise.resolve({})) },
     };
     const prisma = {
       $transaction: vi.fn(
@@ -119,14 +110,42 @@ describe("Stage 6 deployment worker recovery", () => {
     };
     const recovery = recoveryService(prisma);
 
-    const claimed = await recovery.claimNextDeployment({
+    const claimed = await recovery.claimDeploymentById(candidate.id, {
       workerId: "worker-b",
       leaseSeconds: 60,
     });
 
-    expect(claimed).not.toBeNull();
-    expect(claimed?.status).toBe(DeploymentStatus.RollingBack);
+    expect(claimed.status).toBe(DeploymentStatus.RollingBack);
     expect(claimedStatus).toBe(DeploymentStatus.RollingBack);
+    expect(tx.appGroupDeployment.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not steal a deployment lease that is still live", async () => {
+    const candidate = deployment({
+      leaseOwner: "worker-a",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    });
+    const tx = {
+      appGroupDeployment: {
+        findUnique: vi.fn(() => Promise.resolve(candidate)),
+        updateMany: vi.fn(),
+      },
+      deploymentEvent: { create: vi.fn() },
+    };
+    const prisma = {
+      $transaction: vi.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const recovery = recoveryService(prisma);
+
+    await expect(
+      recovery.claimDeploymentById(candidate.id, {
+        workerId: "worker-b",
+        leaseSeconds: 60,
+      }),
+    ).rejects.toThrow("Deployment is leased by another worker");
+    expect(tx.appGroupDeployment.updateMany).not.toHaveBeenCalled();
   });
 
   it("reads Swarm state and skips duplicate stack apply when runtime is already in sync", async () => {
@@ -325,4 +344,102 @@ describe("Stage 6 deployment worker recovery", () => {
     expect(waitForRollout).toHaveBeenCalledTimes(1);
     expect(reconciled?.status).toBe(DeploymentStatus.RolledBack);
   });
+
+  it("replays an incomplete rollback from the persisted target artifact and its digest", async () => {
+    const failed = deployment({
+      status: DeploymentStatus.RollingBack,
+      phase: DeploymentPhase.RollingBack,
+      rollbackTargetVersion: 1,
+      errorCode: "RolloutFailed",
+      errorMessage: "rollout failed",
+    });
+    const target = deployment({
+      id: "deployment-1",
+      version: 1,
+      status: DeploymentStatus.Succeeded,
+      phase: DeploymentPhase.Completed,
+      renderedStack: "services: target\n",
+      renderedStackSha256: "b".repeat(64),
+      rollbackTargetVersion: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      completedAt: new Date(),
+    });
+    const artifact = {
+      renderedStack: "services: target\n",
+      sha256: "b".repeat(64),
+    };
+    const ensureDeploymentArtifact = vi.fn().mockResolvedValue(artifact);
+    const renderStack = vi.fn(() => {
+      throw new Error("rollback recovery must not re-render a persisted target");
+    });
+    const applyStack = vi.fn().mockResolvedValue({
+      command: "docker stack deploy",
+      exitCode: 0,
+      stdout: "updated",
+      stderr: "",
+    });
+    const inspectStackServices = vi.fn().mockResolvedValue([
+      {
+        name: "rp_app_group_1_api",
+        image: "registry.example.test/team/api:2",
+        runningReplicas: 1,
+        desiredReplicas: 1,
+      },
+    ]);
+    const waitForRollout = vi.fn().mockResolvedValue({
+      success: true,
+      message: "Rollout completed",
+      details: "2/2 replicas",
+    });
+    const tx = {
+      appGroupDeployment: {
+        update: vi.fn().mockResolvedValue({
+          ...failed,
+          status: DeploymentStatus.RolledBack,
+          phase: DeploymentPhase.Completed,
+          completedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        }),
+      },
+      appGroup: { update: vi.fn().mockResolvedValue({}) },
+      deploymentEvent: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      appGroupDeployment: {
+        findUnique: vi.fn().mockResolvedValue(failed),
+        findFirst: vi.fn().mockResolvedValue(target),
+      },
+      deploymentEvent: { create: vi.fn().mockResolvedValue({}) },
+      $transaction: vi.fn(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+    };
+    const recovery = recoveryService(
+      prisma,
+      { ensureDeploymentArtifact, renderStack },
+      { applyStack },
+      { waitForRollout },
+      { inspectStackServices },
+    );
+
+    const reconciled = await recovery.reconcileClaimedDeployment(
+      failed.id,
+      "worker-b",
+    );
+
+    expect(ensureDeploymentArtifact).toHaveBeenCalledWith(target.id);
+    expect(renderStack).not.toHaveBeenCalled();
+    expect(applyStack).toHaveBeenCalledWith({
+      stackName: "rp_app_group_1",
+      renderedStack: artifact.renderedStack,
+      artifactSha256: artifact.sha256,
+      appGroupId: "app-group-1",
+    });
+    expect(reconciled?.status).toBe(DeploymentStatus.RolledBack);
+  });
+
 });

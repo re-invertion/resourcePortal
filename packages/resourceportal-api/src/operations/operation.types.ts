@@ -1,12 +1,23 @@
 export const OPERATION_TYPES = [
   "APP_GROUP_DEPLOY",
   "APP_GROUP_ROLLBACK",
+  "APP_GROUP_START",
+  "APP_GROUP_STOP",
+  "APP_GROUP_RESTART",
+  "SINGLE_APP_START",
+  "SINGLE_APP_STOP",
+  "SINGLE_APP_RESTART",
   "VOLUME_CREATE",
   "VOLUME_RESIZE",
   "VOLUME_DELETE",
   "DOMAIN_VERIFY",
   "CUSTOM_ROOT_DOMAIN_VERIFY",
   "DOMAIN_CERTIFICATE_RECONCILE",
+  "SWARM_RECONCILE",
+  "SWARM_NODE_MAINTENANCE",
+  "STORAGE_BACKEND_VALIDATE",
+  "INSTALLER_ENROLLMENT_PREPARE",
+  "INSTALLER_ENROLLMENT_COMPLETE",
 ] as const;
 
 export type OperationType = (typeof OPERATION_TYPES)[number];
@@ -86,6 +97,7 @@ export type AppendOperationEventInput = {
 export type OperationExecutionResult = {
   resourceId?: string | null;
   result?: unknown;
+  terminalStatus?: Extract<OperationStatus, "Succeeded" | "RolledBack">;
 };
 
 export type OperationErrorShape = {

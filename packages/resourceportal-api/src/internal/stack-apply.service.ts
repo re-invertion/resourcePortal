@@ -1,7 +1,13 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
-import { parse, stringify } from "yaml";
+import { deploymentArtifactMatches } from "./deployment-artifact";
+import { inspectAppGroupNetworkTopology } from "./app-group-networking";
+import {
+  appGroupNetworkName,
+  legacyAppGroupIngressNetworkName,
+} from "./traefik-routing";
+import { StackRuntimeService } from "./stack-runtime.service";
 
 type ApplyResult = {
   command: string;
@@ -11,29 +17,79 @@ type ApplyResult = {
   stderr: string;
 };
 
-type ComposeService = {
-  deploy?: {
-    labels?: Record<string, unknown> | unknown[];
-  };
-  networks?: string[] | Record<string, unknown>;
-};
 
-type ComposeStack = {
-  networks?: Record<string, unknown>;
-  services?: Record<string, ComposeService>;
+type CommandResult = {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 };
 
 @Injectable()
 export class StackApplyService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly runtime: StackRuntimeService,
+  ) {}
 
-  applyStack(params: {
+  async applyStack(params: {
     stackName: string;
     renderedStack: string;
+    artifactSha256: string;
+    appGroupId: string;
   }): Promise<ApplyResult> {
+    if (!deploymentArtifactMatches(params.renderedStack, params.artifactSha256)) {
+      return {
+        command: "verify deployment artifact sha256",
+        stackName: params.stackName,
+        exitCode: 2,
+        stdout: "",
+        stderr: "Rendered deployment artifact SHA-256 does not match persisted digest",
+      };
+    }
+
+    const appGroupNetwork = appGroupNetworkName(params.appGroupId);
+    const legacyIngressNetwork = legacyAppGroupIngressNetworkName(
+      params.appGroupId,
+    );
+    let topology;
+    try {
+      topology = inspectAppGroupNetworkTopology(
+        params.renderedStack,
+        appGroupNetwork,
+        legacyIngressNetwork,
+      );
+    } catch (error) {
+      return {
+        command: "parse rendered stack network topology",
+        stackName: params.stackName,
+        exitCode: 2,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const prepared =
+      topology.mode === "single"
+        ? await this.runtime.reconcileAppGroupNetwork({
+            networkName: appGroupNetwork,
+            traefikRequired: topology.traefikRequired,
+          })
+        : await this.runtime.reconcileLegacyIngressNetwork({
+            networkName: legacyIngressNetwork,
+            required: topology.traefikRequired,
+          });
+    if (!prepared.success) {
+      return {
+        command: `prepare ${topology.mode} App Group network`,
+        stackName: params.stackName,
+        exitCode: 1,
+        stdout: "",
+        stderr: "Failed to prepare App Group network topology",
+      };
+    }
+
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
-    const timeoutMs = this.config.get<number>("DOCKER_APPLY_TIMEOUT_MS", 120000);
-    const renderedStack = this.attachIngressNetworks(params.renderedStack);
     const args = [
       ...(dockerContext ? ["--context", dockerContext] : []),
       "stack",
@@ -44,116 +100,63 @@ export class StackApplyService {
       "-",
       params.stackName,
     ];
+    const result = await this.run("docker", args, params.renderedStack);
 
+    if (result.exitCode === 0 && topology.mode === "single") {
+      // v0.2 single-network deployment has already removed the legacy network
+      // from tenant services. Detach Traefik and delete the obsolete overlay.
+      // Cleanup is best effort and is retried by IngressReconcilerService.
+      await this.runtime
+        .reconcileLegacyIngressNetwork({
+          networkName: legacyIngressNetwork,
+          required: false,
+        })
+        .catch(() => undefined);
+    }
+
+    return { ...result, stackName: params.stackName };
+  }
+
+  private run(command: string, args: string[], stdin?: string): Promise<CommandResult> {
+    const timeoutMs = this.config.get<number>("DOCKER_APPLY_TIMEOUT_MS", 120000);
     return new Promise((resolve) => {
-      const child = spawn("docker", args, {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let settled = false;
-      const command = `docker ${args.join(" ")}`;
+      const renderedCommand = `${command} ${args.join(" ")}`;
       const timeout = setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGTERM");
-        }
+        if (!settled) child.kill("SIGTERM");
       }, timeoutMs);
 
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
       child.on("error", (error) => {
+        if (settled) return;
         settled = true;
         clearTimeout(timeout);
         resolve({
-          command,
-          stackName: params.stackName,
+          command: renderedCommand,
           exitCode: 127,
           stdout: this.decode(stdout),
           stderr: error.message,
         });
       });
       child.on("close", (code, signal) => {
-        if (settled) {
-          return;
-        }
-
+        if (settled) return;
         settled = true;
         clearTimeout(timeout);
         resolve({
-          command,
-          stackName: params.stackName,
+          command: renderedCommand,
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
           stderr: signal
-            ? `docker stack deploy terminated by ${signal}`
+            ? `${renderedCommand} terminated by ${signal}`
             : this.decode(stderr),
         });
       });
-
-      child.stdin.end(renderedStack);
+      child.stdin.end(stdin);
     });
-  }
-
-  private attachIngressNetworks(renderedStack: string) {
-    let stack: ComposeStack;
-    try {
-      stack = parse(renderedStack) as ComposeStack;
-    } catch {
-      return renderedStack;
-    }
-
-    if (!stack || typeof stack !== "object" || !stack.services) {
-      return renderedStack;
-    }
-
-    const externalNetworks = new Set<string>();
-    for (const service of Object.values(stack.services)) {
-      const network = this.traefikSwarmNetwork(service.deploy?.labels);
-      if (!network) {
-        continue;
-      }
-
-      externalNetworks.add(network);
-      if (Array.isArray(service.networks)) {
-        if (!service.networks.includes(network)) {
-          service.networks.push(network);
-        }
-      } else {
-        service.networks = {
-          ...(service.networks ?? {}),
-          [network]: {},
-        };
-      }
-    }
-
-    if (externalNetworks.size === 0) {
-      return renderedStack;
-    }
-
-    stack.networks ??= {};
-    for (const network of externalNetworks) {
-      stack.networks[network] = { external: true, name: network };
-    }
-
-    return stringify(stack, { lineWidth: 0 });
-  }
-
-  private traefikSwarmNetwork(labels: Record<string, unknown> | unknown[] | undefined) {
-    if (!labels) {
-      return undefined;
-    }
-
-    if (Array.isArray(labels)) {
-      const prefix = "traefik.swarm.network=";
-      const label = labels.find(
-        (value): value is string =>
-          typeof value === "string" && value.startsWith(prefix),
-      );
-      return label?.slice(prefix.length).trim() || undefined;
-    }
-
-    const value = labels["traefik.swarm.network"];
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
   }
 
   private decode(chunks: Buffer[]) {

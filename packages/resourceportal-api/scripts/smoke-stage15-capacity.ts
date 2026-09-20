@@ -309,7 +309,7 @@ async function preflightApi() {
 }
 
 async function runWorkerOnce() {
-  const result = await command("npm", ["run", "worker:deployments"], {
+  const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
@@ -320,7 +320,7 @@ async function runWorkerOnce() {
     console.log(output);
   }
   if (result.exitCode !== 0) {
-    throw new Error(output || "Deployment worker failed");
+    throw new Error(output || "ResourcePortal worker failed");
   }
 }
 

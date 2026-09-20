@@ -120,7 +120,21 @@ export class DevAuthGuard implements CanActivate {
   }
 
   private getAuthMode() {
-    const authMode = this.config.get<string>("AUTH_MODE", "dev").toLowerCase();
+    const authMode = this.config
+      .get<string>("AUTH_MODE", "dev")
+      .trim()
+      .toLowerCase();
+    const nodeEnv = this.config
+      .get<string>("NODE_ENV", "development")
+      .trim()
+      .toLowerCase();
+
+    if (nodeEnv === "production" && authMode === "dev") {
+      throw new InternalServerErrorException(
+        "AUTH_MODE=dev is not allowed in production",
+      );
+    }
+
     if (authMode === "dev" || authMode === "oidc" || authMode === "zitadel") {
       return authMode === "zitadel" ? "oidc" : authMode;
     }

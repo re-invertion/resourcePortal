@@ -38,6 +38,11 @@ export RP_CFG_ZITADEL_ORGANIZATION_ID='zitadel-org-123'
 export RP_CFG_ZITADEL_PROJECT_ID='zitadel-project-456'
 export RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_feedfacefeedface'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
+export RP_CFG_STORAGE_DEVICE='/dev/sdb'
+export RP_CFG_SWARM_ADVERTISE_ADDR='10.20.0.10'
+export RP_CFG_STORAGE_SERVER_ADDRESS='10.20.0.10'
+export RP_CFG_CLUSTER_CIDR='10.20.0.0/24'
+export RP_CFG_RELEASE_VERSION='0.2.0'
 
 bootstrap="$(rp_render_stack bootstrap)"
 ingress="$(rp_render_stack ingress)"
@@ -45,8 +50,7 @@ final="$(rp_render_stack final)"
 
 contains "$bootstrap" 'replicas: 0 # RP_API_REPLICAS' 'bootstrap gates API'
 contains "$bootstrap" 'replicas: 0 # RP_WEB_REPLICAS' 'bootstrap gates Web'
-contains "$bootstrap" 'replicas: 0 # RP_DEPLOYMENT_WORKER_REPLICAS' 'bootstrap gates deployment worker'
-contains "$bootstrap" 'replicas: 0 # RP_OPERATION_WORKER_REPLICAS' 'bootstrap gates operation worker'
+contains "$bootstrap" 'replicas: 0 # RP_WORKER_REPLICAS' 'bootstrap gates worker'
 contains "$bootstrap" 'replicas: 0 # RP_TRAEFIK_REPLICAS' 'bootstrap gates Traefik before domain/ACME'
 contains "$bootstrap" 'replicas: 1 # RP_POSTGRES_RP_REPLICAS' 'bootstrap starts RP PostgreSQL'
 contains "$bootstrap" 'replicas: 1 # RP_POSTGRES_ZITADEL_REPLICAS' 'bootstrap starts ZITADEL PostgreSQL'
@@ -91,14 +95,24 @@ rm -f "$ingress_prepare_log"
 
 contains "$final" 'replicas: 1 # RP_API_REPLICAS' 'final enables API'
 contains "$final" 'replicas: 1 # RP_WEB_REPLICAS' 'final enables Web'
-contains "$final" 'replicas: 1 # RP_DEPLOYMENT_WORKER_REPLICAS' 'final enables deployment worker'
-contains "$final" 'replicas: 1 # RP_OPERATION_WORKER_REPLICAS' 'final enables operation worker'
+contains "$final" 'replicas: 1 # RP_WORKER_REPLICAS' 'final enables worker'
 contains "$final" 'replicas: 1 # RP_TRAEFIK_REPLICAS' 'final enables Traefik'
+contains "$final" 'AUTH_MODE: zitadel' 'production API uses Zitadel/OIDC auth'
+contains "$final" 'RP_OIDC_EXTRA_CA_B64: ""' 'production API does not add staging CA trust'
+contains "$final" 'if [ -n "$${RP_OIDC_EXTRA_CA_B64:-}" ]; then' 'API starts with conditional extra-CA bootstrap only'
+contains "$final" 'API_TRUST_PROXY_HOPS: "1"' 'production API trusts exactly one reverse-proxy hop'
+contains "$final" 'API_RATE_LIMIT_MAX: "300"' 'production API has an explicit shared rate limit'
+contains "$final" 'API_RATE_LIMIT_WINDOW_SECONDS: "60"' 'production API has an explicit rate-limit window'
+contains "$final" '--entrypoints.websecure.forwardedheaders.insecure=false' 'Traefik does not trust client-supplied forwarded headers'
+not_contains "$final" 'AUTH_MODE: dev' 'production stack never enables dev impersonation auth'
+contains "$final" 'command: ["node", "dist/src/worker.runner.js"]' 'final uses unified worker runner'
+not_contains "$final" 'dist/src/internal/deployment-worker.runner.js' 'final no longer uses deployment worker runner'
+not_contains "$final" 'dist/src/operations/operation-worker.runner.js' 'final no longer uses operation worker runner'
 
 contains "$final" 'DATABASE_URL_FILE: /run/secrets/rp_database_url' 'API consumes DB secret file'
 contains "$final" 'RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key' 'API consumes encryption secret file'
 contains "$final" 'AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret' 'API consumes cookie secret file'
-contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token' 'workers consume token secret file'
+contains "$final" 'INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token' 'API consumes internal token secret file'
 contains "$final" 'ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token' 'API consumes ZITADEL management token from secret file'
 contains "$final" 'ZITADEL_ORGANIZATION_ID: zitadel-org-123' 'API receives ZITADEL organization id'
 contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADEL project id'
@@ -139,9 +153,13 @@ rm -f "$config_fixture"
 unset ZITADEL_MANAGEMENT_TOKEN
 
 contains "$final" 'node.labels.resourceportal.storage.platform == true' 'stateful platform services require platform storage'
-contains "$final" 'node.labels.resourceportal.storage.authoritative == true' 'operation worker requires authoritative storage host'
+contains "$final" 'node.labels.resourceportal.storage.authoritative == true' 'worker requires authoritative storage host'
+control_plane_source="$(cat "$repo_root/scripts/installer/control-plane.sh")"
+contains "$control_plane_source" '--with-registry-auth --prune' 'stack deploy prunes legacy services removed by v0.2 architecture'
+not_contains "$control_plane_source" '--env AUTH_MODE=dev' 'production migration job no longer opts into forbidden dev auth mode'
 contains "$final" 'node.role == manager' 'control plane requires managers'
-contains "$final" 'node.labels.resourceportal.ingress == true' 'Traefik requires ingress opt-in'
+contains "$final" 'node.labels.rp.node.ingress == true' 'Traefik requires v0.2 ingress opt-in'
+not_contains "$final" 'node.labels.resourceportal.ingress == true' 'production stack no longer schedules by legacy ingress role'
 contains "$final" 'Host(`rp.example.com`)' 'Web router uses production domain'
 contains "$final" 'Host(`auth.rp.example.com`)' 'ZITADEL router uses separate auth domain'
 contains "$final" 'OIDC_ISSUER_URL: https://auth.rp.example.com' 'API issuer uses auth domain'
@@ -153,6 +171,27 @@ contains "$final" 'traefik.http.services.resourceportal-zitadel.loadbalancer.ser
 contains "$final" 'RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes' 'runtime volume root is canonical'
 contains "$final" 'RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets' 'runtime secret root is canonical'
 contains "$final" 'RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform' 'runtime platform root is canonical'
+
+api_section="$(sed -n '/^  api:/,/^  worker:/p' <<<"$final")"
+worker_section="$(sed -n '/^  worker:/,/^  dr-reconciliation:/p' <<<"$final")"
+web_section="$(sed -n '/^  web:/,/^  traefik:/p' <<<"$final")"
+traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
+contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
+not_contains "$api_section" '      - rp-ingress' 'API is not directly reachable from the public ingress overlay'
+contains "$web_section" '      - rp-ingress' 'Web remains reachable from Traefik ingress'
+contains "$web_section" '      - rp-web-api' 'Web proxies API requests over the dedicated internal overlay'
+not_contains "$traefik_section" 'rp-web-api' 'Traefik cannot directly reach the API-only proxy overlay'
+not_contains "$api_section" '/var/run/docker.sock' 'API has no Docker socket mount'
+not_contains "$api_section" '/mnt/resourceportal/volumes' 'API has no tenant volume mount'
+not_contains "$api_section" '/mnt/resourceportal/secrets' 'API has no secret filesystem mount'
+not_contains "$api_section" 'RESOURCE_STORAGE_BASE_PATH:' 'API has no host storage root configuration'
+contains "$worker_section" '/var/run/docker.sock:/var/run/docker.sock' 'worker owns Docker socket access'
+contains "$worker_section" '/mnt/resourceportal/volumes:/mnt/resourceportal/volumes' 'worker owns tenant volume access'
+contains "$worker_section" '/mnt/resourceportal/secrets:/mnt/resourceportal/secrets:ro' 'worker can read legacy secret filesystem during upgrade'
+contains "$worker_section" '/srv/resource-portal/storage:/srv/resource-portal/storage' 'worker has authoritative storage path for resumable legacy Secret cleanup'
+contains "$worker_section" 'node.labels.rp.node.control-plane == true' 'worker is placed on v0.2 control-plane capable node'
+contains "$worker_section" 'node.labels.rp.node.storage == true' 'worker requires v0.2 storage role'
+not_contains "$worker_section" 'node.labels.resourceportal.control-plane == true' 'worker no longer schedules by legacy control-plane role'
 
 status 0 'accept exact digest API image' rp_validate_image_ref "$RP_CFG_API_IMAGE"
 status 1 'reject mutable latest image' rp_validate_image_ref 'ghcr.io/re-invertion/resourceportal-api:latest'

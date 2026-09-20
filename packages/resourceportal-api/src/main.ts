@@ -8,14 +8,19 @@ import {
 } from "@nestjs/platform-fastify";
 import fastifyCookie from "@fastify/cookie";
 import { FastifyReply, FastifyRequest } from "fastify";
-import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { AppModule } from "./app.module";
+import { SwaggerModule } from "@nestjs/swagger";
+import { ApiModule } from "./api.module";
+import { apiTrustProxy } from "./config/http-proxy-config";
+import { buildSwaggerConfig } from "./config/swagger-config";
 import { ObservabilityService } from "./observability/observability.service";
+import { structuredLog } from "./observability/structured-log";
 import { ServerSpan, TracingService } from "./observability/tracing.service";
 import { RateLimitService } from "./security/rate-limit.service";
+import { shouldRateLimitRequest } from "./security/rate-limit-policy";
 
 type ObservedRequest = FastifyRequest & {
   requestId?: string;
+  correlationId?: string;
   requestStartedAt?: number;
   traceSpan?: ServerSpan;
 };
@@ -24,8 +29,13 @@ const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
-    AppModule,
-    new FastifyAdapter(),
+    ApiModule,
+    new FastifyAdapter({
+      trustProxy: apiTrustProxy(
+        process.env.NODE_ENV,
+        process.env.API_TRUST_PROXY_HOPS,
+      ),
+    }),
   );
   const config = app.get(ConfigService);
   const observability = app.get(ObservabilityService);
@@ -46,38 +56,43 @@ async function bootstrap() {
 
   app.setGlobalPrefix("api");
   const fastify = app.getHttpAdapter().getInstance();
-  fastify.addHook("onRequest", (request: ObservedRequest, reply, done) => {
-    const requestId = requestIdFromHeader(request.headers["x-request-id"]);
+  fastify.addHook("onRequest", async (request: ObservedRequest, reply) => {
+    const requestId = idFromHeader(request.headers["x-request-id"]);
+    const correlationId = idFromHeader(request.headers["x-correlation-id"]);
     const traceSpan = tracing.startServerSpan(
       request.headers.traceparent,
       `${request.method} ${request.url.split("?")[0] ?? request.url}`,
     );
 
     request.requestId = requestId;
+    request.correlationId = correlationId;
     request.requestStartedAt = Date.now();
     request.traceSpan = traceSpan;
     reply.header("x-request-id", requestId);
+    reply.header("x-correlation-id", correlationId);
     reply.header("traceparent", traceSpan.traceparent);
     applySecurityHeaders(request, reply, config);
 
-    const limit = rateLimit.consume(request.ip);
-    reply.header("x-ratelimit-limit", String(limit.limit));
-    reply.header("x-ratelimit-remaining", String(limit.remaining));
-    reply.header("x-ratelimit-reset", String(Math.ceil(limit.resetAt / 1000)));
-    if (!limit.allowed) {
-      reply.header("retry-after", String(limit.retryAfterSeconds));
-      reply.status(429).send({
-        error: {
-          code: "RATE_LIMIT_EXCEEDED",
-          message: "Too many requests",
-          statusCode: 429,
-          requestId,
-          details: {
-            retryAfterSeconds: limit.retryAfterSeconds,
+    if (shouldRateLimitRequest(request.url)) {
+      const limit = await rateLimit.consume(request.ip);
+      reply.header("x-ratelimit-limit", String(limit.limit));
+      reply.header("x-ratelimit-remaining", String(limit.remaining));
+      reply.header("x-ratelimit-reset", String(Math.ceil(limit.resetAt / 1000)));
+      if (!limit.allowed) {
+        reply.header("retry-after", String(limit.retryAfterSeconds));
+        reply.status(429).send({
+          error: {
+            code: "RATE_LIMIT_EXCEEDED",
+            message: "Too many requests",
+            statusCode: 429,
+            requestId,
+            details: {
+              retryAfterSeconds: limit.retryAfterSeconds,
+            },
           },
-        },
-      });
-      return;
+        });
+        return;
+      }
     }
 
     if (!isCsrfValid(request, config)) {
@@ -93,7 +108,6 @@ async function bootstrap() {
       return;
     }
 
-    done();
   });
   fastify.addHook("onResponse", (request: ObservedRequest, reply, done) => {
     const durationMs = Date.now() - (request.requestStartedAt ?? Date.now());
@@ -112,20 +126,18 @@ async function bootstrap() {
         statusCode: reply.statusCode,
       });
     }
-    httpLogger.log(
-      JSON.stringify({
-        event: "http.request",
-        requestId: request.requestId,
-        traceId: request.traceSpan?.traceId ?? null,
-        spanId: request.traceSpan?.spanId ?? null,
-        method: request.method,
-        route,
-        statusCode: reply.statusCode,
-        durationMs,
-        remoteAddress: request.ip,
-        userAgent: request.headers["user-agent"] ?? null,
-      }),
-    );
+    structuredLog(httpLogger, "log", "resource-portal-api", "http.request", {
+      requestId: request.requestId ?? null,
+      correlationId: request.correlationId ?? null,
+      traceId: request.traceSpan?.traceId ?? null,
+      spanId: request.traceSpan?.spanId ?? null,
+      method: request.method,
+      route,
+      statusCode: reply.statusCode,
+      durationMs,
+      remoteAddress: request.ip,
+      userAgent: request.headers["user-agent"] ?? null,
+    });
     done();
   });
   app.useGlobalPipes(
@@ -136,49 +148,7 @@ async function bootstrap() {
     }),
   );
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle("Resource Portal API")
-    .setDescription("Backend API for Resource Portal")
-    .setVersion("0.1.0")
-    .addApiKey(
-      {
-        type: "apiKey",
-        name: "x-dev-user-id",
-        in: "header",
-        description: "Development authentication user id",
-      },
-      "dev-user",
-    )
-    .addBearerAuth(
-      {
-        type: "http",
-        scheme: "bearer",
-        bearerFormat: "JWT",
-        description: "OIDC access token",
-      },
-      "oidc",
-    )
-    .addCookieAuth(
-      "rp_session",
-      {
-        type: "apiKey",
-        in: "cookie",
-        name: "rp_session",
-        description: "Browser session cookie created by the OIDC callback",
-      },
-      "rp_session",
-    )
-    .addSecurityRequirements("dev-user")
-    .addSecurityRequirements("oidc")
-    .addSecurityRequirements("rp_session")
-    .addTag("auth")
-    .addTag("users")
-    .addTag("tenants")
-    .addTag("app-groups")
-    .addTag("registries")
-    .addTag("volumes")
-    .addTag("domains")
-    .build();
+  const swaggerConfig = buildSwaggerConfig(config.get<string>("AUTH_MODE"));
   const swaggerDocumentFactory = () =>
     SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup("docs", app, swaggerDocumentFactory, {
@@ -187,13 +157,19 @@ async function bootstrap() {
   });
 
   await app.listen({ host: "0.0.0.0", port });
-  Logger.log(`Resource Portal API listening on http://localhost:${port}/api`);
-  Logger.log(`Swagger UI available at http://localhost:${port}/api/docs`);
+  const bootstrapLogger = new Logger("ResourcePortalApi");
+  structuredLog(bootstrapLogger, "log", "resource-portal-api", "api.started", {
+    port,
+    basePath: "/api",
+  });
+  structuredLog(bootstrapLogger, "log", "resource-portal-api", "api.swagger.ready", {
+    path: "/api/docs",
+  });
 }
 
 void bootstrap();
 
-function requestIdFromHeader(value: string | string[] | undefined) {
+function idFromHeader(value: string | string[] | undefined) {
   const candidate = Array.isArray(value) ? value[0] : value;
 
   if (candidate && candidate.length <= 128) {

@@ -17,10 +17,6 @@ import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
 import { mapVolume } from "./volumes.view";
 
-type VolumeWithAttachments = Prisma.VolumeGetPayload<{
-  include: { attachments: true };
-}>;
-
 type ReservedVolumeSizeRow = {
   id: string;
   reservedSizeBytes: bigint;
@@ -39,18 +35,11 @@ export class VolumesService {
       include: { attachments: true },
       orderBy: { createdAt: "desc" },
     });
-    const result = [];
-
-    for (const volume of volumes) {
-      result.push(mapVolume(await this.refreshUsedSize(volume)));
-    }
-
-    return result;
+    return volumes.map(mapVolume);
   }
 
   async getVolume(tenantId: string, volumeId: string) {
-    const volume = await this.findVolumeOrThrow(tenantId, volumeId);
-    return mapVolume(await this.refreshUsedSize(volume));
+    return mapVolume(await this.findVolumeOrThrow(tenantId, volumeId));
   }
 
   async createVolume(
@@ -268,22 +257,6 @@ export class VolumesService {
     await this.findVolumeOrThrow(tenantId, volumeId);
   }
 
-  private async refreshUsedSize(volume: VolumeWithAttachments) {
-    const usedSizeBytes = await this.storageBackends.measureUsedSize(
-      volume.id,
-      volume.storagePath,
-    );
-
-    if (volume.usedSizeBytes === usedSizeBytes) {
-      return volume;
-    }
-
-    return this.prisma.volume.update({
-      where: { id: volume.id },
-      data: { usedSizeBytes },
-      include: { attachments: true },
-    });
-  }
 
   private async findVolumeOrThrow(tenantId: string, volumeId: string) {
     const volume = await this.prisma.volume.findFirst({

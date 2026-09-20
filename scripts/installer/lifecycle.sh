@@ -60,6 +60,22 @@ rp_prompt_if_empty() {
   export "$var=$value"
 }
 
+rp_load_admin_password_file() {
+  local path="${RP_ADMIN_PASSWORD_FILE:-}"
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == /* && -f "$path" && -r "$path" ]] || {
+    printf '%s\n' 'RP_ADMIN_PASSWORD_FILE must reference a readable absolute file.' >&2
+    return 1
+  }
+  RP_ADMIN_PASSWORD="$(cat -- "$path")" || return 1
+  if ! rp_admin_password_valid "$RP_ADMIN_PASSWORD"; then
+    unset RP_ADMIN_PASSWORD
+    printf '%s\n' 'Admin password from RP_ADMIN_PASSWORD_FILE does not meet policy.' >&2
+    return 1
+  fi
+  export RP_ADMIN_PASSWORD
+}
+
 rp_collect_primary_config() {
   local state_file="${1:-${RP_INSTALLER_STATE_FILE:-/var/lib/resourceportal/installer-state/primary.state}}"
   local detected_address detected_cidr detected_public_address detected_storage
@@ -95,9 +111,13 @@ rp_collect_primary_config() {
     rp_prompt_if_empty RP_ADMIN_USERNAME 'First Platform Admin' 'Admin username' 'admin'
     rp_prompt_if_empty RP_ADMIN_EMAIL 'First Platform Admin' 'Admin email' ''
     if [[ -z "${RP_ADMIN_PASSWORD:-}" ]]; then
-      RP_ADMIN_PASSWORD="$(rp_ui_password 'First Platform Admin' 'Admin password (12+ chars, upper/lower/digit/special)')" || return 1
-      rp_admin_password_valid "$RP_ADMIN_PASSWORD" || { printf 'Admin password does not meet policy.\n' >&2; return 1; }
-      export RP_ADMIN_PASSWORD
+      if [[ -n "${RP_ADMIN_PASSWORD_FILE:-}" ]]; then
+        rp_load_admin_password_file || return 1
+      else
+        RP_ADMIN_PASSWORD="$(rp_ui_password 'First Platform Admin' 'Admin password (12+ chars, upper/lower/digit/special)')" || return 1
+        rp_admin_password_valid "$RP_ADMIN_PASSWORD" || { printf 'Admin password does not meet policy.\n' >&2; return 1; }
+        export RP_ADMIN_PASSWORD
+      fi
     fi
   fi
   if ! rp_phase_done "$state_file" smtp && [[ -z "${RP_CFG_SMTP_DEFERRED:-}" && -z "${RP_CFG_SMTP_CONFIGURED:-}" ]]; then
@@ -218,8 +238,12 @@ rp_primary_init_swarm() {
     --label-add resourceportal.storage.authoritative=true \
     --label-add resourceportal.platform.postgres-rp-writer=true \
     --label-add resourceportal.platform.postgres-zitadel-writer=true \
+    --label-add rp.node.control-plane=true \
+    --label-add rp.node.ingress=true \
+    --label-add rp.node.tenant-workloads=true \
     --label-add resourceportal.control-plane=true \
-    --label-add resourceportal.ingress=true "$node"
+    --label-add resourceportal.ingress=true \
+    --label-add resourceportal.tenant-workloads=true "$node"
 }
 
 rp_primary_configure_nfs() {
@@ -556,7 +580,13 @@ rp_primary_enable_ingress() {
     return 0
   fi
   if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started ingress "Validating ACME HTTP-01 with staging: $RP_CFG_ZITADEL_DOMAIN" || true; fi
-  rp_wait_for_acme_certificate "$RP_CFG_ZITADEL_DOMAIN" staging 300
+  rp_wait_for_acme_certificate "$RP_CFG_ZITADEL_DOMAIN" staging 300 || return 1
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    rp_prepare_oidc_staging_ca "$RP_CFG_ZITADEL_DOMAIN" || {
+      printf 'Unable to establish the validated staging CA trust required for OIDC.\n' >&2
+      return 1
+    }
+  fi
 }
 
 rp_primary_deploy_final() {

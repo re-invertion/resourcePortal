@@ -2,6 +2,11 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "./storage-paths";
+import {
+  dockerNodeLabelConstraint,
+  LEGACY_STORAGE_NODE_LABELS,
+  RESOURCEPORTAL_NODE_LABELS,
+} from "../internal/node-labels";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 export type NfsRemoteValidationResult = {
@@ -12,6 +17,7 @@ export type NfsRemoteValidationResult = {
 
 type StorageNode = {
   ready: boolean;
+  storageReady: boolean;
   volumesReady: boolean;
 };
 
@@ -54,7 +60,7 @@ export class NfsRemoteAccessValidatorService {
         "node",
         "inspect",
         "--format",
-        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        '{{index .Spec.Labels "rp.node.storage"}}|{{index .Spec.Labels "resourceportal.storage.volumes"}}',
         id.trim(),
       ]);
       if (label.exitCode !== 0) {
@@ -65,7 +71,9 @@ export class NfsRemoteAccessValidatorService {
         };
       }
       const node = this.parseNode(`${id}|${status}|${label.stdout.trim()}`);
-      if (node.ready && node.volumesReady) eligibleNodeCount += 1;
+      if (node.ready && node.storageReady && node.volumesReady) {
+        eligibleNodeCount += 1;
+      }
     }
     if (eligibleNodeCount === 0) {
       return {
@@ -93,7 +101,9 @@ export class NfsRemoteAccessValidatorService {
       "--mode",
       "global",
       "--constraint",
-      "node.labels.resourceportal.storage.volumes==true",
+      dockerNodeLabelConstraint(RESOURCEPORTAL_NODE_LABELS.storage),
+      "--constraint",
+      dockerNodeLabelConstraint(LEGACY_STORAGE_NODE_LABELS.volumes),
       "--restart-condition",
       "none",
       "--mount",
@@ -170,9 +180,11 @@ export class NfsRemoteAccessValidatorService {
   }
 
   private parseNode(line: string): StorageNode {
-    const [, status = "", volumesLabel = ""] = line.split("|");
+    const [, status = "", storageLabel = "", volumesLabel = ""] =
+      line.split("|");
     return {
       ready: status.trim().toLowerCase() === "ready",
+      storageReady: storageLabel.trim().toLowerCase() === "true",
       volumesReady: volumesLabel.trim().toLowerCase() === "true",
     };
   }

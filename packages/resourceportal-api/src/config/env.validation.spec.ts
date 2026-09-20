@@ -10,6 +10,20 @@ const validBaseEnv = {
   NODE_ENV: "development",
 };
 
+const validProductionEnv = {
+  ...validBaseEnv,
+  AUTH_MODE: "zitadel",
+  AUTH_COOKIE_SECURE: "true",
+  AUTH_COOKIE_SECRET: "ResourcePortalProductionCookieSecret",
+  INTERNAL_WORKER_TOKEN: "changed-production-token",
+  NODE_ENV: "production",
+  OIDC_AUDIENCE: "resource-portal",
+  OIDC_CLIENT_ID: "resource-portal",
+  OIDC_ISSUER_URL: "https://auth.example.com",
+  RESOURCE_ENCRYPTION_KEY:
+    "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+};
+
 describe("validateEnv", () => {
   it("accepts the default development auth mode", () => {
     expect(validateEnv(validBaseEnv)).toBe(validBaseEnv);
@@ -150,8 +164,41 @@ describe("validateEnv", () => {
     );
   });
 
+  it("rejects dev authentication in production even when every other hardening value is valid", () => {
+    expect(() =>
+      validateEnv({
+        ...validProductionEnv,
+        AUTH_MODE: "dev",
+      }),
+    ).toThrow("AUTH_MODE=dev is not allowed in production");
+  });
+
+  it("rejects implicit dev authentication when AUTH_MODE is omitted in production", () => {
+    expect(() => {
+      const env = { ...validProductionEnv, AUTH_MODE: undefined };
+      validateEnv(env);
+    }).toThrow("AUTH_MODE=dev is not allowed in production");
+  });
+
+  it("treats production and dev auth mode case/whitespace variants as production dev auth", () => {
+    expect(() =>
+      validateEnv({
+        ...validProductionEnv,
+        AUTH_MODE: " DEV ",
+        NODE_ENV: " Production ",
+      }),
+    ).toThrow("AUTH_MODE=dev is not allowed in production");
+  });
+
   it("requires secure cookies, a non-default internal token and encryption in production", () => {
-    expect(() => validateEnv({ ...validBaseEnv, NODE_ENV: "production" })).toThrow(
+    expect(() =>
+      validateEnv({
+        ...validProductionEnv,
+        AUTH_COOKIE_SECURE: undefined,
+        INTERNAL_WORKER_TOKEN: undefined,
+        RESOURCE_ENCRYPTION_KEY: undefined,
+      }),
+    ).toThrow(
       "AUTH_COOKIE_SECURE must be true in production; RESOURCE_ENCRYPTION_KEY is required; INTERNAL_WORKER_TOKEN must be changed in production",
     );
   });
@@ -166,10 +213,12 @@ describe("validateEnv", () => {
       writeFileSync(encryptionFile, "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n");
       writeFileSync(workerFile, "production-worker-token\n");
       const env = {
-        ...validBaseEnv,
+        ...validProductionEnv,
         DATABASE_URL: undefined,
         DATABASE_URL_FILE: databaseFile,
+        RESOURCE_ENCRYPTION_KEY: undefined,
         RESOURCE_ENCRYPTION_KEY_FILE: encryptionFile,
+        INTERNAL_WORKER_TOKEN: undefined,
         INTERNAL_WORKER_TOKEN_FILE: workerFile,
         AUTH_COOKIE_SECURE: "true",
         NODE_ENV: "production",
@@ -186,16 +235,29 @@ describe("validateEnv", () => {
 
   it("accepts production when hardening and Stage 14 storage settings are present", () => {
     const env = {
-      ...validBaseEnv,
-      AUTH_COOKIE_SECURE: "true",
-      INTERNAL_WORKER_TOKEN: "changed-production-token",
-      NODE_ENV: "production",
+      ...validProductionEnv,
       NFS_GANESHA_SERVER: "10.0.0.15",
-      RESOURCE_ENCRYPTION_KEY:
-        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
       STORAGE_BACKEND_RECONCILE_INTERVAL_MS: "30000",
       STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: "120000",
     };
     expect(validateEnv(env)).toBe(env);
   });
+  it("validates the Worker heartbeat staleness threshold used by API diagnostics", () => {
+    expect(
+      validateEnv({ ...validBaseEnv, WORKER_HEALTH_STALE_SECONDS: "30" }),
+    ).toMatchObject({ WORKER_HEALTH_STALE_SECONDS: "30" });
+    expect(() =>
+      validateEnv({ ...validBaseEnv, WORKER_HEALTH_STALE_SECONDS: "0" }),
+    ).toThrow("WORKER_HEALTH_STALE_SECONDS must be a positive integer");
+  });
+
+  it("rejects production proxy trust broader than the single Web proxy hop", () => {
+    expect(() =>
+      validateEnv({
+        ...validProductionEnv,
+        API_TRUST_PROXY_HOPS: "2",
+      }),
+    ).toThrow("API_TRUST_PROXY_HOPS must be exactly 1 in production");
+  });
+
 });

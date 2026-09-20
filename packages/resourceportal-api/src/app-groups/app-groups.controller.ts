@@ -12,6 +12,7 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
+import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
 import { AppGroupsService } from "./app-groups.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
@@ -34,7 +35,10 @@ import { UpdateVariableDto } from "./dto/update-variable.dto";
 
 @Controller("tenants/:tenantId/app-groups")
 export class AppGroupsController {
-  constructor(private readonly appGroupsService: AppGroupsService) {}
+  constructor(
+    private readonly appGroupsService: AppGroupsService,
+    private readonly runtimeOperations: AppGroupRuntimeOperationsService,
+  ) {}
 
   @RequirePermissions("appgroup.read")
   @Get()
@@ -172,7 +176,7 @@ export class AppGroupsController {
     @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.startAppGroup(tenantId, appGroupId, user);
+    return this.runtimeOperations.startAppGroup(tenantId, appGroupId, user);
   }
 
   @RequirePermissions("appgroup.runtime.manage")
@@ -182,7 +186,7 @@ export class AppGroupsController {
     @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.stopAppGroup(tenantId, appGroupId, user);
+    return this.runtimeOperations.stopAppGroup(tenantId, appGroupId, user);
   }
 
   @RequirePermissions("appgroup.runtime.manage")
@@ -192,7 +196,7 @@ export class AppGroupsController {
     @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.restartAppGroup(tenantId, appGroupId, user);
+    return this.runtimeOperations.restartAppGroup(tenantId, appGroupId, user);
   }
 
   @RequirePermissions("variable.read")
@@ -412,7 +416,7 @@ export class AppGroupsController {
     @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.startSingleApp(
+    return this.runtimeOperations.startSingleApp(
       tenantId,
       appGroupId,
       singleAppId,
@@ -428,7 +432,7 @@ export class AppGroupsController {
     @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.stopSingleApp(
+    return this.runtimeOperations.stopSingleApp(
       tenantId,
       appGroupId,
       singleAppId,
@@ -444,7 +448,7 @@ export class AppGroupsController {
     @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.appGroupsService.restartSingleApp(
+    return this.runtimeOperations.restartSingleApp(
       tenantId,
       appGroupId,
       singleAppId,

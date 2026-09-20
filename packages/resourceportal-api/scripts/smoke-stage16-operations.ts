@@ -244,7 +244,7 @@ async function preflightApi() {
 async function runOperationWorkerOnce() {
   const workerEnv = {
     ...process.env,
-    OPERATION_WORKER_ONCE: "true",
+    WORKER_ONCE: "true",
   };
   const privileged =
     process.env.STORAGE_SMOKE_PRIVILEGED_WORKER?.trim().toLowerCase() === "true";
@@ -257,11 +257,11 @@ async function runOperationWorkerOnce() {
     }
     result = await command(
       "sudo",
-      ["-E", process.execPath, npmExecPath, "run", "worker:operations"],
+      ["-E", process.execPath, npmExecPath, "run", "worker"],
       workerEnv,
     );
   } else {
-    result = await command("npm", ["run", "worker:operations"], workerEnv);
+    result = await command("npm", ["run", "worker"], workerEnv);
   }
 
   const output = [result.stdout.trim(), result.stderr.trim()]

@@ -1,56 +1,37 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateInstallerEnrollmentEnv } from "./installer-enrollment.env";
 
-describe("validateInstallerEnrollmentEnv", () => {
-  it("loads join tokens from secret files and requires private enrollment settings", () => {
+describe("validateInstallerEnrollmentEnv v0.2", () => {
+  it("requires only DB and TLS material for the network-facing listener", () => {
     const dir = mkdtempSync(join(tmpdir(), "rp-enrollment-env-"));
-    try {
-      const database = join(dir, "database");
-      const worker = join(dir, "worker");
-      const manager = join(dir, "manager");
-      writeFileSync(database, "postgresql://rp:secret@postgres-rp:5432/resource_portal\n");
-      writeFileSync(worker, "worker-secret\n");
-      writeFileSync(manager, "manager-secret\n");
-      const env = {
-        DATABASE_URL_FILE: database,
-        INSTALLER_SWARM_WORKER_TOKEN_FILE: worker,
-        INSTALLER_SWARM_MANAGER_TOKEN_FILE: manager,
-        INSTALLER_SWARM_MANAGER_ENDPOINT: "10.0.0.10:2377",
-        INSTALLER_STORAGE_SERVER_ADDRESS: "10.0.0.10",
-        INSTALLER_CLUSTER_ID: "cluster-a",
-        INSTALLER_VERSION: "0.1.0",
-        INSTALLER_SWARM_ADVERTISE_ADDR: "10.0.0.10",
-        INSTALLER_CLUSTER_CIDR: "10.0.0.0/24",
-        INSTALLER_ENROLLMENT_TLS_CERT_FILE: "/run/secrets/installer_tls_cert",
-        INSTALLER_ENROLLMENT_TLS_KEY_FILE: "/run/secrets/installer_tls_key",
-      };
+    const db = join(dir, "db");
+    const cert = join(dir, "tls.crt");
+    const key = join(dir, "tls.key");
+    writeFileSync(db, "postgresql://example\n");
+    writeFileSync(cert, "cert\n");
+    writeFileSync(key, "key\n");
 
-      expect(validateInstallerEnrollmentEnv(env)).toBe(env);
-      expect(env.DATABASE_URL).toContain("postgres-rp");
-      expect(env.INSTALLER_SWARM_WORKER_TOKEN).toBe("worker-secret");
-      expect(env.INSTALLER_SWARM_MANAGER_TOKEN).toBe("manager-secret");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const env = validateInstallerEnrollmentEnv({
+      DATABASE_URL_FILE: db,
+      INSTALLER_ENROLLMENT_TLS_CERT_FILE: cert,
+      INSTALLER_ENROLLMENT_TLS_KEY_FILE: key,
+    });
+
+    expect(env.DATABASE_URL).toBe("postgresql://example");
+    expect(env.INSTALLER_SWARM_WORKER_TOKEN).toBeUndefined();
+    expect(env.INSTALLER_SWARM_MANAGER_TOKEN).toBeUndefined();
   });
 
-  it("rejects a missing TLS key path", () => {
+  it("does not require Docker/Swarm credential environment", () => {
     expect(() =>
       validateInstallerEnrollmentEnv({
         DATABASE_URL: "postgresql://example",
-        INSTALLER_SWARM_WORKER_TOKEN: "worker",
-        INSTALLER_SWARM_MANAGER_TOKEN: "manager",
-        INSTALLER_SWARM_MANAGER_ENDPOINT: "10.0.0.10:2377",
-        INSTALLER_STORAGE_SERVER_ADDRESS: "10.0.0.10",
-        INSTALLER_CLUSTER_ID: "cluster-a",
-        INSTALLER_VERSION: "0.1.0",
-        INSTALLER_SWARM_ADVERTISE_ADDR: "10.0.0.10",
-        INSTALLER_CLUSTER_CIDR: "10.0.0.0/24",
-        INSTALLER_ENROLLMENT_TLS_CERT_FILE: "/run/secrets/cert",
+        INSTALLER_ENROLLMENT_TLS_CERT_FILE: "/run/secrets/tls.crt",
+        INSTALLER_ENROLLMENT_TLS_KEY_FILE: "/run/secrets/tls.key",
       }),
-    ).toThrow("INSTALLER_ENROLLMENT_TLS_KEY_FILE is required");
+    ).not.toThrow();
   });
 });

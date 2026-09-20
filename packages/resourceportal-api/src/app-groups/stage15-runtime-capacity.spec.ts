@@ -1,22 +1,32 @@
-import { ConfigService } from "@nestjs/config";
 import { Prisma, RuntimeState } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { CapacityPreflightService } from "../capacity/capacity-preflight.service";
-import { StackRuntimeService } from "../internal/stack-runtime.service";
+import { OperationsRepository } from "../operations/operations.repository";
+import { PlatformMaintenanceService } from "../platform-maintenance/platform-maintenance.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { RegistriesService } from "../registries/registries.service";
-import { EncryptionService } from "../security/encryption.service";
-import { SecretStorageService } from "../security/secret-storage.service";
-import { VolumesService } from "../volumes/volumes.service";
-import { Stage15AppGroupsService } from "./stage15-app-groups.service";
+import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
 
-describe("Stage 15 runtime capacity boundary", () => {
-  it("does not persist Running or scale Swarm when capacity rejects AppGroup start", async () => {
+const actor = (id: string) =>
+  ({ id, email: `${id}@example.com`, displayName: id, status: "Active" }) as never;
+
+function operations() {
+  const createOperationInTransaction = vi.fn().mockResolvedValue({
+    id: "operation-1",
+  });
+  return {
+    repository: { createOperationInTransaction } as unknown as OperationsRepository,
+    createOperationInTransaction,
+  };
+}
+
+const maintenance = {
+  getState: vi.fn().mockResolvedValue({ enabled: false }),
+} as unknown as PlatformMaintenanceService;
+
+describe("v0.2 runtime capacity boundary", () => {
+  it("does not persist Running or enqueue runtime work when capacity rejects AppGroup start", async () => {
     const appGroupId = "00000000-0000-0000-0000-000000000101";
     const tenantId = "00000000-0000-0000-0000-000000000201";
-    const singleAppId = "00000000-0000-0000-0000-000000000301";
-    const actor = { id: "user-1", displayName: "User One" } as never;
-
     const persistedUpdate = vi.fn();
     const tx = {
       appGroup: {
@@ -27,38 +37,22 @@ describe("Stage 15 runtime capacity boundary", () => {
           status: "Ready",
           runtimeState: RuntimeState.Stopped,
           currentDeploymentVersion: 1,
-          singleApps: [
-            {
-              id: singleAppId,
-              name: "web",
-              runtimeState: RuntimeState.Running,
-              desiredReplicas: 1,
-              actualReplicas: 0,
-              pendingDeletion: false,
-            },
-          ],
+          singleApps: [],
         }),
         update: persistedUpdate,
       },
-      appGroupDeployment: {
-        findFirst: vi.fn().mockResolvedValue(null),
-      },
-      tenant: { findUniqueOrThrow: vi.fn() },
-      auditLogEntry: { create: vi.fn() },
+      appGroupDeployment: { findFirst: vi.fn().mockResolvedValue(null) },
     } as unknown as Prisma.TransactionClient;
-
     const prisma = {
       appGroup: {
         findFirst: vi.fn().mockResolvedValue({
           id: appGroupId,
           status: "Ready",
           runtimeState: RuntimeState.Stopped,
-          currentDeploymentVersion: 1,
           tenant: {
             status: "Active",
             billing: { balance: new Prisma.Decimal(10) },
           },
-          singleApps: [],
         }),
       },
       $transaction: vi.fn(
@@ -66,8 +60,6 @@ describe("Stage 15 runtime capacity boundary", () => {
           callback(tx),
       ),
     } as unknown as PrismaService;
-    const scaleServices = vi.fn();
-    const stackRuntime = { scaleServices } as unknown as StackRuntimeService;
     const lockRuntimeMutation = vi.fn().mockResolvedValue(undefined);
     const admitRuntimeStart = vi.fn().mockResolvedValue({
       success: false,
@@ -78,41 +70,28 @@ describe("Stage 15 runtime capacity boundary", () => {
       lockRuntimeMutation,
       admitRuntimeStart,
     } as unknown as CapacityPreflightService;
-    const config = {
-      get: vi.fn().mockReturnValue(undefined),
-    } as unknown as ConfigService;
-
-    const service = new Stage15AppGroupsService(
+    const operationFixture = operations();
+    const service = new AppGroupRuntimeOperationsService(
       prisma,
-      {} as RegistriesService,
-      {} as EncryptionService,
-      {} as SecretStorageService,
-      stackRuntime,
-      {} as VolumesService,
-      config,
       capacity,
+      operationFixture.repository,
+      maintenance,
     );
 
     await expect(
-      service.startAppGroup(tenantId, appGroupId, actor),
-    ).rejects.toMatchObject({
-      response: {
-        code: "InsufficientCapacity",
-      },
-    });
+      service.startAppGroup(tenantId, appGroupId, actor("user-1")),
+    ).rejects.toMatchObject({ response: { code: "InsufficientCapacity" } });
 
     expect(lockRuntimeMutation).toHaveBeenCalledWith(tx);
     expect(admitRuntimeStart).toHaveBeenCalledWith(tx, { appGroupId });
     expect(persistedUpdate).not.toHaveBeenCalled();
-    expect(scaleServices).not.toHaveBeenCalled();
+    expect(operationFixture.createOperationInTransaction).not.toHaveBeenCalled();
   });
 
-  it("acquires the runtime capacity lock before reading AppGroup state for start", async () => {
+  it("locks capacity before reading state and enqueues start after admission", async () => {
     const appGroupId = "00000000-0000-0000-0000-000000000102";
     const tenantId = "00000000-0000-0000-0000-000000000202";
-    const actor = { id: "user-2", displayName: "User Two" } as never;
     const order: string[] = [];
-
     const tx = {
       appGroup: {
         findFirst: vi.fn().mockImplementation(() => {
@@ -137,9 +116,7 @@ describe("Stage 15 runtime capacity boundary", () => {
         }),
       },
       appGroupDeployment: { findFirst: vi.fn().mockResolvedValue(null) },
-      tenant: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Tenant" }),
-      },
+      tenant: { findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Tenant" }) },
       auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
     } as unknown as Prisma.TransactionClient;
     const prisma = {
@@ -148,12 +125,10 @@ describe("Stage 15 runtime capacity boundary", () => {
           id: appGroupId,
           status: "Ready",
           runtimeState: RuntimeState.Stopped,
-          currentDeploymentVersion: null,
           tenant: {
             status: "Active",
             billing: { balance: new Prisma.Decimal(10) },
           },
-          singleApps: [],
         }),
       },
       $transaction: vi.fn(
@@ -161,43 +136,44 @@ describe("Stage 15 runtime capacity boundary", () => {
           callback(tx),
       ),
     } as unknown as PrismaService;
+    const lockRuntimeMutation = vi.fn().mockImplementation(() => {
+      order.push("lock");
+      return Promise.resolve();
+    });
+    const admitRuntimeStart = vi.fn().mockImplementation(() => {
+      order.push("admit");
+      return Promise.resolve({ success: true });
+    });
     const capacity = {
-      lockRuntimeMutation: vi.fn().mockImplementation(() => {
-        order.push("lock");
-        return Promise.resolve();
-      }),
-      admitRuntimeStart: vi.fn().mockImplementation(() => {
-        order.push("admit");
-        return Promise.resolve({
-          success: true,
-          demand: { cpuNano: 0n, memoryBytes: 0n },
-          occupied: { cpuNano: 0n, memoryBytes: 0n },
-          supply: { cpuNano: 0n, memoryBytes: 0n },
-        });
-      }),
+      lockRuntimeMutation,
+      admitRuntimeStart,
     } as unknown as CapacityPreflightService;
-    const service = new Stage15AppGroupsService(
+    const operationFixture = operations();
+    const service = new AppGroupRuntimeOperationsService(
       prisma,
-      {} as RegistriesService,
-      {} as EncryptionService,
-      {} as SecretStorageService,
-      { scaleServices: vi.fn() } as unknown as StackRuntimeService,
-      {} as VolumesService,
-      { get: vi.fn() } as unknown as ConfigService,
       capacity,
+      operationFixture.repository,
+      maintenance,
     );
 
-    await service.startAppGroup(tenantId, appGroupId, actor);
+    const result = await service.startAppGroup(
+      tenantId,
+      appGroupId,
+      actor("user-2"),
+    );
 
     expect(order).toEqual(["lock", "read", "admit"]);
+    expect(operationFixture.createOperationInTransaction).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ type: "APP_GROUP_START", resourceId: appGroupId }),
+    );
+    expect(result).toMatchObject({ runtimeApplied: false, operationId: "operation-1" });
   });
 
-  it("serializes AppGroup stop with the Stage 15 runtime capacity lock", async () => {
+  it("serializes AppGroup stop and enqueues worker execution", async () => {
     const appGroupId = "00000000-0000-0000-0000-000000000103";
     const tenantId = "00000000-0000-0000-0000-000000000203";
-    const actor = { id: "user-3", displayName: "User Three" } as never;
     const order: string[] = [];
-
     const tx = {
       appGroup: {
         findFirst: vi.fn().mockImplementation(() => {
@@ -222,9 +198,7 @@ describe("Stage 15 runtime capacity boundary", () => {
         }),
       },
       appGroupDeployment: { findFirst: vi.fn().mockResolvedValue(null) },
-      tenant: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Tenant" }),
-      },
+      tenant: { findUniqueOrThrow: vi.fn().mockResolvedValue({ name: "Tenant" }) },
       auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
     } as unknown as Prisma.TransactionClient;
     const prisma = {
@@ -233,26 +207,28 @@ describe("Stage 15 runtime capacity boundary", () => {
           callback(tx),
       ),
     } as unknown as PrismaService;
+    const lockRuntimeMutation = vi.fn().mockImplementation(() => {
+      order.push("lock");
+      return Promise.resolve();
+    });
     const capacity = {
-      lockRuntimeMutation: vi.fn().mockImplementation(() => {
-        order.push("lock");
-        return Promise.resolve();
-      }),
+      lockRuntimeMutation,
       admitRuntimeStart: vi.fn(),
     } as unknown as CapacityPreflightService;
-    const service = new Stage15AppGroupsService(
+    const operationFixture = operations();
+    const service = new AppGroupRuntimeOperationsService(
       prisma,
-      {} as RegistriesService,
-      {} as EncryptionService,
-      {} as SecretStorageService,
-      { scaleServices: vi.fn() } as unknown as StackRuntimeService,
-      {} as VolumesService,
-      { get: vi.fn() } as unknown as ConfigService,
       capacity,
+      operationFixture.repository,
+      maintenance,
     );
 
-    await service.stopAppGroup(tenantId, appGroupId, actor);
+    await service.stopAppGroup(tenantId, appGroupId, actor("user-3"));
 
     expect(order).toEqual(["lock", "read"]);
+    expect(operationFixture.createOperationInTransaction).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ type: "APP_GROUP_STOP", resourceId: appGroupId }),
+    );
   });
 });

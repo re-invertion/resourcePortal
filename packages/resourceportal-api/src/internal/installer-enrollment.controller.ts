@@ -1,10 +1,9 @@
-import { Body, Controller, Post } from "@nestjs/common";
-import { IsBoolean, IsIn, IsOptional, IsString, Matches } from "class-validator";
+import { Body, Controller, HttpCode, HttpStatus, Post } from "@nestjs/common";
+import { IsBoolean, IsIn, IsOptional, IsString, IsUUID, Matches } from "class-validator";
 import {
   InstallerEnrollmentBundleRole,
   InstallerEnrollmentService,
 } from "./installer-enrollment.service";
-import { InstallerEnrollmentNodeLabelService } from "./installer-enrollment-node-label.service";
 
 class RedeemInstallerEnrollmentDto {
   @IsString()
@@ -13,9 +12,31 @@ class RedeemInstallerEnrollmentDto {
 
   @IsIn(["worker", "manager"])
   role!: InstallerEnrollmentBundleRole;
+
+  @IsString()
+  publicKey!: string;
 }
 
-class CompleteInstallerEnrollmentDto extends RedeemInstallerEnrollmentDto {
+class EnrollmentStatusDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{40,}$/)
+  token!: string;
+
+  @IsIn(["worker", "manager"])
+  role!: InstallerEnrollmentBundleRole;
+
+  @IsUUID()
+  operationId!: string;
+}
+
+class CompleteInstallerEnrollmentDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{40,}$/)
+  token!: string;
+
+  @IsIn(["worker", "manager"])
+  role!: InstallerEnrollmentBundleRole;
+
   @IsString()
   @Matches(/^[a-zA-Z0-9]{20,64}$/)
   nodeId!: string;
@@ -29,29 +50,48 @@ class CompleteInstallerEnrollmentDto extends RedeemInstallerEnrollmentDto {
   ingress = false;
 }
 
+class CompleteInstallerEnrollmentStatusDto extends EnrollmentStatusDto {
+  @IsString()
+  @Matches(/^[a-zA-Z0-9]{20,64}$/)
+  nodeId!: string;
+}
+
 @Controller("installer/enrollment")
 export class InstallerEnrollmentController {
-  constructor(
-    private readonly enrollment: InstallerEnrollmentService,
-    private readonly nodeLabels: InstallerEnrollmentNodeLabelService,
-  ) {}
+  constructor(private readonly enrollment: InstallerEnrollmentService) {}
 
   @Post("redeem")
+  @HttpCode(HttpStatus.ACCEPTED)
   redeem(@Body() dto: RedeemInstallerEnrollmentDto) {
-    return this.enrollment.redeem(dto.token, dto.role);
+    return this.enrollment.beginRedemption(dto.token, dto.role, dto.publicKey);
+  }
+
+  @Post("redeem/status")
+  @HttpCode(HttpStatus.OK)
+  redemptionStatus(@Body() dto: EnrollmentStatusDto) {
+    return this.enrollment.redemptionStatus(dto.token, dto.role, dto.operationId);
   }
 
   @Post("complete")
-  async complete(@Body() dto: CompleteInstallerEnrollmentDto) {
-    const claim = await this.enrollment.claimCompletion(dto.token, dto.role, dto.nodeId);
-    try {
-      await this.nodeLabels.apply(dto.nodeId, dto.role, dto.controlPlane, dto.ingress);
-      return { status: "completed", role: dto.role };
-    } catch (error) {
-      await this.enrollment.releaseCompletionClaim(
-        dto.token, dto.role, dto.nodeId, claim.completedAt,
-      );
-      throw error;
-    }
+  @HttpCode(HttpStatus.ACCEPTED)
+  complete(@Body() dto: CompleteInstallerEnrollmentDto) {
+    return this.enrollment.beginCompletion(
+      dto.token,
+      dto.role,
+      dto.nodeId,
+      dto.controlPlane,
+      dto.ingress,
+    );
+  }
+
+  @Post("complete/status")
+  @HttpCode(HttpStatus.OK)
+  completionStatus(@Body() dto: CompleteInstallerEnrollmentStatusDto) {
+    return this.enrollment.completionStatus(
+      dto.token,
+      dto.role,
+      dto.nodeId,
+      dto.operationId,
+    );
   }
 }

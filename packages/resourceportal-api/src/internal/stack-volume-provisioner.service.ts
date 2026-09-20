@@ -3,6 +3,11 @@ import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
+import {
+  dockerNodeLabelConstraint,
+  LEGACY_STORAGE_NODE_LABELS,
+  RESOURCEPORTAL_NODE_LABELS,
+} from "./node-labels";
 
 type ProvisionVolume = {
   dockerVolumeName: string;
@@ -25,14 +30,17 @@ type ProvisionResult = {
 export type StorageNodeReadiness = {
   id: string;
   ready: boolean;
+  storageReady: boolean;
   volumesReady: boolean;
 };
 
 export function parseStorageNode(line: string): StorageNodeReadiness {
-  const [id = "", status = "", volumesLabel = ""] = line.split("|");
+  const [id = "", status = "", storageLabel = "", volumesLabel = ""] =
+    line.split("|");
   return {
     id: id.trim(),
     ready: status.trim().toLowerCase() === "ready",
+    storageReady: storageLabel.trim().toLowerCase() === "true",
     volumesReady: volumesLabel.trim().toLowerCase() === "true",
   };
 }
@@ -72,7 +80,7 @@ export class StackVolumeProvisionerService {
         "node",
         "inspect",
         "--format",
-        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        '{{index .Spec.Labels "rp.node.storage"}}|{{index .Spec.Labels "resourceportal.storage.volumes"}}',
         id.trim(),
       ]);
       if (label.exitCode !== 0) {
@@ -83,7 +91,9 @@ export class StackVolumeProvisionerService {
         };
       }
       const node = parseStorageNode(`${id}|${status}|${label.stdout.trim()}`);
-      if (node.ready && node.volumesReady) eligibleNodes.push(node);
+      if (node.ready && node.storageReady && node.volumesReady) {
+        eligibleNodes.push(node);
+      }
     }
 
     if (eligibleNodes.length === 0) {
@@ -112,7 +122,9 @@ export class StackVolumeProvisionerService {
       "--mode",
       "global",
       "--constraint",
-      "node.labels.resourceportal.storage.volumes==true",
+      dockerNodeLabelConstraint(RESOURCEPORTAL_NODE_LABELS.storage),
+      "--constraint",
+      dockerNodeLabelConstraint(LEGACY_STORAGE_NODE_LABELS.volumes),
       "--restart-condition",
       "none",
       "--mount",

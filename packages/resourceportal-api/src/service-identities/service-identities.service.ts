@@ -28,6 +28,9 @@ type ServiceIdentityRecord = {
 };
 
 type RoleRecord = { id: string; name: string; permissions: string[] };
+type ServiceIdentityWithRoles = ServiceIdentityRecord & {
+  roles: Array<{ role: RoleRecord }>;
+};
 
 @Injectable()
 export class ServiceIdentitiesService {
@@ -39,12 +42,17 @@ export class ServiceIdentitiesService {
 
   async list(tenantId: string) {
     await this.ensureTenant(tenantId);
-    const records = await this.prisma.$queryRaw<ServiceIdentityRecord[]>`
-      SELECT * FROM "ServiceIdentity"
-      WHERE "tenantId" = CAST(${tenantId} AS uuid)
-      ORDER BY "name" ASC
-    `;
-    return Promise.all(records.map((record) => this.mapWithRoles(record)));
+    const records = await this.prisma.serviceIdentity.findMany({
+      where: { tenantId },
+      orderBy: { name: "asc" },
+      include: {
+        roles: {
+          include: { role: true },
+          orderBy: { role: { name: "asc" } },
+        },
+      },
+    });
+    return records.map((record) => this.mapWithRoles(this.asTenantRecord(record)));
   }
 
   async get(tenantId: string, serviceIdentityId: string) {
@@ -59,22 +67,24 @@ export class ServiceIdentitiesService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          INSERT INTO "ServiceIdentity" (
-            "id", "tenantId", "name", "description", "status", "zitadelUserId",
-            "clientId", "clientSecretCiphertext", "createdBy", "updatedBy"
-          ) VALUES (
-            CAST(${id} AS uuid), CAST(${tenantId} AS uuid), ${dto.name}, ${dto.description ?? null},
-            'Active', ${remote.userId}, ${remote.clientId}, ${this.encryption.encrypt(remote.clientSecret)},
-            CAST(${actor.id} AS uuid), CAST(${actor.id} AS uuid)
-          )
-        `;
-        for (const roleId of [...new Set(dto.roleIds)]) {
-          await tx.$executeRaw`
-            INSERT INTO "ServiceIdentityRole" ("serviceIdentityId", "roleId")
-            VALUES (CAST(${id} AS uuid), ${roleId})
-          `;
-        }
+        const roleIds = [...new Set(dto.roleIds)];
+        await tx.serviceIdentity.create({
+          data: {
+            id,
+            tenantId,
+            name: dto.name,
+            description: dto.description ?? null,
+            status: "Active",
+            zitadelUserId: remote.userId,
+            clientId: remote.clientId,
+            clientSecretCiphertext: this.encryption.encrypt(remote.clientSecret),
+            createdBy: actor.id,
+            updatedBy: actor.id,
+            roles: {
+              create: roleIds.map((roleId) => ({ roleId })),
+            },
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId,
@@ -129,24 +139,23 @@ export class ServiceIdentitiesService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          UPDATE "ServiceIdentity"
-          SET "name" = ${name},
-              "description" = ${description ?? null},
-              "status" = ${dto.status ?? current.status},
-              "updatedBy" = CAST(${actor.id} AS uuid),
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-        `;
+        await tx.serviceIdentity.updateMany({
+          where: { id: serviceIdentityId, tenantId },
+          data: {
+            name,
+            description: description ?? null,
+            status: dto.status ?? current.status,
+            updatedBy: actor.id,
+          },
+        });
         if (roleIds) {
-          await tx.$executeRaw`
-            DELETE FROM "ServiceIdentityRole" WHERE "serviceIdentityId" = CAST(${serviceIdentityId} AS uuid)
-          `;
-          for (const roleId of roleIds) {
-            await tx.$executeRaw`
-              INSERT INTO "ServiceIdentityRole" ("serviceIdentityId", "roleId")
-              VALUES (CAST(${serviceIdentityId} AS uuid), ${roleId})
-            `;
+          await tx.serviceIdentityRole.deleteMany({
+            where: { serviceIdentityId },
+          });
+          if (roleIds.length > 0) {
+            await tx.serviceIdentityRole.createMany({
+              data: roleIds.map((roleId) => ({ serviceIdentityId, roleId })),
+            });
           }
         }
         await tx.auditLogEntry.create({
@@ -179,10 +188,9 @@ export class ServiceIdentitiesService {
     const current = await this.getRecord(tenantId, serviceIdentityId);
     await this.zitadel.disable(current.zitadelUserId);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "ServiceIdentity"
-        WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-      `;
+      await tx.serviceIdentity.deleteMany({
+        where: { id: serviceIdentityId, tenantId },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -203,27 +211,21 @@ export class ServiceIdentitiesService {
   }
 
   private async getRecord(tenantId: string, serviceIdentityId: string) {
-    const rows = await this.prisma.$queryRaw<ServiceIdentityRecord[]>`
-      SELECT * FROM "ServiceIdentity"
-      WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Service identity not found");
-    return rows[0];
+    const row = await this.prisma.serviceIdentity.findFirst({
+      where: { id: serviceIdentityId, tenantId },
+      include: {
+        roles: {
+          include: { role: true },
+          orderBy: { role: { name: "asc" } },
+        },
+      },
+    });
+    if (!row) throw new NotFoundException("Service identity not found");
+    return this.asTenantRecord(row);
   }
 
-  private async roles(serviceIdentityId: string) {
-    return this.prisma.$queryRaw<RoleRecord[]>`
-      SELECT r."id", r."name", r."permissions"
-      FROM "Role" r
-      INNER JOIN "ServiceIdentityRole" sir ON sir."roleId" = r."id"
-      WHERE sir."serviceIdentityId" = CAST(${serviceIdentityId} AS uuid)
-      ORDER BY r."name" ASC
-    `;
-  }
-
-  private async mapWithRoles(record: ServiceIdentityRecord) {
-    const roles = await this.roles(record.id);
+  private mapWithRoles(record: ServiceIdentityWithRoles) {
+    const roles = record.roles.map(({ role }) => role);
     return {
       id: record.id,
       tenantId: record.tenantId,
@@ -235,6 +237,23 @@ export class ServiceIdentitiesService {
       effectivePermissions: [...new Set(roles.flatMap((role) => role.permissions))].sort(),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
+    };
+  }
+
+  private asTenantRecord(record: {
+    id: string; tenantId: string | null; name: string; description: string | null;
+    status: string; zitadelUserId: string; clientId: string;
+    clientSecretCiphertext: string; createdBy: string; updatedBy: string;
+    createdAt: Date; updatedAt: Date;
+    roles: Array<{ role: RoleRecord }>;
+  }): ServiceIdentityWithRoles {
+    if (record.tenantId === null) {
+      throw new NotFoundException("Service identity not found");
+    }
+    return {
+      ...record,
+      tenantId: record.tenantId,
+      status: record.status as "Active" | "Suspended",
     };
   }
 

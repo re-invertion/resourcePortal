@@ -1,14 +1,12 @@
 import { Module } from "@nestjs/common";
-import { OperationsModule } from "../operations/operations.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { StorageBackendsModule } from "../storage-backends/storage-backends.module";
-import { VolumesController } from "./volumes.controller";
 import { VolumesService } from "./volumes.service";
+import { VolumeUsageReconcilerService } from "./volume-usage-reconciler.service";
 
 @Module({
-  imports: [OperationsModule, PrismaModule, StorageBackendsModule],
-  controllers: [VolumesController],
-  providers: [VolumesService],
-  exports: [VolumesService],
+  imports: [PrismaModule, StorageBackendsModule],
+  providers: [VolumesService, VolumeUsageReconcilerService],
+  exports: [VolumesService, VolumeUsageReconcilerService],
 })
 export class VolumesModule {}

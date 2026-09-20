@@ -123,6 +123,7 @@ rp_run_zitadel_bootstrap() {
     --name "$service_name" \
     --restart-condition none \
     --constraint 'node.role==manager' \
+    --constraint 'node.labels.rp.node.storage==true' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --network "${stack_name}_rp-control" \
     --mount type=bind,src=/mnt/resourceportal/platform/zitadel-bootstrap,dst=/platform/zitadel-bootstrap \
@@ -202,6 +203,7 @@ rp_run_zitadel_cli_reconcile() {
     --name "$service_name" \
     --restart-condition none \
     --constraint 'node.role==manager' \
+    --constraint 'node.labels.rp.node.storage==true' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --network "${stack_name}_rp-control" \
     --mount type=bind,src=/mnt/resourceportal/platform/zitadel-bootstrap,dst=/platform/zitadel-bootstrap \

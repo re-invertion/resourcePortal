@@ -1,60 +1,72 @@
 import { describe, expect, it, vi } from "vitest";
 import { InstallerEnrollmentController } from "./installer-enrollment.controller";
 
-describe("InstallerEnrollmentController", () => {
-  it("redeems only the token and role supplied by the join bundle", async () => {
+describe("InstallerEnrollmentController v0.2", () => {
+  it("queues redemption with the client public key", async () => {
     const service = {
-      redeem: vi.fn().mockResolvedValue({ role: "worker", joinToken: "worker-token" }),
-    };
-    const controller = new InstallerEnrollmentController(service as never, { apply: vi.fn() } as never);
-
-    await expect(
-      controller.redeem({ token: "a".repeat(48), role: "worker" }),
-    ).resolves.toEqual({ role: "worker", joinToken: "worker-token" });
-    expect(service.redeem).toHaveBeenCalledWith("a".repeat(48), "worker");
-  });
-  it("claims a joined node before applying role-appropriate labels", async () => {
-    const completedAt = new Date("2026-09-05T12:06:00.000Z");
-    const service = {
-      claimCompletion: vi.fn().mockResolvedValue({ role: "manager", completedAt }),
-      releaseCompletionClaim: vi.fn(),
-    };
-    const labels = { apply: vi.fn().mockResolvedValue(undefined) };
-    const controller = new InstallerEnrollmentController(service as never, labels as never);
-
-    await expect(
-      controller.complete({
-        token: "a".repeat(48),
-        role: "manager",
-        nodeId: "abcdefghijklmnopqrstuvwxy",
-        controlPlane: true,
-        ingress: false,
+      beginRedemption: vi.fn().mockResolvedValue({
+        status: "pending",
+        role: "worker",
+        operationId: "10000000-0000-0000-0000-000000000001",
       }),
-    ).resolves.toEqual({ status: "completed", role: "manager" });
-    expect(service.claimCompletion).toHaveBeenCalled();
-    expect(labels.apply).toHaveBeenCalledWith(
-      "abcdefghijklmnopqrstuvwxy",
-      "manager",
+    };
+    const controller = new InstallerEnrollmentController(service as never);
+    const dto = {
+      token: "a".repeat(48),
+      role: "worker" as const,
+      publicKey: "-----BEGIN PUBLIC KEY-----\nkey\n-----END PUBLIC KEY-----",
+    };
+
+    await controller.redeem(dto);
+    expect(service.beginRedemption).toHaveBeenCalledWith(
+      dto.token,
+      dto.role,
+      dto.publicKey,
+    );
+  });
+
+  it("delegates redemption status without any Docker dependency", async () => {
+    const service = {
+      redemptionStatus: vi.fn().mockResolvedValue({ status: "pending" }),
+    };
+    const controller = new InstallerEnrollmentController(service as never);
+    const dto = {
+      token: "a".repeat(48),
+      role: "manager" as const,
+      operationId: "10000000-0000-0000-0000-000000000001",
+    };
+
+    await controller.redemptionStatus(dto);
+    expect(service.redemptionStatus).toHaveBeenCalledWith(
+      dto.token,
+      dto.role,
+      dto.operationId,
+    );
+  });
+
+  it("queues completion instead of labeling the node in the listener", async () => {
+    const service = {
+      beginCompletion: vi.fn().mockResolvedValue({
+        status: "pending",
+        operationId: "10000000-0000-0000-0000-000000000002",
+      }),
+    };
+    const controller = new InstallerEnrollmentController(service as never);
+    const dto = {
+      token: "a".repeat(48),
+      role: "manager" as const,
+      nodeId: "abcdefghijklmnopqrstuvwxy",
+      controlPlane: true,
+      ingress: false,
+    };
+
+    await controller.complete(dto);
+    expect(service.beginCompletion).toHaveBeenCalledWith(
+      dto.token,
+      dto.role,
+      dto.nodeId,
       true,
       false,
     );
-    expect(service.releaseCompletionClaim).not.toHaveBeenCalled();
   });
-
-  it("releases the completion claim when Docker label application fails", async () => {
-    const completedAt = new Date("2026-09-05T12:06:00.000Z");
-    const service = {
-      claimCompletion: vi.fn().mockResolvedValue({ role: "worker", completedAt }),
-      releaseCompletionClaim: vi.fn().mockResolvedValue(undefined),
-    };
-    const labels = { apply: vi.fn().mockRejectedValue(new Error("docker failed")) };
-    const controller = new InstallerEnrollmentController(service as never, labels as never);
-    const dto = { token: "a".repeat(48), role: "worker" as const, nodeId: "abcdefghijklmnopqrstuvwxy", controlPlane: false, ingress: false };
-
-    await expect(controller.complete(dto)).rejects.toThrow("docker failed");
-    expect(service.releaseCompletionClaim).toHaveBeenCalledWith(
-      dto.token, dto.role, dto.nodeId, completedAt,
-    );
-  });
-
 });

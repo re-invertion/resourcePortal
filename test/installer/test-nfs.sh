@@ -103,7 +103,8 @@ assert_contains "$(cat "$main_ganesha")" '# unrelated main config' 'Ganesha clea
 rm -rf "$ganesha_include_tmp"
 
 args="$(rp_storage_label_args true false true)"
-assert_contains "$args" '--label-add resourceportal.storage.volumes=true' "volumes label when ready"
+assert_contains "$args" '--label-add rp.node.storage=true' "v0.2 storage role when any storage namespace is ready"
+assert_contains "$args" '--label-add resourceportal.storage.volumes=true' "volumes capability detail when ready"
 assert_contains "$args" '--label-add resourceportal.storage.platform=true' "platform label when ready"
 assert_not_contains "$args" 'resourceportal.storage.secrets=true' "no secrets label when not ready"
 

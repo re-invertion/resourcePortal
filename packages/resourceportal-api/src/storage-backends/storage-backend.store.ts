@@ -37,10 +37,6 @@ type CommittedCapacityRow = {
   committedBytes: bigint;
 };
 
-type UsedCapacityRow = {
-  usedBytes: bigint;
-};
-
 type ProjectIdRow = {
   projectId: bigint;
 };
@@ -49,20 +45,14 @@ type ProjectIdRow = {
 export class StorageBackendStore {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
-    return this.prisma.$queryRaw<StorageBackendRow[]>`
-      SELECT * FROM "StorageBackend"
-      ORDER BY "name" ASC, "id" ASC
-    `;
+  list(): Promise<StorageBackendRow[]> {
+    return this.prisma.storageBackend.findMany({
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+    });
   }
 
-  async get(id: string) {
-    const rows = await this.prisma.$queryRaw<StorageBackendRow[]>`
-      SELECT * FROM "StorageBackend"
-      WHERE "id" = ${id}::uuid
-      LIMIT 1
-    `;
-    return rows[0] ?? null;
+  get(id: string): Promise<StorageBackendRow | null> {
+    return this.prisma.storageBackend.findUnique({ where: { id } });
   }
 
   async require(id: string) {
@@ -76,25 +66,19 @@ export class StorageBackendStore {
   }
 
   async requireDefaultInTransaction(tx: Prisma.TransactionClient) {
-    const rows = await tx.$queryRaw<StorageBackendRow[]>(Prisma.sql`
-      SELECT * FROM "StorageBackend"
-      WHERE "id" = ${DEFAULT_STORAGE_BACKEND_ID}::uuid
-      LIMIT 1
-    `);
-    const backend = rows[0];
+    const backend = await tx.storageBackend.findUnique({
+      where: { id: DEFAULT_STORAGE_BACKEND_ID },
+    });
     if (!backend) throw new NotFoundException("Default StorageBackend not found");
     return backend;
   }
 
   async requireForVolume(volumeId: string) {
-    const rows = await this.prisma.$queryRaw<StorageBackendRow[]>`
-      SELECT sb.*
-      FROM "StorageBackend" sb
-      INNER JOIN "Volume" v ON v."storageBackendId" = sb."id"
-      WHERE v."id" = ${volumeId}::uuid
-      LIMIT 1
-    `;
-    const backend = rows[0];
+    const volume = await this.prisma.volume.findUnique({
+      where: { id: volumeId },
+      select: { storageBackend: true },
+    });
+    const backend = volume?.storageBackend;
     if (!backend) throw new NotFoundException("StorageBackend for Volume not found");
     return backend;
   }
@@ -103,14 +87,11 @@ export class StorageBackendStore {
     tx: Prisma.TransactionClient,
     volumeId: string,
   ) {
-    const rows = await tx.$queryRaw<StorageBackendRow[]>(Prisma.sql`
-      SELECT sb.*
-      FROM "StorageBackend" sb
-      INNER JOIN "Volume" v ON v."storageBackendId" = sb."id"
-      WHERE v."id" = ${volumeId}::uuid
-      LIMIT 1
-    `);
-    const backend = rows[0];
+    const volume = await tx.volume.findUnique({
+      where: { id: volumeId },
+      select: { storageBackend: true },
+    });
+    const backend = volume?.storageBackend;
     if (!backend) throw new NotFoundException("StorageBackend for Volume not found");
     return backend;
   }
@@ -136,34 +117,30 @@ export class StorageBackendStore {
   }
 
   async requireProjectIdForVolume(volumeId: string) {
-    const rows = await this.prisma.$queryRaw<ProjectIdRow[]>`
-      SELECT "storageProjectId"::bigint AS "projectId"
-      FROM "Volume"
-      WHERE "id" = ${volumeId}::uuid
-      LIMIT 1
-    `;
-    const raw = rows[0]?.projectId;
-    if (raw === undefined) {
+    const volume = await this.prisma.volume.findUnique({
+      where: { id: volumeId },
+      select: { storageProjectId: true },
+    });
+    const raw = volume?.storageProjectId;
+    if (raw === undefined || raw === null) {
       throw new NotFoundException("Storage project id for Volume not found");
     }
-    return this.projectIdNumber(raw);
+    return this.projectIdNumber(BigInt(raw));
   }
 
   async requireProjectIdForVolumeInTransaction(
     tx: Prisma.TransactionClient,
     volumeId: string,
   ) {
-    const rows = await tx.$queryRaw<ProjectIdRow[]>(Prisma.sql`
-      SELECT "storageProjectId"::bigint AS "projectId"
-      FROM "Volume"
-      WHERE "id" = ${volumeId}::uuid
-      LIMIT 1
-    `);
-    const raw = rows[0]?.projectId;
-    if (raw === undefined) {
+    const volume = await tx.volume.findUnique({
+      where: { id: volumeId },
+      select: { storageProjectId: true },
+    });
+    const raw = volume?.storageProjectId;
+    if (raw === undefined || raw === null) {
       throw new NotFoundException("Storage project id for Volume not found");
     }
-    return this.projectIdNumber(raw);
+    return this.projectIdNumber(BigInt(raw));
   }
 
   async lockCapacity(
@@ -193,12 +170,11 @@ export class StorageBackendStore {
   }
 
   async usedCapacity(backendId: string) {
-    const rows = await this.prisma.$queryRaw<UsedCapacityRow[]>`
-      SELECT COALESCE(SUM(COALESCE("usedSizeBytes", 0)), 0)::bigint AS "usedBytes"
-      FROM "Volume"
-      WHERE "storageBackendId" = ${backendId}::uuid
-    `;
-    return rows[0]?.usedBytes ?? 0n;
+    const aggregate = await this.prisma.volume.aggregate({
+      where: { storageBackendId: backendId },
+      _sum: { usedSizeBytes: true },
+    });
+    return aggregate._sum.usedSizeBytes ?? 0n;
   }
 
   async reserveResize(
@@ -231,28 +207,26 @@ export class StorageBackendStore {
     sizeBytes: bigint,
     actorId: string,
   ) {
-    await this.prisma.$executeRaw`
-      UPDATE "Volume"
-      SET
-        "sizeBytes" = ${sizeBytes},
-        "pendingSizeBytes" = NULL,
-        "status" = 'Ready',
-        "updatedBy" = ${actorId},
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${volumeId}::uuid
-    `;
+    await this.prisma.volume.updateMany({
+      where: { id: volumeId },
+      data: {
+        sizeBytes,
+        pendingSizeBytes: null,
+        status: "Ready",
+        updatedBy: actorId,
+      },
+    });
   }
 
   async failResize(volumeId: string, actorId: string) {
-    await this.prisma.$executeRaw`
-      UPDATE "Volume"
-      SET
-        "pendingSizeBytes" = NULL,
-        "status" = 'Error',
-        "updatedBy" = ${actorId},
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${volumeId}::uuid
-    `;
+    await this.prisma.volume.updateMany({
+      where: { id: volumeId },
+      data: {
+        pendingSizeBytes: null,
+        status: "Error",
+        updatedBy: actorId,
+      },
+    });
   }
 
   async saveValidation(
@@ -266,34 +240,21 @@ export class StorageBackendStore {
       lastValidationError: string | null;
     },
   ) {
-    const rows = await this.prisma.$queryRaw<StorageBackendRow[]>`
-      UPDATE "StorageBackend"
-      SET
-        "status" = ${input.status}::"StorageBackendStatus",
-        "health" = ${input.health}::"HealthState",
-        "capacityTotal" = ${input.capacityTotal},
-        "capacityAvailable" = ${input.capacityAvailable},
-        "lastValidatedAt" = ${input.lastValidatedAt},
-        "lastValidationError" = ${input.lastValidationError},
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${id}::uuid
-      RETURNING *
-    `;
-    const backend = rows[0];
-    if (!backend) throw new NotFoundException("StorageBackend not found");
-    return backend;
+    const updated = await this.prisma.storageBackend.updateMany({
+      where: { id },
+      data: input,
+    });
+    if (updated.count !== 1) throw new NotFoundException("StorageBackend not found");
+    return this.require(id);
   }
 
   async setMaintenance(id: string, maintenance: boolean) {
-    const rows = await this.prisma.$queryRaw<StorageBackendRow[]>`
-      UPDATE "StorageBackend"
-      SET "maintenance" = ${maintenance}, "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${id}::uuid
-      RETURNING *
-    `;
-    const backend = rows[0];
-    if (!backend) throw new NotFoundException("StorageBackend not found");
-    return backend;
+    const updated = await this.prisma.storageBackend.updateMany({
+      where: { id },
+      data: { maintenance },
+    });
+    if (updated.count !== 1) throw new NotFoundException("StorageBackend not found");
+    return this.require(id);
   }
 
   private projectIdNumber(raw: bigint) {

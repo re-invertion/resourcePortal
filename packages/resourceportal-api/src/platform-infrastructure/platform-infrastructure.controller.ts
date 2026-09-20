@@ -11,13 +11,17 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
+import { OperationsService } from "../operations/operations.service";
 import { SetRemoteLocationMaintenanceDto } from "./dto/set-maintenance.dto";
-import { SwarmInfrastructureService } from "./swarm-infrastructure.service";
+import { SwarmInfrastructureReadService } from "./swarm-infrastructure-read.service";
 
 @Controller("platform")
 @UseGuards(PlatformAdminGuard)
 export class PlatformInfrastructureController {
-  constructor(private readonly service: SwarmInfrastructureService) {}
+  constructor(
+    private readonly service: SwarmInfrastructureReadService,
+    private readonly operations: OperationsService,
+  ) {}
 
   @Get("swarm-cluster")
   getCluster() {
@@ -25,8 +29,14 @@ export class PlatformInfrastructureController {
   }
 
   @Post("swarm-cluster/reconcile")
-  reconcile() {
-    return this.service.reconcile();
+  reconcile(@CurrentUser() actor: AuthenticatedUser) {
+    return this.operations.enqueue({
+      type: "SWARM_RECONCILE",
+      tenantId: null,
+      resourceType: "SwarmCluster",
+      actor,
+      input: {},
+    });
   }
 
   @Get("remote-locations")
@@ -47,6 +57,13 @@ export class PlatformInfrastructureController {
     @Body() dto: SetRemoteLocationMaintenanceDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
-    return this.service.setMaintenance(remoteLocationId, dto.enabled, actor);
+    return this.operations.enqueue({
+      type: "SWARM_NODE_MAINTENANCE",
+      tenantId: null,
+      resourceType: "RemoteLocation",
+      resourceId: remoteLocationId,
+      actor,
+      input: { enabled: dto.enabled },
+    });
   }
 }

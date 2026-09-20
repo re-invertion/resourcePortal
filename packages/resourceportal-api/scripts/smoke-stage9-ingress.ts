@@ -173,13 +173,13 @@ async function cleanup() {
 }
 
 async function runWorkerOnce() {
-  const result = await command("npm", ["run", "worker:deployments"], {
+  const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
 
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "Deployment worker failed");
+    throw new Error(result.stderr || result.stdout || "ResourcePortal worker failed");
   }
 }
 

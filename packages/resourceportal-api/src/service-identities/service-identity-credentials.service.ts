@@ -49,13 +49,13 @@ export class ServiceIdentityCredentialsService {
     const clientSecret = await this.zitadel.rotateSecret(identity.zitadelUserId);
 
     try {
-      await this.prisma.$executeRaw`
-        UPDATE "ServiceIdentity"
-        SET "clientSecretCiphertext" = ${this.encryption.encrypt(clientSecret)},
-            "updatedBy" = CAST(${actor.id} AS uuid),
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = CAST(${identity.id} AS uuid)
-      `;
+      await this.prisma.serviceIdentity.update({
+        where: { id: identity.id },
+        data: {
+          clientSecretCiphertext: this.encryption.encrypt(clientSecret),
+          updatedBy: actor.id,
+        },
+      });
     } catch {
       return {
         id: identity.id,
@@ -116,26 +116,20 @@ export class ServiceIdentityCredentialsService {
   }
 
   private async getTenantRecord(tenantId: string, serviceIdentityId: string) {
-    const rows = await this.prisma.$queryRaw<ServiceIdentityCredentialRecord[]>`
-      SELECT "id", "tenantId", "name", "zitadelUserId", "clientId"
-      FROM "ServiceIdentity"
-      WHERE "id" = CAST(${serviceIdentityId} AS uuid)
-        AND "tenantId" = CAST(${tenantId} AS uuid)
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Service identity not found");
-    return rows[0];
+    const row = await this.prisma.serviceIdentity.findFirst({
+      where: { id: serviceIdentityId, tenantId },
+      select: { id: true, tenantId: true, name: true, zitadelUserId: true, clientId: true },
+    });
+    if (!row) throw new NotFoundException("Service identity not found");
+    return row;
   }
 
   private async getPlatformRecord(serviceIdentityId: string) {
-    const rows = await this.prisma.$queryRaw<ServiceIdentityCredentialRecord[]>`
-      SELECT "id", "tenantId", "name", "zitadelUserId", "clientId"
-      FROM "ServiceIdentity"
-      WHERE "id" = CAST(${serviceIdentityId} AS uuid)
-        AND "tenantId" IS NULL
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Platform service identity not found");
-    return rows[0];
+    const row = await this.prisma.serviceIdentity.findFirst({
+      where: { id: serviceIdentityId, tenantId: null },
+      select: { id: true, tenantId: true, name: true, zitadelUserId: true, clientId: true },
+    });
+    if (!row) throw new NotFoundException("Platform service identity not found");
+    return row;
   }
 }

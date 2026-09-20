@@ -11,12 +11,11 @@ import {
 } from "@prisma/client";
 import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
-import { StackRuntimeService } from "../internal/stack-runtime.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
-import { VolumesService } from "../volumes/volumes.service";
+import { VolumeReadService } from "../volumes/volume-read.service";
 import { AppGroupsService } from "./app-groups.service";
 import { mapAppGroup } from "./app-groups.view";
 import { buildDiscardRestorePlan } from "./discard-restore";
@@ -93,8 +92,7 @@ export class Stage3AppGroupsService extends AppGroupsService {
     registriesService: RegistriesService,
     encryption: EncryptionService,
     secretStorage: SecretStorageService,
-    stackRuntime: StackRuntimeService,
-    volumesService: VolumesService,
+    volumesService: VolumeReadService,
     private readonly config: ConfigService,
   ) {
     super(
@@ -102,7 +100,6 @@ export class Stage3AppGroupsService extends AppGroupsService {
       registriesService,
       encryption,
       secretStorage,
-      stackRuntime,
       volumesService,
     );
   }
@@ -156,43 +153,9 @@ export class Stage3AppGroupsService extends AppGroupsService {
     return mapAppGroup(appGroup, this.runtimeContext());
   }
 
-  async startAppGroup(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
-    return super.startAppGroup(tenantId, appGroupId, actor);
-  }
 
-  async restartAppGroup(
-    tenantId: string,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-  ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
-    return super.restartAppGroup(tenantId, appGroupId, actor);
-  }
 
-  async startSingleApp(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
-    return super.startSingleApp(tenantId, appGroupId, singleAppId, actor);
-  }
 
-  async restartSingleApp(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    actor: AuthenticatedUser,
-  ) {
-    await this.assertExternalRuntimeUnblocked(tenantId, appGroupId);
-    return super.restartSingleApp(tenantId, appGroupId, singleAppId, actor);
-  }
 
   async discardDraftChanges(
     tenantId: string,
@@ -340,46 +303,6 @@ export class Stage3AppGroupsService extends AppGroupsService {
     );
   }
 
-  private async assertExternalRuntimeUnblocked(
-    tenantId: string,
-    appGroupId: string,
-  ) {
-    const appGroup = await this.stage3Prisma.appGroup.findFirst({
-      where: { id: appGroupId, tenantId },
-      include: {
-        tenant: {
-          select: {
-            status: true,
-            billing: { select: { balance: true } },
-          },
-        },
-      },
-    });
-
-    if (!appGroup) {
-      throw new NotFoundException("App Group not found");
-    }
-
-    const externalBlockers = mapAppGroup(
-      appGroup,
-      this.runtimeContext(),
-    ).runtimeBlockers.filter((blocker) =>
-      [
-        "AppGroupDeleting",
-        "AppGroupError",
-        "TenantSuspended",
-        "BillingSuspended",
-        "PlatformMaintenance",
-      ].includes(blocker),
-    );
-
-    if (externalBlockers.length > 0) {
-      throw new ConflictException({
-        code: "RuntimeBlocked",
-        blockers: externalBlockers,
-      });
-    }
-  }
 
   private async loadRestorableDeploymentSnapshot(
     appGroupId: string,

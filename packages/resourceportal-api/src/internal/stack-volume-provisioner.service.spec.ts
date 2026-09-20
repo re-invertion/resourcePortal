@@ -53,19 +53,22 @@ describe("StackVolumeProvisionerService", () => {
   });
 
   it("parses Swarm storage readiness from node status and label", () => {
-    expect(parseStorageNode("node-a|Ready|true")).toEqual({
+    expect(parseStorageNode("node-a|Ready|true|true")).toEqual({
       id: "node-a",
       ready: true,
+      storageReady: true,
       volumesReady: true,
     });
-    expect(parseStorageNode("node-b|Ready|false")).toEqual({
+    expect(parseStorageNode("node-b|Ready|true|false")).toEqual({
       id: "node-b",
       ready: true,
+      storageReady: true,
       volumesReady: false,
     });
-    expect(parseStorageNode("node-c|Down|true")).toEqual({
+    expect(parseStorageNode("node-c|Down|true|true")).toEqual({
       id: "node-c",
       ready: false,
+      storageReady: true,
       volumesReady: true,
     });
   });
@@ -75,8 +78,8 @@ describe("StackVolumeProvisionerService", () => {
       .mockImplementationOnce(() =>
         dockerProcess("node-a|Ready\nnode-b|Ready\nnode-c|Down\n"),
       )
-      .mockImplementationOnce(() => dockerProcess("true\n"))
-      .mockImplementationOnce(() => dockerProcess("false\n"))
+      .mockImplementationOnce(() => dockerProcess("true|true\n"))
+      .mockImplementationOnce(() => dockerProcess("true|false\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
@@ -112,7 +115,7 @@ describe("StackVolumeProvisionerService", () => {
         "node",
         "inspect",
         "--format",
-        '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+        '{{index .Spec.Labels "rp.node.storage"}}|{{index .Spec.Labels "resourceportal.storage.volumes"}}',
         "node-a",
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
@@ -122,7 +125,7 @@ describe("StackVolumeProvisionerService", () => {
   it("probes the canonical runtime root with a bind mount and storage constraint", async () => {
     spawnMock
       .mockImplementationOnce(() => dockerProcess("node-a|Ready\n"))
-      .mockImplementationOnce(() => dockerProcess("true\n"))
+      .mockImplementationOnce(() => dockerProcess("true|true\n"))
       .mockImplementationOnce(() => dockerProcess("probe-service\n"))
       .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
       .mockImplementationOnce(() => dockerProcess());
@@ -146,6 +149,7 @@ describe("StackVolumeProvisionerService", () => {
     expect(createArgs[mountIndex + 1]).toBe(
       "type=bind,source=/mnt/resourceportal/volumes,target=/probe",
     );
+    expect(createArgs).toContain("node.labels.rp.node.storage==true");
     expect(createArgs).toContain("node.labels.resourceportal.storage.volumes==true");
     expect(createArgs.join(" ")).not.toContain("volume-driver=local");
     expect(createArgs.join(" ")).not.toContain(":/rp/");
@@ -154,7 +158,7 @@ describe("StackVolumeProvisionerService", () => {
   it("fails closed when no Ready storage node is eligible", async () => {
     spawnMock
       .mockImplementationOnce(() => dockerProcess("node-a|Ready\nnode-b|Down\n"))
-      .mockImplementationOnce(() => dockerProcess("false\n"));
+      .mockImplementationOnce(() => dockerProcess("true|false\n"));
 
     await expect(
       service().provisionVolumes([

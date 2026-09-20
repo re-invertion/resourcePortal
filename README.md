@@ -4,7 +4,7 @@ Resource Portal is a monorepo for the Resource Portal backend, TypeScript SDK, c
 
 ```text
 packages/
-  resourceportal-api/   NestJS API, Prisma schema, deployment worker
+  resourceportal-api/   NestJS API, Prisma schema, unified Worker
   resourceportal-sdk/   TypeScript SDK for the public HTTP API
   resourceportal-cli/   rp/resourceportal CLI built on top of the SDK
   resourceportal-web/   React + TypeScript SSR/MPA Web Console
@@ -18,7 +18,7 @@ npm run build
 npm run lint
 npm test
 npm run api:start
-npm run api:worker:deployments
+npm run api:worker
 npm run api:smoke:deploy
 npm run cli -- --help
 ```
@@ -36,7 +36,7 @@ npm run api:start
 
 ## GitHub Codespaces Preview
 
-The repository includes a one-click development preview in `.devcontainer/devcontainer.json`. From GitHub choose **Code → Codespaces → Create codespace**. The container installs dependencies, prepares a local runtime, starts PostgreSQL, applies Prisma migrations, seeds the core roles and a development administrator, starts the API and workers, initializes a single-node Docker Swarm when available, and opens the Web Console on private forwarded port `5173`.
+The repository includes a one-click development preview in `.devcontainer/devcontainer.json`. From GitHub choose **Code → Codespaces → Create codespace**. The container installs dependencies, prepares a local runtime, starts PostgreSQL, applies Prisma migrations, seeds the core roles and a development administrator, starts the API and unified Worker, initializes a single-node Docker Swarm when available, and opens the Web Console on private forwarded port `5173`.
 
 The preview creates a `codespace-demo` tenant with development quota and credits so the functional Web Console can be explored immediately. Runtime state and logs are stored under the ignored `var/codespaces/` directory.
 
@@ -54,7 +54,7 @@ The Docker image builds the API package and can run either process:
 
 ```bash
 node dist/src/main.js
-node dist/src/internal/deployment-worker.runner.js
+node dist/src/worker.runner.js
 ```
 
 API handles HTTP requests and writes deployment intent to PostgreSQL. Worker claims queued deployments and performs Docker Swarm operations.
@@ -72,7 +72,7 @@ packages/resourceportal-cli/README.md
 `npm run backup:control-plane` creates a PostgreSQL dump, an optional config
 archive, and an archive of the encrypted AppGroup Secret store. Every artifact
 is covered by `manifest.sha256`; plaintext Secret values are never exported.
-Pause API writes and deployment workers for the duration of backup so the
+Pause API writes and the unified Worker for the duration of backup so the
 database snapshot and encrypted Secret archive describe the same point in time.
 
 ```bash

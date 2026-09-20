@@ -408,7 +408,7 @@ async function preflightSwarm() {
 async function runDeploymentWorkerOnce() {
   const result = await command(
     "npm",
-    ["--workspace", "@resource-portal/api", "run", "worker:deployments"],
+    ["--workspace", "@resource-portal/api", "run", "worker"],
     {
       ...process.env,
       WORKER_ONCE: "true",
@@ -418,7 +418,7 @@ async function runDeploymentWorkerOnce() {
     .filter(Boolean)
     .join("\n");
   if (output) console.log(output);
-  assert(result.exitCode === 0, output || "Deployment worker failed");
+  assert(result.exitCode === 0, output || "ResourcePortal worker failed");
 }
 
 async function waitForReplicas(stackName, singleAppName, expected) {

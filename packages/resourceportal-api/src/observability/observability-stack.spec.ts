@@ -31,5 +31,10 @@ describe("Stage 19 observability stack", () => {
     expect(rules).toContain("ResourcePortalRemoteLocationUnhealthy");
     expect(rules).toContain("ResourcePortalStorageBackendLowCapacity");
     expect(rules).toContain("ResourcePortalHighHttp5xxRate");
+    expect(rules).toContain("ResourcePortalWorkerDown");
+    expect(rules).toContain("ResourcePortalWorkerReconciliationFailing");
+    expect(rules).toContain("ResourcePortalOperationRetriesHigh");
+    expect(rules).toContain("ResourcePortalOperationQueueStalled");
+    expect(rules).toContain("ResourcePortalAppGroupDriftDetected");
   });
 });

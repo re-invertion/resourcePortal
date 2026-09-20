@@ -14,102 +14,15 @@ import {
 export class OperationsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createOperation(input: CreateOperationInput) {
-    const id = randomUUID();
-    const eventId = randomUUID();
-    const maxAttempts = Math.max(1, Math.floor(input.maxAttempts ?? 5));
-    const resourceId = input.resourceId ?? null;
-    const phase = input.phase ?? null;
-    const payload = JSON.stringify(input.input ?? {});
-    const idempotencyKey = input.idempotencyKey?.trim() || null;
+  createOperation(input: CreateOperationInput) {
+    return createOperationWithClient(this.prisma, input);
+  }
 
-    const rows = idempotencyKey
-      ? await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
-          WITH inserted AS (
-            INSERT INTO "Operation" (
-              "id", "type", "tenantId", "resourceType", "resourceId",
-              "status", "phase", "createdBy", "createdByEmail",
-              "createdByDisplayName", "input", "idempotencyKey",
-              "maxAttempts", "nextAttemptAt"
-            ) VALUES (
-              ${id}::uuid, ${input.type}, ${input.tenantId}::uuid,
-              ${input.resourceType}, ${resourceId}::uuid,
-              'Pending'::"OperationStatus", ${phase}, ${input.createdBy}::uuid,
-              ${input.createdByEmail}, ${input.createdByDisplayName},
-              ${payload}::jsonb, ${idempotencyKey}, ${maxAttempts}, NOW()
-            )
-            ON CONFLICT ("tenantId", "type", "idempotencyKey")
-              WHERE "idempotencyKey" IS NOT NULL
-            DO NOTHING
-            RETURNING *
-          ), selected AS (
-            SELECT * FROM inserted
-            UNION ALL
-            SELECT *
-            FROM "Operation"
-            WHERE "tenantId" = ${input.tenantId}::uuid
-              AND "type" = ${input.type}
-              AND "idempotencyKey" = ${idempotencyKey}
-              AND NOT EXISTS (SELECT 1 FROM inserted)
-            LIMIT 1
-          ), event_insert AS (
-            INSERT INTO "OperationEvent" (
-              "id", "operationId", "phase", "level", "event", "message", "details"
-            )
-            SELECT
-              ${eventId}::uuid, "id", "phase", 'Info', 'OperationCreated',
-              'Operation accepted and queued for worker execution', NULL
-            FROM inserted
-            RETURNING "id"
-          )
-          SELECT * FROM selected
-        `)
-      : await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
-          WITH inserted AS (
-            INSERT INTO "Operation" (
-              "id", "type", "tenantId", "resourceType", "resourceId",
-              "status", "phase", "createdBy", "createdByEmail",
-              "createdByDisplayName", "input", "idempotencyKey",
-              "maxAttempts", "nextAttemptAt"
-            ) VALUES (
-              ${id}::uuid, ${input.type}, ${input.tenantId}::uuid,
-              ${input.resourceType}, ${resourceId}::uuid,
-              'Pending'::"OperationStatus", ${phase}, ${input.createdBy}::uuid,
-              ${input.createdByEmail}, ${input.createdByDisplayName},
-              ${payload}::jsonb, NULL, ${maxAttempts}, NOW()
-            )
-            RETURNING *
-          ), event_insert AS (
-            INSERT INTO "OperationEvent" (
-              "id", "operationId", "phase", "level", "event", "message", "details"
-            )
-            SELECT
-              ${eventId}::uuid, "id", "phase", 'Info', 'OperationCreated',
-              'Operation accepted and queued for worker execution', NULL
-            FROM inserted
-            RETURNING "id"
-          )
-          SELECT * FROM inserted
-        `);
-
-    let operation = rows[0];
-    if (!operation && idempotencyKey) {
-      const conflictRows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
-        SELECT *
-        FROM "Operation"
-        WHERE "tenantId" = ${input.tenantId}::uuid
-          AND "type" = ${input.type}
-          AND "idempotencyKey" = ${idempotencyKey}
-        LIMIT 1
-      `);
-      operation = conflictRows[0];
-    }
-
-    if (!operation) {
-      throw new Error("Operation could not be created or resolved idempotently");
-    }
-
-    return operation;
+  createOperationInTransaction(
+    tx: Prisma.TransactionClient,
+    input: CreateOperationInput,
+  ) {
+    return createOperationWithClient(tx, input);
   }
 
   async listOperations(tenantId: string, limit = 100) {
@@ -168,13 +81,37 @@ export class OperationsRepository {
     return rows[0] ?? null;
   }
 
+  async failExhaustedOperations() {
+    return this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+      UPDATE "Operation"
+      SET
+        "status" = 'Failed'::"OperationStatus",
+        "errorCode" = 'OperationAttemptsExhausted',
+        "errorMessage" = 'Operation exhausted its execution attempts after retry or worker lease loss',
+        "leaseOwner" = NULL,
+        "leaseExpiresAt" = NULL,
+        "heartbeatAt" = NOW(),
+        "completedAt" = NOW()
+      WHERE "attempt" >= "maxAttempts"
+        AND (
+          ("status" = 'Pending'::"OperationStatus" AND "nextAttemptAt" <= NOW())
+          OR (
+            "status" = 'Running'::"OperationStatus"
+            AND "leaseExpiresAt" IS NOT NULL
+            AND "leaseExpiresAt" <= NOW()
+          )
+        )
+      RETURNING *
+    `);
+  }
+
   async claimNext(workerId: string, leaseSeconds: number) {
     const safeLeaseSeconds = Math.max(15, Math.floor(leaseSeconds));
     const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
       WITH candidate AS (
         SELECT "id"
         FROM "Operation"
-        WHERE "type" NOT IN ('APP_GROUP_DEPLOY', 'APP_GROUP_ROLLBACK')
+        WHERE "attempt" < "maxAttempts"
           AND (
             ("status" = 'Pending'::"OperationStatus" AND "nextAttemptAt" <= NOW())
             OR (
@@ -233,12 +170,13 @@ export class OperationsRepository {
     workerId: string,
     result: unknown,
     resourceId?: string | null,
+    status: Extract<OperationStatus, "Succeeded" | "RolledBack"> = "Succeeded",
   ) {
     const serializedResult = result === undefined ? null : JSON.stringify(result);
     const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
       UPDATE "Operation"
       SET
-        "status" = 'Succeeded'::"OperationStatus",
+        "status" = ${status}::"OperationStatus",
         "result" = ${serializedResult}::jsonb,
         "resourceId" = COALESCE(${resourceId ?? null}::uuid, "resourceId"),
         "errorCode" = NULL,
@@ -329,38 +267,105 @@ export class OperationsRepository {
     return rows[0] ?? null;
   }
 
-  async syncMirroredOperation(
-    operationId: string,
-    status: OperationStatus,
-    phase: string | null,
-    errorCode: string | null,
-    errorMessage: string | null,
-    result: unknown,
-  ) {
-    const serializedResult = result === undefined ? null : JSON.stringify(result);
-    const terminal = [
-      "Succeeded",
-      "Failed",
-      "RolledBack",
-      "RollbackFailed",
-    ].includes(status);
-    const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
-      UPDATE "Operation"
-      SET
-        "status" = ${status}::"OperationStatus",
-        "phase" = ${phase},
-        "errorCode" = ${errorCode},
-        "errorMessage" = ${errorMessage},
-        "result" = ${serializedResult}::jsonb,
-        "startedAt" = CASE
-          WHEN ${status}::"OperationStatus" <> 'Pending'::"OperationStatus"
-          THEN COALESCE("startedAt", NOW())
-          ELSE "startedAt"
-        END,
-        "completedAt" = CASE WHEN ${terminal} THEN NOW() ELSE NULL END
-      WHERE "id" = ${operationId}::uuid
-      RETURNING *
+
+}
+
+type OperationSqlClient = Pick<Prisma.TransactionClient, "$queryRaw">;
+
+async function createOperationWithClient(
+  client: OperationSqlClient,
+  input: CreateOperationInput,
+) {
+  const id = randomUUID();
+  const eventId = randomUUID();
+  const maxAttempts = Math.max(1, Math.floor(input.maxAttempts ?? 5));
+  const resourceId = input.resourceId ?? null;
+  const phase = input.phase ?? null;
+  const payload = JSON.stringify(input.input ?? {});
+  const idempotencyKey = input.idempotencyKey?.trim() || null;
+
+  const rows = idempotencyKey
+    ? await client.$queryRaw<OperationRecord[]>(Prisma.sql`
+        WITH inserted AS (
+          INSERT INTO "Operation" (
+            "id", "type", "tenantId", "resourceType", "resourceId",
+            "status", "phase", "createdBy", "createdByEmail",
+            "createdByDisplayName", "input", "idempotencyKey",
+            "maxAttempts", "nextAttemptAt"
+          ) VALUES (
+            ${id}::uuid, ${input.type}, ${input.tenantId}::uuid,
+            ${input.resourceType}, ${resourceId}::uuid,
+            'Pending'::"OperationStatus", ${phase}, ${input.createdBy}::uuid,
+            ${input.createdByEmail}, ${input.createdByDisplayName},
+            ${payload}::jsonb, ${idempotencyKey}, ${maxAttempts}, NOW()
+          )
+          ON CONFLICT DO NOTHING
+          RETURNING *
+        ), selected AS (
+          SELECT * FROM inserted
+          UNION ALL
+          SELECT *
+          FROM "Operation"
+          WHERE "tenantId" IS NOT DISTINCT FROM ${input.tenantId}::uuid
+            AND "type" = ${input.type}
+            AND "idempotencyKey" = ${idempotencyKey}
+            AND NOT EXISTS (SELECT 1 FROM inserted)
+          LIMIT 1
+        ), event_insert AS (
+          INSERT INTO "OperationEvent" (
+            "id", "operationId", "phase", "level", "event", "message", "details"
+          )
+          SELECT
+            ${eventId}::uuid, "id", "phase", 'Info', 'OperationCreated',
+            'Operation accepted and queued for worker execution', NULL
+          FROM inserted
+          RETURNING "id"
+        )
+        SELECT * FROM selected
+      `)
+    : await client.$queryRaw<OperationRecord[]>(Prisma.sql`
+        WITH inserted AS (
+          INSERT INTO "Operation" (
+            "id", "type", "tenantId", "resourceType", "resourceId",
+            "status", "phase", "createdBy", "createdByEmail",
+            "createdByDisplayName", "input", "idempotencyKey",
+            "maxAttempts", "nextAttemptAt"
+          ) VALUES (
+            ${id}::uuid, ${input.type}, ${input.tenantId}::uuid,
+            ${input.resourceType}, ${resourceId}::uuid,
+            'Pending'::"OperationStatus", ${phase}, ${input.createdBy}::uuid,
+            ${input.createdByEmail}, ${input.createdByDisplayName},
+            ${payload}::jsonb, NULL, ${maxAttempts}, NOW()
+          )
+          RETURNING *
+        ), event_insert AS (
+          INSERT INTO "OperationEvent" (
+            "id", "operationId", "phase", "level", "event", "message", "details"
+          )
+          SELECT
+            ${eventId}::uuid, "id", "phase", 'Info', 'OperationCreated',
+            'Operation accepted and queued for worker execution', NULL
+          FROM inserted
+          RETURNING "id"
+        )
+        SELECT * FROM inserted
+      `);
+
+  let operation = rows[0];
+  if (!operation && idempotencyKey) {
+    const conflictRows = await client.$queryRaw<OperationRecord[]>(Prisma.sql`
+      SELECT *
+      FROM "Operation"
+      WHERE "tenantId" IS NOT DISTINCT FROM ${input.tenantId}::uuid
+        AND "type" = ${input.type}
+        AND "idempotencyKey" = ${idempotencyKey}
+      LIMIT 1
     `);
-    return rows[0] ?? null;
+    operation = conflictRows[0];
   }
+
+  if (!operation) {
+    throw new Error("Operation could not be created or resolved idempotently");
+  }
+  return operation;
 }

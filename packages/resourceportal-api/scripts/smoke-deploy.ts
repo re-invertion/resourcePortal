@@ -335,7 +335,7 @@ async function preflightSwarm() {
 }
 
 async function runWorkerOnce() {
-  const result = await command("npm", ["run", "worker:deployments"], {
+  const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
@@ -348,19 +348,19 @@ async function runWorkerOnce() {
   }
 
   if (result.exitCode !== 0) {
-    throw new Error(output || "Deployment worker failed");
+    throw new Error(output || "ResourcePortal worker failed");
   }
 }
 
 async function runOperationWorkerOnce() {
   const workerEnv = {
     ...process.env,
-    OPERATION_WORKER_ONCE: "true",
+    WORKER_ONCE: "true",
   };
   const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
   const result = privileged
-    ? await command("sudo", ["-E", "npm", "run", "worker:operations"], workerEnv)
-    : await command("npm", ["run", "worker:operations"], workerEnv);
+    ? await command("sudo", ["-E", "npm", "run", "worker"], workerEnv)
+    : await command("npm", ["run", "worker"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");

@@ -21,6 +21,7 @@ export class SwarmInfrastructureReconcilerService
   ) {}
 
   onModuleInit() {
+    void this.reconcileOnce();
     const intervalMs = this.config.get<number>(
       "SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS",
       30000,

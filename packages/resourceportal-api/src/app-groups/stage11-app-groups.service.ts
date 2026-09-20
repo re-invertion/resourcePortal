@@ -7,13 +7,12 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Prisma, RuntimeState } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/types";
-import { StackRuntimeService } from "../internal/stack-runtime.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
 import { lockTenantQuota } from "../tenants/quota-concurrency";
-import { VolumesService } from "../volumes/volumes.service";
+import { VolumeReadService } from "../volumes/volume-read.service";
 import { mapSingleApp } from "./app-groups.view";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
@@ -28,8 +27,7 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
     private readonly stage11Registries: RegistriesService,
     encryption: EncryptionService,
     secretStorage: SecretStorageService,
-    stackRuntime: StackRuntimeService,
-    volumesService: VolumesService,
+    volumesService: VolumeReadService,
     config: ConfigService,
   ) {
     super(
@@ -37,7 +35,6 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
       stage11Registries,
       encryption,
       secretStorage,
-      stackRuntime,
       volumesService,
       config,
     );

@@ -45,12 +45,11 @@ export class OAuthApplicationsService {
 
   async list(tenantId: string) {
     await this.ensureTenant(tenantId);
-    const records = await this.prisma.$queryRaw<OAuthApplicationRecord[]>`
-      SELECT * FROM "OAuthApplication"
-      WHERE "tenantId" = CAST(${tenantId} AS uuid)
-      ORDER BY "name" ASC
-    `;
-    return records.map((record) => this.map(record));
+    const records = await this.prisma.oAuthApplication.findMany({
+      where: { tenantId },
+      orderBy: { name: "asc" },
+    });
+    return records.map((record) => this.map(this.asTenantRecord(record)));
   }
 
   async get(tenantId: string, applicationId: string) {
@@ -66,19 +65,23 @@ export class OAuthApplicationsService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          INSERT INTO "OAuthApplication" (
-            "id", "tenantId", "name", "type", "redirectUris", "postLogoutRedirectUris",
-            "zitadelApplicationId", "clientId", "clientSecretCiphertext", "createdBy", "updatedBy"
-          ) VALUES (
-            CAST(${id} AS uuid), CAST(${tenantId} AS uuid), ${configuration.name}, ${configuration.type},
-            CAST(${JSON.stringify(configuration.redirectUris)} AS jsonb),
-            CAST(${JSON.stringify(configuration.postLogoutRedirectUris)} AS jsonb),
-            ${remote.applicationId}, ${remote.clientId},
-            ${remote.clientSecret ? this.encryption.encrypt(remote.clientSecret) : null},
-            CAST(${actor.id} AS uuid), CAST(${actor.id} AS uuid)
-          )
-        `;
+        await tx.oAuthApplication.create({
+          data: {
+            id,
+            tenantId,
+            name: configuration.name,
+            type: configuration.type,
+            redirectUris: configuration.redirectUris,
+            postLogoutRedirectUris: configuration.postLogoutRedirectUris,
+            zitadelApplicationId: remote.applicationId,
+            clientId: remote.clientId,
+            clientSecretCiphertext: remote.clientSecret
+              ? this.encryption.encrypt(remote.clientSecret)
+              : null,
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId,
@@ -131,15 +134,15 @@ export class OAuthApplicationsService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          UPDATE "OAuthApplication"
-          SET "name" = ${configuration.name},
-              "redirectUris" = CAST(${JSON.stringify(configuration.redirectUris)} AS jsonb),
-              "postLogoutRedirectUris" = CAST(${JSON.stringify(configuration.postLogoutRedirectUris)} AS jsonb),
-              "updatedBy" = CAST(${actor.id} AS uuid),
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-        `;
+        await tx.oAuthApplication.updateMany({
+          where: { id: applicationId, tenantId },
+          data: {
+            name: configuration.name,
+            redirectUris: configuration.redirectUris,
+            postLogoutRedirectUris: configuration.postLogoutRedirectUris,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId,
@@ -170,10 +173,9 @@ export class OAuthApplicationsService {
     const current = await this.getRecord(tenantId, applicationId);
     await this.zitadel.delete(current.zitadelApplicationId);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "OAuthApplication"
-        WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-      `;
+      await tx.oAuthApplication.deleteMany({
+        where: { id: applicationId, tenantId },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -222,13 +224,11 @@ export class OAuthApplicationsService {
   }
 
   private async getRecord(tenantId: string, applicationId: string) {
-    const rows = await this.prisma.$queryRaw<OAuthApplicationRecord[]>`
-      SELECT * FROM "OAuthApplication"
-      WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" = CAST(${tenantId} AS uuid)
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("OAuth application not found");
-    return rows[0];
+    const row = await this.prisma.oAuthApplication.findFirst({
+      where: { id: applicationId, tenantId },
+    });
+    if (!row) throw new NotFoundException("OAuth application not found");
+    return this.asTenantRecord(row);
   }
 
   private async ensureTenant(tenantId: string) {
@@ -238,6 +238,19 @@ export class OAuthApplicationsService {
     });
     if (!tenant) throw new NotFoundException("Tenant not found");
     return tenant;
+  }
+
+  private asTenantRecord(record: Awaited<ReturnType<PrismaService["oAuthApplication"]["findFirst"]>>) {
+    if (!record || record.tenantId === null) {
+      throw new NotFoundException("OAuth application not found");
+    }
+    return {
+      ...record,
+      tenantId: record.tenantId,
+      type: record.type as OAuthApplicationType,
+      redirectUris: record.redirectUris as string[],
+      postLogoutRedirectUris: record.postLogoutRedirectUris as string[],
+    } satisfies OAuthApplicationRecord;
   }
 
   private map(record: OAuthApplicationRecord) {

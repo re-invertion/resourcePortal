@@ -180,21 +180,19 @@ export class BillingReadService {
 
   private async transactionExtras(ids: string[]) {
     if (ids.length === 0) return new Map<string, TransactionExtra>();
-    const rows = await this.prisma.$queryRaw<TransactionExtra[]>(Prisma.sql`
-      SELECT "id", "reason", "sourceTransactionId", "metadata"
-      FROM "BillingTransaction"
-      WHERE "id" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
-    `);
+    const rows = await this.prisma.billingTransaction.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, reason: true, sourceTransactionId: true, metadata: true },
+    });
     return new Map(rows.map((row) => [row.id, row]));
   }
 
   private async usageExtras(ids: string[]) {
     if (ids.length === 0) return new Map<string, UsageExtra>();
-    const rows = await this.prisma.$queryRaw<UsageExtra[]>(Prisma.sql`
-      SELECT "id", "chargedCredits", "priceListVersionId", "appGroupId"
-      FROM "UsageRecord"
-      WHERE "id" IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
-    `);
+    const rows = await this.prisma.usageRecord.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, chargedCredits: true, priceListVersionId: true, appGroupId: true },
+    });
     return new Map(rows.map((row) => [row.id, row]));
   }
 

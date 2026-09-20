@@ -1,10 +1,6 @@
-import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
-import { PrismaService } from "../prisma/prisma.service";
-import type { OperationStatus } from "./operation.types";
-import { OperationsRepository } from "./operations.repository";
 
 export type DeploymentOperationType =
   | "APP_GROUP_DEPLOY"
@@ -19,53 +15,12 @@ type MirroredDeployment = {
   rollbackTargetVersion: number | null;
 };
 
-type DeploymentOutcome = {
-  id: string;
-  version: number;
-  status: string;
-  phase: string;
-  rollbackTargetVersion: number | null;
-  errorCode: string | null;
-  errorMessage: string | null;
-};
-
-type MirroredOperationRef = {
-  id: string;
-  type: DeploymentOperationType;
-};
-
 export function deploymentOperationType(
   deployment: Pick<MirroredDeployment, "rollbackTargetVersion">,
 ): DeploymentOperationType {
   return deployment.rollbackTargetVersion === null
     ? "APP_GROUP_DEPLOY"
     : "APP_GROUP_ROLLBACK";
-}
-
-export function mapDeploymentOperationStatus(
-  deploymentStatus: string,
-  operationType: DeploymentOperationType,
-): OperationStatus {
-  switch (deploymentStatus) {
-    case "Pending":
-      return "Pending";
-    case "Deploying":
-      return "Running";
-    case "RollingBack":
-      return "RollingBack";
-    case "Succeeded":
-      return operationType === "APP_GROUP_ROLLBACK"
-        ? "RolledBack"
-        : "Succeeded";
-    case "Failed":
-      return "Failed";
-    case "RolledBack":
-      return "RolledBack";
-    case "RollbackFailed":
-      return "RollbackFailed";
-    default:
-      return "Failed";
-  }
 }
 
 export async function mirrorDeploymentOperation(
@@ -98,9 +53,9 @@ export async function mirrorDeploymentOperation(
         'AppGroupDeployment', ${deployment.id}::uuid,
         'Pending'::"OperationStatus", ${deployment.phase}, ${actor.id}::uuid,
         ${actor.email}, ${actor.displayName}, ${payload}::jsonb,
-        ${idempotencyKey}, 1, NOW()
+        ${idempotencyKey}, 5, NOW()
       )
-      ON CONFLICT ("id") DO NOTHING
+      ON CONFLICT DO NOTHING
       RETURNING "id"
     ), event_insert AS (
       INSERT INTO "OperationEvent" (
@@ -109,7 +64,7 @@ export async function mirrorDeploymentOperation(
       SELECT
         ${eventId}::uuid, "id", ${deployment.phase}, 'Info',
         'OperationCreated',
-        'AppGroup deployment mirrored into Operations',
+        'AppGroup deployment queued for Operation worker execution',
         ${payload}::jsonb
       FROM inserted
       RETURNING "id"
@@ -118,70 +73,4 @@ export async function mirrorDeploymentOperation(
   `);
 
   return rows[0] ?? null;
-}
-
-@Injectable()
-export class DeploymentOperationAdapterService {
-  constructor(
-    private readonly repository: OperationsRepository,
-    private readonly prisma: PrismaService,
-  ) {}
-
-  mirrorCreatedDeployment(
-    tx: Prisma.TransactionClient,
-    deployment: MirroredDeployment,
-    tenantId: string,
-    actor: Pick<AuthenticatedUser, "id" | "email" | "displayName">,
-  ) {
-    return mirrorDeploymentOperation(tx, deployment, tenantId, actor);
-  }
-
-  async syncDeploymentOutcome(deployment: DeploymentOutcome) {
-    const rows = await this.prisma.$queryRaw<MirroredOperationRef[]>(Prisma.sql`
-      SELECT "id", "type"
-      FROM "Operation"
-      WHERE "resourceType" = 'AppGroupDeployment'
-        AND "resourceId" = ${deployment.id}::uuid
-        AND "type" IN ('APP_GROUP_DEPLOY', 'APP_GROUP_ROLLBACK')
-      LIMIT 1
-    `);
-    const mirrored = rows[0];
-    if (!mirrored) {
-      return null;
-    }
-
-    const status = mapDeploymentOperationStatus(
-      deployment.status,
-      mirrored.type,
-    );
-    const result = {
-      deploymentId: deployment.id,
-      version: deployment.version,
-      rollbackTargetVersion: deployment.rollbackTargetVersion,
-      deploymentStatus: deployment.status,
-    };
-    const operation = await this.repository.syncMirroredOperation(
-      mirrored.id,
-      status,
-      deployment.phase,
-      deployment.errorCode,
-      deployment.errorMessage,
-      result,
-    );
-
-    if (operation) {
-      await this.repository.appendEvent(mirrored.id, {
-        phase: deployment.phase,
-        level:
-          status === "Failed" || status === "RollbackFailed"
-            ? "Error"
-            : "Info",
-        event: "DeploymentOutcomeSynchronized",
-        message: `Deployment state synchronized as ${status}`,
-        details: result,
-      });
-    }
-
-    return operation;
-  }
 }

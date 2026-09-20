@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { InternalModule } from "../internal/internal.module";
+import { WorkerExecutionModule } from "../worker-execution.module";
 import { PlatformInfrastructureModule } from "../platform-infrastructure/platform-infrastructure.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { StorageBackendsModule } from "../storage-backends/storage-backends.module";
@@ -9,7 +9,7 @@ import { RuntimeRestoreService } from "./runtime-restore.service";
 @Module({
   imports: [
     PrismaModule,
-    InternalModule,
+    WorkerExecutionModule,
     PlatformInfrastructureModule,
     StorageBackendsModule,
   ],

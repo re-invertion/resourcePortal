@@ -1,6 +1,6 @@
 import { validate } from "class-validator";
 import { describe, expect, it, vi } from "vitest";
-import { DeploymentWorkerService } from "../internal/deployment-worker.service";
+import { DeploymentExecutionService } from "../internal/deployment-execution.service";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 
@@ -67,7 +67,7 @@ const createWorker = () => {
     volume: { findMany: vi.fn().mockResolvedValue([]) },
   };
 
-  return new DeploymentWorkerService(
+  return new DeploymentExecutionService(
     prisma as never,
     undefined as never,
     undefined as never,

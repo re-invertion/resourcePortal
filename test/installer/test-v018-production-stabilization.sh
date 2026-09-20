@@ -33,26 +33,31 @@ export RP_CFG_ZITADEL_ORGANIZATION_ID='zitadel-org-123'
 export RP_CFG_ZITADEL_PROJECT_ID='zitadel-project-456'
 export RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_feedfacefeedface'
 export RP_CFG_STORAGE_DEVICE='/dev/sdb'
+export RP_CFG_SWARM_ADVERTISE_ADDR='10.20.0.10'
+export RP_CFG_STORAGE_SERVER_ADDRESS='10.20.0.10'
+export RP_CFG_CLUSTER_CIDR='10.20.0.0/24'
+export RP_CFG_RELEASE_VERSION='0.2.0'
 
 rp_config_apply_defaults
 [[ "$RP_CFG_MANAGED_DOMAIN_BASE" == resource-portal.pl ]] && pass 'managed domain defaults to portal domain' || fail 'managed domain defaults to portal domain'
 
 final="$(rp_render_stack final)"
 contains "$final" 'MANAGED_DOMAIN_BASE: resource-portal.pl' 'API receives managed domain base'
-contains "$final" 'TRAEFIK_CERT_RESOLVER: letsencrypt' 'deployment worker receives production resolver'
-contains "$final" 'TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress' 'deployment worker receives ingress overlay name'
+contains "$final" 'TRAEFIK_CERT_RESOLVER: letsencrypt' 'worker receives production resolver'
+not_contains "$final" 'TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress' 'worker no longer depends on shared tenant ingress overlay'
 
-deployment_block="$(awk '/^  deployment-worker:/{flag=1} /^  operation-worker:/{if(flag){exit}} flag' <<<"$final")"
-operation_block="$(awk '/^  operation-worker:/{flag=1} /^  dr-reconciliation:/{if(flag){exit}} flag' <<<"$final")"
-api_block="$(awk '/^  api:/{flag=1} /^  deployment-worker:/{if(flag){exit}} flag' <<<"$final")"
+worker_block="$(awk '/^  worker:/{flag=1} /^  dr-reconciliation:/{if(flag){exit}} flag' <<<"$final")"
+api_block="$(awk '/^  api:/{flag=1} /^  worker:/{if(flag){exit}} flag' <<<"$final")"
 
-contains "$deployment_block" 'user: "0"' 'deployment worker runs as root for Docker socket'
-contains "$deployment_block" '/var/run/docker.sock:/var/run/docker.sock' 'deployment worker owns Docker socket access'
-contains "$operation_block" 'user: "0"' 'operation worker runs as root for quota mutation'
-contains "$operation_block" 'SYS_ADMIN' 'operation worker has SYS_ADMIN capability'
-contains "$operation_block" '/dev/sdb:/dev/sdb' 'operation worker receives storage block device'
-not_contains "$operation_block" '/var/run/docker.sock' 'operation worker has no Docker socket'
+contains "$worker_block" 'user: "0"' 'unified worker runs as root for privileged infrastructure operations'
+contains "$worker_block" '/var/run/docker.sock:/var/run/docker.sock' 'unified worker owns Docker socket access'
+contains "$worker_block" 'SYS_ADMIN' 'unified worker has quota capability'
+contains "$worker_block" '/dev/sdb:/dev/sdb' 'unified worker receives storage block device'
+contains "$worker_block" 'dist/src/worker.runner.js' 'unified worker uses v0.2 runner'
+not_contains "$final" $'\n  deployment-worker:' 'production stack has no deployment-worker service'
+not_contains "$final" $'\n  operation-worker:' 'production stack has no operation-worker service'
 not_contains "$api_block" '/var/run/docker.sock' 'API has no Docker socket'
+not_contains "$api_block" '/mnt/resourceportal/volumes' 'API has no tenant volume mount'
 
 if (( failures > 0 )); then
   printf '%s test(s) failed\n' "$failures" >&2

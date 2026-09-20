@@ -105,9 +105,19 @@ export function mapConfigAttachment(attachment: ConfigAttachment) {
 
 export function mapSecret(secret: Secret & { attachments?: SecretAttachment[] }) {
   return {
-    ...secret,
+    id: secret.id,
+    appGroupId: secret.appGroupId,
+    name: secret.name,
+    description: secret.description,
+    type: secret.type,
+    fileName: secret.fileName,
+    valueVersion: secret.valueVersion,
+    createdBy: secret.createdBy,
+    updatedBy: secret.updatedBy,
+    createdAt: secret.createdAt,
+    updatedAt: secret.updatedAt,
     attachmentCount: secret.attachments?.length,
-    hasValue: true,
+    hasValue: secret.valueCiphertext !== null || secret.storagePath !== null,
   };
 }
 

@@ -70,11 +70,10 @@ export class BillingUsageService {
         ? input.theoreticalCost
         : clampComputeCharge(input.theoreticalCost, account.balance);
 
-      await tx.$executeRaw`
-        UPDATE "UsageRecord"
-        SET "chargedCredits" = ${chargedCredits}
-        WHERE "id" = ${usageRecordId}::uuid
-      `;
+      await tx.usageRecord.update({
+        where: { id: usageRecordId },
+        data: { chargedCredits },
+      });
 
       if (chargedCredits.gt(0)) {
         const balanceBefore = account.balance;
@@ -83,7 +82,7 @@ export class BillingUsageService {
           where: { id: account.id },
           data: { balance: balanceAfter },
         });
-        const transaction = await tx.billingTransaction.create({
+        await tx.billingTransaction.create({
           data: {
             billingAccountId: account.id,
             type: "UsageCharge",
@@ -92,22 +91,18 @@ export class BillingUsageService {
             balanceAfter,
             status: "Completed",
             reference: `usage:${usageRecordId}`,
+            metadata: {
+              usageRecordId,
+              priceListVersionId: input.priceListVersionId,
+              resourceType: input.resourceType,
+              resourceId: input.resourceId,
+              appGroupId: input.appGroupId ?? null,
+              theoreticalCostCredits: input.theoreticalCost.toString(),
+              chargedCredits: chargedCredits.toString(),
+              actor: "system:billing-worker",
+            },
           },
         });
-        await tx.$executeRaw`
-          UPDATE "BillingTransaction"
-          SET "metadata" = ${JSON.stringify({
-            usageRecordId,
-            priceListVersionId: input.priceListVersionId,
-            resourceType: input.resourceType,
-            resourceId: input.resourceId,
-            appGroupId: input.appGroupId ?? null,
-            theoreticalCostCredits: input.theoreticalCost.toString(),
-            chargedCredits: chargedCredits.toString(),
-            actor: "system:billing-worker",
-          })}::jsonb
-          WHERE "id" = ${transaction.id}::uuid
-        `;
       }
 
       await tx.auditLogEntry.create({

@@ -44,12 +44,11 @@ export class PlatformOAuthApplicationsService {
   ) {}
 
   async list() {
-    const records = await this.prisma.$queryRaw<OAuthApplicationRecord[]>`
-      SELECT * FROM "OAuthApplication"
-      WHERE "tenantId" IS NULL
-      ORDER BY "name" ASC
-    `;
-    return records.map((record) => this.map(record));
+    const records = await this.prisma.oAuthApplication.findMany({
+      where: { tenantId: null },
+      orderBy: { name: "asc" },
+    });
+    return records.map((record) => this.map(this.asPlatformRecord(record)));
   }
 
   async get(applicationId: string) {
@@ -69,19 +68,23 @@ export class PlatformOAuthApplicationsService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          INSERT INTO "OAuthApplication" (
-            "id", "tenantId", "name", "type", "redirectUris", "postLogoutRedirectUris",
-            "zitadelApplicationId", "clientId", "clientSecretCiphertext", "createdBy", "updatedBy"
-          ) VALUES (
-            CAST(${id} AS uuid), NULL, ${configuration.name}, ${configuration.type},
-            CAST(${JSON.stringify(configuration.redirectUris)} AS jsonb),
-            CAST(${JSON.stringify(configuration.postLogoutRedirectUris)} AS jsonb),
-            ${remote.applicationId}, ${remote.clientId},
-            ${remote.clientSecret ? this.encryption.encrypt(remote.clientSecret) : null},
-            CAST(${actor.id} AS uuid), CAST(${actor.id} AS uuid)
-          )
-        `;
+        await tx.oAuthApplication.create({
+          data: {
+            id,
+            tenantId: null,
+            name: configuration.name,
+            type: configuration.type,
+            redirectUris: configuration.redirectUris,
+            postLogoutRedirectUris: configuration.postLogoutRedirectUris,
+            zitadelApplicationId: remote.applicationId,
+            clientId: remote.clientId,
+            clientSecretCiphertext: remote.clientSecret
+              ? this.encryption.encrypt(remote.clientSecret)
+              : null,
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId: null,
@@ -133,15 +136,15 @@ export class PlatformOAuthApplicationsService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          UPDATE "OAuthApplication"
-          SET "name" = ${configuration.name},
-              "redirectUris" = CAST(${JSON.stringify(configuration.redirectUris)} AS jsonb),
-              "postLogoutRedirectUris" = CAST(${JSON.stringify(configuration.postLogoutRedirectUris)} AS jsonb),
-              "updatedBy" = CAST(${actor.id} AS uuid),
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" IS NULL
-        `;
+        await tx.oAuthApplication.updateMany({
+          where: { id: applicationId, tenantId: null },
+          data: {
+            name: configuration.name,
+            redirectUris: configuration.redirectUris,
+            postLogoutRedirectUris: configuration.postLogoutRedirectUris,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId: null,
@@ -172,10 +175,9 @@ export class PlatformOAuthApplicationsService {
     const current = await this.getRecord(applicationId);
     await this.zitadel.delete(current.zitadelApplicationId);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "OAuthApplication"
-        WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" IS NULL
-      `;
+      await tx.oAuthApplication.deleteMany({
+        where: { id: applicationId, tenantId: null },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantId: null,
@@ -224,13 +226,21 @@ export class PlatformOAuthApplicationsService {
   }
 
   private async getRecord(applicationId: string) {
-    const rows = await this.prisma.$queryRaw<OAuthApplicationRecord[]>`
-      SELECT * FROM "OAuthApplication"
-      WHERE "id" = CAST(${applicationId} AS uuid) AND "tenantId" IS NULL
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Platform OAuth application not found");
-    return rows[0];
+    const row = await this.prisma.oAuthApplication.findFirst({
+      where: { id: applicationId, tenantId: null },
+    });
+    if (!row) throw new NotFoundException("Platform OAuth application not found");
+    return this.asPlatformRecord(row);
+  }
+
+  private asPlatformRecord(record: NonNullable<Awaited<ReturnType<PrismaService["oAuthApplication"]["findFirst"]>>>) {
+    return {
+      ...record,
+      tenantId: null,
+      type: record.type as OAuthApplicationType,
+      redirectUris: record.redirectUris as string[],
+      postLogoutRedirectUris: record.postLogoutRedirectUris as string[],
+    } satisfies OAuthApplicationRecord;
   }
 
   private map(record: OAuthApplicationRecord) {

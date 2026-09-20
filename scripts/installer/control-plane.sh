@@ -31,7 +31,7 @@ rp_stack_replica_value() {
     bootstrap:*) printf '0\n' ;;
     ingress:postgres-rp|ingress:postgres-zitadel|ingress:zitadel|ingress:traefik) printf '1\n' ;;
     ingress:*) printf '0\n' ;;
-    final:postgres-rp|final:postgres-zitadel|final:zitadel|final:api|final:web|final:deployment-worker|final:operation-worker|final:traefik) printf '1\n' ;;
+    final:postgres-rp|final:postgres-zitadel|final:zitadel|final:api|final:web|final:worker|final:traefik) printf '1\n' ;;
     final:dr-reconciliation) printf '0\n' ;;
     *) return 1 ;;
   esac
@@ -42,7 +42,7 @@ rp_escape_sed_replacement() {
 }
 
 rp_render_stack() {
-  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage
+  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage oidc_extra_ca_b64
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
   # Rendering is also used by preview/ACME tests. Actual final deploy/persist paths
   # validate ZITADEL management state explicitly before consuming this output.
@@ -60,6 +60,14 @@ rp_render_stack() {
   else
     acme_environment=production
     acme_storage=/platform/traefik/acme.json
+  fi
+  oidc_extra_ca_b64=''
+  if [[ "$state" == final && "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    oidc_extra_ca_b64="${RP_CFG_OIDC_EXTRA_CA_B64:-}"
+    [[ -n "$oidc_extra_ca_b64" ]] || {
+      printf 'Final staging stack requires validated RP_CFG_OIDC_EXTRA_CA_B64.\n' >&2
+      return 1
+    }
   fi
 
   local -a pairs=(
@@ -79,6 +87,7 @@ rp_render_stack() {
     "OIDC_CLIENT_ID|$RP_CFG_OIDC_CLIENT_ID"
     "OIDC_CLI_CLIENT_ID|${RP_CFG_OIDC_CLI_CLIENT_ID:-bootstrap-pending}"
     "OIDC_SWARM_REF|$RP_CFG_OIDC_SWARM_REF"
+    "OIDC_EXTRA_CA_B64|$oidc_extra_ca_b64"
     "ZITADEL_KEY_SWARM_REF|$RP_CFG_ZITADEL_KEY_SWARM_REF"
     "ZITADEL_ORGANIZATION_ID|${RP_CFG_ZITADEL_ORGANIZATION_ID:-bootstrap-pending}"
     "ZITADEL_PROJECT_ID|${RP_CFG_ZITADEL_PROJECT_ID:-bootstrap-pending}"
@@ -87,13 +96,16 @@ rp_render_stack() {
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
     "STORAGE_DEVICE|$RP_CFG_STORAGE_DEVICE"
+    "SWARM_ADVERTISE_ADDR|$RP_CFG_SWARM_ADVERTISE_ADDR"
+    "STORAGE_SERVER_ADDRESS|$RP_CFG_STORAGE_SERVER_ADDRESS"
+    "RELEASE_VERSION|${RP_CFG_RELEASE_VERSION:-unknown}"
+    "CLUSTER_CIDR|$RP_CFG_CLUSTER_CIDR"
     "POSTGRES_RP_REPLICAS|$(rp_stack_replica_value "$state" postgres-rp)"
     "POSTGRES_ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" postgres-zitadel)"
     "ZITADEL_REPLICAS|$(rp_stack_replica_value "$state" zitadel)"
     "API_REPLICAS|$(rp_stack_replica_value "$state" api)"
     "WEB_REPLICAS|$(rp_stack_replica_value "$state" web)"
-    "DEPLOYMENT_WORKER_REPLICAS|$(rp_stack_replica_value "$state" deployment-worker)"
-    "OPERATION_WORKER_REPLICAS|$(rp_stack_replica_value "$state" operation-worker)"
+    "WORKER_REPLICAS|$(rp_stack_replica_value "$state" worker)"
     "DR_RECONCILIATION_REPLICAS|$(rp_stack_replica_value "$state" dr-reconciliation)"
     "TRAEFIK_REPLICAS|$(rp_stack_replica_value "$state" traefik)"
   )
@@ -149,7 +161,7 @@ rp_deploy_control_plane() {
     rm -f "$stack_file"
     return 1
   fi
-  if ! docker stack deploy --compose-file "$stack_file" --with-registry-auth "$stack_name"; then
+  if ! docker stack deploy --compose-file "$stack_file" --with-registry-auth --prune "$stack_name"; then
     rm -f "$stack_file"
     return 1
   fi
@@ -166,11 +178,11 @@ rp_run_migrations() {
     --name "$service_name" \
     --restart-condition none \
     --constraint 'node.role==manager' \
+    --constraint 'node.labels.rp.node.storage==true' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --network "${stack_name}_rp-control" \
     --secret source=rp_database_url,target=rp_database_url \
     --env NODE_ENV=production \
-    --env AUTH_MODE=dev \
     --env DATABASE_URL_FILE=/run/secrets/rp_database_url \
     "$RP_CFG_API_IMAGE" \
     sh -ec 'export DATABASE_URL="$(cat /run/secrets/rp_database_url)"; /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; exec node dist/src/prisma/seed.js' >/dev/null

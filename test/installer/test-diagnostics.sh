@@ -252,7 +252,7 @@ done
 
 
 reconfigure_source="$(cat "$repo_root/scripts/installer/reconfigure.sh")"
-for behavior in 'rp_primary_configure_smtp' 'rp_ensure_versioned_swarm_secret' 'rp_deploy_control_plane final' 'rp_wait_for_https_origin' 'docker node update' 'resourceportal.control-plane' 'resourceportal.ingress' 'availability drain' 'rp_mount_runtime_namespace' 'rp_install_ganesha_config'; do
+for behavior in 'rp_primary_configure_smtp' 'rp_ensure_versioned_swarm_secret' 'rp_deploy_control_plane final' 'rp_wait_for_https_origin' 'docker node update' 'rp.node.control-plane' 'rp.node.ingress' 'resourceportal.control-plane' 'resourceportal.ingress' 'availability drain' 'rp_mount_runtime_namespace' 'rp_install_ganesha_config'; do
   [[ "$reconfigure_source" == *"$behavior"* ]] && pass "reconfigure implements $behavior" || fail "reconfigure implements $behavior"
 done
 status 0 'address migration reconfigure allowed' rp_reconfigure_action_valid addresses
