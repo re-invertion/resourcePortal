@@ -5,6 +5,9 @@ import { PrismaClient } from "@prisma/client";
 const webOrigin = (
   process.env.STAGE20_REAL_SWARM_WEB_ORIGIN ?? "http://127.0.0.1:4173"
 ).replace(/\/$/, "");
+const apiBase = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://127.0.0.1:3000/api"
+).replace(/\/$/, "");
 const userId = process.env.SMOKE_USER_ID;
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const prisma = new PrismaClient();
@@ -25,12 +28,19 @@ try {
   const singleAppName = "nginx";
 
   await context.route("**/api/**", async (route) => {
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        "x-dev-user-id": userId,
-      },
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    const apiPath = requestUrl.pathname.replace(/^\/api(?=\/|$)/, "");
+    const headers = {
+      ...request.headers(),
+      "x-dev-user-id": userId,
+    };
+    delete headers.host;
+    const response = await route.fetch({
+      url: `${apiBase}${apiPath}${requestUrl.search}`,
+      headers,
     });
+    await route.fulfill({ response });
   });
 
   try {
@@ -354,7 +364,7 @@ async function nextWizardStep(page, expectedHeading) {
 }
 
 async function proxyApi(context, path, options = {}) {
-  const response = await context.request.fetch(`${webOrigin}/api${path}`, {
+  const response = await context.request.fetch(`${apiBase}${path}`, {
     method: options.method ?? "GET",
     headers: {
       "x-dev-user-id": userId,
