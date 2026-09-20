@@ -25,6 +25,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
   if (section === "overview") content = <AppGroupOverview tenantId={tenantId} group={group.data} />;
   else if (section === "apps" && sub[1] === "new") content = <CreateApplicationWizard tenantId={tenantId} appGroupId={appGroupId} appGroupName={typeof group.data.name === "string" ? group.data.name : "App Group"} />;
   else if (section === "apps" && sub[1] && sub[2] === "edit") content = <ApplicationEdit tenantId={tenantId} appGroupId={appGroupId} appId={sub[1]} subsection={sub[3]} />;
+  else if (section === "apps" && sub[1] && sub[2] === "health") content = <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appId={sub[1]} section="health" />;
   else if (section === "apps" && sub[1]) content = <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appId={sub[1]} />;
   else if (section === "apps") content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "config") content = <AppGroupConfig tenantId={tenantId} appGroupId={appGroupId} />;

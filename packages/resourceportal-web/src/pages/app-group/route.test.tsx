@@ -23,6 +23,9 @@ describe("AppGroupRoute", () => {
     render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1"]} />);
     expect(await screen.findByRole("heading", { name: "checkout" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /edit application/i }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit");
+    const navigation = screen.getByRole("navigation", { name: "Application sections" });
+    expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
+    expect(within(navigation).getByRole("link", { name: "Health" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/health");
   });
 
   it("renders the five-step create application wizard on apps/new", async () => {
@@ -48,8 +51,25 @@ it("matches the Penpot application edit details hierarchy", async () => {
   expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
   expect(screen.getByRole("button", { name: "Stop application" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Restart application" })).toBeTruthy();
-  expect(screen.queryByRole("navigation", { name: "Application edit sections" })).toBeNull();
+  const navigation = screen.getByRole("navigation", { name: "Application sections" });
+  expect(within(navigation).getByRole("link", { name: "Runtime" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/compute");
+  expect(within(navigation).getByRole("link", { name: "Configuration" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/configuration");
   expect(screen.getByTestId("application-edit-details-grid").className).toContain("md:grid-cols-2");
   expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy();
   expect(screen.getByText(/saving creates pending App Group changes/i)).toBeTruthy();
+});
+
+it("keeps the application navigation active across nested application routes", async () => {
+  render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1", "edit", "compute"]} />);
+  await screen.findByRole("heading", { name: "checkout" });
+  const navigation = screen.getByRole("navigation", { name: "Application sections" });
+  expect(within(navigation).getByRole("link", { name: "Runtime" }).getAttribute("aria-current")).toBe("page");
+  expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1");
+});
+
+it("routes Health separately and keeps the Health tab active", async () => {
+  render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1", "health"]} />);
+  await screen.findByRole("heading", { name: "checkout" });
+  const navigation = screen.getByRole("navigation", { name: "Application sections" });
+  expect(within(navigation).getByRole("link", { name: "Health" }).getAttribute("aria-current")).toBe("page");
 });

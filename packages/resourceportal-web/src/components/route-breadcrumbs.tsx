@@ -106,6 +106,11 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
             href: applicationHref(tenantId, groupId, appId, `edit/${sub[3]}`),
           });
         }
+      } else if (sub[2] === "health") {
+        crumbs.push({
+          label: "Health",
+          href: applicationHref(tenantId, groupId, appId, "health"),
+        });
       }
       return crumbs;
     }
