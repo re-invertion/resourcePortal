@@ -106,6 +106,18 @@ contains "$final" 'API_RATE_LIMIT_WINDOW_SECONDS: "60"' 'production API has an e
 contains "$final" '--entrypoints.websecure.forwardedheaders.insecure=false' 'Traefik does not trust client-supplied forwarded headers'
 not_contains "$final" 'AUTH_MODE: dev' 'production stack never enables dev impersonation auth'
 contains "$final" 'command: ["node", "dist/src/worker.runner.js"]' 'final uses unified worker runner'
+contains "$final" 'command: ["node", "dist/src/network-egress/egress-guard.runner.js"]' 'final includes tenant egress guard'
+contains "$final" 'mode: global' 'egress guard runs on every Swarm node'
+egress_guard_section="$(sed -n '/^  egress-guard:/,/^  traefik:/p' <<<"$final")"
+contains "$egress_guard_section" 'user: "0"' 'egress guard runs with root network administration identity'
+contains "$egress_guard_section" '      - NET_ADMIN' 'egress guard receives NET_ADMIN only for host firewall reconciliation'
+contains "$egress_guard_section" '      - NET_RAW' 'egress guard receives NET_RAW for firewall compatibility'
+contains "$egress_guard_section" '/var/run/docker.sock:/var/run/docker.sock:ro' 'egress guard reads local Docker task inventory through a read-only socket mount'
+contains "$egress_guard_section" '      - host' 'egress guard uses host network namespace'
+not_contains "$egress_guard_section" 'DATABASE_URL' 'egress guard has no database credential'
+not_contains "$egress_guard_section" 'rp_encryption_key' 'egress guard has no ResourcePortal encryption key'
+dockerfile_source="$(cat "$repo_root/Dockerfile")"
+contains "$dockerfile_source" '    iptables \' 'API runtime image ships firewall tooling for the egress guard'
 not_contains "$final" 'dist/src/internal/deployment-worker.runner.js' 'final no longer uses deployment worker runner'
 not_contains "$final" 'dist/src/operations/operation-worker.runner.js' 'final no longer uses operation worker runner'
 
@@ -119,6 +131,9 @@ contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADE
 contains "$final" 'OIDC_CLI_CLIENT_ID: zitadel-cli-client-789' 'API receives public CLI OAuth client id'
 contains "$final" 'MANAGED_DOMAIN_BASE: rp.example.com' 'API receives managed ResourcePortal domain base'
 contains "$final" 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' 'API receives canonical DNS target hostname'
+contains "$final" 'RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: 10.20.0.0/24' 'API receives trusted internal network CIDR'
+internal_network_cidr_count="$(grep -c 'RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: 10.20.0.0/24' <<<"$final" || true)"
+[[ "$internal_network_cidr_count" == 2 ]] && pass 'API and worker receive trusted internal network CIDR' || fail 'API and worker receive trusted internal network CIDR'
 managed_domain_base_count="$(grep -c 'MANAGED_DOMAIN_BASE: rp.example.com' <<<"$final" || true)"
 [[ "$managed_domain_base_count" == 2 ]] && pass 'API and worker receive managed ResourcePortal domain base' || fail 'API and worker receive managed ResourcePortal domain base'
 managed_domain_target_count="$(grep -c 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' <<<"$final" || true)"
@@ -180,7 +195,7 @@ contains "$final" 'RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform'
 
 api_section="$(sed -n '/^  api:/,/^  worker:/p' <<<"$final")"
 worker_section="$(sed -n '/^  worker:/,/^  dr-reconciliation:/p' <<<"$final")"
-web_section="$(sed -n '/^  web:/,/^  traefik:/p' <<<"$final")"
+web_section="$(sed -n '/^  web:/,/^  egress-guard:/p' <<<"$final")"
 traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
 contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
 not_contains "$api_section" '      - rp-ingress' 'API is not directly reachable from the public ingress overlay'

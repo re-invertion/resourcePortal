@@ -251,6 +251,9 @@ jobs:
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
 
 
+      - name: Run v0.2.2 privileged networking smoke
+        run: bash scripts/run-v022-privileged-networking-smoke.sh
+
       - name: Build Stage 20 Web Console
         env:
           NODE_ENV: production

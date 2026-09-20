@@ -424,6 +424,7 @@ rp_reset_remove_enrollment() {
 
 rp_reset_remove_system_config() {
   local ganesha="${RP_GANESHA_CONFIG_PATH:-/etc/ganesha/resourceportal.conf}"
+  rp_remove_resourceportal_egress_firewall_rules || return 1
   rp_remove_resourceportal_ufw_rules || return 1
   rp_remove_resourceportal_ganesha_config "$ganesha" || return 1
   rp_remove_storage_ready_unit || return 1

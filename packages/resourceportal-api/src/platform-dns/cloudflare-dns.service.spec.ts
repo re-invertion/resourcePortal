@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CloudflareDnsService } from "./cloudflare-dns.service";
+import {
+  CloudflareDnsRecordConflictError,
+  CloudflareDnsService,
+} from "./cloudflare-dns.service";
 import { CLOUDFLARE_MANAGED_RECORD_COMMENT } from "./platform-dns.constants";
 
 function response(result: unknown, status = 200) {
@@ -203,13 +206,26 @@ describe("CloudflareDnsService", () => {
       ),
     );
     const service = new CloudflareDnsService();
-    await expect(
-      service.ensureManagedCname({
+    try {
+      await service.ensureManagedCname({
         apiToken: "secret-token",
         zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         hostname: "penpot.resource-portal.pl",
         targetHostname: "resource-portal.pl",
-      }),
-    ).rejects.toThrow("will not overwrite an unmanaged record");
+      });
+      throw new Error("Expected a DNS record conflict");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CloudflareDnsRecordConflictError);
+      expect(error).toMatchObject({
+        hostname: "penpot.resource-portal.pl",
+        category: "configuration",
+        records: [
+          { type: "A", content: "203.0.113.5" },
+        ],
+      });
+      expect((error as Error).message).toContain(
+        "Remove or rename the existing record in Cloudflare",
+      );
+    }
   });
 });

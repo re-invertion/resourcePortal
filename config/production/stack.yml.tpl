@@ -11,6 +11,10 @@ networks:
     driver: overlay
     attachable: false
 
+  host:
+    external: true
+    name: host
+
 secrets:
   rp_database_url:
     external: true
@@ -215,6 +219,7 @@ services:
       PLATFORM_ADMIN_USER_IDS: __PLATFORM_ADMIN_IDS__
       MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
       RESOURCEPORTAL_PUBLIC_HOSTNAME: __DOMAIN__
+      RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: __CLUSTER_CIDR__
     secrets:
       - rp_database_url
       - rp_encryption_key
@@ -253,6 +258,7 @@ services:
       RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
       MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
       RESOURCEPORTAL_PUBLIC_HOSTNAME: __DOMAIN__
+      RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: __CLUSTER_CIDR__
       TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
       TRAEFIK_SERVICE_NAME: resourceportal-control-plane_traefik
       INSTALLER_SWARM_MANAGER_ENDPOINT: __SWARM_ADVERTISE_ADDR__:2377
@@ -355,6 +361,26 @@ services:
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
       restart_policy:
         condition: any
+
+  egress-guard:
+    image: __API_IMAGE__
+    user: "0"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    command: ["node", "dist/src/network-egress/egress-guard.runner.js"]
+    environment:
+      NODE_ENV: production
+      EGRESS_GUARD_RECONCILE_INTERVAL_MS: "2000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - host
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 2s
 
   traefik:
     image: __TRAEFIK_IMAGE__

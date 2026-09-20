@@ -105,6 +105,13 @@ type StackConfigSingleApp = {
   stopGracePeriodSeconds: number;
   restartPolicy: Record<string, unknown>;
   updatePolicy: Record<string, unknown>;
+  internalPortExposures?: Array<{
+    id: string;
+    name: string;
+    containerPort: number;
+    publishedPort: number;
+    protocol: string;
+  }>;
   httpEndpoints: Array<{
     id: string;
     name: string;
@@ -1521,6 +1528,7 @@ export class DeploymentExecutionService {
 
     return this.withoutUndefined({
       image: singleApp.image,
+      labels: this.renderWorkloadLabels(snapshot, singleApp),
       environment: this.isEmptyRecord(environment) ? undefined : environment,
       command: singleApp.command.length > 0 ? singleApp.command : undefined,
       entrypoint: singleApp.entrypoint ?? undefined,
@@ -1530,6 +1538,7 @@ export class DeploymentExecutionService {
       stop_grace_period: `${singleApp.stopGracePeriodSeconds}s`,
       healthcheck: this.renderHealthCheck(singleApp.healthCheck),
       networks: ["default"],
+      ports: this.renderInternalPortExposures(singleApp),
       volumes:
         singleApp.volumes.length > 0
           ? singleApp.volumes.map((volume) =>
@@ -1570,14 +1579,51 @@ export class DeploymentExecutionService {
         },
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
-        placement: {
+        placement: this.withoutUndefined({
           constraints: storagePlacementConstraints(
             singleApp.volumes.length > 0,
           ),
-        },
+          max_replicas_per_node:
+            (singleApp.internalPortExposures?.length ?? 0) > 0 ? 1 : undefined,
+        }),
         labels: this.renderTraefikLabels(snapshot, singleApp),
       },
     });
+  }
+
+  private renderWorkloadLabels(
+    snapshot: StackConfigSnapshot,
+    singleApp: StackConfigSingleApp,
+  ) {
+    const exposures = singleApp.internalPortExposures ?? [];
+    return this.withoutUndefined({
+      "resourceportal.workload": "tenant",
+      "resourceportal.app-group-id": snapshot.appGroup.id,
+      "resourceportal.tenant-id": snapshot.appGroup.tenantId,
+      "resourceportal.internal-port-exposures-b64":
+        exposures.length > 0
+          ? Buffer.from(
+              JSON.stringify(
+                exposures.map((exposure) => ({
+                  publishedPort: exposure.publishedPort,
+                  protocol: exposure.protocol === "udp" ? "udp" : "tcp",
+                })),
+              ),
+              "utf8",
+            ).toString("base64")
+          : undefined,
+    });
+  }
+
+  private renderInternalPortExposures(singleApp: StackConfigSingleApp) {
+    const exposures = singleApp.internalPortExposures ?? [];
+    if (exposures.length === 0) return undefined;
+    return exposures.map((exposure) => ({
+      target: exposure.containerPort,
+      published: exposure.publishedPort,
+      protocol: exposure.protocol === "udp" ? "udp" : "tcp",
+      mode: "host",
+    }));
   }
 
   private renderRestartPolicy(policy: Record<string, unknown>) {

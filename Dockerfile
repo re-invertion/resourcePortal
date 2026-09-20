@@ -45,6 +45,7 @@ ENV NODE_ENV=production
 # infrastructure Operations include Docker and filesystem quota mutations.
 RUN apk add --no-cache \
     docker-cli \
+    iptables \
     e2fsprogs-extra \
     findmnt \
     quota-tools \

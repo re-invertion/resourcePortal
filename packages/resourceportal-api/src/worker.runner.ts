@@ -4,6 +4,7 @@ import { NestFactory } from "@nestjs/core";
 import { DomainCertificateReconcilerService } from "./internal/domain-certificate-reconciler.service";
 import { IngressReconcilerService } from "./internal/ingress-reconciler.service";
 import { RuntimeDriftReconcilerService } from "./internal/runtime-drift-reconciler.service";
+import { NetworkEgressReconcilerService } from "./network-egress/network-egress-reconciler.service";
 import {
   errorMessage,
   operationCorrelationId,
@@ -48,6 +49,7 @@ async function main() {
   const ingress = app.get(IngressReconcilerService);
   const drift = app.get(RuntimeDriftReconcilerService);
   const volumeUsage = app.get(VolumeUsageReconcilerService);
+  const egressPolicy = app.get(NetworkEgressReconcilerService);
   const runtimeObservability = app.get(WorkerRuntimeObservabilityService);
 
   const workerId = config.get<string>("WORKER_ID") ?? `worker-${process.pid}`;
@@ -81,6 +83,12 @@ async function main() {
       60_000,
       5_000,
     ),
+    egressPolicy: readInt(
+      config,
+      "EGRESS_POLICY_RECONCILE_INTERVAL_MS",
+      10_000,
+      2_000,
+    ),
   };
   const next = {
     certificate: 0,
@@ -88,6 +96,7 @@ async function main() {
     drift: 0,
     volumeUsage: 0,
     legacySecrets: 0,
+    egressPolicy: 0,
   };
   let stopping = false;
   let crashed = false;
@@ -241,6 +250,7 @@ async function main() {
       await startupReconcile("drift", () => drift.reconcileAll());
       await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
       await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
+      await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
     }
 
     while (!stopping) {
@@ -255,6 +265,7 @@ async function main() {
         await reconcile("drift", () => drift.reconcileBatch());
         await reconcile("volumeUsage", () => volumeUsage.reconcileBatch());
         await reconcile("legacySecrets", () => legacySecrets.migrateAll());
+        await reconcile("egressPolicy", () => egressPolicy.reconcile());
       }
 
       const processed = await operations.processNext(workerId, leaseSeconds);

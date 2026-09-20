@@ -1,5 +1,6 @@
 import { Callout, LinkButton, PageHeader } from "../components/design-system";
 import { PlatformDnsPage } from "./platform-dns";
+import { PlatformNetworkEgressPage } from "./platform-network-egress";
 import { PlatformCredentialsPage, PlatformIdentityProvidersPage } from "./platform-identity-pages";
 import {
   PlatformBillingPage,
@@ -20,6 +21,7 @@ export function PlatformPage({ section }: { section: string; resourceId?: string
   if (section === "credentials") return <PlatformCredentialsPage />;
   if (section === "billing") return <PlatformBillingPage />;
   if (section === "dns") return <PlatformDnsPage />;
+  if (section === "network-egress") return <PlatformNetworkEgressPage />;
   if (section === "security" || section === "operations" || section === "audit") return <PlatformSecurityPage />;
   if (section === "maintenance") return <PlatformMaintenancePage />;
   return <main><PageHeader eyebrow="Platform Admin" title="Platform page not found" description={`Unknown section: ${section}`} /><Callout tone="warning" title="This Platform Admin route is not available" action={<LinkButton href="/platform/overview">Open overview</LinkButton>}>Use the final Platform Admin navigation to open a supported section.</Callout></main>;

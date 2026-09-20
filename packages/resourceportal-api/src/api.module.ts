@@ -18,6 +18,7 @@ import { ObservabilityModule } from "./observability/observability.module";
 import { OperationsModule } from "./operations/operations.module";
 import { PlatformInfrastructureApiModule } from "./platform-infrastructure/platform-infrastructure-api.module";
 import { PlatformDnsApiModule } from "./platform-dns/platform-dns-api.module";
+import { NetworkEgressApiModule } from "./network-egress/network-egress-api.module";
 import { PlatformMaintenanceGuard } from "./platform-maintenance/platform-maintenance.guard";
 import { PlatformMaintenanceModule } from "./platform-maintenance/platform-maintenance.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -56,6 +57,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     ObservabilityModule,
     PlatformInfrastructureApiModule,
     PlatformDnsApiModule,
+    NetworkEgressApiModule,
     StorageBackendsApiModule,
   ],
   providers: [
