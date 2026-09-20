@@ -8,12 +8,16 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
+import { FastifyRequest } from "fastify";
 import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
+import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
+import { AppGroupManifestRequestDto } from "./dto/app-group-manifest-request.dto";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
 import { AttachVariableDto } from "./dto/attach-variable.dto";
@@ -40,6 +44,7 @@ export class AppGroupsController {
   constructor(
     private readonly appGroupsService: AppGroupsService,
     private readonly runtimeOperations: AppGroupRuntimeOperationsService,
+    private readonly manifestService: AppGroupManifestService,
   ) {}
 
   @RequirePermissions("appgroup.read")
@@ -56,6 +61,36 @@ export class AppGroupsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.appGroupsService.createAppGroup(tenantId, dto, user);
+  }
+
+  @RequirePermissions("appgroup.create")
+  @Post("import/validate")
+  validateAppGroupManifest(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: AppGroupManifestRequestDto,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.manifestService.validateManifest(
+      tenantId,
+      dto.yaml,
+      request.tenantContext?.permissions ?? [],
+    );
+  }
+
+  @RequirePermissions("appgroup.create")
+  @Post("import/apply")
+  applyAppGroupManifest(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: AppGroupManifestRequestDto,
+    @Req() request: FastifyRequest,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.manifestService.applyManifest(
+      tenantId,
+      dto.yaml,
+      request.tenantContext?.permissions ?? [],
+      user,
+    );
   }
 
   @RequirePermissions("appgroup.read")

@@ -67,3 +67,9 @@ it("does not load legacy membership data for a final tenant route", async () => 
  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
  expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/tenants/t1/memberships"))).toBe(false);
 });
+
+it("routes the Applications import segment to the YAML importer", () => {
+ render(<TenantPage tenantId="t1" section="applications" segments={["import"]} userId="u1"/>);
+ expect(screen.getByRole("heading", { name: "Import App Group from YAML" })).toBeTruthy();
+ expect(screen.getByLabelText("YAML manifest file")).toBeTruthy();
+});

@@ -172,6 +172,16 @@ export class ResourcePortalClient {
         method: "POST",
         body,
       }),
+    validateManifest: (tenantId: string, yaml: string) =>
+      this.request(`/tenants/${encode(tenantId)}/app-groups/import/validate`, {
+        method: "POST",
+        body: { yaml },
+      }),
+    applyManifest: (tenantId: string, yaml: string) =>
+      this.request(`/tenants/${encode(tenantId)}/app-groups/import/apply`, {
+        method: "POST",
+        body: { yaml },
+      }),
     get: (tenantId: string, appGroupId: string) =>
       this.request(
         `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}`,
