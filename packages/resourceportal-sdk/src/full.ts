@@ -28,6 +28,27 @@ export type ResourcePortalRequestOptions = BaseResourcePortalRequestOptions & {
   responseType?: "auto" | "json" | "text";
 };
 
+export type PlatformDnsState = {
+  provider: string;
+  enabled: boolean;
+  available: boolean;
+  configured: boolean;
+  tokenConfigured: boolean;
+  zoneId: string | null;
+  zoneName: string | null;
+  baseDomain: string;
+  targetHostname: string;
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+export type PlatformDnsUpdate = {
+  enabled?: boolean;
+  zoneId?: string;
+  apiToken?: string;
+};
+
 export class ResourcePortalApiError extends BaseResourcePortalApiError {
   readonly code?: string;
   readonly details?: unknown;
@@ -81,6 +102,14 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
       this.request("/platform/billing/refunds", { method: "POST", body }),
     correction: (body: unknown) =>
       this.request("/platform/billing/corrections", { method: "POST", body }),
+  };
+
+  readonly platformDns = {
+    get: () => this.request<PlatformDnsState>("/platform/dns"),
+    update: (body: PlatformDnsUpdate) =>
+      this.request<PlatformDnsState>("/platform/dns", { method: "PATCH", body }),
+    validate: () =>
+      this.request<PlatformDnsState>("/platform/dns/validate", { method: "POST" }),
   };
 
   readonly platformInfrastructure = {

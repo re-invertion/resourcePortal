@@ -330,6 +330,8 @@ export class ResourcePortalClient {
   readonly domains = {
     list: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/domains`),
+    capabilities: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/domains/capabilities`),
     get: (tenantId: string, domainId: string) =>
       this.request(`/tenants/${encode(tenantId)}/domains/${encode(domainId)}`),
     create: (tenantId: string, body: unknown) =>
