@@ -34,6 +34,7 @@ contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'runOperat
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'RolledBack' 'real-Swarm browser smoke validates rollback terminal semantics'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'STAGE20_WORKER_TIMEOUT_MS' 'real-Swarm browser smoke bounds one-shot worker execution'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.stdout.write(text);' 'real-Swarm browser smoke streams worker stdout while it runs'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.kill(-child.pid, signal);' 'real-Swarm browser smoke terminates the whole worker process group on timeout'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" '[stage20]' 'real-Swarm browser smoke emits progress markers'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'timeout-minutes: 10' 'Swarm browser smoke has a bounded step timeout'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'docker pull nginx:alpine' 'Swarm browser smoke pre-pulls its workload image'

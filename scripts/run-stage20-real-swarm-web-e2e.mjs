@@ -653,7 +653,8 @@ function command(binary, args, options = {}) {
   } = options;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { env });
+    const useProcessGroup = process.platform !== "win32";
+    const child = spawn(binary, args, { env, detached: useProcessGroup });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -677,9 +678,11 @@ function command(binary, args, options = {}) {
         logProgress(
           `command timed out after ${timeoutMs}ms: ${binary} ${args.join(" ")}`,
         );
-        child.kill("SIGTERM");
+        terminateProcessTree(child, "SIGTERM", useProcessGroup);
         killHandle = setTimeout(() => {
-          if (child.exitCode === null) child.kill("SIGKILL");
+          if (child.exitCode === null) {
+            terminateProcessTree(child, "SIGKILL", useProcessGroup);
+          }
         }, 5_000);
         killHandle.unref?.();
       }, timeoutMs);
@@ -697,6 +700,19 @@ function command(binary, args, options = {}) {
       resolve({ exitCode: exitCode ?? 1, stdout, stderr, timedOut });
     });
   });
+}
+
+function terminateProcessTree(child, signal, useProcessGroup) {
+  if (child.pid === undefined) return;
+  try {
+    if (useProcessGroup) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
 }
 
 async function phase(name, run) {
