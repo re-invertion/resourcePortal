@@ -30,7 +30,9 @@ function deployedAppGroup(
       {
         version: 3,
         renderedStack:
-          topology === "single" ? singleNetworkArtifact(id) : legacyArtifact(id),
+          topology === "single"
+            ? singleNetworkArtifact(id)
+            : legacyArtifact(id),
       },
     ],
     singleApps: [
@@ -82,6 +84,46 @@ function serviceFor(appGroups: object[]) {
 }
 
 describe("IngressReconcilerService v0.2 single App Group network", () => {
+  it("can scope reconciliation to one App Group without changing the global default", async () => {
+    const appGroup = deployedAppGroup();
+    const prisma = {
+      appGroup: { findMany: vi.fn().mockResolvedValue([appGroup]) },
+    };
+    const runtime = {
+      reconcileAppGroupNetwork: vi.fn().mockResolvedValue({
+        success: true,
+        changed: false,
+      }),
+      reconcileLegacyIngressNetwork: vi.fn().mockResolvedValue({
+        success: true,
+        changed: false,
+      }),
+      reconcileServiceNetwork: vi.fn().mockResolvedValue({
+        success: true,
+        changed: false,
+      }),
+      reconcileTraefikLabels: vi.fn().mockResolvedValue({
+        success: true,
+        changed: false,
+      }),
+    };
+    const service = new IngressReconcilerService(
+      prisma as unknown as PrismaService,
+      runtime as unknown as StackRuntimeService,
+    );
+
+    await service.reconcileBatch({ appGroupId: appGroup.id });
+
+    expect(prisma.appGroup.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          currentDeploymentVersion: { not: null },
+          id: appGroup.id,
+        },
+      }),
+    );
+  });
+
   it("keeps every tenant service on rp-appgroup and joins Traefik only for public groups", async () => {
     const appGroup = deployedAppGroup();
     const { runtime, service } = serviceFor([appGroup]);
@@ -108,7 +150,8 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
       serviceName: "rp_11111111_1111_4111_8111_111111111111_web_app",
       desiredLabels: {
         "traefik.swarm.network": networkName,
-        "traefik.http.routers.web-app-public-http.rule": "Host(`app.example.com`)",
+        "traefik.http.routers.web-app-public-http.rule":
+          "Host(`app.example.com`)",
       },
     });
     expect(runtime.reconcileLegacyIngressNetwork).toHaveBeenLastCalledWith({
@@ -197,9 +240,7 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
 
   it("reports runtime reconciliation failure without stopping the batch", async () => {
     const first = deployedAppGroup();
-    const second = deployedAppGroup(
-      "22222222-2222-4222-8222-222222222222",
-    );
+    const second = deployedAppGroup("22222222-2222-4222-8222-222222222222");
     const { runtime, service } = serviceFor([first, second]);
     runtime.reconcileTraefikLabels
       .mockResolvedValueOnce({ changed: false, success: false })

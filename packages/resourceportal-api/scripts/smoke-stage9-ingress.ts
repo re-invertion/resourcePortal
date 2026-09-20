@@ -205,7 +205,7 @@ async function reconcileIngressOnce() {
       { checked: number; changed: number; failed: number } | undefined;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      lastResult = await reconciler.reconcileBatch();
+      lastResult = await reconciler.reconcileBatch({ appGroupId });
       if (lastResult.failed === 0) {
         return;
       }

@@ -17,10 +17,11 @@ export class IngressReconcilerService {
     private readonly runtime: StackRuntimeService,
   ) {}
 
-  async reconcileBatch() {
+  async reconcileBatch(input?: { appGroupId?: string }) {
     const appGroups = await this.prisma.appGroup.findMany({
       where: {
         currentDeploymentVersion: { not: null },
+        ...(input?.appGroupId ? { id: input.appGroupId } : {}),
       },
       include: {
         deployments: {
@@ -55,7 +56,8 @@ export class IngressReconcilerService {
         hasPublishedHttpRouting(singleApp),
       );
       const currentDeployment = appGroup.deployments.find(
-        (deployment) => deployment.version === appGroup.currentDeploymentVersion,
+        (deployment) =>
+          deployment.version === appGroup.currentDeploymentVersion,
       );
 
       let topology: "single" | "legacy" = "legacy";
