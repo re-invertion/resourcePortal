@@ -5,6 +5,7 @@ import {
   Callout,
   Card,
   DeployIcon,
+  FileIcon,
   GlobeIcon,
   GridIcon,
   HelpIcon,
@@ -24,6 +25,7 @@ const sections: HelpSection[] = [
   { id: "getting-started", label: "Getting started" },
   { id: "mental-model", label: "How ResourcePortal is organized" },
   { id: "create-application", label: "Create an application" },
+  { id: "app-group-yaml", label: "Import from YAML" },
   { id: "registry", label: "Private image registries" },
   { id: "volume", label: "Persistent storage" },
   { id: "domain", label: "Domains & networking" },
@@ -267,6 +269,101 @@ export function TenantHelpPage({ tenantId }: { tenantId: string }) {
             <div className="mt-5 flex flex-wrap gap-2">
               <LinkButton href={tenantHref(tenantId, "applications")}>Open Applications</LinkButton>
               <LinkButton href={tenantHref(tenantId, "applications", "new")}>Create App Group</LinkButton>
+            </div>
+          </HelpArticle>
+
+          <HelpArticle
+            id="app-group-yaml"
+            icon={<FileIcon />}
+            title="Import an App Group from YAML"
+            description="A versioned YAML manifest lets you describe an App Group and its applications in a repeatable, reviewable format before ResourcePortal creates anything."
+          >
+            <Paragraph>
+              Open <strong>Applications → Import YAML</strong> and select a <code>.yml</code> or <code>.yaml</code> file. ResourcePortal first validates the manifest without changing the tenant. It checks the file structure, your permissions, tenant quota, App Group name conflicts and references to existing registries, volumes and domains. Only a valid manifest can be created.
+            </Paragraph>
+
+            <Subheading>Manifest structure</Subheading>
+            <Paragraph>
+              Use <code>apiVersion: resourceportal.io/v1alpha1</code> and <code>kind: AppGroup</code>. The App Group name is stored in <code>metadata.name</code>. The <code>spec</code> section can contain applications, variables, secrets and config files. Existing tenant resources are referenced by stable names instead of installation-specific IDs: use the registry name, volume name and domain hostname.
+            </Paragraph>
+
+            <div className="mt-4 overflow-x-auto rounded-lg border border-[#D7E0EC] bg-[#111827] p-4 text-[12px] leading-5 text-[#E5E7EB]">
+              <pre><code>{`apiVersion: resourceportal.io/v1alpha1
+kind: AppGroup
+metadata:
+  name: commerce-prod
+  description: Commerce workload
+spec:
+  runtimeState: Stopped
+  variables:
+    - name: LOG_LEVEL
+      value: info
+  secrets:
+    - name: API_TOKEN
+      type: Text
+      value: replace-before-import
+  configs:
+    - name: nginx-conf
+      content: |
+        server {
+          listen 80;
+          location / { return 200 "ok"; }
+        }
+  apps:
+    - name: web
+      image: nginx:1.27
+      desiredReplicas: 2
+      resources:
+        cpu: 0.5
+        memoryBytes: 536870912
+      environment:
+        NODE_ENV: production
+      variables:
+        - source: LOG_LEVEL
+          targetName: LOG_LEVEL
+      secrets:
+        - source: API_TOKEN
+          targetName: API_TOKEN
+      configs:
+        - source: nginx-conf
+          targetPath: /etc/nginx/conf.d/default.conf
+      volumes:
+        - source: app-data
+          mountPath: /var/lib/app
+          mode: ReadWrite
+      httpEndpoints:
+        - name: web
+          containerPort: 80
+          protocolMode: HTTP_REDIRECT_TO_HTTPS
+          domains:
+            - app.example.com`}</code></pre>
+            </div>
+
+            <Subheading>References and validation</Subheading>
+            <StepList>
+              <span><strong>App Group and application names</strong> use lowercase letters, numbers and single hyphens.</span>
+              <span><strong>resources.cpu</strong> and <strong>resources.memoryBytes</strong> are required for every application. Memory must be at least 134217728 bytes (128 MiB).</span>
+              <span><strong>registry</strong>, volume <strong>source</strong> and domain hostnames must already exist in the current tenant when they are referenced.</span>
+              <span>Variables, secrets and configs declared at App Group level can be attached to applications by their <strong>source</strong> name.</span>
+              <span>Binary secret values use Base64. Text secrets are plain text in the YAML file and are encrypted when ResourcePortal imports them.</span>
+              <span>The manifest file can be at most <strong>512 KB</strong>. Unknown fields are rejected so spelling mistakes do not silently change the intended configuration.</span>
+            </StepList>
+
+            <InfoBox title="Treat manifests containing secrets as sensitive">
+              The validation preview never returns secret values, but the YAML file itself can contain them. Avoid committing manifests with real passwords, tokens or private keys to source control. Prefer placeholders and a controlled process for supplying production secret values.
+            </InfoBox>
+
+            <InfoBox title="Import creates desired configuration, not a runtime deployment">
+              ResourcePortal applies a valid manifest atomically: if any create or attachment step fails, the import is rolled back. After a manifest containing applications is imported, review the App Group and use <strong>Deploy changes</strong> to apply the desired configuration to the runtime.
+            </InfoBox>
+
+            <InfoBox title="Privileged networking is not importable">
+              Tenant YAML cannot set <strong>networkPrivileged</strong> or define Internal Port Exposures. Those capabilities remain under Platform Admin control. Import the standard App Group first; a Platform Administrator can grant privileged networking separately when it is actually required.
+            </InfoBox>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <LinkButton href={tenantHref(tenantId, "applications", "import")}>Import YAML</LinkButton>
+              <LinkButton href={tenantHref(tenantId, "applications")}>Open Applications</LinkButton>
             </div>
           </HelpArticle>
 

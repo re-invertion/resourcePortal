@@ -148,6 +148,8 @@ test("uses canonical methods and bodies for representative mutations", async () 
   await client.platformMaintenance.set({ enabled: true, reason: "upgrade" });
   await client.oauthApplications.rotateCredentials("tenant id", "oauth id");
   await client.platformServiceIdentities.rotateCredentials("service id");
+  await client.appGroups.validateManifest("tenant id", "kind: AppGroup");
+  await client.appGroups.applyManifest("tenant id", "kind: AppGroup");
 
   assert.deepEqual(
     calls.map((call) => [call.init.method ?? "GET", pathOf(call)]),
@@ -169,6 +171,8 @@ test("uses canonical methods and bodies for representative mutations", async () 
       ["PATCH", "/api/platform/maintenance"],
       ["POST", "/api/tenants/tenant%20id/oauth-applications/oauth%20id/rotate-credentials"],
       ["POST", "/api/platform/service-identities/service%20id/rotate-credentials"],
+      ["POST", "/api/tenants/tenant%20id/app-groups/import/validate"],
+      ["POST", "/api/tenants/tenant%20id/app-groups/import/apply"],
     ],
   );
   assert.equal(calls[0].init.body, JSON.stringify({ enabled: true }));
@@ -198,6 +202,8 @@ test("uses canonical methods and bodies for representative mutations", async () 
     calls[11].init.body,
     JSON.stringify({ enabled: true, reason: "upgrade" }),
   );
+  assert.equal(calls[14].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(calls[15].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
 });
 
 test("serializes audit filters and supports text audit export", async () => {

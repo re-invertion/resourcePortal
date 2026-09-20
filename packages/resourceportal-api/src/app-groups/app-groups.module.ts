@@ -8,6 +8,7 @@ import { SecurityModule } from "../security/security.module";
 import { ApiVolumesModule } from "../volumes/api-volumes.module";
 import { AppGroupsController } from "./app-groups.controller";
 import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
+import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
 import { Stage15AppGroupsService } from "./stage15-app-groups.service";
 
@@ -24,6 +25,7 @@ import { Stage15AppGroupsService } from "./stage15-app-groups.service";
   controllers: [AppGroupsController],
   providers: [
     AppGroupRuntimeOperationsService,
+    AppGroupManifestService,
     {
       provide: AppGroupsService,
       useClass: Stage15AppGroupsService,

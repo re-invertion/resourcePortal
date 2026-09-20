@@ -17,6 +17,7 @@ describe("ApplicationsPage", () => {
     expect(screen.getByText("v12")).toBeTruthy();
     expect(screen.getByText("Pending changes")).toBeTruthy();
     expect(screen.getByRole("link", { name: /create app group/i }).getAttribute("href")).toBe("/tenants/t1/applications/new");
+    expect(screen.getByRole("link", { name: /import yaml/i }).getAttribute("href")).toBe("/tenants/t1/applications/import");
     const row = screen.getByText("commerce-prod").closest("tr") as HTMLElement;
     expect(within(row).getByText("2 apps")).toBeTruthy();
   });

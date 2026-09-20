@@ -9,6 +9,7 @@ describe("TenantHelpPage", () => {
     expect(screen.getByRole("heading", { name: "Help & getting started", level: 1 })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "How ResourcePortal is organized" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Create and deploy an application" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Import an App Group from YAML" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Use a private container registry" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Add persistent storage" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Add a domain to an application" })).toBeTruthy();
@@ -32,11 +33,13 @@ describe("TenantHelpPage", () => {
     const toc = tables[0];
     expect(within(toc).getByRole("link", { name: "Getting started" }).getAttribute("href")).toBe("#getting-started");
     expect(within(toc).getByRole("link", { name: "Create an application" }).getAttribute("href")).toBe("#create-application");
+    expect(within(toc).getByRole("link", { name: "Import from YAML" }).getAttribute("href")).toBe("#app-group-yaml");
     expect(within(toc).getByRole("link", { name: "Domains & networking" }).getAttribute("href")).toBe("#domain");
     expect(within(toc).getByRole("link", { name: "Billing & vouchers" }).getAttribute("href")).toBe("#billing");
     expect(within(toc).getByRole("link", { name: "Troubleshooting" }).getAttribute("href")).toBe("#troubleshooting");
 
     expect(document.getElementById("getting-started")).toBeTruthy();
+    expect(document.getElementById("app-group-yaml")).toBeTruthy();
     expect(document.getElementById("domain")).toBeTruthy();
     expect(document.getElementById("troubleshooting")).toBeTruthy();
   });
@@ -46,6 +49,7 @@ describe("TenantHelpPage", () => {
 
     expect(screen.getByText(/Most work in ResourcePortal follows the same sequence/i)).toBeTruthy();
     expect(screen.getByText(/A Tenant is your isolated workspace/i)).toBeTruthy();
+    expect(screen.getAllByText(/resourceportal.io\/v1alpha1/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Use persistent storage for files the application must keep/i)).toBeTruthy();
     expect(screen.getByText(/Transactions record changes to the balance/i)).toBeTruthy();
     expect(screen.getByText(/The public System status page describes the health of ResourcePortal itself/i)).toBeTruthy();
