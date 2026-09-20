@@ -148,12 +148,20 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
     spawnMock
       .mockImplementationOnce(() =>
-        dockerProcess("", 1, `Error response from daemon: network ${networkName} not found`),
+        dockerProcess(
+          "",
+          1,
+          `Error response from daemon: network ${networkName} not found`,
+        ),
       )
       .mockImplementationOnce(() => dockerProcess("new-network-id"))
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() =>
-        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+        dockerProcess(
+          "",
+          1,
+          "no such service: resourceportal-control-plane_traefik",
+        ),
       );
 
     const result = await service().reconcileAppGroupNetwork({
@@ -181,7 +189,11 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() =>
-        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+        dockerProcess(
+          "",
+          1,
+          "no such service: resourceportal-control-plane_traefik",
+        ),
       );
 
     const result = await service().reconcileAppGroupNetwork({
@@ -199,7 +211,11 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() =>
-        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+        dockerProcess(
+          "",
+          1,
+          "no such service: resourceportal-control-plane_traefik",
+        ),
       );
 
     const result = await service().reconcileAppGroupNetwork({
@@ -207,7 +223,11 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
       traefikRequired: true,
     });
 
-    expect(result).toEqual({ success: false, changed: false });
+    expect(result).toEqual({
+      success: false,
+      changed: false,
+      error: "no such service: resourceportal-control-plane_traefik",
+    });
     expect(spawnMock).toHaveBeenCalledTimes(3);
   });
 
@@ -216,7 +236,9 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     spawnMock
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() => dockerProcess("network-id"))
-      .mockImplementationOnce(() => dockerProcess("network-id\nbase-network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("network-id\nbase-network-id"),
+      )
       .mockImplementationOnce(() => dockerProcess());
 
     const result = await service().reconcileAppGroupNetwork({
@@ -233,8 +255,10 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
       "resourceportal-control-plane_traefik",
     ]);
     expect(
-      spawnMock.mock.calls.some((call) =>
-        (call[1] as string[]).includes("rm") && (call[1] as string[])[0] === "network",
+      spawnMock.mock.calls.some(
+        (call) =>
+          (call[1] as string[]).includes("rm") &&
+          (call[1] as string[])[0] === "network",
       ),
     ).toBe(false);
   });
@@ -244,7 +268,9 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     spawnMock
       .mockImplementationOnce(() => dockerProcess("network-id"))
       .mockImplementationOnce(() => dockerProcess("network-id"))
-      .mockImplementationOnce(() => dockerProcess("network-id\nbase-network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("network-id\nbase-network-id"),
+      )
       .mockImplementationOnce(() => dockerProcess())
       .mockImplementationOnce(() => dockerProcess());
 

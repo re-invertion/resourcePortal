@@ -59,6 +59,7 @@ jobs:
       STORAGE_REMOTE_VALIDATION_IMAGE: alpine:3.20
       STORAGE_SMOKE_PRIVILEGED_WORKER: "true"
       TRAEFIK_CERT_RESOLVER: smoke-resolver
+      TRAEFIK_SERVICE_NAME: resourceportal-smoke-traefik-anchor
       DOCKER_CONTEXT: default
       DOCKER_APPLY_TIMEOUT_MS: 60000
       DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 60000
@@ -237,13 +238,18 @@ jobs:
           docker node update \
             --label-add rp.node.storage=true \
             --label-add rp.node.tenant-workloads=true \
+            --label-add rp.node.ingress=true \
+            --label-add rp.node.control-plane=true \
             --label-add resourceportal.storage.volumes=true \
             --label-add resourceportal.storage.secrets=true \
             --label-add resourceportal.storage.platform=true \
             "$NODE_ID"
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.storage"}}')" = true
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.tenant-workloads"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.ingress"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.control-plane"}}')" = true
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
+
 
       - name: Build Stage 20 Web Console
         env:
@@ -294,6 +300,12 @@ jobs:
         run: |
           docker pull nginx:alpine
           docker pull alpine:3.20
+          docker service create \
+            --name "$TRAEFIK_SERVICE_NAME" \
+            --replicas 0 \
+            --detach=true \
+            alpine:3.20 sleep 3600
+          docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null
 
       - name: Run Stage 20 browser smoke against real Swarm
         timeout-minutes: 10
@@ -308,6 +320,10 @@ jobs:
 
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
+
+      - name: Remove real-Swarm ingress anchor
+        if: always()
+        run: docker service rm "$TRAEFIK_SERVICE_NAME" || true
 
       - name: Verify Swarm is clean after smoke test
         if: always()

@@ -134,8 +134,15 @@ export class StackRuntimeService {
       input.networkName,
       input.traefikRequired,
     );
+    if (!membership.success) {
+      return {
+        success: false,
+        changed: ensured.changed || membership.changed,
+        error: membership.error,
+      };
+    }
     return {
-      success: membership.success,
+      success: true,
       changed: ensured.changed || membership.changed,
     };
   }
@@ -247,8 +254,15 @@ export class StackRuntimeService {
       networkName,
       true,
     );
+    if (!membership.success) {
+      return {
+        success: false,
+        changed: changed || membership.changed,
+        error: membership.error,
+      };
+    }
     return {
-      success: membership.success,
+      success: true,
       changed: changed || membership.changed,
     };
   }
