@@ -342,6 +342,7 @@ services:
           - node.role == manager
       labels:
         - traefik.enable=true
+        - traefik.swarm.network=resourceportal-control-plane_rp-ingress
         - traefik.http.routers.resourceportal-web.rule=Host(`__DOMAIN__`)
         - traefik.http.routers.resourceportal-web.entrypoints=websecure
         - traefik.http.routers.resourceportal-web.tls=true

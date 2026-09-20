@@ -179,6 +179,7 @@ traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
 contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
 not_contains "$api_section" '      - rp-ingress' 'API is not directly reachable from the public ingress overlay'
 contains "$web_section" '      - rp-ingress' 'Web remains reachable from Traefik ingress'
+contains "$web_section" 'traefik.swarm.network=resourceportal-control-plane_rp-ingress' 'Web pins Traefik service discovery to the shared ingress overlay'
 contains "$web_section" '      - rp-web-api' 'Web proxies API requests over the dedicated internal overlay'
 not_contains "$traefik_section" 'rp-web-api' 'Traefik cannot directly reach the API-only proxy overlay'
 not_contains "$api_section" '/var/run/docker.sock' 'API has no Docker socket mount'
