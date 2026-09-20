@@ -15,8 +15,6 @@ const apiBaseUrl = (
 ).replace(/\/$/, "");
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const resolver = process.env.TRAEFIK_CERT_RESOLVER ?? "smoke-resolver";
-const managedBase =
-  process.env.MANAGED_DOMAIN_BASE ?? "apps.resource-portal.local";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
@@ -109,15 +107,18 @@ async function main() {
     },
   );
   const endpointId = stringField(endpoint, "id");
-  const prefix = `stage9-${suffix}`;
-  const hostname = `${prefix}.${managedBase}`;
+  const hostname = `stage9-${suffix}.example.test`;
 
+  // Stage 9 validates Traefik ingress behavior and must not depend on an
+  // external Cloudflare account. Managed domains are intentionally disabled
+  // until Platform Admin configures Cloudflare, so use the existing custom
+  // domain flow and validate it before deployment.
   const domain = await api<JsonObject>(`/tenants/${tenantId}/domains`, {
     method: "POST",
     userId,
     body: {
-      type: "Managed",
-      prefix,
+      type: "Custom",
+      hostname,
       httpEndpointId: endpointId,
       tlsEnabled: false,
     },
@@ -126,6 +127,15 @@ async function main() {
   if (domain.tlsEnabled !== true) {
     throw new Error("HTTPS endpoint must force domain tlsEnabled=true");
   }
+
+  const verifyOperation = await api<JsonObject>(
+    `/tenants/${tenantId}/domains/${domainId}/validate`,
+    { method: "POST", userId },
+  );
+  await runOperationToTerminal(
+    stringField(verifyOperation, "id"),
+    "Succeeded",
+  );
 
   const deployment = await api<JsonObject>(
     `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,

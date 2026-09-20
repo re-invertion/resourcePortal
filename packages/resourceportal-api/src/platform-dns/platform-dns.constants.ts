@@ -1,0 +1,5 @@
+export const PLATFORM_DNS_INTEGRATION_ID =
+  "00000000-0000-4000-8000-000000000021";
+
+export const CLOUDFLARE_MANAGED_RECORD_COMMENT =
+  "Managed by ResourcePortal";

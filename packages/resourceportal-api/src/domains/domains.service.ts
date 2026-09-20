@@ -17,6 +17,7 @@ import { resolveTxt } from "node:dns/promises";
 import { AuthenticatedUser } from "../auth/types";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
+import { ManagedDnsService } from "../platform-dns/managed-dns.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
 import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
@@ -28,6 +29,7 @@ export class DomainsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly managedDns?: ManagedDnsService,
   ) {}
 
   async listDomains(tenantId: string) {
@@ -43,6 +45,18 @@ export class DomainsService {
   async getDomain(tenantId: string, domainId: string) {
     const domain = await this.findDomainOrThrow(tenantId, domainId);
     return mapDomain(domain);
+  }
+
+  async getCapabilities() {
+    return this.managedDns
+      ? this.managedDns.getTenantCapabilities()
+      : {
+          managedDomains: {
+            enabled: false,
+            provider: "Cloudflare",
+            baseDomain: this.managedBaseDomain(),
+          },
+        };
   }
 
   async listCustomRootDomains(tenantId: string) {
@@ -179,6 +193,10 @@ export class DomainsService {
       ? await this.findEndpointContextOrThrow(tenantId, dto.httpEndpointId)
       : undefined;
     const tlsState = this.domainTlsState(endpointContext?.protocolMode, true);
+    const managedProvision =
+      dto.type === DomainType.Managed
+        ? await this.requireManagedDns().provisionManagedDomain(hostname)
+        : undefined;
 
     try {
       const domain = await this.prisma.$transaction(async (tx) => {
@@ -215,6 +233,11 @@ export class DomainsService {
 
       return mapDomain(domain);
     } catch (error) {
+      if (managedProvision?.created) {
+        await this.requireManagedDns()
+          .deleteManagedDomain(hostname)
+          .catch(() => undefined);
+      }
       this.handleKnownConflict(error, "Domain already exists");
       throw error;
     }
@@ -279,27 +302,44 @@ export class DomainsService {
     const endpointContext = existing.httpEndpointId
       ? await this.findEndpointContextOrThrow(tenantId, existing.httpEndpointId)
       : undefined;
+    const managedDnsRemoved =
+      existing.type === DomainType.Managed
+        ? await this.requireManagedDns().deleteManagedDomain(existing.hostname)
+        : undefined;
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.domain.delete({
-        where: { id: domainId },
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.domain.delete({
+          where: { id: domainId },
+        });
+
+        if (endpointContext) {
+          await this.markAppGroupDraftChanged(tx, endpointContext.appGroupId, actor.id);
+        }
       });
-
-      if (endpointContext) {
-        await this.markAppGroupDraftChanged(tx, endpointContext.appGroupId, actor.id);
+    } catch (error) {
+      if (existing.type === DomainType.Managed && managedDnsRemoved?.deleted) {
+        await this.requireManagedDns()
+          .provisionManagedDomain(existing.hostname)
+          .catch(() => undefined);
       }
-    });
+      throw error;
+    }
 
     return { deleted: true };
   }
 
   async validateDomain(tenantId: string, domainId: string, actor: AuthenticatedUser) {
-    await this.findDomainOrThrow(tenantId, domainId);
+    const existing = await this.findDomainOrThrow(tenantId, domainId);
+    const valid =
+      existing.type === DomainType.Managed
+        ? await this.requireManagedDns().managedDomainExists(existing.hostname)
+        : true;
 
     const domain = await this.prisma.domain.update({
       where: { id: domainId },
       data: {
-        dnsStatus: DnsStatus.Valid,
+        dnsStatus: valid ? DnsStatus.Valid : DnsStatus.Invalid,
         updatedBy: actor.id,
       },
       include: this.domainIncludes(),
@@ -466,6 +506,13 @@ export class DomainsService {
         },
       },
     } satisfies Prisma.DomainInclude;
+  }
+
+  private requireManagedDns() {
+    if (!this.managedDns) {
+      throw new ConflictException("Managed ResourcePortal domains are unavailable");
+    }
+    return this.managedDns;
   }
 
   private handleKnownConflict(error: unknown, message: string) {

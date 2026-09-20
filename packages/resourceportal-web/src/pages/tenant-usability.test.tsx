@@ -135,6 +135,7 @@ describe("guided access and routing", () => {
       const url = String(input);
       if (url.endsWith("/memberships")) return json([]);
       if (url.endsWith("/domains/custom-root-domains")) return json([]);
+      if (url.endsWith("/domains/capabilities")) return json({ managedDomains: { enabled: true, provider: "Cloudflare", baseDomain: "resource-portal.pl" } });
       if (url.endsWith("/domains")) return json([{ id: "domain-1", hostname: "app.example.com", tlsEnabled: true }]);
       return json([]);
     });

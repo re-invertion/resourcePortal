@@ -20,6 +20,7 @@ function installApi() {
     if (url === "/api/platform/billing/price-lists") return json([]);
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/maintenance") return json({ enabled: false, reason: null });
+    if (url === "/api/platform/dns") return json({ provider: "Cloudflare", enabled: false, available: false, configured: false, tokenConfigured: false, zoneId: null, zoneName: null, baseDomain: "resource-portal.pl", targetHostname: "resource-portal.pl", lastValidatedAt: null, lastError: null });
     return json({ error: { message: `Unexpected ${url}` } }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -38,6 +39,7 @@ describe("Platform Admin final routes", () => {
     ["infrastructure", "Infrastructure"],
     ["identity", "Identity & access"],
     ["billing", "Billing"],
+    ["dns", "DNS & Domains"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
   ])("renders %s with the final page header", async (section, heading) => {

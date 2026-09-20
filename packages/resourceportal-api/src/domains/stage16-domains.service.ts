@@ -4,6 +4,7 @@ import { CustomRootDomainVerificationStatus } from "@prisma/client";
 import { resolveTxt } from "node:dns/promises";
 import type { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { ManagedDnsService } from "../platform-dns/managed-dns.service";
 import { DomainsService } from "./domains.service";
 
 const NEGATIVE_DNS_CODES = new Set(["ENODATA", "ENOTFOUND"]);
@@ -30,8 +31,12 @@ export function dnsResolverUnavailable(error: unknown) {
 
 @Injectable()
 export class Stage16DomainsService extends DomainsService {
-  constructor(prisma: PrismaService, config: ConfigService) {
-    super(prisma, config);
+  constructor(
+    prisma: PrismaService,
+    config: ConfigService,
+    managedDns?: ManagedDnsService,
+  ) {
+    super(prisma, config, managedDns);
   }
 
   override async validateCustomRootDomain(

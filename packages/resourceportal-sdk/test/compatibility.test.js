@@ -63,6 +63,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
     "operations/operations.controller.ts",
+    "platform-dns/platform-dns.controller.ts",
     "platform-infrastructure/platform-infrastructure.controller.ts",
     "platform-maintenance/platform-maintenance.controller.ts",
     "registries/registries.controller.ts",
@@ -81,6 +82,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   const { client, calls } = recordingClient();
 
   await client.platformBilling.listPriceLists();
+  await client.platformDns.get();
   await client.platformInfrastructure.getSwarmCluster();
   await client.storageBackends.list();
   await client.operations.list("tenant id");
@@ -96,6 +98,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
     calls.map(pathOf),
     [
       "/api/platform/billing/price-lists",
+      "/api/platform/dns",
       "/api/platform/swarm-cluster",
       "/api/platform/storage-backends",
       "/api/tenants/tenant%20id/operations",
@@ -113,6 +116,8 @@ test("exposes every post-Stage-8 public management resource family", async () =>
 test("uses canonical methods and bodies for representative mutations", async () => {
   const { client, calls } = recordingClient();
 
+  await client.platformDns.update({ enabled: true });
+  await client.platformDns.validate();
   await client.platformInfrastructure.reconcileSwarmCluster();
   await client.platformInfrastructure.setRemoteLocationMaintenance("location id", true);
   await client.storageBackends.setMaintenance("backend id", false);
@@ -124,6 +129,8 @@ test("uses canonical methods and bodies for representative mutations", async () 
   assert.deepEqual(
     calls.map((call) => [call.init.method ?? "GET", pathOf(call)]),
     [
+      ["PATCH", "/api/platform/dns"],
+      ["POST", "/api/platform/dns/validate"],
       ["POST", "/api/platform/swarm-cluster/reconcile"],
       ["PATCH", "/api/platform/remote-locations/location%20id/maintenance"],
       ["PATCH", "/api/platform/storage-backends/backend%20id/maintenance"],
@@ -133,10 +140,11 @@ test("uses canonical methods and bodies for representative mutations", async () 
       ["POST", "/api/platform/service-identities/service%20id/rotate-credentials"],
     ],
   );
-  assert.equal(calls[1].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[2].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(calls[0].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[3].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[4].init.body, JSON.stringify({ enabled: false }));
   assert.equal(
-    calls[4].init.body,
+    calls[6].init.body,
     JSON.stringify({ enabled: true, reason: "upgrade" }),
   );
 });

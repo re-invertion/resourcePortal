@@ -214,6 +214,7 @@ services:
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
       PLATFORM_ADMIN_USER_IDS: __PLATFORM_ADMIN_IDS__
       MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
+      RESOURCEPORTAL_PUBLIC_HOSTNAME: __DOMAIN__
     secrets:
       - rp_database_url
       - rp_encryption_key
@@ -250,6 +251,8 @@ services:
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
       RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
+      MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
+      RESOURCEPORTAL_PUBLIC_HOSTNAME: __DOMAIN__
       TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
       TRAEFIK_SERVICE_NAME: resourceportal-control-plane_traefik
       INSTALLER_SWARM_MANAGER_ENDPOINT: __SWARM_ADVERTISE_ADDR__:2377
@@ -342,6 +345,7 @@ services:
           - node.role == manager
       labels:
         - traefik.enable=true
+        - traefik.swarm.network=resourceportal-control-plane_rp-ingress
         - traefik.http.routers.resourceportal-web.rule=Host(`__DOMAIN__`)
         - traefik.http.routers.resourceportal-web.entrypoints=websecure
         - traefik.http.routers.resourceportal-web.tls=true

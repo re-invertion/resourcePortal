@@ -45,6 +45,12 @@ export class DomainsController {
   }
 
   @RequirePermissions("domain.read")
+  @Get("capabilities")
+  getCapabilities() {
+    return this.domainsService.getCapabilities();
+  }
+
+  @RequirePermissions("domain.read")
   @Get("custom-root-domains")
   listCustomRootDomains(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
     return this.domainsService.listCustomRootDomains(tenantId);

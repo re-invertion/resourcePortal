@@ -83,6 +83,14 @@ POST /api/tenants/:tenantId/app-groups/:appGroupId/discard-changes
 DELETE /api/tenants/:tenantId/app-groups/:appGroupId
 ```
 
+## Managed DNS
+
+Platform administrators configure managed ResourcePortal domains through `GET/PATCH /api/platform/dns` and can revalidate the Cloudflare connection with `POST /api/platform/dns/validate`. The Cloudflare API token is encrypted at rest and responses expose only whether a token is configured.
+
+Tenant availability is exposed by `GET /api/tenants/:tenantId/domains/capabilities`. Managed domains remain unavailable until the platform integration has a validated Cloudflare zone and is explicitly enabled. Custom tenant domains keep their existing ownership-verification flow.
+
+Managed hostnames are provisioned as DNS-only CNAME records to `RESOURCEPORTAL_PUBLIC_HOSTNAME`. ResourcePortal tags records it creates and refuses to overwrite DNS records it does not own. Disabling managed DNS blocks creation of new managed domains but deliberately leaves existing records in place to avoid an outage.
+
 ## Secrets
 
 AppGroup secrets are managed through

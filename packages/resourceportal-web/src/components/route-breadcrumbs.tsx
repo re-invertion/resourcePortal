@@ -106,6 +106,11 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
             href: applicationHref(tenantId, groupId, appId, `edit/${sub[3]}`),
           });
         }
+      } else if (sub[2] === "health") {
+        crumbs.push({
+          label: "Health",
+          href: applicationHref(tenantId, groupId, appId, "health"),
+        });
       }
       return crumbs;
     }
@@ -229,6 +234,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
   const labels: Record<string, string> = {
     billing: "Billing",
     maintenance: "Maintenance",
+    dns: "DNS & Domains",
   };
   return [root, { label: labels[section] ?? titleCase(section), href: platformHref(section, ...segments) }];
 }

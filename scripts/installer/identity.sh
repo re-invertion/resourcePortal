@@ -346,6 +346,10 @@ rp_apply_zitadel_bootstrap_output() {
   RP_CFG_ZITADEL_ORGANIZATION_ID="$organization_id"
   RP_CFG_ZITADEL_PROJECT_ID="$project_id"
   RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF="$management_secret_ref"
+  # The bootstrap user id is the stable subject issued by the primary ZITADEL
+  # instance. PlatformAdminGuard resolves these configured subjects through the
+  # authenticated ResourcePortal UserIdentity; existing internal RP user UUIDs
+  # remain accepted for backward compatibility.
   RP_CFG_PLATFORM_ADMIN_IDS="$(rp_merge_platform_admin_ids "${RP_CFG_PLATFORM_ADMIN_IDS:-}" "$user_id")"
   export RP_CFG_OIDC_CLIENT_ID RP_CFG_OIDC_CLI_CLIENT_ID RP_CFG_OIDC_SWARM_REF RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF RP_CFG_PLATFORM_ADMIN_IDS
 
