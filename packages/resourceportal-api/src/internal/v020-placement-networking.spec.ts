@@ -5,6 +5,7 @@ import { DeploymentExecutionService } from "./deployment-execution.service";
 
 type StackService = {
   networks?: string[];
+  labels?: Record<string, string>;
   deploy: {
     placement: { constraints: string[] };
     labels?: Record<string, string>;
@@ -168,6 +169,16 @@ describe("v0.2 tenant placement and App Group network rendering", () => {
 
     expect(stack.services.public_web.networks).toEqual(["default"]);
     expect(stack.services.private_api.networks).toEqual(["default"]);
+    expect(stack.services.public_web.labels).toEqual({
+      "resourceportal.workload": "tenant",
+      "resourceportal.app-group-id": appGroupId,
+      "resourceportal.tenant-id": "22222222-2222-4222-8222-222222222222",
+    });
+    expect(stack.services.private_api.labels).toEqual({
+      "resourceportal.workload": "tenant",
+      "resourceportal.app-group-id": appGroupId,
+      "resourceportal.tenant-id": "22222222-2222-4222-8222-222222222222",
+    });
     expect(stack.services.public_web.deploy.placement.constraints).toEqual([
       "node.labels.rp.node.tenant-workloads == true",
     ]);

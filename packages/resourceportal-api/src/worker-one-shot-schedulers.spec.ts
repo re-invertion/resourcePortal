@@ -61,8 +61,10 @@ describe("WORKER_ONCE background schedulers", () => {
     expect(guardedBlocks).toHaveLength(2);
     expect(guardedBlocks[0]).toContain('startupReconcile("drift"');
     expect(guardedBlocks[0]).toContain('legacySecrets.migrateAll()');
+    expect(guardedBlocks[0]).toContain('startupReconcile("egressPolicy"');
     expect(guardedBlocks[1]).toContain('reconcile("drift"');
     expect(guardedBlocks[1]).toContain('legacySecrets.migrateAll()');
+    expect(guardedBlocks[1]).toContain('reconcile("egressPolicy"');
     expect(source).toContain("const processed = await operations.processNext(workerId, leaseSeconds)");
   });
 

@@ -139,3 +139,15 @@ Docker Swarm workloads do not create per-Volume Docker NFS volumes. Eligible nod
 A Volume attachment renders as a bind mount from `/mnt/resourceportal/volumes/{tenantId}/{volumeId}` and constrains the service to nodes with `resourceportal.storage.volumes=true`. On the storage host the runtime root may be a local bind mount; additional nodes may receive the same namespace through NFSv4/NFS-Ganesha prepared by host/installer configuration.
 
 The workload-facing NFS namespace exposes tenant Volume data only. The encrypted `secrets` namespace and internal `platform` namespace must not be exposed to tenant workloads. AppGroup Secret plaintext continues to enter containers only through Docker Swarm Secrets.
+
+## Tenant network egress isolation
+
+ResourcePortal v0.2.2 adds platform-managed private-network egress isolation for tenant workloads. The policy is enabled by default after migration and is enforced by a global Swarm `egress-guard` service on every node that runs ResourcePortal tenant tasks.
+
+The guard blocks tenant task egress to RFC1918, carrier-grade NAT, loopback, link-local and IPv6 unique-local/link-local ranges while leaving ordinary Internet egress available. Traffic inside an App Group overlay and inbound Traefik traffic are not routed through this policy. The guard also covers access from tenant containers to the Swarm node itself.
+
+Platform Administrators manage the policy through `GET/PATCH /api/platform/network-egress` and App Group-scoped exceptions through `POST /api/platform/network-egress/rules` and `DELETE /api/platform/network-egress/rules/:ruleId`. Exceptions can target an IP/CIDR and optionally TCP or UDP plus a destination port. Returning from the ResourcePortal firewall chain only removes the ResourcePortal denial; it does not bypass UFW or another destination firewall.
+
+The database is the source of truth. The worker reconciles a versioned policy snapshot into the global guard service without redeploying tenant applications. Existing v0.2.x App Groups are recognized from their legacy Swarm stack namespace, while newly rendered workloads also receive explicit `resourceportal.app-group-id` and tenant workload labels. A fresh guard without a policy snapshot fails closed to the default protected ranges; during a normal control-plane rolling update an existing applied firewall state is preserved until the worker reattaches the authoritative snapshot.
+
+Factory reset removes only the ResourcePortal-owned `RP-TENANT-EGRESS` and `RP-TENANT-HOST` chains and their parent jumps; it does not flush Docker-owned or host firewall chains.

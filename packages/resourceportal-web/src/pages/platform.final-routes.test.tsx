@@ -21,6 +21,7 @@ function installApi() {
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/maintenance") return json({ enabled: false, reason: null });
     if (url === "/api/platform/dns") return json({ provider: "Cloudflare", enabled: false, available: false, configured: false, tokenConfigured: false, zoneId: null, zoneName: null, baseDomain: "resource-portal.pl", targetHostname: "resource-portal.pl", lastValidatedAt: null, lastError: null });
+    if (url === "/api/platform/network-egress") return json({ enabled: true, revision: 1, protectedCidrs: ["10.0.0.0/8"], updatedAt: null, enforcement: null, appGroups: [], rules: [] });
     return json({ error: { message: `Unexpected ${url}` } }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -40,6 +41,7 @@ describe("Platform Admin final routes", () => {
     ["identity", "Identity & access"],
     ["billing", "Billing"],
     ["dns", "DNS & Domains"],
+    ["network-egress", "Network Egress"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
   ])("renders %s with the final page header", async (section, heading) => {

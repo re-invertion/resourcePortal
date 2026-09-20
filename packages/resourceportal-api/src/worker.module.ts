@@ -4,6 +4,7 @@ import { BillingModule } from "./billing/billing.module";
 import { BillingWorkerService } from "./billing/billing-worker.service";
 import { validateWorkerEnv } from "./config/worker-env.validation";
 import { WorkerExecutionModule } from "./worker-execution.module";
+import { NetworkEgressModule } from "./network-egress/network-egress.module";
 import { ObservabilityModule } from "./observability/observability.module";
 import { PlatformInfrastructureModule } from "./platform-infrastructure/platform-infrastructure.module";
 import { SwarmInfrastructureReconcilerService } from "./platform-infrastructure/swarm-infrastructure-reconciler.service";
@@ -18,6 +19,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     PrismaModule,
     BillingModule,
     ObservabilityModule,
+    NetworkEgressModule,
     PlatformInfrastructureModule,
     StorageBackendsModule,
     VolumesModule,

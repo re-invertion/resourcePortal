@@ -235,6 +235,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
     billing: "Billing",
     maintenance: "Maintenance",
     dns: "DNS & Domains",
+    "network-egress": "Network Egress",
   };
   return [root, { label: labels[section] ?? titleCase(section), href: platformHref(section, ...segments) }];
 }

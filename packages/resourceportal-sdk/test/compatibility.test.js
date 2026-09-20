@@ -59,6 +59,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
     "internal/installer-enrollment.controller.ts",
+    "network-egress/network-egress.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
@@ -83,6 +84,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
 
   await client.platformBilling.listPriceLists();
   await client.platformDns.get();
+  await client.platformNetworkEgress.get();
   await client.platformInfrastructure.getSwarmCluster();
   await client.storageBackends.list();
   await client.operations.list("tenant id");
@@ -99,6 +101,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
     [
       "/api/platform/billing/price-lists",
       "/api/platform/dns",
+      "/api/platform/network-egress",
       "/api/platform/swarm-cluster",
       "/api/platform/storage-backends",
       "/api/tenants/tenant%20id/operations",
@@ -118,6 +121,14 @@ test("uses canonical methods and bodies for representative mutations", async () 
 
   await client.platformDns.update({ enabled: true });
   await client.platformDns.validate();
+  await client.platformNetworkEgress.update(true);
+  await client.platformNetworkEgress.createRule({
+    appGroupId: "app-group-id",
+    destinationCidr: "192.168.100.50/32",
+    protocol: "tcp",
+    port: 443,
+  });
+  await client.platformNetworkEgress.deleteRule("rule id");
   await client.platformInfrastructure.reconcileSwarmCluster();
   await client.platformInfrastructure.setRemoteLocationMaintenance("location id", true);
   await client.storageBackends.setMaintenance("backend id", false);
@@ -131,6 +142,9 @@ test("uses canonical methods and bodies for representative mutations", async () 
     [
       ["PATCH", "/api/platform/dns"],
       ["POST", "/api/platform/dns/validate"],
+      ["PATCH", "/api/platform/network-egress"],
+      ["POST", "/api/platform/network-egress/rules"],
+      ["DELETE", "/api/platform/network-egress/rules/rule%20id"],
       ["POST", "/api/platform/swarm-cluster/reconcile"],
       ["PATCH", "/api/platform/remote-locations/location%20id/maintenance"],
       ["PATCH", "/api/platform/storage-backends/backend%20id/maintenance"],
@@ -141,10 +155,20 @@ test("uses canonical methods and bodies for representative mutations", async () 
     ],
   );
   assert.equal(calls[0].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[3].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[4].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(calls[2].init.body, JSON.stringify({ enabled: true }));
   assert.equal(
-    calls[6].init.body,
+    calls[3].init.body,
+    JSON.stringify({
+      appGroupId: "app-group-id",
+      destinationCidr: "192.168.100.50/32",
+      protocol: "tcp",
+      port: 443,
+    }),
+  );
+  assert.equal(calls[6].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[7].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(
+    calls[9].init.body,
     JSON.stringify({ enabled: true, reason: "upgrade" }),
   );
 });

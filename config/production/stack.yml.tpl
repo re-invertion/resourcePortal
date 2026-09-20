@@ -11,6 +11,10 @@ networks:
     driver: overlay
     attachable: false
 
+  host:
+    external: true
+    name: host
+
 secrets:
   rp_database_url:
     external: true
@@ -355,6 +359,26 @@ services:
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
       restart_policy:
         condition: any
+
+  egress-guard:
+    image: __API_IMAGE__
+    user: "0"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    command: ["node", "dist/src/network-egress/egress-guard.runner.js"]
+    environment:
+      NODE_ENV: production
+      EGRESS_GUARD_RECONCILE_INTERVAL_MS: "2000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - host
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 2s
 
   traefik:
     image: __TRAEFIK_IMAGE__

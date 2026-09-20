@@ -530,30 +530,31 @@ model Quota {
 }
 
 model AppGroup {
-  id                       String               @id @default(uuid()) @db.Uuid
-  tenantId                 String               @db.Uuid
+  id                       String                    @id @default(uuid()) @db.Uuid
+  tenantId                 String                    @db.Uuid
   name                     String
   description              String?
-  status                   AppGroupStatus       @default(Ready)
-  runtimeState             RuntimeState         @default(Stopped)
-  health                   HealthState          @default(Unknown)
-  driftStatus              DriftStatus          @default(Unknown)
+  status                   AppGroupStatus            @default(Ready)
+  runtimeState             RuntimeState              @default(Stopped)
+  health                   HealthState               @default(Unknown)
+  driftStatus              DriftStatus               @default(Unknown)
   lastObservedAt           DateTime?
   currentDeploymentVersion Int?
   lastDeploymentAt         DateTime?
   lastDeploymentBy         String?
-  hasPendingChanges        Boolean              @default(false)
-  runtimeDraftRevision     Int                  @default(0)
-  createdBy                String               @db.Uuid
+  hasPendingChanges        Boolean                   @default(false)
+  runtimeDraftRevision     Int                       @default(0)
+  createdBy                String                    @db.Uuid
   updatedBy                String
-  createdAt                DateTime             @default(now())
-  updatedAt                DateTime             @updatedAt
-  tenant                   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  tenant                   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   singleApps               SingleApp[]
   variables                Variable[]
   secrets                  Secret[]
   configs                  Config[]
   deployments              AppGroupDeployment[]
+  egressAllowRules         PlatformEgressAllowRule[]
 
   @@unique([tenantId, name])
 }
@@ -1002,6 +1003,32 @@ model PlatformDnsIntegration {
   updatedBy          String?   @db.Uuid
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+}
+
+model PlatformEgressPolicy {
+  id        String   @id @db.Uuid
+  enabled   Boolean  @default(true)
+  revision  Int      @default(1)
+  updatedBy String?  @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlatformEgressAllowRule {
+  id              String   @id @default(uuid()) @db.Uuid
+  appGroupId      String   @db.Uuid
+  destinationCidr String
+  protocol        String   @default("any")
+  port            Int      @default(0)
+  description     String?
+  createdBy       String   @db.Uuid
+  updatedBy       String   @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  appGroup        AppGroup @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([appGroupId, destinationCidr, protocol, port], map: "PlatformEgressAllowRule_scope_key")
+  @@index([appGroupId], map: "PlatformEgressAllowRule_appGroupId_idx")
 }
 
 model SwarmCluster {

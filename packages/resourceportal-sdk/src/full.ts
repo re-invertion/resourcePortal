@@ -49,6 +49,43 @@ export type PlatformDnsUpdate = {
   apiToken?: string;
 };
 
+export type PlatformNetworkEgressRule = {
+  id: string;
+  appGroupId: string;
+  appGroupName: string;
+  tenantId: string;
+  tenantName: string;
+  destinationCidr: string;
+  protocol: "any" | "tcp" | "udp";
+  port: number | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlatformNetworkEgressState = {
+  enabled: boolean;
+  revision: number;
+  protectedCidrs: string[];
+  updatedAt: string;
+  enforcement: unknown;
+  appGroups: Array<{
+    id: string;
+    name: string;
+    tenantId: string;
+    tenantName: string;
+  }>;
+  rules: PlatformNetworkEgressRule[];
+};
+
+export type CreatePlatformNetworkEgressRule = {
+  appGroupId: string;
+  destinationCidr: string;
+  protocol?: "any" | "tcp" | "udp";
+  port?: number;
+  description?: string;
+};
+
 export class ResourcePortalApiError extends BaseResourcePortalApiError {
   readonly code?: string;
   readonly details?: unknown;
@@ -110,6 +147,25 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
       this.request<PlatformDnsState>("/platform/dns", { method: "PATCH", body }),
     validate: () =>
       this.request<PlatformDnsState>("/platform/dns/validate", { method: "POST" }),
+  };
+
+  readonly platformNetworkEgress = {
+    get: () =>
+      this.request<PlatformNetworkEgressState>("/platform/network-egress"),
+    update: (enabled: boolean) =>
+      this.request<{ enabled: boolean; revision: number; updatedAt: string }>(
+        "/platform/network-egress",
+        { method: "PATCH", body: { enabled } },
+      ),
+    createRule: (body: CreatePlatformNetworkEgressRule) =>
+      this.request<PlatformNetworkEgressRule>("/platform/network-egress/rules", {
+        method: "POST",
+        body,
+      }),
+    deleteRule: (ruleId: string) =>
+      this.request(`/platform/network-egress/rules/${encode(ruleId)}`, {
+        method: "DELETE",
+      }),
   };
 
   readonly platformInfrastructure = {

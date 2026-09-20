@@ -92,6 +92,25 @@ rp_ufw_has_surviving_ssh_rule() {
   ' <<<"$status"
 }
 
+rp_remove_resourceportal_egress_firewall_rules() {
+  local binary parent child parent_child
+  for binary in iptables ip6tables; do
+    command -v "$binary" >/dev/null 2>&1 || continue
+    for parent_child in \
+      'DOCKER-USER RP-TENANT-EGRESS' \
+      'INPUT RP-TENANT-HOST'; do
+      read -r parent child <<<"$parent_child"
+      while "$binary" -w 5 -C "$parent" -j "$child" >/dev/null 2>&1; do
+        "$binary" -w 5 -D "$parent" -j "$child" >/dev/null 2>&1 || return 1
+      done
+      if "$binary" -w 5 -S "$child" >/dev/null 2>&1; then
+        "$binary" -w 5 -F "$child" >/dev/null 2>&1 || return 1
+        "$binary" -w 5 -X "$child" >/dev/null 2>&1 || return 1
+      fi
+    done
+  done
+}
+
 rp_remove_resourceportal_ufw_rules() {
   local status cleanup_status number port retain_installer_ssh=false
   command -v ufw >/dev/null 2>&1 || return 0

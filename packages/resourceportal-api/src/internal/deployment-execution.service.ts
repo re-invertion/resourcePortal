@@ -1521,6 +1521,11 @@ export class DeploymentExecutionService {
 
     return this.withoutUndefined({
       image: singleApp.image,
+      labels: {
+        "resourceportal.workload": "tenant",
+        "resourceportal.app-group-id": snapshot.appGroup.id,
+        "resourceportal.tenant-id": snapshot.appGroup.tenantId,
+      },
       environment: this.isEmptyRecord(environment) ? undefined : environment,
       command: singleApp.command.length > 0 ? singleApp.command : undefined,
       entrypoint: singleApp.entrypoint ?? undefined,

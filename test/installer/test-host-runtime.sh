@@ -109,6 +109,35 @@ assert_not_contains "$ufw_cleanup" 'delete 3' 'UFW cleanup preserves unrelated r
 assert_not_contains "$ufw_cleanup" 'reset' 'UFW cleanup never performs global reset'
 rm -f "$ufw_log"
 
+egress_fw_log="$(mktemp /tmp/rp-egress-fw-cleanup.XXXXXX)"
+: >"$egress_fw_log"
+rp_test_chain_forward=true
+rp_test_chain_host=true
+iptables() {
+  printf 'iptables %s\n' "$*" >>"$egress_fw_log"
+  case "$*" in
+    '-w 5 -C DOCKER-USER -j RP-TENANT-EGRESS') [[ "$rp_test_chain_forward" == true ]] ;;
+    '-w 5 -D DOCKER-USER -j RP-TENANT-EGRESS') rp_test_chain_forward=false; return 0 ;;
+    '-w 5 -C INPUT -j RP-TENANT-HOST') [[ "$rp_test_chain_host" == true ]] ;;
+    '-w 5 -D INPUT -j RP-TENANT-HOST') rp_test_chain_host=false; return 0 ;;
+    '-w 5 -S RP-TENANT-EGRESS'|'-w 5 -S RP-TENANT-HOST') return 0 ;;
+    '-w 5 -F RP-TENANT-EGRESS'|'-w 5 -F RP-TENANT-HOST'|'-w 5 -X RP-TENANT-EGRESS'|'-w 5 -X RP-TENANT-HOST') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+ip6tables() { return 1; }
+rp_remove_resourceportal_egress_firewall_rules
+unset -f iptables ip6tables
+egress_fw_cleanup="$(cat "$egress_fw_log")"
+assert_contains "$egress_fw_cleanup" '-D DOCKER-USER -j RP-TENANT-EGRESS' 'egress cleanup removes ResourcePortal forwarding jump'
+assert_contains "$egress_fw_cleanup" '-F RP-TENANT-EGRESS' 'egress cleanup flushes ResourcePortal forwarding chain'
+assert_contains "$egress_fw_cleanup" '-X RP-TENANT-EGRESS' 'egress cleanup deletes ResourcePortal forwarding chain'
+assert_contains "$egress_fw_cleanup" '-D INPUT -j RP-TENANT-HOST' 'egress cleanup removes ResourcePortal host-input jump'
+assert_contains "$egress_fw_cleanup" '-X RP-TENANT-HOST' 'egress cleanup deletes ResourcePortal host-input chain'
+assert_not_contains "$egress_fw_cleanup" '-F DOCKER-USER' 'egress cleanup never flushes Docker-owned forwarding chain'
+assert_not_contains "$egress_fw_cleanup" '-F INPUT' 'egress cleanup never flushes host INPUT chain'
+rm -f "$egress_fw_log"
+
 # Real-host factory-reset regressions (2026-09-11 and 2026-09-15): removing
 # the only ResourcePortal SSH allow while UFW stays active locks the operator
 # out. Do not try to preserve access by adding an identical allow rule first:
