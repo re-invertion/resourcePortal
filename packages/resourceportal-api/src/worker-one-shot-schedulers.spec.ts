@@ -1,4 +1,5 @@
 import { ConfigService } from "@nestjs/config";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BillingWorkerService } from "./billing/billing-worker.service";
 import { SwarmInfrastructureReconcilerService } from "./platform-infrastructure/swarm-infrastructure-reconciler.service";
@@ -51,6 +52,18 @@ describe("WORKER_ONCE background schedulers", () => {
     reconciler.onModuleInit();
 
     expect(storageBackends.validateDefaultBackend).not.toHaveBeenCalled();
+  });
+
+  it("guards worker-runner startup and periodic reconciliations behind non-one-shot mode", () => {
+    const source = readFileSync(new URL("./worker.runner.ts", import.meta.url), "utf8");
+    const guardedBlocks = source.match(/if \(!once\) \{[\s\S]*?\n {4}\}/g) ?? [];
+
+    expect(guardedBlocks).toHaveLength(2);
+    expect(guardedBlocks[0]).toContain('startupReconcile("drift"');
+    expect(guardedBlocks[0]).toContain('legacySecrets.migrateAll()');
+    expect(guardedBlocks[1]).toContain('reconcile("drift"');
+    expect(guardedBlocks[1]).toContain('legacySecrets.migrateAll()');
+    expect(source).toContain("const processed = await operations.processNext(workerId, leaseSeconds)");
   });
 
   it("does not start Swarm infrastructure reconciliation in one-shot mode", () => {

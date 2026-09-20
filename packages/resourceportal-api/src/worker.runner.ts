@@ -235,11 +235,13 @@ async function main() {
       heartbeatIntervalMs,
     });
 
-    await startupReconcile("certificate", () => certificates.reconcileBatch());
-    await startupReconcile("ingress", () => ingress.reconcileBatch());
-    await startupReconcile("drift", () => drift.reconcileAll());
-    await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
-    await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
+    if (!once) {
+      await startupReconcile("certificate", () => certificates.reconcileBatch());
+      await startupReconcile("ingress", () => ingress.reconcileBatch());
+      await startupReconcile("drift", () => drift.reconcileAll());
+      await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
+      await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
+    }
 
     while (!stopping) {
       await observe(
@@ -247,11 +249,13 @@ async function main() {
         "worker.loop.persist_failed",
       );
 
-      await reconcile("certificate", () => certificates.reconcileBatch());
-      await reconcile("ingress", () => ingress.reconcileBatch());
-      await reconcile("drift", () => drift.reconcileBatch());
-      await reconcile("volumeUsage", () => volumeUsage.reconcileBatch());
-      await reconcile("legacySecrets", () => legacySecrets.migrateAll());
+      if (!once) {
+        await reconcile("certificate", () => certificates.reconcileBatch());
+        await reconcile("ingress", () => ingress.reconcileBatch());
+        await reconcile("drift", () => drift.reconcileBatch());
+        await reconcile("volumeUsage", () => volumeUsage.reconcileBatch());
+        await reconcile("legacySecrets", () => legacySecrets.migrateAll());
+      }
 
       const processed = await operations.processNext(workerId, leaseSeconds);
       if (!processed) {
