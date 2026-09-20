@@ -224,7 +224,7 @@ try {
       `Deployment ${deploymentId} did not expose an integer version`,
     );
 
-    await runDeploymentWorkerOnce();
+    await runOperationToTerminal(deploymentId, "Succeeded");
     await expectDeploymentStatus(
       context,
       createdTenantId,
@@ -251,21 +251,36 @@ try {
       .getByRole("heading", { name: singleAppName, level: 2 })
       .waitFor();
 
-    await page
-      .getByRole("button", { name: "Stop application", exact: true })
-      .click();
+    const stopOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "stop",
+      "Stop application",
+    );
+    await runOperationToTerminal(stopOperation, "Succeeded");
     await waitForReplicas(createdStackName, singleAppName, "0/0");
 
-    await page
-      .getByRole("button", { name: "Start application", exact: true })
-      .click();
+    const startOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "start",
+      "Start application",
+    );
+    await runOperationToTerminal(startOperation, "Succeeded");
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
     const serviceName = `${createdStackName}_${singleAppName}`;
     const forceUpdateBefore = await serviceForceUpdate(serviceName);
-    await page
-      .getByRole("button", { name: "Restart application", exact: true })
-      .click();
+    const restartOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "restart",
+      "Restart application",
+    );
+    await runOperationToTerminal(restartOperation, "Succeeded");
     await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
@@ -304,13 +319,13 @@ try {
     const rollback = JSON.parse(rollbackText);
     const rollbackDeploymentId = stringField(rollback, "id");
 
-    await runDeploymentWorkerOnce();
+    await runOperationToTerminal(rollbackDeploymentId, "RolledBack");
     await expectDeploymentStatus(
       context,
       createdTenantId,
       appGroupId,
       rollbackDeploymentId,
-      "Succeeded",
+      "RolledBack",
     );
     await waitForReplicas(createdStackName, singleAppName, "1/1");
 
@@ -321,10 +336,14 @@ try {
     const succeededRows = page
       .getByRole("row")
       .filter({ hasText: "Succeeded" });
-    await succeededRows.nth(1).waitFor();
+    await succeededRows.first().waitFor();
+    const rolledBackRows = page
+      .getByRole("row")
+      .filter({ hasText: "RolledBack" });
+    await rolledBackRows.first().waitFor();
     assert(
-      (await succeededRows.count()) >= 2,
-      "Deployment history did not show both the deployment and rollback as Succeeded",
+      (await succeededRows.count()) >= 1 && (await rolledBackRows.count()) >= 1,
+      "Deployment history did not show the succeeded deployment and rolled-back rollback operation",
     );
 
     console.log(
@@ -415,7 +434,53 @@ async function preflightSwarm() {
   );
 }
 
-async function runDeploymentWorkerOnce() {
+async function runOperationToTerminal(operationId, expectedStatus) {
+  const terminalStatuses = new Set(["Succeeded", "Failed", "RolledBack", "RollbackFailed"]);
+  let lastOperation;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    lastOperation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        attempt: true,
+        maxAttempts: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    assert(lastOperation, `Operation ${operationId} was not found`);
+    if (lastOperation.status === expectedStatus) return lastOperation;
+    if (terminalStatuses.has(lastOperation.status)) {
+      throw new Error(
+        `Operation ${operationId} (${lastOperation.type}) reached ${lastOperation.status}, expected ${expectedStatus}: ${lastOperation.errorCode ?? "no-code"} ${lastOperation.errorMessage ?? ""}`,
+      );
+    }
+    const retryWaitMs = Math.max(0, lastOperation.nextAttemptAt.getTime() - Date.now());
+    if (retryWaitMs > 0) await sleep(Math.min(retryWaitMs + 50, 5_000));
+    await runWorkerOnce();
+  }
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after draining 20 worker iterations (last=${lastOperation?.status ?? "missing"})`,
+  );
+}
+
+async function clickRuntimeAction(page, appGroupId, singleAppId, action, buttonName) {
+  const path = `/api/tenants/${createdTenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}/runtime/${action}`;
+  const responsePromise = page.waitForResponse(
+    (response) => response.request().method() === "POST" && response.url() === `${webOrigin}${path}`,
+  );
+  await page.getByRole("button", { name: buttonName, exact: true }).click();
+  const response = await responsePromise;
+  const text = await response.text();
+  assert(response.ok(), `${buttonName} failed: ${response.status()} ${text}`);
+  const payload = JSON.parse(text);
+  return stringField(payload, "operationId");
+}
+
+async function runWorkerOnce() {
   const result = await command(
     "npm",
     ["--workspace", "@resource-portal/api", "run", "worker"],

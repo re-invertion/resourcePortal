@@ -30,6 +30,8 @@ contains_file "$repo_root/.github/workflows/federation-integration.yml" 'run: np
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'run: npx playwright install --with-deps chromium' 'Swarm smoke uses Playwright from npm ci dependency graph'
 if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_root/.github/workflows/federation-integration.yml" "$repo_root/.github/workflows/swarm-integration.yml"; then fail 'CI workflows avoid ad-hoc Playwright npm install'; else pass 'CI workflows avoid ad-hoc Playwright npm install'; fi
 for smoke in scripts/run-stage20-real-swarm-web-e2e.mjs scripts/verify-stage20-management-matrix.mjs; do contains_file "$repo_root/$smoke" 'process.env.RESOURCE_PORTAL_API_URL' "$smoke uses the dedicated test API origin"; contains_file "$repo_root/$smoke" 'await route.fetch({' "$smoke bridges browser API calls directly to the test API"; done
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'runOperationToTerminal' 'real-Swarm browser smoke drains the v0.2 Operation queue to a specific terminal operation'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'RolledBack' 'real-Swarm browser smoke validates rollback terminal semantics'
 contains_file "$repo_root/.github/workflows/release.yml" 'run: npm ci' 'Release installs Node dependencies before CLI build'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/sdk' 'Release builds SDK for CLI package'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/cli' 'Release builds CLI package'
