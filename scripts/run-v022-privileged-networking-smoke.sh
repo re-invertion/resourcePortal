@@ -18,7 +18,25 @@ guard_log="$guard_tmp_dir/guard.log"
 guard_pid_file="$guard_tmp_dir/guard.pid"
 
 cleanup() {
+  rc=$?
   set +e
+  if (( rc != 0 )); then
+    echo "v0.2.2 privileged networking smoke failed with rc=$rc" >&2
+    if [[ -f "$guard_log" ]]; then
+      echo "--- egress guard log ---" >&2
+      cat "$guard_log" >&2 || true
+    fi
+    echo "--- internal port firewall chain ---" >&2
+    sudo -n iptables -w 5 -S RP-TENANT-INTERNAL-PORTS >&2 2>/dev/null || true
+    echo "--- smoke service tasks ---" >&2
+    docker service ps --no-trunc "$service_name" >&2 2>/dev/null || true
+    echo "--- smoke container labels ---" >&2
+    container_id="$(docker ps --filter "label=resourceportal.app-group-id=$app_group_id" --format '{{.ID}}' | head -n1)"
+    if [[ -n "$container_id" ]]; then
+      docker inspect "$container_id" --format '{{json .Config.Labels}}' >&2 2>/dev/null || true
+      docker network inspect docker_gwbridge >&2 2>/dev/null || true
+    fi
+  fi
   if [[ -s "$guard_pid_file" ]]; then
     sudo -n kill -TERM "$(cat "$guard_pid_file")" >/dev/null 2>&1 || true
   fi
@@ -27,6 +45,7 @@ cleanup() {
   docker network rm "$denied_network" >/dev/null 2>&1 || true
   sudo -n bash -c "source '$repo_root/scripts/installer/firewall.sh'; rp_remove_resourceportal_egress_firewall_rules" >/dev/null 2>&1 || true
   rm -rf "$guard_tmp_dir"
+  return "$rc"
 }
 trap cleanup EXIT
 
@@ -121,8 +140,10 @@ grep -Fq 'Applied network policy revision=2202' "$guard_log" || {
 }
 
 rules="$(sudo -n iptables -w 5 -S RP-TENANT-INTERNAL-PORTS)"
-grep -Fq -- '-s 172.30.240.0/24 -p tcp -m conntrack --ctstate DNAT --ctorigdstport 18080 -j RETURN' <<<"$rules"
-grep -Fq -- '-p tcp -m conntrack --ctstate DNAT --ctorigdstport 18080 -j REJECT' <<<"$rules"
+allow_rule="$(grep -F -- '-s 172.30.240.0/24 ' <<<"$rules" | grep -F -- '--ctorigdstport 18080' | grep -F -- '--ctstate DNAT' | grep -F -- '-j RETURN' || true)"
+reject_rule="$(grep -F -- '--ctorigdstport 18080' <<<"$rules" | grep -F -- '--ctstate DNAT' | grep -F -- '-j REJECT' || true)"
+[[ -n "$allow_rule" ]] || { echo "Trusted-CIDR RETURN rule missing" >&2; exit 1; }
+[[ -n "$reject_rule" ]] || { echo "Default internal-port REJECT rule missing" >&2; exit 1; }
 
 allowed_body="$(docker run --rm --network "$allowed_network" alpine:3.20 wget -qO- -T 5 "http://$allowed_gateway:$published_port/")"
 grep -Fq 'Welcome to nginx' <<<"$allowed_body"
