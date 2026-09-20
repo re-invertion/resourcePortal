@@ -353,10 +353,34 @@ async function cleanup() {
   for (const appGroupId of appGroupIds) {
     await docker(["stack", "rm", stackNameFor(appGroupId)], true);
   }
+
+  if (appGroupIds.length > 0) {
+    await prisma.appGroup.deleteMany({
+      where: { id: { in: appGroupIds } },
+    });
+    const lingeringAppGroups = await prisma.appGroup.count({
+      where: { id: { in: appGroupIds } },
+    });
+    if (lingeringAppGroups > 0) {
+      throw new Error(
+        `Stage 15 cleanup left ${lingeringAppGroups} App Group(s) in the database`,
+      );
+    }
+  }
+
   if (tenantId) {
-    await prisma.tenant
-      .delete({ where: { id: tenantId } })
-      .catch(() => undefined);
+    await prisma.tenant.deleteMany({
+      where: { id: tenantId },
+    });
+    const lingeringTenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (lingeringTenant) {
+      throw new Error(
+        `Stage 15 cleanup left Tenant ${tenantId} in the database`,
+      );
+    }
   }
 }
 

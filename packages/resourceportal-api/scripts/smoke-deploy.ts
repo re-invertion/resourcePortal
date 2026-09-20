@@ -277,33 +277,76 @@ async function main() {
 
 async function cleanup() {
   if (createdAppGroupId) {
-    await docker(["stack", "rm", stackNameFor(createdAppGroupId)], true);
-    await waitForStackRemoval(stackNameFor(createdAppGroupId));
+    const stackName = stackNameFor(createdAppGroupId);
+    await docker(["stack", "rm", stackName], true);
+    await waitForStackRemoval(stackName);
+
+    await prisma.appGroup.deleteMany({
+      where: { id: createdAppGroupId },
+    });
+    const lingeringAppGroup = await prisma.appGroup.findUnique({
+      where: { id: createdAppGroupId },
+      select: { id: true },
+    });
+    if (lingeringAppGroup) {
+      throw new Error(
+        `Smoke cleanup left App Group ${createdAppGroupId} in the database`,
+      );
+    }
   }
 
   if (createdVolumeId) {
-    const volume = await prisma.volume
-      .findUnique({
-        where: { id: createdVolumeId },
-        select: { storagePath: true },
-      })
-      .catch(() => null);
+    const volume = await prisma.volume.findUnique({
+      where: { id: createdVolumeId },
+      select: { storagePath: true },
+    });
     if (volume?.storagePath) {
       if (!volume.storagePath.startsWith(`${storageBasePath}/volumes/`)) {
         throw new Error(
           `Unsafe smoke cleanup storage path: ${volume.storagePath}`,
         );
       }
-      await command("sudo", ["rm", "-rf", volume.storagePath]).catch(
-        () => undefined,
+      const removeStorage = await command("sudo", [
+        "rm",
+        "-rf",
+        volume.storagePath,
+      ]);
+      if (removeStorage.exitCode !== 0) {
+        throw new Error(
+          removeStorage.stderr ||
+            removeStorage.stdout ||
+            `Failed to remove smoke volume path ${volume.storagePath}`,
+        );
+      }
+    }
+
+    await prisma.volume.deleteMany({
+      where: { id: createdVolumeId },
+    });
+    const lingeringVolume = await prisma.volume.findUnique({
+      where: { id: createdVolumeId },
+      select: { id: true },
+    });
+    if (lingeringVolume) {
+      throw new Error(
+        `Smoke cleanup left Volume ${createdVolumeId} in the database`,
       );
     }
   }
 
   if (createdTenantId) {
-    await prisma.tenant
-      .delete({ where: { id: createdTenantId } })
-      .catch(() => undefined);
+    await prisma.tenant.deleteMany({
+      where: { id: createdTenantId },
+    });
+    const lingeringTenant = await prisma.tenant.findUnique({
+      where: { id: createdTenantId },
+      select: { id: true },
+    });
+    if (lingeringTenant) {
+      throw new Error(
+        `Smoke cleanup left Tenant ${createdTenantId} in the database`,
+      );
+    }
   }
 }
 
