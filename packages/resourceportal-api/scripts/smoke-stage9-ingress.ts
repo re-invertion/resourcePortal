@@ -199,45 +199,62 @@ async function reconcileIngressOnce() {
     logger: false,
   });
   try {
-    const result = await app.get(IngressReconcilerService).reconcileBatch();
-    if (result.failed > 0) {
-      if (!appGroupId) {
-        throw new Error(
-          "Ingress reconciliation failed before App Group diagnostics were available",
-        );
+    const reconciler = app.get(IngressReconcilerService);
+    const maxAttempts = 4;
+    let lastResult:
+      { checked: number; changed: number; failed: number } | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      lastResult = await reconciler.reconcileBatch();
+      if (lastResult.failed === 0) {
+        return;
       }
-      const runtime = app.get(StackRuntimeService);
-      const networkName = appGroupNetworkName(appGroupId);
-      const legacyNetworkName = legacyAppGroupIngressNetworkName(appGroupId);
-      const serviceName = `${stackNameFor(appGroupId)}_nginx`;
-      const diagnostics = {
-        appGroupNetwork: await runtime.reconcileAppGroupNetwork({
-          networkName,
-          traefikRequired: false,
-        }),
-        tenantNetwork: await runtime.reconcileServiceNetwork({
-          serviceName,
-          networkName,
-          required: true,
-        }),
-        legacyMembership: await runtime.reconcileServiceNetwork({
-          serviceName,
-          networkName: legacyNetworkName,
-          required: false,
-        }),
-        labels: await runtime.reconcileTraefikLabels({
-          serviceName,
-          desiredLabels: {},
-        }),
-        legacyCleanup: await runtime.reconcileLegacyIngressNetwork({
-          networkName: legacyNetworkName,
-          required: false,
-        }),
-      };
+
+      if (attempt < maxAttempts) {
+        console.log(
+          `Ingress reconciliation attempt ${attempt}/${maxAttempts} reported ${lastResult.failed} transient failure(s); retrying`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+
+    if (!appGroupId) {
       throw new Error(
-        `Ingress reconciliation reported ${result.failed} failure(s): ${JSON.stringify(diagnostics)}`,
+        "Ingress reconciliation failed before App Group diagnostics were available",
       );
     }
+
+    const runtime = app.get(StackRuntimeService);
+    const networkName = appGroupNetworkName(appGroupId);
+    const legacyNetworkName = legacyAppGroupIngressNetworkName(appGroupId);
+    const serviceName = `${stackNameFor(appGroupId)}_nginx`;
+    const diagnostics = {
+      appGroupNetwork: await runtime.reconcileAppGroupNetwork({
+        networkName,
+        traefikRequired: false,
+      }),
+      tenantNetwork: await runtime.reconcileServiceNetwork({
+        serviceName,
+        networkName,
+        required: true,
+      }),
+      legacyMembership: await runtime.reconcileServiceNetwork({
+        serviceName,
+        networkName: legacyNetworkName,
+        required: false,
+      }),
+      labels: await runtime.reconcileTraefikLabels({
+        serviceName,
+        desiredLabels: {},
+      }),
+      legacyCleanup: await runtime.reconcileLegacyIngressNetwork({
+        networkName: legacyNetworkName,
+        required: false,
+      }),
+    };
+    throw new Error(
+      `Ingress reconciliation did not converge after ${maxAttempts} attempts: ${JSON.stringify({ lastResult, diagnostics })}`,
+    );
   } finally {
     await app.close();
   }
