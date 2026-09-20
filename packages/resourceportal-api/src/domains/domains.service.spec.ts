@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { vi, afterEach, describe, expect, it } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
+import { ManagedDnsService } from "../platform-dns/managed-dns.service";
 
 vi.mock("node:dns/promises", () => ({
   resolveTxt: vi.fn(),
@@ -154,12 +155,20 @@ function domainServiceFor(input: {
     get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
   };
 
+  const managedDns = {
+    provisionManagedDomain: vi.fn().mockResolvedValue({ created: false }),
+    deleteManagedDomain: vi.fn().mockResolvedValue({ deleted: 1 }),
+    managedDomainExists: vi.fn().mockResolvedValue(true),
+    getTenantCapabilities: vi.fn().mockResolvedValue({ managedDomains: { enabled: true, provider: "Cloudflare", baseDomain: "apps.resource-portal.local" } }),
+  };
   return {
     prisma,
     tx,
+    managedDns,
     service: new DomainsService(
       prisma as unknown as PrismaService,
       config as unknown as ConfigService,
+      managedDns as unknown as ManagedDnsService,
     ),
   };
 }
@@ -271,5 +280,59 @@ describe("DomainsService TLS persistence", () => {
       certificateIssuer: null,
       certificateExpiresAt: null,
     });
+  });
+});
+
+describe("DomainsService managed Cloudflare DNS lifecycle", () => {
+  it("provisions managed DNS before persisting a Managed domain", async () => {
+    const { service, managedDns, tx } = domainServiceFor({ endpointProtocolMode: "HTTP" });
+
+    await service.createDomain(
+      "33333333-3333-4333-8333-333333333333",
+      { type: DomainType.Managed, prefix: "app" },
+      actor,
+    );
+
+    expect(managedDns.provisionManagedDomain).toHaveBeenCalledWith(
+      "app.apps.resource-portal.local",
+    );
+    expect(tx.domain.create).toHaveBeenCalled();
+  });
+
+  it("removes a newly-created Cloudflare record when database persistence fails", async () => {
+    const { service, managedDns, prisma } = domainServiceFor({ endpointProtocolMode: "HTTP" });
+    managedDns.provisionManagedDomain.mockResolvedValue({ created: true });
+    prisma.$transaction.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(
+      service.createDomain(
+        "33333333-3333-4333-8333-333333333333",
+        { type: DomainType.Managed, prefix: "app" },
+        actor,
+      ),
+    ).rejects.toThrow("database unavailable");
+
+    expect(managedDns.deleteManagedDomain).toHaveBeenCalledWith(
+      "app.apps.resource-portal.local",
+    );
+  });
+
+  it("marks Managed DNS invalid when the ResourcePortal-owned Cloudflare record is absent", async () => {
+    const { service, managedDns, prisma } = domainServiceFor({ endpointProtocolMode: "HTTP" });
+    managedDns.managedDomainExists.mockResolvedValue(false);
+    prisma.domain.update = vi.fn().mockImplementation(({ data }: DomainUpdateCall) =>
+      Promise.resolve(domainRecord({ ...data })),
+    );
+
+    const result = await service.validateDomain(
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+      actor,
+    );
+
+    expect(result.dnsStatus).toBe(DnsStatus.Invalid);
+    expect(managedDns.managedDomainExists).toHaveBeenCalledWith(
+      "app.apps.resource-portal.local",
+    );
   });
 });

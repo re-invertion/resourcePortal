@@ -234,6 +234,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
   const labels: Record<string, string> = {
     billing: "Billing",
     maintenance: "Maintenance",
+    dns: "DNS & Domains",
   };
   return [root, { label: labels[section] ?? titleCase(section), href: platformHref(section, ...segments) }];
 }

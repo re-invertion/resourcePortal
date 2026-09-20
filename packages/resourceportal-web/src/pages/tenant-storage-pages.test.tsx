@@ -155,3 +155,39 @@ it("confirms in-app before deleting a tenant domain", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Delete domain" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/api/tenants/t1/domains/d1") && (init as RequestInit | undefined)?.method === "DELETE")).toBe(true));
 });
+
+it("hides Managed ResourcePortal domains until Platform Admin enables Cloudflare DNS", async () => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/tenants/t1/domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/domains/capabilities")) return Promise.resolve(json({ managedDomains: { enabled: false, provider: "Cloudflare", baseDomain: "resource-portal.pl" } }));
+    if (url.endsWith("/api/tenants/t1/domains/custom-root-domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/app-groups")) return Promise.resolve(json([]));
+    return Promise.resolve(json({}));
+  }));
+
+  render(<TenantDomainsPage tenantId="t1" />);
+  expect(await screen.findByText(/managed ResourcePortal domains are disabled/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
+  const type = screen.getByLabelText("Domain type");
+  expect(within(type).queryByRole("option", { name: "Managed ResourcePortal domain" })).toBeNull();
+  expect(within(type).getByRole("option", { name: "Custom domain" })).toBeTruthy();
+});
+
+it("offers Managed ResourcePortal domains only after the platform Cloudflare capability is enabled", async () => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/tenants/t1/domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/domains/capabilities")) return Promise.resolve(json({ managedDomains: { enabled: true, provider: "Cloudflare", baseDomain: "resource-portal.pl" } }));
+    if (url.endsWith("/api/tenants/t1/domains/custom-root-domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/app-groups")) return Promise.resolve(json([]));
+    return Promise.resolve(json({}));
+  }));
+
+  render(<TenantDomainsPage tenantId="t1" />);
+  await screen.findByText("Domains & routing");
+  fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
+  const type = screen.getByLabelText("Domain type");
+  expect(within(type).getByRole("option", { name: "Managed ResourcePortal domain" })).toBeTruthy();
+  expect(screen.getByText(/Creates app\.resource-portal\.pl/i)).toBeTruthy();
+});

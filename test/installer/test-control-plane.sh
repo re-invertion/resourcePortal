@@ -117,6 +117,12 @@ contains "$final" 'ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_manage
 contains "$final" 'ZITADEL_ORGANIZATION_ID: zitadel-org-123' 'API receives ZITADEL organization id'
 contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADEL project id'
 contains "$final" 'OIDC_CLI_CLIENT_ID: zitadel-cli-client-789' 'API receives public CLI OAuth client id'
+contains "$final" 'MANAGED_DOMAIN_BASE: rp.example.com' 'API receives managed ResourcePortal domain base'
+contains "$final" 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' 'API receives canonical DNS target hostname'
+managed_domain_base_count="$(grep -c 'MANAGED_DOMAIN_BASE: rp.example.com' <<<"$final" || true)"
+[[ "$managed_domain_base_count" == 2 ]] && pass 'API and worker receive managed ResourcePortal domain base' || fail 'API and worker receive managed ResourcePortal domain base'
+managed_domain_target_count="$(grep -c 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' <<<"$final" || true)"
+[[ "$managed_domain_target_count" == 2 ]] && pass 'API and worker receive canonical DNS target hostname' || fail 'API and worker receive canonical DNS target hostname'
 cli_client_id_count="$(grep -c 'OIDC_CLI_CLIENT_ID:' <<<"$final" || true)"
 [[ "$cli_client_id_count" == 1 ]] && pass 'only API receives CLI OAuth client id' || fail 'only API receives CLI OAuth client id'
 not_contains "$final" 'OIDC_CLI_CLIENT_SECRET' 'stack never contains a CLI OAuth client secret'

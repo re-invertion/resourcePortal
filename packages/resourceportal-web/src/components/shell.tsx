@@ -3,7 +3,7 @@ import type { AppRoute } from "../router/router";
 import { apiRequest } from "../api/client";
 import { RouteBreadcrumbs } from "./route-breadcrumbs";
 import { applicationHref, appGroupHref, platformHref, tenantHref } from "../router/router";
-import { ActivityIcon, BillingIcon, ChevronDownIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
+import { ActivityIcon, BillingIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
 
 type User = { id: string; email?: string; displayName?: string };
 type NavItem = { label: string; href: string; icon: ReactNode; active: boolean };
@@ -33,6 +33,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Identity providers", href: platformHref("identity-providers"), icon: <UsersIcon />, active: ["identity", "identity-providers"].includes(route.section) },
     { label: "Credentials", href: platformHref("credentials"), icon: <KeyIcon />, active: route.section === "credentials" },
     { label: "Billing", href: platformHref("billing"), icon: <BillingIcon />, active: route.section === "billing" },
+    { label: "DNS & Domains", href: platformHref("dns"), icon: <GlobeIcon />, active: route.section === "dns" },
     { label: "Security & Ops", href: platformHref("security"), icon: <ActivityIcon />, active: ["security", "operations", "audit"].includes(route.section) },
     { label: "Maintenance", href: platformHref("maintenance"), icon: <SettingsIcon />, active: route.section === "maintenance" },
   ];
@@ -92,6 +93,7 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-identity", label: "Identity providers", description: "Platform authentication providers", href: platformHref("identity-providers"), category: "Navigation", keywords: "sso auth login" },
     { id: "platform-credentials", label: "Credentials", description: "Platform credentials", href: platformHref("credentials"), category: "Navigation", keywords: "keys secrets" },
     { id: "platform-billing", label: "Billing", description: "Vouchers, prices and credit adjustments", href: platformHref("billing"), category: "Navigation", keywords: "credits vouchers balance payments correction" },
+    { id: "platform-dns", label: "DNS & Domains", description: "Cloudflare managed ResourcePortal domains", href: platformHref("dns"), category: "Navigation", keywords: "cloudflare dns managed domain hostname" },
     { id: "platform-security", label: "Security & Ops", description: "Security, operations and audit", href: platformHref("security"), category: "Navigation", keywords: "audit operations security" },
     { id: "platform-maintenance", label: "Maintenance", description: "Platform maintenance controls", href: platformHref("maintenance"), category: "Navigation", keywords: "system maintenance" },
   ];
