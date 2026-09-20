@@ -37,6 +37,7 @@ contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.s
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.kill(-child.pid, signal);' 'real-Swarm browser smoke terminates the whole worker process group on timeout'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" '[stage20]' 'real-Swarm browser smoke emits progress markers'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'timeout-minutes: 10' 'Swarm browser smoke has a bounded step timeout'
+contains_file "$repo_root/.github/workflows/swarm-integration.yml" '--label-add rp.node.tenant-workloads=true' 'real-Swarm runner is eligible for tenant workload placement'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'docker pull nginx:alpine' 'Swarm browser smoke pre-pulls its workload image'
 contains_file "$repo_root/.github/workflows/release.yml" 'run: npm ci' 'Release installs Node dependencies before CLI build'
 contains_file "$repo_root/.github/workflows/release.yml" 'npm run build --workspace @resource-portal/sdk' 'Release builds SDK for CLI package'

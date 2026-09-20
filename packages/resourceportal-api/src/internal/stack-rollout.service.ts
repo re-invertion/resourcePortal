@@ -26,11 +26,11 @@ export class StackRolloutService {
     stackName: string;
     expectedServices: ExpectedService[];
   }): Promise<RolloutResult> {
-    const timeoutMs = this.config.get<number>(
+    const timeoutMs = this.positiveIntegerConfig(
       "DOCKER_ROLLOUT_TIMEOUT_MS",
       300000,
     );
-    const pollIntervalMs = this.config.get<number>(
+    const pollIntervalMs = this.positiveIntegerConfig(
       "DOCKER_ROLLOUT_POLL_INTERVAL_MS",
       5000,
     );
@@ -86,7 +86,7 @@ export class StackRolloutService {
   }
 
   private runDocker(args: string[]) {
-    const timeoutMs = this.config.get<number>(
+    const timeoutMs = this.positiveIntegerConfig(
       "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
       120000,
     );
@@ -200,6 +200,15 @@ export class StackRolloutService {
       running: Number(running),
       desired: Number(desired),
     };
+  }
+
+  private positiveIntegerConfig(key: string, fallback: number) {
+    const raw = this.config.get<string | number | undefined>(key);
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
   }
 
   private sleep(ms: number) {

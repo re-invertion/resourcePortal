@@ -235,10 +235,14 @@ jobs:
           NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
           test -w /mnt/resourceportal/volumes
           docker node update \
+            --label-add rp.node.storage=true \
+            --label-add rp.node.tenant-workloads=true \
             --label-add resourceportal.storage.volumes=true \
             --label-add resourceportal.storage.secrets=true \
             --label-add resourceportal.storage.platform=true \
             "$NODE_ID"
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.storage"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.tenant-workloads"}}')" = true
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
 
       - name: Build Stage 20 Web Console
