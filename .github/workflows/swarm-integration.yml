@@ -300,8 +300,12 @@ jobs:
         run: |
           docker pull nginx:alpine
           docker pull alpine:3.20
+          docker network create \
+            --driver overlay \
+            resourceportal-smoke-control-plane
           docker service create \
             --name "$TRAEFIK_SERVICE_NAME" \
+            --network resourceportal-smoke-control-plane \
             --replicas 0 \
             --detach=true \
             alpine:3.20 sleep 3600
@@ -323,7 +327,15 @@ jobs:
 
       - name: Remove real-Swarm ingress anchor
         if: always()
-        run: docker service rm "$TRAEFIK_SERVICE_NAME" || true
+        run: |
+          docker service rm "$TRAEFIK_SERVICE_NAME" || true
+          for attempt in $(seq 1 30); do
+            if ! docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker network rm resourceportal-smoke-control-plane || true
 
       - name: Verify Swarm is clean after smoke test
         if: always()

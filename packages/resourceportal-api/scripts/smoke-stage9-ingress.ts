@@ -165,17 +165,12 @@ async function main() {
 
   const cleanedLabels = await serviceLabels(serviceName);
   for (const key of Object.keys(cleanedLabels)) {
-    if (key.startsWith("traefik.http.routers.nginx-public")) {
+    if (key.startsWith("traefik.")) {
       throw new Error(
-        `Stale Stage 9 router label remained after detach: ${key}`,
+        `Stale Stage 9 Traefik label remained after detach: ${key}`,
       );
     }
   }
-  expectLabel(
-    cleanedLabels,
-    "traefik.http.services.nginx-public.loadbalancer.server.port",
-    "80",
-  );
 
   console.log("Stage 9 ingress/TLS real Swarm smoke completed successfully");
 }
