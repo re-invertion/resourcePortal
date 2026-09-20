@@ -15,7 +15,11 @@ export class StackRuntimeService {
   constructor(private readonly config: ConfigService) {}
 
   async scaleServices(
-    services: Array<{ stackName: string; serviceName: string; replicas: number }>,
+    services: Array<{
+      stackName: string;
+      serviceName: string;
+      replicas: number;
+    }>,
   ) {
     const results: RuntimeResult[] = [];
 
@@ -146,7 +150,6 @@ export class StackRuntimeService {
       : this.removeLegacyIngressNetwork(input.networkName);
   }
 
-
   async reconcileServiceNetwork(input: {
     serviceName: string;
     networkName: string;
@@ -160,7 +163,9 @@ export class StackRuntimeService {
         : { success: false, changed: false };
     }
 
-    const serviceNetworks = await this.inspectServiceNetworks(input.serviceName);
+    const serviceNetworks = await this.inspectServiceNetworks(
+      input.serviceName,
+    );
     if (!serviceNetworks.success) {
       return { success: false, changed: false };
     }
@@ -207,7 +212,10 @@ export class StackRuntimeService {
       : {
           success: false,
           changed: false,
-          error: create.stderr || create.stdout || `docker network create ${networkName} failed`,
+          error:
+            create.stderr ||
+            create.stdout ||
+            `docker network create ${networkName} failed`,
         };
   }
 
@@ -301,7 +309,10 @@ export class StackRuntimeService {
       : {
           success: false,
           changed: false,
-          error: update.stderr || update.stdout || `docker service update ${traefik} failed`,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${traefik} failed`,
         };
   }
 
@@ -321,7 +332,10 @@ export class StackRuntimeService {
       success: false as const,
       missing: this.isMissingNetwork(result.stderr),
       networkId: "",
-      error: result.stderr || result.stdout || `docker network inspect ${networkName} failed`,
+      error:
+        result.stderr ||
+        result.stdout ||
+        `docker network inspect ${networkName} failed`,
     };
   }
 
@@ -338,7 +352,10 @@ export class StackRuntimeService {
         success: false as const,
         missing: this.isMissingService(result.stderr),
         networkIds: [] as string[],
-        error: result.stderr || result.stdout || `docker service inspect ${serviceName} failed`,
+        error:
+          result.stderr ||
+          result.stdout ||
+          `docker service inspect ${serviceName} failed`,
       };
     }
     return {
@@ -363,7 +380,9 @@ export class StackRuntimeService {
 
   private assertManagedLegacyIngressNetwork(networkName: string) {
     if (!/^rp-ingress-[a-z0-9-]+$/.test(networkName)) {
-      throw new Error(`Refusing unmanaged legacy ingress network: ${networkName}`);
+      throw new Error(
+        `Refusing unmanaged legacy ingress network: ${networkName}`,
+      );
     }
   }
 
@@ -482,34 +501,19 @@ export class StackRuntimeService {
       });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
-      let settled = false;
       const command = `docker ${fullArgs.join(" ")}`;
-      const timeout = setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGTERM");
-        }
-      }, timeoutMs);
-
-      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-      child.on("error", (error) => {
+      let settled = false;
+      const finish = (result: RuntimeResult) => {
+        if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        resolve({
-          command,
-          exitCode: 127,
-          stdout: this.decode(stdout),
-          stderr: error.message,
-        });
-      });
-      child.on("close", (code, signal) => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        clearTimeout(timeout);
-        resolve({
+        resolve(result);
+      };
+      const finishFromExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        finish({
           command,
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
@@ -517,7 +521,30 @@ export class StackRuntimeService {
             ? `docker runtime command terminated by ${signal}`
             : this.decode(stderr),
         });
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        finish({
+          command,
+          exitCode: 124,
+          stdout: this.decode(stdout),
+          stderr: `${command} timed out after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        finish({
+          command,
+          exitCode: 127,
+          stdout: this.decode(stdout),
+          stderr: error.message,
+        });
       });
+      child.on("exit", finishFromExit);
+      child.on("close", finishFromExit);
     });
   }
 

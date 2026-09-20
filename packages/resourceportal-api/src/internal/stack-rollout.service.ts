@@ -44,7 +44,8 @@ export class StackRolloutService {
         return {
           success: false,
           message: "Docker stack services failed",
-          details: result.stderr || result.stdout || `Exit code ${result.exitCode}`,
+          details:
+            result.stderr || result.stdout || `Exit code ${result.exitCode}`,
         };
       }
 
@@ -130,7 +131,10 @@ export class StackRolloutService {
           stderr: error.message,
         });
       });
-      child.on("close", (code, signal) => {
+      const finishFromExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
         finish({
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
@@ -138,7 +142,9 @@ export class StackRolloutService {
             ? `docker stack services terminated by ${signal}`
             : this.decode(stderr),
         });
-      });
+      };
+      child.on("exit", finishFromExit);
+      child.on("close", finishFromExit);
     });
   }
 

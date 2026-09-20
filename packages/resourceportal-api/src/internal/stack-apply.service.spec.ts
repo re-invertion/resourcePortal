@@ -1,7 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deploymentArtifactSha256 } from "./deployment-artifact";
 import { StackRuntimeService } from "./stack-runtime.service";
 
@@ -36,8 +36,19 @@ function dockerProcess(stdout = "", exitCode = 0, stderr = "") {
   });
   return child;
 }
+function hangingDockerProcess() {
+  const chunks: Buffer[] = [];
+  const child = new EventEmitter() as DockerChild;
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = vi.fn();
+  child.capturedInput = () => Buffer.concat(chunks).toString("utf8");
+  child.stdin.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+  return child;
+}
 
-function fixture() {
+function fixture(applyTimeoutMs?: number) {
   const runtime = {
     reconcileAppGroupNetwork: vi.fn().mockResolvedValue({
       success: true,
@@ -48,7 +59,13 @@ function fixture() {
       changed: false,
     }),
   };
-  const config = { get: vi.fn((_key: string, fallback?: unknown) => fallback) };
+  const config = {
+    get: vi.fn((key: string, fallback?: unknown) =>
+      key === "DOCKER_APPLY_TIMEOUT_MS" && applyTimeoutMs !== undefined
+        ? applyTimeoutMs
+        : fallback,
+    ),
+  };
   return {
     runtime,
     service: new StackApplyService(
@@ -74,6 +91,37 @@ function legacyPublicStack() {
   return `version: "3.9"\nservices:\n  web:\n    image: nginx:alpine\n    networks: [default, ingress]\n    deploy:\n      labels:\n        traefik.enable: "true"\n        traefik.swarm.network: ${legacyIngressNetwork}\nnetworks:\n  default:\n    name: ${appGroupNetwork}\n    driver: overlay\n  ingress:\n    external: true\n    name: ${legacyIngressNetwork}\n`;
 }
 
+describe("StackApplyService timeout boundary", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("terminates and settles a hung docker stack deploy", async () => {
+    const child = hangingDockerProcess();
+    spawnMock.mockReturnValueOnce(child);
+    const { service } = fixture(50);
+    const renderedStack = privateStack();
+
+    const resultPromise = service.applyStack({
+      stackName: "rp_test",
+      renderedStack,
+      artifactSha256: deploymentArtifactSha256(renderedStack),
+      appGroupId,
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await resultPromise;
+
+    expect(result.exitCode).toBe(124);
+    expect(result.stderr).toContain("timed out after 50ms");
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+});
 describe("StackApplyService exact deployment artifact", () => {
   beforeEach(() => spawnMock.mockReset());
 

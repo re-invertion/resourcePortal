@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
 import { DeploymentAuditService } from "../../internal/deployment-audit.service";
 import { DeploymentRecoveryService } from "../../internal/deployment-recovery.service";
@@ -22,7 +22,12 @@ type DeploymentExecution = {
 
 @Injectable()
 export class DeploymentOperationExecutor implements OperationExecutor {
-  readonly types = ["APP_GROUP_DEPLOY", "APP_GROUP_ROLLBACK"] as const satisfies readonly OperationType[];
+  private readonly logger = new Logger(DeploymentOperationExecutor.name);
+
+  readonly types = [
+    "APP_GROUP_DEPLOY",
+    "APP_GROUP_ROLLBACK",
+  ] as const satisfies readonly OperationType[];
 
   constructor(
     private readonly recovery: DeploymentRecoveryService,
@@ -34,7 +39,11 @@ export class DeploymentOperationExecutor implements OperationExecutor {
     const deploymentId = this.requireDeploymentId(operation);
     const workerId = operation.leaseOwner;
     if (!workerId) {
-      throw this.executionError("OperationLeaseMissing", "Deployment Operation has no lease owner", true);
+      throw this.executionError(
+        "OperationLeaseMissing",
+        "Deployment Operation has no lease owner",
+        true,
+      );
     }
     const leaseSeconds = this.leaseSeconds(operation);
 
@@ -49,6 +58,7 @@ export class DeploymentOperationExecutor implements OperationExecutor {
 
     await this.audit.recordStarted(deploymentId).catch(() => undefined);
 
+    this.logProgress(operation, deployment, "recovery.started");
     const recovered = (await this.recovery.reconcileClaimedDeployment(
       deploymentId,
       workerId,
@@ -61,21 +71,46 @@ export class DeploymentOperationExecutor implements OperationExecutor {
       );
     }
     deployment = recovered;
+    this.logProgress(operation, deployment, "recovery.completed");
 
     for (const phase of this.remainingPhases(deployment.phase)) {
       if (this.isTerminal(deployment.status)) break;
-      await this.worker.heartbeatDeployment(deploymentId, { workerId, leaseSeconds });
+      this.logProgress(operation, deployment, "phase.started", phase);
+      await this.worker.heartbeatDeployment(deploymentId, {
+        workerId,
+        leaseSeconds,
+      });
       deployment = await this.worker.advanceDeployment(deploymentId, {
         workerId,
         phase,
         message: `Operation ${operation.id} advanced deployment to ${phase}`,
       });
+      this.logProgress(operation, deployment, "phase.completed", phase);
     }
 
     await this.audit.recordOutcome(deploymentId).catch(() => undefined);
     return this.terminalResult(operation, deployment);
   }
 
+  private logProgress(
+    operation: OperationRecord,
+    deployment: DeploymentExecution,
+    event: string,
+    targetPhase?: DeploymentPhase,
+  ) {
+    this.logger.log(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        service: "resource-portal-worker",
+        event: `worker.deployment.${event}`,
+        operationId: operation.id,
+        deploymentId: deployment.id,
+        deploymentStatus: deployment.status,
+        deploymentPhase: deployment.phase,
+        targetPhase: targetPhase ?? null,
+      }),
+    );
+  }
   private terminalResult(
     operation: OperationRecord,
     deployment: DeploymentExecution,
@@ -134,7 +169,10 @@ export class DeploymentOperationExecutor implements OperationExecutor {
           DeploymentPhase.WaitingForRollout,
         ];
       case DeploymentPhase.GeneratingStack:
-        return [DeploymentPhase.ApplyingStack, DeploymentPhase.WaitingForRollout];
+        return [
+          DeploymentPhase.ApplyingStack,
+          DeploymentPhase.WaitingForRollout,
+        ];
       case DeploymentPhase.ApplyingStack:
         return [DeploymentPhase.WaitingForRollout];
       case DeploymentPhase.Cleanup:
@@ -157,7 +195,11 @@ export class DeploymentOperationExecutor implements OperationExecutor {
 
   private requireDeploymentId(operation: OperationRecord) {
     if (!operation.resourceId) {
-      throw this.executionError("OperationResourceRequired", "Deployment Operation has no deployment id", false);
+      throw this.executionError(
+        "OperationResourceRequired",
+        "Deployment Operation has no deployment id",
+        false,
+      );
     }
     return operation.resourceId;
   }

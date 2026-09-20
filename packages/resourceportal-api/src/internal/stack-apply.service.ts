@@ -17,7 +17,6 @@ type ApplyResult = {
   stderr: string;
 };
 
-
 type CommandResult = {
   command: string;
   exitCode: number;
@@ -38,13 +37,16 @@ export class StackApplyService {
     artifactSha256: string;
     appGroupId: string;
   }): Promise<ApplyResult> {
-    if (!deploymentArtifactMatches(params.renderedStack, params.artifactSha256)) {
+    if (
+      !deploymentArtifactMatches(params.renderedStack, params.artifactSha256)
+    ) {
       return {
         command: "verify deployment artifact sha256",
         stackName: params.stackName,
         exitCode: 2,
         stdout: "",
-        stderr: "Rendered deployment artifact SHA-256 does not match persisted digest",
+        stderr:
+          "Rendered deployment artifact SHA-256 does not match persisted digest",
       };
     }
 
@@ -120,36 +122,32 @@ export class StackApplyService {
     return { ...result, stackName: params.stackName };
   }
 
-  private run(command: string, args: string[], stdin?: string): Promise<CommandResult> {
-    const timeoutMs = this.config.get<number>("DOCKER_APPLY_TIMEOUT_MS", 120000);
+  private run(
+    command: string,
+    args: string[],
+    stdin?: string,
+  ): Promise<CommandResult> {
+    const timeoutMs = this.config.get<number>(
+      "DOCKER_APPLY_TIMEOUT_MS",
+      120000,
+    );
     return new Promise((resolve) => {
       const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
-      let settled = false;
       const renderedCommand = `${command} ${args.join(" ")}`;
-      const timeout = setTimeout(() => {
-        if (!settled) child.kill("SIGTERM");
-      }, timeoutMs);
-
-      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-      child.on("error", (error) => {
+      let settled = false;
+      const finish = (result: CommandResult) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        resolve({
-          command: renderedCommand,
-          exitCode: 127,
-          stdout: this.decode(stdout),
-          stderr: error.message,
-        });
-      });
-      child.on("close", (code, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve({
+        resolve(result);
+      };
+      const finishFromExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        finish({
           command: renderedCommand,
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
@@ -157,7 +155,30 @@ export class StackApplyService {
             ? `${renderedCommand} terminated by ${signal}`
             : this.decode(stderr),
         });
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        finish({
+          command: renderedCommand,
+          exitCode: 124,
+          stdout: this.decode(stdout),
+          stderr: `${renderedCommand} timed out after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        finish({
+          command: renderedCommand,
+          exitCode: 127,
+          stdout: this.decode(stdout),
+          stderr: error.message,
+        });
       });
+      child.on("exit", finishFromExit);
+      child.on("close", finishFromExit);
       child.stdin.end(stdin);
     });
   }

@@ -1,7 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
@@ -25,13 +25,51 @@ function dockerProcess(stdout = "", exitCode = 0) {
   });
   return child;
 }
+function hangingDockerProcess() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = vi.fn();
+  return child;
+}
 
-function service() {
+function service(runtimeTimeoutMs?: number) {
   return new StackRuntimeService({
-    get: vi.fn((_key: string, fallback?: unknown) => fallback),
+    get: vi.fn((key: string, fallback?: unknown) =>
+      key === "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS" &&
+      runtimeTimeoutMs !== undefined
+        ? runtimeTimeoutMs
+        : fallback,
+    ),
   } as unknown as ConfigService);
 }
 
+describe("StackRuntimeService timeout boundary", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("settles a hung Docker runtime inspection at the configured timeout", async () => {
+    const child = hangingDockerProcess();
+    spawnMock.mockReturnValueOnce(child);
+
+    const resultPromise = service(50).inspectStackServices("rp_stack");
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await resultPromise;
+
+    expect(result).toBeNull();
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+});
 describe("StackRuntimeService observed service state", () => {
   beforeEach(() => spawnMock.mockReset());
 
@@ -59,9 +97,15 @@ describe("StackRuntimeService observed service state", () => {
   it("returns unknown rather than inventing state for malformed Docker output", async () => {
     spawnMock.mockImplementationOnce(() =>
       dockerProcess(
-        JSON.stringify({ Name: "rp_stack_web", Image: "nginx", Replicas: "bad" }),
+        JSON.stringify({
+          Name: "rp_stack_web",
+          Image: "nginx",
+          Replicas: "bad",
+        }),
       ),
     );
-    await expect(service().inspectStackServices("rp_stack")).resolves.toBeNull();
+    await expect(
+      service().inspectStackServices("rp_stack"),
+    ).resolves.toBeNull();
   });
 });
