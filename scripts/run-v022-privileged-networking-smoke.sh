@@ -71,11 +71,11 @@ fi
 docker pull alpine:3.20 >/dev/null
 docker pull nginx:alpine >/dev/null
 
-docker network create --driver bridge --subnet 172.30.240.0/24 "$allowed_network" >/dev/null
-docker network create --driver bridge --subnet 172.30.241.0/24 "$denied_network" >/dev/null
+allowed_gateway="172.30.240.1"
+denied_gateway="172.30.241.1"
+docker network create --driver bridge --subnet 172.30.240.0/24 --gateway "$allowed_gateway" "$allowed_network" >/dev/null
+docker network create --driver bridge --subnet 172.30.241.0/24 --gateway "$denied_gateway" "$denied_network" >/dev/null
 docker network create --driver overlay --attachable "$service_network" >/dev/null
-allowed_gateway="$(docker network inspect "$allowed_network" --format '{{(index .IPAM.Config 0).Gateway}}')"
-denied_gateway="$(docker network inspect "$denied_network" --format '{{(index .IPAM.Config 0).Gateway}}')"
 
 exposure_b64="$(node -e 'process.stdout.write(Buffer.from(JSON.stringify([{publishedPort:18080,protocol:"tcp"}])).toString("base64"))')"
 
