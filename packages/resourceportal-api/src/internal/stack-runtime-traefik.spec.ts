@@ -144,6 +144,42 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     ]);
   });
 
+  it("accepts a private App Group when the optional Traefik service is absent", async () => {
+    const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+      );
+
+    const result = await service().reconcileAppGroupNetwork({
+      networkName,
+      traefikRequired: false,
+    });
+
+    expect(result).toEqual({ success: true, changed: false });
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("still rejects a public App Group when the required Traefik service is absent", async () => {
+    const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+      );
+
+    const result = await service().reconcileAppGroupNetwork({
+      networkName,
+      traefikRequired: true,
+    });
+
+    expect(result).toEqual({ success: false, changed: false });
+    expect(spawnMock).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps the App Group network but detaches Traefik when the group becomes private", async () => {
     const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
     spawnMock

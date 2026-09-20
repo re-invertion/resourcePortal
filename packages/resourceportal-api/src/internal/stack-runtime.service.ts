@@ -277,7 +277,9 @@ export class StackRuntimeService {
     const traefik = this.traefikServiceName();
     const serviceNetworks = await this.inspectServiceNetworks(traefik);
     if (!serviceNetworks.success) {
-      return { success: false, changed: false };
+      return !required && serviceNetworks.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false };
     }
     const attached = serviceNetworks.networkIds.includes(network.networkId);
     if (attached === required) {
@@ -325,10 +327,15 @@ export class StackRuntimeService {
       "{{range .Spec.TaskTemplate.Networks}}{{println .Target}}{{end}}",
     ]);
     if (result.exitCode !== 0) {
-      return { success: false as const, networkIds: [] as string[] };
+      return {
+        success: false as const,
+        missing: this.isMissingService(result.stderr),
+        networkIds: [] as string[],
+      };
     }
     return {
       success: true as const,
+      missing: false as const,
       networkIds: result.stdout.split(/\s+/).filter(Boolean),
     };
   }
@@ -366,6 +373,14 @@ export class StackRuntimeService {
     return (
       normalized.includes("no such network") ||
       normalized.includes("network not found")
+    );
+  }
+
+  private isMissingService(stderr: string) {
+    const normalized = stderr.toLowerCase();
+    return (
+      normalized.includes("no such service") ||
+      normalized.includes("service not found")
     );
   }
 

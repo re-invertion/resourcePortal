@@ -87,9 +87,10 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).toContain(
       '.getByRole("button", { name: "Deploy pending changes", exact: true })',
     );
-    expect(script).toContain(
-      '.getByRole("button", { name: "Restart application", exact: true })',
-    );
+    expect(script).toContain('clickRuntimeAction(');
+    expect(script).toContain('"Restart application"');
+    expect(script).toContain('runOperationToTerminal');
+    expect(script).toContain('"RolledBack"');
     expect(script).not.toContain(
       '.getByRole("heading", { name: "Choose tenant" })',
     );
