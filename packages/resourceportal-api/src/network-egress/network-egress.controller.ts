@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   UseGuards,
@@ -13,6 +14,7 @@ import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import type { AuthenticatedUser } from "../auth/types";
 import { CreateNetworkEgressRuleDto } from "./dto/create-network-egress-rule.dto";
 import { UpdateNetworkEgressPolicyDto } from "./dto/update-network-egress-policy.dto";
+import { UpdateAppGroupNetworkPrivilegeDto } from "./dto/update-app-group-network-privilege.dto";
 import { NetworkEgressService } from "./network-egress.service";
 
 @Controller("platform/network-egress")
@@ -31,6 +33,15 @@ export class NetworkEgressController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.egress.updatePolicy(dto, actor);
+  }
+
+  @Patch("app-groups/:appGroupId")
+  updateAppGroupPrivilege(
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Body() dto: UpdateAppGroupNetworkPrivilegeDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.egress.updateAppGroupPrivilege(appGroupId, dto, actor);
   }
 
   @Post("rules")

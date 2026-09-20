@@ -97,6 +97,7 @@ rp_remove_resourceportal_egress_firewall_rules() {
   for binary in iptables ip6tables; do
     command -v "$binary" >/dev/null 2>&1 || continue
     for parent_child in \
+      'DOCKER-USER RP-TENANT-INTERNAL-PORTS' \
       'DOCKER-USER RP-TENANT-EGRESS' \
       'INPUT RP-TENANT-HOST'; do
       read -r parent child <<<"$parent_child"

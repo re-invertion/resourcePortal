@@ -12,6 +12,7 @@ import {
   DeploymentStatus,
   Domain,
   HttpEndpoint,
+  InternalPortExposure,
   Prisma,
   RuntimeState,
   Secret,
@@ -38,6 +39,7 @@ import { AttachVolumeDto } from "./dto/attach-volume.dto";
 import { CreateAppGroupDto } from "./dto/create-app-group.dto";
 import { CreateConfigDto } from "./dto/create-config.dto";
 import { CreateHttpEndpointDto } from "./dto/create-http-endpoint.dto";
+import { CreateInternalPortExposureDto } from "./dto/create-internal-port-exposure.dto";
 import { CreateSecretDto } from "./dto/create-secret.dto";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { CreateVariableDto } from "./dto/create-variable.dto";
@@ -45,6 +47,7 @@ import { DeployAppGroupDto } from "./dto/deploy-app-group.dto";
 import { RollbackDeploymentDto } from "./dto/rollback-deployment.dto";
 import { UpdateConfigDto } from "./dto/update-config.dto";
 import { UpdateHttpEndpointDto } from "./dto/update-http-endpoint.dto";
+import { UpdateInternalPortExposureDto } from "./dto/update-internal-port-exposure.dto";
 import {
   RUNTIME_CONFIG_NAME_PATTERN,
   UpdateRuntimeConfigDto,
@@ -98,6 +101,7 @@ type DeployableDraft = AppGroup & {
     createdAt: Date;
     updatedAt: Date;
     httpEndpoints: Array<HttpEndpoint & { domains: Domain[] }>;
+    internalPortExposures: InternalPortExposure[];
     volumeAttachments: Array<VolumeAttachment & { volume: Volume }>;
     variableAttachments: Array<VariableAttachment & { variable: Variable }>;
     configAttachments: Array<ConfigAttachment & { config: Config }>;
@@ -1704,6 +1708,136 @@ export class AppGroupsService {
     return { deleted: true };
   }
 
+  async listInternalPortExposures(tenantId: string, appGroupId: string) {
+    await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
+    const exposures = await this.prisma.internalPortExposure.findMany({
+      where: { appGroupId },
+      include: { singleApp: { select: { id: true, name: true } } },
+      orderBy: [{ publishedPort: "asc" }, { protocol: "asc" }, { name: "asc" }],
+    });
+    return exposures.map((exposure) => ({
+      ...exposure,
+      singleAppName: exposure.singleApp.name,
+      singleApp: undefined,
+    }));
+  }
+
+  async createInternalPortExposure(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    dto: CreateInternalPortExposureDto,
+    actor: AuthenticatedUser,
+  ) {
+    const singleApp = await this.ensureSingleAppBelongsToAppGroup(
+      tenantId, appGroupId, singleAppId,
+    );
+    if (singleApp.pendingDeletion) {
+      throw new ConflictException("SingleApp is pending deletion");
+    }
+    await this.ensurePrivilegedNetworking(tenantId, appGroupId);
+    this.assertInternalPublishedPortAvailable(
+      dto.protocol ?? "tcp",
+      dto.publishedPort,
+    );
+    await this.assertInternalPublishedPortNotDeployed(
+      dto.protocol ?? "tcp",
+      dto.publishedPort,
+    );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = await tx.internalPortExposure.create({
+          data: {
+            appGroupId,
+            singleAppId,
+            name: dto.name,
+            containerPort: dto.containerPort,
+            publishedPort: dto.publishedPort,
+            protocol: dto.protocol ?? "tcp",
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+        });
+        await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+        return created;
+      });
+    } catch (error) {
+      this.handleKnownConflict(
+        error,
+        "Internal port exposure name or published port/protocol is already in use",
+      );
+      throw error;
+    }
+  }
+
+  async updateInternalPortExposure(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    exposureId: string,
+    dto: UpdateInternalPortExposureDto,
+    actor: AuthenticatedUser,
+  ) {
+    const singleApp = await this.ensureSingleAppBelongsToAppGroup(
+      tenantId, appGroupId, singleAppId,
+    );
+    if (singleApp.pendingDeletion) {
+      throw new ConflictException("SingleApp is pending deletion");
+    }
+    await this.ensurePrivilegedNetworking(tenantId, appGroupId);
+    const currentExposure = await this.findInternalPortExposureOrThrow(
+      appGroupId, singleAppId, exposureId,
+    );
+    const nextProtocol = dto.protocol ?? currentExposure.protocol;
+    const nextPublishedPort = dto.publishedPort ?? currentExposure.publishedPort;
+    this.assertInternalPublishedPortAvailable(nextProtocol, nextPublishedPort);
+    await this.assertInternalPublishedPortNotDeployed(
+      nextProtocol,
+      nextPublishedPort,
+      currentExposure.id,
+    );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.internalPortExposure.update({
+          where: { id: exposureId },
+          data: {
+            name: dto.name,
+            containerPort: dto.containerPort,
+            publishedPort: dto.publishedPort,
+            protocol: dto.protocol,
+            updatedBy: actor.id,
+          },
+        });
+        await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+        return updated;
+      });
+    } catch (error) {
+      this.handleKnownConflict(
+        error,
+        "Internal port exposure name or published port/protocol is already in use",
+      );
+      throw error;
+    }
+  }
+
+  async deleteInternalPortExposure(
+    tenantId: string,
+    appGroupId: string,
+    singleAppId: string,
+    exposureId: string,
+    actor: AuthenticatedUser,
+  ) {
+    await this.ensureSingleAppBelongsToAppGroup(tenantId, appGroupId, singleAppId);
+    await this.findInternalPortExposureOrThrow(
+      appGroupId, singleAppId, exposureId,
+    );
+    await this.prisma.$transaction(async (tx) => {
+      await tx.internalPortExposure.delete({ where: { id: exposureId } });
+      await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
+    });
+    return { deleted: true };
+  }
+
   async updateSingleAppRuntimeConfig(
     tenantId: string,
     appGroupId: string,
@@ -1878,6 +2012,130 @@ export class AppGroupsService {
 
 
 
+
+  private async assertInternalPublishedPortNotDeployed(
+    protocol: string,
+    publishedPort: number,
+    currentExposureId?: string,
+  ) {
+    const appGroups = await this.prisma.appGroup.findMany({
+      where: { currentDeploymentVersion: { not: null } },
+      select: { id: true, name: true, currentDeploymentVersion: true },
+    });
+    for (const appGroup of appGroups) {
+      if (appGroup.currentDeploymentVersion === null) continue;
+      const deployment = await this.prisma.appGroupDeployment.findFirst({
+        where: {
+          appGroupId: appGroup.id,
+          version: appGroup.currentDeploymentVersion,
+        },
+        select: { stackConfig: true },
+      });
+      for (const exposure of this.internalPortExposuresFromStackConfig(
+        deployment?.stackConfig ?? null,
+      )) {
+        if (
+          exposure.protocol === protocol &&
+          exposure.publishedPort === publishedPort &&
+          exposure.id !== currentExposureId
+        ) {
+          throw new ConflictException(
+            `${protocol.toUpperCase()}/${publishedPort} is still active in deployed App Group ${appGroup.name}; deploy its removal before reusing the port`,
+          );
+        }
+      }
+    }
+  }
+
+  private internalPortExposuresFromStackConfig(stackConfig: string | null) {
+    const exposures: Array<{ id: string; protocol: string; publishedPort: number }> = [];
+    if (!stackConfig) return exposures;
+    try {
+      const parsed = JSON.parse(stackConfig) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return exposures;
+      }
+      const singleApps = (parsed as Record<string, unknown>)["singleApps"];
+      if (!Array.isArray(singleApps)) return exposures;
+      for (const singleApp of singleApps as unknown[]) {
+        if (!singleApp || typeof singleApp !== "object" || Array.isArray(singleApp)) {
+          continue;
+        }
+        const rawExposures = (singleApp as Record<string, unknown>)[
+          "internalPortExposures"
+        ];
+        if (!Array.isArray(rawExposures)) continue;
+        for (const rawExposure of rawExposures as unknown[]) {
+          if (
+            !rawExposure ||
+            typeof rawExposure !== "object" ||
+            Array.isArray(rawExposure)
+          ) {
+            continue;
+          }
+          const exposure = rawExposure as Record<string, unknown>;
+          if (
+            typeof exposure.id === "string" &&
+            (exposure.protocol === "tcp" || exposure.protocol === "udp") &&
+            typeof exposure.publishedPort === "number" &&
+            Number.isInteger(exposure.publishedPort)
+          ) {
+            exposures.push({
+              id: exposure.id,
+              protocol: exposure.protocol,
+              publishedPort: exposure.publishedPort,
+            });
+          }
+        }
+      }
+      return exposures;
+    } catch {
+      return exposures;
+    }
+  }
+
+  private assertInternalPublishedPortAvailable(protocol: string, port: number) {
+    const reservedTcp = new Set([22, 80, 443, 2049, 2377, 7443, 7946]);
+    const reservedUdp = new Set([4789, 7946]);
+    const normalizedProtocol = protocol === "udp" ? "udp" : "tcp";
+    const reserved =
+      normalizedProtocol === "udp" ? reservedUdp.has(port) : reservedTcp.has(port);
+    if (reserved) {
+      throw new ConflictException(
+        `${normalizedProtocol.toUpperCase()}/${port} is reserved by ResourcePortal or Docker Swarm infrastructure`,
+      );
+    }
+  }
+
+  private async ensurePrivilegedNetworking(
+    tenantId: string,
+    appGroupId: string,
+  ) {
+    const appGroup = await this.prisma.appGroup.findFirst({
+      where: { id: appGroupId, tenantId },
+      select: { networkPrivileged: true },
+    });
+    if (!appGroup) throw new NotFoundException("App Group not found");
+    if (!appGroup.networkPrivileged) {
+      throw new ForbiddenException(
+        "Internal port exposure requires Platform Admin privileged networking for this App Group",
+      );
+    }
+  }
+
+  private async findInternalPortExposureOrThrow(
+    appGroupId: string,
+    singleAppId: string,
+    exposureId: string,
+  ) {
+    const exposure = await this.prisma.internalPortExposure.findFirst({
+      where: { id: exposureId, appGroupId, singleAppId },
+    });
+    if (!exposure) {
+      throw new NotFoundException("Internal port exposure not found");
+    }
+    return exposure;
+  }
 
   private async ensureAppGroupBelongsToTenant(
     tenantId: string,
@@ -2278,6 +2536,9 @@ export class AppGroupsService {
               orderBy: { name: "asc" },
               include: { domains: { orderBy: { hostname: "asc" } } },
             },
+            internalPortExposures: {
+              orderBy: [{ publishedPort: "asc" }, { protocol: "asc" }],
+            },
             volumeAttachments: {
               orderBy: { mountPath: "asc" },
               include: { volume: true },
@@ -2334,6 +2595,26 @@ export class AppGroupsService {
 
     if (invalidEndpoints.length > 0) {
       throw new ConflictException("AppGroup has invalid HTTP endpoints");
+    }
+
+    const internalPortExposures = activeSingleApps.flatMap(
+      (singleApp) => singleApp.internalPortExposures,
+    );
+    if (internalPortExposures.length > 0 && !draft.networkPrivileged) {
+      throw new ConflictException(
+        "Internal Port Exposures require Platform Admin privileged networking",
+      );
+    }
+    const invalidInternalPorts = internalPortExposures.filter(
+      (exposure) =>
+        exposure.containerPort < 1 ||
+        exposure.containerPort > 65535 ||
+        exposure.publishedPort < 1 ||
+        exposure.publishedPort > 65535 ||
+        !["tcp", "udp"].includes(exposure.protocol),
+    );
+    if (invalidInternalPorts.length > 0) {
+      throw new ConflictException("AppGroup has invalid Internal Port Exposures");
     }
   }
 
@@ -2413,6 +2694,13 @@ export class AppGroupsService {
               dnsStatus: domain.dnsStatus,
               certificateStatus: domain.certificateStatus,
             })),
+          })),
+          internalPortExposures: singleApp.internalPortExposures.map((exposure) => ({
+            id: exposure.id,
+            name: exposure.name,
+            containerPort: exposure.containerPort,
+            publishedPort: exposure.publishedPort,
+            protocol: exposure.protocol,
           })),
           volumes: singleApp.volumeAttachments.map((attachment) => ({
             id: attachment.id,

@@ -67,6 +67,7 @@ export type PlatformNetworkEgressState = {
   enabled: boolean;
   revision: number;
   protectedCidrs: string[];
+  internalNetworkCidrs: string[];
   updatedAt: string;
   enforcement: unknown;
   appGroups: Array<{
@@ -74,6 +75,10 @@ export type PlatformNetworkEgressState = {
     name: string;
     tenantId: string;
     tenantName: string;
+    networkPrivileged: boolean;
+    hasPendingChanges: boolean;
+    internalPortExposureCount: number;
+    deployedInternalPortExposureCount: number;
   }>;
   rules: PlatformNetworkEgressRule[];
 };
@@ -165,6 +170,16 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
     deleteRule: (ruleId: string) =>
       this.request(`/platform/network-egress/rules/${encode(ruleId)}`, {
         method: "DELETE",
+      }),
+    setAppGroupPrivilege: (appGroupId: string, privileged: boolean) =>
+      this.request<{
+        id: string;
+        networkPrivileged: boolean;
+        changed: boolean;
+        deploymentRequired?: boolean;
+      }>(`/platform/network-egress/app-groups/${encode(appGroupId)}`, {
+        method: "PATCH",
+        body: { privileged },
       }),
   };
 

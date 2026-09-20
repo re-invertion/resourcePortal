@@ -117,6 +117,15 @@ describe("Stage 3 AppGroup completion", () => {
               domains: [{ id: "domain-id" }],
             },
           ],
+          internalPortExposures: [
+            {
+              id: "internal-port-id",
+              name: "dns-udp",
+              containerPort: 53,
+              publishedPort: 53,
+              protocol: "udp",
+            },
+          ],
         },
       ],
     });
@@ -153,6 +162,16 @@ describe("Stage 3 AppGroup completion", () => {
     ]);
     expect(plan.domainAssignments).toEqual([
       { domainId: "domain-id", httpEndpointId: "endpoint-id" },
+    ]);
+    expect(plan.internalPortExposures).toEqual([
+      {
+        id: "internal-port-id",
+        singleAppId: "app-id",
+        name: "dns-udp",
+        containerPort: 53,
+        publishedPort: 53,
+        protocol: "udp",
+      },
     ]);
   });
 });

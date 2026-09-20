@@ -14,5 +14,7 @@ export type NetworkEgressPolicySnapshot = {
   revision: number;
   blockedIpv4Cidrs: string[];
   blockedIpv6Cidrs: string[];
+  internalNetworkCidrs: string[];
+  privilegedAppGroupIds: string[];
   rules: NetworkEgressAllowRuleSnapshot[];
 };

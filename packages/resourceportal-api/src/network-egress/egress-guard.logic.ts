@@ -21,11 +21,17 @@ export type DockerGatewayNetworkInspect = {
   > | null;
 };
 
+export type RuntimeInternalPortExposure = {
+  publishedPort: number;
+  protocol: "tcp" | "udp";
+};
+
 export type TenantWorkload = {
   containerId: string;
   appGroupId: string;
   ipv4?: string;
   ipv6?: string;
+  internalPortExposures: RuntimeInternalPortExposure[];
 };
 
 export const DEFAULT_EGRESS_POLICY: NetworkEgressPolicySnapshot = {
@@ -34,6 +40,8 @@ export const DEFAULT_EGRESS_POLICY: NetworkEgressPolicySnapshot = {
   revision: 0,
   blockedIpv4Cidrs: [...DEFAULT_BLOCKED_IPV4_CIDRS],
   blockedIpv6Cidrs: [...DEFAULT_BLOCKED_IPV6_CIDRS],
+  internalNetworkCidrs: [],
+  privilegedAppGroupIds: [],
   rules: [],
 };
 
@@ -74,7 +82,15 @@ export function tenantWorkloads(
     const ipv4 = stripPrefix(gatewayEntry.IPv4Address);
     const ipv6 = stripPrefix(gatewayEntry.IPv6Address);
     if (!ipv4 && !ipv6) continue;
-    workloads.push({ containerId, appGroupId, ipv4, ipv6 });
+    workloads.push({
+      containerId,
+      appGroupId,
+      ipv4,
+      ipv6,
+      internalPortExposures: internalPortExposuresFromLabels(
+        container.Config?.Labels ?? {},
+      ),
+    });
   }
   return workloads.sort((a, b) => a.containerId.localeCompare(b.containerId));
 }
@@ -101,6 +117,7 @@ export function firewallRulesForWorkloads(
   const blocked = family === 4 ? policy.blockedIpv4Cidrs : policy.blockedIpv6Cidrs;
   const commands: string[][] = [];
   for (const workload of workloads) {
+    if (policy.privilegedAppGroupIds.includes(workload.appGroupId)) continue;
     const source = family === 4 ? workload.ipv4 : workload.ipv6;
     if (!source || isIP(source) !== family) continue;
     const sourceCidr = `${source}/${family === 4 ? 32 : 128}`;
@@ -131,6 +148,97 @@ export function firewallRulesForWorkloads(
     }
   }
   return commands;
+}
+
+export function internalPortExposuresFromLabels(
+  labels: Record<string, string>,
+): RuntimeInternalPortExposure[] {
+  const encoded = labels["resourceportal.internal-port-exposures-b64"];
+  if (!encoded) return [];
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const exposures: RuntimeInternalPortExposure[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const value = item as Record<string, unknown>;
+      const publishedPort = value.publishedPort;
+      const protocol = value.protocol;
+      if (
+        typeof publishedPort === "number" &&
+        Number.isInteger(publishedPort) &&
+        publishedPort >= 1 &&
+        publishedPort <= 65535 &&
+        (protocol === "tcp" || protocol === "udp")
+      ) {
+        exposures.push({ publishedPort, protocol });
+      }
+    }
+    return exposures;
+  } catch {
+    return [];
+  }
+}
+
+export function runtimeInternalPortExposures(workloads: TenantWorkload[]) {
+  const unique = new Map<string, RuntimeInternalPortExposure>();
+  for (const workload of workloads) {
+    for (const exposure of workload.internalPortExposures) {
+      unique.set(`${exposure.protocol}:${exposure.publishedPort}`, exposure);
+    }
+  }
+  return [...unique.values()].sort(
+    (a, b) => a.publishedPort - b.publishedPort || a.protocol.localeCompare(b.protocol),
+  );
+}
+
+export function internalPortFirewallRules(
+  policy: NetworkEgressPolicySnapshot,
+  workloads: TenantWorkload[],
+  family: 4 | 6,
+) {
+  const allowedCidrs = policy.internalNetworkCidrs.filter((cidr) => {
+    const address = cidr.split("/")[0] ?? "";
+    return isIP(address) === family;
+  });
+  const privilegedSources = workloads
+    .filter((workload) => policy.privilegedAppGroupIds.includes(workload.appGroupId))
+    .map((workload) => (family === 4 ? workload.ipv4 : workload.ipv6))
+    .filter((address): address is string => typeof address === "string" && isIP(address) === family)
+    .map((address) => `${address}/${family === 4 ? 32 : 128}`);
+  const allowedSources = [...new Set([...allowedCidrs, ...privilegedSources])];
+  const rules: string[][] = [];
+  for (const exposure of runtimeInternalPortExposures(workloads)) {
+    for (const cidr of allowedSources) {
+      rules.push([
+        "-s",
+        cidr,
+        "-p",
+        exposure.protocol,
+        "-m",
+        "conntrack",
+        "--ctstate",
+        "DNAT",
+        "--ctorigdstport",
+        String(exposure.publishedPort),
+        "-j",
+        "RETURN",
+      ]);
+    }
+    rules.push([
+      "-p",
+      exposure.protocol,
+      "-m",
+      "conntrack",
+      "--ctstate",
+      "DNAT",
+      "--ctorigdstport",
+      String(exposure.publishedPort),
+      "-j",
+      "REJECT",
+    ]);
+  }
+  return rules;
 }
 
 function protocolArgs(protocol: EgressProtocol, port: number) {
@@ -168,6 +276,10 @@ function isPolicy(value: unknown): value is NetworkEgressPolicySnapshot {
     item.blockedIpv4Cidrs.every((cidr) => typeof cidr === "string") &&
     Array.isArray(item.blockedIpv6Cidrs) &&
     item.blockedIpv6Cidrs.every((cidr) => typeof cidr === "string") &&
+    Array.isArray(item.internalNetworkCidrs) &&
+    item.internalNetworkCidrs.every((cidr) => typeof cidr === "string") &&
+    Array.isArray(item.privilegedAppGroupIds) &&
+    item.privilegedAppGroupIds.every((id) => isUuid(id)) &&
     Array.isArray(item.rules) &&
     item.rules.every(
       (rule) =>

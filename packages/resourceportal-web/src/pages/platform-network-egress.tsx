@@ -23,6 +23,10 @@ type AppGroupOption = {
   name: string;
   tenantId: string;
   tenantName: string;
+  networkPrivileged: boolean;
+  hasPendingChanges: boolean;
+  internalPortExposureCount: number;
+  deployedInternalPortExposureCount: number;
 };
 
 type EgressRule = {
@@ -50,6 +54,7 @@ type EgressState = {
   enabled: boolean;
   revision: number;
   protectedCidrs: string[];
+  internalNetworkCidrs: string[];
   updatedAt?: string;
   enforcement?: ReconciliationState | null;
   appGroups: AppGroupOption[];
@@ -68,6 +73,7 @@ export function PlatformNetworkEgressPage() {
   const state = useApi<EgressState>("/api/platform/network-egress");
   const [enabled, setEnabled] = useState(true);
   const [form, setForm] = useState(emptyForm);
+  const [privilegedAppGroupId, setPrivilegedAppGroupId] = useState("");
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{
     tone: "success" | "danger" | "warning";
@@ -83,7 +89,10 @@ export function PlatformNetworkEgressPage() {
         appGroupId: state.data?.appGroups[0]?.id ?? "",
       }));
     }
-  }, [state.data, form.appGroupId]);
+    if (!privilegedAppGroupId && state.data.appGroups[0]?.id) {
+      setPrivilegedAppGroupId(state.data.appGroups[0].id);
+    }
+  }, [state.data, form.appGroupId, privilegedAppGroupId]);
 
   const appliedRevision = state.data?.enforcement?.lastResult?.revision;
   const enforcementHealthy = Boolean(
@@ -117,6 +126,35 @@ export function PlatformNetworkEgressPage() {
           error instanceof Error
             ? error.message
             : "Unable to update network egress policy.",
+      });
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function updatePrivilege(privileged: boolean) {
+    if (!privilegedAppGroupId) return;
+    setWorking(true);
+    setNotice(undefined);
+    try {
+      await apiRequest(
+        `/api/platform/network-egress/app-groups/${encodeURIComponent(privilegedAppGroupId)}`,
+        { method: "PATCH", body: { privileged } },
+      );
+      await state.reload();
+      setNotice({
+        tone: privileged ? "warning" : "success",
+        message: privileged
+          ? "Privileged networking enabled. This App Group can reach private networks and can configure internal TCP/UDP port exposure."
+          : "Privileged networking revoked. The App Group is protected by the standard private-network egress policy again.",
+      });
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to update App Group network privilege.",
       });
     } finally {
       setWorking(false);
@@ -181,6 +219,10 @@ export function PlatformNetworkEgressPage() {
       setWorking(false);
     }
   }
+
+  const selectedPrivilegedGroup = state.data?.appGroups.find(
+    (appGroup) => appGroup.id === privilegedAppGroupId,
+  );
 
   const rows = useMemo(
     () =>
@@ -312,6 +354,84 @@ export function PlatformNetworkEgressPage() {
           </Callout>
         </div>
       ) : null}
+
+      <Card className="mb-6 p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2">
+              <NetworkIcon size={18} className="text-[#1769E0]" />
+              <h2 className="font-semibold text-[#172033]">Privileged App Group networking</h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-[#5B6678]">
+              Privileged App Groups bypass the private-network egress deny and may publish explicit TCP/UDP ports to the trusted internal network. This does not grant Docker privileged mode or host filesystem access.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(state.data?.internalNetworkCidrs ?? []).map((cidr) => (
+                <code key={cidr} className="rounded-md border border-[#D7E0EC] bg-[#F5F7FA] px-2.5 py-1.5 text-xs text-[#344054]">
+                  Internal source: {cidr}
+                </code>
+              ))}
+            </div>
+          </div>
+          <StatusBadge tone={selectedPrivilegedGroup?.networkPrivileged ? "warning" : "neutral"}>
+            {selectedPrivilegedGroup?.networkPrivileged ? "Privileged" : "Standard"}
+          </StatusBadge>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-[minmax(260px,1fr)_minmax(220px,.7fr)_auto] md:items-end">
+          <Field label="App Group">
+            <Select
+              value={privilegedAppGroupId}
+              onChange={(event) => setPrivilegedAppGroupId(event.target.value)}
+            >
+              {(state.data?.appGroups ?? []).map((appGroup) => (
+                <option key={appGroup.id} value={appGroup.id}>
+                  {appGroup.tenantName} / {appGroup.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <DetailList
+            columns={1}
+            items={[
+              { label: "Draft internal ports", value: selectedPrivilegedGroup?.internalPortExposureCount ?? 0 },
+              { label: "Deployed internal ports", value: selectedPrivilegedGroup?.deployedInternalPortExposureCount ?? 0 },
+              { label: "Pending deployment changes", value: selectedPrivilegedGroup?.hasPendingChanges ? "Yes" : "No" },
+            ]}
+          />
+          <div className="flex justify-end">
+            {selectedPrivilegedGroup?.networkPrivileged ? (
+              <ConfirmActionButton
+                size="sm"
+                triggerVariant="ghost"
+                disabled={
+                  working ||
+                  (selectedPrivilegedGroup?.internalPortExposureCount ?? 0) > 0 ||
+                  (selectedPrivilegedGroup?.deployedInternalPortExposureCount ?? 0) > 0
+                }
+                confirmTitle="Revoke privileged networking?"
+                confirmDescription="The App Group will immediately return to the standard private-network egress policy. Remove and deploy all internal port exposures first."
+                confirmLabel="Revoke privilege"
+                onConfirm={() => updatePrivilege(false)}
+              >
+                Revoke privilege
+              </ConfirmActionButton>
+            ) : (
+              <ConfirmActionButton
+                size="sm"
+                triggerVariant="ghost"
+                disabled={working || !selectedPrivilegedGroup}
+                confirmTitle="Grant privileged networking?"
+                confirmDescription="This App Group will be allowed to reach private infrastructure and its editors will be able to publish explicitly configured TCP/UDP ports to the internal network."
+                confirmLabel="Grant privilege"
+                onConfirm={() => updatePrivilege(true)}
+              >
+                Grant privilege
+              </ConfirmActionButton>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <Card className="mb-6 p-5">
         <h2 className="font-semibold text-[#172033]">Protected destination ranges</h2>

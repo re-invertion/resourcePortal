@@ -6,8 +6,9 @@ import { DeploymentExecutionService } from "./deployment-execution.service";
 type StackService = {
   networks?: string[];
   labels?: Record<string, string>;
+  ports?: Array<{ target: number; published: number; protocol: string; mode: string }>;
   deploy: {
-    placement: { constraints: string[] };
+    placement: { constraints: string[]; max_replicas_per_node?: number };
     labels?: Record<string, string>;
   };
 };
@@ -234,4 +235,51 @@ describe("v0.2 tenant placement and App Group network rendering", () => {
     expect(stack.services.internal_web.networks).toEqual(["default"]);
     expect(stack.services.internal_web.deploy.labels).toBeUndefined();
   });
+  it("publishes privileged App Group internal ports in host mode with guard metadata", async () => {
+    const appGroupId = "55555555-5555-4555-8555-555555555555";
+    const rendered = await renderStack(
+      JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "66666666-6666-4666-8666-666666666666",
+          name: "dns",
+          runtimeState: "Running",
+          runtimeDraftRevision: 2,
+        },
+        singleApps: [
+          app({
+            name: "dns-server",
+            internalPortExposures: [
+              {
+                id: "77777777-7777-4777-8777-777777777777",
+                name: "dns-udp",
+                containerPort: 53,
+                publishedPort: 53,
+                protocol: "udp",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const stack = parsedStack(rendered);
+    expect(stack.services.dns_server.ports).toEqual([
+      { target: 53, published: 53, protocol: "udp", mode: "host" },
+    ]);
+    expect(
+      stack.services.dns_server.deploy.placement.max_replicas_per_node,
+    ).toBe(1);
+    expect(
+      stack.services.dns_server.labels?.["resourceportal.network-privileged"],
+    ).toBeUndefined();
+    const encoded =
+      stack.services.dns_server.labels?.[
+        "resourceportal.internal-port-exposures-b64"
+      ];
+    expect(encoded).toBeTruthy();
+    expect(JSON.parse(Buffer.from(encoded ?? "", "base64").toString("utf8"))).toEqual([
+      { publishedPort: 53, protocol: "udp" },
+    ]);
+  });
+
 });

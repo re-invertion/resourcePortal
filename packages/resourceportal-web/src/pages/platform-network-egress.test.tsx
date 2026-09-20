@@ -13,6 +13,7 @@ const initial = {
   enabled: true,
   revision: 4,
   protectedCidrs: ["10.0.0.0/8", "192.168.0.0/16", "169.254.0.0/16"],
+  internalNetworkCidrs: ["192.168.100.0/24"],
   updatedAt: "2026-09-20T16:00:00.000Z",
   enforcement: {
     lastSuccessAt: "2026-09-20T16:00:01.000Z",
@@ -27,6 +28,10 @@ const initial = {
       name: "penpot",
       tenantId: "22222222-2222-4222-8222-222222222222",
       tenantName: "Design",
+      networkPrivileged: false,
+      hasPendingChanges: false,
+      internalPortExposureCount: 0,
+      deployedInternalPortExposureCount: 0,
     },
   ],
   rules: [],
@@ -108,5 +113,58 @@ it("creates an App Group-scoped TCP exception without redeploying the applicatio
       port: 443,
       description: "Monitoring API",
     });
+  });
+});
+
+it("grants privileged networking to a selected App Group through the Platform Admin API", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (
+      url ===
+        "/api/platform/network-egress/app-groups/11111111-1111-4111-8111-111111111111" &&
+      init?.method === "PATCH"
+    ) {
+      return Promise.resolve(
+        json({
+          id: initial.appGroups[0].id,
+          networkPrivileged: true,
+          changed: true,
+          deploymentRequired: false,
+        }),
+      );
+    }
+    if (url === "/api/platform/network-egress") {
+      return Promise.resolve(json(initial));
+    }
+    return Promise.resolve(json({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformNetworkEgressPage />);
+  await screen.findByText("Privileged App Group networking");
+  expect(screen.getByText("Internal source: 192.168.100.0/24")).toBeTruthy();
+
+  const grant = screen.getByRole("button", { name: "Grant privilege" });
+  await waitFor(() => expect((grant as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(grant);
+  const dialog = screen.getByRole("dialog", {
+    name: "Grant privileged networking?",
+  });
+  expect(dialog).toBeTruthy();
+  const confirm = Array.from(dialog.querySelectorAll("button")).find(
+    (button) => button.textContent === "Grant privilege",
+  );
+  expect(confirm).toBeTruthy();
+  fireEvent.click(confirm as HTMLButtonElement);
+
+  await waitFor(() => {
+    const request = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url) ===
+          "/api/platform/network-egress/app-groups/11111111-1111-4111-8111-111111111111" &&
+        init?.method === "PATCH",
+    );
+    expect(request).toBeTruthy();
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ privileged: true });
   });
 });

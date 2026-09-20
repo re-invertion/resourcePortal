@@ -150,4 +150,16 @@ Platform Administrators manage the policy through `GET/PATCH /api/platform/netwo
 
 The database is the source of truth. The worker reconciles a versioned policy snapshot into the global guard service without redeploying tenant applications. Existing v0.2.x App Groups are recognized from their legacy Swarm stack namespace, while newly rendered workloads also receive explicit `resourceportal.app-group-id` and tenant workload labels. A fresh guard without a policy snapshot fails closed to the default protected ranges; during a normal control-plane rolling update an existing applied firewall state is preserved until the worker reattaches the authoritative snapshot.
 
-Factory reset removes only the ResourcePortal-owned `RP-TENANT-EGRESS` and `RP-TENANT-HOST` chains and their parent jumps; it does not flush Docker-owned or host firewall chains.
+Factory reset removes only the ResourcePortal-owned `RP-TENANT-EGRESS`, `RP-TENANT-HOST`, and `RP-TENANT-INTERNAL-PORTS` chains and their parent jumps; it does not flush Docker-owned or host firewall chains.
+
+### Privileged App Group networking
+
+Platform Administrators can grant an App Group **privileged networking** without granting Docker `privileged` mode, host filesystem access, or additional container capabilities. A privileged App Group bypasses the default ResourcePortal private-network egress deny, so its tenant workloads can reach private infrastructure subject to the underlying host/network firewall.
+
+Privilege is managed through `PATCH /api/platform/network-egress/app-groups/:appGroupId`. Granting or revoking the capability is a platform-policy change and does not itself require an App Group deployment. Revocation is refused while an Internal Port Exposure exists in the draft or is still present in the currently deployed artifact. Unrelated pending App Group changes do not block revocation.
+
+A privileged App Group may configure **Internal Port Exposures** through the App Group networking API. Each exposure binds one TCP or UDP container port to an explicit Swarm host published port using `mode: host`. Port create/update/delete operations are deployment-draft changes and take effect only after the App Group is deployed. ResourcePortal renders a maximum of one replica per node for services with host-published ports to prevent same-node bind collisions.
+
+The global network guard discovers the currently running port exposures from ResourcePortal workload labels, not from the undeployed database draft. It permits the published port from the installer-defined internal network CIDR (`RP_CFG_CLUSTER_CIDR`, rendered as `RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS`) and from privileged ResourcePortal workloads, then rejects other sources in `DOCKER-USER`. This keeps a deployed port protected throughout update, delete and rollback transitions. A missing trusted CIDR fails closed for published ports.
+
+ResourcePortal reserves host ports used by its own infrastructure and Docker Swarm. In particular, TCP `22`, `80`, `443`, `2049`, `2377`, `7443`, `7946` and UDP `4789`, `7946` cannot be assigned as Internal Port Exposures. DNS ports such as TCP/UDP `53` remain available for privileged workloads.

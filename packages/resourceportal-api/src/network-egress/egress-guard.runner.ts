@@ -4,6 +4,7 @@ import {
   decodeEgressPolicy,
   egressPolicyDigest,
   firewallRulesForWorkloads,
+  internalPortFirewallRules,
   tenantWorkloads,
   type DockerContainerInspect,
   type DockerGatewayNetworkInspect,
@@ -13,6 +14,7 @@ import { EGRESS_POLICY_ENV } from "./network-egress.constants";
 const logger = new Logger("NetworkEgressGuard");
 const FORWARD_CHAIN = "RP-TENANT-EGRESS";
 const HOST_CHAIN = "RP-TENANT-HOST";
+const INTERNAL_PORT_CHAIN = "RP-TENANT-INTERNAL-PORTS";
 const reconcileMs = readPositiveInt(
   process.env.EGRESS_GUARD_RECONCILE_INTERVAL_MS,
   2_000,
@@ -81,13 +83,21 @@ async function reconcile() {
   const workloads = tenantWorkloads(containers, gateway);
   const ipv4Rules = firewallRulesForWorkloads(policy, workloads, 4);
   const ipv6Rules = firewallRulesForWorkloads(policy, workloads, 6);
-  const digest = egressPolicyDigest({
-    ...policy,
-    rules: policy.rules,
-  }) + `:${workloads.map((item) => `${item.containerId}:${item.ipv4 ?? ""}:${item.ipv6 ?? ""}`).join(",")}`;
+  const ipv4InternalPortRules = internalPortFirewallRules(policy, workloads, 4);
+  const ipv6InternalPortRules = internalPortFirewallRules(policy, workloads, 6);
+  const digest = egressPolicyDigest(policy) +
+    `:${workloads
+      .map(
+        (item) =>
+          `${item.containerId}:${item.ipv4 ?? ""}:${item.ipv6 ?? ""}:${item.internalPortExposures
+            .map((exposure) => `${exposure.protocol}/${exposure.publishedPort}`)
+            .join("+")}`,
+      )
+      .join(",")}`;
   if (digest === lastDigest) return;
 
   await applyFamily("iptables", policy.enabled, ipv4Rules);
+  await applyInternalPortFamily("iptables", ipv4InternalPortRules);
   if (await commandExists("ip6tables")) {
     const ipv6ForwardingAvailable = await chainExists(
       "ip6tables",
@@ -95,6 +105,7 @@ async function reconcile() {
     );
     if (ipv6ForwardingAvailable) {
       await applyFamily("ip6tables", policy.enabled, ipv6Rules);
+      await applyInternalPortFamily("ip6tables", ipv6InternalPortRules);
     } else if (ipv6Rules.length > 0) {
       throw new Error(
         "Tenant IPv6 workload detected but Docker IPv6 DOCKER-USER chain is unavailable",
@@ -103,7 +114,7 @@ async function reconcile() {
   }
   lastDigest = digest;
   logger.log(
-    `Applied egress policy revision=${policy.revision} enabled=${policy.enabled} workloads=${workloads.length} rules=${policy.rules.length}`,
+    `Applied network policy revision=${policy.revision} enabled=${policy.enabled} workloads=${workloads.length} rules=${policy.rules.length} internalPorts=${ipv4InternalPortRules.filter((rule) => rule.includes("REJECT")).length}`,
   );
 }
 
@@ -130,6 +141,24 @@ async function applyFamily(
   for (const rule of rules) {
     await run(binary, ["-w", "5", "-A", FORWARD_CHAIN, ...rule]);
     await run(binary, ["-w", "5", "-A", HOST_CHAIN, ...rule]);
+  }
+}
+
+async function applyInternalPortFamily(
+  binary: "iptables" | "ip6tables",
+  rules: string[][],
+) {
+  await ensureChain(binary, INTERNAL_PORT_CHAIN);
+  if (rules.length === 0) {
+    await removeAllJumps(binary, "DOCKER-USER", INTERNAL_PORT_CHAIN);
+    await run(binary, ["-w", "5", "-F", INTERNAL_PORT_CHAIN]);
+    return;
+  }
+
+  await ensureJump(binary, "DOCKER-USER", INTERNAL_PORT_CHAIN);
+  await run(binary, ["-w", "5", "-F", INTERNAL_PORT_CHAIN]);
+  for (const rule of rules) {
+    await run(binary, ["-w", "5", "-A", INTERNAL_PORT_CHAIN, ...rule]);
   }
 }
 

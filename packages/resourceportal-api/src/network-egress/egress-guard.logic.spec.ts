@@ -5,6 +5,7 @@ import {
   decodeEgressPolicy,
   encodeEgressPolicy,
   firewallRulesForWorkloads,
+  internalPortFirewallRules,
   tenantWorkloads,
 } from "./egress-guard.logic";
 import type { NetworkEgressPolicySnapshot } from "./network-egress.types";
@@ -89,6 +90,7 @@ describe("egress guard logic", () => {
         appGroupId: appGroupA,
         ipv4: "172.19.0.18",
         ipv6: undefined,
+        internalPortExposures: [],
       },
     ]);
   });
@@ -116,7 +118,7 @@ describe("egress guard logic", () => {
     };
     const rules = firewallRulesForWorkloads(
       policy,
-      [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18" }],
+      [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18", internalPortExposures: [] }],
       4,
     );
     expect(rules[0]).toEqual([
@@ -146,9 +148,87 @@ describe("egress guard logic", () => {
     expect(
       firewallRulesForWorkloads(
         { ...DEFAULT_EGRESS_POLICY, enabled: false },
-        [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18" }],
+        [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18", internalPortExposures: [] }],
         4,
       ),
     ).toEqual([]);
   });
+  it("bypasses private-network egress denies only for privileged App Groups", () => {
+    const policy: NetworkEgressPolicySnapshot = {
+      ...DEFAULT_EGRESS_POLICY,
+      privilegedAppGroupIds: [appGroupA],
+    };
+    expect(
+      firewallRulesForWorkloads(
+        policy,
+        [
+          {
+            containerId: "c1",
+            appGroupId: appGroupA,
+            ipv4: "172.19.0.18",
+            internalPortExposures: [],
+          },
+        ],
+        4,
+      ),
+    ).toEqual([]);
+  });
+
+  it("allows internal published ports only from the trusted cluster CIDR", () => {
+    const encoded = Buffer.from(
+      JSON.stringify([{ publishedPort: 53, protocol: "udp" }]),
+      "utf8",
+    ).toString("base64");
+    const workloads = tenantWorkloads(
+      [
+        {
+          Id: "container-dns",
+          Config: {
+            Labels: {
+              "resourceportal.app-group-id": appGroupA,
+              "resourceportal.internal-port-exposures-b64": encoded,
+            },
+          },
+        },
+      ],
+      { Containers: { "container-dns": { IPv4Address: "172.19.0.22/16" } } },
+    );
+    const rules = internalPortFirewallRules(
+      {
+        ...DEFAULT_EGRESS_POLICY,
+        internalNetworkCidrs: ["192.168.100.0/24"],
+      },
+      workloads,
+      4,
+    );
+    expect(rules).toEqual([
+      [
+        "-s",
+        "192.168.100.0/24",
+        "-p",
+        "udp",
+        "-m",
+        "conntrack",
+        "--ctstate",
+        "DNAT",
+        "--ctorigdstport",
+        "53",
+        "-j",
+        "RETURN",
+      ],
+      [
+        "-p",
+        "udp",
+        "-m",
+        "conntrack",
+        "--ctstate",
+        "DNAT",
+        "--ctorigdstport",
+        "53",
+        "-j",
+        "REJECT",
+      ],
+    ]);
+  });
+
 });

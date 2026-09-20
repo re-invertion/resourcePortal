@@ -4,12 +4,14 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { CreateNetworkEgressRuleDto } from "./dto/create-network-egress-rule.dto";
 import type { UpdateNetworkEgressPolicyDto } from "./dto/update-network-egress-policy.dto";
+import type { UpdateAppGroupNetworkPrivilegeDto } from "./dto/update-app-group-network-privilege.dto";
 import { parseAndNormalizeCidr } from "./network-egress.cidr";
 import {
   DEFAULT_BLOCKED_IPV4_CIDRS,
@@ -23,7 +25,10 @@ import type {
 
 @Injectable()
 export class NetworkEgressService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async getPlatformState() {
     const [policy, rules, appGroups, latestReconciliation] = await Promise.all([
@@ -48,6 +53,10 @@ export class NetworkEgressService {
         select: {
           id: true,
           name: true,
+          networkPrivileged: true,
+          hasPendingChanges: true,
+          currentDeploymentVersion: true,
+          _count: { select: { internalPortExposures: true } },
           tenant: { select: { id: true, name: true } },
         },
         orderBy: [{ tenant: { name: "asc" } }, { name: "asc" }],
@@ -65,6 +74,18 @@ export class NetworkEgressService {
       }),
     ]);
 
+    const deployedExposureCounts = new Map<string, number>(
+      await Promise.all(
+        appGroups.map(async (appGroup) => [
+          appGroup.id,
+          await this.deployedInternalPortExposureCount(
+            appGroup.id,
+            appGroup.currentDeploymentVersion,
+          ),
+        ] as const),
+      ),
+    );
+
     return {
       enabled: policy.enabled,
       revision: policy.revision,
@@ -73,12 +94,18 @@ export class NetworkEgressService {
         ...DEFAULT_BLOCKED_IPV6_CIDRS,
       ],
       updatedAt: policy.updatedAt,
+      internalNetworkCidrs: this.internalNetworkCidrs(),
       enforcement: latestReconciliation,
       appGroups: appGroups.map((appGroup) => ({
         id: appGroup.id,
         name: appGroup.name,
         tenantId: appGroup.tenant.id,
         tenantName: appGroup.tenant.name,
+        networkPrivileged: appGroup.networkPrivileged,
+        hasPendingChanges: appGroup.hasPendingChanges,
+        internalPortExposureCount: appGroup._count.internalPortExposures,
+        deployedInternalPortExposureCount:
+          deployedExposureCounts.get(appGroup.id) ?? 0,
       })),
       rules: rules.map((rule) => ({
         id: rule.id,
@@ -127,6 +154,83 @@ export class NetworkEgressService {
       enabled: updated.enabled,
       revision: updated.revision,
       updatedAt: updated.updatedAt,
+    };
+  }
+
+  async updateAppGroupPrivilege(
+    appGroupId: string,
+    dto: UpdateAppGroupNetworkPrivilegeDto,
+    actor: AuthenticatedUser,
+  ) {
+    const existing = await this.prisma.appGroup.findUnique({
+      where: { id: appGroupId },
+      select: {
+        id: true,
+        name: true,
+        networkPrivileged: true,
+        currentDeploymentVersion: true,
+        _count: { select: { internalPortExposures: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException("App Group not found");
+    if (existing.networkPrivileged === dto.privileged) {
+      return {
+        id: existing.id,
+        networkPrivileged: existing.networkPrivileged,
+        changed: false,
+      };
+    }
+    if (!dto.privileged && existing._count.internalPortExposures > 0) {
+      throw new ConflictException(
+        "Remove all Internal Port Exposures before revoking privileged networking",
+      );
+    }
+    if (!dto.privileged) {
+      const deployedExposureCount = await this.deployedInternalPortExposureCount(
+        existing.id,
+        existing.currentDeploymentVersion,
+      );
+      if (deployedExposureCount > 0) {
+        throw new ConflictException(
+          "Deploy the Internal Port Exposure removal before revoking privileged networking",
+        );
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const appGroup = await tx.appGroup.update({
+        where: { id: appGroupId },
+        data: {
+          networkPrivileged: dto.privileged,
+          updatedBy: actor.id,
+        },
+        select: { id: true, name: true, networkPrivileged: true },
+      });
+      await tx.platformEgressPolicy.upsert({
+        where: { id: PLATFORM_EGRESS_POLICY_ID },
+        create: {
+          id: PLATFORM_EGRESS_POLICY_ID,
+          enabled: true,
+          revision: 1,
+          updatedBy: actor.id,
+        },
+        update: { revision: { increment: 1 }, updatedBy: actor.id },
+      });
+      await this.audit(tx, actor, {
+        action: "platform_network_egress.app_group_privilege.update",
+        resourceType: "AppGroup",
+        resourceId: appGroup.id,
+        resourceName: appGroup.name,
+        changes: { networkPrivileged: appGroup.networkPrivileged },
+      });
+      return appGroup;
+    });
+
+    return {
+      id: updated.id,
+      networkPrivileged: updated.networkPrivileged,
+      changed: true,
+      deploymentRequired: false,
     };
   }
 
@@ -249,9 +353,9 @@ export class NetworkEgressService {
   }
 
   async policySnapshot(): Promise<NetworkEgressPolicySnapshot> {
-    const [policy, rules] = await Promise.all([
-      this.getPolicy(),
-      this.prisma.platformEgressAllowRule.findMany({
+    const [policy, rules, privilegedAppGroups] = await Promise.all([
+        this.getPolicy(),
+        this.prisma.platformEgressAllowRule.findMany({
         orderBy: [
           { appGroupId: "asc" },
           { destinationCidr: "asc" },
@@ -265,19 +369,74 @@ export class NetworkEgressService {
           protocol: true,
           port: true,
         },
-      }),
-    ]);
+        }),
+        this.prisma.appGroup.findMany({
+          where: { networkPrivileged: true },
+          select: { id: true },
+          orderBy: { id: "asc" },
+        }),
+      ]);
     return {
       version: 1,
       enabled: policy.enabled,
       revision: policy.revision,
       blockedIpv4Cidrs: [...DEFAULT_BLOCKED_IPV4_CIDRS],
       blockedIpv6Cidrs: [...DEFAULT_BLOCKED_IPV6_CIDRS],
+      internalNetworkCidrs: this.internalNetworkCidrs(),
+      privilegedAppGroupIds: privilegedAppGroups.map((appGroup) => appGroup.id),
       rules: rules.map((rule) => ({
         ...rule,
         protocol: normalizeProtocol(rule.protocol),
       })),
     };
+  }
+
+  private async deployedInternalPortExposureCount(
+    appGroupId: string,
+    currentDeploymentVersion: number | null,
+  ): Promise<number> {
+    if (currentDeploymentVersion === null) return 0;
+    const deployment = await this.prisma.appGroupDeployment.findFirst({
+      where: { appGroupId, version: currentDeploymentVersion },
+      select: { stackConfig: true },
+    });
+    return this.internalPortExposureCountFromStackConfig(deployment?.stackConfig ?? null);
+  }
+
+  private internalPortExposureCountFromStackConfig(
+    stackConfig: string | null,
+  ): number {
+    if (!stackConfig) return 0;
+    try {
+      const parsed = JSON.parse(stackConfig) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return 0;
+      const singleApps = (parsed as { singleApps?: unknown }).singleApps;
+      if (!Array.isArray(singleApps)) return 0;
+      let count = 0;
+      for (const singleApp of singleApps as unknown[]) {
+        if (!singleApp || typeof singleApp !== "object" || Array.isArray(singleApp)) {
+          continue;
+        }
+        const exposures = (singleApp as Record<string, unknown>)[
+          "internalPortExposures"
+        ];
+        if (Array.isArray(exposures)) count += exposures.length;
+      }
+      return count;
+    } catch {
+      return 0;
+    }
+  }
+
+  private internalNetworkCidrs() {
+    return (
+      this.config.get<string>("RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS") ??
+      this.config.get<string>("INSTALLER_CLUSTER_CIDR") ??
+      ""
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
   }
 
   private getPolicy() {
