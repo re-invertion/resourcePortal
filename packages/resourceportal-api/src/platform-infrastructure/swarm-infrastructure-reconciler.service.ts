@@ -21,6 +21,7 @@ export class SwarmInfrastructureReconcilerService
   ) {}
 
   onModuleInit() {
+    if (this.oneShot()) return;
     void this.reconcileOnce();
     const intervalMs = this.config.get<number>(
       "SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS",
@@ -38,6 +39,12 @@ export class SwarmInfrastructureReconcilerService
       clearInterval(this.timer);
       this.timer = undefined;
     }
+  }
+
+  private oneShot() {
+    return ["1", "true", "yes", "on"].includes(
+      (this.config.get<string>("WORKER_ONCE") ?? "").trim().toLowerCase(),
+    );
   }
 
   async reconcileOnce() {

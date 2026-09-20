@@ -33,7 +33,10 @@ export class BillingWorkerService
   ) {}
 
   onApplicationBootstrap() {
-    if (process.env.NODE_ENV === "test") {
+    if (
+      process.env.NODE_ENV === "test" ||
+      this.isTruthy(process.env.WORKER_ONCE)
+    ) {
       return;
     }
 
@@ -52,6 +55,12 @@ export class BillingWorkerService
       clearInterval(this.timer);
       this.timer = undefined;
     }
+  }
+
+  private isTruthy(value: string | undefined) {
+    return ["1", "true", "yes", "on"].includes(
+      (value ?? "").trim().toLowerCase(),
+    );
   }
 
   async reconcileClosedPeriods(now = new Date()) {
