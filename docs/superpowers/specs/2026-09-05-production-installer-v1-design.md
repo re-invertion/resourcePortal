@@ -127,7 +127,7 @@ Sensitive settings support `*_FILE` loading so Swarm Secrets can be mounted unde
 
 ## Authentication and ingress
 
-Production uses ZITADEL/OIDC. Installer bootstraps the first user idempotently and appends its stable ZITADEL user ID to `PLATFORM_ADMIN_USER_IDS` without overwriting existing IDs.
+Production uses ZITADEL/OIDC. Installer bootstraps the first user idempotently and appends its stable ZITADEL user ID to `PLATFORM_ADMIN_USER_IDS` without overwriting existing IDs. Platform administrator authorization resolves configured ZITADEL IDs through the authenticated ResourcePortal `UserIdentity` for the primary OIDC issuer; internal ResourcePortal `User.id` UUIDs remain accepted for backward compatibility.
 
 A production domain is required before Web Console login is enabled. Installer verifies both public DNS names against the intended ingress address, deploys ingress first with the Let's Encrypt staging resolver to prove HTTP-01 reachability without consuming production issuance limits, and only then enables the selected final resolver. Production is the default and requires publicly trusted TLS; `--acme-environment staging` is an explicit disposable-E2E mode and is visibly marked as not publicly trusted.
 
