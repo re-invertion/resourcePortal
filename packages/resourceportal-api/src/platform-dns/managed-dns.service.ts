@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Injectable,
@@ -9,7 +10,11 @@ import { randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
-import { CloudflareDnsService } from "./cloudflare-dns.service";
+import {
+  CloudflareApiError,
+  CloudflareDnsRecordConflictError,
+  CloudflareDnsService,
+} from "./cloudflare-dns.service";
 import type { UpdatePlatformDnsDto } from "./dto/update-platform-dns.dto";
 import { PLATFORM_DNS_INTEGRATION_ID } from "./platform-dns.constants";
 
@@ -79,7 +84,7 @@ export class ManagedDnsService {
           where: { id: PLATFORM_DNS_INTEGRATION_ID },
           data: { lastError: safeMessage(error), updatedBy: actor.id },
         });
-        throw error;
+        this.throwCloudflareHttpError(error);
       }
     }
 
@@ -148,39 +153,80 @@ export class ManagedDnsService {
         where: { id: PLATFORM_DNS_INTEGRATION_ID },
         data: { lastError: safeMessage(error), updatedBy: actor.id },
       });
-      throw error;
+      this.throwCloudflareHttpError(error);
     }
   }
 
   async provisionManagedDomain(hostname: string) {
     const state = await this.getState();
     const configuration = this.configuration(state, true);
-    return this.cloudflare.ensureManagedCname({
-      ...configuration,
-      hostname,
-      targetHostname: this.targetHostname(),
-    });
+    try {
+      return await this.cloudflare.ensureManagedCname({
+        ...configuration,
+        hostname,
+        targetHostname: this.targetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
   }
 
   async deleteManagedDomain(hostname: string) {
     const state = await this.getState();
     const configuration = this.configuration(state, false);
-    return this.cloudflare.deleteManagedCname({
-      ...configuration,
-      hostname,
-      targetHostname: this.targetHostname(),
-    });
+    try {
+      return await this.cloudflare.deleteManagedCname({
+        ...configuration,
+        hostname,
+        targetHostname: this.targetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
   }
 
   async managedDomainExists(hostname: string) {
     const state = await this.getState();
     if (!state.apiTokenCiphertext || !state.zoneId) return false;
     const configuration = this.configuration(state, false);
-    return this.cloudflare.hasManagedCname({
-      ...configuration,
-      hostname,
-      targetHostname: this.targetHostname(),
-    });
+    try {
+      return await this.cloudflare.hasManagedCname({
+        ...configuration,
+        hostname,
+        targetHostname: this.targetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
+  }
+
+  private throwCloudflareHttpError(error: unknown): never {
+    if (error instanceof CloudflareDnsRecordConflictError) {
+      throw new ConflictException({
+        code: "CloudflareDnsRecordConflict",
+        message: error.message,
+        details: {
+          hostname: error.hostname,
+          existingRecords: error.records.map((record) => ({
+            type: record.type,
+            content: record.content,
+          })),
+        },
+      });
+    }
+    if (error instanceof CloudflareApiError) {
+      if (error.category === "configuration") {
+        throw new BadRequestException({
+          code: "CloudflareConfigurationError",
+          message: error.message,
+        });
+      }
+      throw new BadGatewayException({
+        code: "CloudflareUpstreamError",
+        message: error.message,
+      });
+    }
+    throw error;
   }
 
   private async reconcileExistingManagedDomains(configuration: {

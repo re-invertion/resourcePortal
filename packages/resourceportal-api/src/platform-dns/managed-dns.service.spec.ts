@@ -1,9 +1,18 @@
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { DomainType } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { EncryptionService } from "../security/encryption.service";
-import type { CloudflareDnsService } from "./cloudflare-dns.service";
+import {
+  CloudflareApiError,
+  CloudflareDnsRecordConflictError,
+  type CloudflareDnsService,
+} from "./cloudflare-dns.service";
 import { ManagedDnsService } from "./managed-dns.service";
 import { PLATFORM_DNS_INTEGRATION_ID } from "./platform-dns.constants";
 
@@ -168,4 +177,109 @@ describe("ManagedDnsService", () => {
       where: { type: DomainType.Managed },
     });
   });
+
+  it("returns an actionable 409 when an existing Cloudflare record blocks reconciliation", async () => {
+    const { service, prisma, cloudflare } = fixture();
+    prisma.domain.findMany.mockResolvedValue([
+      { hostname: "design.portal.resource-portal.pl" },
+    ]);
+    cloudflare.ensureManagedCname.mockRejectedValue(
+      new CloudflareDnsRecordConflictError(
+        "design.portal.resource-portal.pl",
+        [
+          {
+            id: "legacy-a",
+            type: "A",
+            name: "design.portal.resource-portal.pl",
+            content: "109.206.199.72",
+          },
+        ],
+      ),
+    );
+
+    try {
+      await service.updatePlatformState(
+        {
+          enabled: true,
+          zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          apiToken: "cloudflare-token-that-is-long-enough",
+        },
+        actor,
+      );
+      throw new Error("Expected conflict");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConflictException);
+      const conflict = error as ConflictException;
+      expect(conflict.getStatus()).toBe(409);
+      const response = conflict.getResponse() as {
+        code?: unknown;
+        message?: unknown;
+        details?: {
+          hostname?: unknown;
+          existingRecords?: Array<{ type?: unknown; content?: unknown }>;
+        };
+      };
+      expect(response.code).toBe("CloudflareDnsRecordConflict");
+      expect(response.message).toContain("design.portal.resource-portal.pl");
+      expect(response.details).toEqual({
+        hostname: "design.portal.resource-portal.pl",
+        existingRecords: [{ type: "A", content: "109.206.199.72" }],
+      });
+    }
+    const updateCall = prisma.platformDnsIntegration.update.mock.calls.at(-1)?.[0] as
+      | { data?: { lastError?: unknown } }
+      | undefined;
+    expect(updateCall?.data?.lastError).toContain(
+      "design.portal.resource-portal.pl",
+    );
+  });
+
+  it("returns a readable 400 for Cloudflare configuration errors", async () => {
+    const { service, cloudflare } = fixture();
+    cloudflare.validateConnection.mockRejectedValue(
+      new CloudflareApiError("Cloudflare API token is invalid", "configuration"),
+    );
+
+    await expect(
+      service.updatePlatformState(
+        {
+          enabled: true,
+          zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          apiToken: "cloudflare-token-that-is-long-enough",
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      constructor: BadRequestException,
+      response: {
+        code: "CloudflareConfigurationError",
+        message: "Cloudflare API token is invalid",
+      },
+    });
+  });
+
+  it("returns a readable 502 when Cloudflare itself is unavailable", async () => {
+    const { service, cloudflare } = fixture();
+    cloudflare.validateConnection.mockRejectedValue(
+      new CloudflareApiError("Cloudflare API request failed: timeout", "upstream"),
+    );
+
+    await expect(
+      service.updatePlatformState(
+        {
+          enabled: true,
+          zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          apiToken: "cloudflare-token-that-is-long-enough",
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      constructor: BadGatewayException,
+      response: {
+        code: "CloudflareUpstreamError",
+        message: "Cloudflare API request failed: timeout",
+      },
+    });
+  });
+
 });

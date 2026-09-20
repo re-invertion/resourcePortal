@@ -27,10 +27,28 @@ export type CloudflareDnsRecord = {
   comment?: string | null;
 };
 
+export type CloudflareErrorCategory = "configuration" | "upstream";
+
 export class CloudflareApiError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly category: CloudflareErrorCategory = "upstream",
+  ) {
     super(message);
     this.name = "CloudflareApiError";
+  }
+}
+
+export class CloudflareDnsRecordConflictError extends CloudflareApiError {
+  constructor(
+    readonly hostname: string,
+    readonly records: CloudflareDnsRecord[],
+  ) {
+    super(
+      `Cloudflare already has an unmanaged DNS record for ${hostname}. Remove or rename the existing record in Cloudflare, then retry enabling Managed ResourcePortal domains.`,
+      "configuration",
+    );
+    this.name = "CloudflareDnsRecordConflictError";
   }
 }
 
@@ -50,6 +68,7 @@ export class CloudflareDnsService {
     if (token.status !== "active") {
       throw new CloudflareApiError(
         `Cloudflare API token is ${token.status || "not active"}`,
+        "configuration",
       );
     }
 
@@ -65,11 +84,13 @@ export class CloudflareDnsService {
     ) {
       throw new CloudflareApiError(
         `Managed ResourcePortal domain ${managedBaseDomain} is outside Cloudflare zone ${zoneName}`,
+        "configuration",
       );
     }
     if (zone.status && zone.status !== "active") {
       throw new CloudflareApiError(
         `Cloudflare zone ${zoneName} is ${zone.status}, not active`,
+        "configuration",
       );
     }
 
@@ -95,9 +116,7 @@ export class CloudflareDnsService {
     );
     if (owned) return { record: owned, created: false };
     if (records.length > 0) {
-      throw new CloudflareApiError(
-        `Cloudflare already has a DNS record for ${hostname}; ResourcePortal will not overwrite an unmanaged record`,
-      );
+      throw new CloudflareDnsRecordConflictError(hostname, records);
     }
 
     const record = await this.createRecord(input.apiToken, input.zoneId, {
@@ -241,6 +260,9 @@ export class CloudflareDnsService {
         .join("; ");
       throw new CloudflareApiError(
         detail || `Cloudflare API request failed (${response.status})`,
+        response.status >= 400 && response.status < 500
+          ? "configuration"
+          : "upstream",
       );
     }
     return payload.result;
