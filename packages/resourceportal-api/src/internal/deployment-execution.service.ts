@@ -5,11 +5,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import {
-  DeploymentPhase,
-  DeploymentStatus,
-  Prisma,
-} from "@prisma/client";
+import { DeploymentPhase, DeploymentStatus, Prisma } from "@prisma/client";
 import { stringify } from "yaml";
 import { CapacityDeploymentAdmissionService } from "../capacity/capacity-deployment-admission.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -34,10 +30,7 @@ import {
   storagePlacementConstraints,
 } from "./stack-storage";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
-import {
-  appGroupNetworkName,
-  renderTraefikLabels,
-} from "./traefik-routing";
+import { appGroupNetworkName, renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
 const DEFAULT_LEASE_SECONDS = 300;
@@ -151,7 +144,6 @@ export class DeploymentExecutionService {
     private readonly secretStorage: SecretStorageService,
     @Optional() private readonly config?: ConfigService,
   ) {}
-
 
   async heartbeatDeployment(deploymentId: string, dto: HeartbeatDeploymentDto) {
     const deployment = await this.findWorkerDeploymentOrThrow(
@@ -531,7 +523,9 @@ export class DeploymentExecutionService {
     }
 
     if (!secret.storagePath) {
-      throw new Error("Secret has neither database payload nor legacy storage path");
+      throw new Error(
+        "Secret has neither database payload nor legacy storage path",
+      );
     }
 
     // v0.1.x -> v0.2.0 compatibility: consume the old encrypted file once,
@@ -620,7 +614,10 @@ export class DeploymentExecutionService {
     return mapAppGroupDeployment(failed);
   }
 
-  private async recordProvisioningSuccess(deploymentId: string, message: string) {
+  private async recordProvisioningSuccess(
+    deploymentId: string,
+    message: string,
+  ) {
     const provisioned = await this.prisma.$transaction(async (tx) => {
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
@@ -632,7 +629,10 @@ export class DeploymentExecutionService {
       await this.createDeploymentEvent(tx, deploymentId, {
         phase: DeploymentPhase.PreparingArtifacts,
         level: "Info",
-        message: this.truncate(message || "Provisioned deployment artifacts", 2000),
+        message: this.truncate(
+          message || "Provisioned deployment artifacts",
+          2000,
+        ),
       });
 
       return next;
@@ -929,7 +929,8 @@ export class DeploymentExecutionService {
         return {
           cpu: acc.cpu + Number(singleApp.resources.cpu) * replicas,
           memoryBytes:
-            acc.memoryBytes + Number(singleApp.resources.memoryBytes) * replicas,
+            acc.memoryBytes +
+            Number(singleApp.resources.memoryBytes) * replicas,
           gpu: acc.gpu + singleApp.resources.gpu * replicas,
           singleApps: acc.singleApps + 1,
         };
@@ -955,7 +956,10 @@ export class DeploymentExecutionService {
     }
 
     if (requested.singleApps > quota.maxSingleApps) {
-      return this.validationFailure("QuotaExceeded", "SingleApp quota exceeded");
+      return this.validationFailure(
+        "QuotaExceeded",
+        "SingleApp quota exceeded",
+      );
     }
 
     if (volumeIds.size > quota.maxVolumes) {
@@ -1259,7 +1263,6 @@ export class DeploymentExecutionService {
     }
 
     const completed = await this.prisma.$transaction(async (tx) => {
-
       const deletedSingleApps = await tx.singleApp.findMany({
         where: {
           appGroupId: deployment.appGroupId,
@@ -1285,11 +1288,14 @@ export class DeploymentExecutionService {
         where: { id: deployment.appGroupId },
         select: { runtimeDraftRevision: true },
       });
+      const isExplicitRollback = deployment.rollbackTargetVersion !== null;
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
         data: {
           phase: DeploymentPhase.Completed,
-          status: DeploymentStatus.Succeeded,
+          status: isExplicitRollback
+            ? DeploymentStatus.RolledBack
+            : DeploymentStatus.Succeeded,
           completedAt: new Date(),
           leaseOwner: null,
           leaseExpiresAt: null,
@@ -1300,16 +1306,24 @@ export class DeploymentExecutionService {
       await tx.appGroup.update({
         where: { id: deployment.appGroupId },
         data: {
-          currentDeploymentVersion: deployment.version,
-          hasPendingChanges:
-            appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
+          currentDeploymentVersion: isExplicitRollback
+            ? deployment.rollbackTargetVersion
+            : deployment.version,
+          hasPendingChanges: isExplicitRollback
+            ? true
+            : appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
         },
       });
 
       await this.createDeploymentEvent(tx, deploymentId, {
         phase: DeploymentPhase.Completed,
         level: "Info",
-        message: this.truncate(`${result.message}\n${result.details}`, 2000),
+        message: this.truncate(
+          isExplicitRollback
+            ? `Rolled back to deployment v${deployment.rollbackTargetVersion}\n${result.message}\n${result.details}`
+            : `${result.message}\n${result.details}`,
+          2000,
+        ),
       });
 
       if (deletedSingleApps.length > 0) {
@@ -1387,7 +1401,9 @@ export class DeploymentExecutionService {
 
     const rollbackSnapshot = this.parseStackConfig(rollbackTarget.stackConfig);
     const stackName = this.stackName(deployment.appGroupId);
-    const rollbackArtifact = await this.ensureDeploymentArtifact(rollbackTarget.id);
+    const rollbackArtifact = await this.ensureDeploymentArtifact(
+      rollbackTarget.id,
+    );
     const applyResult = await this.stackApplyService.applyStack({
       stackName,
       renderedStack: rollbackArtifact.renderedStack,
@@ -1400,7 +1416,9 @@ export class DeploymentExecutionService {
         deployment.id,
         rollbackTarget.version,
         `Rollback stack deploy failed\n${applyResult.command}\n${
-          applyResult.stderr || applyResult.stdout || `Exit code ${applyResult.exitCode}`
+          applyResult.stderr ||
+          applyResult.stdout ||
+          `Exit code ${applyResult.exitCode}`
         }`,
       );
     }
@@ -1422,7 +1440,6 @@ export class DeploymentExecutionService {
     }
 
     const rolledBack = await this.prisma.$transaction(async (tx) => {
-
       const next = await tx.appGroupDeployment.update({
         where: { id: deployment.id },
         data: {
@@ -1517,10 +1534,11 @@ export class DeploymentExecutionService {
         singleApp.volumes.length > 0
           ? singleApp.volumes.map((volume) =>
               renderRuntimeVolumeMount({
-                runtimeRoot: this.config?.get<string>(
-                  "RESOURCE_VOLUME_RUNTIME_ROOT",
-                  DEFAULT_VOLUME_RUNTIME_ROOT,
-                ) ?? DEFAULT_VOLUME_RUNTIME_ROOT,
+                runtimeRoot:
+                  this.config?.get<string>(
+                    "RESOURCE_VOLUME_RUNTIME_ROOT",
+                    DEFAULT_VOLUME_RUNTIME_ROOT,
+                  ) ?? DEFAULT_VOLUME_RUNTIME_ROOT,
                 tenantId: snapshot.appGroup.tenantId,
                 volumeId: volume.volumeId,
                 mountPath: volume.mountPath,
@@ -1553,7 +1571,9 @@ export class DeploymentExecutionService {
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
         placement: {
-          constraints: storagePlacementConstraints(singleApp.volumes.length > 0),
+          constraints: storagePlacementConstraints(
+            singleApp.volumes.length > 0,
+          ),
         },
         labels: this.renderTraefikLabels(snapshot, singleApp),
       },
