@@ -184,10 +184,10 @@ async function verifyRuntimeStartReservation() {
     select: { actualReplicas: true, runtimeState: true },
   });
   assert(
-    startedSingleApp?.runtimeState === "Running" &&
-      startedSingleApp.actualReplicas === 1,
-    `Expected runtime-started workload to report one actual replica, got ${JSON.stringify(startedSingleApp)}`,
+    startedSingleApp?.runtimeState === "Running",
+    `Expected runtime-started workload to persist Running state, got ${JSON.stringify(startedSingleApp)}`,
   );
+  await waitForServiceReplicas(baselineAppGroupId, "runtime-baseline", "1/1");
 
   const conflicting = await createAppGroup("runtime-conflict", "Running");
   const conflictingAppGroupId = stringField(conflicting, "id");
@@ -301,6 +301,40 @@ async function platformCpuNano() {
   const supply = rows[0]?.availableCpuNano ?? 0n;
   assert(supply > 0n, "Stage 15 runtime smoke found no available platform CPU");
   return supply;
+}
+
+async function waitForServiceReplicas(
+  appGroupId: string,
+  serviceName: string,
+  expected: string,
+) {
+  const stackName = stackNameFor(appGroupId);
+  const normalizedService = serviceName.replaceAll("-", "_");
+  const fullServiceName = `${stackName}_${normalizedService}`;
+  let last = "";
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await docker([
+      "stack",
+      "services",
+      stackName,
+      "--format",
+      "{{.Name}}|{{.Replicas}}",
+    ]);
+    last = result.stdout;
+    const row = result.stdout
+      .split("\n")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(`${fullServiceName}|`));
+    if (row?.endsWith(`|${expected}`)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(
+    `Expected ${fullServiceName} replicas ${expected}, got: ${last}`,
+  );
 }
 
 async function assertStackAbsent(appGroupId: string, label: string) {

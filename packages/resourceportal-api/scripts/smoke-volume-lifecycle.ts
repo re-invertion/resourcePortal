@@ -1,14 +1,18 @@
+import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { VolumeUsageReconcilerService } from "../src/volumes/volume-usage-reconciler.service";
+import { WorkerModule } from "../src/worker.module";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
-  .replace(/\/$/, "");
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api"
+).replace(/\/$/, "");
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -66,6 +70,7 @@ async function main() {
 
   await writeUsageFixture(physicalStoragePath);
   await assertHardQuotaEnforced(physicalStoragePath);
+  await reconcileVolumeUsageOnce();
 
   const measured = await api<JsonObject>(
     `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
@@ -99,7 +104,9 @@ async function main() {
   createdVolumeId = undefined;
   storagePath = undefined;
   physicalStoragePath = undefined;
-  console.log("Stage 7 volume lifecycle smoke completed successfully through Stage 14 StorageBackend");
+  console.log(
+    "Stage 7 volume lifecycle smoke completed successfully through Stage 14 StorageBackend",
+  );
 }
 
 async function cleanup() {
@@ -122,7 +129,6 @@ async function cleanup() {
   }
 }
 
-
 async function assertHardQuotaEnforced(path: string) {
   if (process.env.STORAGE_SMOKE_PRIVILEGED_WORKER !== "true") {
     return;
@@ -138,7 +144,9 @@ async function assertHardQuotaEnforced(path: string) {
     "status=none",
   ]);
   if (first.exitCode !== 0) {
-    throw new Error(`Expected write within Volume quota to succeed: ${first.stderr}`);
+    throw new Error(
+      `Expected write within Volume quota to succeed: ${first.stderr}`,
+    );
   }
   const second = await command("sudo", [
     "dd",
@@ -149,7 +157,9 @@ async function assertHardQuotaEnforced(path: string) {
     "status=none",
   ]);
   if (second.exitCode === 0) {
-    throw new Error("Expected project quota to reject a write beyond Volume.sizeBytes");
+    throw new Error(
+      "Expected project quota to reject a write beyond Volume.sizeBytes",
+    );
   }
 }
 
@@ -166,13 +176,26 @@ async function writeUsageFixture(path: string) {
     ]);
     if (result.exitCode !== 0) {
       throw new Error(
-        result.stderr || result.stdout || "Unable to write privileged volume usage fixture",
+        result.stderr ||
+          result.stdout ||
+          "Unable to write privileged volume usage fixture",
       );
     }
     return;
   }
 
   await writeFile(fixturePath, Buffer.alloc(8192, 1));
+}
+
+async function reconcileVolumeUsageOnce() {
+  const app = await NestFactory.createApplicationContext(WorkerModule, {
+    logger: false,
+  });
+  try {
+    await app.get(VolumeUsageReconcilerService).reconcileBatch();
+  } finally {
+    await app.close();
+  }
 }
 
 async function runOperationWorkerOnce() {
@@ -247,27 +270,29 @@ async function api<T = unknown>(
 }
 
 function command(commandName: string, args: string[], env = process.env) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(commandName, args, {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => {
-      resolve({ exitCode: 127, stdout: "", stderr: error.message });
-    });
-    child.on("close", (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve) => {
+      const child = spawn(commandName, args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    });
-  });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        resolve({ exitCode: 127, stdout: "", stderr: error.message });
+      });
+      child.on("close", (code) => {
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    },
+  );
 }
 
 function stringField(value: JsonObject, field: string) {

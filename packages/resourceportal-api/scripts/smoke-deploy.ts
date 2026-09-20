@@ -443,8 +443,16 @@ async function runOperationWorkerOnce() {
     WORKER_ONCE: "true",
   };
   const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
+  const npmExecPath = privileged ? process.env.npm_execpath : undefined;
+  if (privileged && !npmExecPath) {
+    throw new Error("Privileged storage smoke requires npm_execpath");
+  }
   const result = privileged
-    ? await command("sudo", ["-E", "npm", "run", "worker"], workerEnv)
+    ? await command(
+        "sudo",
+        ["-E", process.execPath, npmExecPath!, "run", "worker"],
+        workerEnv,
+      )
     : await command("npm", ["run", "worker"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)

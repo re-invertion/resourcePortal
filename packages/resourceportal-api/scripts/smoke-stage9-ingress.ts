@@ -1,11 +1,17 @@
+import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
+import { IngressReconcilerService } from "../src/internal/ingress-reconciler.service";
+import { WorkerModule } from "../src/worker.module";
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api").replace(/\/$/, "");
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api"
+).replace(/\/$/, "");
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const resolver = process.env.TRAEFIK_CERT_RESOLVER ?? "smoke-resolver";
-const managedBase = process.env.MANAGED_DOMAIN_BASE ?? "apps.resource-portal.local";
+const managedBase =
+  process.env.MANAGED_DOMAIN_BASE ?? "apps.resource-portal.local";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
@@ -143,12 +149,14 @@ async function main() {
     body: { httpEndpointId: null },
   });
 
-  await runWorkerOnce();
+  await reconcileIngressOnce();
 
   const cleanedLabels = await serviceLabels(serviceName);
   for (const key of Object.keys(cleanedLabels)) {
     if (key.startsWith("traefik.http.routers.nginx-public")) {
-      throw new Error(`Stale Stage 9 router label remained after detach: ${key}`);
+      throw new Error(
+        `Stale Stage 9 router label remained after detach: ${key}`,
+      );
     }
   }
   expectLabel(
@@ -168,7 +176,25 @@ async function cleanup() {
   }
 
   if (tenantId) {
-    await prisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);
+    await prisma.tenant
+      .delete({ where: { id: tenantId } })
+      .catch(() => undefined);
+  }
+}
+
+async function reconcileIngressOnce() {
+  const app = await NestFactory.createApplicationContext(WorkerModule, {
+    logger: false,
+  });
+  try {
+    const result = await app.get(IngressReconcilerService).reconcileBatch();
+    if (result.failed > 0) {
+      throw new Error(
+        "Ingress reconciliation reported " + result.failed + " failure(s)",
+      );
+    }
+  } finally {
+    await app.close();
   }
 }
 
@@ -179,7 +205,9 @@ async function runWorkerOnce() {
   });
 
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "ResourcePortal worker failed");
+    throw new Error(
+      result.stderr || result.stdout || "ResourcePortal worker failed",
+    );
   }
 }
 
