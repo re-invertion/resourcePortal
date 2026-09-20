@@ -144,6 +144,37 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     ]);
   });
 
+  it("creates a missing App Group overlay when Docker reports 'network <name> not found'", async () => {
+    const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
+    spawnMock
+      .mockImplementationOnce(() =>
+        dockerProcess("", 1, `Error response from daemon: network ${networkName} not found`),
+      )
+      .mockImplementationOnce(() => dockerProcess("new-network-id"))
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("", 1, "no such service: resourceportal-control-plane_traefik"),
+      );
+
+    const result = await service().reconcileAppGroupNetwork({
+      networkName,
+      traefikRequired: false,
+    });
+
+    expect(result).toEqual({ success: true, changed: true });
+    expect(spawnMock.mock.calls[1]?.[1]).toEqual([
+      "network",
+      "create",
+      "--driver",
+      "overlay",
+      "--label",
+      "resourceportal.managed=true",
+      "--label",
+      "resourceportal.network.kind=app-group",
+      networkName,
+    ]);
+  });
+
   it("accepts a private App Group when the optional Traefik service is absent", async () => {
     const networkName = "rp-appgroup-11111111-1111-4111-8111-111111111111";
     spawnMock

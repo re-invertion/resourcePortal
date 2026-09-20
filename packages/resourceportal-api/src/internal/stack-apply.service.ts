@@ -85,7 +85,10 @@ export class StackApplyService {
         stackName: params.stackName,
         exitCode: 1,
         stdout: "",
-        stderr: "Failed to prepare App Group network topology",
+        stderr:
+          "error" in prepared && typeof prepared.error === "string"
+            ? prepared.error
+            : "Failed to prepare App Group network topology",
       };
     }
 

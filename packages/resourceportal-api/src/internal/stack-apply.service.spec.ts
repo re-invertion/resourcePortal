@@ -196,6 +196,7 @@ describe("StackApplyService exact deployment artifact", () => {
     runtime.reconcileAppGroupNetwork.mockResolvedValueOnce({
       success: false,
       changed: false,
+      error: "Error response from daemon: network rp-appgroup-test not found",
     });
 
     const result = await service.applyStack({
@@ -206,6 +207,7 @@ describe("StackApplyService exact deployment artifact", () => {
     });
 
     expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("network rp-appgroup-test not found");
     expect(spawnMock).not.toHaveBeenCalled();
   });
 });

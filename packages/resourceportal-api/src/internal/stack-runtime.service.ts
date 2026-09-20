@@ -188,7 +188,7 @@ export class StackRuntimeService {
       return { success: true, changed: false };
     }
     if (!network.missing) {
-      return { success: false, changed: false };
+      return { success: false, changed: false, error: network.error };
     }
 
     const create = await this.runDocker([
@@ -202,10 +202,13 @@ export class StackRuntimeService {
       "resourceportal.network.kind=app-group",
       networkName,
     ]);
-    return {
-      success: create.exitCode === 0,
-      changed: create.exitCode === 0,
-    };
+    return create.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error: create.stderr || create.stdout || `docker network create ${networkName} failed`,
+        };
   }
 
   private async ensureLegacyIngressNetwork(networkName: string) {
@@ -279,7 +282,7 @@ export class StackRuntimeService {
     if (!serviceNetworks.success) {
       return !required && serviceNetworks.missing
         ? { success: true, changed: false }
-        : { success: false, changed: false };
+        : { success: false, changed: false, error: serviceNetworks.error };
     }
     const attached = serviceNetworks.networkIds.includes(network.networkId);
     if (attached === required) {
@@ -293,10 +296,13 @@ export class StackRuntimeService {
       networkName,
       traefik,
     ]);
-    return {
-      success: update.exitCode === 0,
-      changed: update.exitCode === 0,
-    };
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error: update.stderr || update.stdout || `docker service update ${traefik} failed`,
+        };
   }
 
   private async inspectNetwork(networkName: string) {
@@ -315,6 +321,7 @@ export class StackRuntimeService {
       success: false as const,
       missing: this.isMissingNetwork(result.stderr),
       networkId: "",
+      error: result.stderr || result.stdout || `docker network inspect ${networkName} failed`,
     };
   }
 
@@ -331,6 +338,7 @@ export class StackRuntimeService {
         success: false as const,
         missing: this.isMissingService(result.stderr),
         networkIds: [] as string[],
+        error: result.stderr || result.stdout || `docker service inspect ${serviceName} failed`,
       };
     }
     return {
@@ -372,7 +380,8 @@ export class StackRuntimeService {
     const normalized = stderr.toLowerCase();
     return (
       normalized.includes("no such network") ||
-      normalized.includes("network not found")
+      normalized.includes("network not found") ||
+      /network\s+[^\n]+\s+not found/.test(normalized)
     );
   }
 
