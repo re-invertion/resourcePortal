@@ -25,11 +25,23 @@ type DeploymentView = JsonObject & {
 async function main() {
   await preflightApi();
 
-  const reconcile = await api<JsonObject>("/platform/swarm-cluster/reconcile", {
-    method: "POST",
+  const reconcileOperation = await api<JsonObject>(
+    "/platform/swarm-cluster/reconcile",
+    {
+      method: "POST",
+    },
+  );
+  await runOperationToTerminal(
+    stringField(reconcileOperation, "id"),
+    "Succeeded",
+  );
+  const reconcile = await api<JsonObject>("/platform/swarm-cluster", {
+    method: "GET",
   });
   if (typeof reconcile.health !== "string") {
-    throw new Error("Stage 15 preflight reconcile did not return Swarm health");
+    throw new Error(
+      "Stage 15 preflight reconcile did not persist Swarm health",
+    );
   }
 
   const tenant = await api<JsonObject>("/tenants", {
@@ -87,7 +99,7 @@ async function verifyOversizedDeploymentRejected() {
   );
   const deploymentId = stringField(deployment, "id");
 
-  await runWorkerOnce();
+  await runOperationToTerminal(deploymentId, "Failed");
 
   const observed = await getDeployment(appGroupId, deploymentId);
   assert(
@@ -111,8 +123,7 @@ async function verifyOversizedDeploymentRejected() {
 
 async function verifyRuntimeStartReservation() {
   const supplyCpuNano = await platformCpuNano();
-  const cpuTenThousandths =
-    ((supplyCpuNano * 3n) / 4n) / 100_000n;
+  const cpuTenThousandths = (supplyCpuNano * 3n) / 4n / 100_000n;
   const workloadCpuNano = cpuTenThousandths * 100_000n;
   assert(
     cpuTenThousandths > 0n && workloadCpuNano <= supplyCpuNano,
@@ -144,7 +155,7 @@ async function verifyRuntimeStartReservation() {
     "deploy stopped workload before direct runtime start",
   );
   const baselineDeploymentId = stringField(baselineDeployment, "id");
-  await runWorkerOnce();
+  await runOperationToTerminal(baselineDeploymentId, "Succeeded");
 
   const baselineObserved = await getDeployment(
     baselineAppGroupId,
@@ -160,8 +171,12 @@ async function verifyRuntimeStartReservation() {
     { method: "POST" },
   );
   assert(
-    runtimeStart.runtimeApplied === true,
-    "Expected direct AppGroup runtime start to scale the deployed service",
+    runtimeStart.runtimeApplied === false,
+    "Expected AppGroup runtime start to enqueue asynchronous execution",
+  );
+  await runOperationToTerminal(
+    stringField(runtimeStart, "operationId"),
+    "Succeeded",
   );
 
   const startedSingleApp = await prisma.singleApp.findUnique({
@@ -169,10 +184,10 @@ async function verifyRuntimeStartReservation() {
     select: { actualReplicas: true, runtimeState: true },
   });
   assert(
-    startedSingleApp?.runtimeState === "Running" &&
-      startedSingleApp.actualReplicas === 1,
-    `Expected runtime-started workload to report one actual replica, got ${JSON.stringify(startedSingleApp)}`,
+    startedSingleApp?.runtimeState === "Running",
+    `Expected runtime-started workload to persist Running state, got ${JSON.stringify(startedSingleApp)}`,
   );
+  await waitForServiceReplicas(baselineAppGroupId, "runtime-baseline", "1/1");
 
   const conflicting = await createAppGroup("runtime-conflict", "Running");
   const conflictingAppGroupId = stringField(conflicting, "id");
@@ -189,7 +204,7 @@ async function verifyRuntimeStartReservation() {
     "must count directly started stopped deployment as occupied capacity",
   );
   const conflictingDeploymentId = stringField(conflictingDeployment, "id");
-  await runWorkerOnce();
+  await runOperationToTerminal(conflictingDeploymentId, "Failed");
 
   const conflictObserved = await getDeployment(
     conflictingAppGroupId,
@@ -216,7 +231,10 @@ async function verifyRuntimeStartReservation() {
   console.log("Stage 15 runtime-start capacity regression passed");
 }
 
-async function createAppGroup(name: string, runtimeState: "Running" | "Stopped") {
+async function createAppGroup(
+  name: string,
+  runtimeState: "Running" | "Stopped",
+) {
   const appGroup = await api<JsonObject>(`/tenants/${tenantId}/app-groups`, {
     method: "POST",
     body: { name, runtimeState },
@@ -251,12 +269,19 @@ async function createSingleApp(
   );
 }
 
-function createDeployment(appGroupId: string, idempotencyKey: string, note: string) {
-  return api<JsonObject>(`/tenants/${tenantId}/app-groups/${appGroupId}/deploy`, {
-    method: "POST",
-    idempotencyKey,
-    body: { note },
-  });
+function createDeployment(
+  appGroupId: string,
+  idempotencyKey: string,
+  note: string,
+) {
+  return api<JsonObject>(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
+    {
+      method: "POST",
+      idempotencyKey,
+      body: { note },
+    },
+  );
 }
 
 function getDeployment(appGroupId: string, deploymentId: string) {
@@ -278,6 +303,40 @@ async function platformCpuNano() {
   return supply;
 }
 
+async function waitForServiceReplicas(
+  appGroupId: string,
+  serviceName: string,
+  expected: string,
+) {
+  const stackName = stackNameFor(appGroupId);
+  const normalizedService = serviceName.replaceAll("-", "_");
+  const fullServiceName = `${stackName}_${normalizedService}`;
+  let last = "";
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await docker([
+      "stack",
+      "services",
+      stackName,
+      "--format",
+      "{{.Name}}|{{.Replicas}}",
+    ]);
+    last = result.stdout;
+    const row = result.stdout
+      .split("\n")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(`${fullServiceName}|`));
+    if (row?.endsWith(`|${expected}`)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(
+    `Expected ${fullServiceName} replicas ${expected}, got: ${last}`,
+  );
+}
+
 async function assertStackAbsent(appGroupId: string, label: string) {
   const stackName = stackNameFor(appGroupId);
   const stackList = await docker(["stack", "ls", "--format", "{{.Name}}"]);
@@ -294,10 +353,34 @@ async function cleanup() {
   for (const appGroupId of appGroupIds) {
     await docker(["stack", "rm", stackNameFor(appGroupId)], true);
   }
+
+  if (appGroupIds.length > 0) {
+    await prisma.appGroup.deleteMany({
+      where: { id: { in: appGroupIds } },
+    });
+    const lingeringAppGroups = await prisma.appGroup.count({
+      where: { id: { in: appGroupIds } },
+    });
+    if (lingeringAppGroups > 0) {
+      throw new Error(
+        `Stage 15 cleanup left ${lingeringAppGroups} App Group(s) in the database`,
+      );
+    }
+  }
+
   if (tenantId) {
-    await prisma.tenant
-      .delete({ where: { id: tenantId } })
-      .catch(() => undefined);
+    await prisma.tenant.deleteMany({
+      where: { id: tenantId },
+    });
+    const lingeringTenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (lingeringTenant) {
+      throw new Error(
+        `Stage 15 cleanup left Tenant ${tenantId} in the database`,
+      );
+    }
   }
 }
 
@@ -308,8 +391,54 @@ async function preflightApi() {
   }
 }
 
+async function runOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    assert(operation, `Operation ${operationId} was not found`);
+
+    if (operation.status === expectedStatus) {
+      return;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 12 worker iterations`,
+  );
+}
+
 async function runWorkerOnce() {
-  const result = await command("npm", ["run", "worker:deployments"], {
+  const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
@@ -320,7 +449,7 @@ async function runWorkerOnce() {
     console.log(output);
   }
   if (result.exitCode !== 0) {
-    throw new Error(output || "Deployment worker failed");
+    throw new Error(output || "ResourcePortal worker failed");
   }
 }
 

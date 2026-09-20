@@ -60,13 +60,13 @@ export class OAuthApplicationCredentialsService {
     );
 
     try {
-      await this.prisma.$executeRaw`
-        UPDATE "OAuthApplication"
-        SET "clientSecretCiphertext" = ${this.encryption.encrypt(clientSecret)},
-            "updatedBy" = CAST(${actor.id} AS uuid),
-            "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "id" = CAST(${application.id} AS uuid)
-      `;
+      await this.prisma.oAuthApplication.update({
+        where: { id: application.id },
+        data: {
+          clientSecretCiphertext: this.encryption.encrypt(clientSecret),
+          updatedBy: actor.id,
+        },
+      });
     } catch {
       return {
         id: application.id,
@@ -128,26 +128,26 @@ export class OAuthApplicationCredentialsService {
   }
 
   private async getTenantRecord(tenantId: string, applicationId: string) {
-    const rows = await this.prisma.$queryRaw<OAuthApplicationCredentialRecord[]>`
-      SELECT "id", "tenantId", "name", "type", "zitadelApplicationId", "clientId", "clientSecretCiphertext"
-      FROM "OAuthApplication"
-      WHERE "id" = CAST(${applicationId} AS uuid)
-        AND "tenantId" = CAST(${tenantId} AS uuid)
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("OAuth application not found");
-    return rows[0];
+    const row = await this.prisma.oAuthApplication.findFirst({
+      where: { id: applicationId, tenantId },
+      select: {
+        id: true, tenantId: true, name: true, type: true,
+        zitadelApplicationId: true, clientId: true, clientSecretCiphertext: true,
+      },
+    });
+    if (!row) throw new NotFoundException("OAuth application not found");
+    return row;
   }
 
   private async getPlatformRecord(applicationId: string) {
-    const rows = await this.prisma.$queryRaw<OAuthApplicationCredentialRecord[]>`
-      SELECT "id", "tenantId", "name", "type", "zitadelApplicationId", "clientId", "clientSecretCiphertext"
-      FROM "OAuthApplication"
-      WHERE "id" = CAST(${applicationId} AS uuid)
-        AND "tenantId" IS NULL
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Platform OAuth application not found");
-    return rows[0];
+    const row = await this.prisma.oAuthApplication.findFirst({
+      where: { id: applicationId, tenantId: null },
+      select: {
+        id: true, tenantId: true, name: true, type: true,
+        zitadelApplicationId: true, clientId: true, clientSecretCiphertext: true,
+      },
+    });
+    if (!row) throw new NotFoundException("Platform OAuth application not found");
+    return row;
   }
 }

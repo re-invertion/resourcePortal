@@ -5,8 +5,16 @@ import { PrismaClient } from "@prisma/client";
 const webOrigin = (
   process.env.STAGE20_REAL_SWARM_WEB_ORIGIN ?? "http://127.0.0.1:4173"
 ).replace(/\/$/, "");
+const apiBase = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://127.0.0.1:3000/api"
+).replace(/\/$/, "");
 const userId = process.env.SMOKE_USER_ID;
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
+const workerTimeoutMs = positiveIntegerEnv("STAGE20_WORKER_TIMEOUT_MS", 180_000);
+const replicaWaitTimeoutMs = positiveIntegerEnv("STAGE20_REPLICA_WAIT_TIMEOUT_MS", 60_000);
+const replicaPollIntervalMs = positiveIntegerEnv("STAGE20_REPLICA_POLL_INTERVAL_MS", 1_000);
+const forceUpdateWaitTimeoutMs = positiveIntegerEnv("STAGE20_FORCE_UPDATE_WAIT_TIMEOUT_MS", 30_000);
+const stackRemovalTimeoutMs = positiveIntegerEnv("STAGE20_STACK_REMOVAL_TIMEOUT_MS", 30_000);
 const prisma = new PrismaClient();
 const browser = await chromium.launch({ headless: true });
 
@@ -15,7 +23,7 @@ let createdStackName;
 
 try {
   assert(userId, "SMOKE_USER_ID is required for the real-Swarm browser smoke");
-  await preflightSwarm();
+  await phase("preflight Swarm", preflightSwarm);
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -25,12 +33,19 @@ try {
   const singleAppName = "nginx";
 
   await context.route("**/api/**", async (route) => {
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        "x-dev-user-id": userId,
-      },
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    const apiPath = requestUrl.pathname.replace(/^\/api(?=\/|$)/, "");
+    const headers = {
+      ...request.headers(),
+      "x-dev-user-id": userId,
+    };
+    delete headers.host;
+    const response = await route.fetch({
+      url: `${apiBase}${apiPath}${requestUrl.search}`,
+      headers,
     });
+    await route.fulfill({ response });
   });
 
   try {
@@ -89,7 +104,7 @@ try {
     await page.getByLabel("Name", { exact: false }).fill(appGroupName);
     await page
       .getByLabel("Description", { exact: false })
-      .fill("Real Docker Swarm browser smoke for ResourcePortal v0.1.9");
+      .fill("Real Docker Swarm browser smoke for ResourcePortal v0.2.0");
     await page
       .getByLabel("Initial runtime state", { exact: false })
       .selectOption("Running");
@@ -146,7 +161,7 @@ try {
       .fill("nginx:alpine");
     await page
       .getByLabel("Description", { exact: false })
-      .fill("ResourcePortal v0.1.9 real Swarm browser workload");
+      .fill("ResourcePortal v0.2.0 real Swarm browser workload");
     await nextWizardStep(page, "Volumes");
     await nextWizardStep(page, "Config");
     await nextWizardStep(page, "Resources");
@@ -214,15 +229,17 @@ try {
       `Deployment ${deploymentId} did not expose an integer version`,
     );
 
-    await runDeploymentWorkerOnce();
-    await expectDeploymentStatus(
-      context,
-      createdTenantId,
-      appGroupId,
-      deploymentId,
-      "Succeeded",
-    );
-    await waitForReplicas(createdStackName, singleAppName, "1/1");
+    await phase("deploy application and reach 1/1 replicas", async () => {
+      await runOperationToTerminal(deploymentId, "Succeeded");
+      await expectDeploymentStatus(
+        context,
+        createdTenantId,
+        appGroupId,
+        deploymentId,
+        "Succeeded",
+      );
+      await waitForReplicas(createdStackName, singleAppName, "1/1");
+    });
 
     await page.reload({ waitUntil: "domcontentloaded" });
     const deploymentRow = page
@@ -241,23 +258,44 @@ try {
       .getByRole("heading", { name: singleAppName, level: 2 })
       .waitFor();
 
-    await page
-      .getByRole("button", { name: "Stop application", exact: true })
-      .click();
-    await waitForReplicas(createdStackName, singleAppName, "0/0");
+    const stopOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "stop",
+      "Stop application",
+    );
+    await phase("stop application and reach 0/0 replicas", async () => {
+      await runOperationToTerminal(stopOperation, "Succeeded");
+      await waitForReplicas(createdStackName, singleAppName, "0/0");
+    });
 
-    await page
-      .getByRole("button", { name: "Start application", exact: true })
-      .click();
-    await waitForReplicas(createdStackName, singleAppName, "1/1");
+    const startOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "start",
+      "Start application",
+    );
+    await phase("start application and reach 1/1 replicas", async () => {
+      await runOperationToTerminal(startOperation, "Succeeded");
+      await waitForReplicas(createdStackName, singleAppName, "1/1");
+    });
 
     const serviceName = `${createdStackName}_${singleAppName}`;
     const forceUpdateBefore = await serviceForceUpdate(serviceName);
-    await page
-      .getByRole("button", { name: "Restart application", exact: true })
-      .click();
-    await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
-    await waitForReplicas(createdStackName, singleAppName, "1/1");
+    const restartOperation = await clickRuntimeAction(
+      page,
+      appGroupId,
+      singleAppId,
+      "restart",
+      "Restart application",
+    );
+    await phase("restart application and observe ForceUpdate", async () => {
+      await runOperationToTerminal(restartOperation, "Succeeded");
+      await waitForForceUpdate(serviceName, forceUpdateBefore + 1);
+      await waitForReplicas(createdStackName, singleAppName, "1/1");
+    });
 
     await page.goto(
       `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments`,
@@ -294,15 +332,17 @@ try {
     const rollback = JSON.parse(rollbackText);
     const rollbackDeploymentId = stringField(rollback, "id");
 
-    await runDeploymentWorkerOnce();
-    await expectDeploymentStatus(
-      context,
-      createdTenantId,
-      appGroupId,
-      rollbackDeploymentId,
-      "Succeeded",
-    );
-    await waitForReplicas(createdStackName, singleAppName, "1/1");
+    await phase("rollback deployment and keep 1/1 replicas", async () => {
+      await runOperationToTerminal(rollbackDeploymentId, "RolledBack");
+      await expectDeploymentStatus(
+        context,
+        createdTenantId,
+        appGroupId,
+        rollbackDeploymentId,
+        "RolledBack",
+      );
+      await waitForReplicas(createdStackName, singleAppName, "1/1");
+    });
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await page
@@ -311,18 +351,22 @@ try {
     const succeededRows = page
       .getByRole("row")
       .filter({ hasText: "Succeeded" });
-    await succeededRows.nth(1).waitFor();
+    await succeededRows.first().waitFor();
+    const rolledBackRows = page
+      .getByRole("row")
+      .filter({ hasText: "RolledBack" });
+    await rolledBackRows.first().waitFor();
     assert(
-      (await succeededRows.count()) >= 2,
-      "Deployment history did not show both the deployment and rollback as Succeeded",
+      (await succeededRows.count()) >= 1 && (await rolledBackRows.count()) >= 1,
+      "Deployment history did not show the succeeded deployment and rolled-back rollback operation",
     );
 
     console.log(
-      `ResourcePortal v0.1.9 Web Console real Swarm browser E2E passed for tenant ${createdTenantId}`,
+      `ResourcePortal v0.2.0 Web Console real Swarm browser E2E passed for tenant ${createdTenantId}`,
     );
   } catch (error) {
     const snapshot = await page.content().catch(() => "<page unavailable>");
-    console.error(`v0.1.9 real Swarm browser E2E failed at ${page.url()}`);
+    console.error(`v0.2.0 real Swarm browser E2E failed at ${page.url()}`);
     console.error(snapshot.slice(0, 8_000));
     throw error;
   } finally {
@@ -330,15 +374,17 @@ try {
   }
 } finally {
   if (createdStackName) {
-    await docker(["stack", "rm", createdStackName], true);
-    await waitForStackRemoval(createdStackName);
+    await phase("remove Stage 20 Swarm stack", async () => {
+      await docker(["stack", "rm", createdStackName], true);
+      await waitForStackRemoval(createdStackName);
+    });
   }
   if (createdTenantId) {
     await prisma.tenant
       .delete({ where: { id: createdTenantId } })
       .catch((error) =>
         console.warn(
-          `v0.1.9 real Swarm fixture tenant cleanup failed: ${error.message}`,
+          `v0.2.0 real Swarm fixture tenant cleanup failed: ${error.message}`,
         ),
       );
   }
@@ -354,7 +400,7 @@ async function nextWizardStep(page, expectedHeading) {
 }
 
 async function proxyApi(context, path, options = {}) {
-  const response = await context.request.fetch(`${webOrigin}/api${path}`, {
+  const response = await context.request.fetch(`${apiBase}${path}`, {
     method: options.method ?? "GET",
     headers: {
       "x-dev-user-id": userId,
@@ -405,26 +451,89 @@ async function preflightSwarm() {
   );
 }
 
-async function runDeploymentWorkerOnce() {
+async function runOperationToTerminal(operationId, expectedStatus) {
+  const terminalStatuses = new Set(["Succeeded", "Failed", "RolledBack", "RollbackFailed"]);
+  let lastOperation;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    lastOperation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        attempt: true,
+        maxAttempts: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    assert(lastOperation, `Operation ${operationId} was not found`);
+    logProgress(
+      `operation ${operationId} type=${lastOperation.type} status=${lastOperation.status} attempt=${lastOperation.attempt}/${lastOperation.maxAttempts}`,
+    );
+    if (lastOperation.status === expectedStatus) return lastOperation;
+    if (terminalStatuses.has(lastOperation.status)) {
+      throw new Error(
+        `Operation ${operationId} (${lastOperation.type}) reached ${lastOperation.status}, expected ${expectedStatus}: ${lastOperation.errorCode ?? "no-code"} ${lastOperation.errorMessage ?? ""}`,
+      );
+    }
+    const retryWaitMs = Math.max(0, lastOperation.nextAttemptAt.getTime() - Date.now());
+    if (retryWaitMs > 0) await sleep(Math.min(retryWaitMs + 50, 5_000));
+    await runWorkerOnce();
+  }
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after draining 20 worker iterations (last=${lastOperation?.status ?? "missing"})`,
+  );
+}
+
+async function clickRuntimeAction(page, appGroupId, singleAppId, action, buttonName) {
+  const path = `/api/tenants/${createdTenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}/runtime/${action}`;
+  const responsePromise = page.waitForResponse(
+    (response) => response.request().method() === "POST" && response.url() === `${webOrigin}${path}`,
+  );
+  await page.getByRole("button", { name: buttonName, exact: true }).click();
+  const response = await responsePromise;
+  const text = await response.text();
+  assert(response.ok(), `${buttonName} failed: ${response.status()} ${text}`);
+  const payload = JSON.parse(text);
+  return stringField(payload, "operationId");
+}
+
+async function runWorkerOnce() {
+  const startedAt = Date.now();
+  logProgress(`worker one-shot starting (timeout=${workerTimeoutMs}ms)`);
   const result = await command(
     "npm",
-    ["--workspace", "@resource-portal/api", "run", "worker:deployments"],
+    ["--workspace", "@resource-portal/api", "run", "worker"],
     {
-      ...process.env,
-      WORKER_ONCE: "true",
+      env: {
+        ...process.env,
+        WORKER_ONCE: "true",
+      },
+      timeoutMs: workerTimeoutMs,
+      stream: true,
     },
   );
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");
-  if (output) console.log(output);
-  assert(result.exitCode === 0, output || "Deployment worker failed");
+  assert(
+    !result.timedOut,
+    `ResourcePortal worker one-shot exceeded ${workerTimeoutMs}ms`,
+  );
+  assert(result.exitCode === 0, output || "ResourcePortal worker failed");
+  logProgress(`worker one-shot completed in ${Date.now() - startedAt}ms`);
 }
 
 async function waitForReplicas(stackName, singleAppName, expected) {
   const serviceName = `${stackName}_${singleAppName}`;
+  const deadline = Date.now() + replicaWaitTimeoutMs;
   let last = "";
-  for (let attempt = 0; attempt < 90; attempt += 1) {
+  let lastLogged = "";
+  let lastLoggedAt = 0;
+
+  while (Date.now() < deadline) {
     const result = await docker(
       [
         "service",
@@ -441,11 +550,21 @@ async function waitForReplicas(stackName, singleAppName, expected) {
       .map((value) => value.trim())
       .find((value) => value.startsWith(`${serviceName} `));
     last = row?.slice(serviceName.length + 1).trim() ?? "missing";
-    if (last === expected) return;
-    await sleep(2_000);
+    if (last === expected) {
+      logProgress(`${serviceName} replicas reached ${expected}`);
+      return;
+    }
+    if (last !== lastLogged || Date.now() - lastLoggedAt >= 10_000) {
+      logProgress(`waiting for ${serviceName} replicas ${expected}; current=${last}`);
+      lastLogged = last;
+      lastLoggedAt = Date.now();
+    }
+    await sleep(
+      Math.min(replicaPollIntervalMs, Math.max(1, deadline - Date.now())),
+    );
   }
   throw new Error(
-    `Expected ${serviceName} replicas ${expected}, got ${last}`,
+    `Expected ${serviceName} replicas ${expected} within ${replicaWaitTimeoutMs}ms, got ${last}`,
   );
 }
 
@@ -463,8 +582,9 @@ async function serviceForceUpdate(serviceName) {
 }
 
 async function waitForForceUpdate(serviceName, expectedMinimum) {
+  const deadline = Date.now() + forceUpdateWaitTimeoutMs;
   let last = -1;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  while (Date.now() < deadline) {
     const result = await docker(
       [
         "service",
@@ -476,24 +596,33 @@ async function waitForForceUpdate(serviceName, expectedMinimum) {
       true,
     );
     last = Number.parseInt(result.stdout.trim(), 10);
-    if (Number.isInteger(last) && last >= expectedMinimum) return;
-    await sleep(1_000);
+    if (Number.isInteger(last) && last >= expectedMinimum) {
+      logProgress(`${serviceName} ForceUpdate reached ${last}`);
+      return;
+    }
+    await sleep(Math.min(1_000, Math.max(1, deadline - Date.now())));
   }
   throw new Error(
-    `Expected ${serviceName} ForceUpdate >= ${expectedMinimum}, got ${last}`,
+    `Expected ${serviceName} ForceUpdate >= ${expectedMinimum} within ${forceUpdateWaitTimeoutMs}ms, got ${last}`,
   );
 }
 
 async function waitForStackRemoval(stackName) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  const deadline = Date.now() + stackRemovalTimeoutMs;
+  while (Date.now() < deadline) {
     const result = await docker(
       ["stack", "ls", "--format", "{{.Name}}"],
       true,
     );
-    if (!result.stdout.split("\n").includes(stackName)) return;
-    await sleep(1_000);
+    if (!result.stdout.split("\n").includes(stackName)) {
+      logProgress(`stack ${stackName} removed`);
+      return;
+    }
+    await sleep(Math.min(1_000, Math.max(1, deadline - Date.now())));
   }
-  throw new Error(`Stack ${stackName} was not removed during cleanup`);
+  throw new Error(
+    `Stack ${stackName} was not removed within ${stackRemovalTimeoutMs}ms`,
+  );
 }
 
 function resourceIdFromUrl(url, segment) {
@@ -516,22 +645,102 @@ async function docker(args, ignoreFailure = false) {
   return result;
 }
 
-function command(binary, args, env = process.env) {
+function command(binary, args, options = {}) {
+  const {
+    env = process.env,
+    timeoutMs = 0,
+    stream = false,
+  } = options;
+
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { env });
+    const useProcessGroup = process.platform !== "win32";
+    const child = spawn(binary, args, { env, detached: useProcessGroup });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    let timeoutHandle;
+    let killHandle;
+
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      if (stream) process.stdout.write(text);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (stream) process.stderr.write(text);
     });
-    child.once("error", reject);
+
+    if (timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        logProgress(
+          `command timed out after ${timeoutMs}ms: ${binary} ${args.join(" ")}`,
+        );
+        terminateProcessTree(child, "SIGTERM", useProcessGroup);
+        killHandle = setTimeout(() => {
+          if (child.exitCode === null) {
+            terminateProcessTree(child, "SIGKILL", useProcessGroup);
+          }
+        }, 5_000);
+        killHandle.unref?.();
+      }, timeoutMs);
+      timeoutHandle.unref?.();
+    }
+
+    child.once("error", (error) => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (killHandle) clearTimeout(killHandle);
+      reject(error);
+    });
     child.once("close", (exitCode) => {
-      resolve({ exitCode: exitCode ?? 1, stdout, stderr });
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (killHandle) clearTimeout(killHandle);
+      resolve({ exitCode: exitCode ?? 1, stdout, stderr, timedOut });
     });
   });
+}
+
+function terminateProcessTree(child, signal, useProcessGroup) {
+  if (child.pid === undefined) return;
+  try {
+    if (useProcessGroup) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+async function phase(name, run) {
+  const startedAt = Date.now();
+  logProgress(`START ${name}`);
+  try {
+    const result = await run();
+    logProgress(`PASS ${name} (${Date.now() - startedAt}ms)`);
+    return result;
+  } catch (error) {
+    logProgress(`FAIL ${name} after ${Date.now() - startedAt}ms`);
+    throw error;
+  }
+}
+
+function logProgress(message) {
+  console.log(`[stage20] ${new Date().toISOString()} ${message}`);
+}
+
+function positiveIntegerEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  assert(
+    Number.isInteger(parsed) && parsed > 0,
+    `${name} must be a positive integer, got ${raw}`,
+  );
+  return parsed;
 }
 
 function stringField(value, field) {

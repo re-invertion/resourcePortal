@@ -32,12 +32,11 @@ export class PlatformServiceIdentitiesService {
   ) {}
 
   async list() {
-    const records = await this.prisma.$queryRaw<PlatformServiceIdentityRecord[]>`
-      SELECT * FROM "ServiceIdentity"
-      WHERE "tenantId" IS NULL
-      ORDER BY "name" ASC
-    `;
-    return records.map((record) => this.map(record));
+    const records = await this.prisma.serviceIdentity.findMany({
+      where: { tenantId: null },
+      orderBy: { name: "asc" },
+    });
+    return records.map((record) => this.map(this.asPlatformRecord(record)));
   }
 
   async get(serviceIdentityId: string) {
@@ -50,16 +49,20 @@ export class PlatformServiceIdentitiesService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          INSERT INTO "ServiceIdentity" (
-            "id", "tenantId", "name", "description", "status", "zitadelUserId",
-            "clientId", "clientSecretCiphertext", "createdBy", "updatedBy"
-          ) VALUES (
-            CAST(${id} AS uuid), NULL, ${dto.name}, ${dto.description ?? null},
-            'Active', ${remote.userId}, ${remote.clientId}, ${this.encryption.encrypt(remote.clientSecret)},
-            CAST(${actor.id} AS uuid), CAST(${actor.id} AS uuid)
-          )
-        `;
+        await tx.serviceIdentity.create({
+          data: {
+            id,
+            tenantId: null,
+            name: dto.name,
+            description: dto.description ?? null,
+            status: "Active",
+            zitadelUserId: remote.userId,
+            clientId: remote.clientId,
+            clientSecretCiphertext: this.encryption.encrypt(remote.clientSecret),
+            createdBy: actor.id,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId: null,
@@ -110,15 +113,15 @@ export class PlatformServiceIdentitiesService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`
-          UPDATE "ServiceIdentity"
-          SET "name" = ${name},
-              "description" = ${description ?? null},
-              "status" = ${dto.status ?? current.status},
-              "updatedBy" = CAST(${actor.id} AS uuid),
-              "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" IS NULL
-        `;
+        await tx.serviceIdentity.updateMany({
+          where: { id: serviceIdentityId, tenantId: null },
+          data: {
+            name,
+            description: description ?? null,
+            status: dto.status ?? current.status,
+            updatedBy: actor.id,
+          },
+        });
         await tx.auditLogEntry.create({
           data: {
             tenantId: null,
@@ -145,10 +148,9 @@ export class PlatformServiceIdentitiesService {
     const current = await this.getRecord(serviceIdentityId);
     await this.zitadel.disable(current.zitadelUserId);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        DELETE FROM "ServiceIdentity"
-        WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" IS NULL
-      `;
+      await tx.serviceIdentity.deleteMany({
+        where: { id: serviceIdentityId, tenantId: null },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantId: null,
@@ -169,13 +171,24 @@ export class PlatformServiceIdentitiesService {
   }
 
   private async getRecord(serviceIdentityId: string) {
-    const rows = await this.prisma.$queryRaw<PlatformServiceIdentityRecord[]>`
-      SELECT * FROM "ServiceIdentity"
-      WHERE "id" = CAST(${serviceIdentityId} AS uuid) AND "tenantId" IS NULL
-      LIMIT 1
-    `;
-    if (!rows[0]) throw new NotFoundException("Platform service identity not found");
-    return rows[0];
+    const row = await this.prisma.serviceIdentity.findFirst({
+      where: { id: serviceIdentityId, tenantId: null },
+    });
+    if (!row) throw new NotFoundException("Platform service identity not found");
+    return this.asPlatformRecord(row);
+  }
+
+  private asPlatformRecord(record: {
+    id: string; tenantId: string | null; name: string; description: string | null;
+    status: string; zitadelUserId: string; clientId: string;
+    clientSecretCiphertext: string; createdBy: string; updatedBy: string;
+    createdAt: Date; updatedAt: Date;
+  }): PlatformServiceIdentityRecord {
+    return {
+      ...record,
+      tenantId: null,
+      status: record.status as "Active" | "Suspended",
+    };
   }
 
   private map(record: PlatformServiceIdentityRecord) {

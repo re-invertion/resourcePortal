@@ -1,9 +1,9 @@
 import { NestFactory } from "@nestjs/core";
-import { AppModule } from "../app.module";
+import { DisasterRecoveryModule } from "./disaster-recovery.module";
 import { DisasterRecoveryService } from "./disaster-recovery.service";
 
 async function main() {
-  const app = await NestFactory.createApplicationContext(AppModule, {
+  const app = await NestFactory.createApplicationContext(DisasterRecoveryModule, {
     logger: ["error", "warn", "log"],
   });
 

@@ -1,14 +1,18 @@
+import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { VolumeUsageReconcilerService } from "../src/volumes/volume-usage-reconciler.service";
+import { WorkerModule } from "../src/worker.module";
 
 type JsonObject = Record<string, unknown>;
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api")
-  .replace(/\/$/, "");
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api"
+).replace(/\/$/, "");
 const suffix = `${Date.now()}`;
 const userId =
   process.env.SMOKE_USER_ID ?? "11111111-1111-4111-8111-111111111111";
@@ -53,8 +57,7 @@ async function main() {
     },
   );
   const createOperationId = stringField(createOperation, "id");
-  await runOperationWorkerOnce();
-  const completedCreate = await expectOperationSucceeded(createOperationId);
+  const completedCreate = await runOperationToTerminal(createOperationId);
   createdVolumeId = stringField(completedCreate, "resourceId");
 
   const volume = await api<JsonObject>(
@@ -66,6 +69,7 @@ async function main() {
 
   await writeUsageFixture(physicalStoragePath);
   await assertHardQuotaEnforced(physicalStoragePath);
+  await reconcileVolumeUsageOnce();
 
   const measured = await api<JsonObject>(
     `/tenants/${createdTenantId}/volumes/${createdVolumeId}`,
@@ -87,8 +91,7 @@ async function main() {
     },
   );
   const deleteOperationId = stringField(deleteOperation, "id");
-  await runOperationWorkerOnce();
-  await expectOperationSucceeded(deleteOperationId);
+  await runOperationToTerminal(deleteOperationId);
 
   if (existsSync(physicalStoragePath)) {
     throw new Error(
@@ -99,7 +102,9 @@ async function main() {
   createdVolumeId = undefined;
   storagePath = undefined;
   physicalStoragePath = undefined;
-  console.log("Stage 7 volume lifecycle smoke completed successfully through Stage 14 StorageBackend");
+  console.log(
+    "Stage 7 volume lifecycle smoke completed successfully through Stage 14 StorageBackend",
+  );
 }
 
 async function cleanup() {
@@ -122,7 +127,6 @@ async function cleanup() {
   }
 }
 
-
 async function assertHardQuotaEnforced(path: string) {
   if (process.env.STORAGE_SMOKE_PRIVILEGED_WORKER !== "true") {
     return;
@@ -138,7 +142,9 @@ async function assertHardQuotaEnforced(path: string) {
     "status=none",
   ]);
   if (first.exitCode !== 0) {
-    throw new Error(`Expected write within Volume quota to succeed: ${first.stderr}`);
+    throw new Error(
+      `Expected write within Volume quota to succeed: ${first.stderr}`,
+    );
   }
   const second = await command("sudo", [
     "dd",
@@ -149,7 +155,9 @@ async function assertHardQuotaEnforced(path: string) {
     "status=none",
   ]);
   if (second.exitCode === 0) {
-    throw new Error("Expected project quota to reject a write beyond Volume.sizeBytes");
+    throw new Error(
+      "Expected project quota to reject a write beyond Volume.sizeBytes",
+    );
   }
 }
 
@@ -166,7 +174,9 @@ async function writeUsageFixture(path: string) {
     ]);
     if (result.exitCode !== 0) {
       throw new Error(
-        result.stderr || result.stdout || "Unable to write privileged volume usage fixture",
+        result.stderr ||
+          result.stdout ||
+          "Unable to write privileged volume usage fixture",
       );
     }
     return;
@@ -175,15 +185,79 @@ async function writeUsageFixture(path: string) {
   await writeFile(fixturePath, Buffer.alloc(8192, 1));
 }
 
+async function reconcileVolumeUsageOnce() {
+  const app = await NestFactory.createApplicationContext(WorkerModule, {
+    logger: false,
+  });
+  try {
+    await app.get(VolumeUsageReconcilerService).reconcileBatch();
+  } finally {
+    await app.close();
+  }
+}
+
+async function runOperationToTerminal(operationId: string) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        resourceId: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    if (!operation) {
+      throw new Error(`Operation ${operationId} was not found`);
+    }
+    if (operation.status === "Succeeded") {
+      return operation;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runOperationWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach Succeeded after 12 worker iterations`,
+  );
+}
+
 async function runOperationWorkerOnce() {
   const workerEnv = {
     ...process.env,
-    OPERATION_WORKER_ONCE: "true",
+    WORKER_ONCE: "true",
   };
   const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
+  const npmExecPath = privileged ? process.env.npm_execpath : undefined;
+  if (privileged && !npmExecPath) {
+    throw new Error("Privileged storage smoke requires npm_execpath");
+  }
   const result = privileged
-    ? await command("sudo", ["-E", "npm", "run", "worker:operations"], workerEnv)
-    : await command("npm", ["run", "worker:operations"], workerEnv);
+    ? await command(
+        "sudo",
+        ["-E", process.execPath, npmExecPath!, "run", "worker"],
+        workerEnv,
+      )
+    : await command("npm", ["run", "worker"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
     .join("\n");
@@ -195,22 +269,6 @@ async function runOperationWorkerOnce() {
   if (result.exitCode !== 0) {
     throw new Error(output || "Operation worker failed");
   }
-}
-
-async function expectOperationSucceeded(operationId: string) {
-  const operation = await api<JsonObject>(
-    `/tenants/${createdTenantId}/operations/${operationId}`,
-    { method: "GET" },
-  );
-  const status = stringField(operation, "status");
-
-  if (status !== "Succeeded") {
-    throw new Error(
-      `Expected operation ${operationId} to succeed, got ${status}: ${JSON.stringify(operation)}`,
-    );
-  }
-
-  return operation;
 }
 
 async function api<T = unknown>(
@@ -247,27 +305,29 @@ async function api<T = unknown>(
 }
 
 function command(commandName: string, args: string[], env = process.env) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(commandName, args, {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => {
-      resolve({ exitCode: 127, stdout: "", stderr: error.message });
-    });
-    child.on("close", (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve) => {
+      const child = spawn(commandName, args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    });
-  });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        resolve({ exitCode: 127, stdout: "", stderr: error.message });
+      });
+      child.on("close", (code) => {
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    },
+  );
 }
 
 function stringField(value: JsonObject, field: string) {

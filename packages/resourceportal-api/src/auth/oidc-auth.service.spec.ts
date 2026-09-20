@@ -157,7 +157,7 @@ describe("OidcAuthService", () => {
   it("uses UserInfo when a verified human access token omits email", async () => {
     const fixture = await createTokenFixture(true, false);
     const prisma = {
-      $queryRaw: vi.fn().mockResolvedValue([]),
+      serviceIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
       userIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
       user: {
         findUnique: vi.fn().mockResolvedValue(null),
@@ -200,7 +200,9 @@ describe("OidcAuthService", () => {
 
   it("rejects UserInfo subject mismatch", async () => {
     const fixture = await createTokenFixture(true, false);
-    const prisma = { $queryRaw: vi.fn().mockResolvedValue([]) };
+    const prisma = {
+      serviceIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+    };
     installOidcFetch(fixture, {
       sub: "different-subject",
       email: "patryk@example.test",
@@ -245,16 +247,16 @@ describe("OidcAuthService", () => {
   it("keeps service identity bearer authentication independent of UserInfo", async () => {
     const fixture = await createTokenFixture(true, false);
     const prisma = {
-      $queryRaw: vi.fn().mockResolvedValue([
-        {
+      serviceIdentity: {
+        findUnique: vi.fn().mockResolvedValue({
           id: "service-1",
           tenantId: "tenant-1",
           name: "cli",
           status: "Active",
           zitadelUserId: fixture.subject,
           clientId: "rp-si-service-1",
-        },
-      ]),
+        }),
+      },
     };
     const fetchMock = installOidcFetch(fixture, {
       sub: fixture.subject,

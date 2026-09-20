@@ -1,18 +1,7 @@
 import { isAbsolute } from "node:path";
 import { loadSecretFiles, SecretFileEnv } from "../config/secret-file-loader";
 
-const requiredValues = [
-  "DATABASE_URL",
-  "INSTALLER_SWARM_WORKER_TOKEN",
-  "INSTALLER_SWARM_MANAGER_TOKEN",
-  "INSTALLER_SWARM_MANAGER_ENDPOINT",
-  "INSTALLER_STORAGE_SERVER_ADDRESS",
-  "INSTALLER_CLUSTER_ID",
-  "INSTALLER_VERSION",
-  "INSTALLER_SWARM_ADVERTISE_ADDR",
-  "INSTALLER_CLUSTER_CIDR",
-] as const;
-
+const requiredValues = ["DATABASE_URL"] as const;
 const requiredAbsolutePaths = [
   "INSTALLER_ENROLLMENT_TLS_CERT_FILE",
   "INSTALLER_ENROLLMENT_TLS_KEY_FILE",

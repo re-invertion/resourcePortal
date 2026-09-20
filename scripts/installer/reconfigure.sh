@@ -2,7 +2,7 @@
 
 rp_reconfigure_action_valid() {
   case "$1" in
-    domain|smtp|rotate-secrets|manager-control-plane|manager-ingress|addresses) return 0 ;;
+    domain|smtp|rotate-secrets|manager-control-plane|manager-ingress|node-tenant-workloads|addresses) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -74,16 +74,39 @@ rp_reconfigure_rotate_secret() {
   return 1
 }
 
+rp_reconfigure_apply_dual_label() {
+  local node="$1" enabled="$2" primary_label="$3" legacy_label="$4"
+  case "$enabled" in
+    true)
+      docker node update \
+        --label-add "${primary_label}=true" \
+        --label-add "${legacy_label}=true" \
+        "$node"
+      ;;
+    false)
+      docker node update \
+        --label-rm "$primary_label" \
+        --label-rm "$legacy_label" \
+        "$node"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 rp_reconfigure_manager_label() {
-  local label="$1" node="${RP_RECONFIGURE_NODE:-}" enabled="${RP_RECONFIGURE_ENABLED:-}"
+  local primary_label="$1" legacy_label="$2" node="${RP_RECONFIGURE_NODE:-}" enabled="${RP_RECONFIGURE_ENABLED:-}"
   [[ -n "$node" ]] || node="$(rp_ui_input 'Manager participation' 'Docker node ID/name' '')" || return 1
   [[ "$(docker node inspect "$node" --format '{{.Spec.Role}}' 2>/dev/null)" == manager ]] || { printf 'Target node is not a Swarm manager.\n' >&2; return 1; }
   if [[ -z "$enabled" ]]; then enabled="$(rp_ui_choice 'Manager participation' 'Enable or disable participation?' true true 'Enable' false 'Disable')" || return 1; fi
-  case "$enabled" in
-    true) docker node update --label-add "${label}=true" "$node" ;;
-    false) docker node update --label-rm "$label" "$node" ;;
-    *) return 1 ;;
-  esac
+  rp_reconfigure_apply_dual_label "$node" "$enabled" "$primary_label" "$legacy_label"
+}
+
+rp_reconfigure_node_label() {
+  local primary_label="$1" legacy_label="$2" node="${RP_RECONFIGURE_NODE:-}" enabled="${RP_RECONFIGURE_ENABLED:-}"
+  [[ -n "$node" ]] || node="$(rp_ui_input 'Node participation' 'Docker node ID/name' '')" || return 1
+  docker node inspect "$node" >/dev/null 2>&1 || { printf 'Target node does not exist.\n' >&2; return 1; }
+  if [[ -z "$enabled" ]]; then enabled="$(rp_ui_choice 'Node participation' 'Enable or disable participation?' true true 'Enable' false 'Disable')" || return 1; fi
+  rp_reconfigure_apply_dual_label "$node" "$enabled" "$primary_label" "$legacy_label"
 }
 
 rp_nfs_server_reachable() {
@@ -126,8 +149,9 @@ rp_reconfigure() {
     domain) rp_reconfigure_domain ;;
     smtp) rp_reconfigure_smtp ;;
     rotate-secrets) rp_reconfigure_rotate_secret ;;
-    manager-control-plane) rp_reconfigure_manager_label resourceportal.control-plane ;;
-    manager-ingress) rp_reconfigure_manager_label resourceportal.ingress ;;
+    manager-control-plane) rp_reconfigure_manager_label rp.node.control-plane resourceportal.control-plane ;;
+    manager-ingress) rp_reconfigure_manager_label rp.node.ingress resourceportal.ingress ;;
+    node-tenant-workloads) rp_reconfigure_node_label rp.node.tenant-workloads resourceportal.tenant-workloads ;;
     addresses) rp_reconfigure_addresses ;;
   esac
 }

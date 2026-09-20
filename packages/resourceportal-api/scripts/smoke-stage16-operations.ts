@@ -39,12 +39,22 @@ async function main() {
   const backends = await api<JsonObject[]>("/platform/storage-backends", {
     method: "GET",
   });
-  assert(backends.length === 1, `Expected one StorageBackend, got ${backends.length}`);
+  assert(
+    backends.length === 1,
+    `Expected one StorageBackend, got ${backends.length}`,
+  );
   backendId = stringField(backends[0], "id");
 
-  const validated = await api<JsonObject>(
+  const validationOperation = await api<OperationView>(
     `/platform/storage-backends/${backendId}/validate`,
     { method: "POST" },
+  );
+  const validationOperationId = stringField(validationOperation, "id");
+  await runPlatformOperationToTerminal(validationOperationId, "Succeeded");
+
+  const validated = await api<JsonObject>(
+    `/platform/storage-backends/${backendId}`,
+    { method: "GET" },
   );
   assert(
     validated.status === "Ready",
@@ -86,7 +96,10 @@ async function main() {
     },
   };
 
-  const first = await api<OperationView>(`/tenants/${tenantId}/volumes`, createInput);
+  const first = await api<OperationView>(
+    `/tenants/${tenantId}/volumes`,
+    createInput,
+  );
   const duplicate = await api<OperationView>(
     `/tenants/${tenantId}/volumes`,
     createInput,
@@ -96,7 +109,10 @@ async function main() {
     stringField(duplicate, "id") === operationId,
     "Idempotency-Key created more than one VOLUME_CREATE operation",
   );
-  assert(first.status === "Pending", `Expected Pending operation, got ${String(first.status)}`);
+  assert(
+    first.status === "Pending",
+    `Expected Pending operation, got ${String(first.status)}`,
+  );
 
   const listed = await api<OperationView[]>(`/tenants/${tenantId}/operations`, {
     method: "GET",
@@ -113,13 +129,17 @@ async function main() {
     retrying.status === "Pending",
     `Expected retryable operation to return to Pending, got ${String(retrying.status)}`,
   );
-  assert(retrying.attempt === 1, `Expected attempt=1, got ${String(retrying.attempt)}`);
+  assert(
+    retrying.attempt === 1,
+    `Expected attempt=1, got ${String(retrying.attempt)}`,
+  );
   assert(
     retrying.errorCode === "PlatformUnavailable",
     `Expected PlatformUnavailable retry classification, got ${String(retrying.errorCode)}`,
   );
   assert(
-    typeof retrying.nextAttemptAt === "string" || retrying.nextAttemptAt instanceof Date,
+    typeof retrying.nextAttemptAt === "string" ||
+      retrying.nextAttemptAt instanceof Date,
     "Retry did not persist nextAttemptAt",
   );
 
@@ -149,7 +169,10 @@ async function main() {
     `/tenants/${tenantId}/volumes/${createdVolumeId}`,
     { method: "GET" },
   );
-  assert(volume.status === "Ready", `Expected Ready Volume, got ${String(volume.status)}`);
+  assert(
+    volume.status === "Ready",
+    `Expected Ready Volume, got ${String(volume.status)}`,
+  );
   assert(
     stringField(volume, "sizeBytes") === "1048576",
     `Unexpected Volume size ${String(volume.sizeBytes)}`,
@@ -178,11 +201,52 @@ async function main() {
   console.log("Stage 16 operations/jobs smoke passed");
 }
 
-async function getOperation(operationId: string) {
-  return api<OperationView>(
-    `/tenants/${tenantId}/operations/${operationId}`,
-    { method: "GET" },
+async function runPlatformOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+) {
+  for (let iteration = 0; iteration < 10; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    assert(operation, `Operation ${operationId} was not found`);
+    if (operation.status === expectedStatus) return;
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runOperationWorkerOnce();
+  }
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 10 worker iterations`,
   );
+}
+
+async function getOperation(operationId: string) {
+  return api<OperationView>(`/tenants/${tenantId}/operations/${operationId}`, {
+    method: "GET",
+  });
 }
 
 async function assertEvents(operationId: string, expected: string[]) {
@@ -223,9 +287,13 @@ async function cleanup() {
     for (const volume of volumes) {
       const physicalPath = volume.storagePath;
       if (!physicalPath.startsWith(`${storageBasePath}/volumes/`)) {
-        throw new Error(`Unsafe Stage 16 cleanup storage path: ${physicalPath}`);
+        throw new Error(
+          `Unsafe Stage 16 cleanup storage path: ${physicalPath}`,
+        );
       }
-      await rm(physicalPath, { recursive: true, force: true }).catch(() => undefined);
+      await rm(physicalPath, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
     }
 
     await prisma.tenant
@@ -244,10 +312,11 @@ async function preflightApi() {
 async function runOperationWorkerOnce() {
   const workerEnv = {
     ...process.env,
-    OPERATION_WORKER_ONCE: "true",
+    WORKER_ONCE: "true",
   };
   const privileged =
-    process.env.STORAGE_SMOKE_PRIVILEGED_WORKER?.trim().toLowerCase() === "true";
+    process.env.STORAGE_SMOKE_PRIVILEGED_WORKER?.trim().toLowerCase() ===
+    "true";
 
   let result;
   if (privileged) {
@@ -257,11 +326,11 @@ async function runOperationWorkerOnce() {
     }
     result = await command(
       "sudo",
-      ["-E", process.execPath, npmExecPath, "run", "worker:operations"],
+      ["-E", process.execPath, npmExecPath, "run", "worker"],
       workerEnv,
     );
   } else {
-    result = await command("npm", ["run", "worker:operations"], workerEnv);
+    result = await command("npm", ["run", "worker"], workerEnv);
   }
 
   const output = [result.stdout.trim(), result.stderr.trim()]
@@ -279,7 +348,10 @@ async function assertNotFound(path: string) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: { "x-dev-user-id": userId },
   });
-  assert(response.status === 404, `Expected HTTP 404 for ${path}, got ${response.status}`);
+  assert(
+    response.status === 404,
+    `Expected HTTP 404 for ${path}, got ${response.status}`,
+  );
 }
 
 async function api<T = unknown>(

@@ -41,8 +41,8 @@ describe("NfsRemoteAccessValidatorService", () => {
         stdout: "node-a|Ready\nnode-b|Ready\nnode-c|Down",
         stderr: "",
       },
-      { exitCode: 0, stdout: "true", stderr: "" },
-      { exitCode: 0, stdout: "false", stderr: "" },
+      { exitCode: 0, stdout: "true|true", stderr: "" },
+      { exitCode: 0, stdout: "true|false", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -66,7 +66,7 @@ describe("NfsRemoteAccessValidatorService", () => {
       "node",
       "inspect",
       "--format",
-      '{{index .Spec.Labels "resourceportal.storage.volumes"}}',
+      '{{index .Spec.Labels "rp.node.storage"}}|{{index .Spec.Labels "resourceportal.storage.volumes"}}',
       "node-a",
     ]);
   });
@@ -74,7 +74,7 @@ describe("NfsRemoteAccessValidatorService", () => {
   it("probes only the canonical workload Volume runtime namespace", async () => {
     const { validator, runner } = harness([
       { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
-      { exitCode: 0, stdout: "true", stderr: "" },
+      { exitCode: 0, stdout: "true|true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Complete 1 second ago|", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },
@@ -94,6 +94,7 @@ describe("NfsRemoteAccessValidatorService", () => {
     expect(createArgs[mountIndex + 1]).toBe(
       "type=bind,source=/mnt/resourceportal/volumes,target=/probe",
     );
+    expect(createArgs).toContain("node.labels.rp.node.storage==true");
     expect(createArgs).toContain("node.labels.resourceportal.storage.volumes==true");
     expect(createArgs.join(" ")).not.toContain("/mnt/resourceportal/secrets");
     expect(createArgs.join(" ")).not.toContain("/mnt/resourceportal/platform");
@@ -103,7 +104,7 @@ describe("NfsRemoteAccessValidatorService", () => {
   it("fails closed when no storage-ready node is eligible", async () => {
     const { validator } = harness([
       { exitCode: 0, stdout: "node-a|Ready\nnode-b|Down", stderr: "" },
-      { exitCode: 0, stdout: "false", stderr: "" },
+      { exitCode: 0, stdout: "true|false", stderr: "" },
     ]);
 
     await expect(
@@ -118,7 +119,7 @@ describe("NfsRemoteAccessValidatorService", () => {
   it("removes the probe service after a failed task", async () => {
     const { validator, runner } = harness([
       { exitCode: 0, stdout: "node-a|Ready", stderr: "" },
-      { exitCode: 0, stdout: "true", stderr: "" },
+      { exitCode: 0, stdout: "true|true", stderr: "" },
       { exitCode: 0, stdout: "probe-service", stderr: "" },
       { exitCode: 0, stdout: "Rejected 1 second ago|mount failed", stderr: "" },
       { exitCode: 0, stdout: "", stderr: "" },

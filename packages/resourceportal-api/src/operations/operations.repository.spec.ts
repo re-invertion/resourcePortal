@@ -47,6 +47,7 @@ type CreateInput = {
 
 type RepositoryLike = {
   createOperation: (input: CreateInput) => Promise<OperationRow>;
+  failExhaustedOperations: () => Promise<OperationRow[]>;
   claimNext: (workerId: string, leaseSeconds: number) => Promise<OperationRow | null>;
 };
 
@@ -167,4 +168,38 @@ describe("Stage 16 OperationsRepository", () => {
     expect(result?.attempt).toBe(1);
     expect(result?.leaseOwner).toBe("worker-a");
   });
+  it("terminalizes expired work that has exhausted maxAttempts", async () => {
+    const { OperationsRepository } = await loadRepositoryModule();
+    const exhausted: OperationRow = {
+      ...operationRow,
+      status: "Failed",
+      attempt: 5,
+      maxAttempts: 5,
+      errorCode: "OperationAttemptsExhausted",
+      errorMessage: "attempts exhausted",
+      completedAt: new Date(),
+    };
+    const queryRaw = vi.fn().mockResolvedValue([exhausted]);
+    const repository = new OperationsRepository({ $queryRaw: queryRaw } as unknown as PrismaService);
+
+    const result = await repository.failExhaustedOperations();
+
+    expect(result).toEqual([exhausted]);
+    const sql = queryRaw.mock.calls[0][0] as { strings?: readonly string[] };
+    const text = sql.strings?.join(" ") ?? "";
+    expect(text).toContain('"attempt" >= "maxAttempts"');
+    expect(text).toContain("OperationAttemptsExhausted");
+  });
+
+  it("claim query refuses work whose execution-attempt budget is exhausted", async () => {
+    const { OperationsRepository } = await loadRepositoryModule();
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const repository = new OperationsRepository({ $queryRaw: queryRaw } as unknown as PrismaService);
+
+    await repository.claimNext("worker-a", 300);
+
+    const sql = queryRaw.mock.calls[0][0] as { strings?: readonly string[] };
+    expect(sql.strings?.join(" ")).toContain('"attempt" < "maxAttempts"');
+  });
+
 });

@@ -1,11 +1,22 @@
+import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
+import { IngressReconcilerService } from "../src/internal/ingress-reconciler.service";
+import { StackRuntimeService } from "../src/internal/stack-runtime.service";
+import {
+  appGroupNetworkName,
+  legacyAppGroupIngressNetworkName,
+} from "../src/internal/traefik-routing";
+import { WorkerModule } from "../src/worker.module";
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api").replace(/\/$/, "");
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api"
+).replace(/\/$/, "");
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const resolver = process.env.TRAEFIK_CERT_RESOLVER ?? "smoke-resolver";
-const managedBase = process.env.MANAGED_DOMAIN_BASE ?? "apps.resource-portal.local";
+const managedBase =
+  process.env.MANAGED_DOMAIN_BASE ?? "apps.resource-portal.local";
 const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
@@ -18,6 +29,18 @@ async function main() {
   if (!userId) {
     throw new Error("SMOKE_USER_ID is required");
   }
+
+  const reconcileOperation = await api<JsonObject>(
+    "/platform/swarm-cluster/reconcile",
+    {
+      method: "POST",
+      userId,
+    },
+  );
+  await runOperationToTerminal(
+    stringField(reconcileOperation, "id"),
+    "Succeeded",
+  );
 
   const tenant = await api<JsonObject>("/tenants", {
     method: "POST",
@@ -115,7 +138,7 @@ async function main() {
   );
   const deploymentId = stringField(deployment, "id");
 
-  await runWorkerOnce();
+  await runOperationToTerminal(deploymentId, "Succeeded");
   await expectDeploymentStatus(userId, deploymentId, "Succeeded");
 
   const serviceName = `${stackNameFor(appGroupId)}_nginx`;
@@ -143,19 +166,16 @@ async function main() {
     body: { httpEndpointId: null },
   });
 
-  await runWorkerOnce();
+  await reconcileIngressOnce();
 
   const cleanedLabels = await serviceLabels(serviceName);
   for (const key of Object.keys(cleanedLabels)) {
-    if (key.startsWith("traefik.http.routers.nginx-public")) {
-      throw new Error(`Stale Stage 9 router label remained after detach: ${key}`);
+    if (key.startsWith("traefik.")) {
+      throw new Error(
+        `Stale Stage 9 Traefik label remained after detach: ${key}`,
+      );
     }
   }
-  expectLabel(
-    cleanedLabels,
-    "traefik.http.services.nginx-public.loadbalancer.server.port",
-    "80",
-  );
 
   console.log("Stage 9 ingress/TLS real Swarm smoke completed successfully");
 }
@@ -168,18 +188,141 @@ async function cleanup() {
   }
 
   if (tenantId) {
-    await prisma.tenant.delete({ where: { id: tenantId } }).catch(() => undefined);
+    await prisma.tenant
+      .delete({ where: { id: tenantId } })
+      .catch(() => undefined);
   }
 }
 
+async function reconcileIngressOnce() {
+  const app = await NestFactory.createApplicationContext(WorkerModule, {
+    logger: false,
+  });
+  try {
+    const reconciler = app.get(IngressReconcilerService);
+    const maxAttempts = 4;
+    let lastResult:
+      { checked: number; changed: number; failed: number } | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      lastResult = await reconciler.reconcileBatch({ appGroupId });
+      if (lastResult.failed === 0) {
+        return;
+      }
+
+      if (attempt < maxAttempts) {
+        console.log(
+          `Ingress reconciliation attempt ${attempt}/${maxAttempts} reported ${lastResult.failed} transient failure(s); retrying`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+
+    if (!appGroupId) {
+      throw new Error(
+        "Ingress reconciliation failed before App Group diagnostics were available",
+      );
+    }
+
+    const runtime = app.get(StackRuntimeService);
+    const networkName = appGroupNetworkName(appGroupId);
+    const legacyNetworkName = legacyAppGroupIngressNetworkName(appGroupId);
+    const serviceName = `${stackNameFor(appGroupId)}_nginx`;
+    const diagnostics = {
+      appGroupNetwork: await runtime.reconcileAppGroupNetwork({
+        networkName,
+        traefikRequired: false,
+      }),
+      tenantNetwork: await runtime.reconcileServiceNetwork({
+        serviceName,
+        networkName,
+        required: true,
+      }),
+      legacyMembership: await runtime.reconcileServiceNetwork({
+        serviceName,
+        networkName: legacyNetworkName,
+        required: false,
+      }),
+      labels: await runtime.reconcileTraefikLabels({
+        serviceName,
+        desiredLabels: {},
+      }),
+      legacyCleanup: await runtime.reconcileLegacyIngressNetwork({
+        networkName: legacyNetworkName,
+        required: false,
+      }),
+    };
+    throw new Error(
+      `Ingress reconciliation did not converge after ${maxAttempts} attempts: ${JSON.stringify({ lastResult, diagnostics })}`,
+    );
+  } finally {
+    await app.close();
+  }
+}
+
+async function runOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        type: true,
+        status: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    if (!operation) {
+      throw new Error(`Operation ${operationId} was not found`);
+    }
+
+    if (operation.status === expectedStatus) {
+      return;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} (${operation.type}) reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 12 worker iterations`,
+  );
+}
+
 async function runWorkerOnce() {
-  const result = await command("npm", ["run", "worker:deployments"], {
+  const result = await command("npm", ["run", "worker"], {
     ...process.env,
     WORKER_ONCE: "true",
   });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+  if (output) {
+    console.log(output);
+  }
 
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || "Deployment worker failed");
+    throw new Error(output || "ResourcePortal worker failed");
   }
 }
 
@@ -195,7 +338,7 @@ async function expectDeploymentStatus(
   const status = stringField(deployment, "status");
   if (status !== expectedStatus) {
     throw new Error(
-      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}`,
+      `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}: ${diagnosticField(deployment.errorCode, "no-code")} ${diagnosticField(deployment.errorMessage, "")}`,
     );
   }
 }
@@ -214,6 +357,16 @@ async function serviceLabels(serviceName: string) {
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+}
+
+function diagnosticField(value: unknown, fallback: string) {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value);
 }
 
 function expectLabel(

@@ -165,14 +165,11 @@ export class BillingService {
     };
   }
 
-  async getActivePriceList(at = new Date()) {
-    const rows = await this.prisma.$queryRaw<PriceListRow[]>`
-      SELECT * FROM "PriceListVersion"
-      WHERE "effectiveFrom" <= ${at}
-      ORDER BY "effectiveFrom" DESC, "version" DESC
-      LIMIT 1
-    `;
-    return rows[0] ?? null;
+  getActivePriceList(at = new Date()) {
+    return this.prisma.priceListVersion.findFirst({
+      where: { effectiveFrom: { lte: at } },
+      orderBy: [{ effectiveFrom: "desc" }, { version: "desc" }],
+    });
   }
 
   async assertActivePriceList(at = new Date()) {
@@ -184,18 +181,16 @@ export class BillingService {
   }
 
   async listPriceLists() {
-    const rows = await this.prisma.$queryRaw<PriceListRow[]>`
-      SELECT * FROM "PriceListVersion"
-      ORDER BY "effectiveFrom" DESC, "version" DESC
-    `;
+    const rows = await this.prisma.priceListVersion.findMany({
+      orderBy: [{ effectiveFrom: "desc" }, { version: "desc" }],
+    });
     return rows.map((row) => this.mapPriceList(row));
   }
 
   async getPriceList(priceListId: string) {
-    const rows = await this.prisma.$queryRaw<PriceListRow[]>`
-      SELECT * FROM "PriceListVersion" WHERE "id" = ${priceListId}::uuid LIMIT 1
-    `;
-    const row = rows[0];
+    const row = await this.prisma.priceListVersion.findUnique({
+      where: { id: priceListId },
+    });
     if (!row) {
       throw new NotFoundException("Price list not found");
     }
@@ -225,20 +220,18 @@ export class BillingService {
       `;
       const version = (versions[0]?.version ?? 0) + 1;
       const id = randomUUID();
-      const rows = await tx.$queryRaw<PriceListRow[]>`
-        INSERT INTO "PriceListVersion" (
-          "id", "version", "effectiveFrom", "cpuCreditsPerVcpuHour",
-          "memoryCreditsPerGbHour", "storageCreditsPerGbHour",
-          "gpuCreditsPerGpuHour", "createdBy"
-        ) VALUES (
-          ${id}::uuid, ${version}, ${effectiveFrom}, ${rates.cpu},
-          ${rates.memory}, ${rates.storage}, ${rates.gpu}, ${actor.id}
-        ) RETURNING *
-      `;
-      const row = rows[0];
-      if (!row) {
-        throw new ConflictException("Price list creation failed");
-      }
+      const row = await tx.priceListVersion.create({
+        data: {
+          id,
+          version,
+          effectiveFrom,
+          cpuCreditsPerVcpuHour: rates.cpu,
+          memoryCreditsPerGbHour: rates.memory,
+          storageCreditsPerGbHour: rates.storage,
+          gpuCreditsPerGpuHour: rates.gpu,
+          createdBy: actor.id,
+        },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantName: "Platform",
@@ -267,17 +260,16 @@ export class BillingService {
   }
 
   async listVouchers() {
-    const rows = await this.prisma.$queryRaw<VoucherRow[]>`
-      SELECT * FROM "Voucher" ORDER BY "createdAt" DESC
-    `;
+    const rows = await this.prisma.voucher.findMany({
+      orderBy: { createdAt: "desc" },
+    });
     return rows.map((row) => this.mapVoucher(row));
   }
 
   async getVoucher(voucherId: string) {
-    const rows = await this.prisma.$queryRaw<VoucherRow[]>`
-      SELECT * FROM "Voucher" WHERE "id" = ${voucherId}::uuid LIMIT 1
-    `;
-    const row = rows[0];
+    const row = await this.prisma.voucher.findUnique({
+      where: { id: voucherId },
+    });
     if (!row) {
       throw new NotFoundException("Voucher not found");
     }
@@ -294,17 +286,15 @@ export class BillingService {
     const codeHash = hashVoucherCode(code);
     const id = randomUUID();
 
-    const rows = await this.prisma.$queryRaw<VoucherRow[]>`
-      INSERT INTO "Voucher" (
-        "id", "codeHash", "valueCredits", "expiresAt", "createdBy"
-      ) VALUES (
-        ${id}::uuid, ${codeHash}, ${valueCredits}, ${expiresAt}, ${actor.id}::uuid
-      ) RETURNING *
-    `;
-    const voucher = rows[0];
-    if (!voucher) {
-      throw new ConflictException("Voucher creation failed");
-    }
+    const voucher = await this.prisma.voucher.create({
+      data: {
+        id,
+        codeHash,
+        valueCredits,
+        expiresAt,
+        createdBy: actor.id,
+      },
+    });
     await this.prisma.auditLogEntry.create({
       data: {
         tenantName: "Platform",
@@ -340,13 +330,14 @@ export class BillingService {
       if (voucher.status === "Disabled") {
         return voucher;
       }
-      const updated = await tx.$queryRaw<VoucherRow[]>`
-        UPDATE "Voucher"
-        SET "status" = 'Disabled', "disabledAt" = CURRENT_TIMESTAMP,
-            "disabledByUserId" = ${actor.id}::uuid
-        WHERE "id" = ${voucherId}::uuid
-        RETURNING *
-      `;
+      const updated = await tx.voucher.update({
+        where: { id: voucherId },
+        data: {
+          status: "Disabled",
+          disabledAt: new Date(),
+          disabledByUserId: actor.id,
+        },
+      });
       await tx.auditLogEntry.create({
         data: {
           tenantName: "Platform",
@@ -359,7 +350,7 @@ export class BillingService {
           correlationId: randomUUID(),
         },
       });
-      return updated[0] ?? voucher;
+      return updated;
     });
 
     return this.mapVoucher(result);
@@ -400,13 +391,15 @@ export class BillingService {
         auditResourceType: "Voucher",
         auditResourceId: voucher.id,
       });
-      await tx.$executeRaw`
-        UPDATE "Voucher"
-        SET "status" = 'Redeemed', "redeemedAt" = ${now},
-            "redeemedByUserId" = ${actor.id}::uuid,
-            "redeemedBillingAccountId" = ${account.id}::uuid
-        WHERE "id" = ${voucher.id}::uuid
-      `;
+      await tx.voucher.update({
+        where: { id: voucher.id },
+        data: {
+          status: "Redeemed",
+          redeemedAt: now,
+          redeemedByUserId: actor.id,
+          redeemedBillingAccountId: account.id,
+        },
+      });
 
       return mutation;
     });
@@ -478,19 +471,22 @@ export class BillingService {
         chargedCredits: chargedCredits.toString(),
       } satisfies Prisma.InputJsonObject;
 
-      await tx.$executeRaw`
-        INSERT INTO "UsageRecord" (
-          "id", "billingAccountId", "tenantId", "resourceType", "resourceId",
-          "periodStart", "periodEnd", "usage", "cost", "chargedCredits",
-          "priceListVersionId", "appGroupId"
-        ) VALUES (
-          ${usageRecordId}::uuid, ${account.id}::uuid, ${input.tenantId}::uuid,
-          ${input.resourceType}, ${input.resourceId}::uuid, ${input.periodStart},
-          ${input.periodEnd}, ${JSON.stringify(usage)}::jsonb, ${input.theoreticalCost},
-          ${chargedCredits}, ${input.priceListVersionId}::uuid,
-          ${input.appGroupId ?? null}::uuid
-        )
-      `;
+      await tx.usageRecord.create({
+        data: {
+          id: usageRecordId,
+          billingAccountId: account.id,
+          tenantId: input.tenantId,
+          resourceType: input.resourceType,
+          resourceId: input.resourceId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          usage,
+          cost: input.theoreticalCost,
+          chargedCredits,
+          priceListVersionId: input.priceListVersionId,
+          appGroupId: input.appGroupId ?? null,
+        },
+      });
 
       if (chargedCredits.gt(0)) {
         await this.applyBalanceMutation(tx, {
@@ -620,16 +616,10 @@ export class BillingService {
         balanceAfter,
         status: "Succeeded",
         reference: input.reference,
+        reason: input.reason ?? null,
+        sourceTransactionId: input.sourceTransactionId ?? null,
       },
     });
-    if (input.reason || input.sourceTransactionId) {
-      await tx.$executeRaw`
-        UPDATE "BillingTransaction"
-        SET "reason" = ${input.reason ?? null},
-            "sourceTransactionId" = ${input.sourceTransactionId ?? null}::uuid
-        WHERE "id" = ${transaction.id}::uuid
-      `;
-    }
 
     const accountStateBefore = billingState(
       balanceBefore,

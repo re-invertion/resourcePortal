@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
+import { DeploymentExecutionService } from "../internal/deployment-execution.service";
 import { StackApplyService } from "../internal/stack-apply.service";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -8,6 +9,7 @@ export class RuntimeRestoreService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stackApply: StackApplyService,
+    private readonly deploymentExecution: DeploymentExecutionService,
   ) {}
 
   async reconcile() {
@@ -22,7 +24,6 @@ export class RuntimeRestoreService {
             id: true,
             version: true,
             status: true,
-            renderedStack: true,
           },
         },
       },
@@ -37,14 +38,26 @@ export class RuntimeRestoreService {
         (candidate) => candidate.version === appGroup.currentDeploymentVersion,
       );
 
-      if (!deployment?.renderedStack) {
+      if (!deployment) {
         skipped += 1;
+        continue;
+      }
+
+      let artifact: { renderedStack: string; sha256: string };
+      try {
+        artifact = await this.deploymentExecution.ensureDeploymentArtifact(
+          deployment.id,
+        );
+      } catch {
+        failed += 1;
         continue;
       }
 
       const result = await this.stackApply.applyStack({
         stackName: this.stackName(appGroup.id),
-        renderedStack: deployment.renderedStack,
+        renderedStack: artifact.renderedStack,
+        artifactSha256: artifact.sha256,
+        appGroupId: appGroup.id,
       });
 
       if (result.exitCode === 0) {

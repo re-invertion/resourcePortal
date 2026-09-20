@@ -165,11 +165,9 @@ EOF_NODE
     "http://127.0.0.1:3000/api/platform/billing/corrections" >/dev/null
 fi
 
-start_background operations-worker npm --workspace @resource-portal/api run worker:operations
-if [[ "$swarm_state" == "active" ]]; then
-  start_background deployment-worker npm run api:worker:deployments
-else
-  echo "Docker Swarm could not be initialized; deployment execution is disabled in this Codespace." >&2
+start_background worker npm run api:worker
+if [[ "$swarm_state" != "active" ]]; then
+  echo "Docker Swarm could not be initialized; infrastructure Operations will remain retryable in this Codespace." >&2
 fi
 
 start_background web env HOST=0.0.0.0 PORT=5173 npm --workspace @resource-portal/web run dev

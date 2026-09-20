@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ObservabilityService } from "./observability.service";
 
 describe("ObservabilityService", () => {
-  it("renders Prometheus metrics for recorded requests", () => {
+  it("renders Prometheus metrics for recorded requests", async () => {
     const service = new ObservabilityService();
 
     service.recordRequest({
@@ -12,7 +12,7 @@ describe("ObservabilityService", () => {
       statusCode: 200,
     });
 
-    const metrics = service.renderPrometheusMetrics();
+    const metrics = await service.renderPrometheusMetrics();
 
     expect(metrics).toContain("resource_portal_up 1");
     expect(metrics).toContain(
@@ -23,14 +23,14 @@ describe("ObservabilityService", () => {
     );
   });
 
-  it("renders worker lifecycle counters", () => {
+  it("renders worker lifecycle counters", async () => {
     const service = new ObservabilityService();
 
     service.recordWorkerEvent("poll", "worker-1");
     service.recordWorkerEvent("poll", "worker-1");
     service.recordWorkerEvent("claimed", "worker-1");
 
-    const metrics = service.renderPrometheusMetrics();
+    const metrics = await service.renderPrometheusMetrics();
     expect(metrics).toContain(
       'resource_portal_worker_events_total{event="poll",worker_id="worker-1"} 2',
     );
@@ -39,12 +39,12 @@ describe("ObservabilityService", () => {
     );
   });
 
-  it("renders deployment outcome and duration metrics", () => {
+  it("renders deployment outcome and duration metrics", async () => {
     const service = new ObservabilityService();
 
     service.recordDeploymentOutcome("Succeeded", "worker-1", 12_000);
 
-    const metrics = service.renderPrometheusMetrics();
+    const metrics = await service.renderPrometheusMetrics();
     expect(metrics).toContain(
       'resource_portal_deployments_total{status="Succeeded",worker_id="worker-1"} 1',
     );
@@ -56,7 +56,7 @@ describe("ObservabilityService", () => {
     );
   });
 
-  it("renders RemoteLocation and storage capacity gauges", () => {
+  it("renders RemoteLocation and storage capacity gauges", async () => {
     const service = new ObservabilityService();
 
     service.recordRemoteLocationSnapshot({
@@ -81,7 +81,7 @@ describe("ObservabilityService", () => {
       usedBytes: 250_000_000_000n,
     });
 
-    const metrics = service.renderPrometheusMetrics();
+    const metrics = await service.renderPrometheusMetrics();
     expect(metrics).toContain(
       'resource_portal_remote_location_available_cpu_nano{remote_location_id="rl-1",hostname="worker-a",status="Ready",health="Healthy",maintenance="false"} 6000000000',
     );

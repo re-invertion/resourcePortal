@@ -15,7 +15,11 @@ export class StackRuntimeService {
   constructor(private readonly config: ConfigService) {}
 
   async scaleServices(
-    services: Array<{ stackName: string; serviceName: string; replicas: number }>,
+    services: Array<{
+      stackName: string;
+      serviceName: string;
+      replicas: number;
+    }>,
   ) {
     const results: RuntimeResult[] = [];
 
@@ -64,7 +68,14 @@ export class StackRuntimeService {
     ]);
 
     if (inspect.exitCode !== 0) {
-      return { success: false, changed: false };
+      return {
+        success: false,
+        changed: false,
+        error:
+          inspect.stderr ||
+          inspect.stdout ||
+          `docker service inspect ${input.serviceName} failed`,
+      };
     }
 
     let current: Record<string, string>;
@@ -79,7 +90,11 @@ export class StackRuntimeService {
         ),
       );
     } catch {
-      return { success: false, changed: false };
+      return {
+        success: false,
+        changed: false,
+        error: `Unable to parse Docker service labels for ${input.serviceName}`,
+      };
     }
 
     const currentTraefik = Object.fromEntries(
@@ -94,8 +109,11 @@ export class StackRuntimeService {
     const removeKeys = Object.keys(currentTraefik).filter(
       (key) => !(key in desiredTraefik),
     );
+    const addOrUpdate = Object.entries(desiredTraefik).filter(
+      ([key, value]) => currentTraefik[key] !== value,
+    );
 
-    if (removeKeys.length === 0) {
+    if (removeKeys.length === 0 && addOrUpdate.length === 0) {
       return { success: true, changed: false };
     }
 
@@ -103,13 +121,350 @@ export class StackRuntimeService {
     for (const key of removeKeys) {
       args.push("--label-rm", key);
     }
+    for (const [key, value] of addOrUpdate) {
+      args.push("--label-add", `${key}=${value}`);
+    }
     args.push(input.serviceName);
 
     const update = await this.runDocker(args);
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${input.serviceName} labels failed`,
+        };
+  }
+
+  async reconcileAppGroupNetwork(input: {
+    networkName: string;
+    traefikRequired: boolean;
+  }) {
+    this.assertManagedAppGroupNetwork(input.networkName);
+    const ensured = await this.ensureAppGroupNetwork(input.networkName);
+    if (!ensured.success) return ensured;
+
+    const membership = await this.reconcileTraefikNetworkMembership(
+      input.networkName,
+      input.traefikRequired,
+    );
+    if (!membership.success) {
+      return {
+        success: false,
+        changed: ensured.changed || membership.changed,
+        error: membership.error,
+      };
+    }
     return {
-      success: update.exitCode === 0,
-      changed: update.exitCode === 0,
+      success: true,
+      changed: ensured.changed || membership.changed,
     };
+  }
+
+  async reconcileLegacyIngressNetwork(input: {
+    networkName: string;
+    required: boolean;
+  }) {
+    this.assertManagedLegacyIngressNetwork(input.networkName);
+    return input.required
+      ? this.ensureLegacyIngressNetwork(input.networkName)
+      : this.removeLegacyIngressNetwork(input.networkName);
+  }
+
+  async reconcileServiceNetwork(input: {
+    serviceName: string;
+    networkName: string;
+    required: boolean;
+  }) {
+    this.assertManagedTenantNetwork(input.networkName);
+    const network = await this.inspectNetwork(input.networkName);
+    if (!network.success) {
+      return !input.required && network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+
+    const serviceNetworks = await this.inspectServiceNetworks(
+      input.serviceName,
+    );
+    if (!serviceNetworks.success) {
+      return {
+        success: false,
+        changed: false,
+        error: serviceNetworks.error,
+      };
+    }
+    const attached = serviceNetworks.networkIds.includes(network.networkId);
+    if (attached === input.required) {
+      return { success: true, changed: false };
+    }
+
+    const update = await this.runDocker([
+      "service",
+      "update",
+      input.required ? "--network-add" : "--network-rm",
+      input.networkName,
+      input.serviceName,
+    ]);
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${input.serviceName} network membership failed`,
+        };
+  }
+
+  private async ensureAppGroupNetwork(networkName: string) {
+    const network = await this.inspectNetwork(networkName);
+    if (network.success) {
+      return { success: true, changed: false };
+    }
+    if (!network.missing) {
+      return { success: false, changed: false, error: network.error };
+    }
+
+    const create = await this.runDocker([
+      "network",
+      "create",
+      "--driver",
+      "overlay",
+      "--label",
+      "resourceportal.managed=true",
+      "--label",
+      "resourceportal.network.kind=app-group",
+      networkName,
+    ]);
+    return create.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            create.stderr ||
+            create.stdout ||
+            `docker network create ${networkName} failed`,
+        };
+  }
+
+  private async ensureLegacyIngressNetwork(networkName: string) {
+    let changed = false;
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      if (!network.missing) {
+        return { success: false, changed: false, error: network.error };
+      }
+      const create = await this.runDocker([
+        "network",
+        "create",
+        "--driver",
+        "overlay",
+        "--label",
+        "resourceportal.managed=true",
+        "--label",
+        "resourceportal.network.kind=app-group-ingress-legacy",
+        networkName,
+      ]);
+      if (create.exitCode !== 0) {
+        return {
+          success: false,
+          changed: false,
+          error:
+            create.stderr ||
+            create.stdout ||
+            `docker network create ${networkName} failed`,
+        };
+      }
+      changed = true;
+    }
+
+    const membership = await this.reconcileTraefikNetworkMembership(
+      networkName,
+      true,
+    );
+    if (!membership.success) {
+      return {
+        success: false,
+        changed: changed || membership.changed,
+        error: membership.error,
+      };
+    }
+    return {
+      success: true,
+      changed: changed || membership.changed,
+    };
+  }
+
+  private async removeLegacyIngressNetwork(networkName: string) {
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      return network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+
+    const membership = await this.reconcileTraefikNetworkMembership(
+      networkName,
+      false,
+    );
+    if (!membership.success) return membership;
+
+    const remove = await this.runDocker(["network", "rm", networkName]);
+    if (remove.exitCode !== 0 && !this.isMissingNetwork(remove.stderr)) {
+      return {
+        success: false,
+        changed: membership.changed,
+        error:
+          remove.stderr ||
+          remove.stdout ||
+          `docker network rm ${networkName} failed`,
+      };
+    }
+    return { success: true, changed: true };
+  }
+
+  private async reconcileTraefikNetworkMembership(
+    networkName: string,
+    required: boolean,
+  ) {
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      return !required && network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+
+    const traefik = this.traefikServiceName();
+    const serviceNetworks = await this.inspectServiceNetworks(traefik);
+    if (!serviceNetworks.success) {
+      return !required && serviceNetworks.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: serviceNetworks.error };
+    }
+    const attached = serviceNetworks.networkIds.includes(network.networkId);
+    if (attached === required) {
+      return { success: true, changed: false };
+    }
+
+    const update = await this.runDocker([
+      "service",
+      "update",
+      required ? "--network-add" : "--network-rm",
+      networkName,
+      traefik,
+    ]);
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${traefik} failed`,
+        };
+  }
+
+  private async inspectNetwork(networkName: string) {
+    const result = await this.runDocker([
+      "network",
+      "inspect",
+      networkName,
+      "--format",
+      "{{.Id}}",
+    ]);
+    const networkId = result.stdout.trim();
+    if (result.exitCode === 0 && networkId) {
+      return { success: true as const, missing: false, networkId };
+    }
+    return {
+      success: false as const,
+      missing: this.isMissingNetwork(result.stderr),
+      networkId: "",
+      error:
+        result.stderr ||
+        result.stdout ||
+        `docker network inspect ${networkName} failed`,
+    };
+  }
+
+  private async inspectServiceNetworks(serviceName: string) {
+    const result = await this.runDocker([
+      "service",
+      "inspect",
+      serviceName,
+      "--format",
+      "{{range .Spec.TaskTemplate.Networks}}{{println .Target}}{{end}}",
+    ]);
+    if (result.exitCode !== 0) {
+      return {
+        success: false as const,
+        missing: this.isMissingService(result.stderr),
+        networkIds: [] as string[],
+        error:
+          result.stderr ||
+          result.stdout ||
+          `docker service inspect ${serviceName} failed`,
+      };
+    }
+    return {
+      success: true as const,
+      missing: false as const,
+      networkIds: result.stdout.split(/\s+/).filter(Boolean),
+    };
+  }
+
+  private traefikServiceName() {
+    return (
+      this.config.get<string>("TRAEFIK_SERVICE_NAME") ??
+      "resourceportal-control-plane_traefik"
+    );
+  }
+
+  private assertManagedAppGroupNetwork(networkName: string) {
+    if (!/^rp-appgroup-[a-z0-9-]+$/.test(networkName)) {
+      throw new Error(`Refusing unmanaged App Group network: ${networkName}`);
+    }
+  }
+
+  private assertManagedLegacyIngressNetwork(networkName: string) {
+    if (!/^rp-ingress-[a-z0-9-]+$/.test(networkName)) {
+      throw new Error(
+        `Refusing unmanaged legacy ingress network: ${networkName}`,
+      );
+    }
+  }
+
+  private assertManagedTenantNetwork(networkName: string) {
+    if (
+      !/^rp-appgroup-[a-z0-9-]+$/.test(networkName) &&
+      !/^rp-ingress-[a-z0-9-]+$/.test(networkName)
+    ) {
+      throw new Error(`Refusing unmanaged tenant network: ${networkName}`);
+    }
+  }
+
+  private isMissingNetwork(stderr: string) {
+    const normalized = stderr.toLowerCase();
+    return (
+      normalized.includes("no such network") ||
+      normalized.includes("network not found") ||
+      /network\s+[^\n]+\s+not found/.test(normalized)
+    );
+  }
+
+  private isMissingService(stderr: string) {
+    const normalized = stderr.toLowerCase();
+    return (
+      normalized.includes("no such service") ||
+      normalized.includes("service not found")
+    );
   }
 
   async inspectStackServices(
@@ -147,16 +502,17 @@ export class StackRuntimeService {
           throw new Error("Unexpected docker stack services output");
         }
 
-        const desiredReplicas = this.parseDesiredReplicas(service.Replicas);
+        const replicas = this.parseReplicas(service.Replicas);
 
-        if (desiredReplicas === null) {
+        if (replicas === null) {
           throw new Error("Unexpected docker service replica value");
         }
 
         return {
           name: service.Name,
           image: service.Image,
-          desiredReplicas,
+          runningReplicas: replicas.running,
+          desiredReplicas: replicas.desired,
         };
       });
     } catch {
@@ -164,15 +520,23 @@ export class StackRuntimeService {
     }
   }
 
-  private parseDesiredReplicas(value: string) {
-    const [, desired] = value.trim().split("/");
-
-    if (desired === undefined) {
+  private parseReplicas(value: string) {
+    const [runningRaw, desiredRaw] = value.trim().split("/");
+    if (runningRaw === undefined || desiredRaw === undefined) {
       return null;
     }
 
-    const parsed = Number.parseInt(desired, 10);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    const running = Number.parseInt(runningRaw, 10);
+    const desired = Number.parseInt(desiredRaw, 10);
+    if (
+      !Number.isFinite(running) ||
+      running < 0 ||
+      !Number.isFinite(desired) ||
+      desired < 0
+    ) {
+      return null;
+    }
+    return { running, desired };
   }
 
   private runDocker(args: string[]): Promise<RuntimeResult> {
@@ -192,34 +556,19 @@ export class StackRuntimeService {
       });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
-      let settled = false;
       const command = `docker ${fullArgs.join(" ")}`;
-      const timeout = setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGTERM");
-        }
-      }, timeoutMs);
-
-      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-      child.on("error", (error) => {
+      let settled = false;
+      const finish = (result: RuntimeResult) => {
+        if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        resolve({
-          command,
-          exitCode: 127,
-          stdout: this.decode(stdout),
-          stderr: error.message,
-        });
-      });
-      child.on("close", (code, signal) => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        clearTimeout(timeout);
-        resolve({
+        resolve(result);
+      };
+      const finishFromExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        finish({
           command,
           exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
@@ -227,7 +576,30 @@ export class StackRuntimeService {
             ? `docker runtime command terminated by ${signal}`
             : this.decode(stderr),
         });
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        finish({
+          command,
+          exitCode: 124,
+          stdout: this.decode(stdout),
+          stderr: `${command} timed out after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        finish({
+          command,
+          exitCode: 127,
+          stdout: this.decode(stdout),
+          stderr: error.message,
+        });
       });
+      child.on("exit", finishFromExit);
+      child.on("close", finishFromExit);
     });
   }
 

@@ -203,12 +203,14 @@ upgrade_preserves_management_state() (
   rp_run_migrations(){ return 0; }
   rp_deploy_control_plane(){ [[ "$1" == final ]] && printf 'deploy:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_wait_for_https_origin(){ return 0; }
+  rp_primary_start_enrollment(){ printf 'enrollment:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_manifest_value(){ [[ "$2" == .version ]] && printf '0.1.4\n'; }
   rp_config_write(){ printf 'config:%s:%s:%s\n' "$RP_CFG_ZITADEL_ORGANIZATION_ID" "$RP_CFG_ZITADEL_PROJECT_ID" "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_write_stack(){ printf 'stack:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_upgrade_apply "$manifest" "$previous"
   text="$(cat "$log")"
   [[ "$text" == *'deploy:rp_zitadel_management_token_upgrade42'* ]]
+  [[ "$text" == *'enrollment:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'config:org-upgrade:project-upgrade:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'stack:rp_zitadel_management_token_upgrade42'* ]]
 )

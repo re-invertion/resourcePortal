@@ -58,8 +58,6 @@ test("classifies every API controller so new public surface cannot drift silentl
     "health/health.controller.ts",
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
-    "internal/auth-session-maintenance.controller.ts",
-    "internal/deployment-worker.controller.ts",
     "internal/installer-enrollment.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",
     "oauth-applications/platform-oauth-applications.controller.ts",

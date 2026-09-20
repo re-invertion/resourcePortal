@@ -55,24 +55,30 @@ jobs:
       NFS_GANESHA_VERSION: "4.1"
       STORAGE_BACKEND_RECONCILE_INTERVAL_MS: 600000
       STORAGE_REMOTE_VALIDATION_ENABLED: "true"
-      STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: 120000
+      STORAGE_REMOTE_VALIDATION_TIMEOUT_MS: 45000
       STORAGE_REMOTE_VALIDATION_IMAGE: alpine:3.20
       STORAGE_SMOKE_PRIVILEGED_WORKER: "true"
       TRAEFIK_CERT_RESOLVER: smoke-resolver
+      TRAEFIK_SERVICE_NAME: resourceportal-smoke-traefik-anchor
       DOCKER_CONTEXT: default
-      DOCKER_APPLY_TIMEOUT_MS: 120000
-      DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 120000
-      DOCKER_REGISTRY_AUTH_TIMEOUT_MS: 120000
-      DOCKER_SECRET_PROVISION_TIMEOUT_MS: 120000
-      DOCKER_VOLUME_PROVISION_TIMEOUT_MS: 120000
-      DOCKER_RUNTIME_OPERATION_TIMEOUT_MS: 120000
-      DOCKER_ROLLOUT_TIMEOUT_MS: 180000
-      DOCKER_ROLLOUT_POLL_INTERVAL_MS: 2000
+      DOCKER_APPLY_TIMEOUT_MS: 60000
+      DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 60000
+      DOCKER_REGISTRY_AUTH_TIMEOUT_MS: 60000
+      DOCKER_SECRET_PROVISION_TIMEOUT_MS: 60000
+      DOCKER_VOLUME_PROVISION_TIMEOUT_MS: 60000
+      DOCKER_RUNTIME_OPERATION_TIMEOUT_MS: 60000
+      DOCKER_ROLLOUT_TIMEOUT_MS: 60000
+      DOCKER_ROLLOUT_POLL_INTERVAL_MS: 1000
       WORKER_ID: github-actions-swarm
       WORKER_ONCE: "true"
       SMOKE_USER_ID: 11111111-1111-4111-8111-111111111111
       PLATFORM_ADMIN_USER_IDS: 11111111-1111-4111-8111-111111111111
       SWARM_INFRASTRUCTURE_RECONCILE_INTERVAL_MS: 600000
+      STAGE20_WORKER_TIMEOUT_MS: 180000
+      STAGE20_REPLICA_WAIT_TIMEOUT_MS: 60000
+      STAGE20_REPLICA_POLL_INTERVAL_MS: 1000
+      STAGE20_FORCE_UPDATE_WAIT_TIMEOUT_MS: 30000
+      STAGE20_STACK_REMOVAL_TIMEOUT_MS: 30000
 
     steps:
       - name: Checkout
@@ -88,9 +94,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright for Stage 20 real-Swarm browser smoke
-        run: |
-          npm install --no-save --package-lock=false playwright@1.62.1
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Generate Prisma client
         run: npm run api:prisma:generate
@@ -128,7 +132,7 @@ jobs:
 
       - name: Prepare Stage 14 XFS storage harness
         run: |
-          sudo apt-get update
+          # Playwright's immediately preceding --with-deps install already refreshes apt metadata.
           sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs nfs-common xfsprogs quota
           sudo systemctl stop nfs-ganesha 2>/dev/null || true
 
@@ -232,11 +236,20 @@ jobs:
           NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
           test -w /mnt/resourceportal/volumes
           docker node update \
+            --label-add rp.node.storage=true \
+            --label-add rp.node.tenant-workloads=true \
+            --label-add rp.node.ingress=true \
+            --label-add rp.node.control-plane=true \
             --label-add resourceportal.storage.volumes=true \
             --label-add resourceportal.storage.secrets=true \
             --label-add resourceportal.storage.platform=true \
             "$NODE_ID"
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.storage"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.tenant-workloads"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.ingress"}}')" = true
+          test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.control-plane"}}')" = true
           test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
+
 
       - name: Build Stage 20 Web Console
         env:
@@ -283,7 +296,23 @@ jobs:
             -H "x-dev-user-id: $SMOKE_USER_ID" \
             http://127.0.0.1:3000/api/platform/swarm-cluster/reconcile
 
+      - name: Pre-pull Stage 20 workload images
+        run: |
+          docker pull nginx:alpine
+          docker pull alpine:3.20
+          docker network create \
+            --driver overlay \
+            resourceportal-smoke-control-plane
+          docker service create \
+            --name "$TRAEFIK_SERVICE_NAME" \
+            --network resourceportal-smoke-control-plane \
+            --replicas 0 \
+            --detach=true \
+            alpine:3.20 sleep 3600
+          docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null
+
       - name: Run Stage 20 browser smoke against real Swarm
+        timeout-minutes: 10
         env:
           STAGE20_REAL_SWARM_WEB_ORIGIN: http://127.0.0.1:4173
         run: node scripts/run-stage20-real-swarm-web-e2e.mjs
@@ -295,6 +324,18 @@ jobs:
 
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
+
+      - name: Remove real-Swarm ingress anchor
+        if: always()
+        run: |
+          docker service rm "$TRAEFIK_SERVICE_NAME" || true
+          for attempt in $(seq 1 30); do
+            if ! docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker network rm resourceportal-smoke-control-plane || true
 
       - name: Verify Swarm is clean after smoke test
         if: always()

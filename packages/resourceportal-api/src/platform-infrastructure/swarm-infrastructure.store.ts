@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   InfrastructureHealth,
@@ -47,29 +46,23 @@ export type RemoteLocationRow = {
 export class SwarmInfrastructureStore {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getCluster() {
-    const rows = await this.prisma.$queryRaw<SwarmClusterRow[]>`
-      SELECT * FROM "SwarmCluster"
-      WHERE "id" = ${SWARM_CLUSTER_SINGLETON_ID}::uuid
-      LIMIT 1
-    `;
-    return rows[0] ?? null;
+  async getCluster(): Promise<SwarmClusterRow | null> {
+    const row = await this.prisma.swarmCluster.findUnique({
+      where: { id: SWARM_CLUSTER_SINGLETON_ID },
+    });
+    return row ? this.mapCluster(row) : null;
   }
 
-  async listRemoteLocations() {
-    return this.prisma.$queryRaw<RemoteLocationRow[]>`
-      SELECT * FROM "RemoteLocation"
-      ORDER BY "hostname" ASC, "id" ASC
-    `;
+  async listRemoteLocations(): Promise<RemoteLocationRow[]> {
+    const rows = await this.prisma.remoteLocation.findMany({
+      orderBy: [{ hostname: "asc" }, { id: "asc" }],
+    });
+    return rows.map((row) => this.mapRemoteLocation(row));
   }
 
-  async getRemoteLocation(id: string) {
-    const rows = await this.prisma.$queryRaw<RemoteLocationRow[]>`
-      SELECT * FROM "RemoteLocation"
-      WHERE "id" = ${id}::uuid
-      LIMIT 1
-    `;
-    return rows[0] ?? null;
+  async getRemoteLocation(id: string): Promise<RemoteLocationRow | null> {
+    const row = await this.prisma.remoteLocation.findUnique({ where: { id } });
+    return row ? this.mapRemoteLocation(row) : null;
   }
 
   async requireRemoteLocation(id: string) {
@@ -97,66 +90,39 @@ export class SwarmInfrastructureStore {
     networkCapabilities: string[];
     lastSeenAt: Date;
   }) {
-    const networkCapabilities =
-      input.networkCapabilities.length > 0
-        ? Prisma.sql`ARRAY[${Prisma.join(input.networkCapabilities)}]::TEXT[]`
-        : Prisma.sql`ARRAY[]::TEXT[]`;
-
-    await this.prisma.$executeRaw`
-      INSERT INTO "RemoteLocation" (
-        "id", "swarmNodeId", "hostname", "role", "status", "availability",
-        "health", "maintenance", "cpuNano", "availableCpuNano", "memoryBytes",
-        "availableMemoryBytes", "gpuCount", "networkCapabilities", "lastSeenAt",
-        "createdAt", "updatedAt"
-      ) VALUES (
-        ${input.id}::uuid,
-        ${input.swarmNodeId},
-        ${input.hostname},
-        ${input.role},
-        ${input.status},
-        ${input.availability},
-        ${input.health},
-        ${input.maintenance},
-        ${input.cpuNano},
-        ${input.availableCpuNano},
-        ${input.memoryBytes},
-        ${input.availableMemoryBytes},
-        ${input.gpuCount},
-        ${networkCapabilities},
-        ${input.lastSeenAt},
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      )
-      ON CONFLICT ("swarmNodeId") DO UPDATE SET
-        "hostname" = EXCLUDED."hostname",
-        "role" = EXCLUDED."role",
-        "status" = EXCLUDED."status",
-        "availability" = EXCLUDED."availability",
-        "health" = EXCLUDED."health",
-        "maintenance" = EXCLUDED."maintenance",
-        "cpuNano" = EXCLUDED."cpuNano",
-        "availableCpuNano" = EXCLUDED."availableCpuNano",
-        "memoryBytes" = EXCLUDED."memoryBytes",
-        "availableMemoryBytes" = EXCLUDED."availableMemoryBytes",
-        "gpuCount" = EXCLUDED."gpuCount",
-        "networkCapabilities" = EXCLUDED."networkCapabilities",
-        "lastSeenAt" = EXCLUDED."lastSeenAt",
-        "updatedAt" = CURRENT_TIMESTAMP
-    `;
+    const row = await this.prisma.remoteLocation.upsert({
+      where: { swarmNodeId: input.swarmNodeId },
+      create: input,
+      update: {
+        hostname: input.hostname,
+        role: input.role,
+        status: input.status,
+        availability: input.availability,
+        health: input.health,
+        maintenance: input.maintenance,
+        cpuNano: input.cpuNano,
+        availableCpuNano: input.availableCpuNano,
+        memoryBytes: input.memoryBytes,
+        availableMemoryBytes: input.availableMemoryBytes,
+        gpuCount: input.gpuCount,
+        networkCapabilities: input.networkCapabilities,
+        lastSeenAt: input.lastSeenAt,
+      },
+    });
+    return this.mapRemoteLocation(row);
   }
 
   async markRemoteLocationRemoved(id: string) {
-    await this.prisma.$executeRaw`
-      UPDATE "RemoteLocation"
-      SET
-        "status" = 'Removed',
-        "health" = 'Unhealthy',
-        "maintenance" = false,
-        "availableCpuNano" = 0,
-        "availableMemoryBytes" = 0,
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${id}::uuid
-    `;
+    await this.prisma.remoteLocation.updateMany({
+      where: { id },
+      data: {
+        status: "Removed",
+        health: "Unhealthy",
+        maintenance: false,
+        availableCpuNano: 0n,
+        availableMemoryBytes: 0n,
+      },
+    });
   }
 
   async saveCluster(input: {
@@ -167,38 +133,22 @@ export class SwarmInfrastructureStore {
     lastSyncedAt: Date;
     lastError: string | null;
   }) {
-    await this.prisma.$executeRaw`
-      INSERT INTO "SwarmCluster" (
-        "id", "dockerClusterId", "health", "managerCount", "nodeCount",
-        "lastSyncedAt", "lastError", "createdAt", "updatedAt"
-      ) VALUES (
-        ${SWARM_CLUSTER_SINGLETON_ID}::uuid,
-        ${input.dockerClusterId},
-        ${input.health},
-        ${input.managerCount},
-        ${input.nodeCount},
-        ${input.lastSyncedAt},
-        ${input.lastError},
-        CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
-      )
-      ON CONFLICT ("id") DO UPDATE SET
-        "dockerClusterId" = EXCLUDED."dockerClusterId",
-        "health" = EXCLUDED."health",
-        "managerCount" = EXCLUDED."managerCount",
-        "nodeCount" = EXCLUDED."nodeCount",
-        "lastSyncedAt" = EXCLUDED."lastSyncedAt",
-        "lastError" = EXCLUDED."lastError",
-        "updatedAt" = CURRENT_TIMESTAMP
-    `;
+    const row = await this.prisma.swarmCluster.upsert({
+      where: { id: SWARM_CLUSTER_SINGLETON_ID },
+      create: {
+        id: SWARM_CLUSTER_SINGLETON_ID,
+        ...input,
+      },
+      update: input,
+    });
+    return this.mapCluster(row);
   }
 
   async setClusterError(error: string) {
-    await this.prisma.$executeRaw`
-      UPDATE "SwarmCluster"
-      SET "health" = 'Unknown', "lastError" = ${error}, "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${SWARM_CLUSTER_SINGLETON_ID}::uuid
-    `;
+    await this.prisma.swarmCluster.updateMany({
+      where: { id: SWARM_CLUSTER_SINGLETON_ID },
+      data: { health: "Unknown", lastError: error },
+    });
   }
 
   async setRemoteLocationMaintenance(
@@ -211,23 +161,59 @@ export class SwarmInfrastructureStore {
       availableMemoryBytes: bigint;
     },
   ) {
-    const rows = await this.prisma.$queryRaw<RemoteLocationRow[]>`
-      UPDATE "RemoteLocation"
-      SET
-        "maintenance" = ${input.maintenance},
-        "availability" = ${input.availability},
-        "health" = ${input.health},
-        "availableCpuNano" = ${input.availableCpuNano},
-        "availableMemoryBytes" = ${input.availableMemoryBytes},
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${id}::uuid
-      RETURNING *
-    `;
-
-    const remoteLocation = rows[0];
-    if (!remoteLocation) {
+    const updated = await this.prisma.remoteLocation.updateMany({
+      where: { id },
+      data: input,
+    });
+    if (updated.count !== 1) {
       throw new NotFoundException("Remote Location not found");
     }
-    return remoteLocation;
+    const row = await this.prisma.remoteLocation.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException("Remote Location not found");
+    }
+    return this.mapRemoteLocation(row);
+  }
+
+  private mapCluster(row: {
+    id: string;
+    dockerClusterId: string;
+    health: string;
+    managerCount: number;
+    nodeCount: number;
+    lastSyncedAt: Date | null;
+    lastError: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): SwarmClusterRow {
+    return { ...row, health: row.health as InfrastructureHealth };
+  }
+
+  private mapRemoteLocation(row: {
+    id: string;
+    swarmNodeId: string;
+    hostname: string;
+    role: string;
+    status: string;
+    availability: string;
+    health: string;
+    maintenance: boolean;
+    cpuNano: bigint;
+    availableCpuNano: bigint;
+    memoryBytes: bigint;
+    availableMemoryBytes: bigint;
+    gpuCount: number;
+    networkCapabilities: string[];
+    lastSeenAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): RemoteLocationRow {
+    return {
+      ...row,
+      role: row.role as RemoteLocationRole,
+      status: row.status as RemoteLocationStatus,
+      availability: row.availability as RemoteLocationAvailability,
+      health: row.health as InfrastructureHealth,
+    };
   }
 }

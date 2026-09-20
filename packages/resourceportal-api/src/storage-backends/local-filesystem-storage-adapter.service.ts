@@ -326,7 +326,7 @@ export class LocalFilesystemStorageAdapterService {
   private assertPrivilegedMutation() {
     if (typeof process.getuid !== "function" || process.getuid() !== 0) {
       throw new InternalServerErrorException(
-        "Storage quota mutation requires the privileged operation-worker",
+        "Storage quota mutation requires the privileged ResourcePortal Worker",
       );
     }
   }

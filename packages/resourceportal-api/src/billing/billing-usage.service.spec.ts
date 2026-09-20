@@ -26,6 +26,9 @@ describe("BillingUsageService system audit", () => {
           },
         ]),
       $executeRaw: vi.fn(() => Promise.resolve(1)),
+      usageRecord: {
+        update: vi.fn(() => Promise.resolve({ id: usageRecordId })),
+      },
       billingAccount: {
         update: vi.fn(() => Promise.resolve({ id: accountId })),
       },

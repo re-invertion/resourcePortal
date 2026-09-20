@@ -69,3 +69,48 @@ groups:
         annotations:
           summary: StorageBackend free capacity is low
           description: StorageBackend {{ $labels.name }} has less than 10% physical capacity available.
+
+      - alert: ResourcePortalWorkerDown
+        expr: resource_portal_workers_active < 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Resource Portal Worker is unavailable
+          description: No Resource Portal Worker has published a fresh durable heartbeat for at least 1 minute.
+
+      - alert: ResourcePortalWorkerReconciliationFailing
+        expr: resource_portal_worker_reconciliation_healthy == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Resource Portal Worker reconciliation is failing
+          description: Reconciliation {{ $labels.reconciliation }} on {{ $labels.worker_id }} has not recovered from its latest failure.
+
+      - alert: ResourcePortalOperationRetriesHigh
+        expr: increase(resource_portal_operation_retry_events_total[15m]) >= 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Resource Portal Operations are retrying frequently
+          description: At least five Operation retries were scheduled during the last 15 minutes.
+
+      - alert: ResourcePortalOperationQueueStalled
+        expr: resource_portal_operation_oldest_pending_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Resource Portal Operation queue is stalled
+          description: The oldest pending Operation has been waiting for more than five minutes.
+
+      - alert: ResourcePortalAppGroupDriftDetected
+        expr: resource_portal_app_groups_drift{status="Drifted"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Resource Portal runtime drift detected
+          description: One or more App Groups have persisted runtime drift.

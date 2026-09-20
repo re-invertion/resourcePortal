@@ -7,6 +7,9 @@ networks:
   rp-ingress:
     driver: overlay
     attachable: false
+  rp-web-api:
+    driver: overlay
+    attachable: false
 
 secrets:
   rp_database_url:
@@ -76,6 +79,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
         condition: any
@@ -116,6 +120,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
         condition: any
@@ -154,6 +159,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.platform == true
       labels:
         - traefik.enable=true
@@ -170,11 +176,26 @@ services:
 
   api:
     image: __API_IMAGE__
+    command:
+      - sh
+      - -ec
+      - |
+        if [ -n "$${RP_OIDC_EXTRA_CA_B64:-}" ]; then
+          ca=/tmp/resourceportal-oidc-extra-ca.pem
+          printf '%s' "$$RP_OIDC_EXTRA_CA_B64" | base64 -d >"$$ca"
+          chmod 0600 "$$ca"
+          export NODE_EXTRA_CA_CERTS="$$ca"
+        fi
+        exec node dist/src/main.js
     environment:
       NODE_ENV: production
       PORT: "3000"
       AUTH_MODE: zitadel
       AUTH_COOKIE_SECURE: "true"
+      API_TRUST_PROXY_HOPS: "1"
+      API_RATE_LIMIT_MAX: "300"
+      API_RATE_LIMIT_WINDOW_SECONDS: "60"
+      WORKER_HEALTH_STALE_SECONDS: "30"
       DATABASE_URL_FILE: /run/secrets/rp_database_url
       RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
@@ -188,14 +209,11 @@ services:
       OIDC_CLI_CLIENT_ID: __OIDC_CLI_CLIENT_ID__
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
+      RP_OIDC_EXTRA_CA_B64: "__OIDC_EXTRA_CA_B64__"
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
       PLATFORM_ADMIN_USER_IDS: __PLATFORM_ADMIN_IDS__
       MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
-      RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
-      RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
-      RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
-      RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
     secrets:
       - rp_database_url
       - rp_encryption_key
@@ -203,84 +221,19 @@ services:
       - rp_internal_worker_token
       - rp_oidc_client_secret
       - rp_zitadel_management_token
-    volumes:
-      - type: bind
-        source: __STORAGE_BASE_PATH__
-        target: __STORAGE_BASE_PATH__
-        read_only: false
-      - type: bind
-        source: /mnt/resourceportal/volumes
-        target: /mnt/resourceportal/volumes
-        read_only: false
-      - type: bind
-        source: /mnt/resourceportal/secrets
-        target: /mnt/resourceportal/secrets
-        read_only: false
-      - type: bind
-        source: /mnt/resourceportal/platform
-        target: /mnt/resourceportal/platform
-        read_only: true
     networks:
       - rp-control
-      - rp-ingress
+      - rp-web-api
     deploy:
       replicas: __API_REPLICAS__ # RP_API_REPLICAS
       placement:
         constraints:
           - node.role == manager
-          - node.labels.resourceportal.storage.authoritative == true
-          - node.labels.resourceportal.storage.secrets == true
+          - node.labels.rp.node.control-plane == true
       restart_policy:
         condition: any
 
-  deployment-worker:
-    image: __API_IMAGE__
-    user: "0"
-    command: ["node", "dist/src/internal/deployment-worker.runner.js"]
-    environment:
-      NODE_ENV: production
-      AUTH_MODE: zitadel
-      AUTH_COOKIE_SECURE: "true"
-      DATABASE_URL_FILE: /run/secrets/rp_database_url
-      RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key
-      AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
-      INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
-      OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
-      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
-      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
-      RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
-      RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
-      RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
-      RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
-      TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
-      TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress
-      WORKER_ID: production-deployment-worker
-    secrets:
-      - rp_database_url
-      - rp_encryption_key
-      - rp_cookie_secret
-      - rp_internal_worker_token
-      - rp_oidc_client_secret
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/resourceportal/volumes:/mnt/resourceportal/volumes
-      - /mnt/resourceportal/secrets:/mnt/resourceportal/secrets
-      - __STORAGE_BASE_PATH__:__STORAGE_BASE_PATH__
-    networks:
-      - rp-control
-    deploy:
-      replicas: __DEPLOYMENT_WORKER_REPLICAS__ # RP_DEPLOYMENT_WORKER_REPLICAS
-      placement:
-        constraints:
-          - node.role == manager
-          - node.labels.resourceportal.storage.authoritative == true
-          - node.labels.resourceportal.storage.volumes == true
-          - node.labels.resourceportal.storage.secrets == true
-      restart_policy:
-        condition: any
-
-  operation-worker:
+  worker:
     image: __API_IMAGE__
     user: "0"
     cap_add:
@@ -288,41 +241,44 @@ services:
       - DAC_OVERRIDE
       - FOWNER
       - SYS_ADMIN
-    command: ["node", "dist/src/operations/operation-worker.runner.js"]
+    command: ["node", "dist/src/worker.runner.js"]
     environment:
       NODE_ENV: production
-      AUTH_MODE: zitadel
-      AUTH_COOKIE_SECURE: "true"
       DATABASE_URL_FILE: /run/secrets/rp_database_url
       RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key
-      AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
-      INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
-      OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
-      OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
-      OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
-      OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
       RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform
-      OPERATION_WORKER_ID: production-operation-worker
+      TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
+      TRAEFIK_SERVICE_NAME: resourceportal-control-plane_traefik
+      INSTALLER_SWARM_MANAGER_ENDPOINT: __SWARM_ADVERTISE_ADDR__:2377
+      INSTALLER_STORAGE_SERVER_ADDRESS: __STORAGE_SERVER_ADDRESS__
+      INSTALLER_VERSION: __RELEASE_VERSION__
+      INSTALLER_SWARM_ADVERTISE_ADDR: __SWARM_ADVERTISE_ADDR__
+      INSTALLER_CLUSTER_CIDR: __CLUSTER_CIDR__
+      WORKER_ID: production-worker
+      WORKER_HEARTBEAT_INTERVAL_MS: "10000"
+      WORKER_HEALTH_STALE_SECONDS: "30"
     secrets:
       - rp_database_url
       - rp_encryption_key
-      - rp_cookie_secret
-      - rp_internal_worker_token
-      - rp_oidc_client_secret
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - __STORAGE_DEVICE__:__STORAGE_DEVICE__
       - __STORAGE_BASE_PATH__:__STORAGE_BASE_PATH__
       - /mnt/resourceportal/volumes:/mnt/resourceportal/volumes
+      - /mnt/resourceportal/secrets:/mnt/resourceportal/secrets:ro
+      - /mnt/resourceportal/platform:/mnt/resourceportal/platform
     networks:
       - rp-control
     deploy:
-      replicas: __OPERATION_WORKER_REPLICAS__ # RP_OPERATION_WORKER_REPLICAS
+      replicas: __WORKER_REPLICAS__ # RP_WORKER_REPLICAS
       placement:
         constraints:
           - node.role == manager
+          - node.labels.rp.node.control-plane == true
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.authoritative == true
           - node.labels.resourceportal.storage.volumes == true
       restart_policy:
@@ -330,7 +286,17 @@ services:
 
   dr-reconciliation:
     image: __API_IMAGE__
-    command: ["node", "dist/src/disaster-recovery/disaster-recovery.runner.js"]
+    command:
+      - sh
+      - -ec
+      - |
+        if [ -n "$${RP_OIDC_EXTRA_CA_B64:-}" ]; then
+          ca=/tmp/resourceportal-oidc-extra-ca.pem
+          printf '%s' "$$RP_OIDC_EXTRA_CA_B64" | base64 -d >"$$ca"
+          chmod 0600 "$$ca"
+          export NODE_EXTRA_CA_CERTS="$$ca"
+        fi
+        exec node dist/src/disaster-recovery/disaster-recovery.runner.js
     environment:
       NODE_ENV: production
       AUTH_MODE: zitadel
@@ -356,6 +322,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.platform == true
 
   web:
@@ -367,6 +334,7 @@ services:
       RESOURCE_PORTAL_API_ORIGIN: http://api:3000
     networks:
       - rp-ingress
+      - rp-web-api
     deploy:
       replicas: __WEB_REPLICAS__ # RP_WEB_REPLICAS
       placement:
@@ -391,7 +359,9 @@ services:
       - --providers.swarm.endpoint=unix:///var/run/docker.sock
       - --providers.swarm.exposedbydefault=false
       - --entrypoints.web.address=:80
+      - --entrypoints.web.forwardedheaders.insecure=false
       - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.forwardedheaders.insecure=false
       - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.email=__ACME_EMAIL__
       - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.caserver=__ACME_CA_SERVER__
       - --certificatesresolvers.__ACME_CERT_RESOLVER__.acme.storage=__ACME_STORAGE__
@@ -416,7 +386,8 @@ services:
       placement:
         constraints:
           - node.role == manager
-          - node.labels.resourceportal.ingress == true
+          - node.labels.rp.node.ingress == true
+          - node.labels.rp.node.storage == true
           - node.labels.resourceportal.storage.platform == true
       restart_policy:
         condition: any

@@ -29,7 +29,9 @@ type RotationResult = {
 describe("Stage 1 credential rotation recovery", () => {
   it("returns an OAuth client secret with an explicit warning when local persistence fails", async () => {
     const prisma = {
-      $executeRaw: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      oAuthApplication: {
+        update: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      },
       auditLogEntry: { create: vi.fn() },
     } as unknown as PrismaService;
     const zitadel = {
@@ -79,8 +81,12 @@ describe("Stage 1 credential rotation recovery", () => {
 
   it("does not lose a persisted OAuth client secret when audit persistence fails", async () => {
     const prisma = {
-      $executeRaw: vi.fn().mockResolvedValue(1),
-      auditLogEntry: { create: vi.fn().mockRejectedValue(new Error("audit unavailable")) },
+      oAuthApplication: {
+        update: vi.fn().mockResolvedValue({}),
+      },
+      auditLogEntry: {
+        create: vi.fn().mockRejectedValue(new Error("audit unavailable")),
+      },
     } as unknown as PrismaService;
     const zitadel = {
       rotateSecret: vi.fn().mockResolvedValue("oauth-secret-v2"),
@@ -114,7 +120,9 @@ describe("Stage 1 credential rotation recovery", () => {
 
   it("returns a ServiceIdentity secret with an explicit warning when local persistence fails", async () => {
     const prisma = {
-      $executeRaw: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      serviceIdentity: {
+        update: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      },
       auditLogEntry: { create: vi.fn() },
     } as unknown as PrismaService;
     const zitadel = {

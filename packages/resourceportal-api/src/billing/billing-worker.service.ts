@@ -33,7 +33,10 @@ export class BillingWorkerService
   ) {}
 
   onApplicationBootstrap() {
-    if (process.env.NODE_ENV === "test") {
+    if (
+      process.env.NODE_ENV === "test" ||
+      this.isTruthy(process.env.WORKER_ONCE)
+    ) {
       return;
     }
 
@@ -54,6 +57,12 @@ export class BillingWorkerService
     }
   }
 
+  private isTruthy(value: string | undefined) {
+    return ["1", "true", "yes", "on"].includes(
+      (value ?? "").trim().toLowerCase(),
+    );
+  }
+
   async reconcileClosedPeriods(now = new Date()) {
     if (this.running) {
       return { skipped: true, periodsProcessed: 0 };
@@ -61,28 +70,26 @@ export class BillingWorkerService
 
     this.running = true;
     try {
-      const state = await this.prisma.$queryRaw<
-        Array<{ lastCompletedPeriodEnd: Date | null }>
-      >`
-        SELECT "lastCompletedPeriodEnd"
-        FROM "BillingWorkerState"
-        WHERE "id" = ${WORKER_STATE_ID}
-      `;
+      const state = await this.prisma.billingWorkerState.findUnique({
+        where: { id: WORKER_STATE_ID },
+        select: { lastCompletedPeriodEnd: true },
+      });
       const periods = reconciliationPeriods({
         now,
-        lastCompletedPeriodEnd: state[0]?.lastCompletedPeriodEnd ?? null,
+        lastCompletedPeriodEnd: state?.lastCompletedPeriodEnd ?? null,
         maxPeriods: MAX_BACKFILL_PERIODS,
       });
 
       for (const period of periods) {
         await this.reconcilePeriod(period.periodStart, period.periodEnd);
-        await this.prisma.$executeRaw`
-          INSERT INTO "BillingWorkerState" ("id", "lastCompletedPeriodEnd", "updatedAt")
-          VALUES (${WORKER_STATE_ID}, ${period.periodEnd}, CURRENT_TIMESTAMP)
-          ON CONFLICT ("id") DO UPDATE
-          SET "lastCompletedPeriodEnd" = EXCLUDED."lastCompletedPeriodEnd",
-              "updatedAt" = CURRENT_TIMESTAMP
-        `;
+        await this.prisma.billingWorkerState.upsert({
+          where: { id: WORKER_STATE_ID },
+          create: {
+            id: WORKER_STATE_ID,
+            lastCompletedPeriodEnd: period.periodEnd,
+          },
+          update: { lastCompletedPeriodEnd: period.periodEnd },
+        });
       }
 
       return { skipped: false, periodsProcessed: periods.length };

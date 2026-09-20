@@ -81,61 +81,28 @@ rp_join_swarm_for_enrollment() {
   docker swarm join --token "$join_token" "$manager_endpoint"
 }
 
-rp_sync_swarm_join_token_secrets() {
-  local tmpdir worker_file manager_file worker_ref manager_ref
-  tmpdir="$(mktemp -d /tmp/resourceportal-enrollment-tokens.XXXXXX)" || return 1
-  chmod 0700 "$tmpdir"
-  worker_file="$tmpdir/worker"; manager_file="$tmpdir/manager"
-  trap 'rm -rf "$tmpdir"' RETURN
-  umask 077
-  docker swarm join-token -q worker >"$worker_file" || return 1
-  docker swarm join-token -q manager >"$manager_file" || return 1
-  chmod 0600 "$worker_file" "$manager_file"
-  worker_ref="$(rp_ensure_versioned_swarm_secret installer_swarm_worker_token "$worker_file")" || return 1
-  manager_ref="$(rp_ensure_versioned_swarm_secret installer_swarm_manager_token "$manager_file")" || return 1
-  RP_CFG_ENROLLMENT_WORKER_TOKEN_REF="$worker_ref"
-  RP_CFG_ENROLLMENT_MANAGER_TOKEN_REF="$manager_ref"
-  export RP_CFG_ENROLLMENT_WORKER_TOKEN_REF RP_CFG_ENROLLMENT_MANAGER_TOKEN_REF
-  rm -rf "$tmpdir"; trap - RETURN
-}
-
 rp_start_enrollment_listener() {
-  local cert="$1" key="$2" cert_ref key_ref service_name port manager_endpoint cluster_id control_network
+  local cert="$1" key="$2" cert_ref key_ref service_name port control_network
   [[ -r "$cert" && -r "$key" ]] || return 1
-  rp_sync_swarm_join_token_secrets || return 1
   cert_ref="$(rp_ensure_versioned_swarm_secret installer_enrollment_tls_cert "$cert")" || return 1
   key_ref="$(rp_ensure_versioned_swarm_secret installer_enrollment_tls_key "$key")" || return 1
   service_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}-installer-enrollment"
   control_network="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_rp-control"
   port="${RP_CFG_ENROLLMENT_PORT:-7443}"
-  manager_endpoint="${RP_CFG_SWARM_ADVERTISE_ADDR}:2377"
-  cluster_id="$(docker info --format '{{.Swarm.Cluster.ID}}')" || return 1
 
   docker service rm "$service_name" >/dev/null 2>&1 || true
   docker service create \
     --name "$service_name" \
     --network "$control_network" \
     --constraint 'node.role==manager' \
-    --constraint 'node.labels.resourceportal.storage.authoritative==true' \
-    --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
-    --user 0:0 \
+    --constraint 'node.labels.rp.node.control-plane==true' \
     --publish "mode=host,target=7443,published=${port},protocol=tcp" \
     --secret source=rp_database_url,target=rp_database_url \
-    --secret source="$RP_CFG_ENROLLMENT_WORKER_TOKEN_REF",target=installer_worker_token \
-    --secret source="$RP_CFG_ENROLLMENT_MANAGER_TOKEN_REF",target=installer_manager_token \
     --secret source="$cert_ref",target=installer_tls_cert \
     --secret source="$key_ref",target=installer_tls_key \
     --env DATABASE_URL_FILE=/run/secrets/rp_database_url \
-    --env INSTALLER_SWARM_WORKER_TOKEN_FILE=/run/secrets/installer_worker_token \
-    --env INSTALLER_SWARM_MANAGER_TOKEN_FILE=/run/secrets/installer_manager_token \
     --env INSTALLER_ENROLLMENT_TLS_CERT_FILE=/run/secrets/installer_tls_cert \
     --env INSTALLER_ENROLLMENT_TLS_KEY_FILE=/run/secrets/installer_tls_key \
-    --env INSTALLER_SWARM_MANAGER_ENDPOINT="$manager_endpoint" \
-    --env INSTALLER_STORAGE_SERVER_ADDRESS="$RP_CFG_STORAGE_SERVER_ADDRESS" \
-    --env INSTALLER_CLUSTER_ID="$cluster_id" \
-    --env INSTALLER_VERSION="${RP_CFG_RELEASE_VERSION:-unknown}" \
-    --env INSTALLER_SWARM_ADVERTISE_ADDR="$RP_CFG_SWARM_ADVERTISE_ADDR" \
-    --env INSTALLER_CLUSTER_CIDR="$RP_CFG_CLUSTER_CIDR" \
     --env INSTALLER_ENROLLMENT_PORT=7443 \
     "$RP_CFG_API_IMAGE" node dist/src/internal/installer-enrollment.runner.js >/dev/null
 }
@@ -175,6 +142,7 @@ rp_issue_enrollment_bundle() {
     --name "$service_name" --restart-condition none \
     --network "$control_network" \
     --constraint 'node.role==manager' \
+    --constraint 'node.labels.rp.node.storage==true' \
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --secret source=rp_database_url,target=rp_database_url \
     --mount "type=bind,src=$workdir,dst=/enrollment-output" \
@@ -201,23 +169,70 @@ rp_issue_enrollment_bundle() {
 }
 
 rp_redeem_join_bundle() {
-  local bundle="$1" role token endpoint pin response join_role join_token manager_endpoint nfs_server cluster_id cluster_cidr node_id ssh_port control_plane ingress completion
+  local bundle="$1" role token endpoint pin response completion join_role encrypted_join_token join_token manager_endpoint nfs_server cluster_id cluster_cidr node_id ssh_port control_plane ingress
+  local keydir private_key public_key encrypted_file payload operation_id status timeout elapsed completion_operation_id
   command -v jq >/dev/null 2>&1 || { printf 'jq is required for node enrollment.\n' >&2; return 1; }
+  command -v openssl >/dev/null 2>&1 || { printf 'openssl is required for node enrollment.\n' >&2; return 1; }
   role="$(rp_bundle_value "$bundle" RP_ENROLLMENT_ROLE)" || return 1
   token="$(rp_bundle_value "$bundle" RP_ENROLLMENT_TOKEN)" || return 1
   endpoint="$(rp_bundle_value "$bundle" RP_ENROLLMENT_ENDPOINT)" || return 1
   pin="$(rp_bundle_value "$bundle" RP_ENROLLMENT_PIN)" || return 1
   rp_validate_enrollment_role "$role" || return 1
-  response="$(mktemp /tmp/resourceportal-enrollment-response.XXXXXX.json)" || return 1
-  chmod 0600 "$response"; trap 'rm -f "${response:-}"; trap - RETURN' RETURN
+
+  keydir="$(mktemp -d /tmp/resourceportal-enrollment-crypto.XXXXXX)" || return 1
+  chmod 0700 "$keydir"
+  private_key="$keydir/private.pem"
+  public_key="$keydir/public.pem"
+  encrypted_file="$keydir/join-token.enc"
+  response="$keydir/redeem.json"
+  completion="$keydir/complete.json"
+  trap 'rm -rf "${keydir:-}"; trap - RETURN' RETURN
+
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$private_key" >/dev/null 2>&1 || return 1
+  chmod 0600 "$private_key"
+  openssl pkey -in "$private_key" -pubout -out "$public_key" >/dev/null 2>&1 || return 1
+
+  payload="$(jq -nc \
+    --arg token "$token" \
+    --arg role "$role" \
+    --rawfile publicKey "$public_key" \
+    '{token:$token,role:$role,publicKey:$publicKey}')" || return 1
   curl --fail --silent --show-error --insecure \
     --pinnedpubkey "$pin" \
     -H 'content-type: application/json' \
-    --data-binary "{\"token\":\"${token}\",\"role\":\"${role}\"}" \
+    --data-binary "$payload" \
     "${endpoint}/installer/enrollment/redeem" >"$response" || return 1
+  operation_id="$(jq -er '.operationId' "$response")" || return 1
+
+  timeout=90; elapsed=0; status=pending
+  while (( elapsed < timeout )); do
+    payload="$(jq -nc --arg token "$token" --arg role "$role" --arg operationId "$operation_id" '{token:$token,role:$role,operationId:$operationId}')" || return 1
+    curl --fail --silent --show-error --insecure \
+      --pinnedpubkey "$pin" \
+      -H 'content-type: application/json' \
+      --data-binary "$payload" \
+      "${endpoint}/installer/enrollment/redeem/status" >"$response" || return 1
+    status="$(jq -er '.status' "$response")" || return 1
+    case "$status" in
+      ready) break ;;
+      pending) sleep 1; elapsed=$((elapsed+1)) ;;
+      *) return 1 ;;
+    esac
+  done
+  [[ "$status" == ready ]] || { printf 'Enrollment preparation timed out.\n' >&2; return 1; }
+
   join_role="$(jq -er '.role' "$response")" || return 1
   [[ "$join_role" == "$role" ]] || return 1
-  join_token="$(jq -er '.joinToken' "$response")" || return 1
+  encrypted_join_token="$(jq -er '.encryptedJoinToken' "$response")" || return 1
+  printf '%s' "$encrypted_join_token" | base64 --decode >"$encrypted_file" || return 1
+  join_token="$(openssl pkeyutl -decrypt \
+    -inkey "$private_key" \
+    -pkeyopt rsa_padding_mode:oaep \
+    -pkeyopt rsa_oaep_md:sha256 \
+    -pkeyopt rsa_mgf1_md:sha256 \
+    -in "$encrypted_file")" || return 1
+  [[ -n "$join_token" ]] || return 1
+
   manager_endpoint="$(jq -er '.managerEndpoint' "$response")" || return 1
   nfs_server="$(jq -er '.nfsServerAddress' "$response")" || return 1
   cluster_id="$(jq -er '.clusterId' "$response")" || return 1
@@ -225,27 +240,53 @@ rp_redeem_join_bundle() {
 
   control_plane="${RP_JOIN_CONTROL_PLANE:-false}"
   ingress="${RP_JOIN_INGRESS:-false}"
-  if [[ "$role" == "worker" ]]; then control_plane=false; ingress=false; fi
+  if [[ "$role" == worker ]]; then control_plane=false; ingress=false; fi
   ssh_port="$(rp_detect_ssh_port)" || return 1
   rp_configure_ufw "$ssh_port" "$cluster_cidr" "$ingress" || return 1
 
   rp_join_swarm_for_enrollment "$role" "$join_token" "$manager_endpoint" "$cluster_id" || return 1
   rp_mount_runtime_namespace nfs volumes "$nfs_server" || return 1
-  if [[ "$role" == "manager" ]]; then
+  if [[ "$role" == manager ]]; then
     rp_mount_runtime_namespace nfs secrets "$nfs_server" || return 1
     rp_mount_runtime_namespace nfs platform "$nfs_server" || return 1
   fi
 
   node_id="$(docker info --format '{{.Swarm.NodeID}}')" || return 1
-  completion="$(mktemp /tmp/resourceportal-enrollment-complete.XXXXXX.json)" || return 1
-  chmod 0600 "$completion"
-  if ! curl --fail --silent --show-error --insecure \
+  payload="$(jq -nc \
+    --arg token "$token" \
+    --arg role "$role" \
+    --arg nodeId "$node_id" \
+    --argjson controlPlane "$control_plane" \
+    --argjson ingress "$ingress" \
+    '{token:$token,role:$role,nodeId:$nodeId,controlPlane:$controlPlane,ingress:$ingress}')" || return 1
+  curl --fail --silent --show-error --insecure \
     --pinnedpubkey "$pin" \
     -H 'content-type: application/json' \
-    --data-binary "{\"token\":\"${token}\",\"role\":\"${role}\",\"nodeId\":\"${node_id}\",\"controlPlane\":${control_plane},\"ingress\":${ingress}}" \
-    "${endpoint}/installer/enrollment/complete" >"$completion"; then
-    rm -f "$completion"; return 1
-  fi
-  jq -e '.status == "completed" and (.role == "worker" or .role == "manager")' "$completion" >/dev/null || { rm -f "$completion"; return 1; }
-  rm -f "$completion" "$response"; trap - RETURN
+    --data-binary "$payload" \
+    "${endpoint}/installer/enrollment/complete" >"$completion" || return 1
+  completion_operation_id="$(jq -er '.operationId' "$completion")" || return 1
+
+  elapsed=0; status=pending
+  while (( elapsed < timeout )); do
+    payload="$(jq -nc \
+      --arg token "$token" \
+      --arg role "$role" \
+      --arg nodeId "$node_id" \
+      --arg operationId "$completion_operation_id" \
+      '{token:$token,role:$role,nodeId:$nodeId,operationId:$operationId}')" || return 1
+    curl --fail --silent --show-error --insecure \
+      --pinnedpubkey "$pin" \
+      -H 'content-type: application/json' \
+      --data-binary "$payload" \
+      "${endpoint}/installer/enrollment/complete/status" >"$completion" || return 1
+    status="$(jq -er '.status' "$completion")" || return 1
+    case "$status" in
+      completed) break ;;
+      pending) sleep 1; elapsed=$((elapsed+1)) ;;
+      *) return 1 ;;
+    esac
+  done
+  [[ "$status" == completed ]] || { printf 'Enrollment completion timed out.\n' >&2; return 1; }
+
+  rm -rf "$keydir"; trap - RETURN
 }

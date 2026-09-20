@@ -158,6 +158,10 @@ export RP_CFG_OIDC_SWARM_REF='rp_oidc_client_secret_v42'
 export RP_CFG_ZITADEL_KEY_SWARM_REF='zitadel_masterkey_deadbeefcafebabe'
 export RP_CFG_STACK_NAME='resourceportal-control-plane'
 export RP_CFG_STORAGE_DEVICE='/dev/sdb'
+export RP_CFG_SWARM_ADVERTISE_ADDR='10.20.0.10'
+export RP_CFG_STORAGE_SERVER_ADDRESS='10.20.0.10'
+export RP_CFG_CLUSTER_CIDR='10.20.0.0/24'
+export RP_CFG_RELEASE_VERSION='0.2.0'
 export RP_CFG_ACME_ENVIRONMENT=production
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
@@ -172,10 +176,37 @@ contains "$final" 'traefik.http.routers.resourceportal-zitadel.tls.domains[0].sa
 contains "$final" 'traefik.http.routers.resourceportal-web.tls.domains[0].main=auth.rp.example.com' 'Web router reuses canonical combined certificate main domain'
 contains "$final" 'traefik.http.routers.resourceportal-web.tls.domains[0].sans=rp.example.com' 'Web router reuses the same SAN set'
 export RP_CFG_ACME_ENVIRONMENT=staging
+export RP_CFG_OIDC_EXTRA_CA_B64=U1RBR0lORy1ST09ULUNB
 staging_final="$(rp_render_stack final)"
 contains "$staging_final" 'tls.certresolver=letsencrypt-staging' 'test-only staging install never switches router to production ACME'
 contains "$staging_final" 'certificatesresolvers.letsencrypt-staging.acme.storage=/platform/traefik/acme-staging.json' 'test-only staging final loads staging ACME storage'
 not_contains "$staging_final" 'certificatesresolvers.letsencrypt.acme.storage=/platform/traefik/acme.json' 'test-only staging final does not load production ACME resolver'
+contains "$staging_final" 'RP_OIDC_EXTRA_CA_B64: "U1RBR0lORy1ST09ULUNB"' 'staging final passes only validated public CA material to OIDC runtime'
+contains "$staging_final" 'export NODE_EXTRA_CA_CERTS="$$ca"' 'staging API enables Node extra CA from decoded staging root'
+not_contains "$final" 'RP_OIDC_EXTRA_CA_B64: "U1RBR0lORy1ST09ULUNB"' 'production final never trusts persisted staging root'
+
+ca_helper_source="$(declare -f rp_prepare_oidc_staging_ca)"
+contains "$ca_helper_source" 'openssl x509 -in "$leaf" -noout -checkhost "$domain"' 'staging CA extraction verifies served leaf hostname'
+contains "$ca_helper_source" 'openssl verify -CAfile "$root" "$root"' 'staging CA extraction requires a self-validating root'
+contains "$ca_helper_source" 'openssl verify -CAfile "$root" "$last"' 'staging CA extraction verifies downloaded root signs served chain'
+contains "$ca_helper_source" 'openssl verify -CAfile "$root" -untrusted "$intermediates" "$leaf"' 'staging CA extraction validates the complete served chain'
+
+# A staging install must prepare OIDC trust immediately after issuance, before final API starts.
+staging_ingress_log="$fixture_dir/staging-ingress.log"
+rp_validate_domain_dns(){ return 0; }
+mountpoint(){ return 0; }
+rp_acme_prepare_state(){ return 0; }
+rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$staging_ingress_log"; }
+rp_wait_for_acme_certificate(){ printf 'cert:%s:%s\n' "$1" "$2" >>"$staging_ingress_log"; return 0; }
+rp_prepare_oidc_staging_ca(){ printf 'oidc-ca:%s\n' "$1" >>"$staging_ingress_log"; RP_CFG_OIDC_EXTRA_CA_B64=fixture; export RP_CFG_OIDC_EXTRA_CA_B64; }
+export RP_CFG_ACME_ENVIRONMENT=staging
+status 0 'staging ingress prepares validated OIDC CA trust' rp_primary_enable_ingress
+staging_ingress_calls="$(cat "$staging_ingress_log")"
+expected_staging_ingress=$'deploy:ingress\ncert:auth.rp.example.com:staging\noidc-ca:auth.rp.example.com'
+[[ "$staging_ingress_calls" == "$expected_staging_ingress" ]] && pass 'staging OIDC trust is prepared after certificate issuance' || fail 'staging OIDC trust is prepared after certificate issuance'
+unset -f rp_validate_domain_dns mountpoint rp_acme_prepare_state rp_deploy_control_plane rp_wait_for_acme_certificate rp_prepare_oidc_staging_ca
+source "$repo_root/scripts/installer/acme.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
 
 # A production reinstall with a valid restored certificate must not create a new staging order.
 ingress_reuse_log="$fixture_dir/ingress-reuse.log"
@@ -185,6 +216,7 @@ rp_acme_prepare_state(){ return 0; }
 rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$ingress_reuse_log"; }
 rp_acme_production_state_reusable(){ return 0; }
 rp_wait_for_acme_certificate(){ printf 'unexpected-cert:%s:%s\n' "$1" "$2" >>"$ingress_reuse_log"; return 0; }
+unset RP_CFG_OIDC_EXTRA_CA_B64
 export RP_CFG_ACME_ENVIRONMENT=production RP_ACME_PLATFORM_DIR="$reuse_dir"
 status 0 'production reinstall ingress reuses valid preserved certificate without staging issuance' rp_primary_enable_ingress
 reuse_calls="$(cat "$ingress_reuse_log")"

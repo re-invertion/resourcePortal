@@ -134,6 +134,68 @@ rp_acme_prepare_state() {
   rp_acme_restore_cached_state
 }
 
+rp_prepare_oidc_staging_ca() {
+  local domain="$1" tmpdir count leaf last issuer_url root subject issuer intermediates
+  [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]] || {
+    unset RP_CFG_OIDC_EXTRA_CA_B64
+    return 0
+  }
+  [[ -n "$domain" && "$domain" != *[[:space:]]* ]] || return 1
+  tmpdir="$(mktemp -d /tmp/resourceportal-oidc-staging-ca.XXXXXX)" || return 1
+  chmod 0700 "$tmpdir" || { rm -rf "$tmpdir"; return 1; }
+  trap 'rm -rf "${tmpdir:-}"; trap - RETURN' RETURN
+
+  if ! openssl s_client -showcerts -servername "$domain" -connect 127.0.0.1:443 </dev/null 2>/dev/null \
+      | awk -v dir="$tmpdir" '
+          /-----BEGIN CERTIFICATE-----/ { n++; f=sprintf("%s/cert-%02d.pem", dir, n) }
+          f { print >f }
+          /-----END CERTIFICATE-----/ { close(f); f="" }
+        '; then
+    return 1
+  fi
+
+  count="$(find "$tmpdir" -maxdepth 1 -type f -name 'cert-*.pem' | wc -l | tr -d ' ')" || return 1
+  [[ "$count" =~ ^[0-9]+$ && "$count" -ge 2 ]] || return 1
+  leaf="$tmpdir/cert-01.pem"
+  last="$(find "$tmpdir" -maxdepth 1 -type f -name 'cert-*.pem' | sort | tail -n1)"
+  openssl x509 -in "$leaf" -noout -checkhost "$domain" >/dev/null 2>&1 || return 1
+
+  issuer_url="$(openssl x509 -in "$last" -noout -text 2>/dev/null \
+    | sed -n '/Authority Information Access/,+8p' \
+    | sed -n 's/.*CA Issuers - URI://p' \
+    | head -n1)" || return 1
+  case "$issuer_url" in http://*|https://*) ;; *) return 1 ;; esac
+
+  curl -fsSL --connect-timeout 10 "$issuer_url" -o "$tmpdir/root.download" || return 1
+  root="$tmpdir/root.pem"
+  if ! openssl x509 -inform DER -in "$tmpdir/root.download" -out "$root" 2>/dev/null; then
+    openssl x509 -in "$tmpdir/root.download" -out "$root" 2>/dev/null || return 1
+  fi
+  chmod 0600 "$root" || return 1
+
+  subject="$(openssl x509 -in "$root" -noout -subject -nameopt RFC2253 2>/dev/null | sed 's/^subject=//')" || return 1
+  issuer="$(openssl x509 -in "$root" -noout -issuer -nameopt RFC2253 2>/dev/null | sed 's/^issuer=//')" || return 1
+  [[ -n "$subject" && "$subject" == "$issuer" ]] || return 1
+  openssl x509 -in "$root" -noout -text 2>/dev/null \
+    | grep -A1 'Basic Constraints' \
+    | grep -q 'CA:TRUE' || return 1
+  openssl verify -CAfile "$root" "$root" >/dev/null 2>&1 || return 1
+  openssl verify -CAfile "$root" "$last" >/dev/null 2>&1 || return 1
+
+  intermediates="$tmpdir/intermediates.pem"
+  : >"$intermediates"
+  find "$tmpdir" -maxdepth 1 -type f -name 'cert-*.pem' | sort | tail -n +2 | while IFS= read -r cert; do
+    cat "$cert" >>"$intermediates"
+  done
+  openssl verify -CAfile "$root" -untrusted "$intermediates" "$leaf" >/dev/null 2>&1 || return 1
+
+  RP_CFG_OIDC_EXTRA_CA_B64="$(openssl base64 -A -in "$root")" || return 1
+  [[ -n "$RP_CFG_OIDC_EXTRA_CA_B64" ]] || return 1
+  export RP_CFG_OIDC_EXTRA_CA_B64
+  rm -rf "$tmpdir"
+  trap - RETURN
+}
+
 rp_traefik_recent_logs() {
   local stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
   local service="${RP_CFG_TRAEFIK_SERVICE_NAME:-${stack}_traefik}"

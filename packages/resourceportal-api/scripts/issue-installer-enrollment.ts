@@ -1,6 +1,6 @@
-import { ConfigService } from "@nestjs/config";
 import { chmodSync, writeFileSync } from "node:fs";
 import { InstallerEnrollmentService } from "../src/internal/installer-enrollment.service";
+import { OperationsRepository } from "../src/operations/operations.repository";
 import { PrismaService } from "../src/prisma/prisma.service";
 
 async function main() {
@@ -15,7 +15,7 @@ async function main() {
   try {
     const service = new InstallerEnrollmentService(
       prisma,
-      { get: () => undefined } as unknown as ConfigService,
+      new OperationsRepository(prisma),
     );
     const issued = await service.issue(role);
     writeFileSync(

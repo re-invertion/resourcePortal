@@ -77,6 +77,7 @@ export RP_CFG_STORAGE_BASE_PATH="/srv/resource-portal/storage"
 export RP_CFG_SWARM_ADVERTISE_ADDR="10.10.0.10"
 export RP_CFG_DOMAIN="rp.example.com"
 export RP_CFG_ACME_ENVIRONMENT="staging"
+export RP_CFG_OIDC_EXTRA_CA_B64="U1RBR0lORy1ST09ULUNB"
 export RP_CFG_API_IMAGE="ghcr.io/example/api@sha256:abc"
 export RP_CFG_WEB_IMAGE="ghcr.io/example/web@sha256:def"
 export RP_SECRET_DATABASE_PASSWORD="super-secret-db-password"
@@ -88,16 +89,21 @@ assert_contains "$config_text" 'RP_CFG_MODE=primary' "writes allow-listed mode"
 assert_contains "$config_text" 'RP_CFG_STORAGE_BASE_PATH=/srv/resource-portal/storage' "writes storage base path"
 assert_contains "$config_text" 'RP_CFG_DOMAIN=rp.example.com' "writes domain"
 assert_contains "$config_text" 'RP_CFG_ACME_ENVIRONMENT=staging' "writes ACME environment"
+assert_contains "$config_text" 'RP_CFG_OIDC_EXTRA_CA_B64=U1RBR0lORy1ST09ULUNB' "writes public OIDC staging CA trust material"
 assert_not_contains "$config_text" 'super-secret-db-password' "does not serialize RP_SECRET values"
 assert_not_contains "$config_text" 'must-not-be-serialized' "does not serialize secret-like cfg key"
 assert_eq "600" "$(stat -c '%a' "$config_path")" "config permissions are 0600"
 
-unset RP_CFG_MODE RP_CFG_STORAGE_BASE_PATH RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_DOMAIN RP_CFG_ACME_ENVIRONMENT RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_SECRET_DATABASE_PASSWORD RP_CFG_SMTP_PASSWORD
+unset RP_CFG_MODE RP_CFG_STORAGE_BASE_PATH RP_CFG_SWARM_ADVERTISE_ADDR RP_CFG_DOMAIN RP_CFG_ACME_ENVIRONMENT RP_CFG_OIDC_EXTRA_CA_B64 RP_CFG_API_IMAGE RP_CFG_WEB_IMAGE RP_SECRET_DATABASE_PASSWORD RP_CFG_SMTP_PASSWORD
 rp_config_load "$config_path"
 assert_eq "primary" "${RP_CFG_MODE:-}" "loads persisted mode"
 assert_eq "/srv/resource-portal/storage" "${RP_CFG_STORAGE_BASE_PATH:-}" "loads persisted base path"
 assert_eq "rp.example.com" "${RP_CFG_DOMAIN:-}" "loads persisted domain"
 assert_eq "staging" "${RP_CFG_ACME_ENVIRONMENT:-}" "loads persisted ACME environment"
+assert_eq "U1RBR0lORy1ST09ULUNB" "${RP_CFG_OIDC_EXTRA_CA_B64:-}" "loads public OIDC staging CA trust material"
+RP_CFG_ACME_ENVIRONMENT=production; export RP_CFG_ACME_ENVIRONMENT
+rp_config_apply_defaults
+assert_eq "" "${RP_CFG_OIDC_EXTRA_CA_B64:-}" "production defaults remove stale staging CA trust"
 
 # Only one installer process may mutate a host at a time.
 lock_file="$tmpdir/resourceportal-installer.lock"

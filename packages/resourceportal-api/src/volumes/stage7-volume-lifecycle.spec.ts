@@ -2,6 +2,7 @@ import { VolumeStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageBackendsService } from "../storage-backends/storage-backends.service";
+import { VolumeUsageReconcilerService } from "./volume-usage-reconciler.service";
 import { VolumesService } from "./volumes.service";
 
 const actor = {
@@ -63,13 +64,26 @@ function serviceFor(item = volume()) {
 }
 
 describe("Stage 7 volume lifecycle through Stage 14 backend", () => {
-  it("refreshes usedSizeBytes from physical storage when a volume is read", async () => {
-    const item = volume();
+  it("keeps reads DB-only and refreshes physical usage through the Worker reconciler", async () => {
+    const item = volume({ usedSizeBytes: 1024n });
     const { prisma, storageBackends, service } = serviceFor(item);
     storageBackends.measureUsedSize.mockResolvedValue(4096n);
 
     const result = await service.getVolume(item.tenantId, item.id);
 
+    expect(result.usedSizeBytes).toBe("1024");
+    expect(storageBackends.measureUsedSize).not.toHaveBeenCalled();
+
+    prisma.volume.findMany.mockResolvedValue([item]);
+    const reconciler = new VolumeUsageReconcilerService(
+      prisma as unknown as PrismaService,
+      storageBackends as unknown as StorageBackendsService,
+    );
+    await expect(reconciler.reconcileBatch()).resolves.toEqual({
+      scanned: 1,
+      updated: 1,
+      failed: 0,
+    });
     expect(storageBackends.measureUsedSize).toHaveBeenCalledWith(
       item.id,
       item.storagePath,
@@ -77,9 +91,7 @@ describe("Stage 7 volume lifecycle through Stage 14 backend", () => {
     expect(prisma.volume.update).toHaveBeenCalledWith({
       where: { id: item.id },
       data: { usedSizeBytes: 4096n },
-      include: { attachments: true },
     });
-    expect(result.usedSizeBytes).toBe("4096");
   });
 
   it("removes backend data before deleting the database record", async () => {

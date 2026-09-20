@@ -181,6 +181,9 @@ rp_mount_runtime_namespace() {
 
 rp_storage_label_args() {
   local volumes_ready="$1" secrets_ready="$2" platform_ready="$3"
+  if [[ "$volumes_ready" == "true" || "$secrets_ready" == "true" || "$platform_ready" == "true" ]]; then
+    printf '%s\n' '--label-add rp.node.storage=true'
+  fi
   [[ "$volumes_ready" == "true" ]] && printf '%s\n' '--label-add resourceportal.storage.volumes=true'
   [[ "$secrets_ready" == "true" ]] && printf '%s\n' '--label-add resourceportal.storage.secrets=true'
   [[ "$platform_ready" == "true" ]] && printf '%s\n' '--label-add resourceportal.storage.platform=true'

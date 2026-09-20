@@ -7,6 +7,7 @@ export type ExpectedRuntimeService = {
 export type ObservedRuntimeService = {
   name: string;
   image: string;
+  runningReplicas: number;
   desiredReplicas: number;
 };
 

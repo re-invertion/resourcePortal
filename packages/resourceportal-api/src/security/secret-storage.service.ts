@@ -44,37 +44,36 @@ export class SecretStorageService {
     return physicalSecretPath(basePath, tenantId, appGroupId, secretName);
   }
 
-  async read(storagePath: string) {
-    const envelope = JSON.parse(
-      await readFile(storagePath, "utf8"),
-    ) as SecretEnvelope;
+  seal(plaintext: Buffer) {
+    return JSON.stringify(this.encrypt(plaintext));
+  }
 
-    if (
-      envelope.version !== 1 ||
-      envelope.algorithm !== "AES-256-GCM" ||
-      typeof envelope.encryptedDataKey !== "string" ||
-      typeof envelope.nonce !== "string" ||
-      typeof envelope.ciphertext !== "string" ||
-      typeof envelope.authTag !== "string"
-    ) {
-      throw new Error("Invalid encrypted Secret envelope");
+  open(serializedEnvelope: string) {
+    return this.decryptEnvelope(JSON.parse(serializedEnvelope) as SecretEnvelope);
+  }
+
+  async readLegacyEnvelope(storagePath: string) {
+    const serialized = await readFile(storagePath, "utf8");
+    // Validate/decrypt before the envelope is accepted as database state.
+    this.open(serialized);
+    return serialized;
+  }
+
+  async readLegacy(storagePath: string) {
+    return this.open(await this.readLegacyEnvelope(storagePath));
+  }
+
+  async removeLegacy(storagePath: string) {
+    try {
+      await unlink(storagePath);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
     }
+  }
 
-    const dataKey = Buffer.from(
-      this.encryption.decrypt(envelope.encryptedDataKey),
-      "base64url",
-    );
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      dataKey,
-      Buffer.from(envelope.nonce, "base64url"),
-    );
-    decipher.setAuthTag(Buffer.from(envelope.authTag, "base64url"));
-
-    return Buffer.concat([
-      decipher.update(Buffer.from(envelope.ciphertext, "base64url")),
-      decipher.final(),
-    ]);
+  /** @deprecated v0.2.0 keeps this alias only for upgrade compatibility. */
+  read(storagePath: string) {
+    return this.readLegacy(storagePath);
   }
 
   async replaceAtomically<T>(
@@ -91,7 +90,7 @@ export class SecretStorageService {
     let persisted = false;
 
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(temporaryPath, JSON.stringify(this.encrypt(plaintext)), {
+    await writeFile(temporaryPath, this.seal(plaintext), {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
@@ -171,6 +170,36 @@ export class SecretStorageService {
 
   async deleteBestEffort(storagePath: string) {
     await unlinkIgnoringErrors(storagePath);
+  }
+
+  private decryptEnvelope(envelope: SecretEnvelope) {
+    if (
+      envelope.version !== 1 ||
+      envelope.algorithm !== "AES-256-GCM" ||
+      envelope.keyVersion !== 1 ||
+      typeof envelope.encryptedDataKey !== "string" ||
+      typeof envelope.nonce !== "string" ||
+      typeof envelope.ciphertext !== "string" ||
+      typeof envelope.authTag !== "string"
+    ) {
+      throw new Error("Invalid encrypted Secret envelope");
+    }
+
+    const dataKey = Buffer.from(
+      this.encryption.decrypt(envelope.encryptedDataKey),
+      "base64url",
+    );
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      dataKey,
+      Buffer.from(envelope.nonce, "base64url"),
+    );
+    decipher.setAuthTag(Buffer.from(envelope.authTag, "base64url"));
+
+    return Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext, "base64url")),
+      decipher.final(),
+    ]);
   }
 
   private encrypt(plaintext: Buffer): SecretEnvelope {

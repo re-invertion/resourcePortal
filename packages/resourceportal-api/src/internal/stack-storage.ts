@@ -1,4 +1,9 @@
 import { volumeRuntimePath } from "../storage-backends/storage-paths";
+import {
+  LEGACY_STORAGE_NODE_LABELS,
+  nodeLabelConstraint,
+  RESOURCEPORTAL_NODE_LABELS,
+} from "./node-labels";
 
 export function renderRuntimeVolumeMount(input: {
   runtimeRoot: string;
@@ -12,7 +17,13 @@ export function renderRuntimeVolumeMount(input: {
 }
 
 export function storagePlacementConstraints(hasVolumes: boolean): string[] {
-  return hasVolumes
-    ? ["node.labels.resourceportal.storage.volumes == true"]
-    : [];
+  return [
+    nodeLabelConstraint(RESOURCEPORTAL_NODE_LABELS.tenantWorkloads),
+    ...(hasVolumes
+      ? [
+          nodeLabelConstraint(RESOURCEPORTAL_NODE_LABELS.storage),
+          nodeLabelConstraint(LEGACY_STORAGE_NODE_LABELS.volumes),
+        ]
+      : []),
+  ];
 }

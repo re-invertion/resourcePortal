@@ -12,6 +12,7 @@ bash scripts/validate-swarm-ci.sh
 
 test -d "${RESOURCE_VOLUME_RUNTIME_ROOT:-/mnt/resourceportal/volumes}"
 NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
+test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.storage"}}')" = true
 test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
 
 npm --workspace @resource-portal/api run smoke:stage14-storage-backend

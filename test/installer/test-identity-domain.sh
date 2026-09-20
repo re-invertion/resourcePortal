@@ -6,6 +6,7 @@ source "$repo_root/scripts/installer/identity.sh"
 source "$repo_root/scripts/installer/domain.sh"
 source "$repo_root/scripts/installer/smtp.sh"
 source "$repo_root/scripts/installer/secrets.sh"
+source "$repo_root/scripts/installer/lifecycle.sh"
 failures=0
 pass(){ printf 'PASS: %s\n' "$1"; }
 fail(){ printf 'FAIL: %s\n' "$1" >&2; failures=$((failures+1)); }
@@ -24,6 +25,22 @@ status 1 'missing uppercase rejected' rp_admin_password_valid 'goodpassword1!'
 status 1 'missing lowercase rejected' rp_admin_password_valid 'GOODPASSWORD1!'
 status 1 'missing digit rejected' rp_admin_password_valid 'GoodPassword!'
 status 1 'missing special rejected' rp_admin_password_valid 'GoodPassword123'
+
+admin_password_file="$(mktemp /tmp/rp-admin-password.XXXXXX)"
+printf 'GoodPassword1!\n' >"$admin_password_file"
+chmod 0600 "$admin_password_file"
+unset RP_ADMIN_PASSWORD
+RP_ADMIN_PASSWORD_FILE="$admin_password_file"; export RP_ADMIN_PASSWORD_FILE
+status 0 'admin password can be loaded from an absolute secret file' rp_load_admin_password_file
+eq 'GoodPassword1!' "${RP_ADMIN_PASSWORD:-}" 'admin password file is read without trailing newline'
+unset RP_ADMIN_PASSWORD
+printf 'weak-password\n' >"$admin_password_file"
+status 1 'weak admin password file is rejected' rp_load_admin_password_file
+not_contains "$(cat /tmp/rp-id.err)" 'weak-password' 'admin password file validation never logs secret content'
+RP_ADMIN_PASSWORD_FILE='relative-password-file'; export RP_ADMIN_PASSWORD_FILE
+status 1 'relative admin password file path is rejected' rp_load_admin_password_file
+rm -f "$admin_password_file"
+unset RP_ADMIN_PASSWORD_FILE RP_ADMIN_PASSWORD
 
 status 0 'DNS accepts expected IPv4' rp_dns_matches_addresses '203.0.113.10' $'203.0.113.10\n2001:db8::10'
 status 0 'DNS accepts one of expected addresses' rp_dns_matches_addresses '203.0.113.11,203.0.113.10' $'203.0.113.10\n2001:db8::10'

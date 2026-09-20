@@ -91,6 +91,15 @@ status 0 'compatible installer accepted' rp_release_compatible "$manifest" '0.1.
 status 1 'old installer rejected' rp_release_compatible "$manifest" '0.0.9' '0.1.0' '28.0.0'
 status 1 'unsupported current release rejected' rp_release_compatible "$manifest" '0.1.0' '0.0.8' '28.0.0'
 status 1 'old Docker rejected' rp_release_compatible "$manifest" '0.1.0' '0.1.0' '26.1.0'
+
+# v0.2.0 explicitly supports the production source versions from the v0.1 line.
+v020_manifest="$(mktemp /tmp/rp-release-v020.XXXXXX.json)"
+jq '.migrations.supportedFromVersions=["0.1.8","0.1.9","0.1.10"]' "$manifest" >"$v020_manifest"
+status 0 'v0.2 accepts upgrade from v0.1.8' rp_release_compatible "$v020_manifest" '0.1.0' '0.1.8' '28.0.0'
+status 0 'v0.2 accepts upgrade from v0.1.9' rp_release_compatible "$v020_manifest" '0.1.0' '0.1.9' '28.0.0'
+status 0 'v0.2 accepts upgrade from v0.1.10' rp_release_compatible "$v020_manifest" '0.1.0' '0.1.10' '28.0.0'
+status 1 'v0.2 rejects source older than supported floor' rp_release_compatible "$v020_manifest" '0.1.0' '0.1.7' '28.0.0'
+rm -f "$v020_manifest"
 status 1 'irreversible migration refuses automatic rollback' rp_upgrade_rollback_allowed "$manifest"
 
 safe_manifest="$(mktemp /tmp/rp-release-safe.XXXXXX.json)"
@@ -118,6 +127,8 @@ contains "$workflow" 'fetch-depth: 0' 'release workflow fetches tag history for 
 contains "$workflow" 'git tag --merged HEAD' 'release workflow derives compatibility only from ancestor release tags'
 contains "$workflow" 'SUPPORTED_FROM_VERSIONS' 'release workflow derives supported source versions dynamically'
 contains "$workflow" 'supportedFromVersions:$supported_from_versions' 'release manifest uses derived supported source versions'
+contains "$workflow" 'MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"' 'v0.2 release workflow keeps v0.1.8+ as supported upgrade sources'
+not_contains "$workflow" 'release_series=' 'release workflow does not incorrectly restrict compatibility to the target minor series'
 not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
 
 schema="$(cat "$repo_root/config/production/release-manifest.schema.json")"
@@ -130,6 +141,12 @@ upgrade_source="$(cat "$repo_root/scripts/installer/upgrade.sh")"
 contains "$upgrade_source" 'rp_wait_for_https_origin' 'upgrade verifies ResourcePortal health after deploy'
 contains "$upgrade_source" 'rp_config_write' 'upgrade persists release state only after successful health check'
 contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected release version'
+contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$manifest"' 'upgrade records the exact applied release manifest for resume'
+contains "$upgrade_source" '--with-registry-auth --prune' 'rollback prunes services from failed target architecture'
+contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels' 'v0.2 upgrade backfills node roles before deploy'
+contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade refreshes standalone enrollment listener before persisting release state'
+contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
+contains "$upgrade_source" 'case "$current" in' 'upgrade preserves explicit tenant-workloads false opt-out'
 
 # Resume must restore release-derived image refs even when the release phase checkpoint is already complete.
 resume_manifest="$(mktemp /tmp/rp-release-resume.XXXXXX.json)"

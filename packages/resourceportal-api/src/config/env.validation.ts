@@ -9,8 +9,8 @@ const traefikResolverPattern = /^[A-Za-z0-9_-]+$/;
 export function validateEnv(config: Env) {
   loadSecretFiles(config);
   const errors: string[] = [];
-  const nodeEnv = config.NODE_ENV ?? "development";
-  const authMode = (config.AUTH_MODE ?? "dev").toLowerCase();
+  const nodeEnv = (config.NODE_ENV ?? "development").trim().toLowerCase();
+  const authMode = (config.AUTH_MODE ?? "dev").trim().toLowerCase();
 
   requireValue(config, errors, "DATABASE_URL");
 
@@ -29,6 +29,8 @@ export function validateEnv(config: Env) {
   requirePositiveIntegerIfSet(config, errors, "AUTH_SESSION_IDLE_TIMEOUT_SECONDS");
   requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_MAX");
   requirePositiveIntegerIfSet(config, errors, "API_RATE_LIMIT_WINDOW_SECONDS");
+  requirePositiveIntegerIfSet(config, errors, "API_TRUST_PROXY_HOPS");
+  requirePositiveIntegerIfSet(config, errors, "WORKER_HEALTH_STALE_SECONDS");
   requirePositiveIntegerIfSet(config, errors, "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS");
   requirePositiveIntegerIfSet(
     config,
@@ -68,8 +70,16 @@ export function validateEnv(config: Env) {
   );
 
   if (nodeEnv === "production") {
+    if (authMode === "dev") {
+      errors.push("AUTH_MODE=dev is not allowed in production");
+    }
+
     if (config.AUTH_COOKIE_SECURE !== "true") {
       errors.push("AUTH_COOKIE_SECURE must be true in production");
+    }
+
+    if ((config.API_TRUST_PROXY_HOPS ?? "1").trim() !== "1") {
+      errors.push("API_TRUST_PROXY_HOPS must be exactly 1 in production");
     }
 
     requireValue(config, errors, "RESOURCE_ENCRYPTION_KEY");

@@ -283,16 +283,16 @@ async function runOperationWorkers(count: number, label: string) {
     Array.from({ length: count }, (_, index) => {
       const workerEnv = {
         ...process.env,
-        OPERATION_WORKER_ONCE: "true",
-        OPERATION_WORKER_ID: `stage11-${label}-${suffix}-${index}`,
+        WORKER_ONCE: "true",
+        WORKER_ID: `stage11-${label}-${suffix}-${index}`,
       };
       return privileged
         ? command(
             "sudo",
-            ["-E", process.execPath, npmExecPath!, "run", "worker:operations"],
+            ["-E", process.execPath, npmExecPath!, "run", "worker"],
             workerEnv,
           )
-        : command("npm", ["run", "worker:operations"], workerEnv);
+        : command("npm", ["run", "worker"], workerEnv);
     }),
   );
 

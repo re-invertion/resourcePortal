@@ -11,13 +11,17 @@ import {
 import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
+import { OperationsService } from "../operations/operations.service";
 import { SetStorageBackendMaintenanceDto } from "./dto/set-storage-backend-maintenance.dto";
-import { StorageBackendsService } from "./storage-backends.service";
+import { StorageBackendsApiService } from "./storage-backends-api.service";
 
 @Controller("platform/storage-backends")
 @UseGuards(PlatformAdminGuard)
 export class StorageBackendsController {
-  constructor(private readonly service: StorageBackendsService) {}
+  constructor(
+    private readonly service: StorageBackendsApiService,
+    private readonly operations: OperationsService,
+  ) {}
 
   @Get()
   list() {
@@ -30,8 +34,18 @@ export class StorageBackendsController {
   }
 
   @Post(":storageBackendId/validate")
-  validate(@Param("storageBackendId", ParseUUIDPipe) storageBackendId: string) {
-    return this.service.validateBackend(storageBackendId);
+  validate(
+    @Param("storageBackendId", ParseUUIDPipe) storageBackendId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.operations.enqueue({
+      type: "STORAGE_BACKEND_VALIDATE",
+      tenantId: null,
+      resourceType: "StorageBackend",
+      resourceId: storageBackendId,
+      actor,
+      input: {},
+    });
   }
 
   @Patch(":storageBackendId/maintenance")

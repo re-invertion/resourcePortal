@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  appGroupNetworkName,
+  legacyAppGroupIngressNetworkName,
+  hasPublishedHttpRouting,
   protocolModeRequiresTls,
   renderTraefikLabels,
 } from "./traefik-routing";
@@ -90,4 +93,26 @@ describe("renderTraefikLabels", () => {
       "traefik.http.routers.web-public.tls.certresolver",
     );
   });
+  it("does not publish an endpoint without a domain", () => {
+    const app = {
+      name: "web",
+      httpEndpoints: [
+        {
+          name: "internal",
+          containerPort: 8080,
+          protocolMode: "HTTP",
+          domains: [],
+        },
+      ],
+    };
+    expect(hasPublishedHttpRouting(app)).toBe(false);
+    expect(renderTraefikLabels(app, { swarmNetwork: "rp-ingress-test" })).toBeUndefined();
+  });
+
+  it("uses one deterministic App Group network and retains the legacy name only for upgrade compatibility", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(appGroupNetworkName(id)).toBe(`rp-appgroup-${id}`);
+    expect(legacyAppGroupIngressNetworkName(id)).toBe(`rp-ingress-${id}`);
+  });
+
 });

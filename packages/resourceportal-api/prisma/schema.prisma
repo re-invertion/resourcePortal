@@ -70,6 +70,16 @@ enum DeploymentPhase {
   Completed
 }
 
+enum OperationStatus {
+  Pending
+  Running
+  Succeeded
+  Failed
+  RollingBack
+  RolledBack
+  RollbackFailed
+}
+
 enum VolumeStatus {
   Creating
   Ready
@@ -220,6 +230,7 @@ model Tenant {
   customRootDomains CustomRootDomain[]
   registries        Registry[]
   auditEntries      AuditLogEntry[]
+  operations        Operation[]
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 }
@@ -415,38 +426,91 @@ model TenantGroupRole {
 model BillingAccount {
   id                   String               @id @default(uuid()) @db.Uuid
   tenantId             String               @unique @db.Uuid
-  balance              Decimal              @default(0) @db.Decimal(18, 4)
+  balance              Decimal              @default(0) @db.Decimal(24, 8)
   currency             String               @default("credits")
-  informationThreshold Decimal              @default(0) @db.Decimal(18, 4)
+  informationThreshold Decimal              @default(0) @db.Decimal(24, 8)
   tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transactions         BillingTransaction[]
   usageRecords         UsageRecord[]
+  redeemedVouchers     Voucher[]
 }
 
 model BillingTransaction {
-  id               String         @id @default(uuid()) @db.Uuid
-  billingAccountId String         @db.Uuid
-  type             String
-  amount           Decimal        @db.Decimal(18, 4)
-  balanceBefore    Decimal        @db.Decimal(18, 4)
-  balanceAfter     Decimal        @db.Decimal(18, 4)
-  status           String
-  reference        String?
-  createdAt        DateTime       @default(now())
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  id                  String         @id @default(uuid()) @db.Uuid
+  billingAccountId    String         @db.Uuid
+  type                String
+  amount              Decimal        @db.Decimal(24, 8)
+  balanceBefore       Decimal        @db.Decimal(24, 8)
+  balanceAfter        Decimal        @db.Decimal(24, 8)
+  status              String
+  reference           String?
+  reason              String?
+  sourceTransactionId String?        @db.Uuid
+  metadata            Json?
+  createdAt           DateTime       @default(now())
+  billingAccount      BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+
+  @@index([billingAccountId, createdAt(sort: Desc), id(sort: Desc)], map: "BillingTransaction_account_created_idx")
+}
+
+model PriceListVersion {
+  id                      String        @id @default(uuid()) @db.Uuid
+  version                 Int           @unique
+  effectiveFrom           DateTime      @unique
+  cpuCreditsPerVcpuHour   Decimal       @db.Decimal(24, 8)
+  memoryCreditsPerGbHour  Decimal       @db.Decimal(24, 8)
+  storageCreditsPerGbHour Decimal       @db.Decimal(24, 8)
+  gpuCreditsPerGpuHour    Decimal       @db.Decimal(24, 8)
+  createdBy               String
+  createdAt               DateTime      @default(now())
+  usageRecords            UsageRecord[]
+
+  @@index([effectiveFrom(sort: Desc)], map: "PriceListVersion_effectiveFrom_idx")
+}
+
+model Voucher {
+  id                       String          @id @default(uuid()) @db.Uuid
+  codeHash                 String          @unique
+  valueCredits             Decimal         @db.Decimal(24, 8)
+  status                   String          @default("Active")
+  expiresAt                DateTime?
+  redeemedAt               DateTime?
+  redeemedByUserId         String?         @db.Uuid
+  redeemedBillingAccountId String?         @db.Uuid
+  disabledAt               DateTime?
+  disabledByUserId         String?         @db.Uuid
+  createdBy                String          @db.Uuid
+  createdAt                DateTime        @default(now())
+  redeemedBillingAccount   BillingAccount? @relation(fields: [redeemedBillingAccountId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+}
+
+model BillingWorkerState {
+  id                     String    @id
+  lastCompletedPeriodEnd DateTime?
+  updatedAt              DateTime  @updatedAt
 }
 
 model UsageRecord {
-  id               String         @id @default(uuid()) @db.Uuid
-  billingAccountId String         @db.Uuid
-  tenantId         String         @db.Uuid
-  resourceType     String
-  resourceId       String         @db.Uuid
-  periodStart      DateTime
-  periodEnd        DateTime
-  usage            Json
-  cost             Decimal        @db.Decimal(18, 4)
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  id                 String            @id @default(uuid()) @db.Uuid
+  billingAccountId   String            @db.Uuid
+  tenantId           String            @db.Uuid
+  resourceType       String
+  resourceId         String            @db.Uuid
+  periodStart        DateTime
+  periodEnd          DateTime
+  usage              Json
+  cost               Decimal           @db.Decimal(24, 8)
+  chargedCredits     Decimal           @default(0) @db.Decimal(24, 8)
+  priceListVersionId String?           @db.Uuid
+  appGroupId         String?           @db.Uuid
+  createdAt          DateTime          @default(now())
+  billingAccount     BillingAccount    @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  priceListVersion   PriceListVersion? @relation(fields: [priceListVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([resourceType, resourceId, periodStart, periodEnd], map: "UsageRecord_resource_period_key")
+  @@index([tenantId, periodStart, periodEnd], map: "UsageRecord_tenant_period_idx")
 }
 
 model Quota {
@@ -474,6 +538,7 @@ model AppGroup {
   runtimeState             RuntimeState         @default(Stopped)
   health                   HealthState          @default(Unknown)
   driftStatus              DriftStatus          @default(Unknown)
+  lastObservedAt           DateTime?
   currentDeploymentVersion Int?
   lastDeploymentAt         DateTime?
   lastDeploymentBy         String?
@@ -494,42 +559,45 @@ model AppGroup {
 }
 
 model SingleApp {
-  id                     String               @id @default(uuid()) @db.Uuid
-  appGroupId             String               @db.Uuid
-  name                   String
-  description            String?
-  image                  String
-  registryId             String?              @db.Uuid
-  desiredReplicas        Int                  @default(1)
-  pendingDeletion        Boolean              @default(false)
-  runtimeState           RuntimeState         @default(Running)
-  actualReplicas         Int                  @default(0)
-  health                 HealthState          @default(Unknown)
-  cpu                    Decimal              @db.Decimal(12, 4)
-  memoryBytes            BigInt
-  gpu                    Int                  @default(0)
-  environment            Json                 @default("{}")
-  healthCheck            Json?
-  entrypoint             String?
-  command                String[]
-  workingDir             String?
-  user                   String?
-  readOnlyRootFilesystem Boolean              @default(false)
-  stopGracePeriodSeconds Int                  @default(30)
-  restartPolicy          Json                 @default("{}")
-  updatePolicy           Json                 @default("{}")
-  createdBy              String               @db.Uuid
-  updatedBy              String
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @updatedAt
-  appGroup               AppGroup             @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
-  registry               Registry?            @relation(fields: [registryId], references: [id], onDelete: Restrict)
-  httpEndpoints          HttpEndpoint[]
-  volumeAttachments      VolumeAttachment[]
-  variableAttachments    VariableAttachment[]
-  configAttachments      ConfigAttachment[]
-  secrets                SingleAppSecret[]
-  secretAttachments      SecretAttachment[]
+  id                      String               @id @default(uuid()) @db.Uuid
+  appGroupId              String               @db.Uuid
+  name                    String
+  description             String?
+  image                   String
+  registryId              String?              @db.Uuid
+  desiredReplicas         Int                  @default(1)
+  pendingDeletion         Boolean              @default(false)
+  runtimeState            RuntimeState         @default(Running)
+  actualReplicas          Int                  @default(0)
+  observedDesiredReplicas Int?
+  observedImage           String?
+  observedAt              DateTime?
+  health                  HealthState          @default(Unknown)
+  cpu                     Decimal              @db.Decimal(12, 4)
+  memoryBytes             BigInt
+  gpu                     Int                  @default(0)
+  environment             Json                 @default("{}")
+  healthCheck             Json?
+  entrypoint              String?
+  command                 String[]
+  workingDir              String?
+  user                    String?
+  readOnlyRootFilesystem  Boolean              @default(false)
+  stopGracePeriodSeconds  Int                  @default(30)
+  restartPolicy           Json                 @default("{}")
+  updatePolicy            Json                 @default("{}")
+  createdBy               String               @db.Uuid
+  updatedBy               String
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  appGroup                AppGroup             @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  registry                Registry?            @relation(fields: [registryId], references: [id], onDelete: Restrict)
+  httpEndpoints           HttpEndpoint[]
+  volumeAttachments       VolumeAttachment[]
+  variableAttachments     VariableAttachment[]
+  configAttachments       ConfigAttachment[]
+  secrets                 SingleAppSecret[]
+  secretAttachments       SecretAttachment[]
 
   @@unique([appGroupId, name])
 }
@@ -558,6 +626,7 @@ model AppGroupDeployment {
   phase                 DeploymentPhase   @default(Validating)
   stackConfig           String?
   renderedStack         String?
+  renderedStackSha256   String?           @db.VarChar(64)
   renderedAt            DateTime?
   sourceDraftRevision   Int
   rollbackTargetVersion Int?
@@ -610,6 +679,53 @@ model StorageBackend {
   volumes             Volume[]
 
   @@index([status, health])
+}
+
+model Operation {
+  id                   String           @id @default(uuid()) @db.Uuid
+  type                 String
+  tenantId             String?          @db.Uuid
+  resourceType         String
+  resourceId           String?          @db.Uuid
+  status               OperationStatus  @default(Pending)
+  phase                String?
+  createdBy            String           @db.Uuid
+  createdByEmail       String
+  createdByDisplayName String
+  input                Json             @default("{}")
+  result               Json?
+  idempotencyKey       String?
+  attempt              Int              @default(0)
+  maxAttempts          Int              @default(5)
+  nextAttemptAt        DateTime         @default(now())
+  leaseOwner           String?
+  leaseExpiresAt       DateTime?
+  heartbeatAt          DateTime?
+  errorCode            String?
+  errorMessage         String?
+  createdAt            DateTime         @default(now())
+  startedAt            DateTime?
+  completedAt          DateTime?
+  tenant               Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  events               OperationEvent[]
+
+  @@index([status, nextAttemptAt, createdAt], map: "Operation_queue_idx")
+  @@index([tenantId, createdAt(sort: Desc)], map: "Operation_tenantId_createdAt_idx")
+  @@index([resourceType, resourceId], map: "Operation_resource_idx")
+}
+
+model OperationEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  operationId String    @db.Uuid
+  timestamp   DateTime  @default(now())
+  phase       String?
+  level       String
+  event       String
+  message     String
+  details     Json?
+  operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@index([operationId, timestamp], map: "OperationEvent_operationId_timestamp_idx")
 }
 
 model Volume {
@@ -762,20 +878,22 @@ model VariableAttachment {
 }
 
 model Secret {
-  id           String             @id @default(uuid()) @db.Uuid
-  appGroupId   String             @db.Uuid
-  name         String
-  description  String?
-  type         SecretType
-  fileName     String?
-  valueVersion Int                @default(1)
-  storagePath  String
-  createdBy    String             @db.Uuid
-  updatedBy    String
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  appGroup     AppGroup           @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
-  attachments  SecretAttachment[]
+  id              String             @id @default(uuid()) @db.Uuid
+  appGroupId      String             @db.Uuid
+  name            String
+  description     String?
+  type            SecretType
+  fileName        String?
+  valueVersion    Int                @default(1)
+  keyVersion      Int                @default(1)
+  valueCiphertext String?            @db.Text
+  storagePath     String?
+  createdBy       String             @db.Uuid
+  updatedBy       String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  appGroup        AppGroup           @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
+  attachments     SecretAttachment[]
 
   @@unique([appGroupId, name])
 }
@@ -861,4 +979,95 @@ model InstallerEnrollment {
   createdAt   DateTime                @default(now())
 
   @@index([role, expiresAt, consumedAt])
+}
+
+model PlatformMaintenanceState {
+  id        String   @id @db.Uuid
+  enabled   Boolean  @default(false)
+  reason    String?
+  updatedBy String?  @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SwarmCluster {
+  id              String    @id @db.Uuid
+  dockerClusterId String    @unique
+  health          String    @default("Unknown")
+  managerCount    Int       @default(0)
+  nodeCount       Int       @default(0)
+  lastSyncedAt    DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model RemoteLocation {
+  id                   String    @id @default(uuid()) @db.Uuid
+  swarmNodeId          String    @unique
+  hostname             String
+  role                 String
+  status               String
+  availability         String
+  health               String    @default("Unknown")
+  maintenance          Boolean   @default(false)
+  cpuNano              BigInt    @default(0)
+  availableCpuNano     BigInt    @default(0)
+  memoryBytes          BigInt    @default(0)
+  availableMemoryBytes BigInt    @default(0)
+  gpuCount             Int       @default(0)
+  networkCapabilities  String[]  @default([])
+  lastSeenAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([hostname])
+  @@index([status, health])
+}
+
+model WorkerRuntimeState {
+  workerId            String                      @id @db.VarChar(128)
+  status              String                      @default("Starting")
+  startedAt           DateTime                    @default(now())
+  heartbeatAt         DateTime                    @default(now())
+  lastLoopAt          DateTime?
+  lastOperationId     String?                     @db.Uuid
+  lastOperationStatus String?
+  lastOperationAt     DateTime?
+  lastError           String?                     @db.Text
+  stoppedAt           DateTime?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+  reconciliations     WorkerReconciliationState[]
+
+  @@index([heartbeatAt])
+}
+
+model WorkerReconciliationState {
+  workerId        String             @db.VarChar(128)
+  key             String             @db.VarChar(64)
+  lastStartedAt   DateTime?
+  lastCompletedAt DateTime?
+  lastSuccessAt   DateTime?
+  lastFailureAt   DateTime?
+  lastDurationMs  Int?
+  lastResult      Json?
+  lastError       String?            @db.Text
+  successCount    Int                @default(0)
+  failureCount    Int                @default(0)
+  updatedAt       DateTime           @updatedAt
+  worker          WorkerRuntimeState @relation(fields: [workerId], references: [workerId], onDelete: Cascade)
+
+  @@id([workerId, key])
+  @@index([lastFailureAt])
+}
+
+model ApiRateLimitBucket {
+  key             String   @id @db.VarChar(64)
+  windowStartedAt DateTime
+  resetAt         DateTime
+  count           Int
+  updatedAt       DateTime @updatedAt
+
+  @@index([resetAt])
 }

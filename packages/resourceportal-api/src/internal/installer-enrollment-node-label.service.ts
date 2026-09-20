@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { StorageCommandRunnerService } from "../storage-backends/storage-command-runner.service";
 import { InstallerEnrollmentBundleRole } from "./installer-enrollment.service";
+import {
+  LEGACY_STORAGE_NODE_LABELS,
+  RESOURCEPORTAL_NODE_LABELS,
+} from "./node-labels";
 
 @Injectable()
 export class InstallerEnrollmentNodeLabelService {
@@ -23,14 +27,29 @@ export class InstallerEnrollmentNodeLabelService {
       throw new Error("Joined Docker node role does not match enrollment role");
     }
 
-    const labels = ["resourceportal.storage.volumes=true"];
+    const labels = [
+      `${RESOURCEPORTAL_NODE_LABELS.storage}=true`,
+      `${RESOURCEPORTAL_NODE_LABELS.tenantWorkloads}=true`,
+      `${LEGACY_STORAGE_NODE_LABELS.volumes}=true`,
+      "resourceportal.tenant-workloads=true",
+    ];
     if (role === "manager") {
       labels.push(
-        "resourceportal.storage.secrets=true",
-        "resourceportal.storage.platform=true",
+        `${LEGACY_STORAGE_NODE_LABELS.secrets}=true`,
+        `${LEGACY_STORAGE_NODE_LABELS.platform}=true`,
       );
-      if (controlPlane) labels.push("resourceportal.control-plane=true");
-      if (ingress) labels.push("resourceportal.ingress=true");
+      if (controlPlane) {
+        labels.push(
+          `${RESOURCEPORTAL_NODE_LABELS.controlPlane}=true`,
+          "resourceportal.control-plane=true",
+        );
+      }
+      if (ingress) {
+        labels.push(
+          `${RESOURCEPORTAL_NODE_LABELS.ingress}=true`,
+          "resourceportal.ingress=true",
+        );
+      }
     } else if (controlPlane || ingress) {
       throw new Error("Worker enrollment cannot opt into control-plane or ingress");
     }

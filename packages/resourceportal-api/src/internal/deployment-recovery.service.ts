@@ -17,7 +17,7 @@ import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { PrismaService } from "../prisma/prisma.service";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
-import { DeploymentWorkerService } from "./deployment-worker.service";
+import { DeploymentExecutionService } from "./deployment-execution.service";
 import { StackApplyService } from "./stack-apply.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackRuntimeService } from "./stack-runtime.service";
@@ -53,80 +53,101 @@ type RecoveryWorkerInternals = {
     workerId: string,
   ): Promise<ReturnType<typeof mapAppGroupDeployment>>;
   renderStack(stackConfig: string | null): string;
+  ensureDeploymentArtifact(deploymentId: string): Promise<{
+    renderedStack: string;
+    sha256: string;
+  }>;
 };
 
 @Injectable()
 export class DeploymentRecoveryService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly worker: DeploymentWorkerService,
+    private readonly worker: DeploymentExecutionService,
     private readonly stackApply: StackApplyService,
     private readonly stackRollout: StackRolloutService,
     private readonly stackRuntime: StackRuntimeService,
   ) {}
 
-  async claimNextDeployment(dto: ClaimDeploymentDto) {
+
+  async claimDeploymentById(
+    deploymentId: string,
+    dto: ClaimDeploymentDto,
+  ) {
     const now = new Date();
-    const leaseExpiresAt = this.calculateLeaseExpiration(dto.leaseSeconds);
-    const recoverable = [
-      { status: DeploymentStatus.Pending },
-      {
-        status: DeploymentStatus.Deploying,
-        leaseExpiresAt: { lt: now },
-      },
-      {
-        status: DeploymentStatus.RollingBack,
-        leaseExpiresAt: { lt: now },
-      },
-    ];
-
     const deployment = await this.prisma.$transaction(async (tx) => {
-      const candidate = await tx.appGroupDeployment.findFirst({
-        where: { OR: recoverable },
-        orderBy: { createdAt: "asc" },
+      const current = await tx.appGroupDeployment.findUnique({
+        where: { id: deploymentId },
       });
-
-      if (!candidate) {
-        return null;
+      if (!current) {
+        throw new NotFoundException("Deployment not found");
       }
 
-      const nextStatus =
-        candidate.status === DeploymentStatus.Pending
+      if (
+        current.status === DeploymentStatus.Succeeded ||
+        current.status === DeploymentStatus.Failed ||
+        current.status === DeploymentStatus.RolledBack ||
+        current.status === DeploymentStatus.RollbackFailed
+      ) {
+        return current;
+      }
+
+      if (
+        current.leaseOwner !== null &&
+        current.leaseOwner !== dto.workerId &&
+        current.leaseExpiresAt !== null &&
+        current.leaseExpiresAt > now
+      ) {
+        throw Object.assign(
+          new ConflictException("Deployment is leased by another worker"),
+          { code: "DeploymentLeaseActive", retryable: true },
+        );
+      }
+
+      const status =
+        current.status === DeploymentStatus.Pending
           ? DeploymentStatus.Deploying
-          : candidate.status;
+          : current.status;
       const claimed = await tx.appGroupDeployment.updateMany({
         where: {
-          id: candidate.id,
-          OR: recoverable,
+          id: deploymentId,
+          OR: [
+            { leaseOwner: dto.workerId },
+            { leaseOwner: null },
+            { leaseExpiresAt: null },
+            { leaseExpiresAt: { lte: now } },
+          ],
         },
         data: {
-          status: nextStatus,
+          status,
           leaseOwner: dto.workerId,
-          leaseExpiresAt,
+          leaseExpiresAt: this.calculateLeaseExpiration(dto.leaseSeconds),
           heartbeatAt: now,
-          startedAt: candidate.startedAt ?? now,
+          startedAt: current.startedAt ?? now,
         },
       });
-
       if (claimed.count !== 1) {
-        return null;
+        throw Object.assign(
+          new ConflictException("Deployment is leased by another worker"),
+          { code: "DeploymentLeaseActive", retryable: true },
+        );
       }
+      const next = await tx.appGroupDeployment.findUniqueOrThrow({
+        where: { id: deploymentId },
+      });
 
-      await this.createEvent(tx, candidate.id, {
-        phase: candidate.phase,
+      await this.createEvent(tx, deploymentId, {
+        phase: current.phase,
         level: "Info",
         message:
-          candidate.status === DeploymentStatus.Pending
-            ? `Deployment claimed by ${dto.workerId}`
-            : `Deployment lease recovered by ${dto.workerId} from ${candidate.status}/${candidate.phase}`,
+          current.status === DeploymentStatus.Pending
+            ? `Deployment claimed through Operation by ${dto.workerId}`
+            : `Deployment execution resumed through Operation by ${dto.workerId}`,
       });
-
-      return tx.appGroupDeployment.findUniqueOrThrow({
-        where: { id: candidate.id },
-      });
+      return next;
     });
 
-    return deployment ? mapAppGroupDeployment(deployment) : null;
+    return mapAppGroupDeployment(deployment);
   }
 
   async heartbeatDeployment(
@@ -302,11 +323,12 @@ export class DeploymentRecoveryService {
         "Warning",
         `Worker recovery observed an incomplete rollback to v${target.version}; reconciling rollback target after inspection`,
       );
-      const renderedStack =
-        target.renderedStack ?? this.workerInternals().renderStack(target.stackConfig);
+      const artifact = await this.workerInternals().ensureDeploymentArtifact(target.id);
       const applyResult = await this.stackApply.applyStack({
         stackName,
-        renderedStack,
+        renderedStack: artifact.renderedStack,
+        artifactSha256: artifact.sha256,
+        appGroupId: deployment.appGroupId,
       });
 
       if (applyResult.exitCode !== 0) {
@@ -441,28 +463,6 @@ export class DeploymentRecoveryService {
     rolloutResult: { message: string; details: string },
   ) {
     const rolledBack = await this.prisma.$transaction(async (tx) => {
-      for (const singleApp of failedSnapshot.singleApps) {
-        await tx.singleApp.updateMany({
-          where: { id: singleApp.id },
-          data: {
-            actualReplicas: 0,
-            health: "Unknown",
-          },
-        });
-      }
-
-      for (const singleApp of rollbackSnapshot.singleApps) {
-        await tx.singleApp.updateMany({
-          where: { id: singleApp.id },
-          data: {
-            actualReplicas: this.effectiveReplicas(
-              rollbackSnapshot,
-              singleApp,
-            ),
-            health: "Healthy",
-          },
-        });
-      }
 
       const next = await tx.appGroupDeployment.update({
         where: { id: deployment.id },
@@ -481,8 +481,6 @@ export class DeploymentRecoveryService {
         data: {
           currentDeploymentVersion: rollbackTarget.version,
           hasPendingChanges: true,
-          health: "Healthy",
-          driftStatus: "InSync",
         },
       });
 
@@ -520,7 +518,6 @@ export class DeploymentRecoveryService {
           appGroup: {
             update: {
               status: "Error",
-              health: "Unhealthy",
               driftStatus: "Unknown",
             },
           },

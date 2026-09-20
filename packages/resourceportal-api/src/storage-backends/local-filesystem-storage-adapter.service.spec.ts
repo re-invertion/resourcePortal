@@ -187,7 +187,7 @@ describe("LocalFilesystemStorageAdapterService", () => {
         sizeBytes: 4096n,
         projectId: 12001,
       }),
-    ).rejects.toThrow("privileged operation-worker");
+    ).rejects.toThrow("privileged ResourcePortal Worker");
 
     expect(mockedMkdir).not.toHaveBeenCalled();
     expect(runner.run).not.toHaveBeenCalled();

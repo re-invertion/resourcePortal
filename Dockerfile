@@ -40,9 +40,9 @@ WORKDIR /app/packages/resourceportal-api
 
 ENV NODE_ENV=production
 
-# The image stays non-root by default. The production operation-worker may
-# override the user to root on the storage node so only that process can
-# mutate filesystem project quotas.
+# The image stays non-root by default. The production ResourcePortal Worker
+# overrides the user on the authoritative storage/control-plane node because
+# infrastructure Operations include Docker and filesystem quota mutations.
 RUN apk add --no-cache \
     docker-cli \
     e2fsprogs-extra \

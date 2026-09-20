@@ -5,11 +5,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import {
-  DeploymentPhase,
-  DeploymentStatus,
-  Prisma,
-} from "@prisma/client";
+import { DeploymentPhase, DeploymentStatus, Prisma } from "@prisma/client";
 import { stringify } from "yaml";
 import { CapacityDeploymentAdmissionService } from "../capacity/capacity-deployment-admission.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,9 +14,12 @@ import { getDockerImageHost } from "../registries/docker-image";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
-import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
+import {
+  deploymentArtifactMatches,
+  deploymentArtifactSha256,
+} from "./deployment-artifact";
 import { StackApplyService } from "./stack-apply.service";
 import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
 import { StackRegistryAuthService } from "./stack-registry-auth.service";
@@ -31,7 +30,7 @@ import {
   storagePlacementConstraints,
 } from "./stack-storage";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
-import { renderTraefikLabels } from "./traefik-routing";
+import { appGroupNetworkName, renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
 
 const DEFAULT_LEASE_SECONDS = 300;
@@ -131,7 +130,7 @@ type StackConfigSingleApp = {
 };
 
 @Injectable()
-export class DeploymentWorkerService {
+export class DeploymentExecutionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly capacityAdmission: CapacityDeploymentAdmissionService,
@@ -145,66 +144,6 @@ export class DeploymentWorkerService {
     private readonly secretStorage: SecretStorageService,
     @Optional() private readonly config?: ConfigService,
   ) {}
-
-  async claimNextDeployment(dto: ClaimDeploymentDto) {
-    const now = new Date();
-    const leaseExpiresAt = this.calculateLeaseExpiration(dto.leaseSeconds);
-
-    const deployment = await this.prisma.$transaction(async (tx) => {
-      const candidate = await tx.appGroupDeployment.findFirst({
-        where: {
-          OR: [
-            { status: DeploymentStatus.Pending },
-            {
-              status: DeploymentStatus.Deploying,
-              leaseExpiresAt: { lt: now },
-            },
-          ],
-        },
-        orderBy: { createdAt: "asc" },
-      });
-
-      if (!candidate) {
-        return null;
-      }
-
-      const claimed = await tx.appGroupDeployment.updateMany({
-        where: {
-          id: candidate.id,
-          OR: [
-            { status: DeploymentStatus.Pending },
-            {
-              status: DeploymentStatus.Deploying,
-              leaseExpiresAt: { lt: now },
-            },
-          ],
-        },
-        data: {
-          status: DeploymentStatus.Deploying,
-          leaseOwner: dto.workerId,
-          leaseExpiresAt,
-          heartbeatAt: now,
-          startedAt: candidate.startedAt ?? now,
-        },
-      });
-
-      if (claimed.count !== 1) {
-        return null;
-      }
-
-      await this.createDeploymentEvent(tx, candidate.id, {
-        phase: candidate.phase,
-        level: "Info",
-        message: `Deployment claimed by ${dto.workerId}`,
-      });
-
-      return tx.appGroupDeployment.findUniqueOrThrow({
-        where: { id: candidate.id },
-      });
-    });
-
-    return deployment ? mapAppGroupDeployment(deployment) : null;
-  }
 
   async heartbeatDeployment(deploymentId: string, dto: HeartbeatDeploymentDto) {
     const deployment = await this.findWorkerDeploymentOrThrow(
@@ -268,12 +207,16 @@ export class DeploymentWorkerService {
       dto.phase === DeploymentPhase.GeneratingStack
         ? this.renderStack(deployment.stackConfig)
         : undefined;
+    const renderedStackSha256 = renderedStack
+      ? deploymentArtifactSha256(renderedStack)
+      : undefined;
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
         data: {
           phase: dto.phase,
           renderedStack,
+          renderedStackSha256,
           renderedAt: renderedStack ? new Date() : undefined,
           status: completed
             ? DeploymentStatus.Succeeded
@@ -478,7 +421,13 @@ export class DeploymentWorkerService {
     const [appGroupSecrets, legacySecrets] = await Promise.all([
       this.prisma.secret.findMany({
         where: { id: { in: appGroupSecretIds } },
-        select: { id: true, storagePath: true, valueVersion: true },
+        select: {
+          id: true,
+          storagePath: true,
+          valueCiphertext: true,
+          keyVersion: true,
+          valueVersion: true,
+        },
       }),
       this.prisma.singleAppSecret.findMany({
         where: { id: { in: legacySecretIds } },
@@ -517,9 +466,10 @@ export class DeploymentWorkerService {
         }
 
         try {
+          const value = await this.resolveAppGroupSecretPayload(databaseSecret);
           resolvedSecrets.push({
             dockerSecretName: snapshotSecret.dockerSecretName,
-            value: await this.secretStorage.read(databaseSecret.storagePath),
+            value,
           });
         } catch {
           return {
@@ -556,6 +506,45 @@ export class DeploymentWorkerService {
     }
 
     return this.stackSecretProvisioner.provisionSecrets(resolvedSecrets);
+  }
+
+  private async resolveAppGroupSecretPayload(secret: {
+    id: string;
+    storagePath: string | null;
+    valueCiphertext: string | null;
+    keyVersion: number;
+    valueVersion: number;
+  }) {
+    if (secret.valueCiphertext) {
+      if (secret.keyVersion !== 1) {
+        throw new Error(`Unsupported Secret key version ${secret.keyVersion}`);
+      }
+      return this.secretStorage.open(secret.valueCiphertext);
+    }
+
+    if (!secret.storagePath) {
+      throw new Error(
+        "Secret has neither database payload nor legacy storage path",
+      );
+    }
+
+    // v0.1.x -> v0.2.0 compatibility: consume the old encrypted file once,
+    // then persist the encrypted envelope in PostgreSQL. The legacy file may
+    // remain on disk; it is no longer a source of truth after this commit.
+    const plaintext = await this.secretStorage.readLegacy(secret.storagePath);
+    const valueCiphertext = this.secretStorage.seal(plaintext);
+    await this.prisma.secret.updateMany({
+      where: {
+        id: secret.id,
+        valueVersion: secret.valueVersion,
+        valueCiphertext: null,
+      },
+      data: {
+        valueCiphertext,
+        keyVersion: 1,
+      },
+    });
+    return plaintext;
   }
 
   private provisionConfigs(snapshot: StackConfigSnapshot) {
@@ -625,7 +614,10 @@ export class DeploymentWorkerService {
     return mapAppGroupDeployment(failed);
   }
 
-  private async recordProvisioningSuccess(deploymentId: string, message: string) {
+  private async recordProvisioningSuccess(
+    deploymentId: string,
+    message: string,
+  ) {
     const provisioned = await this.prisma.$transaction(async (tx) => {
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
@@ -637,7 +629,10 @@ export class DeploymentWorkerService {
       await this.createDeploymentEvent(tx, deploymentId, {
         phase: DeploymentPhase.PreparingArtifacts,
         level: "Info",
-        message: this.truncate(message || "Provisioned deployment artifacts", 2000),
+        message: this.truncate(
+          message || "Provisioned deployment artifacts",
+          2000,
+        ),
       });
 
       return next;
@@ -934,7 +929,8 @@ export class DeploymentWorkerService {
         return {
           cpu: acc.cpu + Number(singleApp.resources.cpu) * replicas,
           memoryBytes:
-            acc.memoryBytes + Number(singleApp.resources.memoryBytes) * replicas,
+            acc.memoryBytes +
+            Number(singleApp.resources.memoryBytes) * replicas,
           gpu: acc.gpu + singleApp.resources.gpu * replicas,
           singleApps: acc.singleApps + 1,
         };
@@ -960,7 +956,10 @@ export class DeploymentWorkerService {
     }
 
     if (requested.singleApps > quota.maxSingleApps) {
-      return this.validationFailure("QuotaExceeded", "SingleApp quota exceeded");
+      return this.validationFailure(
+        "QuotaExceeded",
+        "SingleApp quota exceeded",
+      );
     }
 
     if (volumeIds.size > quota.maxVolumes) {
@@ -1035,6 +1034,113 @@ export class DeploymentWorkerService {
     return new Date(Date.now() + leaseSeconds * 1000);
   }
 
+  async ensureDeploymentArtifact(deploymentId: string) {
+    const current = await this.prisma.appGroupDeployment.findUnique({
+      where: { id: deploymentId },
+      select: {
+        id: true,
+        stackConfig: true,
+        renderedStack: true,
+        renderedStackSha256: true,
+        renderedAt: true,
+      },
+    });
+    if (!current) {
+      throw new NotFoundException("Deployment was not found");
+    }
+
+    if (current.renderedStack) {
+      const digest = deploymentArtifactSha256(current.renderedStack);
+      if (
+        current.renderedStackSha256 &&
+        !deploymentArtifactMatches(
+          current.renderedStack,
+          current.renderedStackSha256,
+        )
+      ) {
+        throw new ConflictException(
+          "Persisted deployment artifact does not match its SHA-256 digest",
+        );
+      }
+
+      if (!current.renderedStackSha256) {
+        await this.prisma.appGroupDeployment.updateMany({
+          where: {
+            id: deploymentId,
+            renderedStack: current.renderedStack,
+            renderedStackSha256: null,
+          },
+          data: {
+            renderedStackSha256: digest,
+            renderedAt: current.renderedAt ?? new Date(),
+          },
+        });
+      }
+
+      const artifact = await this.prisma.appGroupDeployment.findUniqueOrThrow({
+        where: { id: deploymentId },
+        select: { renderedStack: true, renderedStackSha256: true },
+      });
+      if (
+        !artifact.renderedStack ||
+        !artifact.renderedStackSha256 ||
+        !deploymentArtifactMatches(
+          artifact.renderedStack,
+          artifact.renderedStackSha256,
+        )
+      ) {
+        throw new ConflictException(
+          "Deployment artifact integrity could not be established",
+        );
+      }
+      return {
+        renderedStack: artifact.renderedStack,
+        sha256: artifact.renderedStackSha256,
+      };
+    }
+
+    if (!current.stackConfig) {
+      throw new ConflictException(
+        "Deployment has neither a rendered stack nor source stack config",
+      );
+    }
+
+    // Supported v0.1.x deployments may predate persisted rendered artifacts.
+    // Materialize exactly once, persist the bytes + digest, then every later
+    // deploy/recovery/rollback reuses this immutable artifact.
+    const renderedStack = this.renderStack(current.stackConfig);
+    const sha256 = deploymentArtifactSha256(renderedStack);
+    await this.prisma.appGroupDeployment.updateMany({
+      where: { id: deploymentId, renderedStack: null },
+      data: {
+        renderedStack,
+        renderedStackSha256: sha256,
+        renderedAt: new Date(),
+      },
+    });
+
+    const artifact = await this.prisma.appGroupDeployment.findUniqueOrThrow({
+      where: { id: deploymentId },
+      select: { renderedStack: true, renderedStackSha256: true },
+    });
+    if (
+      !artifact.renderedStack ||
+      !artifact.renderedStackSha256 ||
+      !deploymentArtifactMatches(
+        artifact.renderedStack,
+        artifact.renderedStackSha256,
+      )
+    ) {
+      throw new ConflictException(
+        "Deployment artifact integrity could not be established",
+      );
+    }
+    return {
+      renderedStack: artifact.renderedStack,
+      sha256: artifact.renderedStackSha256,
+    };
+  }
+
   private renderStack(stackConfig: string | null) {
     const snapshot = this.parseStackConfig(stackConfig);
     const stack = this.withoutUndefined({
@@ -1045,6 +1151,7 @@ export class DeploymentWorkerService {
           this.renderService(snapshot, singleApp),
         ]),
       ),
+      networks: this.renderNetworks(snapshot),
       secrets: this.renderSecrets(snapshot),
       configs: this.renderConfigs(snapshot),
     });
@@ -1066,14 +1173,13 @@ export class DeploymentWorkerService {
       workerId,
     );
 
-    if (!deployment.renderedStack) {
-      throw new ConflictException("Deployment has no rendered stack");
-    }
-
+    const artifact = await this.ensureDeploymentArtifact(deployment.id);
     const stackName = this.stackName(deployment.appGroupId);
     const result = await this.stackApplyService.applyStack({
       stackName,
-      renderedStack: deployment.renderedStack,
+      renderedStack: artifact.renderedStack,
+      artifactSha256: artifact.sha256,
+      appGroupId: deployment.appGroupId,
     });
 
     if (result.exitCode !== 0) {
@@ -1157,16 +1263,6 @@ export class DeploymentWorkerService {
     }
 
     const completed = await this.prisma.$transaction(async (tx) => {
-      for (const singleApp of snapshot.singleApps) {
-        await tx.singleApp.update({
-          where: { id: singleApp.id },
-          data: {
-            actualReplicas: this.effectiveReplicas(snapshot, singleApp),
-            health: "Healthy",
-          },
-        });
-      }
-
       const deletedSingleApps = await tx.singleApp.findMany({
         where: {
           appGroupId: deployment.appGroupId,
@@ -1192,11 +1288,14 @@ export class DeploymentWorkerService {
         where: { id: deployment.appGroupId },
         select: { runtimeDraftRevision: true },
       });
+      const isExplicitRollback = deployment.rollbackTargetVersion !== null;
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
         data: {
           phase: DeploymentPhase.Completed,
-          status: DeploymentStatus.Succeeded,
+          status: isExplicitRollback
+            ? DeploymentStatus.RolledBack
+            : DeploymentStatus.Succeeded,
           completedAt: new Date(),
           leaseOwner: null,
           leaseExpiresAt: null,
@@ -1207,18 +1306,24 @@ export class DeploymentWorkerService {
       await tx.appGroup.update({
         where: { id: deployment.appGroupId },
         data: {
-          currentDeploymentVersion: deployment.version,
-          hasPendingChanges:
-            appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
-          health: "Healthy",
-          driftStatus: "InSync",
+          currentDeploymentVersion: isExplicitRollback
+            ? deployment.rollbackTargetVersion
+            : deployment.version,
+          hasPendingChanges: isExplicitRollback
+            ? true
+            : appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
         },
       });
 
       await this.createDeploymentEvent(tx, deploymentId, {
         phase: DeploymentPhase.Completed,
         level: "Info",
-        message: this.truncate(`${result.message}\n${result.details}`, 2000),
+        message: this.truncate(
+          isExplicitRollback
+            ? `Rolled back to deployment v${deployment.rollbackTargetVersion}\n${result.message}\n${result.details}`
+            : `${result.message}\n${result.details}`,
+          2000,
+        ),
       });
 
       if (deletedSingleApps.length > 0) {
@@ -1296,11 +1401,14 @@ export class DeploymentWorkerService {
 
     const rollbackSnapshot = this.parseStackConfig(rollbackTarget.stackConfig);
     const stackName = this.stackName(deployment.appGroupId);
-    const renderedStack =
-      rollbackTarget.renderedStack ?? this.renderStack(rollbackTarget.stackConfig);
+    const rollbackArtifact = await this.ensureDeploymentArtifact(
+      rollbackTarget.id,
+    );
     const applyResult = await this.stackApplyService.applyStack({
       stackName,
-      renderedStack,
+      renderedStack: rollbackArtifact.renderedStack,
+      artifactSha256: rollbackArtifact.sha256,
+      appGroupId: deployment.appGroupId,
     });
 
     if (applyResult.exitCode !== 0) {
@@ -1308,7 +1416,9 @@ export class DeploymentWorkerService {
         deployment.id,
         rollbackTarget.version,
         `Rollback stack deploy failed\n${applyResult.command}\n${
-          applyResult.stderr || applyResult.stdout || `Exit code ${applyResult.exitCode}`
+          applyResult.stderr ||
+          applyResult.stdout ||
+          `Exit code ${applyResult.exitCode}`
         }`,
       );
     }
@@ -1330,26 +1440,6 @@ export class DeploymentWorkerService {
     }
 
     const rolledBack = await this.prisma.$transaction(async (tx) => {
-      for (const singleApp of failedSnapshot.singleApps) {
-        await tx.singleApp.updateMany({
-          where: { id: singleApp.id },
-          data: {
-            actualReplicas: 0,
-            health: "Unknown",
-          },
-        });
-      }
-
-      for (const singleApp of rollbackSnapshot.singleApps) {
-        await tx.singleApp.updateMany({
-          where: { id: singleApp.id },
-          data: {
-            actualReplicas: this.effectiveReplicas(rollbackSnapshot, singleApp),
-            health: "Healthy",
-          },
-        });
-      }
-
       const next = await tx.appGroupDeployment.update({
         where: { id: deployment.id },
         data: {
@@ -1367,8 +1457,6 @@ export class DeploymentWorkerService {
         data: {
           currentDeploymentVersion: rollbackTarget.version,
           hasPendingChanges: true,
-          health: "Healthy",
-          driftStatus: "InSync",
         },
       });
 
@@ -1404,7 +1492,6 @@ export class DeploymentWorkerService {
           appGroup: {
             update: {
               status: "Error",
-              health: "Unhealthy",
               driftStatus: "Unknown",
             },
           },
@@ -1442,14 +1529,16 @@ export class DeploymentWorkerService {
       read_only: singleApp.readOnlyRootFilesystem ? true : undefined,
       stop_grace_period: `${singleApp.stopGracePeriodSeconds}s`,
       healthcheck: this.renderHealthCheck(singleApp.healthCheck),
+      networks: ["default"],
       volumes:
         singleApp.volumes.length > 0
           ? singleApp.volumes.map((volume) =>
               renderRuntimeVolumeMount({
-                runtimeRoot: this.config?.get<string>(
-                  "RESOURCE_VOLUME_RUNTIME_ROOT",
-                  DEFAULT_VOLUME_RUNTIME_ROOT,
-                ) ?? DEFAULT_VOLUME_RUNTIME_ROOT,
+                runtimeRoot:
+                  this.config?.get<string>(
+                    "RESOURCE_VOLUME_RUNTIME_ROOT",
+                    DEFAULT_VOLUME_RUNTIME_ROOT,
+                  ) ?? DEFAULT_VOLUME_RUNTIME_ROOT,
                 tenantId: snapshot.appGroup.tenantId,
                 volumeId: volume.volumeId,
                 mountPath: volume.mountPath,
@@ -1481,11 +1570,12 @@ export class DeploymentWorkerService {
         },
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
-        placement:
-          singleApp.volumes.length > 0
-            ? { constraints: storagePlacementConstraints(true) }
-            : undefined,
-        labels: this.renderTraefikLabels(singleApp),
+        placement: {
+          constraints: storagePlacementConstraints(
+            singleApp.volumes.length > 0,
+          ),
+        },
+        labels: this.renderTraefikLabels(snapshot, singleApp),
       },
     });
   }
@@ -1533,10 +1623,24 @@ export class DeploymentWorkerService {
     });
   }
 
-  private renderTraefikLabels(singleApp: StackConfigSingleApp) {
-    return renderTraefikLabels(singleApp);
+  private renderTraefikLabels(
+    snapshot: StackConfigSnapshot,
+    singleApp: StackConfigSingleApp,
+  ) {
+    return renderTraefikLabels(singleApp, {
+      certResolver: this.config?.get<string>("TRAEFIK_CERT_RESOLVER"),
+      swarmNetwork: appGroupNetworkName(snapshot.appGroup.id),
+    });
   }
 
+  private renderNetworks(snapshot: StackConfigSnapshot) {
+    return {
+      default: {
+        external: true,
+        name: appGroupNetworkName(snapshot.appGroup.id),
+      },
+    };
+  }
 
   private renderSecrets(snapshot: StackConfigSnapshot) {
     const secrets = new Map<string, { external: true; name: string }>();

@@ -25,10 +25,17 @@ describe("Stage 14 stack storage rendering", () => {
     })).toBe("/mnt/resourceportal/volumes/tenant-a/volume-a:/data:ro");
   });
 
-  it("requires the storage readiness label when a service uses a Volume", () => {
+  it("requires tenant workload capability for every tenant service", () => {
+    expect(storagePlacementConstraints(false)).toEqual([
+      "node.labels.rp.node.tenant-workloads == true",
+    ]);
+  });
+
+  it("adds storage readiness only when a service uses a Volume", () => {
     expect(storagePlacementConstraints(true)).toEqual([
+      "node.labels.rp.node.tenant-workloads == true",
+      "node.labels.rp.node.storage == true",
       "node.labels.resourceportal.storage.volumes == true",
     ]);
-    expect(storagePlacementConstraints(false)).toEqual([]);
   });
 });

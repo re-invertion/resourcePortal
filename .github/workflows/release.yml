@@ -108,17 +108,22 @@ jobs:
           API_DIGEST: ${{ steps.api.outputs.digest }}
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
           POSTGRES_DIGEST: ${{ steps.postgres.outputs.digest }}
+          MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"
         shell: bash
         run: |
           set -euo pipefail
-          release_series="${VERSION%.*}"
-          mapfile -t supported_versions < <(
-            git tag --merged HEAD --list 'v*' \
+          mapfile -t ancestor_versions < <(
+            git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
               | sed 's/^v//' \
-              | grep -E "^${release_series//./\.}\.[0-9]+$" \
               | grep -Fxv "$VERSION" \
               | sort -V
           )
+          supported_versions=()
+          for candidate in "${ancestor_versions[@]}"; do
+            oldest="$(printf '%s\n%s\n' "$MIN_SUPPORTED_SOURCE_VERSION" "$candidate" | sort -V | head -n1)"
+            [[ "$oldest" == "$MIN_SUPPORTED_SOURCE_VERSION" ]] || continue
+            supported_versions+=("$candidate")
+          done
           if (( ${#supported_versions[@]} == 0 )); then
             supported_versions=("$VERSION")
           fi

@@ -12,10 +12,11 @@ import { DomainsController } from "../domains/domains.controller";
 import { HealthController } from "../health/health.controller";
 import { IdentityProvidersController } from "../identity-providers/identity-providers.controller";
 import { PlatformIdentityProvidersController } from "../identity-providers/platform-identity-providers.controller";
-import { AuthSessionMaintenanceController } from "../internal/auth-session-maintenance.controller";
-import { DeploymentWorkerController } from "../internal/deployment-worker.controller";
 import { InternalAuthGuard } from "../internal/internal-auth.guard";
-import { ObservabilityController } from "../observability/observability.controller";
+import {
+  ObservabilityController,
+  ObservabilityDiagnosticsController,
+} from "../observability/observability.controller";
 import { OAuthApplicationsController } from "../oauth-applications/oauth-applications.controller";
 import { PlatformOAuthApplicationsController } from "../oauth-applications/platform-oauth-applications.controller";
 import { PlatformInfrastructureController } from "../platform-infrastructure/platform-infrastructure.controller";
@@ -40,12 +41,11 @@ const controllers = [
   AppGroupsController,
   AuditController,
   AuthController,
-  AuthSessionMaintenanceController,
-  DeploymentWorkerController,
   DomainsController,
   HealthController,
   IdentityProvidersController,
   ObservabilityController,
+  ObservabilityDiagnosticsController,
   OAuthApplicationsController,
   PlatformIdentityProvidersController,
   PlatformInfrastructureController,

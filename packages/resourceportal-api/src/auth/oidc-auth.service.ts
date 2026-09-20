@@ -131,13 +131,20 @@ export class OidcAuthService {
   }
 
   private async findServiceIdentity(subject: string) {
-    const rows = await this.prisma.$queryRaw<ServiceIdentityRecord[]>`
-      SELECT "id", "tenantId", "name", "status", "zitadelUserId", "clientId"
-      FROM "ServiceIdentity"
-      WHERE "zitadelUserId" = ${subject}
-      LIMIT 1
-    `;
-    return rows[0];
+    const row = await this.prisma.serviceIdentity.findUnique({
+      where: { zitadelUserId: subject },
+      select: {
+        id: true,
+        tenantId: true,
+        name: true,
+        status: true,
+        zitadelUserId: true,
+        clientId: true,
+      },
+    });
+    return row
+      ? ({ ...row, status: row.status as ServiceIdentityRecord["status"] } satisfies ServiceIdentityRecord)
+      : undefined;
   }
 
   private async findOrProvisionUser(

@@ -9,7 +9,7 @@ npm --workspace @resource-portal/api run test
 npm --workspace @resource-portal/api run start
 npm --workspace @resource-portal/api run prisma:migrate
 npm --workspace @resource-portal/api run db:seed
-npm --workspace @resource-portal/api run worker:deployments
+npm --workspace @resource-portal/api run worker
 npm --workspace @resource-portal/api run smoke:deploy
 ```
 
@@ -34,7 +34,7 @@ GET /api/metrics
 
 `/api/health/live` potwierdza, że proces API działa. `/api/health/ready` sprawdza zależności wymagane do obsługi ruchu, obecnie PostgreSQL. `/api/metrics` zwraca metryki w formacie Prometheus text exposition.
 
-Every HTTP request receives an `x-request-id` response header. If the caller sends `x-request-id`, the API preserves it; otherwise it generates a UUID. API requests and the deployment worker emit structured JSON log events for easier filtering in log aggregation.
+Every HTTP request receives an `x-request-id` response header. If the caller sends `x-request-id`, the API preserves it; otherwise it generates a UUID. API requests and the unified Worker emit structured JSON log events for easier filtering in log aggregation.
 
 Main public resource groups:
 

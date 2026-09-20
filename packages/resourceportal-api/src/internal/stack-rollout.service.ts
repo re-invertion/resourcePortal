@@ -26,11 +26,11 @@ export class StackRolloutService {
     stackName: string;
     expectedServices: ExpectedService[];
   }): Promise<RolloutResult> {
-    const timeoutMs = this.config.get<number>(
+    const timeoutMs = this.positiveIntegerConfig(
       "DOCKER_ROLLOUT_TIMEOUT_MS",
       300000,
     );
-    const pollIntervalMs = this.config.get<number>(
+    const pollIntervalMs = this.positiveIntegerConfig(
       "DOCKER_ROLLOUT_POLL_INTERVAL_MS",
       5000,
     );
@@ -44,7 +44,8 @@ export class StackRolloutService {
         return {
           success: false,
           message: "Docker stack services failed",
-          details: result.stderr || result.stdout || `Exit code ${result.exitCode}`,
+          details:
+            result.stderr || result.stdout || `Exit code ${result.exitCode}`,
         };
       }
 
@@ -85,6 +86,11 @@ export class StackRolloutService {
   }
 
   private runDocker(args: string[]) {
+    const timeoutMs = this.positiveIntegerConfig(
+      "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
+      120000,
+    );
+
     return new Promise<{
       exitCode: number;
       stdout: string;
@@ -96,28 +102,49 @@ export class StackRolloutService {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let settled = false;
+      const finish = (result: {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(result);
+      };
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        child.kill("SIGKILL");
+        finish({
+          exitCode: 124,
+          stdout: this.decode(stdout),
+          stderr: `docker stack services timed out after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
 
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
       child.on("error", (error) => {
-        settled = true;
-        resolve({
+        finish({
           exitCode: 127,
           stdout: this.decode(stdout),
           stderr: error.message,
         });
       });
-      child.on("close", (code) => {
-        if (settled) {
-          return;
-        }
-
-        resolve({
-          exitCode: code ?? 1,
+      const finishFromExit = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        finish({
+          exitCode: signal ? 124 : (code ?? 1),
           stdout: this.decode(stdout),
-          stderr: this.decode(stderr),
+          stderr: signal
+            ? `docker stack services terminated by ${signal}`
+            : this.decode(stderr),
         });
-      });
+      };
+      child.on("exit", finishFromExit);
+      child.on("close", finishFromExit);
     });
   }
 
@@ -173,6 +200,15 @@ export class StackRolloutService {
       running: Number(running),
       desired: Number(desired),
     };
+  }
+
+  private positiveIntegerConfig(key: string, fallback: number) {
+    const raw = this.config.get<string | number | undefined>(key);
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
   }
 
   private sleep(ms: number) {

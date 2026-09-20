@@ -1,42 +1,71 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
+import { PrismaService } from "../prisma/prisma.service";
 
-type Bucket = {
+type RateLimitRow = {
   count: number;
-  resetAt: number;
+  resetAt: Date;
 };
 
 @Injectable()
 export class RateLimitService {
-  private readonly buckets = new Map<string, Bucket>();
   private lastCleanupAt = 0;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  consume(key: string, now = Date.now()) {
+  async consume(key: string, now = Date.now()) {
     const windowMs = this.windowSeconds() * 1000;
     const maxRequests = this.maxRequests();
-    this.cleanup(now);
+    const windowStartedAt = new Date(now);
+    const proposedResetAt = new Date(now + windowMs);
+    const bucketKey = this.hashKey(key);
 
-    const current = this.buckets.get(key);
-    const bucket =
-      !current || current.resetAt <= now
-        ? { count: 0, resetAt: now + windowMs }
-        : current;
-    bucket.count += 1;
-    this.buckets.set(key, bucket);
+    const rows = await this.prisma.$queryRaw<RateLimitRow[]>(Prisma.sql`
+      INSERT INTO "ApiRateLimitBucket" (
+        "key", "windowStartedAt", "resetAt", "count", "updatedAt"
+      ) VALUES (
+        ${bucketKey}, ${windowStartedAt}, ${proposedResetAt}, 1, NOW()
+      )
+      ON CONFLICT ("key") DO UPDATE SET
+        "count" = CASE
+          WHEN "ApiRateLimitBucket"."resetAt" <= ${windowStartedAt}
+            THEN 1
+          ELSE "ApiRateLimitBucket"."count" + 1
+        END,
+        "windowStartedAt" = CASE
+          WHEN "ApiRateLimitBucket"."resetAt" <= ${windowStartedAt}
+            THEN ${windowStartedAt}
+          ELSE "ApiRateLimitBucket"."windowStartedAt"
+        END,
+        "resetAt" = CASE
+          WHEN "ApiRateLimitBucket"."resetAt" <= ${windowStartedAt}
+            THEN ${proposedResetAt}
+          ELSE "ApiRateLimitBucket"."resetAt"
+        END,
+        "updatedAt" = NOW()
+      RETURNING "count", "resetAt"
+    `);
+    const bucket = rows[0];
+    if (!bucket) throw new Error("Rate limiter failed to persist a bucket");
+
+    await this.cleanup(now, windowMs).catch(() => undefined);
 
     const remaining = Math.max(0, maxRequests - bucket.count);
     const retryAfterSeconds = Math.max(
       1,
-      Math.ceil((bucket.resetAt - now) / 1000),
+      Math.ceil((bucket.resetAt.getTime() - now) / 1000),
     );
 
     return {
       allowed: bucket.count <= maxRequests,
       limit: maxRequests,
       remaining,
-      resetAt: bucket.resetAt,
+      resetAt: bucket.resetAt.getTime(),
       retryAfterSeconds,
     };
   }
@@ -54,16 +83,16 @@ export class RateLimitService {
     return Number.isFinite(value) && value > 0 ? value : fallback;
   }
 
-  private cleanup(now: number) {
-    if (now - this.lastCleanupAt < 60_000) {
-      return;
-    }
+  private hashKey(key: string) {
+    return createHash("sha256").update(key).digest("hex");
+  }
 
-    for (const [key, bucket] of this.buckets.entries()) {
-      if (bucket.resetAt <= now) {
-        this.buckets.delete(key);
-      }
-    }
+  private async cleanup(now: number, windowMs: number) {
+    if (now - this.lastCleanupAt < 60_000) return;
     this.lastCleanupAt = now;
+    const staleBefore = new Date(now - Math.max(windowMs * 10, 10 * 60_000));
+    await this.prisma.apiRateLimitBucket.deleteMany({
+      where: { resetAt: { lt: staleBefore } },
+    });
   }
 }

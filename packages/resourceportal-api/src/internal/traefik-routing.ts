@@ -29,20 +29,19 @@ export function renderTraefikLabels(
   singleApp: TraefikSingleApp,
   options: TraefikRoutingOptions = {
     certResolver: process.env.TRAEFIK_CERT_RESOLVER,
-    swarmNetwork: process.env.TRAEFIK_SWARM_NETWORK,
   },
 ) {
   const labels: Record<string, string> = {};
 
   for (const endpoint of singleApp.httpEndpoints) {
     const serviceName = `${singleApp.name}-${endpoint.name}`;
-    labels[`traefik.http.services.${serviceName}.loadbalancer.server.port`] =
-      String(endpoint.containerPort);
-
     const domains = endpoint.domains.map((domain) => domain.hostname);
     if (domains.length === 0) {
       continue;
     }
+
+    labels[`traefik.http.services.${serviceName}.loadbalancer.server.port`] =
+      String(endpoint.containerPort);
 
     const rule = domains.map((domain) => `Host(\`${domain}\`)`).join(" || ");
 
@@ -127,3 +126,19 @@ function addRouter(
     }
   }
 }
+
+export function legacyAppGroupIngressNetworkName(appGroupId: string) {
+  return `rp-ingress-${appGroupId.toLowerCase()}`;
+}
+
+
+export function hasPublishedHttpRouting(singleApp: TraefikSingleApp) {
+  return singleApp.httpEndpoints.some((endpoint) => endpoint.domains.length > 0);
+}
+
+export function appGroupNetworkName(appGroupId: string) {
+  return `rp-appgroup-${appGroupId.toLowerCase()}`;
+}
+
+/** @deprecated compatibility alias for pre-v0.2 call sites/tests. */
+export const appGroupPrivateNetworkName = appGroupNetworkName;

@@ -17,12 +17,12 @@ import { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
-import { VolumesService } from "./volumes.service";
+import { VolumeReadService } from "./volume-read.service";
 
 @Controller("tenants/:tenantId/volumes")
 export class VolumesController {
   constructor(
-    private readonly volumesService: VolumesService,
+    private readonly volumesService: VolumeReadService,
     private readonly operationsService: OperationsService,
   ) {}
 
