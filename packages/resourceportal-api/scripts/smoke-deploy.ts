@@ -9,12 +9,14 @@ const envFilePaths = [".env", "../../.env"];
 loadDotEnv();
 
 const prisma = new PrismaClient();
-const apiBaseUrl = (process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api")
-  .replace(/\/$/, "");
+const apiBaseUrl = (
+  process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3001/api"
+).replace(/\/$/, "");
 const dockerContext = process.env.DOCKER_CONTEXT ?? "default";
 const suffix = `${Date.now()}`;
 const stackPrefix = "rp_";
-const storageBasePath = process.env.RESOURCE_STORAGE_BASE_PATH ?? "/srv/resource-portal/storage";
+const storageBasePath =
+  process.env.RESOURCE_STORAGE_BASE_PATH ?? "/srv/resource-portal/storage";
 
 let createdTenantId: string | undefined;
 let createdVolumeId: string | undefined;
@@ -73,21 +75,12 @@ async function main() {
     },
   );
   const volumeOperationId = stringField(volumeOperation, "id");
-  await runOperationWorkerOnce();
-  const completedVolumeOperation = await api<JsonObject>(
-    `/tenants/${createdTenantId}/operations/${volumeOperationId}`,
-    {
-      method: "GET",
-      userId,
-    },
+  const completedVolumeOperation = await runOperationToTerminal(
+    volumeOperationId,
+    "Succeeded",
+    true,
   );
-  const volumeOperationStatus = stringField(completedVolumeOperation, "status");
-  if (volumeOperationStatus !== "Succeeded") {
-    throw new Error(
-      `Expected volume create operation ${volumeOperationId} to succeed, got ${volumeOperationStatus}`,
-    );
-  }
-  createdVolumeId = stringField(completedVolumeOperation, "resourceId");
+  createdVolumeId = requiredOperationResourceId(completedVolumeOperation);
 
   const appGroup = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups`,
@@ -212,7 +205,7 @@ async function main() {
   );
   const deploymentId = stringField(deployment, "id");
 
-  await runWorkerOnce();
+  await runOperationToTerminal(deploymentId, "Succeeded");
   await expectDeploymentStatus(userId, deploymentId, "Succeeded");
 
   const stackName = stackNameFor(createdAppGroupId);
@@ -224,30 +217,42 @@ async function main() {
     createdVolumeId,
   );
 
-  await api(
+  const stopRuntime = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/single-apps/${singleAppId}/runtime/stop`,
     {
       method: "POST",
       userId,
     },
   );
+  await runOperationToTerminal(
+    stringField(stopRuntime, "operationId"),
+    "Succeeded",
+  );
   await expectServiceReplicas(stackName, "nginx", "0/0");
 
-  await api(
+  const startRuntime = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/single-apps/${singleAppId}/runtime/start`,
     {
       method: "POST",
       userId,
     },
   );
+  await runOperationToTerminal(
+    stringField(startRuntime, "operationId"),
+    "Succeeded",
+  );
   await expectServiceReplicas(stackName, "nginx", "1/1");
 
-  await api(
+  const restartRuntime = await api<JsonObject>(
     `/tenants/${createdTenantId}/app-groups/${createdAppGroupId}/single-apps/${singleAppId}/runtime/restart`,
     {
       method: "POST",
       userId,
     },
+  );
+  await runOperationToTerminal(
+    stringField(restartRuntime, "operationId"),
+    "Succeeded",
   );
   await expectServiceReplicas(stackName, "nginx", "1/1");
   await expectVolumeMarker(stackName, "nginx", volumeMarker);
@@ -263,8 +268,9 @@ async function main() {
       },
     },
   );
-  await runWorkerOnce();
-  await expectDeploymentStatus(userId, stringField(rollback, "id"), "Succeeded");
+  const rollbackDeploymentId = stringField(rollback, "id");
+  await runOperationToTerminal(rollbackDeploymentId, "RolledBack");
+  await expectDeploymentStatus(userId, rollbackDeploymentId, "RolledBack");
 
   console.log("Smoke deploy completed successfully");
 }
@@ -276,20 +282,28 @@ async function cleanup() {
   }
 
   if (createdVolumeId) {
-    const volume = await prisma.volume.findUnique({
-      where: { id: createdVolumeId },
-      select: { storagePath: true },
-    }).catch(() => null);
+    const volume = await prisma.volume
+      .findUnique({
+        where: { id: createdVolumeId },
+        select: { storagePath: true },
+      })
+      .catch(() => null);
     if (volume?.storagePath) {
       if (!volume.storagePath.startsWith(`${storageBasePath}/volumes/`)) {
-        throw new Error(`Unsafe smoke cleanup storage path: ${volume.storagePath}`);
+        throw new Error(
+          `Unsafe smoke cleanup storage path: ${volume.storagePath}`,
+        );
       }
-      await command("sudo", ["rm", "-rf", volume.storagePath]).catch(() => undefined);
+      await command("sudo", ["rm", "-rf", volume.storagePath]).catch(
+        () => undefined,
+      );
     }
   }
 
   if (createdTenantId) {
-    await prisma.tenant.delete({ where: { id: createdTenantId } }).catch(() => undefined);
+    await prisma.tenant
+      .delete({ where: { id: createdTenantId } })
+      .catch(() => undefined);
   }
 }
 
@@ -305,7 +319,9 @@ async function resolveUserId() {
   });
 
   if (!membership) {
-    throw new Error("SMOKE_USER_ID is required when no active membership exists");
+    throw new Error(
+      "SMOKE_USER_ID is required when no active membership exists",
+    );
   }
 
   return membership.userId;
@@ -332,6 +348,75 @@ async function preflightSwarm() {
       `Docker context ${dockerContext} is not a Swarm manager (${output || "empty docker info"})`,
     );
   }
+}
+
+type OperationRecord = {
+  status: string;
+  resourceId: string | null;
+  nextAttemptAt: Date;
+  errorCode: string | null;
+  errorMessage: string | null;
+};
+
+async function runOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+  privileged = false,
+): Promise<OperationRecord> {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        resourceId: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    if (!operation) {
+      throw new Error(`Operation ${operationId} was not found`);
+    }
+
+    if (operation.status === expectedStatus) {
+      return operation;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    if (privileged) {
+      await runOperationWorkerOnce();
+    } else {
+      await runWorkerOnce();
+    }
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 12 worker iterations`,
+  );
+}
+
+function requiredOperationResourceId(operation: OperationRecord) {
+  if (!operation.resourceId) {
+    throw new Error("Succeeded operation did not persist resourceId");
+  }
+  return operation.resourceId;
 }
 
 async function runWorkerOnce() {
@@ -398,12 +483,7 @@ async function expectDeploymentStatus(
     );
     const eventDetails = events
       .map((event) =>
-        [
-          event.timestamp,
-          event.phase,
-          event.level,
-          event.message,
-        ]
+        [event.timestamp, event.phase, event.level, event.message]
           .filter((value) => typeof value === "string")
           .join(" "),
       )
@@ -430,11 +510,22 @@ async function assertCanonicalVolumeRuntime(
     "{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}|{{json .Spec.TaskTemplate.Placement.Constraints}}",
   ]);
   const expectedSource = `/mnt/resourceportal/volumes/${tenantId}/${volumeId}`;
-  if (!inspect.stdout.includes(`"Type":"bind"`) || !inspect.stdout.includes(expectedSource)) {
-    throw new Error(`Expected canonical bind mount ${expectedSource}, got ${inspect.stdout}`);
+  if (
+    !inspect.stdout.includes(`"Type":"bind"`) ||
+    !inspect.stdout.includes(expectedSource)
+  ) {
+    throw new Error(
+      `Expected canonical bind mount ${expectedSource}, got ${inspect.stdout}`,
+    );
   }
-  if (!inspect.stdout.includes("node.labels.resourceportal.storage.volumes == true")) {
-    throw new Error(`Expected Volume storage placement constraint, got ${inspect.stdout}`);
+  if (
+    !inspect.stdout.includes(
+      "node.labels.resourceportal.storage.volumes == true",
+    )
+  ) {
+    throw new Error(
+      `Expected Volume storage placement constraint, got ${inspect.stdout}`,
+    );
   }
 
   const container = await docker([
@@ -445,7 +536,8 @@ async function assertCanonicalVolumeRuntime(
     "{{.ID}}",
   ]);
   const containerId = container.stdout.trim().split("\n")[0];
-  if (!containerId) throw new Error(`No running container found for ${service}`);
+  if (!containerId)
+    throw new Error(`No running container found for ${service}`);
   const marker = `stage14-${Date.now()}`;
   const persisted = await docker([
     "exec",
@@ -455,7 +547,9 @@ async function assertCanonicalVolumeRuntime(
     `printf '%s' '${marker}' > /smoke-data/.rp-stage14-marker && cat /smoke-data/.rp-stage14-marker`,
   ]);
   if (persisted.stdout.trim() !== marker) {
-    throw new Error(`Volume-backed workload marker mismatch: ${persisted.stdout}`);
+    throw new Error(
+      `Volume-backed workload marker mismatch: ${persisted.stdout}`,
+    );
   }
   return marker;
 }
@@ -468,13 +562,7 @@ async function expectVolumeMarker(
   const service = `${stackName}_${serviceName}`;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const container = await docker(
-      [
-        "ps",
-        "--filter",
-        `name=${service}`,
-        "--format",
-        "{{.ID}}",
-      ],
+      ["ps", "--filter", `name=${service}`, "--format", "{{.ID}}"],
       true,
     );
     const containerId = container.stdout.trim().split("\n")[0];
@@ -517,13 +605,7 @@ async function expectServiceReplicas(
 async function waitForStackRemoval(stackName: string) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const result = await docker(
-      [
-        "stack",
-        "services",
-        stackName,
-        "--format",
-        "{{.Name}}",
-      ],
+      ["stack", "services", stackName, "--format", "{{.Name}}"],
       true,
     );
 
@@ -548,8 +630,12 @@ async function api<T = unknown>(
     method: options.method,
     headers: {
       "x-dev-user-id": options.userId,
-      ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
-      ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+      ...(options.idempotencyKey
+        ? { "idempotency-key": options.idempotencyKey }
+        : {}),
+      ...(options.body === undefined
+        ? {}
+        : { "content-type": "application/json" }),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
@@ -571,7 +657,9 @@ function docker(args: string[], ignoreFailure = false) {
     ...args,
   ]).then((result) => {
     if (!ignoreFailure && result.exitCode !== 0) {
-      throw new Error(result.stderr || result.stdout || `docker ${args.join(" ")} failed`);
+      throw new Error(
+        result.stderr || result.stdout || `docker ${args.join(" ")} failed`,
+      );
     }
 
     return result;
@@ -579,27 +667,29 @@ function docker(args: string[], ignoreFailure = false) {
 }
 
 function command(commandName: string, args: string[], env = process.env) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(commandName, args, {
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", (error) => {
-      resolve({ exitCode: 127, stdout: "", stderr: error.message });
-    });
-    child.on("close", (code) => {
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve) => {
+      const child = spawn(commandName, args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    });
-  });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        resolve({ exitCode: 127, stdout: "", stderr: error.message });
+      });
+      child.on("close", (code) => {
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    },
+  );
 }
 
 function stackNameFor(appGroupId: string) {

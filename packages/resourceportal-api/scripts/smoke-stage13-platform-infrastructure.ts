@@ -1,5 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { PrismaClient } from "@prisma/client";
+import { execFileSync, spawn } from "node:child_process";
 
+const prisma = new PrismaClient();
 const apiBaseUrl = (
   process.env.RESOURCE_PORTAL_API_URL ?? "http://localhost:3000/api"
 ).replace(/\/$/, "");
@@ -30,22 +32,34 @@ async function main() {
   const nodeId = docker(["info", "--format", "{{.Swarm.NodeID}}"]);
   assert(nodeId.length > 0, "Docker Swarm did not expose the local node id");
 
-  const reconcile = await request("/platform/swarm-cluster/reconcile", "POST");
-  expectSuccess(reconcile, "reconcile Swarm infrastructure");
-  const reconcilePayload = objectPayload(reconcile.payload);
+  await enqueueAndDrain(
+    "/platform/swarm-cluster/reconcile",
+    "POST",
+    undefined,
+    "reconcile Swarm infrastructure",
+  );
+  const cluster = await request("/platform/swarm-cluster", "GET");
+  expectSuccess(cluster, "read reconciled Swarm infrastructure");
+  const clusterPayload = objectPayload(cluster.payload);
   assert(
-    numberField(reconcilePayload, "nodeCount") >= 1,
+    numberField(clusterPayload, "nodeCount") >= 1,
     "Stage 13 reconcile did not discover any nodes",
   );
   assert(
-    numberField(reconcilePayload, "managerCount") >= 1,
+    numberField(clusterPayload, "managerCount") >= 1,
     "Stage 13 reconcile did not discover a manager",
   );
 
   const remoteLocation = await findRemoteLocation(nodeId);
-  assert(remoteLocation.role === "Manager", "Local Swarm node was not mapped as Manager");
+  assert(
+    remoteLocation.role === "Manager",
+    "Local Swarm node was not mapped as Manager",
+  );
   assert(remoteLocation.status === "Ready", "Local Swarm node was not Ready");
-  assert(BigInt(remoteLocation.cpuNano) > 0n, "Remote Location CPU capacity was not captured");
+  assert(
+    BigInt(remoteLocation.cpuNano) > 0n,
+    "Remote Location CPU capacity was not captured",
+  );
   assert(
     BigInt(remoteLocation.availableCpuNano) === BigInt(remoteLocation.cpuNano),
     "Active Remote Location available CPU did not match total schedulable CPU",
@@ -63,16 +77,19 @@ async function main() {
   let maintenanceEnabled = false;
   let restoreApiError: Error | null = null;
   try {
-    const enable = await request(
+    await enqueueAndDrain(
       `/platform/remote-locations/${remoteLocation.id}/maintenance`,
       "PATCH",
       { enabled: true },
+      "enable Remote Location maintenance",
     );
-    expectSuccess(enable, "enable Remote Location maintenance");
     maintenanceEnabled = true;
 
-    const drained = remoteLocationPayload(enable.payload);
-    assert(drained.maintenance, "Remote Location maintenance flag was not enabled");
+    const drained = await getRemoteLocation(remoteLocation.id);
+    assert(
+      drained.maintenance,
+      "Remote Location maintenance flag was not enabled",
+    );
     assert(drained.availability === "Drain", "Remote Location was not drained");
     assert(
       BigInt(drained.availableCpuNano) === 0n &&
@@ -86,11 +103,12 @@ async function main() {
       "Docker node availability did not change to drain",
     );
 
-    const drainedReconcile = await request(
+    await enqueueAndDrain(
       "/platform/swarm-cluster/reconcile",
       "POST",
+      undefined,
+      "reconcile drained Remote Location",
     );
-    expectSuccess(drainedReconcile, "reconcile drained Remote Location");
     const observedDrain = await findRemoteLocation(nodeId);
     assert(
       observedDrain.maintenance && observedDrain.availability === "Drain",
@@ -104,15 +122,17 @@ async function main() {
   } finally {
     if (maintenanceEnabled) {
       try {
-        const disable = await request(
+        await enqueueAndDrain(
           `/platform/remote-locations/${remoteLocation.id}/maintenance`,
           "PATCH",
           { enabled: false },
+          "disable Remote Location maintenance",
         );
-        expectSuccess(disable, "disable Remote Location maintenance");
       } catch (error) {
         restoreApiError =
-          error instanceof Error ? error : new Error("maintenance restore failed");
+          error instanceof Error
+            ? error
+            : new Error("maintenance restore failed");
       }
     }
 
@@ -136,17 +156,27 @@ async function main() {
       `Docker node availability was not restored: ${restoredAvailability}`,
     );
 
-    const restoredReconcile = await request(
+    await enqueueAndDrain(
       "/platform/swarm-cluster/reconcile",
       "POST",
+      undefined,
+      "reconcile restored Remote Location",
     );
-    expectSuccess(restoredReconcile, "reconcile restored Remote Location");
   }
 
   const restored = await findRemoteLocation(nodeId);
-  assert(!restored.maintenance, "Remote Location maintenance flag stayed enabled");
-  assert(restored.availability === "Active", "Remote Location did not return to Active");
-  assert(restored.health === "Healthy", "Remote Location did not return to Healthy");
+  assert(
+    !restored.maintenance,
+    "Remote Location maintenance flag stayed enabled",
+  );
+  assert(
+    restored.availability === "Active",
+    "Remote Location did not return to Active",
+  );
+  assert(
+    restored.health === "Healthy",
+    "Remote Location did not return to Healthy",
+  );
   assert(
     BigInt(restored.availableCpuNano) === BigInt(restored.cpuNano) &&
       BigInt(restored.availableMemoryBytes) === BigInt(restored.memoryBytes),
@@ -158,6 +188,80 @@ async function main() {
   }
 
   console.log("Stage 13 platform infrastructure smoke passed");
+}
+
+async function enqueueAndDrain(
+  path: string,
+  method: "POST" | "PATCH",
+  body: unknown,
+  label: string,
+) {
+  const queued = await request(path, method, body);
+  expectSuccess(queued, label);
+  const operationId = stringField(objectPayload(queued.payload), "id");
+  await runOperationToTerminal(operationId, "Succeeded");
+}
+
+async function runOperationToTerminal(
+  operationId: string,
+  expectedStatus: string,
+) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    assert(operation, `Operation ${operationId} was not found`);
+
+    if (operation.status === expectedStatus) {
+      return;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}, expected ${expectedStatus}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach ${expectedStatus} after 12 worker iterations`,
+  );
+}
+
+async function runWorkerOnce() {
+  const result = await command("npm", ["run", "worker"], {
+    ...process.env,
+    WORKER_ONCE: "true",
+  });
+  const output = [result.stdout.trim(), result.stderr.trim()]
+    .filter(Boolean)
+    .join("\n");
+  if (output) {
+    console.log(output);
+  }
+  if (result.exitCode !== 0) {
+    throw new Error(output || "ResourcePortal worker failed");
+  }
 }
 
 async function findRemoteLocation(nodeId: string) {
@@ -177,6 +281,15 @@ async function findRemoteLocation(nodeId: string) {
     throw new Error(`Remote Location for Docker node ${nodeId} was not found`);
   }
   return remoteLocation;
+}
+
+async function getRemoteLocation(remoteLocationId: string) {
+  const result = await request(
+    `/platform/remote-locations/${remoteLocationId}`,
+    "GET",
+  );
+  expectSuccess(result, "read Remote Location");
+  return remoteLocationPayload(result.payload);
 }
 
 async function request(
@@ -202,6 +315,36 @@ async function request(
     }
   }
   return { status: response.status, payload };
+}
+
+function command(
+  commandName: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+    (resolve) => {
+      const child = spawn(commandName, args, {
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (error) => {
+        resolve({ exitCode: 127, stdout: "", stderr: error.message });
+      });
+      child.on("close", (code) => {
+        resolve({
+          exitCode: code ?? 1,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    },
+  );
 }
 
 function docker(args: string[]) {
@@ -249,6 +392,14 @@ function remoteLocationPayload(value: unknown): RemoteLocation {
   return payload as unknown as RemoteLocation;
 }
 
+function stringField(payload: Record<string, unknown>, field: string) {
+  const value = payload[field];
+  if (typeof value !== "string") {
+    throw new Error(`Expected string field ${field}`);
+  }
+  return value;
+}
+
 function numberField(payload: Record<string, unknown>, field: string) {
   const value = payload[field];
   if (typeof value !== "number") {
@@ -263,7 +414,9 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());
