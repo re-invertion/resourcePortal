@@ -3,8 +3,16 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 service_name="rp-v022-privileged-network-smoke"
-allowed_network="rp-v022-allowed-client"
-denied_network="rp-v022-denied-client"
+allowed_ns="rp-v022-allow"
+denied_ns="rp-v022-deny"
+allowed_host_if="rp22a-h"
+allowed_ns_if="rp22a-n"
+denied_host_if="rp22d-h"
+denied_ns_if="rp22d-n"
+allowed_host_ip="172.30.240.1"
+allowed_client_ip="172.30.240.2"
+denied_host_ip="172.30.241.1"
+denied_client_ip="172.30.241.2"
 service_network="rp-v022-appgroup-overlay"
 published_port="18080"
 app_group_id="55555555-5555-4555-8555-555555555555"
@@ -29,6 +37,9 @@ cleanup() {
     fi
     echo "--- internal port firewall chain ---" >&2
     sudo -n iptables -w 5 -S RP-TENANT-INTERNAL-PORTS >&2 2>/dev/null || true
+    sudo -n iptables -w 5 -nvL RP-TENANT-INTERNAL-PORTS >&2 2>/dev/null || true
+    echo "--- Docker NAT published-port rules ---" >&2
+    sudo -n iptables -w 5 -t nat -S >&2 2>/dev/null | grep -E "18080|DOCKER" || true
     echo "--- smoke service tasks ---" >&2
     docker service ps --no-trunc "$service_name" >&2 2>/dev/null || true
     echo "--- smoke container labels ---" >&2
@@ -49,8 +60,10 @@ cleanup() {
     sleep 0.2
   done
   docker network rm "$service_network" >/dev/null 2>&1 || true
-  docker network rm "$allowed_network" >/dev/null 2>&1 || true
-  docker network rm "$denied_network" >/dev/null 2>&1 || true
+  sudo -n ip netns del "$allowed_ns" >/dev/null 2>&1 || true
+  sudo -n ip netns del "$denied_ns" >/dev/null 2>&1 || true
+  sudo -n ip link del "$allowed_host_if" >/dev/null 2>&1 || true
+  sudo -n ip link del "$denied_host_if" >/dev/null 2>&1 || true
   sudo -n bash -c "source '$repo_root/scripts/installer/firewall.sh'; rp_remove_resourceportal_egress_firewall_rules" >/dev/null 2>&1 || true
   rm -rf "$guard_tmp_dir"
   return "$rc"
@@ -71,10 +84,24 @@ fi
 docker pull alpine:3.20 >/dev/null
 docker pull nginx:alpine >/dev/null
 
-allowed_gateway="172.30.240.1"
-denied_gateway="172.30.241.1"
-docker network create --driver bridge --subnet 172.30.240.0/24 --gateway "$allowed_gateway" "$allowed_network" >/dev/null
-docker network create --driver bridge --subnet 172.30.241.0/24 --gateway "$denied_gateway" "$denied_network" >/dev/null
+sudo -n ip netns add "$allowed_ns"
+sudo -n ip link add "$allowed_host_if" type veth peer name "$allowed_ns_if"
+sudo -n ip link set "$allowed_ns_if" netns "$allowed_ns"
+sudo -n ip addr add "$allowed_host_ip/30" dev "$allowed_host_if"
+sudo -n ip link set "$allowed_host_if" up
+sudo -n ip netns exec "$allowed_ns" ip addr add "$allowed_client_ip/30" dev "$allowed_ns_if"
+sudo -n ip netns exec "$allowed_ns" ip link set lo up
+sudo -n ip netns exec "$allowed_ns" ip link set "$allowed_ns_if" up
+
+sudo -n ip netns add "$denied_ns"
+sudo -n ip link add "$denied_host_if" type veth peer name "$denied_ns_if"
+sudo -n ip link set "$denied_ns_if" netns "$denied_ns"
+sudo -n ip addr add "$denied_host_ip/30" dev "$denied_host_if"
+sudo -n ip link set "$denied_host_if" up
+sudo -n ip netns exec "$denied_ns" ip addr add "$denied_client_ip/30" dev "$denied_ns_if"
+sudo -n ip netns exec "$denied_ns" ip link set lo up
+sudo -n ip netns exec "$denied_ns" ip link set "$denied_ns_if" up
+
 docker network create --driver overlay --attachable "$service_network" >/dev/null
 
 exposure_b64="$(node -e 'process.stdout.write(Buffer.from(JSON.stringify([{publishedPort:18080,protocol:"tcp"}])).toString("base64"))')"
@@ -168,11 +195,11 @@ reject_rule="$(grep -F -- '--ctorigdstport 18080' <<<"$rules" | grep -F -- '--ct
 [[ -n "$allow_rule" ]] || { echo "Trusted-CIDR RETURN rule missing" >&2; exit 1; }
 [[ -n "$reject_rule" ]] || { echo "Default internal-port REJECT rule missing" >&2; exit 1; }
 
-allowed_body="$(docker run --rm --network "$allowed_network" alpine:3.20 wget -qO- -T 5 "http://$allowed_gateway:$published_port/")"
+allowed_body="$(sudo -n ip netns exec "$allowed_ns" curl --fail --silent --show-error --max-time 5 "http://$allowed_host_ip:$published_port/")"
 grep -Fq 'Welcome to nginx' <<<"$allowed_body"
 
-if docker run --rm --network "$denied_network" alpine:3.20 wget -qO- -T 5 "http://$denied_gateway:$published_port/" >/dev/null 2>&1; then
-  echo "Denied client network unexpectedly reached the internal published port" >&2
+if sudo -n ip netns exec "$denied_ns" curl --fail --silent --show-error --max-time 5 "http://$denied_host_ip:$published_port/" >/dev/null 2>&1; then
+  echo "Denied external network namespace unexpectedly reached the internal published port" >&2
   exit 1
 fi
 
