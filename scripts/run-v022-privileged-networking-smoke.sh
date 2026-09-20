@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 service_name="rp-v022-privileged-network-smoke"
 allowed_network="rp-v022-allowed-client"
 denied_network="rp-v022-denied-client"
+service_network="rp-v022-appgroup-overlay"
 published_port="18080"
 app_group_id="55555555-5555-4555-8555-555555555555"
 tenant_id="66666666-6666-4666-8666-666666666666"
@@ -34,6 +35,8 @@ cleanup() {
     container_id="$(docker ps --filter "label=resourceportal.app-group-id=$app_group_id" --format '{{.ID}}' | head -n1)"
     if [[ -n "$container_id" ]]; then
       docker inspect "$container_id" --format '{{json .Config.Labels}}' >&2 2>/dev/null || true
+      echo "--- smoke container networks ---" >&2
+      docker inspect "$container_id" --format '{{json .NetworkSettings.Networks}}' >&2 2>/dev/null || true
       docker network inspect docker_gwbridge >&2 2>/dev/null || true
     fi
   fi
@@ -41,6 +44,11 @@ cleanup() {
     sudo -n kill -TERM "$(cat "$guard_pid_file")" >/dev/null 2>&1 || true
   fi
   docker service rm "$service_name" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    docker service inspect "$service_name" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
+  docker network rm "$service_network" >/dev/null 2>&1 || true
   docker network rm "$allowed_network" >/dev/null 2>&1 || true
   docker network rm "$denied_network" >/dev/null 2>&1 || true
   sudo -n bash -c "source '$repo_root/scripts/installer/firewall.sh'; rp_remove_resourceportal_egress_firewall_rules" >/dev/null 2>&1 || true
@@ -65,6 +73,7 @@ docker pull nginx:alpine >/dev/null
 
 docker network create --driver bridge --subnet 172.30.240.0/24 "$allowed_network" >/dev/null
 docker network create --driver bridge --subnet 172.30.241.0/24 "$denied_network" >/dev/null
+docker network create --driver overlay --attachable "$service_network" >/dev/null
 allowed_gateway="$(docker network inspect "$allowed_network" --format '{{(index .IPAM.Config 0).Gateway}}')"
 denied_gateway="$(docker network inspect "$denied_network" --format '{{(index .IPAM.Config 0).Gateway}}')"
 
@@ -77,6 +86,7 @@ docker service create \
   --container-label "resourceportal.app-group-id=$app_group_id" \
   --container-label "resourceportal.tenant-id=$tenant_id" \
   --container-label "resourceportal.internal-port-exposures-b64=$exposure_b64" \
+  --network "$service_network" \
   --publish "published=$published_port,target=80,protocol=tcp,mode=host" \
   --replicas 1 \
   --detach=true \
@@ -93,6 +103,19 @@ done
   docker service ps --no-trunc "$service_name" >&2 || true
   exit 1
 }
+
+container_id=""
+for _ in $(seq 1 40); do
+  container_id="$(docker ps --filter "label=resourceportal.app-group-id=$app_group_id" --format '{{.ID}}' | head -n1)"
+  if [[ -n "$container_id" ]] && docker network inspect docker_gwbridge --format '{{json .Containers}}' | grep -Fq "$container_id"; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ -z "$container_id" ]] || ! docker network inspect docker_gwbridge --format '{{json .Containers}}' | grep -Fq "$container_id"; then
+  echo "Smoke task did not acquire a docker_gwbridge endpoint" >&2
+  exit 1
+fi
 
 policy_b64="$(node - "$app_group_id" <<'NODE'
 const appGroupId = process.argv[2];
