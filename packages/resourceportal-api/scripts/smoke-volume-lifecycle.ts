@@ -57,8 +57,7 @@ async function main() {
     },
   );
   const createOperationId = stringField(createOperation, "id");
-  await runOperationWorkerOnce();
-  const completedCreate = await expectOperationSucceeded(createOperationId);
+  const completedCreate = await runOperationToTerminal(createOperationId);
   createdVolumeId = stringField(completedCreate, "resourceId");
 
   const volume = await api<JsonObject>(
@@ -92,8 +91,7 @@ async function main() {
     },
   );
   const deleteOperationId = stringField(deleteOperation, "id");
-  await runOperationWorkerOnce();
-  await expectOperationSucceeded(deleteOperationId);
+  await runOperationToTerminal(deleteOperationId);
 
   if (existsSync(physicalStoragePath)) {
     throw new Error(
@@ -198,14 +196,67 @@ async function reconcileVolumeUsageOnce() {
   }
 }
 
+async function runOperationToTerminal(operationId: string) {
+  for (let iteration = 0; iteration < 12; iteration += 1) {
+    const operation = await prisma.operation.findUnique({
+      where: { id: operationId },
+      select: {
+        status: true,
+        resourceId: true,
+        nextAttemptAt: true,
+        errorCode: true,
+        errorMessage: true,
+      },
+    });
+    if (!operation) {
+      throw new Error(`Operation ${operationId} was not found`);
+    }
+    if (operation.status === "Succeeded") {
+      return operation;
+    }
+    if (
+      operation.status === "Failed" ||
+      operation.status === "RollbackFailed" ||
+      operation.status === "RolledBack"
+    ) {
+      throw new Error(
+        `Operation ${operationId} reached ${operation.status}: ${operation.errorCode ?? "no-code"} ${operation.errorMessage ?? ""}`,
+      );
+    }
+
+    const retryWaitMs = Math.max(
+      0,
+      operation.nextAttemptAt.getTime() - Date.now(),
+    );
+    if (retryWaitMs > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(retryWaitMs + 50, 5_000)),
+      );
+    }
+    await runOperationWorkerOnce();
+  }
+
+  throw new Error(
+    `Operation ${operationId} did not reach Succeeded after 12 worker iterations`,
+  );
+}
+
 async function runOperationWorkerOnce() {
   const workerEnv = {
     ...process.env,
     WORKER_ONCE: "true",
   };
   const privileged = process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true";
+  const npmExecPath = privileged ? process.env.npm_execpath : undefined;
+  if (privileged && !npmExecPath) {
+    throw new Error("Privileged storage smoke requires npm_execpath");
+  }
   const result = privileged
-    ? await command("sudo", ["-E", "npm", "run", "worker"], workerEnv)
+    ? await command(
+        "sudo",
+        ["-E", process.execPath, npmExecPath!, "run", "worker"],
+        workerEnv,
+      )
     : await command("npm", ["run", "worker"], workerEnv);
   const output = [result.stdout.trim(), result.stderr.trim()]
     .filter(Boolean)
@@ -218,22 +269,6 @@ async function runOperationWorkerOnce() {
   if (result.exitCode !== 0) {
     throw new Error(output || "Operation worker failed");
   }
-}
-
-async function expectOperationSucceeded(operationId: string) {
-  const operation = await api<JsonObject>(
-    `/tenants/${createdTenantId}/operations/${operationId}`,
-    { method: "GET" },
-  );
-  const status = stringField(operation, "status");
-
-  if (status !== "Succeeded") {
-    throw new Error(
-      `Expected operation ${operationId} to succeed, got ${status}: ${JSON.stringify(operation)}`,
-    );
-  }
-
-  return operation;
 }
 
 async function api<T = unknown>(
