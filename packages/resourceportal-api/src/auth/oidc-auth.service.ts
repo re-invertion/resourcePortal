@@ -16,6 +16,7 @@ export type OidcDiscovery = {
   issuer: string;
   jwksUri: string;
   tokenEndpoint: string;
+  registrationEndpoint?: string;
   deviceAuthorizationEndpoint?: string;
   userInfoEndpoint?: string;
   revocationEndpoint?: string;
@@ -283,6 +284,7 @@ export class OidcAuthService {
     const authorizationEndpoint = discovery.authorization_endpoint;
     const jwksUri = discovery.jwks_uri;
     const tokenEndpoint = discovery.token_endpoint;
+    const registrationEndpoint = discovery.registration_endpoint;
     const deviceAuthorizationEndpoint = discovery.device_authorization_endpoint;
     const userInfoEndpoint = discovery.userinfo_endpoint;
     const revocationEndpoint = discovery.revocation_endpoint;
@@ -306,6 +308,10 @@ export class OidcAuthService {
       issuer,
       jwksUri,
       tokenEndpoint,
+      registrationEndpoint:
+        typeof registrationEndpoint === "string" && registrationEndpoint.length > 0
+          ? registrationEndpoint
+          : undefined,
       deviceAuthorizationEndpoint:
         typeof deviceAuthorizationEndpoint === "string" &&
         deviceAuthorizationEndpoint.length > 0

@@ -1,4 +1,4 @@
-import { Logger, ValidationPipe } from "@nestjs/common";
+import { Logger, RequestMethod, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -54,7 +54,14 @@ async function bootstrap() {
       : undefined,
   );
 
-  app.setGlobalPrefix("api");
+  app.setGlobalPrefix("api", {
+    exclude: [
+      {
+        path: ".well-known/oauth-protected-resource/api/tenants/:mcpTenantId/mcp",
+        method: RequestMethod.GET,
+      },
+    ],
+  });
   const fastify = app.getHttpAdapter().getInstance();
   fastify.addHook("onRequest", async (request: ObservedRequest, reply) => {
     const requestId = idFromHeader(request.headers["x-request-id"]);

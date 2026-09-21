@@ -73,3 +73,15 @@ it("routes the Applications import segment to the YAML importer", () => {
  expect(screen.getByRole("heading", { name: "Import App Group from YAML" })).toBeTruthy();
  expect(screen.getByLabelText("YAML manifest file")).toBeTruthy();
 });
+
+it("routes tenant settings to MCP administration", async () => {
+ const fetchMock=vi.fn(async (input:RequestInfo|URL)=>{
+  const url=String(input);
+  if(url.endsWith("/mcp-settings")) return json({enabled:false,accessMode:"SelectedMembers",allowedMembershipIds:[],oauth:{discoveryAvailable:true,dynamicClientRegistrationAvailable:false}});
+  return json([]);
+ });
+ vi.stubGlobal("fetch",fetchMock);
+ render(<TenantPage tenantId="t1" section="settings" userId="u1"/>);
+ expect(await screen.findByRole("heading",{name:"Tenant settings"})).toBeTruthy();
+ expect(screen.getByText("Model Context Protocol (MCP)")).toBeTruthy();
+});

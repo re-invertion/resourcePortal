@@ -22,6 +22,7 @@ function tenantItems(route: Extract<AppRoute, { kind: "tenant" }>): NavItem[] {
     { label: "Billing", href: tenantHref(tenant, "billing"), icon: <BillingIcon />, active: route.section === "billing" },
     { label: "Access", href: tenantHref(tenant, "access"), icon: <UsersIcon />, active: accessActive },
     { label: "Activity", href: tenantHref(tenant, "activity"), icon: <ActivityIcon />, active: activityActive },
+    { label: "Settings", href: tenantHref(tenant, "settings"), icon: <SettingsIcon />, active: route.section === "settings" },
   ];
 }
 
@@ -82,6 +83,7 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
     item("activity", "Activity", "Operations and audit activity", "activity", "events jobs"),
     item("operations", "Operations", "Runtime and background operations", "operations", "jobs deploy runtime"),
     item("audit", "Audit log", "Tenant audit history", "audit", "events history log"),
+    item("settings", "Settings", "Tenant-wide settings including MCP", "settings", "mcp model context protocol oauth integration admin"),
     item("help", "Help", "How to create apps, add domains, storage, billing and troubleshoot", "help", "guide docs documentation create app application domain volume registry deploy restart voucher billing troubleshoot"),
   ];
 }
