@@ -192,6 +192,7 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
   }
 
   if (section === "billing") return [root, { label: "Billing", href: tenantHref(tenantId, "billing") }];
+  if (section === "settings") return [root, { label: "Settings", href: tenantHref(tenantId, "settings") }];
   if (section === "help") return [root, { label: "Help", href: tenantHref(tenantId, "help") }];
 
   return [root, { label: titleCase(section), href: tenantResourceHref(tenantId, section, ...segments) }];

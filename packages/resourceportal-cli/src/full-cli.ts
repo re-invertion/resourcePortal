@@ -32,6 +32,7 @@ const COMPATIBILITY_GROUPS = new Set([
   "storage-backend",
   "operation",
   "platform-maintenance",
+  "tenant-mcp",
   "oauth-application",
   "platform-oauth-application",
   "service-identity",
@@ -55,6 +56,7 @@ const DTO_ARRAY_FIELDS = new Set([
   "redirectUris",
   "postLogoutRedirectUris",
   "scopes",
+  "allowedMembershipIds",
 ]);
 
 const parsed = parseArgs(process.argv.slice(2));
@@ -204,6 +206,15 @@ async function runCompatibilityCommand(parsedArgs: ParsedArgs) {
       break;
     case "platform-maintenance set":
       result = await client.platformMaintenance.set(mutationBody(parsedArgs.flags));
+      break;
+    case "tenant-mcp show":
+      result = await client.tenants.mcpSettings(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-mcp set":
+      result = await client.tenants.updateMcpSettings(
+        arg(parsedArgs, 0, "tenantId"),
+        mutationBody(parsedArgs.flags),
+      );
       break;
     case "oauth-application list":
       result = await client.oauthApplications.list(arg(parsedArgs, 0, "tenantId"));
@@ -570,6 +581,8 @@ function printCompatibilityHelp(group?: string) {
     "operation retry <tenantId> <operationId>",
     "platform-maintenance show",
     "platform-maintenance set --enabled true|false [--reason TEXT]",
+    "tenant-mcp show <tenantId>",
+    "tenant-mcp set <tenantId> --enabled true|false --access-mode AllMembers|SelectedMembers [--allowed-membership-ids ID]",
     "oauth-application list <tenantId>",
     "oauth-application show <tenantId> <applicationId>",
     "oauth-application create <tenantId> --name NAME --type TYPE [flags]",

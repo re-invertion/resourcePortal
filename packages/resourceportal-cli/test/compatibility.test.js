@@ -97,6 +97,7 @@ test("global help exposes post-Stage-8 compatibility commands", () => {
     "storage-backend validate",
     "operation retry",
     "platform-maintenance set",
+    "tenant-mcp set",
     "oauth-application rotate-credentials",
     "platform-oauth-application rotate-credentials",
     "service-identity rotate-credentials",
@@ -110,6 +111,27 @@ test("global help exposes post-Stage-8 compatibility commands", () => {
   ]) {
     assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+
+test("tenant MCP settings preserve selected membership IDs as an array", async () => {
+  const request = await captureJsonRequest([
+    "tenant-mcp",
+    "set",
+    "00000000-0000-4000-8000-000000000001",
+    "--enabled",
+    "true",
+    "--access-mode",
+    "SelectedMembers",
+    "--allowed-membership-ids",
+    "11111111-1111-4111-8111-111111111111",
+  ]);
+  assert.equal(request.method, "PATCH");
+  assert.deepEqual(request.body, {
+    enabled: true,
+    accessMode: "SelectedMembers",
+    allowedMembershipIds: ["11111111-1111-4111-8111-111111111111"],
+  });
 });
 
 test("billing decimal mutation flags are sent as strings", async () => {

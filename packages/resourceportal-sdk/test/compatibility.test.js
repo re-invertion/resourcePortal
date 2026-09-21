@@ -59,6 +59,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
     "internal/installer-enrollment.controller.ts",
+    "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",
     "oauth-applications/platform-oauth-applications.controller.ts",
@@ -150,6 +151,12 @@ test("uses canonical methods and bodies for representative mutations", async () 
   await client.platformServiceIdentities.rotateCredentials("service id");
   await client.appGroups.validateManifest("tenant id", "kind: AppGroup");
   await client.appGroups.applyManifest("tenant id", "kind: AppGroup");
+  await client.tenants.mcpSettings("tenant id");
+  await client.tenants.updateMcpSettings("tenant id", {
+    enabled: true,
+    accessMode: "SelectedMembers",
+    allowedMembershipIds: ["membership-id"],
+  });
 
   assert.deepEqual(
     calls.map((call) => [call.init.method ?? "GET", pathOf(call)]),
@@ -173,6 +180,8 @@ test("uses canonical methods and bodies for representative mutations", async () 
       ["POST", "/api/platform/service-identities/service%20id/rotate-credentials"],
       ["POST", "/api/tenants/tenant%20id/app-groups/import/validate"],
       ["POST", "/api/tenants/tenant%20id/app-groups/import/apply"],
+      ["GET", "/api/tenants/tenant%20id/mcp-settings"],
+      ["PATCH", "/api/tenants/tenant%20id/mcp-settings"],
     ],
   );
   assert.equal(calls[0].init.body, JSON.stringify({ enabled: true }));
@@ -204,6 +213,14 @@ test("uses canonical methods and bodies for representative mutations", async () 
   );
   assert.equal(calls[14].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
   assert.equal(calls[15].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(
+    calls[17].init.body,
+    JSON.stringify({
+      enabled: true,
+      accessMode: "SelectedMembers",
+      allowedMembershipIds: ["membership-id"],
+    }),
+  );
 });
 
 test("serializes audit filters and supports text audit export", async () => {

@@ -9,7 +9,8 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { UserStatus } from "@prisma/client";
-import { FastifyRequest } from "fastify";
+import { FastifyReply, FastifyRequest } from "fastify";
+import { applyMcpBearerChallenge, isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
@@ -34,7 +35,8 @@ export class DevAuthGuard implements CanActivate {
     const authMode = this.getAuthMode();
 
     if (authMode === "oidc") {
-      return this.authenticateOidcRequest(request, isPublic);
+      const reply = context.switchToHttp().getResponse<FastifyReply>();
+      return this.authenticateOidcRequest(request, reply, isPublic);
     }
 
     return this.authenticateDevRequest(request, isPublic);
@@ -72,12 +74,19 @@ export class DevAuthGuard implements CanActivate {
 
   private async authenticateOidcRequest(
     request: FastifyRequest,
+    reply: FastifyReply,
     isPublic: boolean | undefined,
   ) {
     const token = this.extractBearerToken(request.headers.authorization);
 
     if (token) {
-      const principal = await this.oidcAuth.authenticatePrincipalToken(token);
+      let principal;
+      try {
+        principal = await this.oidcAuth.authenticatePrincipalToken(token);
+      } catch (error) {
+        if (isTenantMcpRequest(request)) applyMcpBearerChallenge(request, reply);
+        throw error;
+      }
       if (principal.type === "ServiceIdentity") {
         const tenantId = (request.params as { tenantId?: string }).tenantId;
         if (!tenantId) {
@@ -107,6 +116,7 @@ export class DevAuthGuard implements CanActivate {
 
     if (isPublic) return true;
 
+    if (isTenantMcpRequest(request)) applyMcpBearerChallenge(request, reply);
     throw new UnauthorizedException(
       "Authorization bearer token or session cookie is required",
     );

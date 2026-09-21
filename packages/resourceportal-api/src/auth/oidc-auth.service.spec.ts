@@ -79,6 +79,7 @@ function installOidcFetch(
               issuer: fixture.issuer,
               authorization_endpoint: `${fixture.issuer}/oauth/v2/authorize`,
               token_endpoint: `${fixture.issuer}/oauth/v2/token`,
+              registration_endpoint: `${fixture.issuer}/oauth/v2/register`,
               device_authorization_endpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
               userinfo_endpoint: `${fixture.issuer}/oidc/v1/userinfo`,
               revocation_endpoint: `${fixture.issuer}/oauth/v2/revoke`,
@@ -149,6 +150,7 @@ describe("OidcAuthService", () => {
     );
 
     await expect(service.getDiscovery()).resolves.toMatchObject({
+      registrationEndpoint: `${fixture.issuer}/oauth/v2/register`,
       deviceAuthorizationEndpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
       userInfoEndpoint: `${fixture.issuer}/oidc/v1/userinfo`,
     });

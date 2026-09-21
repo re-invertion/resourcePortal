@@ -12,6 +12,7 @@ import {
   KeyIcon,
   LinkButton,
   RegistryIcon,
+  SettingsIcon,
   VolumeIcon,
 } from "../components/design-system";
 import { tenantHref } from "../router/router";
@@ -30,6 +31,7 @@ const sections: HelpSection[] = [
   { id: "volume", label: "Persistent storage" },
   { id: "domain", label: "Domains & networking" },
   { id: "credentials", label: "Credentials & secrets" },
+  { id: "tenant-mcp", label: "Tenant MCP" },
   { id: "deploy", label: "Deploy & restart" },
   { id: "billing", label: "Billing & vouchers" },
   { id: "troubleshooting", label: "Troubleshooting" },
@@ -479,6 +481,38 @@ spec:
             </InfoBox>
 
             <div className="mt-5"><LinkButton href={tenantHref(tenantId, "credentials")}>Open Credentials</LinkButton></div>
+          </HelpArticle>
+
+          <HelpArticle
+            id="tenant-mcp"
+            icon={<SettingsIcon />}
+            title="Connect an MCP client to your tenant"
+            description="Tenant administrators can expose ResourcePortal tenant operations through Model Context Protocol (MCP) without creating a second authorization model."
+          >
+            <Subheading>Enable MCP and choose who may connect</Subheading>
+            <StepList>
+              <span>Open <strong>Settings</strong> in the tenant navigation.</span>
+              <span>Enable <strong>Model Context Protocol (MCP)</strong>. MCP is disabled by default for every tenant.</span>
+              <span>Choose whether all active tenant members may connect or select specific memberships.</span>
+              <span>Save the settings, then copy the MCP server URL from the connection section into your MCP client.</span>
+              <span>Complete OAuth sign-in with the same ResourcePortal identity system used for normal login.</span>
+            </StepList>
+
+            <Subheading>Access through MCP does not bypass tenant roles</Subheading>
+            <Paragraph>
+              The MCP allow-list controls who may enter through the MCP endpoint. It does not grant additional ResourcePortal permissions. Each tool call runs as the authenticated user and passes through the same tenant membership, role, group, billing and platform safety checks as the equivalent API operation.
+            </Paragraph>
+
+            <Subheading>OAuth discovery</Subheading>
+            <Paragraph>
+              ResourcePortal publishes protected-resource metadata for the tenant MCP endpoint and requires an OAuth bearer token in production. Compatible clients can discover the ResourcePortal identity issuer and the scopes required for the ResourcePortal audience. Browser session cookies and service identities are not accepted for tenant MCP access.
+            </Paragraph>
+
+            <InfoBox title="Automatic OAuth client registration">
+              Some MCP clients rely on Dynamic Client Registration. Tenant Settings reports whether the configured OAuth server advertises that capability, but enabling tenant MCP does not enable Dynamic Client Registration globally. If it is unavailable and your client supports a preconfigured client ID, create a tenant OAuth application in Credentials using the redirect URI required by that MCP client. Otherwise ask the platform operator to review DCR before enabling it globally.
+            </InfoBox>
+
+            <div className="mt-5"><LinkButton href={tenantHref(tenantId, "settings")}>Open Tenant Settings</LinkButton></div>
           </HelpArticle>
 
           <HelpArticle

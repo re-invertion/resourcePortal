@@ -52,6 +52,13 @@ export class ResourcePortalClient {
       }),
     authPolicy: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/auth-policy`),
+    mcpSettings: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/mcp-settings`),
+    updateMcpSettings: (tenantId: string, body: unknown) =>
+      this.request(`/tenants/${encode(tenantId)}/mcp-settings`, {
+        method: "PATCH",
+        body,
+      }),
     updateAuthPolicy: (tenantId: string, body: unknown) =>
       this.request(`/tenants/${encode(tenantId)}/auth-policy`, {
         method: "PATCH",
