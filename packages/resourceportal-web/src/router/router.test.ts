@@ -24,6 +24,7 @@ describe("route parser", () => {
   it("recognizes public and tenant-selection routes", () => {
     expect(parseRoute("/login")).toEqual({ kind: "public", page: "login" });
     expect(parseRoute("/tenants")).toEqual({ kind: "tenants" });
+    expect(parseRoute("/invitations/opaque-token")).toEqual({ kind: "invitation", token: "opaque-token" });
   });
 
   it("builds canonical tenant, App Group and application URLs", () => {

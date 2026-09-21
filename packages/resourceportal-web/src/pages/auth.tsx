@@ -3,6 +3,19 @@ import { apiRequest } from "../api/client";
 import { ActivityIcon, Button, Callout, Card, CheckIcon, GridIcon, LockIcon, ResourcePortalLogo, ServerIcon, SettingsIcon, StatusBadge } from "../components/design-system";
 import { AuthWorkspaceLayout } from "../components/auth-workspace";
 
+export function interactiveAuthUrl(
+  mode: "login" | "register" | "recover",
+  tenantId = "",
+  identityProviderId = "",
+  returnTo = "",
+) {
+  const query = new URLSearchParams();
+  if (tenantId) query.set("tenantId", tenantId);
+  if (identityProviderId) query.set("identityProviderId", identityProviderId);
+  if (returnTo) query.set("returnTo", returnTo);
+  return `/api/auth/${mode}${query.size ? `?${query}` : ""}`;
+}
+
 function providerItems(value: unknown): Record<string, unknown>[] {
   if (Array.isArray(value)) return value as Record<string, unknown>[];
   if (value && typeof value === "object") {
@@ -13,7 +26,9 @@ function providerItems(value: unknown): Record<string, unknown>[] {
 }
 
 export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
-  const tenantId = typeof location === "undefined" ? "" : new URLSearchParams(location.search).get("tenantId") ?? "";
+  const search = typeof location === "undefined" ? new URLSearchParams() : new URLSearchParams(location.search);
+  const tenantId = search.get("tenantId") ?? "";
+  const returnTo = search.get("returnTo") ?? "";
   const [providers, setProviders] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>();
@@ -29,10 +44,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
   }, [tenantId]);
 
   function start(identityProviderId?: string) {
-    const query = new URLSearchParams();
-    if (tenantId) query.set("tenantId", tenantId);
-    if (identityProviderId) query.set("identityProviderId", identityProviderId);
-    window.location.assign(`/api/auth/${mode}${query.size ? `?${query}` : ""}`);
+    window.location.assign(interactiveAuthUrl(mode, tenantId, identityProviderId, returnTo));
   }
 
   const isLogin = mode === "login";

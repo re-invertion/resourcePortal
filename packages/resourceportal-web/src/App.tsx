@@ -7,6 +7,7 @@ import { ErrorState } from "./components/resource";
 import { AppShell } from "./components/shell";
 import { AuthPage, PublicHealthPage } from "./pages/auth";
 import { PlatformPage } from "./pages/platform";
+import { InvitationPage } from "./pages/invitation";
 import { TenantPage } from "./pages/tenant";
 import { AppRoute, parseRoute, tenantHref } from "./router/router";
 
@@ -17,7 +18,7 @@ type AppProps = { initialPath?: string };
 function browserPath() { return typeof window === "undefined" ? "/" : window.location.pathname; }
 function useRoute(initialPath?: string) { const pathname = initialPath ?? browserPath(); return useMemo(() => parseRoute(pathname), [pathname]); }
 function routeAttributes(route: AppRoute) { const attributes: Record<string, string> = { "data-route-kind": route.kind }; if (route.kind === "tenant") { attributes["data-tenant-id"] = route.tenantId; attributes["data-route-section"] = route.section; } else if (route.kind === "platform") attributes["data-route-section"] = route.section; else if (route.kind === "public") attributes["data-route-page"] = route.page; return attributes; }
-function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
+function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "invitation") return "Loading invitation…"; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
 function tenantList(value: unknown): Tenant[] { const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : []; return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant); }
 
 function AppLoading({ route, error }: { route: AppRoute; error?: unknown }) {
@@ -36,7 +37,8 @@ export function App({ initialPath }: AppProps = {}) {
   useEffect(() => { if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; } let active = true; apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); }); return () => { active = false; }; }, [user, route.kind]);
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
   if (user === undefined) return <AppLoading route={route} error={error}/>;
-  if (!user) { const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }
+  if (!user) { if (route.kind === "invitation") return <InvitationPage token={route.token} user={null} />; const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }
+  if (route.kind === "invitation") return <InvitationPage token={route.token} user={user} />;
   if (!tenants) return <AppLoading route={route} error={error}/>;
   if (route.kind === "not-found") return <main className="min-h-screen bg-[#F4F7FB] p-6" {...routeAttributes(route)}><div className="mx-auto max-w-2xl"><ResourcePortalLogo/><h1 className="sr-only">Page not found</h1><Card className="mt-8 p-6"><EmptyState title="Page not found" description="The requested ResourcePortal page does not exist." action={<a className="text-sm font-semibold text-[#0F56A7] hover:underline" href="/tenants">Choose tenant</a>}/></Card></div></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector user={user} tenants={tenants} reload={reloadTenants} />;

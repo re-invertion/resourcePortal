@@ -562,6 +562,40 @@ export class TenantsService {
     return { deleted: true };
   }
 
+  async getInvitationPreview(token: string) {
+    if (token.length < 32) {
+      throw new NotFoundException("TenantInvitation not found");
+    }
+
+    const invitation = await this.prisma.tenantInvitation.findUnique({
+      where: { tokenHash: hashToken(token) },
+      include: {
+        tenant: {
+          select: { id: true, name: true, displayName: true },
+        },
+      },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException("TenantInvitation not found");
+    }
+
+    const roles = await this.prisma.role.findMany({
+      where: { id: { in: invitation.roleIds } },
+      select: { id: true, name: true },
+    });
+    const rolesById = new Map(roles.map((role) => [role.id, role]));
+
+    return {
+      tenant: invitation.tenant,
+      roles: invitation.roleIds
+        .map((roleId) => rolesById.get(roleId))
+        .filter((role): role is { id: string; name: string } => Boolean(role)),
+      expiresAt: invitation.expiresAt,
+      status: invitation.expiresAt <= new Date() ? "Expired" : "Pending",
+    };
+  }
+
   async acceptInvitation(
     dto: AcceptTenantInvitationDto,
     actor: AuthenticatedUser,

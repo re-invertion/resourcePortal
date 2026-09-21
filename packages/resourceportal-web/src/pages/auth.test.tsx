@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { AuthPage, PublicHealthPage } from "./auth";
+import { AuthPage, PublicHealthPage, interactiveAuthUrl } from "./auth";
 
 function json(value: unknown){return new Response(JSON.stringify(value),{status:200,headers:{"content-type":"application/json"}})}
 
@@ -46,4 +46,15 @@ it("renders public health as a service status view instead of raw object cards",
   expect(screen.getByText("PostgreSQL")).toBeTruthy();
   expect(screen.getAllByText("Operational").length).toBeGreaterThanOrEqual(4);
   expect(screen.queryByText("DETAILS")).toBeNull();
+});
+
+it("preserves invitation returnTo and tenant context in interactive auth URLs",()=>{
+  expect(interactiveAuthUrl(
+    "login",
+    "22222222-2222-4222-8222-222222222222",
+    "provider-id",
+    "/invitations/opaque-token",
+  )).toBe(
+    "/api/auth/login?tenantId=22222222-2222-4222-8222-222222222222&identityProviderId=provider-id&returnTo=%2Finvitations%2Fopaque-token",
+  );
 });
