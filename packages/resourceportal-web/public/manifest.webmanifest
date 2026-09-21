@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "ResourcePortal",
+  "short_name": "ResourcePortal",
+  "description": "Manage ResourcePortal tenants, applications, storage, networking and access.",
+  "start_url": "/tenants",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F7F9FC",
+  "theme_color": "#122033",
+  "icons": [
+    {
+      "src": "/brand/resourceportal-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/resourceportal-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

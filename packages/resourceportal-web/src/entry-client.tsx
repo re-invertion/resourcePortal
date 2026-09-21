@@ -72,6 +72,17 @@ async function loadPreviewUi() {
   await Promise.all(loaders);
 }
 
+function registerResourcePortalServiceWorker() {
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
+  const register = () => {
+    void navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).catch((error) => {
+      console.warn("ResourcePortal service worker registration failed.", error);
+    });
+  };
+  if (document.readyState === "complete") register();
+  else window.addEventListener("load", register, { once: true });
+}
+
 async function bootstrap() {
   const root = document.getElementById("root");
   if (!root) throw new Error("Missing #root mount point");
@@ -80,4 +91,5 @@ async function bootstrap() {
   hydrateRoot(root, <StrictMode><App initialPath={window.location.pathname} /></StrictMode>);
 }
 
+registerResourcePortalServiceWorker();
 void bootstrap();
