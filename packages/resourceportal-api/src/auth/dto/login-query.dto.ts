@@ -1,4 +1,4 @@
-import { IsOptional, IsUUID } from "class-validator";
+import { IsOptional, IsString, IsUUID, MaxLength } from "class-validator";
 
 export class LoginQueryDto {
   @IsOptional()
@@ -8,6 +8,11 @@ export class LoginQueryDto {
   @IsOptional()
   @IsUUID()
   identityProviderId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  returnTo?: string;
 }
 
 export class LoginProvidersQueryDto {

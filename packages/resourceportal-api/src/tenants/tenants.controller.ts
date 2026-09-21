@@ -13,6 +13,7 @@ import {
 import { Authenticated } from "../auth/authenticated.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
+import { Public } from "../auth/public.decorator";
 import { AuthenticatedUser } from "../auth/types";
 import {
   BillingHistoryQueryDto,
@@ -310,6 +311,12 @@ export class TenantsController {
 @Controller("invitations")
 export class TenantInvitationsController {
   constructor(private readonly tenantsService: TenantsService) {}
+
+  @Public()
+  @Get(":token")
+  previewInvitation(@Param("token") token: string) {
+    return this.tenantsService.getInvitationPreview(token);
+  }
 
   @Authenticated()
   @Post("accept")

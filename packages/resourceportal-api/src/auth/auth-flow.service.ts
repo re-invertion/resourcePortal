@@ -68,6 +68,7 @@ export class AuthFlowService {
       authorizationUrl: url.toString(),
       codeVerifier,
       identityProviderId: selection.identityProviderId,
+      returnTo: options.returnTo,
       state,
     };
   }

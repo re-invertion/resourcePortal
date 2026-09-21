@@ -379,6 +379,43 @@ describe("AuthController cookie flow", () => {
     ).toBe(true);
   });
 
+  it("preserves a safe local returnTo path through OIDC callback", async () => {
+    const returnTo = "/invitations/invite-token-123456789012345678901234567890";
+    const loginResponse = await app.inject({
+      method: "GET",
+      url: `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`,
+    });
+
+    expect(loginResponse.statusCode).toBe(302);
+    const returnToCookie = getCookieValue(loginResponse, "rp_oidc_return_to");
+    expect(returnToCookie).toBeTruthy();
+    expect(
+      app.getHttpAdapter().getInstance().unsignCookie(returnToCookie).value,
+    ).toBe(returnTo);
+
+    const loginLocation = new URL(getRequiredHeader(loginResponse, "location"));
+    const callbackResponse = await app.inject({
+      method: "GET",
+      url: `/api/auth/callback?code=valid-code&state=${loginLocation.searchParams.get("state")}`,
+      headers: { cookie: getCookieHeader(loginResponse) },
+    });
+
+    expect(callbackResponse.statusCode).toBe(302);
+    expect(callbackResponse.headers.location).toBe(returnTo);
+  });
+
+  it("rejects an external returnTo redirect", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/auth/login?returnTo=${encodeURIComponent("https://evil.example/steal")}`,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: "returnTo must be a local ResourcePortal path",
+    });
+  });
+
   it("rejects callback without code or state", async () => {
     const response = await app.inject({
       method: "GET",

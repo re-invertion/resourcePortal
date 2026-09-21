@@ -34,6 +34,7 @@ import {
 } from "./dto/login-query.dto";
 
 const providerCookieName = "rp_oidc_provider";
+const returnToCookieName = "rp_oidc_return_to";
 const stateCookieName = "rp_oidc_state";
 const verifierCookieName = "rp_oidc_verifier";
 
@@ -41,6 +42,7 @@ type InteractiveRequest = {
   authorizationUrl: string;
   codeVerifier: string;
   identityProviderId?: string;
+  returnTo?: string;
   state: string;
 };
 
@@ -99,6 +101,7 @@ export class AuthController {
   @ApiFoundResponse({ description: "Redirects to the OIDC authorization endpoint." })
   @ApiQuery({ name: "tenantId", required: false, type: String })
   @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  @ApiQuery({ name: "returnTo", required: false, type: String })
   async login(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
     return this.redirectInteractive(await this.authFlow.createLoginRequest(query), reply);
   }
@@ -113,6 +116,7 @@ export class AuthController {
   @ApiFoundResponse({ description: "Redirects to the ZITADEL registration UI." })
   @ApiQuery({ name: "tenantId", required: false, type: String })
   @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  @ApiQuery({ name: "returnTo", required: false, type: String })
   async register(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
     return this.redirectInteractive(
       await this.authFlow.createRegistrationRequest(query),
@@ -130,6 +134,7 @@ export class AuthController {
   @ApiFoundResponse({ description: "Redirects to the ZITADEL login/recovery UI." })
   @ApiQuery({ name: "tenantId", required: false, type: String })
   @ApiQuery({ name: "identityProviderId", required: false, type: String })
+  @ApiQuery({ name: "returnTo", required: false, type: String })
   async recover(@Query() query: LoginQueryDto, @Res() reply: FastifyReply) {
     return this.redirectInteractive(
       await this.authFlow.createRecoveryRequest(query),
@@ -171,7 +176,11 @@ export class AuthController {
 
     reply.clearCookie(stateCookieName, { path: "/api/auth" });
     reply.clearCookie(verifierCookieName, { path: "/api/auth" });
+    const returnTo = this.safeCallbackReturnTo(
+      this.getSignedCookie(request, returnToCookieName),
+    );
     reply.clearCookie(providerCookieName, { path: "/api/auth" });
+    reply.clearCookie(returnToCookieName, { path: "/api/auth" });
     reply.setCookie(this.sessions.getSessionCookieName(), result.session.id, {
       httpOnly: true,
       maxAge: this.sessions.getSessionMaxAgeSeconds(),
@@ -193,7 +202,7 @@ export class AuthController {
       },
     );
 
-    return reply.status(302).redirect("/");
+    return reply.status(302).redirect(returnTo);
   }
 
   @Post("logout")
@@ -265,6 +274,20 @@ export class AuthController {
       secure: this.sessions.isCookieSecure(),
       signed: true,
     });
+    const returnTo = this.validateReturnTo(request.returnTo);
+    if (returnTo) {
+      reply.setCookie(returnToCookieName, returnTo, {
+        httpOnly: true,
+        maxAge: 600,
+        path: "/api/auth",
+        sameSite: "lax",
+        secure: this.sessions.isCookieSecure(),
+        signed: true,
+      });
+    } else {
+      reply.clearCookie(returnToCookieName, { path: "/api/auth" });
+    }
+
     if (request.identityProviderId) {
       reply.setCookie(providerCookieName, request.identityProviderId, {
         httpOnly: true,
@@ -279,6 +302,36 @@ export class AuthController {
     }
 
     return reply.status(302).redirect(request.authorizationUrl);
+  }
+
+
+  private validateReturnTo(value: string | undefined) {
+    if (!value) return undefined;
+    if (
+      !value.startsWith("/") ||
+      value.startsWith("//") ||
+      value.includes("\\") ||
+      [...value].some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || code === 127;
+      })
+    ) {
+      throw new BadRequestException("returnTo must be a local ResourcePortal path");
+    }
+
+    const parsed = new URL(value, "https://resourceportal.invalid");
+    if (parsed.origin !== "https://resourceportal.invalid") {
+      throw new BadRequestException("returnTo must be a local ResourcePortal path");
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  }
+
+  private safeCallbackReturnTo(value: string | undefined) {
+    try {
+      return this.validateReturnTo(value) ?? "/";
+    } catch {
+      return "/";
+    }
   }
 
   private clearSessionCookies(reply: FastifyReply) {

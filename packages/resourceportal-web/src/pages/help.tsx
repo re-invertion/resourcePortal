@@ -13,6 +13,7 @@ import {
   LinkButton,
   RegistryIcon,
   SettingsIcon,
+  UsersIcon,
   VolumeIcon,
 } from "../components/design-system";
 import { tenantHref } from "../router/router";
@@ -30,6 +31,7 @@ const sections: HelpSection[] = [
   { id: "registry", label: "Private image registries" },
   { id: "volume", label: "Persistent storage" },
   { id: "domain", label: "Domains & networking" },
+  { id: "tenant-access", label: "Invite tenant users" },
   { id: "credentials", label: "Credentials & secrets" },
   { id: "tenant-mcp", label: "Tenant MCP" },
   { id: "deploy", label: "Deploy & restart" },
@@ -455,6 +457,33 @@ spec:
               <LinkButton href={tenantHref(tenantId, "domains")}>Open Domains</LinkButton>
               <LinkButton href={tenantHref(tenantId, "storage-networking")}>Storage & Networking</LinkButton>
             </div>
+          </HelpArticle>
+
+          <HelpArticle
+            id="tenant-access"
+            icon={<UsersIcon />}
+            title="Invite a user to the tenant"
+            description="Tenant administrators can create a one-time invitation link and share it manually with the person who should join the tenant."
+          >
+            <Subheading>Generate an invitation link</Subheading>
+            <StepList>
+              <span>Open <strong>Access management</strong> and choose <strong>Invite user</strong>.</span>
+              <span>Enter the user's email address and select the role that should be granted after acceptance.</span>
+              <span>Choose <strong>Generate invitation link</strong> and copy the link shown by ResourcePortal.</span>
+              <span>Share the link with the intended user through an appropriate channel. ResourcePortal does not send invitation email yet.</span>
+              <span>The user opens the link, signs in or creates an account through ResourcePortal OAuth, then accepts the invitation.</span>
+            </StepList>
+
+            <Subheading>Generate a new link</Subheading>
+            <Paragraph>
+              A pending invitation does not expose its original token again. Use <strong>Generate new link</strong> when you need another copy. ResourcePortal rotates the invitation token, so the previous link stops working.
+            </Paragraph>
+
+            <InfoBox title="Invitation links are credentials">
+              Anyone who receives the link still has to authenticate as the invited email address, but the link itself should be handled as sensitive access material until it is accepted, revoked or expires.
+            </InfoBox>
+
+            <div className="mt-5"><LinkButton href={tenantHref(tenantId, "administration")}>Open Access management</LinkButton></div>
           </HelpArticle>
 
           <HelpArticle

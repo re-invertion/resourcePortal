@@ -2,6 +2,7 @@ export type PublicPage = "login" | "register" | "recover" | "health";
 
 export type AppRoute =
   | { kind: "public"; page: PublicPage }
+  | { kind: "invitation"; token: string }
   | { kind: "tenants" }
   | { kind: "tenant"; tenantId: string; section: string; resourceId?: string; segments?: string[] }
   | { kind: "platform"; section: string; resourceId?: string; segments?: string[] }
@@ -21,6 +22,7 @@ export function parseRoute(pathname: string): AppRoute {
   if (parts.length === 0) return { kind: "tenants" };
   if (parts.length === 1 && ["login", "register", "recover", "health"].includes(parts[0])) return { kind: "public", page: parts[0] as PublicPage };
   if (parts.length === 1 && parts[0] === "tenants") return { kind: "tenants" };
+  if (parts.length === 2 && parts[0] === "invitations" && parts[1]) return { kind: "invitation", token: parts[1] };
   if (parts[0] === "tenants" && parts[1]) {
     const section = parts[2] ?? "overview";
     const segments = parts.slice(3);
