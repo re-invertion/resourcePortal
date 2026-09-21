@@ -18,6 +18,30 @@ describe("AppShell", () => {
     expect(within(nav).getByRole("link", { name: "Applications" }).getAttribute("aria-current")).toBe("page");
   });
 
+  it("shows the active tenant in the sidebar and switches to another tenant", () => {
+    const onTenantChange = vi.fn();
+    render(<AppShell
+      user={user}
+      route={tenantRoute()}
+      tenants={[
+        { id: "tenant-1", displayName: "Production", status: "Active" },
+        { id: "tenant-2", displayName: "Development", status: "Active" },
+        { id: "tenant-disabled", displayName: "Disabled", status: "Suspended" },
+      ]}
+      onTenantChange={onTenantChange}
+      onLogout={vi.fn()}
+    ><p>Content</p></AppShell>);
+
+    const switcher = screen.getByRole("combobox", { name: "Switch tenant" }) as HTMLSelectElement;
+    expect(switcher.value).toBe("tenant-1");
+    expect(within(switcher).getByRole("option", { name: "Production" })).toBeTruthy();
+    expect(within(switcher).getByRole("option", { name: "Development" })).toBeTruthy();
+    expect(within(switcher).queryByRole("option", { name: "Disabled" })).toBeNull();
+
+    fireEvent.change(switcher, { target: { value: "tenant-2" } });
+    expect(onTenantChange).toHaveBeenCalledWith("tenant-2");
+  });
+
   it("provides the final topbar controls and user menu", () => {
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
     expect(screen.getByRole("combobox", { name: "Search resources" })).toBeTruthy();

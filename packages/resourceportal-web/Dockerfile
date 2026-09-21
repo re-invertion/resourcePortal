@@ -15,6 +15,7 @@ COPY packages/resourceportal-web/vite.config.ts ./vite.config.ts
 COPY packages/resourceportal-web/index.html ./index.html
 COPY packages/resourceportal-web/server.mjs ./server.mjs
 COPY packages/resourceportal-web/proxy-target.mjs ./proxy-target.mjs
+COPY packages/resourceportal-web/public ./public
 COPY packages/resourceportal-web/src ./src
 RUN npm run build
 

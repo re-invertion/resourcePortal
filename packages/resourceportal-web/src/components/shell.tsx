@@ -6,6 +6,7 @@ import { applicationHref, appGroupHref, platformHref, tenantHref } from "../rout
 import { ActivityIcon, BillingIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
 
 type User = { id: string; email?: string; displayName?: string };
+type TenantSummary = { id: string; name?: string; displayName?: string; status?: string };
 type NavItem = { label: string; href: string; icon: ReactNode; active: boolean };
 type SearchItem = { id: string; label: string; description: string; href: string; category: string; keywords?: string };
 
@@ -321,19 +322,44 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
   </div>;
 }
 
-export function AppShell({ user, route, showPlatformAdmin = false, onLogout, children }: { user: User; route: Extract<AppRoute, { kind: "tenant" | "platform" }>; showPlatformAdmin?: boolean; onLogout: () => void; children: ReactNode }) {
+export function AppShell({ user, route, tenants = [], showPlatformAdmin = false, onLogout, onTenantChange, children }: { user: User; route: Extract<AppRoute, { kind: "tenant" | "platform" }>; tenants?: TenantSummary[]; showPlatformAdmin?: boolean; onLogout: () => void; onTenantChange?: (tenantId: string) => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = route.kind === "tenant" ? tenantItems(route) : platformItems(route);
   const userName = user.displayName || user.email || "Account";
   const initials = userName.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join("") || "RP";
   const helpHref = route.kind === "tenant" ? tenantHref(route.tenantId, "help") : "/health";
   const helpLabel = route.kind === "tenant" ? "Help" : "System status";
+  const availableTenants = route.kind === "tenant"
+    ? tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active")
+    : [];
+  const selectedTenant = route.kind === "tenant"
+    ? availableTenants.find((tenant) => tenant.id === route.tenantId) ?? tenants.find((tenant) => tenant.id === route.tenantId)
+    : undefined;
+  const selectedTenantName = selectedTenant?.displayName ?? selectedTenant?.name ?? (route.kind === "tenant" ? route.tenantId : "");
+  const switchableTenants = route.kind === "tenant" && !availableTenants.some((tenant) => tenant.id === route.tenantId)
+    ? [{ id: route.tenantId, displayName: selectedTenantName, status: "Active" }, ...availableTenants]
+    : availableTenants;
+
+  function switchTenant(tenantId: string) {
+    if (route.kind !== "tenant" || tenantId === route.tenantId) return;
+    if (onTenantChange) onTenantChange(tenantId);
+    else window.location.assign(tenantHref(tenantId, "overview"));
+  }
 
   return <div className="rp-final-ui min-h-screen w-full max-w-full overflow-x-hidden bg-[#F7F9FC] font-['Inter_Tight',Inter,ui-sans-serif,system-ui,sans-serif] text-[#172033]">
     <button type="button" aria-label="Open navigation" onClick={() => setMobileOpen(true)} className="fixed left-3 top-2.5 z-40 inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#D7E0EC] bg-white text-[#344054] lg:hidden"><MenuIcon /></button>
     {mobileOpen ? <button aria-label="Close navigation backdrop" className="fixed inset-0 z-40 bg-[#0E1A2B]/35 lg:hidden" onClick={() => setMobileOpen(false)} /> : null}
     <aside className={`fixed inset-y-0 left-0 z-50 flex w-[228px] flex-col border-r border-[#D7E0EC] bg-[#F4F7FB] px-3 pb-4 pt-3 transition-[transform,visibility] lg:pointer-events-auto lg:visible lg:translate-x-0 ${mobileOpen ? "pointer-events-auto visible translate-x-0" : "pointer-events-none invisible -translate-x-full"}`}>
       <div className="mb-3 flex h-10 items-center justify-between px-2"><a href="/tenants" className="min-w-0"><ResourcePortalLogo /></a><IconButton label="Close navigation" className="lg:hidden" onClick={() => setMobileOpen(false)}><XIcon /></IconButton></div>
+      {route.kind === "tenant" ? <div className="mb-4 px-1">
+        <label htmlFor="rp-tenant-switcher" className="mb-1.5 block px-1 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">Tenant workspace</label>
+        <div className="relative">
+          <GridIcon size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#1769E0]" />
+          <select id="rp-tenant-switcher" aria-label="Switch tenant" value={route.tenantId} onChange={(event) => switchTenant(event.target.value)} className="h-10 w-full truncate rounded-md border border-[#C9D4E2] bg-white pl-8 pr-7 text-[13px] font-semibold text-[#172033] outline-none transition hover:border-[#A9B8CC] focus:border-[#1769E0] focus:ring-2 focus:ring-[#1769E0]/15">
+            {switchableTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.displayName ?? tenant.name ?? tenant.id}</option>)}
+          </select>
+        </div>
+      </div> : null}
       <div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">{route.kind === "tenant" ? "Tenant" : "Platform"}</div>
       <nav aria-label="Workspace" className="space-y-1">{items.map(item => <NavLink key={item.href} item={item} onNavigate={() => setMobileOpen(false)} />)}</nav>
       {route.kind === "tenant" ? <div className="mt-5 border-t border-[#D7E0EC] pt-4"><div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">Platform</div>{showPlatformAdmin ? <nav aria-label="Platform administration"><NavLink onNavigate={() => setMobileOpen(false)} item={{ label: "Platform Admin", href: platformHref("overview"), icon: <SettingsIcon />, active: false }} /></nav> : <p className="px-3 py-2 text-xs text-[#8A96A8]">Platform Admin access is not assigned.</p>}</div> : <div className="mt-5 border-t border-[#D7E0EC] pt-4"><a className="flex h-10 items-center gap-3 rounded-md px-3 text-[13px] font-medium text-[#263449] hover:bg-[#EEF3F9]" href="/tenants"><GridIcon />Tenant workspaces</a></div>}
