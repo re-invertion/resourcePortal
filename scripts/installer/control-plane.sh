@@ -42,7 +42,7 @@ rp_escape_sed_replacement() {
 }
 
 rp_render_stack() {
-  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage oidc_extra_ca_b64
+  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage oidc_extra_ca_b64 legacy_domain legacy_zitadel_domain legacy_domain_regex legacy_zitadel_domain_regex
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
   # Rendering is also used by preview/ACME tests. Actual final deploy/persist paths
   # validate ZITADEL management state explicitly before consuming this output.
@@ -61,6 +61,10 @@ rp_render_stack() {
     acme_environment=production
     acme_storage=/platform/traefik/acme.json
   fi
+  legacy_domain="${RP_CFG_LEGACY_DOMAIN:-}"
+  legacy_zitadel_domain="${RP_CFG_LEGACY_ZITADEL_DOMAIN:-}"
+  legacy_domain_regex="${legacy_domain//./\\.}"
+  legacy_zitadel_domain_regex="${legacy_zitadel_domain//./\\.}"
   oidc_extra_ca_b64=''
   if [[ "$state" == final && "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     oidc_extra_ca_b64="${RP_CFG_OIDC_EXTRA_CA_B64:-}"
@@ -79,6 +83,10 @@ rp_render_stack() {
     "DOMAIN|$RP_CFG_DOMAIN"
     "MANAGED_DOMAIN_BASE|${RP_CFG_MANAGED_DOMAIN_BASE:-$RP_CFG_DOMAIN}"
     "ZITADEL_DOMAIN|$RP_CFG_ZITADEL_DOMAIN"
+    "LEGACY_DOMAIN|${legacy_domain:-legacy-domain.invalid}"
+    "LEGACY_DOMAIN_REGEX|${legacy_domain_regex:-legacy-domain\.invalid}"
+    "LEGACY_ZITADEL_DOMAIN|${legacy_zitadel_domain:-legacy-auth.invalid}"
+    "LEGACY_ZITADEL_DOMAIN_REGEX|${legacy_zitadel_domain_regex:-legacy-auth\.invalid}"
     "ACME_EMAIL|$RP_CFG_ACME_EMAIL"
     "ACME_CERT_RESOLVER|$acme_resolver"
     "ACME_CA_SERVER|$(rp_acme_ca_server_for_environment "$acme_environment")"
@@ -114,6 +122,12 @@ rp_render_stack() {
     key="${pair%%|*}"; value="${pair#*|}"; escaped="$(rp_escape_sed_replacement "$value")"
     output="$(sed "s|__${key}__|${escaped}|g" <<<"$output")"
   done
+  if [[ -z "$legacy_domain" ]]; then
+    output="$(grep -v 'rp-legacy-portal' <<<"$output")"
+  fi
+  if [[ -z "$legacy_zitadel_domain" ]]; then
+    output="$(grep -v 'rp-legacy-auth' <<<"$output")"
+  fi
   if grep -q '__[A-Z0-9_]*__' <<<"$output"; then
     printf 'Unresolved production stack placeholder.\n' >&2
     return 1
