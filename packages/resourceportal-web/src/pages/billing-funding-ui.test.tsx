@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TenantBilling } from "./tenant-resources";
 import { PlatformBillingPage } from "./platform-final-pages";
@@ -156,4 +156,56 @@ describe("billing funding UI", () => {
       });
     });
   });
+});
+it("shows persistent voucher codes and captures an optional expiration date when Platform Admin creates one", async () => {
+  const created = {
+    id: "voucher-2",
+    code: "RPV-NEWVISIBLECODE1234567890",
+    valueCredits: "250",
+    status: "Active",
+    expiresAt: "2026-10-01T10:30:00.000Z",
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url === "/api/tenants") return json([]);
+    if (url === "/api/platform/billing/price-lists") return json([]);
+    if (url === "/api/platform/billing/vouchers" && method === "GET") {
+      return json([{
+        id: "voucher-1",
+        code: "RPV-PERSISTEDCODE1234567890",
+        valueCredits: "100",
+        status: "Active",
+        expiresAt: null,
+      }]);
+    }
+    if (url === "/api/platform/billing/vouchers" && method === "POST") return json(created);
+    return json({ error: { message: `Unexpected ${method} ${url}` } }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformBillingPage />);
+
+  expect(await screen.findByText("RPV-PERSISTEDCODE1234567890")).toBeTruthy();
+  expect(screen.getByRole("columnheader", { name: "Code" })).toBeTruthy();
+  expect(screen.getByText("Never")).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Create voucher" }));
+  expect(screen.getByLabelText("Expiration date")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Credit value"), { target: { value: "250" } });
+  fireEvent.change(screen.getByLabelText("Expiration date"), { target: { value: "2026-10-01T12:30" } });
+  const voucherDialog = screen.getByRole("dialog", { name: "Create voucher" });
+  fireEvent.click(within(voucherDialog).getByRole("button", { name: "Create voucher" }));
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([input, init]) =>
+      String(input) === "/api/platform/billing/vouchers" && init?.method === "POST",
+    );
+    expect(call).toBeTruthy();
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(body.valueCredits).toBe("250");
+    expect(body.expiresAt).toBe(new Date("2026-10-01T12:30").toISOString());
+  });
+  expect(await screen.findByRole("heading", { name: "Voucher created" })).toBeTruthy();
+  expect(screen.getByText("RPV-NEWVISIBLECODE1234567890")).toBeTruthy();
 });

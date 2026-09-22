@@ -8,7 +8,7 @@ type CloudflareEnvelope<T> = {
   errors?: Array<{ code?: number; message?: string }>;
 };
 
-type CloudflareZone = {
+export type CloudflareZone = {
   id: string;
   name: string;
   status?: string;
@@ -96,6 +96,73 @@ export class CloudflareDnsService {
 
     await this.verifyDnsWrite(input.apiToken, input.zoneId, managedBaseDomain);
     return { zoneId: zone.id, zoneName };
+  }
+
+  async listZones(apiToken: string) {
+    const zones: CloudflareZone[] = [];
+    for (let page = 1; page <= 20; page += 1) {
+      const query = new URLSearchParams({
+        status: "active",
+        per_page: "50",
+        page: String(page),
+      });
+      const batch = await this.request<CloudflareZone[]>(
+        `/zones?${query.toString()}`,
+        apiToken,
+      );
+      zones.push(...batch);
+      if (batch.length < 50) break;
+    }
+    return zones
+      .filter((zone) => !zone.status || zone.status === "active")
+      .map((zone) => ({ id: zone.id, name: normalizeHostname(zone.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getZone(apiToken: string, zoneId: string) {
+    const zone = await this.request<CloudflareZone>(
+      `/zones/${encodeURIComponent(zoneId)}`,
+      apiToken,
+    );
+    if (zone.status && zone.status !== "active") {
+      throw new CloudflareApiError(
+        `Cloudflare zone ${zone.name} is ${zone.status}, not active`,
+        "configuration",
+      );
+    }
+    return { id: zone.id, name: normalizeHostname(zone.name) };
+  }
+
+  async ensureVerificationTxt(input: {
+    apiToken: string;
+    zoneId: string;
+    rootDomain: string;
+    content: string;
+  }) {
+    const zone = await this.getZone(input.apiToken, input.zoneId);
+    const rootDomain = normalizeHostname(input.rootDomain);
+    if (rootDomain !== zone.name && !rootDomain.endsWith(`.${zone.name}`)) {
+      throw new CloudflareApiError(
+        `Root domain ${rootDomain} is outside Cloudflare zone ${zone.name}`,
+        "configuration",
+      );
+    }
+    const records = await this.listRecords(input.apiToken, input.zoneId, rootDomain);
+    const existing = records.find(
+      (record) =>
+        record.type === "TXT" &&
+        normalizeHostname(record.name) === rootDomain &&
+        record.content.replace(/^"|"$/g, "") === input.content,
+    );
+    if (existing) return { zone, record: existing, created: false };
+    const record = await this.createRecord(input.apiToken, input.zoneId, {
+      type: "TXT",
+      name: rootDomain,
+      content: input.content,
+      ttl: 300,
+      comment: "Managed by ResourcePortal custom-domain verification",
+    });
+    return { zone, record, created: true };
   }
 
   async ensureManagedCname(input: {

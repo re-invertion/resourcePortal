@@ -228,4 +228,47 @@ describe("CloudflareDnsService", () => {
       );
     }
   });
+
+  it("creates the exact custom-domain verification TXT inside the authorized zone", async () => {
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (url.endsWith("/zones/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) {
+        return Promise.resolve(response({
+          id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          name: "example.com",
+          status: "active",
+        }));
+      }
+      if (url.includes("/dns_records?") && (!init?.method || init.method === "GET")) {
+        return Promise.resolve(response([]));
+      }
+      if (url.endsWith("/dns_records") && init?.method === "POST") {
+        return Promise.resolve(response({ id: "txt-1", ...jsonBody(init) }));
+      }
+      return Promise.reject(new Error(`Unexpected ${init?.method ?? "GET"} ${url}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new CloudflareDnsService();
+
+    await expect(service.ensureVerificationTxt({
+      apiToken: "oauth-token",
+      zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      rootDomain: "apps.example.com",
+      content: "rp-domain-verification=abc123",
+    })).resolves.toMatchObject({
+      created: true,
+      zone: { name: "example.com" },
+      record: { id: "txt-1" },
+    });
+
+    const create = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(jsonBody(create?.[1])).toEqual({
+      type: "TXT",
+      name: "apps.example.com",
+      content: "rp-domain-verification=abc123",
+      ttl: 300,
+      comment: "Managed by ResourcePortal custom-domain verification",
+    });
+  });
+
 });

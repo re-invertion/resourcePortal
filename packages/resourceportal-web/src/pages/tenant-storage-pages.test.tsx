@@ -191,3 +191,26 @@ it("offers Managed ResourcePortal domains only after the platform Cloudflare cap
   expect(within(type).getByRole("option", { name: "Managed ResourcePortal domain" })).toBeTruthy();
   expect(screen.getByText(/Creates app\.resource-portal\.pl/i)).toBeTruthy();
 });
+
+it("offers Cloudflare and standard methods when adding a custom root domain", async () => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/tenants/t1/domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/domains/capabilities")) return Promise.resolve(json({ managedDomains: { enabled: false, provider: "Cloudflare", baseDomain: "resource-portal.pl" } }));
+    if (url.endsWith("/api/tenants/t1/domains/cloudflare/status")) return Promise.resolve(json({ configured: true, connected: false }));
+    if (url.endsWith("/api/tenants/t1/domains/custom-root-domains")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/app-groups")) return Promise.resolve(json([]));
+    return Promise.resolve(json({}));
+  }));
+
+  render(<TenantDomainsPage tenantId="t1" />);
+  await screen.findByText("Domains & routing");
+  fireEvent.click(screen.getByRole("button", { name: "Add root domain" }));
+
+  expect(screen.getByRole("dialog", { name: "Add root domain" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /Add using Cloudflare/i })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /Add using standard methods/i }));
+
+  expect(screen.getByRole("dialog", { name: "Add root domain using DNS" })).toBeTruthy();
+  expect(screen.getByPlaceholderText("apps.example.com")).toBeTruthy();
+});

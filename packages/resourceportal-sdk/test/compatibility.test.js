@@ -65,6 +65,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
     "operations/operations.controller.ts",
+    "platform-dns/cloudflare-oauth.controller.ts",
     "platform-dns/platform-dns.controller.ts",
     "platform-infrastructure/platform-infrastructure.controller.ts",
     "platform-maintenance/platform-maintenance.controller.ts",

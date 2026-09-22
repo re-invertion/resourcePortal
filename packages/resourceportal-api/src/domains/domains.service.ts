@@ -18,6 +18,7 @@ import { AuthenticatedUser } from "../auth/types";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ManagedDnsService } from "../platform-dns/managed-dns.service";
+import { CloudflareTenantOauthService } from "../platform-dns/cloudflare-tenant-oauth.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
 import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
@@ -30,6 +31,7 @@ export class DomainsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly managedDns?: ManagedDnsService,
+    private readonly tenantCloudflare?: CloudflareTenantOauthService,
   ) {}
 
   async listDomains(tenantId: string) {
@@ -100,6 +102,62 @@ export class DomainsService {
       return mapCustomRootDomain(root);
     } catch (error) {
       this.handleKnownConflict(error, "Custom root domain already exists");
+      throw error;
+    }
+  }
+
+  async createCloudflareCustomRootDomain(
+    tenantId: string,
+    dto: { zoneId: string; rootDomain: string },
+    actor: AuthenticatedUser,
+  ) {
+    const cloudflare = this.requireTenantCloudflare();
+    const rootDomain = dto.rootDomain.toLowerCase();
+    const verificationToken = this.verificationToken();
+    let root;
+    try {
+      root = await this.prisma.customRootDomain.create({
+        data: {
+          tenantId,
+          rootDomain,
+          verificationMethod: "CLOUDFLARE_OAUTH",
+          verificationToken,
+          createdBy: actor.id,
+          updatedBy: actor.id,
+        },
+        include: { domains: true },
+      });
+    } catch (error) {
+      this.handleKnownConflict(error, "Custom root domain already exists");
+      throw error;
+    }
+
+    try {
+      await cloudflare.ensureVerificationTxt({
+        tenantId,
+        userId: actor.id,
+        zoneId: dto.zoneId,
+        rootDomain,
+        verificationToken,
+      });
+      const verified = await this.prisma.customRootDomain.update({
+        where: { id: root.id },
+        data: {
+          verificationStatus: CustomRootDomainVerificationStatus.Verified,
+          verifiedAt: new Date(),
+          updatedBy: actor.id,
+        },
+        include: { domains: true },
+      });
+      return mapCustomRootDomain(verified);
+    } catch (error) {
+      await this.prisma.customRootDomain.update({
+        where: { id: root.id },
+        data: {
+          verificationStatus: CustomRootDomainVerificationStatus.Failed,
+          updatedBy: actor.id,
+        },
+      });
       throw error;
     }
   }
@@ -506,6 +564,13 @@ export class DomainsService {
         },
       },
     } satisfies Prisma.DomainInclude;
+  }
+
+  private requireTenantCloudflare() {
+    if (!this.tenantCloudflare) {
+      throw new ConflictException("Cloudflare domain authorization is unavailable");
+    }
+    return this.tenantCloudflare;
   }
 
   private requireManagedDns() {

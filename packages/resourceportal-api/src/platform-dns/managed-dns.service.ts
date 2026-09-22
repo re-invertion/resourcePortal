@@ -98,6 +98,10 @@ export class ManagedDnsService {
           apiTokenCiphertext: dto.apiToken
             ? this.encryption.encrypt(dto.apiToken.trim())
             : undefined,
+          oauthClientId: dto.oauthClientId?.trim() || undefined,
+          oauthClientSecretCiphertext: dto.oauthClientSecret
+            ? this.encryption.encrypt(dto.oauthClientSecret.trim())
+            : undefined,
           lastValidatedAt: validation ? new Date() : undefined,
           lastError: validation ? null : undefined,
           updatedBy: actor.id,
@@ -121,6 +125,9 @@ export class ManagedDnsService {
             zoneId: state.zoneId,
             zoneName: state.zoneName,
             tokenConfigured: Boolean(state.apiTokenCiphertext),
+            tenantOauthConfigured: Boolean(
+              state.oauthClientId && state.oauthClientSecretCiphertext,
+            ),
           },
         },
       });
@@ -155,6 +162,20 @@ export class ManagedDnsService {
       });
       this.throwCloudflareHttpError(error);
     }
+  }
+
+  async getTenantOauthConfiguration() {
+    const state = await this.getState();
+    if (!state.oauthClientId || !state.oauthClientSecretCiphertext) {
+      throw new ConflictException(
+        "Cloudflare tenant OAuth is not configured by the Platform Administrator",
+      );
+    }
+    return {
+      clientId: state.oauthClientId,
+      clientSecret: this.encryption.decrypt(state.oauthClientSecretCiphertext),
+      redirectUri: this.cloudflareOauthRedirectUri(),
+    };
   }
 
   async provisionManagedDomain(hostname: string) {
@@ -302,6 +323,12 @@ export class ManagedDnsService {
       available: this.isAvailable(state),
       configured: Boolean(state.zoneId && state.apiTokenCiphertext),
       tokenConfigured: Boolean(state.apiTokenCiphertext),
+      tenantOauthConfigured: Boolean(
+        state.oauthClientId && state.oauthClientSecretCiphertext,
+      ),
+      oauthClientId: state.oauthClientId,
+      oauthClientSecretConfigured: Boolean(state.oauthClientSecretCiphertext),
+      oauthRedirectUri: this.cloudflareOauthRedirectUri(),
       zoneId: state.zoneId,
       zoneName: state.zoneName,
       baseDomain: this.managedBaseDomain(),
@@ -310,6 +337,13 @@ export class ManagedDnsService {
       lastError: state.lastError,
       updatedAt: state.updatedAt,
     };
+  }
+
+  private cloudflareOauthRedirectUri() {
+    const base = this.config
+      .get<string>("PUBLIC_API_URL", `http://localhost:${this.config.get("PORT", 3000)}`)
+      .replace(/\/$/, "");
+    return `${base}/api/integrations/cloudflare/oauth/callback`;
   }
 
   private managedBaseDomain() {
