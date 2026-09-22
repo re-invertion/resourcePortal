@@ -55,6 +55,16 @@ export class OidcAuthService {
     return this.findOrProvisionUser(this.getIssuer(), payload, identityProviderId);
   }
 
+  async authenticateBrowserTokens(
+    idToken: string,
+    accessToken: string,
+    identityProviderId?: string,
+  ): Promise<AuthenticatedUser> {
+    const idTokenClaims = await this.verifyToken(idToken);
+    const humanClaims = await this.resolveHumanClaims(accessToken, idTokenClaims);
+    return this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
+  }
+
   async authenticatePrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
     const subject = this.requireStringClaim(payload.sub, "sub");
