@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, UserStatus } from "@prisma/client";
-import { FastifyRequest } from "fastify";
+import { FastifyReply, FastifyRequest } from "fastify";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import { AuthenticatedUser } from "./types";
@@ -201,7 +201,7 @@ export class AuthSessionService {
       },
     });
 
-    await this.prisma.portalSession.updateMany({
+    const result = await this.prisma.portalSession.updateMany({
       where: {
         id: sessionId,
         revokedAt: null,
@@ -211,6 +211,10 @@ export class AuthSessionService {
       },
     });
 
+    if (result.count === 0) {
+      return;
+    }
+
     await this.writeSessionAudit({
       action: "auth.session.revoked",
       actor: session?.user.id ?? "system",
@@ -218,6 +222,20 @@ export class AuthSessionService {
       result: "Success",
       sessionId,
     });
+  }
+
+  hasSessionCookie(request: FastifyRequest) {
+    return Boolean(request.cookies[this.getSessionCookieName()]);
+  }
+
+  clearSessionCookies(reply: FastifyReply) {
+    reply.clearCookie(this.getSessionCookieName(), { path: "/" });
+    reply.clearCookie(this.getCsrfCookieName(), { path: "/" });
+  }
+
+  async invalidateRequestSession(request: FastifyRequest, reply: FastifyReply) {
+    await this.revokeSession(this.getSessionIdFromRequest(request));
+    this.clearSessionCookies(reply);
   }
 
   async pruneExpiredSessions(now = new Date()) {
