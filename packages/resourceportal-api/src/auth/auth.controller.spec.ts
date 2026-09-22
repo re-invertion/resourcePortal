@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import fastifyCookie from "@fastify/cookie";
+import { UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { APP_GUARD, Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
@@ -483,6 +484,112 @@ describe("AuthController cookie flow", () => {
     expect(response.json()).toMatchObject({
       message: "OIDC state is invalid",
     });
+  });
+
+  it("revokes an existing browser session and clears cookies when OIDC callback claims are invalid", async () => {
+    const loginResponse = await app.inject({
+      method: "GET",
+      url: "/api/auth/login",
+    });
+    const loginLocation = new URL(getRequiredHeader(loginResponse, "location"));
+    const signedSession = app
+      .getHttpAdapter()
+      .getInstance()
+      .signCookie("session-1");
+
+    oidcAuth.authenticateBearerToken.mockRejectedValueOnce(
+      new UnauthorizedException("OIDC email claim is required"),
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/auth/callback?code=valid-code&state=${loginLocation.searchParams.get("state")}`,
+      headers: {
+        cookie: `${getCookieHeader(loginResponse)}; rp_session=${signedSession}; rp_csrf=csrf-token`,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      message: "OIDC email claim is required",
+    });
+    expect(prisma.portalSession.updateMany).toHaveBeenCalledWith({
+      where: { id: "session-1", revokedAt: null },
+      data: { revokedAt: expect.any(Date) as Date },
+    });
+    const cookies = getSetCookieHeaders(response);
+    for (const name of [
+      "rp_session",
+      "rp_csrf",
+      "rp_oidc_state",
+      "rp_oidc_verifier",
+      "rp_oidc_provider",
+      "rp_oidc_return_to",
+    ]) {
+      expect(cookies.some((cookie) => cookie.includes(`${name}=;`))).toBe(true);
+    }
+  });
+
+  it("revokes and clears a browser session when the OIDC refresh token is rejected", async () => {
+    const signedSession = app
+      .getHttpAdapter()
+      .getInstance()
+      .signCookie("session-1");
+    const expiredAccessSession = {
+      id: "session-1",
+      accessToken: "access-token",
+      accessTokenExpiresAt: new Date(Date.now() - 1000),
+      idToken: "id-token",
+      refreshToken: "refresh-token",
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      lastSeenAt: new Date(),
+      user,
+    };
+    prisma.portalSession.findUnique.mockResolvedValue(expiredAccessSession);
+    prisma.portalSession.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: {
+        cookie: `rp_session=${signedSession}; rp_csrf=csrf-token`,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      message: "OIDC refresh token exchange failed",
+    });
+    const cookies = getSetCookieHeaders(response);
+    expect(cookies.some((cookie) => cookie.includes("rp_session=;"))).toBe(true);
+    expect(cookies.some((cookie) => cookie.includes("rp_csrf=;"))).toBe(true);
+  });
+
+  it("clears an invalid signed session cookie instead of leaving the browser stuck", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: {
+        cookie: "rp_session=invalid.signature; rp_csrf=csrf-token",
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    const cookies = getSetCookieHeaders(response);
+    expect(cookies.some((cookie) => cookie.includes("rp_session=;"))).toBe(true);
+    expect(cookies.some((cookie) => cookie.includes("rp_csrf=;"))).toBe(true);
   });
 
   it("creates session and CSRF cookies and authenticates requests", async () => {

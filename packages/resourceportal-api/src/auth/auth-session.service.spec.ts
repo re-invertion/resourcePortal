@@ -144,6 +144,30 @@ describe("AuthSessionService", () => {
     expect(prisma.portalSession.updateMany).toHaveBeenCalled();
   });
 
+  it("does not duplicate the revoke audit when a session is already revoked", async () => {
+    const prisma = {
+      auditLogEntry: { create: vi.fn() },
+      portalSession: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "session-1",
+          user: { id: "user-1", displayName: "Example User" },
+        }),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const service = new AuthSessionService(
+      createConfig(),
+      prisma as unknown as PrismaService,
+      createOidcAuth(),
+      createEncryption(),
+    );
+
+    await service.revokeSession("session-1");
+
+    expect(prisma.portalSession.updateMany).toHaveBeenCalled();
+    expect(prisma.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
   it("marks expired or idle sessions as revoked", async () => {
     const now = new Date("2026-08-29T10:00:00.000Z");
     const prisma = {

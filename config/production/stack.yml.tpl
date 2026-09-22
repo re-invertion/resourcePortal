@@ -359,6 +359,32 @@ services:
         - traefik.http.routers.resourceportal-web.tls.domains[0].main=__ZITADEL_DOMAIN__
         - traefik.http.routers.resourceportal-web.tls.domains[0].sans=__DOMAIN__
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
+        - traefik.http.middlewares.rp-legacy-portal.redirectregex.regex=^https?://__LEGACY_DOMAIN_REGEX__/(.*)
+        - traefik.http.middlewares.rp-legacy-portal.redirectregex.replacement=https://__DOMAIN__/$${1}
+        - traefik.http.middlewares.rp-legacy-portal.redirectregex.permanent=true
+        - traefik.http.routers.rp-legacy-portal-http.rule=Host(`__LEGACY_DOMAIN__`)
+        - traefik.http.routers.rp-legacy-portal-http.entrypoints=web
+        - traefik.http.routers.rp-legacy-portal-http.middlewares=rp-legacy-portal
+        - traefik.http.routers.rp-legacy-portal-http.service=resourceportal-web
+        - traefik.http.routers.rp-legacy-portal-https.rule=Host(`__LEGACY_DOMAIN__`)
+        - traefik.http.routers.rp-legacy-portal-https.entrypoints=websecure
+        - traefik.http.routers.rp-legacy-portal-https.tls=true
+        - traefik.http.routers.rp-legacy-portal-https.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.rp-legacy-portal-https.middlewares=rp-legacy-portal
+        - traefik.http.routers.rp-legacy-portal-https.service=resourceportal-web
+        - traefik.http.middlewares.rp-legacy-auth.redirectregex.regex=^https?://__LEGACY_ZITADEL_DOMAIN_REGEX__/(.*)
+        - traefik.http.middlewares.rp-legacy-auth.redirectregex.replacement=https://__ZITADEL_DOMAIN__/$${1}
+        - traefik.http.middlewares.rp-legacy-auth.redirectregex.permanent=true
+        - traefik.http.routers.rp-legacy-auth-http.rule=Host(`__LEGACY_ZITADEL_DOMAIN__`)
+        - traefik.http.routers.rp-legacy-auth-http.entrypoints=web
+        - traefik.http.routers.rp-legacy-auth-http.middlewares=rp-legacy-auth
+        - traefik.http.routers.rp-legacy-auth-http.service=resourceportal-web
+        - traefik.http.routers.rp-legacy-auth-https.rule=Host(`__LEGACY_ZITADEL_DOMAIN__`)
+        - traefik.http.routers.rp-legacy-auth-https.entrypoints=websecure
+        - traefik.http.routers.rp-legacy-auth-https.tls=true
+        - traefik.http.routers.rp-legacy-auth-https.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.rp-legacy-auth-https.middlewares=rp-legacy-auth
+        - traefik.http.routers.rp-legacy-auth-https.service=resourceportal-web
       restart_policy:
         condition: any
 

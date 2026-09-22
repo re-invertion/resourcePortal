@@ -166,21 +166,25 @@ export class AuthController {
       throw new BadRequestException("OIDC callback code and state are required");
     }
 
-    const result = await this.authFlow.handleCallback(
-      code,
-      state,
-      this.getSignedCookie(request, stateCookieName),
-      this.getSignedCookie(request, verifierCookieName),
-      this.getSignedCookie(request, providerCookieName),
-    );
+    let result: Awaited<ReturnType<AuthFlowService["handleCallback"]>>;
+    try {
+      result = await this.authFlow.handleCallback(
+        code,
+        state,
+        this.getSignedCookie(request, stateCookieName),
+        this.getSignedCookie(request, verifierCookieName),
+        this.getSignedCookie(request, providerCookieName),
+      );
+    } catch (error) {
+      await this.sessions.invalidateRequestSession(request, reply);
+      this.clearOidcCallbackCookies(reply);
+      throw error;
+    }
 
-    reply.clearCookie(stateCookieName, { path: "/api/auth" });
-    reply.clearCookie(verifierCookieName, { path: "/api/auth" });
     const returnTo = this.safeCallbackReturnTo(
       this.getSignedCookie(request, returnToCookieName),
     );
-    reply.clearCookie(providerCookieName, { path: "/api/auth" });
-    reply.clearCookie(returnToCookieName, { path: "/api/auth" });
+    this.clearOidcCallbackCookies(reply);
     reply.setCookie(this.sessions.getSessionCookieName(), result.session.id, {
       httpOnly: true,
       maxAge: this.sessions.getSessionMaxAgeSeconds(),
@@ -212,7 +216,7 @@ export class AuthController {
   @ApiNoContentResponse({ description: "The current local session was revoked." })
   async logout(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
     await this.sessions.revokeSession(this.sessions.getSessionIdFromRequest(request));
-    this.clearSessionCookies(reply);
+    this.sessions.clearSessionCookies(reply);
     return reply.status(204).send();
   }
 
@@ -228,7 +232,7 @@ export class AuthController {
     const result = await this.sessions.prepareProviderLogout(
       this.sessions.getSessionIdFromRequest(request),
     );
-    this.clearSessionCookies(reply);
+    this.sessions.clearSessionCookies(reply);
     return reply.status(200).send(result);
   }
 
@@ -334,9 +338,11 @@ export class AuthController {
     }
   }
 
-  private clearSessionCookies(reply: FastifyReply) {
-    reply.clearCookie(this.sessions.getSessionCookieName(), { path: "/" });
-    reply.clearCookie(this.sessions.getCsrfCookieName(), { path: "/" });
+  private clearOidcCallbackCookies(reply: FastifyReply) {
+    reply.clearCookie(stateCookieName, { path: "/api/auth" });
+    reply.clearCookie(verifierCookieName, { path: "/api/auth" });
+    reply.clearCookie(providerCookieName, { path: "/api/auth" });
+    reply.clearCookie(returnToCookieName, { path: "/api/auth" });
   }
 
   private getSignedCookie(request: FastifyRequest, name: string) {

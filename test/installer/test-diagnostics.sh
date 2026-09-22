@@ -203,6 +203,58 @@ status 0 'smtp reconfigure allowed' rp_reconfigure_action_valid smtp
 status 0 'secret rotation allowed' rp_reconfigure_action_valid rotate-secrets
 status 1 'storage migration not silently allowed' rp_reconfigure_action_valid migrate-storage
 
+(
+  RP_CFG_DOMAIN='old.example.com'
+  RP_CFG_ZITADEL_DOMAIN='auth.old.example.com'
+  RP_CFG_ACME_EMAIL='old@example.com'
+  RP_CFG_INGRESS_ADDRESSES='203.0.113.5'
+  unset RP_CFG_LEGACY_DOMAIN RP_CFG_LEGACY_ZITADEL_DOMAIN
+  rp_ui_input(){
+    case "$2" in
+      'ResourcePortal hostname') printf 'new.example.com\n' ;;
+      'ZITADEL hostname') printf 'auth.new.example.com\n' ;;
+      'ACME contact email') printf 'new@example.com\n' ;;
+      'Expected ingress IP address(es), comma-separated') printf '203.0.113.6\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_primary_enable_ingress(){ return 0; }
+  rp_primary_deploy_final(){ return 0; }
+  rp_primary_persist(){ return 0; }
+  rp_reconfigure_domain
+  [[ "$RP_CFG_LEGACY_DOMAIN" == 'old.example.com' ]]
+  [[ "$RP_CFG_LEGACY_ZITADEL_DOMAIN" == 'auth.old.example.com' ]]
+) && pass 'domain reconfigure preserves previous hosts as legacy redirects' || fail 'domain reconfigure preserves previous hosts as legacy redirects'
+
+(
+  RP_CFG_DOMAIN='old.example.com'
+  RP_CFG_ZITADEL_DOMAIN='auth.old.example.com'
+  RP_CFG_ACME_EMAIL='old@example.com'
+  RP_CFG_INGRESS_ADDRESSES='203.0.113.5'
+  RP_CFG_LEGACY_DOMAIN='older.example.com'
+  RP_CFG_LEGACY_ZITADEL_DOMAIN='auth.older.example.com'
+  rp_ui_input(){
+    case "$2" in
+      'ResourcePortal hostname') printf 'new.example.com\n' ;;
+      'ZITADEL hostname') printf 'auth.new.example.com\n' ;;
+      'ACME contact email') printf 'new@example.com\n' ;;
+      'Expected ingress IP address(es), comma-separated') printf '203.0.113.6\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  rp_primary_enable_ingress(){ return 1; }
+  rp_deploy_control_plane(){ return 0; }
+  set +e
+  rp_reconfigure_domain
+  rc=$?
+  set -e
+  [[ $rc -eq 1 ]]
+  [[ "$RP_CFG_DOMAIN" == 'old.example.com' ]]
+  [[ "$RP_CFG_ZITADEL_DOMAIN" == 'auth.old.example.com' ]]
+  [[ "$RP_CFG_LEGACY_DOMAIN" == 'older.example.com' ]]
+  [[ "$RP_CFG_LEGACY_ZITADEL_DOMAIN" == 'auth.older.example.com' ]]
+) && pass 'failed domain reconfigure restores previous legacy redirect state' || fail 'failed domain reconfigure restores previous legacy redirect state'
+
 diag_source="$(cat "$repo_root/scripts/installer/diagnostics.sh")"
 for forbidden in 'systemctl restart' 'docker service update' 'docker node update' 'ufw allow' 'mkfs.' 'wipefs --all'; do
   [[ "$diag_source" != *"$forbidden"* ]] && pass "diagnostics excludes mutating command: $forbidden" || fail "diagnostics excludes mutating command: $forbidden"

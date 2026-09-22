@@ -108,10 +108,20 @@ export class DevAuthGuard implements CanActivate {
       return true;
     }
 
+    const hasSessionCookie = this.sessions.hasSessionCookie(request);
     const sessionId = this.sessions.getSessionIdFromRequest(request);
     if (sessionId) {
-      request.user = await this.sessions.authenticateSession(sessionId);
-      return true;
+      try {
+        request.user = await this.sessions.authenticateSession(sessionId);
+        return true;
+      } catch (error) {
+        await this.sessions.invalidateRequestSession(request, reply);
+        throw error;
+      }
+    }
+
+    if (hasSessionCookie) {
+      this.sessions.clearSessionCookies(reply);
     }
 
     if (isPublic) return true;
