@@ -5,6 +5,7 @@ import { resolveTxt } from "node:dns/promises";
 import type { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { ManagedDnsService } from "../platform-dns/managed-dns.service";
+import { CloudflareTenantOauthService } from "../platform-dns/cloudflare-tenant-oauth.service";
 import { DomainsService } from "./domains.service";
 
 const NEGATIVE_DNS_CODES = new Set(["ENODATA", "ENOTFOUND"]);
@@ -35,8 +36,9 @@ export class Stage16DomainsService extends DomainsService {
     prisma: PrismaService,
     config: ConfigService,
     managedDns?: ManagedDnsService,
+    tenantCloudflare?: CloudflareTenantOauthService,
   ) {
-    super(prisma, config, managedDns);
+    super(prisma, config, managedDns, tenantCloudflare);
   }
 
   override async validateCustomRootDomain(

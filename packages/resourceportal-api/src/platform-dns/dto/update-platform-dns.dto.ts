@@ -22,4 +22,16 @@ export class UpdatePlatformDnsDto {
   @MinLength(20)
   @MaxLength(2048)
   apiToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(512)
+  oauthClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(4096)
+  oauthClientSecret?: string;
 }

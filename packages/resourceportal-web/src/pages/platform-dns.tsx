@@ -20,6 +20,10 @@ type DnsState = {
   available?: boolean;
   configured?: boolean;
   tokenConfigured?: boolean;
+  tenantOauthConfigured?: boolean;
+  oauthClientId?: string | null;
+  oauthClientSecretConfigured?: boolean;
+  oauthRedirectUri?: string;
   zoneId?: string | null;
   zoneName?: string | null;
   baseDomain?: string;
@@ -34,6 +38,8 @@ export function PlatformDnsPage() {
   const [enabled, setEnabled] = useState(false);
   const [zoneId, setZoneId] = useState("");
   const [apiToken, setApiToken] = useState("");
+  const [oauthClientId, setOauthClientId] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; message: string }>();
 
@@ -42,6 +48,8 @@ export function PlatformDnsPage() {
     setEnabled(dns.data.enabled === true);
     setZoneId(text(dns.data.zoneId, ""));
     setApiToken("");
+    setOauthClientId(text(dns.data.oauthClientId, ""));
+    setOauthClientSecret("");
   }, [dns.data]);
 
   async function save(event: FormEvent) {
@@ -55,10 +63,13 @@ export function PlatformDnsPage() {
           enabled,
           zoneId: zoneId.trim() || undefined,
           apiToken: apiToken.trim() || undefined,
+          oauthClientId: oauthClientId.trim() || undefined,
+          oauthClientSecret: oauthClientSecret.trim() || undefined,
         },
       });
       await dns.reload();
       setApiToken("");
+      setOauthClientSecret("");
       setNotice({ tone: "success", message: enabled ? "Cloudflare DNS connected and managed domains enabled." : "DNS configuration saved." });
     } catch (error) {
       setNotice({ tone: "danger", message: error instanceof Error ? error.message : "DNS configuration failed." });
@@ -95,6 +106,13 @@ export function PlatformDnsPage() {
           <Field label="Cloudflare Zone ID" required hint="Use the zone that contains the ResourcePortal managed domain."><TextInput value={zoneId} onChange={event=>setZoneId(event.target.value)} placeholder="32-character zone ID" autoComplete="off" /></Field>
           <Field label="Cloudflare API token" hint={dns.data?.tokenConfigured ? "A token is already configured. Leave blank to keep it." : "Required. Use a scoped token with Zone:Read and DNS:Edit for this zone."}><TextInput type="password" value={apiToken} onChange={event=>setApiToken(event.target.value)} placeholder={dns.data?.tokenConfigured ? "Configured — enter only to rotate" : "Cloudflare API token"} autoComplete="new-password" /></Field>
           <Callout title="Scoped permissions only">Create a Cloudflare API token restricted to the selected zone. ResourcePortal validates the token and performs a temporary DNS write/delete probe before enabling managed domains.</Callout>
+          <div className="border-t border-[#E1E7F0] pt-5">
+            <h3 className="text-sm font-semibold text-[#172033]">Tenant Cloudflare OAuth</h3>
+            <p className="mt-1 text-xs leading-5 text-[#718096]">Optional. Configure a Cloudflare OAuth client so tenant users can authorize their own Cloudflare account when adding a custom root domain.</p>
+          </div>
+          <Field label="OAuth Client ID" hint="Client ID from Cloudflare → Manage Account → OAuth clients."><TextInput value={oauthClientId} onChange={event=>setOauthClientId(event.target.value)} placeholder="Cloudflare OAuth client ID" autoComplete="off" /></Field>
+          <Field label="OAuth Client secret" hint={dns.data?.oauthClientSecretConfigured ? "A client secret is already configured. Leave blank to keep it." : "Stored encrypted. Required before tenant Cloudflare authorization can be used."}><TextInput type="password" value={oauthClientSecret} onChange={event=>setOauthClientSecret(event.target.value)} placeholder={dns.data?.oauthClientSecretConfigured ? "Configured — enter only to rotate" : "Cloudflare OAuth client secret"} autoComplete="new-password" /></Field>
+          <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-4"><p className="text-xs font-medium text-[#172033]">OAuth redirect URI</p><code className="mt-1 block break-all text-xs text-[#5B6678]">{text(dns.data?.oauthRedirectUri,"Save once to display redirect URI")}</code><p className="mt-2 text-xs leading-5 text-[#718096]">Register this exact URI in Cloudflare. Configure <code>zone.read</code> and <code>dns.write</code>, with Authorization Code and Refresh Token grants and <code>client_secret_basic</code> token authentication. Cloudflare adds <code>offline_access</code> for refresh-enabled clients. Promote the OAuth client to <strong>Public</strong> if tenant users outside the owner Cloudflare account must authorize it.</p></div>
           <div className="flex flex-wrap gap-2"><Button variant="primary" type="submit" disabled={working}>{working?"Saving…":"Save configuration"}</Button><Button type="button" disabled={working||!dns.data?.configured} onClick={()=>void validate()}>Validate connection</Button></div>
         </form>
       </Card>
@@ -105,6 +123,7 @@ export function PlatformDnsPage() {
           {label:"DNS target",value:text(dns.data?.targetHostname,"—")},
           {label:"Cloudflare zone",value:text(dns.data?.zoneName,text(dns.data?.zoneId,"Not configured"))},
           {label:"API token",value:dns.data?.tokenConfigured?"Configured":"Not configured"},
+          {label:"Tenant OAuth",value:dns.data?.tenantOauthConfigured?"Configured":"Not configured"},
           {label:"Last validated",value:formatDate(dns.data?.lastValidatedAt)},
         ]}/></Card>
         {dns.data?.lastError ? <Callout tone="danger" title="Last Cloudflare error">{dns.data.lastError}</Callout> : <Callout tone="success" title="Managed DNS is isolated from custom domains">Custom tenant domains keep their existing ownership verification flow. Cloudflare automation applies only to ResourcePortal-managed hostnames.</Callout>}

@@ -167,15 +167,17 @@ enum IdentityProviderProtocol {
 }
 
 model User {
-  id          String             @id @default(uuid()) @db.Uuid
-  email       String             @unique
-  displayName String
-  status      UserStatus         @default(Pending)
-  memberships TenantMembership[]
-  sessions    PortalSession[]
-  identities  UserIdentity[]
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  id                         String                      @id @default(uuid()) @db.Uuid
+  email                      String                      @unique
+  displayName                String
+  status                     UserStatus                  @default(Pending)
+  memberships                TenantMembership[]
+  sessions                   PortalSession[]
+  identities                 UserIdentity[]
+  cloudflareOAuthStates      CloudflareOAuthState[]
+  cloudflareOAuthConnections CloudflareOAuthConnection[]
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
 }
 
 model UserIdentity {
@@ -209,31 +211,33 @@ model PortalSession {
 }
 
 model Tenant {
-  id                String             @id @default(uuid()) @db.Uuid
-  name              String             @unique
-  displayName       String
-  description       String?
-  status            TenantStatus       @default(Active)
-  contactEmail      String
-  billing           BillingAccount?
-  quota             Quota?
-  authPolicy        TenantAuthPolicy?
-  memberships       TenantMembership[]
-  invitations       TenantInvitation[]
-  groups            TenantGroup[]
-  identityProviders IdentityProvider[]
-  oauthApplications OAuthApplication[]
-  serviceIdentities ServiceIdentity[]
-  mcpSettings       TenantMcpSettings?
-  appGroups         AppGroup[]
-  volumes           Volume[]
-  domains           Domain[]
-  customRootDomains CustomRootDomain[]
-  registries        Registry[]
-  auditEntries      AuditLogEntry[]
-  operations        Operation[]
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id                         String                      @id @default(uuid()) @db.Uuid
+  name                       String                      @unique
+  displayName                String
+  description                String?
+  status                     TenantStatus                @default(Active)
+  contactEmail               String
+  billing                    BillingAccount?
+  quota                      Quota?
+  authPolicy                 TenantAuthPolicy?
+  memberships                TenantMembership[]
+  invitations                TenantInvitation[]
+  groups                     TenantGroup[]
+  identityProviders          IdentityProvider[]
+  oauthApplications          OAuthApplication[]
+  serviceIdentities          ServiceIdentity[]
+  mcpSettings                TenantMcpSettings?
+  appGroups                  AppGroup[]
+  volumes                    Volume[]
+  domains                    Domain[]
+  customRootDomains          CustomRootDomain[]
+  cloudflareOAuthStates      CloudflareOAuthState[]
+  cloudflareOAuthConnections CloudflareOAuthConnection[]
+  registries                 Registry[]
+  auditEntries               AuditLogEntry[]
+  operations                 Operation[]
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
 }
 
 model TenantMembership {
@@ -495,6 +499,7 @@ model PriceListVersion {
 model Voucher {
   id                       String          @id @default(uuid()) @db.Uuid
   codeHash                 String          @unique
+  codeCiphertext           String?         @db.Text
   valueCredits             Decimal         @db.Decimal(24, 8)
   status                   String          @default("Active")
   expiresAt                DateTime?
@@ -1039,17 +1044,50 @@ model PlatformMaintenanceState {
 }
 
 model PlatformDnsIntegration {
-  id                 String    @id @db.Uuid
-  provider           String    @default("Cloudflare")
-  enabled            Boolean   @default(false)
-  zoneId             String?
-  zoneName           String?
-  apiTokenCiphertext String?   @db.Text
-  lastValidatedAt    DateTime?
-  lastError          String?   @db.Text
-  updatedBy          String?   @db.Uuid
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                          String    @id @db.Uuid
+  provider                    String    @default("Cloudflare")
+  enabled                     Boolean   @default(false)
+  zoneId                      String?
+  zoneName                    String?
+  apiTokenCiphertext          String?   @db.Text
+  oauthClientId               String?
+  oauthClientSecretCiphertext String?   @db.Text
+  lastValidatedAt             DateTime?
+  lastError                   String?   @db.Text
+  updatedBy                   String?   @db.Uuid
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+}
+
+model CloudflareOAuthState {
+  id         String    @id @default(uuid()) @db.Uuid
+  stateHash  String    @unique
+  tenantId   String    @db.Uuid
+  userId     String    @db.Uuid
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+  @@index([expiresAt])
+}
+
+model CloudflareOAuthConnection {
+  id                     String    @id @default(uuid()) @db.Uuid
+  tenantId               String    @db.Uuid
+  userId                 String    @db.Uuid
+  accessTokenCiphertext  String    @db.Text
+  refreshTokenCiphertext String?   @db.Text
+  accessTokenExpiresAt   DateTime?
+  scopes                 String[]  @default([])
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  tenant                 Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
 }
 
 model PlatformEgressPolicy {

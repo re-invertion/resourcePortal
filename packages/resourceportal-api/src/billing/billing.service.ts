@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../security/encryption.service";
 import {
   BillingHistoryQueryDto,
   CreatePriceListDto,
@@ -44,6 +45,7 @@ type PriceListRow = {
 type VoucherRow = {
   id: string;
   codeHash: string;
+  codeCiphertext: string | null;
   valueCredits: Prisma.Decimal;
   status: string;
   expiresAt: Date | null;
@@ -71,7 +73,10 @@ type ActorSnapshot = {
 
 @Injectable()
 export class BillingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
 
   async getAccount(tenantId: string) {
     const account = await this.prisma.billingAccount.findUnique({
@@ -290,6 +295,7 @@ export class BillingService {
       data: {
         id,
         codeHash,
+        codeCiphertext: this.encryption.encrypt(code),
         valueCredits,
         expiresAt,
         createdBy: actor.id,
@@ -814,6 +820,7 @@ export class BillingService {
       row.expiresAt.getTime() <= Date.now();
     return {
       id: row.id,
+      code: row.codeCiphertext ? this.encryption.decrypt(row.codeCiphertext) : null,
       valueCredits: row.valueCredits.toString(),
       valuePln: creditsToPln(row.valueCredits).toString(),
       status: expired ? "Expired" : row.status,

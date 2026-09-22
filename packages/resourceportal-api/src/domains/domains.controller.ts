@@ -15,7 +15,9 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
+import { CloudflareTenantOauthService } from "../platform-dns/cloudflare-tenant-oauth.service";
 import { CreateCustomRootDomainDto } from "./dto/create-custom-root-domain.dto";
+import { CreateCloudflareCustomRootDomainDto } from "./dto/create-cloudflare-custom-root-domain.dto";
 import { CreateDomainDto } from "./dto/create-domain.dto";
 import { UpdateCustomRootDomainDto } from "./dto/update-custom-root-domain.dto";
 import { UpdateDomainDto } from "./dto/update-domain.dto";
@@ -26,6 +28,7 @@ export class DomainsController {
   constructor(
     private readonly domainsService: DomainsService,
     private readonly operationsService: OperationsService,
+    private readonly cloudflareOauth: CloudflareTenantOauthService,
   ) {}
 
   @RequirePermissions("domain.read")
@@ -48,6 +51,52 @@ export class DomainsController {
   @Get("capabilities")
   getCapabilities() {
     return this.domainsService.getCapabilities();
+  }
+
+  @RequirePermissions("domain.read")
+  @Get("cloudflare/status")
+  cloudflareStatus(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cloudflareOauth.getStatus(tenantId, user.id);
+  }
+
+  @RequirePermissions("domain.create")
+  @Post("cloudflare/authorize")
+  cloudflareAuthorize(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cloudflareOauth.startAuthorization(tenantId, user);
+  }
+
+  @RequirePermissions("domain.create")
+  @Get("cloudflare/zones")
+  cloudflareZones(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cloudflareOauth.listZones(tenantId, user.id);
+  }
+
+  @RequirePermissions("domain.create")
+  @Post("cloudflare/custom-root-domains")
+  createCloudflareCustomRootDomain(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: CreateCloudflareCustomRootDomainDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.domainsService.createCloudflareCustomRootDomain(tenantId, dto, user);
+  }
+
+  @RequirePermissions("domain.create")
+  @Delete("cloudflare/connection")
+  disconnectCloudflare(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.cloudflareOauth.disconnect(tenantId, user.id);
   }
 
   @RequirePermissions("domain.read")

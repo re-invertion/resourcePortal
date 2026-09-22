@@ -8,6 +8,7 @@ import {
 import { vi, afterEach, describe, expect, it } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { ManagedDnsService } from "../platform-dns/managed-dns.service";
+import type { CloudflareTenantOauthService } from "../platform-dns/cloudflare-tenant-oauth.service";
 
 vi.mock("node:dns/promises", () => ({
   resolveTxt: vi.fn(),
@@ -107,6 +108,13 @@ type DomainCreateCall = {
 };
 type DomainUpdateCall = {
   data: Record<string, unknown>;
+};
+type CustomRootCreateCall = {
+  data: {
+    rootDomain: string;
+    verificationMethod: string;
+    verificationToken: string;
+  };
 };
 
 function domainServiceFor(input: {
@@ -334,5 +342,51 @@ describe("DomainsService managed Cloudflare DNS lifecycle", () => {
     expect(managedDns.managedDomainExists).toHaveBeenCalledWith(
       "app.apps.resource-portal.local",
     );
+  });
+});
+
+
+describe("DomainsService tenant Cloudflare root-domain verification", () => {
+  it("creates a verification TXT through the authorized account and marks the root verified", async () => {
+    const created = root({
+      verificationMethod: "CLOUDFLARE_OAUTH",
+      verificationToken: "rp-domain-verification=generated",
+    });
+    const customRootDomain = {
+      create: vi.fn().mockResolvedValue(created),
+      update: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ ...created, ...data, domains: [] }),
+      ),
+    };
+    const prisma = { customRootDomain };
+    const config = { get: vi.fn((_key: string, defaultValue: unknown) => defaultValue) };
+    const cloudflare = { ensureVerificationTxt: vi.fn().mockResolvedValue({ created: true }) };
+    const service = new DomainsService(
+      prisma as unknown as PrismaService,
+      config as unknown as ConfigService,
+      undefined,
+      cloudflare as unknown as CloudflareTenantOauthService,
+    );
+
+    const result = await service.createCloudflareCustomRootDomain(
+      created.tenantId,
+      { zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", rootDomain: "Example.COM" },
+      actor,
+    );
+
+    const createCall = customRootDomain.create.mock.calls[0]?.[0] as CustomRootCreateCall;
+    const createData = createCall.data;
+    expect(createData.rootDomain).toBe("example.com");
+    expect(createData.verificationMethod).toBe("CLOUDFLARE_OAUTH");
+    expect(String(createData.verificationToken)).toMatch(/^rp-domain-verification=[a-f0-9]{48}$/);
+    expect(cloudflare.ensureVerificationTxt).toHaveBeenCalledWith({
+      tenantId: created.tenantId,
+      userId: actor.id,
+      zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      rootDomain: "example.com",
+      verificationToken: createData.verificationToken,
+    });
+    expect(result.verificationStatus).toBe(CustomRootDomainVerificationStatus.Verified);
+    expect(result.verifiedAt).toBeInstanceOf(Date);
   });
 });
