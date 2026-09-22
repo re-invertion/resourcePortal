@@ -89,8 +89,9 @@ export class AuthFlowService {
     }
 
     const tokenResponse = await this.exchangeCode(code, codeVerifier);
-    const user = await this.oidcAuth.authenticateBearerToken(
+    const user = await this.oidcAuth.authenticateBrowserTokens(
       tokenResponse.id_token,
+      tokenResponse.access_token,
       identityProviderId,
     );
     if (user.status !== UserStatus.Active) {

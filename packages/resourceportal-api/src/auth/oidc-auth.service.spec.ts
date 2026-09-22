@@ -156,6 +156,79 @@ describe("OidcAuthService", () => {
     });
   });
 
+  it("uses UserInfo for browser login when the verified ID token omits email", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = {
+      userIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+      user: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "user-1",
+          email: "patryk@example.test",
+          displayName: "Patryk",
+          status: UserStatus.Active,
+        }),
+      },
+    };
+    const fetchMock = installOidcFetch(fixture, {
+      sub: fixture.subject,
+      email: "patryk@example.test",
+      email_verified: true,
+      name: "Patryk",
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+        OIDC_PROVIDER_TYPE: "zitadel",
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    const user = await service.authenticateBrowserTokens(
+      fixture.token,
+      "browser-access-token",
+    );
+
+    expect(user).toMatchObject({
+      email: "patryk@example.test",
+      displayName: "Patryk",
+      status: UserStatus.Active,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      fixture.issuer + "/oidc/v1/userinfo",
+      expect.objectContaining({
+        headers: { authorization: "Bearer browser-access-token" },
+      }),
+    );
+  });
+
+  it("rejects browser UserInfo when its subject does not match the verified ID token", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const fetchMock = installOidcFetch(fixture, {
+      sub: "different-subject",
+      email: "patryk@example.test",
+      email_verified: true,
+    });
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+      }),
+      {} as PrismaService,
+    );
+
+    await expect(
+      service.authenticateBrowserTokens(fixture.token, "browser-access-token"),
+    ).rejects.toThrow("OIDC UserInfo subject mismatch");
+    expect(fetchMock).toHaveBeenCalledWith(
+      fixture.issuer + "/oidc/v1/userinfo",
+      expect.objectContaining({
+        headers: { authorization: "Bearer browser-access-token" },
+      }),
+    );
+  });
+
   it("uses UserInfo when a verified human access token omits email", async () => {
     const fixture = await createTokenFixture(true, false);
     const prisma = {

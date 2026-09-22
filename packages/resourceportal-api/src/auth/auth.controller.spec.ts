@@ -92,7 +92,7 @@ describe("AuthController cookie flow", () => {
   let app: NestFastifyApplication;
   let configValues: ConfigValues;
   let oidcAuth: {
-    authenticateBearerToken: ReturnType<typeof vi.fn>;
+    authenticateBrowserTokens: ReturnType<typeof vi.fn>;
     getDiscovery: ReturnType<typeof vi.fn>;
   };
   let prisma: {
@@ -138,7 +138,7 @@ describe("AuthController cookie flow", () => {
         jwksUri: `${issuer}/oauth/v2/keys`,
         tokenEndpoint: `${issuer}/oauth/v2/token`,
       }),
-      authenticateBearerToken: vi.fn().mockResolvedValue(user),
+      authenticateBrowserTokens: vi.fn().mockResolvedValue(user),
     };
     prisma = {
       auditLogEntry: {
@@ -465,8 +465,9 @@ describe("AuthController cookie flow", () => {
     });
 
     expect(callbackResponse.statusCode).toBe(302);
-    expect(oidcAuth.authenticateBearerToken).toHaveBeenCalledWith(
+    expect(oidcAuth.authenticateBrowserTokens).toHaveBeenCalledWith(
       "id-token",
+      "access-token",
       identityProviderId,
     );
   });
@@ -497,7 +498,7 @@ describe("AuthController cookie flow", () => {
       .getInstance()
       .signCookie("session-1");
 
-    oidcAuth.authenticateBearerToken.mockRejectedValueOnce(
+    oidcAuth.authenticateBrowserTokens.mockRejectedValueOnce(
       new UnauthorizedException("OIDC email claim is required"),
     );
 

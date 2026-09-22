@@ -27,7 +27,7 @@ function createService(userStatus = UserStatus.Active) {
       jwksUri: "https://issuer.example.com/oauth/v2/keys",
       tokenEndpoint: "https://issuer.example.com/oauth/v2/token",
     }),
-    authenticateBearerToken: vi.fn().mockResolvedValue({
+    authenticateBrowserTokens: vi.fn().mockResolvedValue({
       id: "user-1",
       email: "user@example.com",
       displayName: "Example User",
