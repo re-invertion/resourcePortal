@@ -48,6 +48,7 @@ rp_run_diagnostics() {
   fi
   [[ -n "${RP_CFG_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ResourcePortal HTTPS' rp_validate_https_origin "$RP_CFG_DOMAIN"
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ZITADEL HTTPS certificate' rp_validate_https_certificate "$RP_CFG_ZITADEL_DOMAIN"
+  [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ZITADEL MCP DCR discovery' rp_zitadel_mcp_dcr_advertised
   [[ -n "${RP_CFG_RELEASE_VERSION:-}" ]] && rp_diagnostic_line 'installed release' "$RP_CFG_RELEASE_VERSION"
   [[ -n "${RP_CFG_API_IMAGE:-}" ]] && rp_diagnostic_line 'API image' "$RP_CFG_API_IMAGE"
   [[ -n "${RP_CFG_WEB_IMAGE:-}" ]] && rp_diagnostic_line 'Web image' "$RP_CFG_WEB_IMAGE"

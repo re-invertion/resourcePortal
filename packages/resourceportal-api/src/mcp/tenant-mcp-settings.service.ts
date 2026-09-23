@@ -135,6 +135,16 @@ export class TenantMcpSettingsService {
     return this.getSettings(tenantId);
   }
 
+  async assertMcpEnabled(tenantId: string) {
+    const settings = await this.prisma.tenantMcpSettings.findUnique({
+      where: { tenantId },
+      select: { enabled: true },
+    });
+    if (!settings?.enabled) {
+      throw new ForbiddenException("Tenant MCP is disabled");
+    }
+  }
+
   async assertUserCanUseMcp(tenantId: string, userId: string) {
     const settings = await this.prisma.tenantMcpSettings.findUnique({
       where: { tenantId },
@@ -240,6 +250,7 @@ export class TenantMcpSettingsService {
       "openid",
       "profile",
       "email",
+      "offline_access",
       ...(projectId ? [`urn:zitadel:iam:org:project:id:${projectId}:aud`] : []),
       ...(organizationId ? [`urn:zitadel:iam:org:id:${organizationId}`] : []),
     ];
@@ -251,6 +262,9 @@ export class TenantMcpSettingsService {
         scopes,
         discoveryAvailable: true,
         dynamicClientRegistrationAvailable: Boolean(discovery.registrationEndpoint),
+        openAiReady: Boolean(discovery.registrationEndpoint),
+        transport: "Streamable HTTP",
+        protocol: "MCP 2026-07-28 with 2025-era compatibility",
       };
     } catch {
       return {
@@ -258,6 +272,9 @@ export class TenantMcpSettingsService {
         scopes,
         discoveryAvailable: false,
         dynamicClientRegistrationAvailable: false,
+        openAiReady: false,
+        transport: "Streamable HTTP",
+        protocol: "MCP 2026-07-28 with 2025-era compatibility",
       };
     }
   }

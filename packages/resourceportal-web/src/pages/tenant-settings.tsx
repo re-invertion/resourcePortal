@@ -6,7 +6,6 @@ import {
   Card,
   Checkbox,
   Field,
-  LinkButton,
   LockIcon,
   PageHeader,
   Select,
@@ -28,6 +27,9 @@ type McpSettings = {
     scopes?: string[];
     discoveryAvailable?: boolean;
     dynamicClientRegistrationAvailable?: boolean;
+    openAiReady?: boolean;
+    transport?: string;
+    protocol?: string;
   };
 };
 
@@ -126,7 +128,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><SettingsIcon size={18} /></span>
           <div>
             <h2 className="font-semibold">Model Context Protocol (MCP)</h2>
-            <p className="mt-1 text-sm text-[#5B6678]">Expose this tenant to compatible MCP clients using ResourcePortal OAuth authentication and the tenant's existing RBAC.</p>
+            <p className="mt-1 text-sm text-[#5B6678]">Standards-compliant Streamable HTTP MCP for OpenAI/ChatGPT and other MCP clients, using ResourcePortal OAuth and the tenant's existing RBAC.</p>
           </div>
         </div>
 
@@ -191,7 +193,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
       </Card>
 
       <Card className="mt-6 overflow-hidden">
-        <div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">MCP connection</h2><p className="mt-1 text-sm text-[#5B6678]">Use these values in a compatible MCP client after MCP is enabled.</p></div>
+        <div className="border-b border-[#E1E7F0] px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">MCP connection</h2><p className="mt-1 text-sm text-[#5B6678]">Enable MCP, then paste the server URL into OpenAI/ChatGPT or another MCP host. OAuth registration and account linking are discovered automatically.</p></div>{oauth?.openAiReady ? <StatusText tone="success">OpenAI / ChatGPT ready</StatusText> : <StatusText tone="warning">OAuth setup incomplete</StatusText>}</div></div>
         <div className="grid gap-4 p-5 lg:grid-cols-2">
           <div><p className="text-xs font-medium text-[#718096]">MCP server URL</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code></div>
           <div><p className="text-xs font-medium text-[#718096]">OAuth protected-resource metadata</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{metadataUrl}</code></div>
@@ -200,9 +202,8 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           <div className="lg:col-span-2"><p className="text-xs font-medium text-[#718096]">Required/requested scopes</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{oauth?.scopes?.join(" ") || "Unavailable"}</code></div>
         </div>
         <div className="space-y-3 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5">
-          <Callout title="OAuth is required">Production MCP accepts OAuth bearer tokens issued by the same ResourcePortal identity system used for login. Browser session cookies and service identities are not accepted for tenant MCP access.</Callout>
-          {!oauth?.dynamicClientRegistrationAvailable ? <Callout tone="warning" title="Automatic OAuth client registration is not advertised">Some MCP clients require Dynamic Client Registration. ResourcePortal does not enable it globally from tenant settings. If your MCP client supports a preconfigured client ID, create a tenant OAuth application with the redirect URI required by that client. Otherwise ask the platform operator to review DCR before enabling it globally.</Callout> : <Callout tone="success" title="Dynamic Client Registration is advertised by the OAuth server">Compatible clients can discover OAuth registration support. ResourcePortal still validates issuer, audience and tenant membership on every request.</Callout>}
-          <div><LinkButton href={`/tenants/${encodeURIComponent(tenantId)}/credentials`}>Open OAuth applications</LinkButton></div>
+          <Callout title="Automatic OpenAI account linking">OpenAI can discover the protected-resource metadata, OAuth issuer and required scopes directly from this MCP URL. When a protected tool is invoked, ResourcePortal returns the standard MCP OAuth challenge and OpenAI starts account linking automatically.</Callout>
+          {!oauth?.dynamicClientRegistrationAvailable ? <Callout tone="warning" title="Platform OAuth bootstrap is incomplete">The identity server is not advertising Dynamic Client Registration, so zero-configuration OpenAI linking is not ready. The platform operator should run a v0.2.10+ installer repair/upgrade; tenant users should not create a manual OAuth client.</Callout> : <Callout tone="success" title="No Client ID or secret required">ResourcePortal automatically prepares ZITADEL Dynamic Client Registration for MCP. OpenAI/ChatGPT can register its OAuth client, request ResourcePortal scopes, and complete user sign-in without tenant-side OAuth application setup.</Callout>}
         </div>
       </Card>
     </main>

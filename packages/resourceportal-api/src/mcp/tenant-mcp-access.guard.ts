@@ -23,19 +23,33 @@ export class TenantMcpAccessGuard implements CanActivate {
     const tenantId = (request.params as { tenantId?: string }).tenantId;
     if (!tenantId) throw new ForbiddenException("Tenant MCP requires a tenant context");
 
+    await this.settings.assertMcpEnabled(tenantId);
+
     const authMode = this.config.get<string>("AUTH_MODE", "dev").toLowerCase();
     const bearer = this.extractBearerToken(request.headers.authorization);
-    if (authMode !== "dev" && !bearer) {
-      applyMcpBearerChallenge(request, reply, tenantId);
-      throw new UnauthorizedException("MCP requires an OAuth bearer token");
+    const devUserIdHeader = request.headers["x-dev-user-id"];
+    const devUserId = Array.isArray(devUserIdHeader)
+      ? devUserIdHeader[0]
+      : devUserIdHeader;
+    const hasInteractiveCredential =
+      Boolean(bearer) || (authMode === "dev" && Boolean(devUserId));
+
+    if (!hasInteractiveCredential) {
+      // Standard MCP discovery/tool listing must remain reachable before OAuth
+      // account linking. Protected tools return an MCP auth challenge at call time.
+      return true;
     }
 
     if (request.serviceIdentity) {
-      throw new ForbiddenException("MCP user access requires an interactive Resource Portal user");
+      throw new ForbiddenException(
+        "MCP user access requires an interactive Resource Portal user",
+      );
     }
     if (!request.user) {
       applyMcpBearerChallenge(request, reply, tenantId);
-      throw new UnauthorizedException("Authenticated Resource Portal user is required");
+      throw new UnauthorizedException(
+        "Authenticated Resource Portal user is required",
+      );
     }
 
     await this.settings.assertUserCanUseMcp(tenantId, request.user.id);

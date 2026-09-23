@@ -33,6 +33,10 @@ contains "$bootstrap_source" 'cliClientId: cliApp.clientId' 'production bootstra
 contains "$bootstrap_source" '["cli-client-id", cliApp.clientId]' 'production bootstrap emits CLI client id sidecar'
 not_contains "$bootstrap_source" 'cliClientSecret' 'production bootstrap never emits a CLI client secret'
 contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_CLI_ONLY' 'bootstrap supports CLI-only reconciliation for upgrades'
+contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY' 'bootstrap supports MCP OAuth-only reconciliation for upgrades'
+contains "$bootstrap_source" '"/v2/settings/security"' 'bootstrap configures ZITADEL security settings for MCP OAuth'
+contains "$bootstrap_source" 'dynamicClientRegistration:' 'bootstrap configures Dynamic Client Registration'
+contains "$bootstrap_source" 'allowUnauthenticated: true' 'bootstrap enables unauthenticated DCR required for automatic MCP client registration'
 
 secret_fixture="$(mktemp /tmp/rp-zitadel-management-secret.XXXXXX)"
 printf 'management-token-material' >"$secret_fixture"
@@ -200,6 +204,8 @@ upgrade_preserves_management_state() (
   export RP_CFG_DOMAIN RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }
+  rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth:%s
+' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_run_migrations(){ return 0; }
   rp_deploy_control_plane(){ [[ "$1" == final ]] && printf 'deploy:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_wait_for_https_origin(){ return 0; }
@@ -209,6 +215,7 @@ upgrade_preserves_management_state() (
   rp_write_stack(){ printf 'stack:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_upgrade_apply "$manifest" "$previous"
   text="$(cat "$log")"
+  [[ "$text" == *'mcp-oauth:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'deploy:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'enrollment:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'config:org-upgrade:project-upgrade:rp_zitadel_management_token_upgrade42'* ]]

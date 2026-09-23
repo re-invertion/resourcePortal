@@ -273,6 +273,53 @@ describe("OidcAuthService", () => {
     );
   });
 
+  it("accepts an MCP token carrying the ResourcePortal project audience", async () => {
+    const fixture = await createTokenFixture(true, false);
+    const prisma = {
+      serviceIdentity: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "service-1",
+          tenantId: "tenant-1",
+          name: "mcp-test",
+          status: "Active",
+          zitadelUserId: fixture.subject,
+          clientId: "rp-si-service-1",
+        }),
+      },
+    };
+    installOidcFetch(fixture);
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+        ZITADEL_PROJECT_ID: fixture.audience,
+      }),
+      prisma as unknown as PrismaService,
+    );
+
+    await expect(service.authenticateMcpPrincipalToken(fixture.token)).resolves.toMatchObject({
+      type: "ServiceIdentity",
+      serviceIdentity: { id: "service-1" },
+    });
+  });
+
+  it("rejects an MCP token that lacks the ResourcePortal project audience", async () => {
+    const fixture = await createTokenFixture();
+    installOidcFetch(fixture);
+    const service = new OidcAuthService(
+      createConfig({
+        OIDC_ISSUER_URL: fixture.issuer,
+        OIDC_CLIENT_ID: fixture.audience,
+        ZITADEL_PROJECT_ID: "zitadel-project-1",
+      }),
+      {} as PrismaService,
+    );
+
+    await expect(service.authenticateMcpPrincipalToken(fixture.token)).rejects.toThrow(
+      "MCP bearer token is missing the ResourcePortal project audience",
+    );
+  });
+
   it("rejects UserInfo subject mismatch", async () => {
     const fixture = await createTokenFixture(true, false);
     const prisma = {

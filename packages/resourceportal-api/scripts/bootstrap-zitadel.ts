@@ -37,6 +37,10 @@ const bootstrapMode = process.env.ZITADEL_BOOTSTRAP_MODE ?? "development";
 const productionBootstrap = bootstrapMode === "production";
 const bootstrapOutputFile = process.env.ZITADEL_BOOTSTRAP_OUTPUT_FILE;
 const cliOnlyBootstrap = process.env.ZITADEL_BOOTSTRAP_CLI_ONLY === "true";
+const mcpOauthOnlyBootstrap =
+  process.env.ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY === "true";
+const mcpDynamicClientRegistrationEnabled =
+  process.env.ZITADEL_BOOTSTRAP_MCP_DCR_ENABLED?.trim().toLowerCase() !== "false";
 
 loadDotEnv();
 
@@ -82,12 +86,18 @@ async function main() {
   await waitForZitadel();
 
   const pat = readPat();
+  if (mcpOauthOnlyBootstrap) {
+    await configureMcpDynamicClientRegistration(pat);
+    console.log("ZITADEL MCP OAuth reconciliation completed");
+    return;
+  }
   if (cliOnlyBootstrap) {
     await runCliOnlyBootstrap(pat);
     return;
   }
   if (productionBootstrap) {
     await configureProductionLoginVersion(pat);
+    await configureMcpDynamicClientRegistration(pat);
   }
   const organization = await getOrCreateOrganization(pat);
   const project = await getOrCreateProject(pat, organization.id);
@@ -207,6 +217,25 @@ async function configureProductionLoginVersion(pat: string) {
     pat,
     "/v2/features/instance",
     { loginV2: { required: false } },
+    undefined,
+    "PUT",
+  );
+}
+
+async function configureMcpDynamicClientRegistration(pat: string) {
+  if (!mcpDynamicClientRegistrationEnabled) {
+    return;
+  }
+
+  await zitadelApi(
+    pat,
+    "/v2/settings/security",
+    {
+      dynamicClientRegistration: {
+        enabled: true,
+        allowUnauthenticated: true,
+      },
+    },
     undefined,
     "PUT",
   );
