@@ -10,6 +10,7 @@ rp_reconfigure_action_valid() {
 rp_reconfigure_domain() {
   local old_domain="${RP_CFG_DOMAIN:-}" old_zitadel="${RP_CFG_ZITADEL_DOMAIN:-}" old_email="${RP_CFG_ACME_EMAIL:-}" old_ingress="${RP_CFG_INGRESS_ADDRESSES:-}"
   local old_legacy_domain="${RP_CFG_LEGACY_DOMAIN:-}" old_legacy_zitadel="${RP_CFG_LEGACY_ZITADEL_DOMAIN:-}"
+  local old_zitadel_public_config_ref="${RP_CFG_ZITADEL_PUBLIC_CONFIG_REF:-}" oidc_reconciled=false
   RP_CFG_DOMAIN="$(rp_ui_input 'Reconfigure domain' 'ResourcePortal hostname' "$old_domain")" || return 1
   RP_CFG_ZITADEL_DOMAIN="$(rp_ui_input 'Reconfigure domain' 'ZITADEL hostname' "${old_zitadel:-auth.$RP_CFG_DOMAIN}")" || return 1
   RP_CFG_ACME_EMAIL="$(rp_ui_input 'Reconfigure domain' 'ACME contact email' "$old_email")" || return 1
@@ -21,14 +22,23 @@ rp_reconfigure_domain() {
     RP_CFG_LEGACY_ZITADEL_DOMAIN="$old_zitadel"
   fi
   export RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL RP_CFG_INGRESS_ADDRESSES RP_CFG_LEGACY_DOMAIN RP_CFG_LEGACY_ZITADEL_DOMAIN
-  if rp_primary_enable_ingress && rp_primary_deploy_final; then
-    rp_primary_persist
-    return 0
+
+  if rp_primary_enable_ingress && rp_run_zitadel_web_oidc_reconcile; then
+    oidc_reconciled=true
+    if rp_primary_deploy_final; then
+      rp_primary_persist
+      return 0
+    fi
   fi
+
   RP_CFG_DOMAIN="$old_domain"; RP_CFG_ZITADEL_DOMAIN="$old_zitadel"; RP_CFG_ACME_EMAIL="$old_email"; RP_CFG_INGRESS_ADDRESSES="$old_ingress"
   RP_CFG_LEGACY_DOMAIN="$old_legacy_domain"; RP_CFG_LEGACY_ZITADEL_DOMAIN="$old_legacy_zitadel"
-  export RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL RP_CFG_INGRESS_ADDRESSES RP_CFG_LEGACY_DOMAIN RP_CFG_LEGACY_ZITADEL_DOMAIN
-  rp_deploy_control_plane final >/dev/null 2>&1 || true
+  RP_CFG_ZITADEL_PUBLIC_CONFIG_REF="$old_zitadel_public_config_ref"
+  export RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL RP_CFG_INGRESS_ADDRESSES RP_CFG_LEGACY_DOMAIN RP_CFG_LEGACY_ZITADEL_DOMAIN RP_CFG_ZITADEL_PUBLIC_CONFIG_REF
+
+  if rp_deploy_control_plane final >/dev/null 2>&1 && [[ "$oidc_reconciled" == true ]]; then
+    rp_run_zitadel_web_oidc_reconcile >/dev/null 2>&1 || true
+  fi
   return 1
 }
 

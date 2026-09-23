@@ -82,6 +82,60 @@ rp_upgrade_ensure_v020_node_labels() {
   done < <(docker node ls -q)
 }
 
+rp_upgrade_wait_service_image() {
+  local service_name="$1" expected_image="$2" timeout="${3:-300}"
+  local elapsed=0 running current_image
+
+  while (( elapsed < timeout )); do
+    current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true)"
+    running="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service_name" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"
+    if [[ "$current_image" == "$expected_image" && "$running" == 1 ]]; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  docker service ps --no-trunc "$service_name" >&2 || true
+  return 1
+}
+
+rp_upgrade_update_service_image() {
+  local service_name="$1" image="$2" description="$3"
+  local timeout="${RP_UPGRADE_SERVICE_TIMEOUT_SECONDS:-300}" current_image
+
+  current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)" || return 1
+  if [[ "$current_image" == "$image" ]]; then
+    return 0
+  fi
+
+  printf 'Updating %s: %s\n' "$description" "$image" >&2
+  docker service update --detach=false --image "$image" --with-registry-auth "$service_name" >/dev/null || return 1
+  rp_upgrade_wait_service_image "$service_name" "$image" "$timeout" || {
+    printf '%s did not converge after image update.\n' "$description" >&2
+    return 1
+  }
+}
+
+rp_upgrade_prepare_postgres_services() {
+  local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
+  local target_image="${RP_CFG_POSTGRES_IMAGE:-}" service
+
+  rp_validate_image_ref "$target_image" || {
+    printf 'Target PostgreSQL image must be pinned by sha256 digest before upgrade rollout.\n' >&2
+    return 1
+  }
+
+  # Pre-roll the databases before the final stack deploy. This keeps the API,
+  # Worker and ZITADEL rollout from racing a simultaneous PostgreSQL restart.
+  for service in postgres-rp postgres-zitadel; do
+    rp_upgrade_update_service_image \
+      "${stack_name}_${service}" \
+      "$target_image" \
+      "${service} database" || return 1
+  done
+}
+
 rp_upgrade_zitadel_migration_bridge_image() {
   # v4.15.1 records migration 64_change_push_position against
   # eventstore.command[] before v4.17 introduces eventstore.command2 in
@@ -169,13 +223,14 @@ rp_upgrade_refresh_enrollment_listener() {
 }
 
 rp_upgrade_apply() {
-  local manifest="$1" previous_stack="$2"
+  local manifest="$1" previous_stack="$2" canonical_manifest
   local source_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
   [[ -r "$previous_stack" ]] || return 1
   rp_config_apply_defaults || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
+  rp_upgrade_prepare_postgres_services || return 1
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || return 1
   rp_run_zitadel_mcp_oauth_reconcile || return 1
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
@@ -194,8 +249,9 @@ rp_upgrade_apply() {
     printf 'Upgrade core services are healthy, but the enrollment listener could not be refreshed to the target release.\n' >&2
     return 1
   fi
-  RP_CFG_RELEASE_VERSION="$(rp_manifest_value "$manifest" '.version')"
-  RP_CFG_RELEASE_MANIFEST="$manifest"
+  canonical_manifest="$(rp_persist_release_manifest "$manifest")" || return 1
+  RP_CFG_RELEASE_VERSION="$(rp_manifest_value "$canonical_manifest" '.version')"
+  RP_CFG_RELEASE_MANIFEST="$canonical_manifest"
   export RP_CFG_RELEASE_VERSION RP_CFG_RELEASE_MANIFEST
   rp_config_write /etc/resourceportal/installer.conf
   rp_write_stack final /etc/resourceportal/stack.yml

@@ -31,6 +31,7 @@ import { mirrorDeploymentOperation } from "../operations/deployment-operation-ad
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
+import { isSensitiveEnvironmentName, protectSensitiveEnvironment, protectSensitiveValue } from "../security/sensitive-environment";
 import { VolumeReadService } from "../volumes/volume-read.service";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
@@ -2600,6 +2601,20 @@ export class AppGroupsService {
       throw new ConflictException("AppGroup has no active SingleApps");
     }
 
+    const sensitivePlainConfig = activeSingleApps.flatMap((singleApp) => [
+      ...Object.keys(this.jsonObjectToRecord(singleApp.environment))
+        .filter((name) => isSensitiveEnvironmentName(name))
+        .map((name) => `${singleApp.name}:${name}`),
+      ...singleApp.variableAttachments
+        .filter((attachment) => isSensitiveEnvironmentName(attachment.targetName))
+        .map((attachment) => `${singleApp.name}:${attachment.targetName}`),
+    ]);
+    if (sensitivePlainConfig.length > 0) {
+      throw new ConflictException(
+        `Sensitive runtime values must use ResourcePortal Secrets instead of environment/Variables: ${sensitivePlainConfig.join(", ")}`,
+      );
+    }
+
     const invalidEndpoints = activeSingleApps.flatMap((singleApp) =>
       singleApp.httpEndpoints.filter(
         (endpoint) =>
@@ -2656,13 +2671,13 @@ export class AppGroupsService {
             memoryBytes: singleApp.memoryBytes.toString(),
             gpu: singleApp.gpu,
           },
-          environment: this.jsonObjectToRecord(singleApp.environment),
+          environment: protectSensitiveEnvironment(this.jsonObjectToRecord(singleApp.environment), this.encryption),
           variables: singleApp.variableAttachments.map((attachment) => ({
             id: attachment.id,
             variableId: attachment.variableId,
             variableName: attachment.variable.name,
             targetName: attachment.targetName,
-            value: attachment.variable.value,
+            value: protectSensitiveValue(attachment.targetName, attachment.variable.value, this.encryption),
           })),
           secrets: [
             ...singleApp.secretAttachments.map((attachment) => ({

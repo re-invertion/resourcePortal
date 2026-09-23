@@ -1,4 +1,9 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { isZitadelNoChangesResponse } from "./zitadel-api-response";
+import {
+  bootstrapWebOidcConfig,
+  selectBootstrapWebOidcApp,
+} from "./zitadel-web-oidc";
 
 type JsonObject = Record<string, unknown>;
 
@@ -39,8 +44,11 @@ const bootstrapOutputFile = process.env.ZITADEL_BOOTSTRAP_OUTPUT_FILE;
 const cliOnlyBootstrap = process.env.ZITADEL_BOOTSTRAP_CLI_ONLY === "true";
 const mcpOauthOnlyBootstrap =
   process.env.ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY === "true";
+const webOidcOnlyBootstrap =
+  process.env.ZITADEL_BOOTSTRAP_WEB_OIDC_ONLY === "true";
 const mcpDynamicClientRegistrationEnabled =
-  process.env.ZITADEL_BOOTSTRAP_MCP_DCR_ENABLED?.trim().toLowerCase() !== "false";
+  process.env.ZITADEL_BOOTSTRAP_MCP_DCR_ENABLED?.trim().toLowerCase() !==
+  "false";
 
 loadDotEnv();
 
@@ -57,8 +65,7 @@ const organizationName =
   process.env.ZITADEL_BOOTSTRAP_ORGANIZATION_NAME ?? "Resource Portal";
 const projectName =
   process.env.ZITADEL_BOOTSTRAP_PROJECT_NAME ?? "Resource Portal";
-const appName =
-  process.env.ZITADEL_BOOTSTRAP_APP_NAME ?? "Resource Portal Web";
+const appName = process.env.ZITADEL_BOOTSTRAP_APP_NAME ?? "Resource Portal Web";
 const cliAppName = "Resource Portal CLI";
 const redirectUris = listEnv(
   "ZITADEL_BOOTSTRAP_REDIRECT_URIS",
@@ -79,13 +86,20 @@ const bootstrapUserEmail = (
 ).toLowerCase();
 const bootstrapUserPassword =
   process.env.ZITADEL_BOOTSTRAP_ADMIN_PASSWORD ??
-  readOptionalFile(process.env.ZITADEL_BOOTSTRAP_ADMIN_PASSWORD_FILE ?? "")?.trim() ??
+  readOptionalFile(
+    process.env.ZITADEL_BOOTSTRAP_ADMIN_PASSWORD_FILE ?? "",
+  )?.trim() ??
   process.env.ZITADEL_BOOTSTRAP_TEST_USER_PASSWORD;
 
 async function main() {
   await waitForZitadel();
 
   const pat = readPat();
+  if (webOidcOnlyBootstrap) {
+    await reconcileWebOidcApp(pat);
+    console.log("ZITADEL Web OIDC reconciliation completed");
+    return;
+  }
   if (mcpOauthOnlyBootstrap) {
     await configureMcpDynamicClientRegistration(pat);
     console.log("ZITADEL MCP OAuth reconciliation completed");
@@ -107,7 +121,9 @@ async function main() {
 
   if (productionBootstrap) {
     if (!bootstrapOutputFile) {
-      throw new Error("ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in production bootstrap mode");
+      throw new Error(
+        "ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in production bootstrap mode",
+      );
     }
     writeFileSync(
       bootstrapOutputFile,
@@ -157,7 +173,9 @@ async function main() {
 
 async function runCliOnlyBootstrap(pat: string) {
   if (!bootstrapOutputFile) {
-    throw new Error("ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in CLI-only bootstrap mode");
+    throw new Error(
+      "ZITADEL_BOOTSTRAP_OUTPUT_FILE is required in CLI-only bootstrap mode",
+    );
   }
   const organizationId = process.env.ZITADEL_ORGANIZATION_ID?.trim();
   const projectId = process.env.ZITADEL_PROJECT_ID?.trim();
@@ -282,7 +300,9 @@ async function getOrCreateProject(pat: string, organizationId: string) {
     {},
     organizationId,
   );
-  const existing = projects.result?.find((project) => project.name === projectName);
+  const existing = projects.result?.find(
+    (project) => project.name === projectName,
+  );
 
   if (existing) {
     return existing;
@@ -301,6 +321,41 @@ async function getOrCreateProject(pat: string, organizationId: string) {
     id: created.id,
     name: projectName,
   };
+}
+
+async function reconcileWebOidcApp(pat: string) {
+  const organizationId = process.env.ZITADEL_ORGANIZATION_ID?.trim();
+  const projectId = process.env.ZITADEL_PROJECT_ID?.trim();
+  const expectedClientId = process.env.OIDC_CLIENT_ID?.trim();
+  if (!organizationId || !projectId || !expectedClientId) {
+    throw new Error(
+      "ZITADEL_ORGANIZATION_ID, ZITADEL_PROJECT_ID and OIDC_CLIENT_ID are required for Web OIDC reconciliation",
+    );
+  }
+
+  const apps = await zitadelApi<{ result?: App[] }>(
+    pat,
+    `/management/v1/projects/${projectId}/apps/_search`,
+    {},
+    organizationId,
+  );
+  const existing = selectBootstrapWebOidcApp(
+    apps.result ?? [],
+    expectedClientId,
+  );
+  if (!existing?.id) {
+    throw new Error(
+      `Existing ZITADEL Web OIDC application was not found for client ${expectedClientId}`,
+    );
+  }
+
+  await zitadelApi(
+    pat,
+    `/management/v1/projects/${projectId}/apps/${encodeURIComponent(existing.id)}/oidc_config`,
+    bootstrapWebOidcConfig(redirectUris, postLogoutRedirectUris, true),
+    organizationId,
+    "PUT",
+  );
 }
 
 async function getOrCreateOidcApp(
@@ -337,16 +392,11 @@ async function getOrCreateOidcApp(
     `/management/v1/projects/${projectId}/apps/oidc`,
     {
       name: appName,
-      redirectUris,
-      responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-      grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
-      appType: "OIDC_APP_TYPE_WEB",
-      authMethodType: "OIDC_AUTH_METHOD_TYPE_BASIC",
-      postLogoutRedirectUris,
-      version: "OIDC_VERSION_1_0",
-      devMode: !productionBootstrap,
-      accessTokenType: "OIDC_TOKEN_TYPE_JWT",
-      idTokenUserinfoAssertion: true,
+      ...bootstrapWebOidcConfig(
+        redirectUris,
+        postLogoutRedirectUris,
+        productionBootstrap,
+      ),
       loginVersion: { loginV1: {} },
     },
     organizationId,
@@ -492,6 +542,12 @@ async function zitadelApi<T>(
   const payload = text ? (JSON.parse(text) as unknown) : {};
 
   if (!response.ok) {
+    if (
+      method === "PUT" &&
+      isZitadelNoChangesResponse(response.status, payload)
+    ) {
+      return payload as T;
+    }
     throw new Error(
       `ZITADEL API ${path} failed with ${response.status}: ${JSON.stringify(
         payload,
@@ -514,7 +570,8 @@ function zitadelHostHeaders(): Record<string, string> {
 }
 
 function updateDotEnv(values: Record<string, string>) {
-  const path = envFilePaths.find((candidate) => existsSync(candidate)) ?? ".env";
+  const path =
+    envFilePaths.find((candidate) => existsSync(candidate)) ?? ".env";
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
   const seen = new Set<string>();
   const lines = existing.split("\n").map((line) => {
@@ -534,7 +591,10 @@ function updateDotEnv(values: Record<string, string>) {
     }
   }
 
-  writeFileSync(path, `${lines.filter((line) => line.length > 0).join("\n")}\n`);
+  writeFileSync(
+    path,
+    `${lines.filter((line) => line.length > 0).join("\n")}\n`,
+  );
 }
 
 function loadDotEnv() {

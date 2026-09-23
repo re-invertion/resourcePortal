@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AppShell } from "./shell";
+import { AppShell, tenantSearchResultToItem } from "./shell";
 import type { AppRoute } from "../router/router";
 
 const user = { id: "u1", displayName: "Patryk", email: "patryk@example.test" };
@@ -52,32 +52,45 @@ describe("AppShell", () => {
   });
 
 
-  it("searches navigation and live tenant resources as the user types", async () => {
+  it("searches tenant resources through one backend request", async () => {
     const json = (value: unknown) => Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }));
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
-      if (path === "/api/tenants/tenant-1/app-groups") return json([{ id: "ag1", name: "demo-stack", description: "Demo workspace" }]);
-      if (path === "/api/tenants/tenant-1/app-groups/ag1/single-apps") return json([{ id: "app1", name: "checkout-api", image: "ghcr.io/acme/checkout:1" }]);
-      if (path === "/api/tenants/tenant-1/volumes") return json([{ id: "v1", name: "orders-data" }]);
-      if (path === "/api/tenants/tenant-1/registries") return json([{ id: "r1", name: "ghcr" }]);
-      if (path === "/api/tenants/tenant-1/domains") return json([{ id: "d1", hostname: "shop.example.test" }]);
+      if (path === "/api/tenants/tenant-1/search?q=checkout&limit=20") return json({ items: [{ kind: "application", id: "app1", appGroupId: "ag31", label: "checkout-api", description: "Application in demo-stack", keywords: "ghcr.io/acme/checkout:1" }] });
+      if (path.includes("/search?")) return json({ items: [] });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
-
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
     const search = screen.getByRole("combobox", { name: "Search resources" });
-
     fireEvent.focus(search);
     fireEvent.change(search, { target: { value: "checkout" } });
-
     expect(await screen.findByText("checkout-api")).toBeTruthy();
     expect(screen.getByText("Application in demo-stack")).toBeTruthy();
+    expect(tenantSearchResultToItem("tenant-1", { kind: "application", id: "app1", appGroupId: "ag31", label: "checkout-api" })?.href).toBe("/tenants/tenant-1/app-groups/ag31/apps/app1");
+    expect(fetchMock).toHaveBeenCalledWith("/api/tenants/tenant-1/search?q=checkout&limit=20", expect.any(Object));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/single-apps"))).toBe(false);
+  });
 
-    fireEvent.change(search, { target: { value: "billing" } });
-    await waitFor(() => expect(screen.getByText("Credits, quota and vouchers")).toBeTruthy());
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/tenants/tenant-1/app-groups", expect.any(Object));
+  it("retries tenant search after a transient request failure", async () => {
+    const json = (value: unknown) => Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }));
+    let searchCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/tenants/tenant-1/search?")) {
+        searchCalls += 1;
+        if (searchCalls === 1) return Promise.reject(new Error("temporary"));
+        return json({ items: [{ kind: "volume", id: "v1", label: "orders-data", description: "Persistent volume", keywords: "storage" }] });
+      }
+      return json([]);
+    }));
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    const search = screen.getByRole("combobox", { name: "Search resources" });
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "orders" } });
+    await waitFor(() => expect(searchCalls).toBe(1));
+    fireEvent.change(search, { target: { value: "orders-data" } });
+    expect(await screen.findByText("orders-data")).toBeTruthy();
+    expect(searchCalls).toBe(2);
   });
 
   it("opens quick search with Ctrl+K", async () => {

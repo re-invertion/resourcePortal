@@ -13,6 +13,7 @@ import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
+import { hasProtectedSensitiveEnvironment, revealSensitiveEnvironment, revealSensitiveValue } from "../security/sensitive-environment";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
@@ -210,13 +211,13 @@ export class DeploymentExecutionService {
     }
 
     const completed = dto.phase === DeploymentPhase.Completed;
-    const renderedStack =
+    const renderedCandidate =
       dto.phase === DeploymentPhase.GeneratingStack
         ? this.renderStack(deployment.stackConfig)
         : undefined;
-    const renderedStackSha256 = renderedStack
-      ? deploymentArtifactSha256(renderedStack)
-      : undefined;
+    const persistRenderedStack = !hasProtectedSensitiveEnvironment(deployment.stackConfig);
+    const renderedStack = persistRenderedStack ? renderedCandidate : undefined;
+    const renderedStackSha256 = renderedStack ? deploymentArtifactSha256(renderedStack) : undefined;
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
@@ -1056,6 +1057,17 @@ export class DeploymentExecutionService {
       throw new NotFoundException("Deployment was not found");
     }
 
+    if (current.stackConfig && hasProtectedSensitiveEnvironment(current.stackConfig)) {
+      if (current.renderedStack) {
+        await this.prisma.appGroupDeployment.update({
+          where: { id: deploymentId },
+          data: { renderedStack: null, renderedStackSha256: null, renderedAt: null },
+        });
+      }
+      const renderedStack = this.renderStack(current.stackConfig);
+      return { renderedStack, sha256: deploymentArtifactSha256(renderedStack) };
+    }
+
     if (current.renderedStack) {
       const digest = deploymentArtifactSha256(current.renderedStack);
       if (
@@ -1727,10 +1739,10 @@ export class DeploymentExecutionService {
       ...Object.fromEntries(
         singleApp.variables.map((variable) => [
           variable.targetName,
-          variable.value,
+          revealSensitiveValue(variable.targetName, variable.value, this.encryption),
         ]),
       ),
-      ...singleApp.environment,
+      ...revealSensitiveEnvironment(singleApp.environment, this.encryption),
     };
   }
 

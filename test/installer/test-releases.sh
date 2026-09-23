@@ -37,6 +37,17 @@ JSON
 
 status 0 'valid release manifest accepted' rp_validate_release_manifest "$manifest"
 eq '0.2.0' "$(rp_manifest_value "$manifest" '.version')" 'reads release version'
+
+persist_state="$(mktemp -d /tmp/rp-release-state.XXXXXX)"
+RP_INSTALLER_STATE_DIR="$persist_state"
+export RP_INSTALLER_STATE_DIR
+persisted_manifest="$(rp_persist_release_manifest "$manifest")"
+eq "$persist_state/release.json" "$persisted_manifest" 'canonical release manifest uses installer-state path'
+status 0 'canonical release manifest remains valid' rp_validate_release_manifest "$persisted_manifest"
+eq '0.2.0' "$(rp_manifest_value "$persisted_manifest" '.version')" 'canonical release manifest preserves version'
+cmp -s "$manifest" "$persisted_manifest" && pass 'canonical release manifest preserves exact content' || fail 'canonical release manifest preserves exact content'
+rm -rf "$persist_state"
+unset RP_INSTALLER_STATE_DIR persisted_manifest persist_state
 eq '27.0.0' "$(rp_manifest_value "$manifest" '.docker.minimumVersion')" 'reads minimum Docker version'
 
 # Primary installs should resolve the newest stable release automatically.
@@ -141,7 +152,7 @@ upgrade_source="$(cat "$repo_root/scripts/installer/upgrade.sh")"
 contains "$upgrade_source" 'rp_wait_for_https_origin' 'upgrade verifies ResourcePortal health after deploy'
 contains "$upgrade_source" 'rp_config_write' 'upgrade persists release state only after successful health check'
 contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected release version'
-contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$manifest"' 'upgrade records the exact applied release manifest for resume'
+contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$canonical_manifest"' 'upgrade records the canonical applied release manifest for resume'
 contains "$upgrade_source" '--with-registry-auth --prune' 'rollback prunes services from failed target architecture'
 contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels' 'v0.2 upgrade backfills node roles before deploy'
 contains "$upgrade_source" 'rp_upgrade_prepare_zitadel_for_mcp_oauth' 'upgrade updates ZITADEL before MCP OAuth reconciliation'
@@ -151,6 +162,81 @@ contains "$upgrade_source" 'rp_run_zitadel_mcp_oauth_reconcile' 'upgrade reconci
 contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade refreshes standalone enrollment listener before persisting release state'
 contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
 contains "$upgrade_source" 'case "$current" in' 'upgrade preserves explicit tenant-workloads false opt-out'
+contains "$upgrade_source" 'rp_upgrade_prepare_postgres_services' 'upgrade pre-rolls PostgreSQL before dependent services'
+
+upgrade_prerolls_postgres_before_dependents() (
+  local log target old stack
+  log="$(mktemp /tmp/rp-upgrade-postgres-order.XXXXXX)"
+  trap 'rm -f "$log"' EXIT
+  target='ghcr.io/re-invertion/resourceportal-postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  old='ghcr.io/re-invertion/resourceportal-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  stack='resourceportal-control-plane'
+  declare -A images=(
+    ["${stack}_postgres-rp"]="$old"
+    ["${stack}_postgres-zitadel"]="$old"
+  )
+  RP_CFG_STACK_NAME="$stack"
+  RP_CFG_POSTGRES_IMAGE="$target"
+  RP_UPGRADE_SERVICE_TIMEOUT_SECONDS=2
+  export RP_CFG_STACK_NAME RP_CFG_POSTGRES_IMAGE RP_UPGRADE_SERVICE_TIMEOUT_SECONDS
+  rp_validate_image_ref(){ return 0; }
+  docker() {
+    case "$1 $2" in
+      'service inspect') printf '%s\n' "${images[$3]}" ;;
+      'service update')
+        local image='' service="${*: -1}"
+        shift 2
+        while (( $# > 0 )); do
+          if [[ "$1" == --image ]]; then image="$2"; shift 2; continue; fi
+          shift
+        done
+        printf 'update:%s:%s\n' "$service" "$image" >>"$log"
+        images["$service"]="$image"
+        ;;
+      'service ps') printf 'Running 1 second ago\n' ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_upgrade_prepare_postgres_services
+  mapfile -t updates <"$log"
+  [[ "${updates[0]}" == "update:${stack}_postgres-rp:${target}" ]]
+  [[ "${updates[1]}" == "update:${stack}_postgres-zitadel:${target}" ]]
+  [[ "${#updates[@]}" == 2 ]]
+)
+status 0 'upgrade pre-rolls both PostgreSQL services in deterministic order' upgrade_prerolls_postgres_before_dependents
+
+upgrade_orders_dependencies_before_final_rollout() (
+  local log previous postgres_line zitadel_line migration_line deploy_line
+  log="$(mktemp /tmp/rp-upgrade-dependency-order.XXXXXX)"
+  previous="$(mktemp /tmp/rp-upgrade-previous-stack.XXXXXX.yml)"
+  trap 'rm -f "$log" "$previous"' EXIT
+  printf 'services: {}\n' >"$previous"
+  RP_CFG_RELEASE_VERSION=0.2.13
+  RP_CFG_ACME_ENVIRONMENT=production
+  RP_CFG_DOMAIN=rp.example.test
+  export RP_CFG_RELEASE_VERSION RP_CFG_ACME_ENVIRONMENT RP_CFG_DOMAIN
+  rp_config_apply_defaults(){ printf 'defaults\n' >>"$log"; }
+  rp_pull_release_images(){ printf 'pull\n' >>"$log"; }
+  rp_apply_release_manifest_images(){ printf 'manifest-images\n' >>"$log"; }
+  rp_upgrade_ensure_v020_node_labels(){ printf 'labels\n' >>"$log"; }
+  rp_upgrade_prepare_postgres_services(){ printf 'postgres-ready\n' >>"$log"; }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-ready\n' >>"$log"; }
+  rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth\n' >>"$log"; }
+  rp_run_migrations(){ printf 'migrations\n' >>"$log"; }
+  rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$log"; }
+  rp_wait_for_https_origin(){ printf 'https-ready\n' >>"$log"; }
+  rp_upgrade_refresh_enrollment_listener(){ printf 'enrollment\n' >>"$log"; }
+  rp_persist_release_manifest(){ printf '%s\n' "$1"; }
+  rp_config_write(){ printf 'persist-config\n' >>"$log"; }
+  rp_write_stack(){ printf 'persist-stack\n' >>"$log"; }
+  rp_upgrade_apply "$manifest" "$previous"
+  postgres_line="$(grep -n '^postgres-ready$' "$log" | cut -d: -f1)"
+  zitadel_line="$(grep -n '^zitadel-ready$' "$log" | cut -d: -f1)"
+  migration_line="$(grep -n '^migrations$' "$log" | cut -d: -f1)"
+  deploy_line="$(grep -n '^deploy:final$' "$log" | cut -d: -f1)"
+  [[ "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
+)
+status 0 'upgrade gates PostgreSQL before ZITADEL, migrations and final rollout' upgrade_orders_dependencies_before_final_rollout
 
 # Resume must restore release-derived image refs even when the release phase checkpoint is already complete.
 resume_manifest="$(mktemp /tmp/rp-release-resume.XXXXXX.json)"

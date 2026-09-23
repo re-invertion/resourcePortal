@@ -337,6 +337,48 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     ]);
   });
 
+  it("detaches a pre-v0.2 tenant service from the shared control-plane ingress without deleting that network", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("shared-network-id"))
+      .mockImplementationOnce(() =>
+        dockerProcess("private-network-id\nshared-network-id"),
+      )
+      .mockImplementationOnce(() => dockerProcess());
+
+    const result = await service().detachServiceFromPreV020SharedIngress({
+      serviceName: "rp_stack_web",
+    });
+
+    expect(result).toEqual({ success: true, changed: true });
+    expect(spawnMock.mock.calls[2]?.[1]).toEqual([
+      "service",
+      "update",
+      "--network-rm",
+      "resourceportal-control-plane_rp-ingress",
+      "rp_stack_web",
+    ]);
+    expect(
+      spawnMock.mock.calls.some(
+        (call) =>
+          (call[1] as string[])[0] === "network" &&
+          (call[1] as string[])[1] === "rm",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves a pre-v0.2 service alone when it is already detached from shared ingress", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("shared-network-id"))
+      .mockImplementationOnce(() => dockerProcess("private-network-id"));
+
+    const result = await service().detachServiceFromPreV020SharedIngress({
+      serviceName: "rp_stack_web",
+    });
+
+    expect(result).toEqual({ success: true, changed: false });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses to mutate a network outside ResourcePortal tenant namespaces", async () => {
     await expect(
       service().reconcileAppGroupNetwork({

@@ -19,9 +19,13 @@ function legacyArtifact(appGroupId: string) {
   return `services:\n  web_app:\n    networks: [default, ingress]\n    deploy:\n      labels:\n        traefik.enable: "true"\n        traefik.swarm.network: ${legacy}\nnetworks:\n  default:\n    name: ${networkName}\n    driver: overlay\n  ingress:\n    external: true\n    name: ${legacy}\n`;
 }
 
+function preV020NetworklessArtifact() {
+  return `services:\n  web_app:\n    image: nginx:alpine\n    deploy:\n      labels:\n        traefik.http.routers.web-app-public-https.rule: Host(\`app.example.com\`)\n`;
+}
+
 function deployedAppGroup(
   id = "11111111-1111-4111-8111-111111111111",
-  topology: "single" | "legacy" = "single",
+  topology: "single" | "legacy" | "pre-v020" = "single",
 ) {
   return {
     id,
@@ -32,7 +36,9 @@ function deployedAppGroup(
         renderedStack:
           topology === "single"
             ? singleNetworkArtifact(id)
-            : legacyArtifact(id),
+            : topology === "legacy"
+              ? legacyArtifact(id)
+              : preV020NetworklessArtifact(),
       },
     ],
     singleApps: [
@@ -69,6 +75,10 @@ function serviceFor(appGroups: object[]) {
       success: true,
       changed: false,
     }),
+    detachServiceFromPreV020SharedIngress: vi.fn().mockResolvedValue({
+      success: true,
+      changed: false,
+    }),
     reconcileTraefikLabels: vi.fn((input: ReconcileInput) => {
       void input;
       return Promise.resolve({ changed: true, success: true });
@@ -99,6 +109,10 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
         changed: false,
       }),
       reconcileServiceNetwork: vi.fn().mockResolvedValue({
+        success: true,
+        changed: false,
+      }),
+      detachServiceFromPreV020SharedIngress: vi.fn().mockResolvedValue({
         success: true,
         changed: false,
       }),
@@ -236,6 +250,53 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
     expect(runtime.reconcileTraefikLabels.mock.calls[0]?.[0]).toMatchObject({
       desiredLabels: { "traefik.swarm.network": legacyNetworkName },
     });
+  });
+
+  it("migrates a successful pre-v0.2 networkless deployment away from shared ingress", async () => {
+    const appGroup = deployedAppGroup(undefined, "pre-v020");
+    const { runtime, service } = serviceFor([appGroup]);
+
+    const result = await service.reconcileBatch();
+    const networkName = `rp-appgroup-${appGroup.id}`;
+    const legacyNetworkName = `rp-ingress-${appGroup.id}`;
+    const serviceName = "rp_11111111_1111_4111_8111_111111111111_web_app";
+
+    expect(runtime.reconcileAppGroupNetwork).toHaveBeenCalledWith({
+      networkName,
+      traefikRequired: true,
+    });
+    expect(runtime.reconcileServiceNetwork).toHaveBeenNthCalledWith(1, {
+      serviceName,
+      networkName,
+      required: true,
+    });
+    expect(runtime.reconcileTraefikLabels.mock.calls[0]?.[0]).toMatchObject({
+      serviceName,
+      desiredLabels: {
+        "traefik.swarm.network": networkName,
+      },
+    });
+    expect(runtime.detachServiceFromPreV020SharedIngress).toHaveBeenCalledWith({
+      serviceName,
+    });
+    expect(runtime.reconcileLegacyIngressNetwork).toHaveBeenLastCalledWith({
+      networkName: legacyNetworkName,
+      required: false,
+    });
+    expect(result).toEqual({ checked: 1, changed: 1, failed: 0 });
+  });
+
+  it("does not auto-migrate a malformed deployment that already declares networks", async () => {
+    const appGroup = deployedAppGroup();
+    appGroup.deployments[0].renderedStack = `services:\n  web_app:\n    image: nginx:alpine\nnetworks:\n  default:\n    external: true\n    name: unrelated-network\n`;
+    const { runtime, service } = serviceFor([appGroup]);
+
+    const result = await service.reconcileBatch();
+
+    expect(runtime.reconcileAppGroupNetwork).not.toHaveBeenCalled();
+    expect(runtime.reconcileServiceNetwork).not.toHaveBeenCalled();
+    expect(runtime.reconcileTraefikLabels).not.toHaveBeenCalled();
+    expect(result).toEqual({ checked: 0, changed: 0, failed: 1 });
   });
 
   it("reports runtime reconciliation failure without stopping the batch", async () => {

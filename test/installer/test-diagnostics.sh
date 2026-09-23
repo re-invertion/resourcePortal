@@ -219,6 +219,7 @@ status 1 'storage migration not silently allowed' rp_reconfigure_action_valid mi
     esac
   }
   rp_primary_enable_ingress(){ return 0; }
+  rp_run_zitadel_web_oidc_reconcile(){ return 0; }
   rp_primary_deploy_final(){ return 0; }
   rp_primary_persist(){ return 0; }
   rp_reconfigure_domain
