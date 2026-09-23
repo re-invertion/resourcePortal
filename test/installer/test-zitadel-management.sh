@@ -256,7 +256,7 @@ upgrade_bridges_legacy_zitadel_before_target() (
         return 0
         ;;
       'service ps') printf 'Running 1 second ago\n'; return 0 ;;
-      pull) printf '%s\n' "$*" >>"$log"; return 0 ;;
+      pull\ *) printf '%s\n' "$*" >>"$log"; return 0 ;;
       *) return 0 ;;
     esac
   }
@@ -295,7 +295,7 @@ upgrade_skips_bridge_for_v0212_and_newer() (
         return 0
         ;;
       'service ps') printf 'Running 1 second ago\n'; return 0 ;;
-      pull) printf '%s\n' "$*" >>"$log"; return 0 ;;
+      pull\ *) printf '%s\n' "$*" >>"$log"; return 0 ;;
       *) return 0 ;;
     esac
   }
