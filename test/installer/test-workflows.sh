@@ -58,5 +58,10 @@ contains_file "$repo_root/.github/workflows/release.yml" 'cli-release/SHA256SUMS
 contains_file "$repo_root/.github/workflows/release.yml" 'cli-release/resource-portal-cli-${VERSION}.tgz' 'Release publishes versioned CLI archive'
 contains_file "$repo_root/.github/workflows/release.yml" '"./cli-release/resource-portal-cli-${VERSION}.tgz"' 'Release verifies CLI from an explicit local tarball path'
 
+release_zitadel_version="$(grep -oE 'ghcr.io/zitadel/zitadel:v[0-9]+\.[0-9]+\.[0-9]+' "$repo_root/.github/workflows/release.yml" | head -n1 | sed 's#.*:##')"
+federation_zitadel_version="$(grep -oE 'ZITADEL_VERSION: v[0-9]+\.[0-9]+\.[0-9]+' "$repo_root/.github/workflows/federation-integration.yml" | head -n1 | awk '{print $2}')"
+if [[ "$release_zitadel_version" == "$federation_zitadel_version" ]]; then pass 'Release and federation pin the same ZITADEL version'; else printf 'release=%s federation=%s\n' "$release_zitadel_version" "$federation_zitadel_version" >&2; fail 'Release and federation pin the same ZITADEL version'; fi
+contains_file "$repo_root/.github/workflows/release.yml" 'ghcr.io/zitadel/zitadel:v4.17.0' 'Release pins ZITADEL with Dynamic Client Registration support'
+
 if (( failures > 0 )); then printf '%s workflow test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer workflow contract tests passed.\n'

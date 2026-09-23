@@ -99,8 +99,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for image in ghcr.io/zitadel/zitadel:v4.0.0 traefik:v3.6.16; do docker pull "$image"; done
-          echo "ZITADEL_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/zitadel/zitadel:v4.0.0)" >> "$GITHUB_ENV"
+          for image in ghcr.io/zitadel/zitadel:v4.17.0 traefik:v3.6.16; do docker pull "$image"; done
+          echo "ZITADEL_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/zitadel/zitadel:v4.17.0)" >> "$GITHUB_ENV"
           echo "TRAEFIK_REF=$(docker inspect --format='{{index .RepoDigests 0}}' traefik:v3.6.16)" >> "$GITHUB_ENV"
       - name: Create release manifest
         env:
