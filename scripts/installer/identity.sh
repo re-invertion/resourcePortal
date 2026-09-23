@@ -267,7 +267,7 @@ rp_run_zitadel_mcp_oauth_reconcile() {
     return 1
   }
 
-  service_name="${stack_name}-zitadel-mcp-oauth-reconcile-$(date +%s)"
+  service_name="${stack_name}-zitadel-mcp-oauth-$(date +%s)"
   readiness_script='const base=process.env.ZITADEL_ISSUER_URL; const host=process.env.ZITADEL_BOOTSTRAP_INSTANCE_HOST; const timeout=Number(process.env.ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS||"300")*1000; const headers=host?{"x-zitadel-instance-host":host,"x-zitadel-public-host":host}:{}; const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms)); (async()=>{const deadline=Date.now()+timeout; while(Date.now()<deadline){try{const response=await fetch(`${base}/debug/ready`,{headers}); if(response.ok){process.exit(0);}}catch{} await sleep(1000);} console.error("ZITADEL readiness timed out"); process.exit(1);})().catch(()=>process.exit(1));'
   bootstrap_command='node -e "$RP_ZITADEL_READY_SCRIPT" && exec node dist/scripts/bootstrap-zitadel.js'
 

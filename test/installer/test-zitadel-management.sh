@@ -222,6 +222,41 @@ upgrade_preserves_management_state() (
   [[ "$text" == *'stack:rp_zitadel_management_token_upgrade42'* ]]
 )
 status 0 'upgrade preserves and persists management state' upgrade_preserves_management_state
+mcp_oauth_reconcile_uses_swarm_safe_service_name() (
+  pat="$(mktemp /tmp/rp-zitadel-mcp-pat.XXXXXX)"
+  log="$(mktemp /tmp/rp-zitadel-mcp-service.XXXXXX)"
+  trap 'rm -f "$pat" "$log"' EXIT
+  printf 'management-token-material\n' >"$pat"
+  chmod 0600 "$pat"
+  RP_ZITADEL_MANAGEMENT_PAT_FILE="$pat"
+  RP_CFG_STACK_NAME='resourceportal-control-plane'
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  RP_CFG_API_IMAGE='example.invalid/resourceportal-api@sha256:deadbeef'
+  RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS=2
+  export RP_ZITADEL_MANAGEMENT_PAT_FILE RP_CFG_STACK_NAME RP_CFG_ZITADEL_DOMAIN RP_CFG_API_IMAGE RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS
+  rp_zitadel_management_state_ready(){ return 0; }
+  date(){ printf '1790160000\n'; }
+  docker(){
+    case "$1 $2" in
+      'service create')
+        shift 2
+        while (( $# > 0 )); do
+          if [[ "$1" == --name ]]; then printf '%s\n' "$2" >"$log"; break; fi
+          shift
+        done
+        return 0
+        ;;
+      'service ps') printf 'Complete 1 second ago|\n' ;;
+      'service rm') return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_run_zitadel_mcp_oauth_reconcile
+  name="$(cat "$log")"
+  [[ "$name" == 'resourceportal-control-plane-zitadel-mcp-oauth-1790160000' ]]
+  (( ${#name} <= 63 ))
+)
+status 0 'MCP OAuth reconcile service name stays within Swarm limit' mcp_oauth_reconcile_uses_swarm_safe_service_name
 
 status 0 'management secret is classified as ResourcePortal-owned' rp_swarm_resourceportal_secret_name rp_zitadel_management_token_deadbeef
 
