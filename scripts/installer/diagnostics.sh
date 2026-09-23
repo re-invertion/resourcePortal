@@ -3,6 +3,22 @@
 rp_diagnostic_line() { printf '%-34s %s\n' "$1" "$2"; }
 rp_diagnostic_cmd() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then rp_diagnostic_line "$name" OK; else rp_diagnostic_line "$name" FAIL; fi; }
 
+rp_zitadel_mcp_dcr_advertised() {
+  local domain="${RP_CFG_ZITADEL_DOMAIN:-}" discovery issuer registration expected_base
+  [[ -n "$domain" ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  expected_base="https://${domain}"
+  discovery="$(curl --fail --silent --show-error --proto '=https' --max-time 15 \
+    "${expected_base}/.well-known/openid-configuration")" || return 1
+  issuer="$(jq -er '.issuer | select(type == "string" and length > 0)' <<<"$discovery")" || return 1
+  registration="$(jq -er '.registration_endpoint | select(type == "string" and length > 0)' <<<"$discovery")" || return 1
+
+  [[ "$issuer" == "$expected_base" ]] || return 1
+  [[ "$registration" == "${expected_base}/oauth/v2/register" ]]
+}
+
 rp_run_diagnostics() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" quorum node_id fstype uuid acme_env acme_state acme_resolver acme_cache
   rp_diagnostic_cmd 'supported OS' rp_detect_os

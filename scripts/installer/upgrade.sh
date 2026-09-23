@@ -82,11 +82,53 @@ rp_upgrade_ensure_v020_node_labels() {
   done < <(docker node ls -q)
 }
 
+rp_upgrade_zitadel_migration_bridge_image() {
+  # v4.15.1 records migration 64_change_push_position against
+  # eventstore.command[] before v4.17 introduces eventstore.command2 in
+  # migration 70. Keep the tested bridge immutable.
+  printf '%s\n' 'ghcr.io/zitadel/zitadel@sha256:0d88e6e92d0bd98641c107a054715ca57cbd68ca2119d3600cfe95aa6ccc7be4'
+}
+
+rp_upgrade_requires_zitadel_migration_bridge() {
+  local current_version="$1"
+  ! rp_version_ge "$current_version" '0.2.12'
+}
+
+rp_upgrade_wait_zitadel_image() {
+  local service_name="$1" expected_image="$2" timeout="$3"
+  local elapsed=0 running current_image
+
+  while (( elapsed < timeout )); do
+    current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true)"
+    running="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service_name" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"
+    if [[ "$current_image" == "$expected_image" && "$running" == 1 ]]; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  docker service ps --no-trunc "$service_name" >&2 || true
+  return 1
+}
+
+rp_upgrade_update_zitadel_image() {
+  local service_name="$1" image="$2" description="$3"
+  local timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}"
+
+  printf 'Updating ZITADEL for %s: %s\n' "$description" "$image" >&2
+  docker service update --detach=false --image "$image" --with-registry-auth "$service_name" >/dev/null || return 1
+  rp_upgrade_wait_zitadel_image "$service_name" "$image" "$timeout" || {
+    printf 'ZITADEL service did not converge during %s.\n' "$description" >&2
+    return 1
+  }
+}
+
 rp_upgrade_prepare_zitadel_for_mcp_oauth() {
+  local source_version="${1:-${RP_CFG_RELEASE_VERSION:-0.0.0}}"
   local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
   local service_name="${stack_name}_zitadel"
-  local target_image="${RP_CFG_ZITADEL_IMAGE:-}" current_image
-  local timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}" elapsed=0 running
+  local target_image="${RP_CFG_ZITADEL_IMAGE:-}" current_image bridge_image
 
   rp_validate_image_ref "$target_image" || {
     printf 'Target ZITADEL image must be pinned by sha256 digest before MCP OAuth reconciliation.\n' >&2
@@ -96,23 +138,25 @@ rp_upgrade_prepare_zitadel_for_mcp_oauth() {
     printf 'ZITADEL service is unavailable for upgrade reconciliation: %s\n' "$service_name" >&2
     return 1
   }
+
   current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')" || return 1
-  if [[ "$current_image" != "$target_image" ]]; then
-    docker service update --image "$target_image" --with-registry-auth "$service_name" >/dev/null || return 1
+  if [[ "$current_image" == "$target_image" ]]; then
+    return 0
   fi
 
-  while (( elapsed < timeout )); do
-    running="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service_name" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"
-    if [[ "$running" == 1 ]]; then
-      return 0
+  if rp_upgrade_requires_zitadel_migration_bridge "$source_version"; then
+    bridge_image="$(rp_upgrade_zitadel_migration_bridge_image)" || return 1
+    rp_validate_image_ref "$bridge_image" || return 1
+    if [[ "$current_image" != "$bridge_image" ]]; then
+      docker pull "$bridge_image" >/dev/null || return 1
+      rp_upgrade_update_zitadel_image "$service_name" "$bridge_image" 'legacy migration bridge' || return 1
+      current_image="$bridge_image"
     fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
+  fi
 
-  docker service ps --no-trunc "$service_name" >&2 || true
-  printf 'ZITADEL service did not converge to the target image before MCP OAuth reconciliation.\n' >&2
-  return 1
+  if [[ "$current_image" != "$target_image" ]]; then
+    rp_upgrade_update_zitadel_image "$service_name" "$target_image" 'target release' || return 1
+  fi
 }
 
 rp_upgrade_refresh_enrollment_listener() {
@@ -126,12 +170,13 @@ rp_upgrade_refresh_enrollment_listener() {
 
 rp_upgrade_apply() {
   local manifest="$1" previous_stack="$2"
+  local source_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
   [[ -r "$previous_stack" ]] || return 1
   rp_config_apply_defaults || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
-  rp_upgrade_prepare_zitadel_for_mcp_oauth || return 1
+  rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || return 1
   rp_run_zitadel_mcp_oauth_reconcile || return 1
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1

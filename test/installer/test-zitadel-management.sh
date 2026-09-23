@@ -11,6 +11,7 @@ source "$repo_root/scripts/installer/swarm.sh"
 source "$repo_root/scripts/installer/reset.sh"
 source "$repo_root/scripts/installer/repair.sh"
 source "$repo_root/scripts/installer/reconfigure.sh"
+source "$repo_root/scripts/installer/releases.sh"
 source "$repo_root/scripts/installer/upgrade.sh"
 
 failures=0
@@ -199,10 +200,11 @@ upgrade_preserves_management_state() (
   printf 'version: "3.9"\n' >"$previous"
   printf '%s\n' '{"version":"0.1.4"}' >"$manifest"
   RP_CFG_DOMAIN='rp.example.com'
+  RP_CFG_RELEASE_VERSION='0.2.9'
   RP_CFG_ZITADEL_ORGANIZATION_ID='org-upgrade'
   RP_CFG_ZITADEL_PROJECT_ID='project-upgrade'
   RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_upgrade42'
-  export RP_CFG_DOMAIN RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
+  export RP_CFG_DOMAIN RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-upgrade\n' >>"$log"; }
@@ -217,6 +219,7 @@ upgrade_preserves_management_state() (
   rp_write_stack(){ printf 'stack:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_upgrade_apply "$manifest" "$previous"
   text="$(cat "$log")"
+  [[ "$text" == *'zitadel-source:0.2.9'* ]]
   [[ "$text" == *'mcp-oauth:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'deploy:rp_zitadel_management_token_upgrade42'* ]]
   [[ "$text" == *'enrollment:rp_zitadel_management_token_upgrade42'* ]]
@@ -225,31 +228,83 @@ upgrade_preserves_management_state() (
 )
 status 0 'upgrade preserves and persists management state' upgrade_preserves_management_state
 
-upgrade_prepares_zitadel_image_before_mcp_reconcile() (
+upgrade_bridges_legacy_zitadel_before_target() (
   log="$(mktemp /tmp/rp-zitadel-upgrade-image.XXXXXX)"
-  trap 'rm -f "$log"' EXIT
+  state="$(mktemp /tmp/rp-zitadel-upgrade-state.XXXXXX)"
+  trap 'rm -f "$log" "$state"' EXIT
+  old='ghcr.io/zitadel/zitadel@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  bridge="$(rp_upgrade_zitadel_migration_bridge_image)"
+  target='ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  printf '%s\n' "$old" >"$state"
   RP_CFG_STACK_NAME='resourceportal-control-plane'
-  RP_CFG_ZITADEL_IMAGE='ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  RP_CFG_RELEASE_VERSION='0.2.9'
+  RP_CFG_ZITADEL_IMAGE="$target"
   RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS=2
-  export RP_CFG_STACK_NAME RP_CFG_ZITADEL_IMAGE RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS
+  export RP_CFG_STACK_NAME RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_IMAGE RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS
   docker(){
     case "$1 $2" in
       'service inspect')
-        if [[ "$*" == *'--format'* ]]; then
-          printf '%s\n' 'ghcr.io/zitadel/zitadel@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-        fi
+        if [[ "$*" == *'--format'* ]]; then cat "$state"; fi
         return 0
         ;;
-      'service update') printf '%s\n' "$*" >>"$log"; return 0 ;;
+      'service update')
+        printf '%s\n' "$*" >>"$log"
+        while (( $# > 0 )); do
+          if [[ "$1" == --image ]]; then printf '%s\n' "$2" >"$state"; break; fi
+          shift
+        done
+        return 0
+        ;;
       'service ps') printf 'Running 1 second ago\n'; return 0 ;;
+      pull\ *) printf '%s\n' "$*" >>"$log"; return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth
+  bridge_line="$(grep -nF "service update --detach=false --image $bridge" "$log" | cut -d: -f1)"
+  target_line="$(grep -nF "service update --detach=false --image $target" "$log" | cut -d: -f1)"
+  [[ -n "$bridge_line" && -n "$target_line" && "$bridge_line" -lt "$target_line" ]]
+)
+status 0 'legacy upgrade bridges ZITADEL v4.15.1 before target digest' upgrade_bridges_legacy_zitadel_before_target
+
+upgrade_skips_bridge_for_v0212_and_newer() (
+  log="$(mktemp /tmp/rp-zitadel-upgrade-image-new.XXXXXX)"
+  state="$(mktemp /tmp/rp-zitadel-upgrade-state-new.XXXXXX)"
+  trap 'rm -f "$log" "$state"' EXIT
+  old='ghcr.io/zitadel/zitadel@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  target='ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  bridge="$(rp_upgrade_zitadel_migration_bridge_image)"
+  printf '%s\n' "$old" >"$state"
+  RP_CFG_STACK_NAME='resourceportal-control-plane'
+  RP_CFG_RELEASE_VERSION='0.2.13'
+  RP_CFG_ZITADEL_IMAGE="$target"
+  RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS=2
+  export RP_CFG_STACK_NAME RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_IMAGE RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS
+  docker(){
+    case "$1 $2" in
+      'service inspect')
+        if [[ "$*" == *'--format'* ]]; then cat "$state"; fi
+        return 0
+        ;;
+      'service update')
+        printf '%s\n' "$*" >>"$log"
+        while (( $# > 0 )); do
+          if [[ "$1" == --image ]]; then printf '%s\n' "$2" >"$state"; break; fi
+          shift
+        done
+        return 0
+        ;;
+      'service ps') printf 'Running 1 second ago\n'; return 0 ;;
+      pull\ *) printf '%s\n' "$*" >>"$log"; return 0 ;;
       *) return 0 ;;
     esac
   }
   rp_upgrade_prepare_zitadel_for_mcp_oauth
   text="$(cat "$log")"
-  [[ "$text" == *'service update --image ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --with-registry-auth resourceportal-control-plane_zitadel'* ]]
+  [[ "$text" == *"service update --detach=false --image $target"* ]]
+  [[ "$text" != *"$bridge"* ]]
 )
-status 0 'upgrade updates ZITADEL to target digest before MCP reconciliation' upgrade_prepares_zitadel_image_before_mcp_reconcile
+status 0 'v0.2.12+ upgrade skips legacy ZITADEL bridge' upgrade_skips_bridge_for_v0212_and_newer
 mcp_oauth_reconcile_uses_swarm_safe_service_name() (
   pat="$(mktemp /tmp/rp-zitadel-mcp-pat.XXXXXX)"
   log="$(mktemp /tmp/rp-zitadel-mcp-service.XXXXXX)"
