@@ -18,12 +18,18 @@ import { OperationsWorkerService } from "./operations/operations-worker.service"
 import { DeploymentArtifactSecurityMigrationService } from "./security/deployment-artifact-security-migration.service";
 import { LegacySecretMigrationService } from "./security/legacy-secret-migration.service";
 import { VolumeUsageReconcilerService } from "./volumes/volume-usage-reconciler.service";
+import { isTransientDatabaseConnectivityError } from "./worker-database-retry";
 import { WorkerModule } from "./worker.module";
 
 const logger = new Logger("ResourcePortalWorker");
 const serviceName = "resource-portal-worker";
 
-function readInt(config: ConfigService, key: string, fallback: number, minimum = 1) {
+function readInt(
+  config: ConfigService,
+  key: string,
+  fallback: number,
+  minimum = 1,
+) {
   const raw = config.get<string>(key);
   const parsed = raw === undefined ? fallback : Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -251,7 +257,9 @@ async function main() {
         () => artifactSecurity.migrateAll(),
         "worker.startup_artifact_security_migration.failed",
       );
-      await startupReconcile("certificate", () => certificates.reconcileBatch());
+      await startupReconcile("certificate", () =>
+        certificates.reconcileBatch(),
+      );
       await startupReconcile("ingress", () => ingress.reconcileBatch());
       await startupReconcile("drift", () => drift.reconcileAll());
       await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
@@ -274,7 +282,25 @@ async function main() {
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
       }
 
-      const processed = await operations.processNext(workerId, leaseSeconds);
+      let processed;
+      try {
+        processed = await operations.processNext(workerId, leaseSeconds);
+      } catch (error) {
+        if (once || !isTransientDatabaseConnectivityError(error)) throw error;
+        structuredLog(
+          logger,
+          "warn",
+          serviceName,
+          "worker.database_unavailable",
+          {
+            workerId,
+            error: errorMessage(error),
+            retryInMs: pollIntervalMs,
+          },
+        );
+        await sleep(pollIntervalMs);
+        continue;
+      }
       if (!processed) {
         if (once) break;
         await sleep(pollIntervalMs);
@@ -282,7 +308,12 @@ async function main() {
       }
 
       await observe(
-        () => runtimeObservability.operation(workerId, processed.id, processed.status),
+        () =>
+          runtimeObservability.operation(
+            workerId,
+            processed.id,
+            processed.status,
+          ),
         "worker.operation.persist_failed",
       );
       structuredLog(logger, "log", serviceName, "worker.operation.processed", {
