@@ -165,6 +165,7 @@ repair_preserves_management_state() (
   rp_write_stack(){ printf 'stack:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_run_repair control-plane
   text="$(cat "$log")"
+  [[ "$text" == *'zitadel-upgrade'* ]]
   [[ "$text" == *'deploy:rp_zitadel_management_token_repair42'* ]]
   [[ "$text" == *'config:org-repair:project-repair:rp_zitadel_management_token_repair42'* ]]
   [[ "$text" == *'stack:rp_zitadel_management_token_repair42'* ]]
@@ -204,6 +205,7 @@ upgrade_preserves_management_state() (
   export RP_CFG_DOMAIN RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-upgrade\n' >>"$log"; }
   rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth:%s
 ' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_run_migrations(){ return 0; }
@@ -222,6 +224,32 @@ upgrade_preserves_management_state() (
   [[ "$text" == *'stack:rp_zitadel_management_token_upgrade42'* ]]
 )
 status 0 'upgrade preserves and persists management state' upgrade_preserves_management_state
+
+upgrade_prepares_zitadel_image_before_mcp_reconcile() (
+  log="$(mktemp /tmp/rp-zitadel-upgrade-image.XXXXXX)"
+  trap 'rm -f "$log"' EXIT
+  RP_CFG_STACK_NAME='resourceportal-control-plane'
+  RP_CFG_ZITADEL_IMAGE='ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS=2
+  export RP_CFG_STACK_NAME RP_CFG_ZITADEL_IMAGE RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS
+  docker(){
+    case "$1 $2" in
+      'service inspect')
+        if [[ "$*" == *'--format'* ]]; then
+          printf '%s\n' 'ghcr.io/zitadel/zitadel@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+        fi
+        return 0
+        ;;
+      'service update') printf '%s\n' "$*" >>"$log"; return 0 ;;
+      'service ps') printf 'Running 1 second ago\n'; return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth
+  text="$(cat "$log")"
+  [[ "$text" == *'service update --image ghcr.io/zitadel/zitadel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --with-registry-auth resourceportal-control-plane_zitadel'* ]]
+)
+status 0 'upgrade updates ZITADEL to target digest before MCP reconciliation' upgrade_prepares_zitadel_image_before_mcp_reconcile
 mcp_oauth_reconcile_uses_swarm_safe_service_name() (
   pat="$(mktemp /tmp/rp-zitadel-mcp-pat.XXXXXX)"
   log="$(mktemp /tmp/rp-zitadel-mcp-service.XXXXXX)"

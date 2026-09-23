@@ -82,6 +82,39 @@ rp_upgrade_ensure_v020_node_labels() {
   done < <(docker node ls -q)
 }
 
+rp_upgrade_prepare_zitadel_for_mcp_oauth() {
+  local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
+  local service_name="${stack_name}_zitadel"
+  local target_image="${RP_CFG_ZITADEL_IMAGE:-}" current_image
+  local timeout="${RP_IDENTITY_BOOTSTRAP_TIMEOUT_SECONDS:-300}" elapsed=0 running
+
+  rp_validate_image_ref "$target_image" || {
+    printf 'Target ZITADEL image must be pinned by sha256 digest before MCP OAuth reconciliation.\n' >&2
+    return 1
+  }
+  docker service inspect "$service_name" >/dev/null 2>&1 || {
+    printf 'ZITADEL service is unavailable for upgrade reconciliation: %s\n' "$service_name" >&2
+    return 1
+  }
+  current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')" || return 1
+  if [[ "$current_image" != "$target_image" ]]; then
+    docker service update --image "$target_image" --with-registry-auth "$service_name" >/dev/null || return 1
+  fi
+
+  while (( elapsed < timeout )); do
+    running="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service_name" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"
+    if [[ "$running" == 1 ]]; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  docker service ps --no-trunc "$service_name" >&2 || true
+  printf 'ZITADEL service did not converge to the target image before MCP OAuth reconciliation.\n' >&2
+  return 1
+}
+
 rp_upgrade_refresh_enrollment_listener() {
   # resourceportal-install.sh sources lifecycle.sh after upgrade.sh, so the
   # primary enrollment helper is available by the time upgrade dispatch runs.
@@ -98,6 +131,7 @@ rp_upgrade_apply() {
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
+  rp_upgrade_prepare_zitadel_for_mcp_oauth || return 1
   rp_run_zitadel_mcp_oauth_reconcile || return 1
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1
