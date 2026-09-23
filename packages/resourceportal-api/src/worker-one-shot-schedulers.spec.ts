@@ -65,7 +65,7 @@ describe("WORKER_ONCE background schedulers", () => {
     expect(guardedBlocks[1]).toContain('reconcile("drift"');
     expect(guardedBlocks[1]).toContain('legacySecrets.migrateAll()');
     expect(guardedBlocks[1]).toContain('reconcile("egressPolicy"');
-    expect(source).toContain("const processed = await operations.processNext(workerId, leaseSeconds)");
+    expect(source).toContain("processed = await operations.processNext(workerId, leaseSeconds)");
   });
 
   it("does not start Swarm infrastructure reconciliation in one-shot mode", () => {
