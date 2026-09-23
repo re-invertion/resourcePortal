@@ -82,7 +82,7 @@ describe("Web Console bootstrap", () => {
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
 
-    expect(screen.getByRole("heading", { name: "Review configuration" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Review configuration" })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Create Tenant" }));
 

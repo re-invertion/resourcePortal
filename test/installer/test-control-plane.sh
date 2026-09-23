@@ -190,6 +190,39 @@ contains "$final" 'node.labels.resourceportal.storage.platform == true' 'statefu
 contains "$final" 'node.labels.resourceportal.storage.authoritative == true' 'worker requires authoritative storage host'
 control_plane_source="$(cat "$repo_root/scripts/installer/control-plane.sh")"
 contains "$control_plane_source" '--with-registry-auth --prune' 'stack deploy prunes legacy services removed by v0.2 architecture'
+contains "$control_plane_source" 'rp_wait_control_plane_converged' 'stack deploy waits for Swarm convergence before returning'
+
+control_plane_convergence_succeeds() (
+  docker() {
+    case "$1 $2" in
+      'stack services') printf 'resourceportal-control-plane_api\nresourceportal-control-plane_worker\n' ;;
+      'service inspect') printf 'completed\n' ;;
+      'service ps')
+        if [[ "$*" == *'{{.ID}}'* ]]; then
+          printf 'task-id\n'
+        elif [[ "$*" == *'{{.CurrentState}}'* ]]; then
+          printf 'Running 2 seconds ago\n'
+        fi
+        ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_wait_control_plane_converged resourceportal-control-plane 2
+)
+status 0 'control-plane convergence accepts completed updates with all desired tasks running' control_plane_convergence_succeeds
+
+control_plane_convergence_rejects_paused_update() (
+  docker() {
+    case "$1 $2" in
+      'stack services') printf 'resourceportal-control-plane_worker\n' ;;
+      'service inspect') printf 'paused\n' ;;
+      'service ps') return 0 ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_wait_control_plane_converged resourceportal-control-plane 2
+)
+status 1 'control-plane convergence fails fast on paused rollout' control_plane_convergence_rejects_paused_update
 not_contains "$control_plane_source" '--env AUTH_MODE=dev' 'production migration job no longer opts into forbidden dev auth mode'
 contains "$final" 'node.role == manager' 'control plane requires managers'
 contains "$final" 'node.labels.rp.node.ingress == true' 'Traefik requires v0.2 ingress opt-in'

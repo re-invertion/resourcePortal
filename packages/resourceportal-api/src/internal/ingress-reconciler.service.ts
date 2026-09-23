@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { inspectAppGroupNetworkTopology } from "./app-group-networking";
+import { inspectPersistedAppGroupNetworkTopology } from "./app-group-networking";
 import {
   appGroupNetworkName,
   hasPublishedHttpRouting,
@@ -60,36 +60,46 @@ export class IngressReconcilerService {
           deployment.version === appGroup.currentDeploymentVersion,
       );
 
-      let topology: "single" | "legacy" = "legacy";
+      let topology: "single" | "legacy" | "pre-v020-networkless" = "legacy";
       if (currentDeployment?.renderedStack) {
         try {
-          topology = inspectAppGroupNetworkTopology(
+          topology = inspectPersistedAppGroupNetworkTopology(
             currentDeployment.renderedStack,
             networkName,
             legacyNetworkName,
           ).mode;
         } catch {
-          // Do not mutate network topology when the persisted deployment artifact
-          // cannot be classified safely. Exact artifact integrity wins over repair.
+          // Declared-but-invalid network topology is never repaired heuristically.
+          // The compatibility path below is reserved for successful pre-v0.2
+          // artifacts that had no top-level network declaration at all.
           failed += 1;
           continue;
         }
       }
 
-      if (topology === "single") {
+      const singleNetwork =
+        topology === "single" || topology === "pre-v020-networkless";
+      if (singleNetwork) {
         const network = await this.runtime.reconcileAppGroupNetwork({
           networkName,
           traefikRequired: groupRequiresIngress,
         });
-        if (!network.success) failed += 1;
+        if (!network.success) {
+          failed += 1;
+          continue;
+        }
       } else if (groupRequiresIngress) {
         const legacy = await this.runtime.reconcileLegacyIngressNetwork({
           networkName: legacyNetworkName,
           required: true,
         });
-        if (!legacy.success) failed += 1;
+        if (!legacy.success) {
+          failed += 1;
+          continue;
+        }
       }
 
+      let cleanupSafe = true;
       for (const singleApp of appGroup.singleApps) {
         checked += 1;
         const serviceName = `${stackName}_${this.serviceName(singleApp.name)}`;
@@ -97,37 +107,26 @@ export class IngressReconcilerService {
         let serviceChanged = false;
         let serviceFailed = false;
 
-        if (topology === "single") {
-          const membership = await this.runtime.reconcileServiceNetwork({
-            serviceName,
-            networkName,
-            required: true,
-          });
-          serviceChanged ||= membership.changed;
-          serviceFailed ||= !membership.success;
+        const desiredMembership = await this.runtime.reconcileServiceNetwork({
+          serviceName,
+          networkName: singleNetwork ? networkName : legacyNetworkName,
+          required: singleNetwork ? true : published,
+        });
+        serviceChanged ||= desiredMembership.changed;
+        serviceFailed ||= !desiredMembership.success;
 
-          const legacyMembership = await this.runtime.reconcileServiceNetwork({
-            serviceName,
-            networkName: legacyNetworkName,
-            required: false,
-          });
-          serviceChanged ||= legacyMembership.changed;
-          serviceFailed ||= !legacyMembership.success;
-        } else {
-          const legacyMembership = await this.runtime.reconcileServiceNetwork({
-            serviceName,
-            networkName: legacyNetworkName,
-            required: published,
-          });
-          serviceChanged ||= legacyMembership.changed;
-          serviceFailed ||= !legacyMembership.success;
+        // Never repoint Traefik to a network that Docker failed to attach.
+        if (serviceFailed) {
+          cleanupSafe = false;
+          if (serviceChanged) changed += 1;
+          failed += 1;
+          continue;
         }
 
         const desiredLabels =
           renderTraefikLabels(singleApp, {
             certResolver: process.env.TRAEFIK_CERT_RESOLVER,
-            swarmNetwork:
-              topology === "single" ? networkName : legacyNetworkName,
+            swarmNetwork: singleNetwork ? networkName : legacyNetworkName,
           }) ?? {};
         const labels = await this.runtime.reconcileTraefikLabels({
           serviceName,
@@ -136,17 +135,41 @@ export class IngressReconcilerService {
         serviceChanged ||= labels.changed;
         serviceFailed ||= !labels.success;
 
+        // Obsolete network membership is removed only after routing labels point
+        // at the desired isolated network, preventing a migration outage.
+        if (singleNetwork && labels.success) {
+          const legacyMembership = await this.runtime.reconcileServiceNetwork({
+            serviceName,
+            networkName: legacyNetworkName,
+            required: false,
+          });
+          serviceChanged ||= legacyMembership.changed;
+          serviceFailed ||= !legacyMembership.success;
+
+          if (topology === "pre-v020-networkless") {
+            const sharedIngress =
+              await this.runtime.detachServiceFromPreV020SharedIngress({
+                serviceName,
+              });
+            serviceChanged ||= sharedIngress.changed;
+            serviceFailed ||= !sharedIngress.success;
+          }
+        }
+
         if (serviceChanged) changed += 1;
-        if (serviceFailed) failed += 1;
+        if (serviceFailed) {
+          failed += 1;
+          cleanupSafe = false;
+        }
       }
 
-      if (topology === "single") {
+      if (singleNetwork && cleanupSafe) {
         const cleanup = await this.runtime.reconcileLegacyIngressNetwork({
           networkName: legacyNetworkName,
           required: false,
         });
         if (!cleanup.success) failed += 1;
-      } else if (!groupRequiresIngress) {
+      } else if (!singleNetwork && !groupRequiresIngress) {
         const cleanup = await this.runtime.reconcileLegacyIngressNetwork({
           networkName: legacyNetworkName,
           required: false,

@@ -452,4 +452,5 @@ configs:
   postgres_fence_script:
     file: /etc/resourceportal/postgres-fence.sh
   zitadel_public_config:
-    file: /etc/resourceportal/zitadel-config.yaml
+    external: true
+    name: __ZITADEL_PUBLIC_CONFIG_REF__

@@ -35,6 +35,7 @@ contains "$bootstrap_source" '["cli-client-id", cliApp.clientId]' 'production bo
 not_contains "$bootstrap_source" 'cliClientSecret' 'production bootstrap never emits a CLI client secret'
 contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_CLI_ONLY' 'bootstrap supports CLI-only reconciliation for upgrades'
 contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY' 'bootstrap supports MCP OAuth-only reconciliation for upgrades'
+contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_WEB_OIDC_ONLY' 'bootstrap supports Web OIDC-only reconciliation for domain changes'
 contains "$bootstrap_source" '"/v2/settings/security"' 'bootstrap configures ZITADEL security settings for MCP OAuth'
 contains "$bootstrap_source" 'dynamicClientRegistration:' 'bootstrap configures Dynamic Client Registration'
 contains "$bootstrap_source" 'allowUnauthenticated: true' 'bootstrap enables unauthenticated DCR required for automatic MCP client registration'
@@ -194,6 +195,92 @@ reconfigure_preserves_management_state() (
 )
 status 0 'reconfigure preserves management secret ref' reconfigure_preserves_management_state
 
+
+zitadel_public_config_is_content_addressed() (
+  tmpdir="$(mktemp -d /tmp/rp-zitadel-public-config.XXXXXX)"; trap 'rm -rf "$tmpdir"' EXIT
+  RP_CFG_ZITADEL_DOMAIN='auth.new.example.com'
+  RP_ZITADEL_PUBLIC_CONFIG_PATH="$tmpdir/zitadel-config.yaml"
+  export RP_CFG_ZITADEL_DOMAIN RP_ZITADEL_PUBLIC_CONFIG_PATH
+  created=''
+  docker() {
+    if [[ "$1 $2" == 'config inspect' ]]; then return 1; fi
+    if [[ "$1 $2" == 'config create' ]]; then created="$3:$4"; return 0; fi
+    return 1
+  }
+  rp_prepare_zitadel_public_config
+  expected_hash="$(sha256sum "$RP_ZITADEL_PUBLIC_CONFIG_PATH" | awk '{print substr($1,1,16)}')"
+  [[ "$RP_CFG_ZITADEL_PUBLIC_CONFIG_REF" == "zitadel_public_config_${expected_hash}" ]]
+  [[ "$created" == "zitadel_public_config_${expected_hash}:$RP_ZITADEL_PUBLIC_CONFIG_PATH" ]]
+  grep -q '^ExternalDomain: auth.new.example.com$' "$RP_ZITADEL_PUBLIC_CONFIG_PATH"
+)
+status 0 'ZITADEL public config is content-addressed and tracks ExternalDomain' zitadel_public_config_is_content_addressed
+
+reconfigure_domain_reconciles_oidc_before_final() (
+  log="$(mktemp /tmp/rp-domain-reconfigure.XXXXXX)"; trap 'rm -f "$log"' EXIT
+  RP_CFG_DOMAIN='old.example.com'
+  RP_CFG_ZITADEL_DOMAIN='auth.old.example.com'
+  RP_CFG_ACME_EMAIL='admin@example.com'
+  RP_CFG_INGRESS_ADDRESSES='203.0.113.10'
+  RP_CFG_ZITADEL_PUBLIC_CONFIG_REF='zitadel_public_config_old'
+  export RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL RP_CFG_INGRESS_ADDRESSES RP_CFG_ZITADEL_PUBLIC_CONFIG_REF
+  input_index=0
+  rp_ui_input() {
+    input_index=$((input_index+1))
+    case "$input_index" in
+      1) printf 'new.example.com\n' ;;
+      2) printf 'auth.new.example.com\n' ;;
+      3) printf 'new-admin@example.com\n' ;;
+      4) printf '203.0.113.20\n' ;;
+    esac
+  }
+  rp_primary_enable_ingress(){ RP_CFG_ZITADEL_PUBLIC_CONFIG_REF='zitadel_public_config_new'; export RP_CFG_ZITADEL_PUBLIC_CONFIG_REF; printf 'ingress:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; }
+  rp_run_zitadel_web_oidc_reconcile(){ printf 'oidc:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; }
+  rp_primary_deploy_final(){ printf 'final:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; }
+  rp_primary_persist(){ printf 'persist:%s:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_ZITADEL_PUBLIC_CONFIG_REF" >>"$log"; }
+  rp_reconfigure_domain
+  expected=$'ingress:new.example.com:auth.new.example.com\noidc:new.example.com:auth.new.example.com\nfinal:new.example.com:auth.new.example.com\npersist:new.example.com:auth.new.example.com:zitadel_public_config_new'
+  [[ "$(cat "$log")" == "$expected" ]]
+  [[ "$RP_CFG_LEGACY_DOMAIN" == old.example.com ]]
+  [[ "$RP_CFG_LEGACY_ZITADEL_DOMAIN" == auth.old.example.com ]]
+)
+status 0 'domain reconfigure updates ZITADEL/OIDC before persisting final stack' reconfigure_domain_reconciles_oidc_before_final
+
+reconfigure_domain_rolls_back_zitadel_and_oidc() (
+  log="$(mktemp /tmp/rp-domain-rollback.XXXXXX)"; trap 'rm -f "$log"' EXIT
+  RP_CFG_DOMAIN='old.example.com'
+  RP_CFG_ZITADEL_DOMAIN='auth.old.example.com'
+  RP_CFG_ACME_EMAIL='admin@example.com'
+  RP_CFG_INGRESS_ADDRESSES='203.0.113.10'
+  RP_CFG_ZITADEL_PUBLIC_CONFIG_REF='zitadel_public_config_old'
+  export RP_CFG_DOMAIN RP_CFG_ZITADEL_DOMAIN RP_CFG_ACME_EMAIL RP_CFG_INGRESS_ADDRESSES RP_CFG_ZITADEL_PUBLIC_CONFIG_REF
+  input_index=0
+  oidc_calls=0
+  rp_ui_input() {
+    input_index=$((input_index+1))
+    case "$input_index" in
+      1) printf 'new.example.com\n' ;;
+      2) printf 'auth.new.example.com\n' ;;
+      3) printf 'new-admin@example.com\n' ;;
+      4) printf '203.0.113.20\n' ;;
+    esac
+  }
+  rp_primary_enable_ingress(){ RP_CFG_ZITADEL_PUBLIC_CONFIG_REF='zitadel_public_config_new'; export RP_CFG_ZITADEL_PUBLIC_CONFIG_REF; printf 'ingress:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; }
+  rp_run_zitadel_web_oidc_reconcile(){ oidc_calls=$((oidc_calls+1)); printf 'oidc:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; }
+  rp_primary_deploy_final(){ printf 'final-failed:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" >>"$log"; return 1; }
+  rp_deploy_control_plane(){ printf 'rollback-stack:%s:%s:%s\n' "$RP_CFG_DOMAIN" "$RP_CFG_ZITADEL_DOMAIN" "$RP_CFG_ZITADEL_PUBLIC_CONFIG_REF" >>"$log"; }
+  set +e
+  rp_reconfigure_domain
+  rc=$?
+  set -e
+  [[ "$rc" == 1 ]]
+  [[ "$RP_CFG_DOMAIN" == old.example.com ]]
+  [[ "$RP_CFG_ZITADEL_DOMAIN" == auth.old.example.com ]]
+  [[ "$RP_CFG_ZITADEL_PUBLIC_CONFIG_REF" == zitadel_public_config_old ]]
+  [[ "$(cat "$log")" == *'rollback-stack:old.example.com:auth.old.example.com:zitadel_public_config_old'* ]]
+  [[ "$(cat "$log")" == *'oidc:old.example.com:auth.old.example.com'* ]]
+)
+status 0 'domain reconfigure rolls back ZITADEL config and OIDC client after final failure' reconfigure_domain_rolls_back_zitadel_and_oidc
+
 upgrade_preserves_management_state() (
   previous="$(mktemp /tmp/rp-zitadel-upgrade-stack.XXXXXX.yml)"; manifest="$(mktemp /tmp/rp-zitadel-upgrade-manifest.XXXXXX.json)"; log="$(mktemp /tmp/rp-zitadel-upgrade.XXXXXX)"
   trap 'rm -f "$previous" "$manifest" "$log"' EXIT
@@ -207,13 +294,15 @@ upgrade_preserves_management_state() (
   export RP_CFG_DOMAIN RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }
-  rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-upgrade\n' >>"$log"; }
+  rp_upgrade_prepare_postgres_services(){ return 0; }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-source:%s\n' "$1" >>"$log"; }
   rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth:%s
 ' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_run_migrations(){ return 0; }
   rp_deploy_control_plane(){ [[ "$1" == final ]] && printf 'deploy:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_wait_for_https_origin(){ return 0; }
   rp_primary_start_enrollment(){ printf 'enrollment:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
+  rp_persist_release_manifest(){ printf '%s\n' "$1"; }
   rp_manifest_value(){ [[ "$2" == .version ]] && printf '0.1.4\n'; }
   rp_config_write(){ printf 'config:%s:%s:%s\n' "$RP_CFG_ZITADEL_ORGANIZATION_ID" "$RP_CFG_ZITADEL_PROJECT_ID" "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }
   rp_write_stack(){ printf 'stack:%s\n' "$RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF" >>"$log"; }

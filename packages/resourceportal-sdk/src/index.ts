@@ -11,6 +11,26 @@ export type ResourcePortalRequestOptions = {
   idempotencyKey?: string;
 };
 
+export type TenantSearchKind =
+  | "appGroup"
+  | "application"
+  | "volume"
+  | "registry"
+  | "domain";
+
+export type TenantSearchResult = {
+  kind: TenantSearchKind;
+  id: string;
+  label: string;
+  description: string;
+  keywords: string;
+  appGroupId?: string;
+};
+
+export type TenantSearchResponse = {
+  items: TenantSearchResult[];
+};
+
 export class ResourcePortalApiError extends Error {
   constructor(
     message: string,
@@ -139,6 +159,13 @@ export class ResourcePortalClient {
       this.request(
         `/tenants/${encode(tenantId)}/groups/${encode(groupId)}/roles/${encode(roleId)}`,
         { method: "DELETE" },
+      ),
+  };
+
+  readonly search = {
+    tenant: (tenantId: string, query: string, limit = 20) =>
+      this.request<TenantSearchResponse>(
+        `/tenants/${encode(tenantId)}/search?q=${encode(query)}&limit=${encode(String(limit))}`,
       ),
   };
 

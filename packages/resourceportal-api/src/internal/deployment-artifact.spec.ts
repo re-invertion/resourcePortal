@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
+import type { EncryptionService } from "../security/encryption.service";
 import {
   deploymentArtifactMatches,
   deploymentArtifactSha256,
@@ -20,7 +21,10 @@ type UpdateManyArgs = {
   data: Record<string, unknown>;
 };
 
-function serviceWithPrisma(prisma: PrismaService) {
+function serviceWithPrisma(
+  prisma: PrismaService,
+  encryption: EncryptionService = undefined as never,
+) {
   return new DeploymentExecutionService(
     prisma,
     undefined as never,
@@ -30,7 +34,7 @@ function serviceWithPrisma(prisma: PrismaService) {
     undefined as never,
     undefined as never,
     undefined as never,
-    undefined as never,
+    encryption,
     undefined as never,
   );
 }
@@ -136,6 +140,73 @@ describe("deployment artifact integrity", () => {
     expect(update?.data.renderedStack).toBe(first.renderedStack);
     expect(update?.data.renderedStackSha256).toBe(first.sha256);
     expect(update?.data.renderedAt).toBeInstanceOf(Date);
+  });
+
+
+  it("renders protected sensitive environment only in memory without persisting plaintext", async () => {
+    const protectedValue = "enc:v1:iv:tag:ciphertext";
+    const appGroupId = "22222222-2222-4222-8222-222222222222";
+    const stackConfig = JSON.stringify({
+      appGroup: {
+        id: appGroupId,
+        tenantId: "99999999-9999-4999-8999-999999999999",
+        name: "protected-group",
+        runtimeState: "Running",
+        runtimeDraftRevision: 1,
+      },
+      singleApps: [
+        {
+          id: "app-1",
+          name: "db",
+          image: "postgres:15",
+          registryId: null,
+          desiredReplicas: 1,
+          runtimeState: "Running",
+          resources: { cpu: "0.5", memoryBytes: "536870912", gpu: 0 },
+          environment: { POSTGRES_PASSWORD: protectedValue },
+          variables: [],
+          secrets: [],
+          configs: [],
+          healthCheck: null,
+          entrypoint: null,
+          command: [],
+          workingDir: null,
+          user: null,
+          readOnlyRootFilesystem: false,
+          stopGracePeriodSeconds: 30,
+          restartPolicy: {},
+          updatePolicy: {},
+          httpEndpoints: [],
+          internalPortExposures: [],
+          volumes: [],
+        },
+      ],
+    });
+    const state: ArtifactState = {
+      id: "deployment-protected",
+      stackConfig,
+      renderedStack: null,
+      renderedStackSha256: null,
+      renderedAt: null,
+    };
+    const { prisma, updateMany } = fakePrismaFor(state);
+    const encryption = {
+      decrypt: vi.fn((value: string) =>
+        value === protectedValue ? "runtime-only-password" : value,
+      ),
+    } as unknown as EncryptionService;
+    const service = serviceWithPrisma(prisma, encryption);
+
+    const artifact = await service.ensureDeploymentArtifact("deployment-protected");
+
+    expect(artifact.renderedStack).toContain("runtime-only-password");
+    expect(artifact.renderedStack).not.toContain(protectedValue);
+    expect(artifact.sha256).toBe(
+      deploymentArtifactSha256(artifact.renderedStack),
+    );
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(state.renderedStack).toBeNull();
+    expect(state.renderedStackSha256).toBeNull();
   });
 
   it("rejects a persisted artifact whose bytes no longer match its digest", async () => {

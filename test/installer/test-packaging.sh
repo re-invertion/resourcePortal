@@ -17,6 +17,7 @@ const pkg=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if (pkg.dependencies?.prisma !== '6.12.0') process.exit(1);
 EOF_NODE
 [[ -f "$web_docker" ]] && pass "Web production Dockerfile exists" || fail "Web production Dockerfile exists"
+[[ "$(cat "$api_docker")" == *'COPY --from=dependencies /app/node_modules/@prisma/engines /app/node_modules/@prisma/engines'* ]] && pass 'API image carries Prisma migration engines for offline deploys' || fail 'API image carries Prisma migration engines for offline deploys'
 if [[ -f "$web_docker" ]]; then
   contains "$web_docker" 'RUN npm run build' "Web image builds production assets"
   contains "$web_docker" 'COPY packages/resourceportal-web/public ./public' "Web image includes public brand assets before Vite build"

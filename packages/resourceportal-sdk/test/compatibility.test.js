@@ -70,6 +70,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "platform-infrastructure/platform-infrastructure.controller.ts",
     "platform-maintenance/platform-maintenance.controller.ts",
     "registries/registries.controller.ts",
+    "search/tenant-search.controller.ts",
     "service-identities/platform-service-identities.controller.ts",
     "service-identities/service-identities.controller.ts",
     "storage-backends/storage-backends.controller.ts",
@@ -89,6 +90,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   await client.platformNetworkEgress.get();
   await client.platformInfrastructure.getSwarmCluster();
   await client.storageBackends.list();
+  await client.search.tenant("tenant id", "checkout", 15);
   await client.operations.list("tenant id");
   await client.platformMaintenance.get();
   await client.oauthApplications.list("tenant id");
@@ -106,6 +108,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
       "/api/platform/network-egress",
       "/api/platform/swarm-cluster",
       "/api/platform/storage-backends",
+      "/api/tenants/tenant%20id/search",
       "/api/tenants/tenant%20id/operations",
       "/api/platform/maintenance",
       "/api/tenants/tenant%20id/oauth-applications",

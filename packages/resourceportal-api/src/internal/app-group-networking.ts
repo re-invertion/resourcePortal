@@ -21,6 +21,11 @@ export type AppGroupNetworkTopology = {
   traefikRequired: boolean;
 };
 
+export type PersistedAppGroupNetworkTopology = {
+  mode: "single" | "legacy" | "pre-v020-networkless";
+  traefikRequired: boolean;
+};
+
 export function inspectAppGroupNetworkTopology(
   renderedStack: string,
   appGroupNetworkName: string,
@@ -80,6 +85,32 @@ export function inspectAppGroupNetworkTopology(
   }
 
   return { mode: "legacy", traefikRequired };
+}
+
+export function inspectPersistedAppGroupNetworkTopology(
+  renderedStack: string,
+  appGroupNetworkName: string,
+  legacyIngressNetworkName: string,
+): PersistedAppGroupNetworkTopology {
+  try {
+    return inspectAppGroupNetworkTopology(
+      renderedStack,
+      appGroupNetworkName,
+      legacyIngressNetworkName,
+    );
+  } catch (error) {
+    const stack = parse(renderedStack) as ComposeStack;
+    const declaredNetworks = Object.keys(stack.networks ?? {});
+    if (declaredNetworks.length !== 0) throw error;
+
+    const labels = Object.values(stack.services ?? {}).flatMap((service) =>
+      normalizeLabels(service?.deploy?.labels),
+    );
+    const traefikRequired = labels.some(([key]) =>
+      key.startsWith("traefik.http.routers."),
+    );
+    return { mode: "pre-v020-networkless", traefikRequired };
+  }
 }
 
 function normalizeLabels(

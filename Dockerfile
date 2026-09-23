@@ -53,6 +53,9 @@ RUN apk add --no-cache \
 
 COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules
 COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
+# Prisma CLI is a production dependency, but production npm ci runs with --ignore-scripts.
+# Copy the pre-fetched engine bundle from the dependency stage so migrate deploy works offline.
+COPY --from=dependencies /app/node_modules/@prisma/engines /app/node_modules/@prisma/engines
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist

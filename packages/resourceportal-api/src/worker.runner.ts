@@ -15,6 +15,7 @@ import {
   WorkerRuntimeObservabilityService,
 } from "./observability/worker-runtime-observability.service";
 import { OperationsWorkerService } from "./operations/operations-worker.service";
+import { DeploymentArtifactSecurityMigrationService } from "./security/deployment-artifact-security-migration.service";
 import { LegacySecretMigrationService } from "./security/legacy-secret-migration.service";
 import { VolumeUsageReconcilerService } from "./volumes/volume-usage-reconciler.service";
 import { WorkerModule } from "./worker.module";
@@ -44,6 +45,7 @@ async function main() {
   });
   const config = app.get(ConfigService);
   const operations = app.get(OperationsWorkerService);
+  const artifactSecurity = app.get(DeploymentArtifactSecurityMigrationService);
   const legacySecrets = app.get(LegacySecretMigrationService);
   const certificates = app.get(DomainCertificateReconcilerService);
   const ingress = app.get(IngressReconcilerService);
@@ -245,6 +247,10 @@ async function main() {
     });
 
     if (!once) {
+      await observe(
+        () => artifactSecurity.migrateAll(),
+        "worker.startup_artifact_security_migration.failed",
+      );
       await startupReconcile("certificate", () => certificates.reconcileBatch());
       await startupReconcile("ingress", () => ingress.reconcileBatch());
       await startupReconcile("drift", () => drift.reconcileAll());

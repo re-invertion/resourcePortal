@@ -25,6 +25,7 @@ import { PlatformMaintenanceModule } from "./platform-maintenance/platform-maint
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
 import { SecurityModule } from "./security/security.module";
+import { SearchModule } from "./search/search.module";
 import { ServiceIdentitiesModule } from "./service-identities/service-identities.module";
 import { StorageBackendsApiModule } from "./storage-backends/storage-backends-api.module";
 import { TenantsModule } from "./tenants/tenants.module";
@@ -41,6 +42,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     PrismaModule,
     PlatformMaintenanceModule,
     SecurityModule,
+    SearchModule,
     AuthModule,
     HealthModule,
     UsersModule,

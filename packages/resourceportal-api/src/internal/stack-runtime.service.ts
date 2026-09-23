@@ -221,6 +221,48 @@ export class StackRuntimeService {
         };
   }
 
+  async detachServiceFromPreV020SharedIngress(input: { serviceName: string }) {
+    const networkName = this.preV020SharedIngressNetworkName();
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      return network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+
+    const serviceNetworks = await this.inspectServiceNetworks(
+      input.serviceName,
+    );
+    if (!serviceNetworks.success) {
+      return {
+        success: false,
+        changed: false,
+        error: serviceNetworks.error,
+      };
+    }
+    if (!serviceNetworks.networkIds.includes(network.networkId)) {
+      return { success: true, changed: false };
+    }
+
+    const update = await this.runDocker([
+      "service",
+      "update",
+      "--network-rm",
+      networkName,
+      input.serviceName,
+    ]);
+    return update.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            update.stderr ||
+            update.stdout ||
+            `docker service update ${input.serviceName} shared ingress detach failed`,
+        };
+  }
+
   private async ensureAppGroupNetwork(networkName: string) {
     const network = await this.inspectNetwork(networkName);
     if (network.success) {
@@ -425,6 +467,17 @@ export class StackRuntimeService {
       this.config.get<string>("TRAEFIK_SERVICE_NAME") ??
       "resourceportal-control-plane_traefik"
     );
+  }
+
+  private preV020SharedIngressNetworkName() {
+    const traefik = this.traefikServiceName();
+    const suffix = "_traefik";
+    if (!traefik.endsWith(suffix)) {
+      throw new Error(
+        `Unable to derive pre-v0.2 shared ingress from Traefik service: ${traefik}`,
+      );
+    }
+    return `${traefik.slice(0, -suffix.length)}_rp-ingress`;
   }
 
   private assertManagedAppGroupNetwork(networkName: string) {

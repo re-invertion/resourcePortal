@@ -100,6 +100,7 @@ rp_render_stack() {
     "ZITADEL_ORGANIZATION_ID|${RP_CFG_ZITADEL_ORGANIZATION_ID:-bootstrap-pending}"
     "ZITADEL_PROJECT_ID|${RP_CFG_ZITADEL_PROJECT_ID:-bootstrap-pending}"
     "ZITADEL_MANAGEMENT_SWARM_REF|${RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF:-$RP_CFG_OIDC_SWARM_REF}"
+    "ZITADEL_PUBLIC_CONFIG_REF|${RP_CFG_ZITADEL_PUBLIC_CONFIG_REF:-zitadel_public_config}"
     "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
@@ -145,8 +146,50 @@ rp_write_stack() {
   mv -f "$tmp" "$target"
 }
 
+rp_wait_control_plane_converged() {
+  local stack_name="${1:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}"
+  local timeout="${2:-${RP_CONTROL_PLANE_CONVERGENCE_TIMEOUT_SECONDS:-300}}"
+  local elapsed=0 service state desired running all_ready
+  local -a services=()
+
+  while (( elapsed < timeout )); do
+    mapfile -t services < <(docker stack services "$stack_name" --format '{{.Name}}' 2>/dev/null || true)
+    if (( ${#services[@]} > 0 )); then
+      all_ready=true
+      for service in "${services[@]}"; do
+        state="$(docker service inspect "$service" --format '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{else}}none{{end}}' 2>/dev/null || true)"
+        case "$state" in
+          paused|rollback_paused)
+            printf 'Control-plane service rollout paused: %s (%s)\n' "$service" "$state" >&2
+            docker service ps --no-trunc "$service" >&2 || true
+            return 1
+            ;;
+          updating|rollback_started) all_ready=false ;;
+          none|completed|rollback_completed|'') ;;
+          *) all_ready=false ;;
+        esac
+
+        desired="$(docker service ps --filter desired-state=running --format '{{.ID}}' "$service" 2>/dev/null | awk 'NF { count++ } END { print count + 0 }')"
+        running="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "$service" 2>/dev/null | awk '$1 == "Running" { count++ } END { print count + 0 }')"
+        [[ "$running" == "$desired" ]] || all_ready=false
+      done
+      [[ "$all_ready" == true ]] && return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  printf 'Control-plane stack did not converge within %ss: %s\n' "$timeout" "$stack_name" >&2
+  for service in "${services[@]}"; do
+    docker service ps --no-trunc "$service" >&2 || true
+  done
+  return 1
+}
+
 rp_deploy_control_plane() {
   local state="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" stack_file
+  declare -F rp_prepare_zitadel_public_config >/dev/null || { printf 'ZITADEL public config helper is unavailable.\n' >&2; return 1; }
+  rp_prepare_zitadel_public_config || return 1
   if [[ "$state" == final ]]; then
     declare -F rp_recover_zitadel_management_state >/dev/null || {
       printf 'ZITADEL management state recovery helper is unavailable.\n' >&2
@@ -180,6 +223,7 @@ rp_deploy_control_plane() {
     return 1
   fi
   rm -f "$stack_file"
+  rp_wait_control_plane_converged "$stack_name" || return 1
 }
 
 rp_run_migrations() {

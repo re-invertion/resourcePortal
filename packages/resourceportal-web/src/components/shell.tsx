@@ -64,6 +64,22 @@ function idValue(item: Record<string, unknown>) {
   return stringValue(item.id);
 }
 
+export function tenantSearchResultToItem(tenantId: string, resource: Record<string, unknown>): SearchItem | undefined {
+  const kind = stringValue(resource.kind);
+  const id = idValue(resource);
+  const appGroupId = stringValue(resource.appGroupId);
+  if (!id) return undefined;
+  let href = "";
+  let category = "Resource";
+  if (kind === "appGroup") { href = appGroupHref(tenantId, id); category = "App Group"; }
+  else if (kind === "application" && appGroupId) { href = applicationHref(tenantId, appGroupId, id); category = "Application"; }
+  else if (kind === "volume") { href = tenantHref(tenantId, "volumes", id); category = "Volume"; }
+  else if (kind === "registry") { href = tenantHref(tenantId, "registries", id); category = "Registry"; }
+  else if (kind === "domain") { href = tenantHref(tenantId, "domains", id); category = "Domain"; }
+  if (!href) return undefined;
+  return { id: `search-${kind}-${appGroupId || "tenant"}-${id}`, label: stringValue(resource.label, id), description: stringValue(resource.description, category), href, category, keywords: stringValue(resource.keywords) };
+}
+
 function tenantSearchNavigation(tenantId: string): SearchItem[] {
   const item = (id: string, label: string, description: string, section: string, keywords = ""): SearchItem => ({
     id: `nav-${id}`, label, description, href: tenantHref(tenantId, section), category: "Navigation", keywords,
@@ -127,7 +143,7 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
   const [dynamicItems, setDynamicItems] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(0);
-  const loadedKeyRef = useRef("");
+  const searchRequestRef = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -162,88 +178,44 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
     };
   }, []);
 
-  async function loadDynamic() {
-    const key = route.kind === "tenant" ? `tenant:${route.tenantId}` : "platform";
-    if (loadedKeyRef.current === key) return;
-    loadedKeyRef.current = key;
-    setLoading(true);
-    try {
-      if (route.kind === "platform") {
-        const tenants = records(await apiRequest("/api/tenants"));
-        setDynamicItems(tenants.map(tenant => ({
-          id: `tenant-${idValue(tenant)}`,
-          label: stringValue(tenant.displayName, stringValue(tenant.name, idValue(tenant))),
-          description: stringValue(tenant.description, "Tenant workspace"),
-          href: tenantHref(idValue(tenant), "overview"),
-          category: "Tenant",
-          keywords: `${stringValue(tenant.name)} ${stringValue(tenant.status)} ${stringValue(tenant.contactEmail)}`,
-        })).filter(item => item.href && item.label));
-        return;
-      }
-
-      const tenantId = route.tenantId;
-      const base = `/api/tenants/${encodeURIComponent(tenantId)}`;
-      const [groupPayload, volumePayload, registryPayload, domainPayload] = await Promise.all([
-        apiRequest(`${base}/app-groups`).catch(() => []),
-        apiRequest(`${base}/volumes`).catch(() => []),
-        apiRequest(`${base}/registries`).catch(() => []),
-        apiRequest(`${base}/domains`).catch(() => []),
-      ]);
-      const groups = records(groupPayload);
-      const resources: SearchItem[] = [];
-
-      for (const group of groups) {
-        const groupId = idValue(group);
-        if (!groupId) continue;
-        const groupName = stringValue(group.displayName, stringValue(group.name, groupId));
-        resources.push({
-          id: `group-${groupId}`, label: groupName, description: "App Group", href: appGroupHref(tenantId, groupId), category: "App Group",
-          keywords: `${stringValue(group.description)} ${stringValue(group.runtimeState)} ${stringValue(group.health)}`,
-        });
-      }
-
-      const appsByGroup = await Promise.all(groups.slice(0, 30).map(async group => {
-        const groupId = idValue(group);
-        if (!groupId) return [] as SearchItem[];
-        const groupName = stringValue(group.displayName, stringValue(group.name, groupId));
-        const apps = records(await apiRequest(`${base}/app-groups/${encodeURIComponent(groupId)}/single-apps`).catch(() => []));
-        return apps.map(app => {
-          const appId = idValue(app);
-          return {
-            id: `app-${groupId}-${appId}`,
-            label: stringValue(app.displayName, stringValue(app.name, appId)),
-            description: `Application in ${groupName}`,
-            href: applicationHref(tenantId, groupId, appId),
-            category: "Application",
-            keywords: `${stringValue(app.image)} ${stringValue(app.runtimeState)} ${stringValue(app.health)} ${groupName}`,
-          } satisfies SearchItem;
-        }).filter(item => item.id && item.label);
-      }));
-      resources.push(...appsByGroup.flat());
-
-      for (const [category, payload, section, keywords] of [
-        ["Volume", volumePayload, "volumes", "storage disk persistent"],
-        ["Registry", registryPayload, "registries", "docker image container"],
-        ["Domain", domainPayload, "domains", "dns hostname tls"],
-      ] as const) {
-        for (const resource of records(payload)) {
-          const id = idValue(resource);
-          if (!id) continue;
-          resources.push({
-            id: `${category.toLowerCase()}-${id}`,
-            label: stringValue(resource.displayName, stringValue(resource.name, stringValue(resource.hostname, id))),
-            description: category,
-            href: tenantHref(tenantId, section, id),
-            category,
-            keywords: `${keywords} ${stringValue(resource.description)} ${stringValue(resource.status)} ${stringValue(resource.host)} ${stringValue(resource.hostname)}`,
-          });
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 2) { setDynamicItems([]); setLoading(false); return; }
+    const requestId = ++searchRequestRef.current;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void (async () => {
+        try {
+          if (route.kind === "platform") {
+            const tenants = records(await apiRequest("/api/tenants"));
+            if (searchRequestRef.current !== requestId) return;
+            const lowerQuery = q.toLowerCase();
+            setDynamicItems(tenants.map(tenant => ({
+              id: `tenant-${idValue(tenant)}`,
+              label: stringValue(tenant.displayName, stringValue(tenant.name, idValue(tenant))),
+              description: stringValue(tenant.description, "Tenant workspace"),
+              href: tenantHref(idValue(tenant), "overview"),
+              category: "Tenant",
+              keywords: `${stringValue(tenant.name)} ${stringValue(tenant.status)} ${stringValue(tenant.contactEmail)}`,
+            })).filter(item => item.href && item.label && `${item.label} ${item.description} ${item.keywords}`.toLowerCase().includes(lowerQuery)));
+            return;
+          }
+          const tenantId = route.tenantId;
+          const payload = await apiRequest(`/api/tenants/${encodeURIComponent(tenantId)}/search?q=${encodeURIComponent(q)}&limit=20`);
+          if (searchRequestRef.current !== requestId) return;
+          setDynamicItems(records(payload).flatMap(resource => {
+            const item = tenantSearchResultToItem(tenantId, resource);
+            return item ? [item] : [];
+          }));
+        } catch {
+          if (searchRequestRef.current === requestId) setDynamicItems([]);
+        } finally {
+          if (searchRequestRef.current === requestId) setLoading(false);
         }
-      }
-      setDynamicItems(resources);
-    } finally {
-      setLoading(false);
-    }
-  }
+      })();
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [open, query, route]);
 
   const results = useMemo(() => {
     const q = query.trim();
@@ -277,8 +249,8 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
         value={query}
         placeholder="Search resources, apps, pages…"
         className="rp-global-search-input h-full min-w-0 flex-1 px-2 text-[13px] text-[#172033] placeholder:text-[#718096]"
-        onFocus={() => { setOpen(true); void loadDynamic(); }}
-        onChange={event => { setQuery(event.target.value); setOpen(true); void loadDynamic(); }}
+        onFocus={() => setOpen(true)}
+        onChange={event => { setQuery(event.target.value); setOpen(true); }}
         onKeyDown={event => {
           if (event.key === "ArrowDown") { event.preventDefault(); setSelected(index => Math.min(index + 1, Math.max(results.length - 1, 0))); }
           if (event.key === "ArrowUp") { event.preventDefault(); setSelected(index => Math.max(index - 1, 0)); }

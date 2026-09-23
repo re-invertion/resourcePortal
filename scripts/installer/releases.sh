@@ -68,6 +68,23 @@ rp_download_release_manifest() {
   rp_validate_release_manifest "$target"
 }
 
+rp_persist_release_manifest() {
+  local source="$1" state_dir target tmp
+  rp_validate_release_manifest "$source" || return 1
+  state_dir="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}"
+  target="${state_dir}/release.json"
+  install -d -m 0700 "$state_dir" || return 1
+  tmp="$(mktemp "${state_dir}/.release.json.XXXXXX")" || return 1
+  if ! cp -- "$source" "$tmp" ||
+     ! chmod 0644 "$tmp" ||
+     ! rp_validate_release_manifest "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv -f "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+  printf '%s\n' "$target"
+}
+
 rp_apply_release_manifest_images() {
   local manifest="$1"
   rp_validate_release_manifest "$manifest" || return 1
