@@ -167,7 +167,7 @@ contains "$upgrade_source" 'rp_upgrade_prepare_postgres_services' 'upgrade pre-r
 upgrade_prerolls_postgres_before_dependents() (
   local log target old stack
   log="$(mktemp /tmp/rp-upgrade-postgres-order.XXXXXX)"
-  trap "rm -f '$log'" EXIT
+  trap 'rm -f "$log"' EXIT
   target='ghcr.io/re-invertion/resourceportal-postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   old='ghcr.io/re-invertion/resourceportal-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   stack='resourceportal-control-plane'
@@ -209,7 +209,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   local log previous postgres_line zitadel_line migration_line deploy_line
   log="$(mktemp /tmp/rp-upgrade-dependency-order.XXXXXX)"
   previous="$(mktemp /tmp/rp-upgrade-previous-stack.XXXXXX.yml)"
-  trap "rm -f '$log' '$previous'" EXIT
+  trap 'rm -f "$log" "$previous"' EXIT
   printf 'services: {}\n' >"$previous"
   RP_CFG_RELEASE_VERSION=0.2.13
   RP_CFG_ACME_ENVIRONMENT=production
