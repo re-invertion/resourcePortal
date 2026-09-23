@@ -57,15 +57,42 @@ describe("TenantSettingsPage", () => {
     });
   });
 
-  it("shows OAuth discovery and DCR safety guidance", async () => {
+  it("shows zero-config OpenAI guidance when platform OAuth bootstrap is incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false } });
       return json([]);
     }));
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
-    expect(await screen.findByText("Automatic OAuth client registration is not advertised")).toBeTruthy();
-    expect(screen.getByText(/same ResourcePortal identity system/i)).toBeTruthy();
+    expect(await screen.findByText("Platform OAuth bootstrap is incomplete")).toBeTruthy();
+    expect(screen.getByText(/tenant users should not create a manual OAuth client/i)).toBeTruthy();
     expect(screen.getByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
   });
+
+  it("shows OpenAI ready status and no-client-secret guidance when DCR is advertised", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/mcp-settings")) return json({
+        enabled: true,
+        accessMode: "AllMembers",
+        allowedMembershipIds: [],
+        oauth: {
+          issuer: "https://auth.example.com",
+          scopes: ["openid", "profile", "email", "offline_access", "rp-audience"],
+          discoveryAvailable: true,
+          dynamicClientRegistrationAvailable: true,
+          openAiReady: true,
+          transport: "Streamable HTTP",
+          protocol: "MCP 2026-07-28 with 2025-era compatibility",
+        },
+      });
+      return json([]);
+    }));
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+    expect(await screen.findByText("OpenAI / ChatGPT ready")).toBeTruthy();
+    expect(screen.getByText("No Client ID or secret required")).toBeTruthy();
+    expect(screen.getByText(/OpenAI\/ChatGPT can register its OAuth client/i)).toBeTruthy();
+    expect(screen.getByText("offline_access", { exact: false })).toBeTruthy();
+  });
+
 });

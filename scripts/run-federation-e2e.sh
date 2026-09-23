@@ -163,6 +163,32 @@ EOF
   }
 }
 
+
+validate_mcp_dcr() {
+  local discovery registration payload response client_id
+  discovery="$(curl --fail --silent --show-error http://localhost:8080/.well-known/openid-configuration)"
+  registration="$(jq -r '.registration_endpoint // empty' <<<"$discovery")"
+  [[ -n "$registration" ]] || {
+    echo "ZITADEL discovery does not advertise registration_endpoint after MCP OAuth reconciliation" >&2
+    return 1
+  }
+
+  payload='{
+    "client_name": "ResourcePortal MCP Federation E2E",
+    "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none"
+  }'
+  response="$(curl --fail --silent --show-error     --request POST     --header 'content-type: application/json'     --data "$payload"     "$registration")"
+  client_id="$(jq -r '.client_id // empty' <<<"$response")"
+  [[ -n "$client_id" ]] || {
+    echo "ZITADEL DCR response did not include client_id: $response" >&2
+    return 1
+  }
+  echo "MCP DCR live registration succeeded: client_id=$client_id"
+}
+
 bootstrap_zitadel() {
   cd "$ROOT_DIR"
   [[ -f .env ]] || {
@@ -174,6 +200,8 @@ bootstrap_zitadel() {
     return 1
   }
   npm --workspace @resource-portal/api run zitadel:bootstrap
+  ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY=true npm --workspace @resource-portal/api run zitadel:bootstrap
+  validate_mcp_dcr
   load_environment
   [[ -n "${ZITADEL_ORGANIZATION_ID:-}" ]] || {
     echo "ZITADEL bootstrap did not persist ZITADEL_ORGANIZATION_ID" >&2

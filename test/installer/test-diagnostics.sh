@@ -269,6 +269,7 @@ done
 [[ "$entrypoint_source" == *'rp_redeem_join_bundle'* ]] && pass 'entrypoint dispatches add-node lifecycle' || fail 'entrypoint dispatches add-node lifecycle'
 [[ "$entrypoint_source" == *'issue-bundle'* && "$entrypoint_source" == *'--role'* && "$entrypoint_source" == *'rp_issue_node_bundle_cli'* ]] && pass 'entrypoint exposes enrollment bundle issuance' || fail 'entrypoint exposes enrollment bundle issuance'
 [[ "$entrypoint_source" == *'rp_upgrade_apply'* ]] && pass 'entrypoint dispatches upgrade lifecycle' || fail 'entrypoint dispatches upgrade lifecycle'
+[[ "$(cat "$repo_root/scripts/installer/diagnostics.sh")" == *'ZITADEL MCP DCR discovery'* ]] && pass 'diagnostics reports MCP DCR discovery readiness' || fail 'diagnostics reports MCP DCR discovery readiness'
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
 [[ "$entrypoint_source" == *'rp_ui_mode_operation'* ]] && pass 'non-primary modes use shared TUI operation wrapper' || fail 'non-primary modes use shared TUI operation wrapper'

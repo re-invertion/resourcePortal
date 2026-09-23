@@ -1,13 +1,12 @@
 import {
+  All,
   Body,
   Controller,
   Get,
   Header,
-  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
-  Post,
   Req,
   Res,
   UseGuards,
@@ -46,24 +45,39 @@ export class TenantMcpSettingsController {
   }
 }
 
+@Public()
 @Controller("tenants/:tenantId/mcp")
 @UseGuards(TenantMcpAccessGuard)
 export class TenantMcpController {
-  constructor(private readonly protocol: TenantMcpProtocolService) {}
+  constructor(
+    private readonly protocol: TenantMcpProtocolService,
+    private readonly config: ConfigService,
+  ) {}
 
-  @Post()
-  @HttpCode(200)
-  async post(
+  @All()
+  async handle(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Body() body: unknown,
     @Req() request: FastifyRequest,
     @Res() reply: FastifyReply,
-    @CurrentUser() actor: AuthenticatedUser,
   ) {
-    const response = await this.protocol.handle({ tenantId, request, actor }, body);
-    reply.header("cache-control", "no-store");
-    if (response.body === undefined) return reply.status(response.statusCode).send();
-    return reply.status(response.statusCode).send(response.body);
+    const authMode = this.config
+      .get<string>("AUTH_MODE", "dev")
+      .trim()
+      .toLowerCase();
+    const bearer = bearerToken(request.headers.authorization);
+    const devUserId = headerValue(request.headers["x-dev-user-id"]);
+    const hasInteractiveCredential =
+      Boolean(bearer) || (authMode === "dev" && Boolean(devUserId));
+
+    return this.protocol.handleHttp(
+      {
+        tenantId,
+        request,
+        actor: hasInteractiveCredential ? request.user : undefined,
+        hasInteractiveCredential,
+      },
+      reply,
+    );
   }
 }
 
@@ -93,6 +107,7 @@ export class TenantMcpOAuthMetadataController {
         "openid",
         "profile",
         "email",
+        "offline_access",
         ...(projectId ? [`urn:zitadel:iam:org:project:id:${projectId}:aud`] : []),
         ...(organizationId ? [`urn:zitadel:iam:org:id:${organizationId}`] : []),
       ],
@@ -101,4 +116,15 @@ export class TenantMcpOAuthMetadataController {
         : undefined,
     };
   }
+}
+
+
+function bearerToken(header: string | undefined) {
+  if (!header) return undefined;
+  const [scheme, token] = header.split(" ");
+  return scheme?.toLowerCase() === "bearer" && token ? token : undefined;
+}
+
+function headerValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }

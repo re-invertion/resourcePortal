@@ -61,9 +61,15 @@ describe("TenantMcpSettingsService", () => {
         issuer: "https://auth.example.com",
         discoveryAvailable: true,
         dynamicClientRegistrationAvailable: true,
+        openAiReady: true,
+        transport: "Streamable HTTP",
+        protocol: "MCP 2026-07-28 with 2025-era compatibility",
       },
     });
-    expect(result.oauth.scopes).toContain("urn:zitadel:iam:org:project:id:project-id:aud");
+    expect(result.oauth.scopes).toContain("offline_access");
+    expect(result.oauth.scopes).toContain(
+      "urn:zitadel:iam:org:project:id:project-id:aud",
+    );
   });
 
   it("atomically saves selected-member access and audits the change", async () => {
@@ -119,6 +125,17 @@ describe("TenantMcpSettingsService", () => {
       { enabled: true, accessMode: "SelectedMembers", allowedMembershipIds: ["11111111-1111-4111-8111-111111111111"] },
       actor,
     )).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("checks whether tenant MCP is enabled for pre-auth discovery", async () => {
+    const { service, prisma } = fixture();
+    prisma.tenantMcpSettings.findUnique.mockResolvedValue({ enabled: false });
+    await expect(service.assertMcpEnabled("tenant-id")).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    prisma.tenantMcpSettings.findUnique.mockResolvedValue({ enabled: true });
+    await expect(service.assertMcpEnabled("tenant-id")).resolves.toBeUndefined();
   });
 
   it("enforces disabled, active membership and selected-member access", async () => {

@@ -7,6 +7,7 @@ import {
 import { Reflector } from "@nestjs/core";
 import { MembershipStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
+import { isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { REQUIRED_PERMISSIONS_KEY } from "./auth.constants";
 
@@ -19,6 +20,7 @@ export class TenantContextGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
+    if (isTenantMcpRequest(request)) return true;
     const tenantId = this.getTenantId(request);
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
       REQUIRED_PERMISSIONS_KEY,

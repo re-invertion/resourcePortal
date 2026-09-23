@@ -65,8 +65,21 @@ export class OidcAuthService {
     return this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
   }
 
+  async authenticateMcpPrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
+    const payload = await this.verifyToken(token);
+    this.assertMcpTokenClaims(payload);
+    return this.authenticateVerifiedPrincipal(token, payload);
+  }
+
   async authenticatePrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
+    return this.authenticateVerifiedPrincipal(token, payload);
+  }
+
+  private async authenticateVerifiedPrincipal(
+    token: string,
+    payload: JWTPayload,
+  ): Promise<AuthenticatedPrincipal> {
     const subject = this.requireStringClaim(payload.sub, "sub");
     const serviceIdentity = await this.findServiceIdentity(subject);
 
@@ -355,6 +368,22 @@ export class OidcAuthService {
     return [...new Set([...(audience || clientId || "").split(","), projectId ?? ""])]
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  private assertMcpTokenClaims(payload: JWTPayload) {
+    const projectId = this.config.get<string>("ZITADEL_PROJECT_ID")?.trim();
+    if (!projectId) {
+      throw new UnauthorizedException("ZITADEL_PROJECT_ID is required for MCP authentication");
+    }
+
+    const audience = Array.isArray(payload.aud)
+      ? payload.aud
+      : typeof payload.aud === "string"
+        ? [payload.aud]
+        : [];
+    if (!audience.includes(projectId)) {
+      throw new UnauthorizedException("MCP bearer token is missing the ResourcePortal project audience");
+    }
   }
 
   private getEmail(payload: JWTPayload) {

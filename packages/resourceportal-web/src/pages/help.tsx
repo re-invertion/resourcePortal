@@ -523,8 +523,9 @@ spec:
               <span>Open <strong>Settings</strong> in the tenant navigation.</span>
               <span>Enable <strong>Model Context Protocol (MCP)</strong>. MCP is disabled by default for every tenant.</span>
               <span>Choose whether all active tenant members may connect or select specific memberships.</span>
-              <span>Save the settings, then copy the MCP server URL from the connection section into your MCP client.</span>
-              <span>Complete OAuth sign-in with the same ResourcePortal identity system used for normal login.</span>
+              <span>Save the settings, then copy the <strong>MCP server URL</strong> from the connection section.</span>
+              <span>In OpenAI/ChatGPT, add a remote MCP server and paste that URL. You do not need to create or paste a Client ID or Client Secret.</span>
+              <span>When OpenAI asks to connect the account, complete OAuth sign-in with the same ResourcePortal identity system used for normal login.</span>
             </StepList>
 
             <Subheading>Access through MCP does not bypass tenant roles</Subheading>
@@ -534,11 +535,11 @@ spec:
 
             <Subheading>OAuth discovery</Subheading>
             <Paragraph>
-              ResourcePortal publishes protected-resource metadata for the tenant MCP endpoint and requires an OAuth bearer token in production. Compatible clients can discover the ResourcePortal identity issuer and the scopes required for the ResourcePortal audience. Browser session cookies and service identities are not accepted for tenant MCP access.
+              ResourcePortal uses the official MCP Streamable HTTP transport and publishes protected-resource metadata for each tenant MCP endpoint. OpenAI can discover the ResourcePortal identity issuer and requested scopes automatically. Tool descriptors advertise OAuth security schemes, and protected tool calls return the standard MCP authentication challenge when account linking is required. Browser session cookies and service identities are not accepted as MCP credentials.
             </Paragraph>
 
             <InfoBox title="Automatic OAuth client registration">
-              Some MCP clients rely on Dynamic Client Registration. Tenant Settings reports whether the configured OAuth server advertises that capability, but enabling tenant MCP does not enable Dynamic Client Registration globally. If it is unavailable and your client supports a preconfigured client ID, create a tenant OAuth application in Credentials using the redirect URI required by that MCP client. Otherwise ask the platform operator to review DCR before enabling it globally.
+              ResourcePortal v0.2.10+ automatically enables the ZITADEL Dynamic Client Registration mode required by MCP account linking. A correctly installed platform advertises the registration endpoint in OIDC discovery, so OpenAI/ChatGPT can register its client automatically. If Tenant Settings shows that automatic registration is unavailable, the platform installer or identity bootstrap needs repair; do not work around it by creating a tenant OAuth application manually.
             </InfoBox>
 
             <div className="mt-5"><LinkButton href={tenantHref(tenantId, "settings")}>Open Tenant Settings</LinkButton></div>

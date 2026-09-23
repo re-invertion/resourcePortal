@@ -82,7 +82,9 @@ export class DevAuthGuard implements CanActivate {
     if (token) {
       let principal;
       try {
-        principal = await this.oidcAuth.authenticatePrincipalToken(token);
+        principal = isTenantMcpRequest(request)
+          ? await this.oidcAuth.authenticateMcpPrincipalToken(token)
+          : await this.oidcAuth.authenticatePrincipalToken(token);
       } catch (error) {
         if (isTenantMcpRequest(request)) applyMcpBearerChallenge(request, reply);
         throw error;

@@ -144,6 +144,7 @@ contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected r
 contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$manifest"' 'upgrade records the exact applied release manifest for resume'
 contains "$upgrade_source" '--with-registry-auth --prune' 'rollback prunes services from failed target architecture'
 contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels' 'v0.2 upgrade backfills node roles before deploy'
+contains "$upgrade_source" 'rp_run_zitadel_mcp_oauth_reconcile' 'upgrade reconciles automatic MCP OAuth registration before deploy'
 contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade refreshes standalone enrollment listener before persisting release state'
 contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
 contains "$upgrade_source" 'case "$current" in' 'upgrade preserves explicit tenant-workloads false opt-out'
