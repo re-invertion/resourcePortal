@@ -270,6 +270,35 @@ done
 [[ "$entrypoint_source" == *'issue-bundle'* && "$entrypoint_source" == *'--role'* && "$entrypoint_source" == *'rp_issue_node_bundle_cli'* ]] && pass 'entrypoint exposes enrollment bundle issuance' || fail 'entrypoint exposes enrollment bundle issuance'
 [[ "$entrypoint_source" == *'rp_upgrade_apply'* ]] && pass 'entrypoint dispatches upgrade lifecycle' || fail 'entrypoint dispatches upgrade lifecycle'
 [[ "$(cat "$repo_root/scripts/installer/diagnostics.sh")" == *'ZITADEL MCP DCR discovery'* ]] && pass 'diagnostics reports MCP DCR discovery readiness' || fail 'diagnostics reports MCP DCR discovery readiness'
+
+(
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  export RP_CFG_ZITADEL_DOMAIN
+  curl(){ printf '%s\n' '{"issuer":"https://auth.example.test","registration_endpoint":"https://auth.example.test/oauth/v2/register"}'; }
+  rp_zitadel_mcp_dcr_advertised
+) && pass 'DCR diagnostic accepts expected registration endpoint' || fail 'DCR diagnostic accepts expected registration endpoint'
+
+set +e
+(
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  export RP_CFG_ZITADEL_DOMAIN
+  curl(){ printf '%s\n' '{"issuer":"https://auth.example.test"}'; }
+  rp_zitadel_mcp_dcr_advertised
+)
+dcr_missing_rc=$?
+set -e
+[[ $dcr_missing_rc -ne 0 ]] && pass 'DCR diagnostic rejects missing registration endpoint' || fail 'DCR diagnostic rejects missing registration endpoint'
+
+set +e
+(
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  export RP_CFG_ZITADEL_DOMAIN
+  curl(){ printf '%s\n' '{"issuer":"https://auth.example.test","registration_endpoint":"https://evil.example.test/oauth/v2/register"}'; }
+  rp_zitadel_mcp_dcr_advertised
+)
+dcr_wrong_host_rc=$?
+set -e
+[[ $dcr_wrong_host_rc -ne 0 ]] && pass 'DCR diagnostic rejects unexpected registration endpoint host' || fail 'DCR diagnostic rejects unexpected registration endpoint host'
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
 [[ "$entrypoint_source" == *'rp_ui_mode_operation'* ]] && pass 'non-primary modes use shared TUI operation wrapper' || fail 'non-primary modes use shared TUI operation wrapper'

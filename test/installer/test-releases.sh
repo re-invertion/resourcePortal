@@ -145,6 +145,8 @@ contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$manifest"' 'upgrade record
 contains "$upgrade_source" '--with-registry-auth --prune' 'rollback prunes services from failed target architecture'
 contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels' 'v0.2 upgrade backfills node roles before deploy'
 contains "$upgrade_source" 'rp_upgrade_prepare_zitadel_for_mcp_oauth' 'upgrade updates ZITADEL before MCP OAuth reconciliation'
+contains "$upgrade_source" 'rp_upgrade_zitadel_migration_bridge_image' 'upgrade includes immutable ZITADEL migration bridge for legacy releases'
+contains "$upgrade_source" '0d88e6e92d0bd98641c107a054715ca57cbd68ca2119d3600cfe95aa6ccc7be4' 'legacy ZITADEL bridge is pinned by digest'
 contains "$upgrade_source" 'rp_run_zitadel_mcp_oauth_reconcile' 'upgrade reconciles automatic MCP OAuth registration before final deploy'
 contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade refreshes standalone enrollment listener before persisting release state'
 contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
