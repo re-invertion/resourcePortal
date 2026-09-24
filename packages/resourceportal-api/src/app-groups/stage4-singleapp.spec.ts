@@ -80,6 +80,30 @@ const createWorker = () => {
 };
 
 describe("Stage 4 SingleApp completion", () => {
+  it("escapes dollar signs in rendered stack values so Compose preserves container-side expansion", () => {
+    const worker = createWorker();
+    const renderStack = (
+      worker as unknown as { renderStack: (stackConfig: string) => string }
+    ).renderStack.bind(worker);
+    const snapshot = stackSnapshot(0);
+    snapshot.singleApps[0].environment = {
+      LITERAL_DOLLAR: "$HOME",
+    };
+    snapshot.singleApps[0].entrypoint = "/bin/sh";
+    snapshot.singleApps[0].command = [
+      "-ec",
+      'echo "$HOME"; export TOKEN="$(cat /run/secrets/token)"; exec app',
+    ];
+
+    const rendered = renderStack(JSON.stringify(snapshot));
+
+    expect(rendered).toContain("LITERAL_DOLLAR: $$HOME");
+    expect(rendered).toContain(
+      'echo "$$HOME"; export TOKEN="$$(cat /run/secrets/token)"; exec app',
+    );
+    expect(rendered).not.toContain('TOKEN="$(cat /run/secrets/token)"');
+  });
+
   it("renders CPU and memory as Docker Swarm resource limits", () => {
     const worker = createWorker();
     const renderStack = (
