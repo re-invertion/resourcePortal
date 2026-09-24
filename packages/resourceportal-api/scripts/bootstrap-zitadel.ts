@@ -278,10 +278,14 @@ async function reconcileMcpDcrJwtAccessTokens(pat: string) {
     if (!app.id || !app.oidcConfig?.clientId) continue;
     await zitadelApi(
       pat,
-      `/management/v1/projects/${dcrProject.id}/apps/${app.id}/oidc_config`,
-      { accessTokenType: "OIDC_TOKEN_TYPE_JWT" },
-      undefined,
-      "PUT",
+      "/zitadel.application.v2.ApplicationService/UpdateApplication",
+      {
+        applicationId: app.id,
+        projectId: dcrProject.id,
+        oidcConfiguration: {
+          accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+        },
+      },
     );
   }
 }
@@ -554,6 +558,7 @@ async function zitadelApi<T>(
     authorization: `Bearer ${pat}`,
     "content-type": "application/json",
     ...zitadelHostHeaders(),
+    ...(path.startsWith("/zitadel.") ? { "connect-protocol-version": "1" } : {}),
   };
 
   if (organizationId && path.startsWith("/management/v1/")) {

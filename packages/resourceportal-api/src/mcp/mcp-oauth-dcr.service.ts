@@ -71,9 +71,16 @@ export class McpOAuthDcrService {
     const projectId = await this.findDcrProjectId();
     const appId = await this.findDcrAppId(projectId, clientId);
     await this.managementRequest(
-      "PUT",
-      `/management/v1/projects/${encodeURIComponent(projectId)}/apps/${encodeURIComponent(appId)}/oidc_config`,
-      { accessTokenType: "OIDC_TOKEN_TYPE_JWT" },
+      "POST",
+      "/zitadel.application.v2.ApplicationService/UpdateApplication",
+      {
+        applicationId: appId,
+        projectId,
+        oidcConfiguration: {
+          accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+        },
+      },
+      { "connect-protocol-version": "1" },
     );
   }
 
@@ -109,6 +116,7 @@ export class McpOAuthDcrService {
     method: "POST" | "PUT",
     path: string,
     body: Record<string, unknown>,
+    extraHeaders: Record<string, string> = {},
   ): Promise<T> {
     const response = await fetch(`${this.internalUrl()}${path}`, {
       method,
@@ -117,6 +125,7 @@ export class McpOAuthDcrService {
         "content-type": "application/json",
         "x-zitadel-instance-host": this.issuerHost(),
         "x-zitadel-public-host": this.issuerHost(),
+        ...extraHeaders,
       },
       body: JSON.stringify(body),
     });
