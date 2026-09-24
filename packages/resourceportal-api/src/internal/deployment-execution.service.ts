@@ -13,7 +13,11 @@ import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
-import { hasProtectedSensitiveEnvironment, revealSensitiveEnvironment, revealSensitiveValue } from "../security/sensitive-environment";
+import {
+  hasProtectedSensitiveEnvironment,
+  revealSensitiveEnvironment,
+  revealSensitiveValue,
+} from "../security/sensitive-environment";
 import { AdvanceDeploymentDto } from "./dto/advance-deployment.dto";
 import { FailDeploymentDto } from "./dto/fail-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
@@ -137,6 +141,24 @@ type StackConfigSingleApp = {
   }>;
 };
 
+function escapeComposeInterpolation(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.replaceAll("$", () => "$$");
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => escapeComposeInterpolation(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        escapeComposeInterpolation(item),
+      ]),
+    );
+  }
+  return value;
+}
+
 @Injectable()
 export class DeploymentExecutionService {
   constructor(
@@ -215,9 +237,13 @@ export class DeploymentExecutionService {
       dto.phase === DeploymentPhase.GeneratingStack
         ? this.renderStack(deployment.stackConfig)
         : undefined;
-    const persistRenderedStack = !hasProtectedSensitiveEnvironment(deployment.stackConfig);
+    const persistRenderedStack = !hasProtectedSensitiveEnvironment(
+      deployment.stackConfig,
+    );
     const renderedStack = persistRenderedStack ? renderedCandidate : undefined;
-    const renderedStackSha256 = renderedStack ? deploymentArtifactSha256(renderedStack) : undefined;
+    const renderedStackSha256 = renderedStack
+      ? deploymentArtifactSha256(renderedStack)
+      : undefined;
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.appGroupDeployment.update({
         where: { id: deploymentId },
@@ -1057,11 +1083,18 @@ export class DeploymentExecutionService {
       throw new NotFoundException("Deployment was not found");
     }
 
-    if (current.stackConfig && hasProtectedSensitiveEnvironment(current.stackConfig)) {
+    if (
+      current.stackConfig &&
+      hasProtectedSensitiveEnvironment(current.stackConfig)
+    ) {
       if (current.renderedStack) {
         await this.prisma.appGroupDeployment.update({
           where: { id: deploymentId },
-          data: { renderedStack: null, renderedStackSha256: null, renderedAt: null },
+          data: {
+            renderedStack: null,
+            renderedStackSha256: null,
+            renderedAt: null,
+          },
         });
       }
       const renderedStack = this.renderStack(current.stackConfig);
@@ -1175,7 +1208,7 @@ export class DeploymentExecutionService {
       configs: this.renderConfigs(snapshot),
     });
 
-    return stringify(stack, { lineWidth: 0 });
+    return stringify(escapeComposeInterpolation(stack), { lineWidth: 0 });
   }
 
   private parseStackConfig(stackConfig: string | null) {
@@ -1739,7 +1772,11 @@ export class DeploymentExecutionService {
       ...Object.fromEntries(
         singleApp.variables.map((variable) => [
           variable.targetName,
-          revealSensitiveValue(variable.targetName, variable.value, this.encryption),
+          revealSensitiveValue(
+            variable.targetName,
+            variable.value,
+            this.encryption,
+          ),
         ]),
       ),
       ...revealSensitiveEnvironment(singleApp.environment, this.encryption),
