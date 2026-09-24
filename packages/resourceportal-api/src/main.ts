@@ -64,6 +64,10 @@ async function bootstrap() {
         path: ".well-known/oauth-authorization-server",
         method: RequestMethod.GET,
       },
+      {
+        path: "oauth/v2/register",
+        method: RequestMethod.POST,
+      },
     ],
   });
   const fastify = app.getHttpAdapter().getInstance();

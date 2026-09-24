@@ -22,7 +22,8 @@
     "test:installer": "export RP_CFG_STORAGE_DEVICE=${RP_CFG_STORAGE_DEVICE:-/dev/sdb}; bash test/installer/test-ui.sh && bash test/installer/test-dashboard.sh && bash test/installer/test-tui-integration.sh && bash test/installer/test-error-reporting.sh && bash test/installer/test-ownership.sh && bash test/installer/test-reset.sh && bash test/installer/test-core.sh && bash test/installer/test-storage.sh && bash test/installer/test-nfs.sh && bash test/installer/test-host-runtime.sh && bash test/installer/test-packaging.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-zitadel-management.sh && bash test/installer/test-acme-resilience.sh && bash test/installer/test-identity-domain.sh && bash test/installer/test-enrollment.sh && bash test/installer/test-releases.sh && bash test/installer/test-diagnostics.sh && bash test/installer/test-workflows.sh && bash test/installer/test-managed-domain-defaults.sh && bash test/installer/test-v018-production-stabilization.sh && bash test/installer/test-v020-placement-networking.sh",
     "test:cli-release": "bash test/cli/test-release-package.sh",
     "postinstall": "node scripts/postinstall-prisma.mjs",
-    "api:worker": "npm --workspace @resource-portal/api run worker"
+    "api:worker": "npm --workspace @resource-portal/api run worker",
+    "test:fastfix:mcp-oauth": "npm --workspace @resource-portal/api test -- src/mcp/mcp-oauth-dcr.service.spec.ts src/mcp/mcp-oauth-metadata.controller.spec.ts src/mcp/tenant-mcp-settings.service.spec.ts src/mcp/tenant-mcp-access.guard.spec.ts src/auth/dev-auth.guard.mcp.spec.ts src/auth/oidc-auth.service.spec.ts && npm --workspace @resource-portal/web test -- proxy-target.test.mjs && bash test/installer/test-zitadel-management.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-workflows.sh"
   },
   "devDependencies": {
     "playwright": "^1.63.0"

@@ -5,6 +5,7 @@ export function isApiProxyPath(pathname) {
     pathname === "/api" ||
     pathname.startsWith("/api/") ||
     pathname === "/.well-known/oauth-authorization-server" ||
+    pathname === "/oauth/v2/register" ||
     pathname === "/.well-known/oauth-protected-resource" ||
     pathname.startsWith("/.well-known/oauth-protected-resource/")
   );

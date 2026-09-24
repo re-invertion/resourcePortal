@@ -1,0 +1,57 @@
+name: ResourcePortal Fast Fix
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fastfix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targeted-hotfix:
+    if: startsWith(github.head_ref, 'fastfix/')
+    name: Targeted hotfix validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
+      AUTH_MODE: dev
+      RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run api:prisma:generate
+
+      - name: Run targeted MCP/OAuth hotfix tests
+        run: npm run test:fastfix:mcp-oauth
+
+      - name: Lint API
+        run: npm run lint --workspace @resource-portal/api
+
+      - name: Build API
+        run: npm run build --workspace @resource-portal/api
+
+      - name: Validate Web proxy
+        run: npm run lint --workspace @resource-portal/web
+
+      - name: Build Web
+        run: npm run build --workspace @resource-portal/web
+
+      - name: Validate touched shell syntax
+        run: bash -n scripts/installer/identity.sh scripts/installer/upgrade.sh

@@ -7,6 +7,8 @@ import {
   TenantMcpOAuthMetadataController,
   TenantMcpSettingsController,
 } from "./tenant-mcp.controller";
+import { McpOAuthDcrController } from "./mcp-oauth-dcr.controller";
+import { McpOAuthDcrService } from "./mcp-oauth-dcr.service";
 import { TenantMcpAccessGuard } from "./tenant-mcp-access.guard";
 import { TenantMcpProtocolService } from "./tenant-mcp-protocol.service";
 import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
@@ -18,7 +20,13 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
     TenantMcpController,
     TenantMcpOAuthMetadataController,
     McpOAuthAuthorizationServerMetadataController,
+    McpOAuthDcrController,
   ],
-  providers: [TenantMcpSettingsService, TenantMcpAccessGuard, TenantMcpProtocolService],
+  providers: [
+    TenantMcpSettingsService,
+    TenantMcpAccessGuard,
+    TenantMcpProtocolService,
+    McpOAuthDcrService,
+  ],
 })
 export class McpModule {}

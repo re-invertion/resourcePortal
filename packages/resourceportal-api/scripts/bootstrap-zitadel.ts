@@ -257,6 +257,33 @@ async function configureMcpDynamicClientRegistration(pat: string) {
     undefined,
     "PUT",
   );
+  await reconcileMcpDcrJwtAccessTokens(pat);
+}
+
+async function reconcileMcpDcrJwtAccessTokens(pat: string) {
+  const projects = await zitadelApi<{ result?: Project[] }>(
+    pat,
+    "/management/v1/projects/_search",
+    {},
+  );
+  const dcrProject = projects.result?.find((project) => project.name === "ZITADEL DCR");
+  if (!dcrProject?.id) return;
+
+  const apps = await zitadelApi<{ result?: App[] }>(
+    pat,
+    `/management/v1/projects/${dcrProject.id}/apps/_search`,
+    {},
+  );
+  for (const app of apps.result ?? []) {
+    if (!app.id || !app.oidcConfig?.clientId) continue;
+    await zitadelApi(
+      pat,
+      `/management/v1/projects/${dcrProject.id}/apps/${app.id}/oidc_config`,
+      { accessTokenType: "OIDC_TOKEN_TYPE_JWT" },
+      undefined,
+      "PUT",
+    );
+  }
 }
 
 async function getOrCreateOrganization(pat: string): Promise<Organization> {

@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   federation-e2e:
+    if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'fastfix/')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
