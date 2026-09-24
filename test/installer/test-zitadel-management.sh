@@ -44,6 +44,7 @@ contains "$bootstrap_source" 'accessTokenType: "OIDC_TOKEN_TYPE_JWT"' 'bootstrap
 contains "$bootstrap_source" '"/zitadel.application.v2.ApplicationService/UpdateApplication"' 'bootstrap uses v2 partial application updates for DCR JWT compatibility'
 contains "$bootstrap_source" '"connect-protocol-version": "1"' 'bootstrap authenticates application v2 updates with Connect protocol'
 not_contains "$bootstrap_source" 'apps/${app.id}/oidc_config' 'bootstrap no longer uses destructive legacy OIDC config PUT for DCR clients'
+not_contains "$bootstrap_source" 'method === "PUT" &&' 'bootstrap accepts ZITADEL no-changes responses for v2 POST updates too'
 
 secret_fixture="$(mktemp /tmp/rp-zitadel-management-secret.XXXXXX)"
 printf 'management-token-material' >"$secret_fixture"
