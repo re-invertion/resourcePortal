@@ -20,7 +20,15 @@ export type OidcDiscovery = {
   deviceAuthorizationEndpoint?: string;
   userInfoEndpoint?: string;
   revocationEndpoint?: string;
+  introspectionEndpoint?: string;
   endSessionEndpoint?: string;
+  scopesSupported?: string[];
+  responseTypesSupported?: string[];
+  responseModesSupported?: string[];
+  grantTypesSupported?: string[];
+  tokenEndpointAuthMethodsSupported?: string[];
+  codeChallengeMethodsSupported?: string[];
+  authorizationResponseIssParameterSupported?: boolean;
 };
 
 export type AuthenticatedPrincipal =
@@ -311,7 +319,20 @@ export class OidcAuthService {
     const deviceAuthorizationEndpoint = discovery.device_authorization_endpoint;
     const userInfoEndpoint = discovery.userinfo_endpoint;
     const revocationEndpoint = discovery.revocation_endpoint;
+    const introspectionEndpoint = discovery.introspection_endpoint;
     const endSessionEndpoint = discovery.end_session_endpoint;
+    const scopesSupported = stringArray(discovery.scopes_supported);
+    const responseTypesSupported = stringArray(discovery.response_types_supported);
+    const responseModesSupported = stringArray(discovery.response_modes_supported);
+    const grantTypesSupported = stringArray(discovery.grant_types_supported);
+    const tokenEndpointAuthMethodsSupported = stringArray(
+      discovery.token_endpoint_auth_methods_supported,
+    );
+    const codeChallengeMethodsSupported = stringArray(
+      discovery.code_challenge_methods_supported,
+    );
+    const authorizationResponseIssParameterSupported =
+      discovery.authorization_response_iss_parameter_supported === true;
 
     if (typeof discoveredIssuer === "string" && discoveredIssuer !== issuer) {
       throw new UnauthorizedException("OIDC issuer mismatch");
@@ -348,6 +369,17 @@ export class OidcAuthService {
         typeof revocationEndpoint === "string" && revocationEndpoint.length > 0
           ? revocationEndpoint
           : undefined,
+      introspectionEndpoint:
+        typeof introspectionEndpoint === "string" && introspectionEndpoint.length > 0
+          ? introspectionEndpoint
+          : undefined,
+      scopesSupported,
+      responseTypesSupported,
+      responseModesSupported,
+      grantTypesSupported,
+      tokenEndpointAuthMethodsSupported,
+      codeChallengeMethodsSupported,
+      authorizationResponseIssParameterSupported,
       endSessionEndpoint:
         typeof endSessionEndpoint === "string" && endSessionEndpoint.length > 0
           ? endSessionEndpoint
@@ -414,4 +446,12 @@ export class OidcAuthService {
     }
     return value;
   }
+}
+
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
+  return values.length > 0 ? values : undefined;
 }

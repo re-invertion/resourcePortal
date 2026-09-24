@@ -19,6 +19,24 @@ rp_zitadel_mcp_dcr_advertised() {
   [[ "$registration" == "${expected_base}/oauth/v2/register" ]]
 }
 
+rp_mcp_oauth_authorization_server_metadata_advertised() {
+  local domain="${RP_CFG_ZITADEL_DOMAIN:-}" metadata issuer registration pkce expected_base
+  [[ -n "$domain" ]] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  expected_base="https://${domain}"
+  metadata="$(curl --fail --silent --show-error --proto '=https' --max-time 15 \
+    "${expected_base}/.well-known/oauth-authorization-server")" || return 1
+  issuer="$(jq -er '.issuer | select(type == "string" and length > 0)' <<<"$metadata")" || return 1
+  registration="$(jq -er '.registration_endpoint | select(type == "string" and length > 0)' <<<"$metadata")" || return 1
+  pkce="$(jq -er '.code_challenge_methods_supported | index("S256")' <<<"$metadata")" || return 1
+
+  [[ "$issuer" == "$expected_base" ]] || return 1
+  [[ "$registration" == "${expected_base}/oauth/v2/register" ]] || return 1
+  [[ "$pkce" != null ]]
+}
+
 rp_run_diagnostics() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" quorum node_id fstype uuid acme_env acme_state acme_resolver acme_cache
   rp_diagnostic_cmd 'supported OS' rp_detect_os
@@ -65,6 +83,7 @@ rp_run_diagnostics() {
   [[ -n "${RP_CFG_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ResourcePortal HTTPS' rp_validate_https_origin "$RP_CFG_DOMAIN"
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ZITADEL HTTPS certificate' rp_validate_https_certificate "$RP_CFG_ZITADEL_DOMAIN"
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'ZITADEL MCP DCR discovery' rp_zitadel_mcp_dcr_advertised
+  [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] && rp_diagnostic_cmd 'MCP OAuth RFC 8414 metadata' rp_mcp_oauth_authorization_server_metadata_advertised
   [[ -n "${RP_CFG_RELEASE_VERSION:-}" ]] && rp_diagnostic_line 'installed release' "$RP_CFG_RELEASE_VERSION"
   [[ -n "${RP_CFG_API_IMAGE:-}" ]] && rp_diagnostic_line 'API image' "$RP_CFG_API_IMAGE"
   [[ -n "${RP_CFG_WEB_IMAGE:-}" ]] && rp_diagnostic_line 'Web image' "$RP_CFG_WEB_IMAGE"

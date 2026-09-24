@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalForwardedClientIp,
+  isApiProxyPath,
   resolveApiTarget,
   resolveProxyHeaders,
 } from "./proxy-target.mjs";
 
 describe("production API proxy target", () => {
+  it("proxies MCP OAuth well-known endpoints to the API instead of SSR", () => {
+    expect(isApiProxyPath("/.well-known/oauth-protected-resource/api/tenants/t1/mcp")).toBe(true);
+    expect(isApiProxyPath("/.well-known/oauth-authorization-server")).toBe(true);
+    expect(isApiProxyPath("/.well-known/openid-configuration")).toBe(false);
+    expect(isApiProxyPath("/tenants/t1/settings")).toBe(false);
+  });
+
+
   it("preserves the configured API origin for origin-form request targets", () => {
     expect(resolveApiTarget("/api/tenants?limit=10", new URL("http://api.internal:3000"))).toBe(
       "http://api.internal:3000/api/tenants?limit=10",

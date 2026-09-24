@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import {
+  McpOAuthAuthorizationServerMetadataController,
   TenantMcpController,
   TenantMcpOAuthMetadataController,
   TenantMcpSettingsController,
@@ -16,6 +17,7 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
     TenantMcpSettingsController,
     TenantMcpController,
     TenantMcpOAuthMetadataController,
+    McpOAuthAuthorizationServerMetadataController,
   ],
   providers: [TenantMcpSettingsService, TenantMcpAccessGuard, TenantMcpProtocolService],
 })

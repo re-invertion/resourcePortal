@@ -83,7 +83,14 @@ function installOidcFetch(
               device_authorization_endpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
               userinfo_endpoint: `${fixture.issuer}/oidc/v1/userinfo`,
               revocation_endpoint: `${fixture.issuer}/oauth/v2/revoke`,
+              introspection_endpoint: `${fixture.issuer}/oauth/v2/introspect`,
               end_session_endpoint: `${fixture.issuer}/oidc/v1/end_session`,
+              scopes_supported: ["openid", "profile", "email", "offline_access"],
+              response_types_supported: ["code"],
+              response_modes_supported: ["query", "form_post"],
+              grant_types_supported: ["authorization_code", "refresh_token"],
+              token_endpoint_auth_methods_supported: ["none", "client_secret_basic"],
+              code_challenge_methods_supported: ["S256"],
               jwks_uri: fixture.jwksUri,
             }),
             {
@@ -153,6 +160,9 @@ describe("OidcAuthService", () => {
       registrationEndpoint: `${fixture.issuer}/oauth/v2/register`,
       deviceAuthorizationEndpoint: `${fixture.issuer}/oauth/v2/device_authorization`,
       userInfoEndpoint: `${fixture.issuer}/oidc/v1/userinfo`,
+      introspectionEndpoint: `${fixture.issuer}/oauth/v2/introspect`,
+      codeChallengeMethodsSupported: ["S256"],
+      tokenEndpointAuthMethodsSupported: ["none", "client_secret_basic"],
     });
   });
 

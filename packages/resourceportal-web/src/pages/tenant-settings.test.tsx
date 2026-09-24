@@ -27,6 +27,8 @@ describe("TenantSettingsPage", () => {
             scopes: ["openid", "profile", "email", "rp-audience"],
             discoveryAvailable: true,
             dynamicClientRegistrationAvailable: false,
+            pkceS256Available: false,
+            openAiReady: false,
           },
         });
       }
@@ -40,7 +42,8 @@ describe("TenantSettingsPage", () => {
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
 
     expect(await screen.findByRole("heading", { name: "Tenant settings" })).toBeTruthy();
-    expect(await screen.findByText("https://auth.example.com")).toBeTruthy();
+    expect(await screen.findByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
+    expect(screen.queryByText("https://auth.example.com")).toBeNull();
     fireEvent.click(screen.getByText("Enable MCP for this tenant"));
     const member = await screen.findByLabelText("Allow Alice Admin to use MCP");
     fireEvent.click(member);
@@ -60,7 +63,7 @@ describe("TenantSettingsPage", () => {
   it("shows zero-config OpenAI guidance when platform OAuth bootstrap is incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false } });
+      if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false, pkceS256Available: false, openAiReady: false } });
       return json([]);
     }));
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
@@ -81,6 +84,7 @@ describe("TenantSettingsPage", () => {
           scopes: ["openid", "profile", "email", "offline_access", "rp-audience"],
           discoveryAvailable: true,
           dynamicClientRegistrationAvailable: true,
+          pkceS256Available: true,
           openAiReady: true,
           transport: "Streamable HTTP",
           protocol: "MCP 2026-07-28 with 2025-era compatibility",
@@ -91,8 +95,10 @@ describe("TenantSettingsPage", () => {
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
     expect(await screen.findByText("OpenAI / ChatGPT ready")).toBeTruthy();
     expect(screen.getByText("No Client ID or secret required")).toBeTruthy();
-    expect(screen.getByText(/OpenAI\/ChatGPT can register its OAuth client/i)).toBeTruthy();
-    expect(screen.getByText("offline_access", { exact: false })).toBeTruthy();
+    expect(screen.getByText(/publishes standards-compatible OAuth discovery metadata/i)).toBeTruthy();
+    expect(screen.queryByText("https://auth.example.com")).toBeNull();
+    expect(screen.queryByText(/offline_access/)).toBeNull();
+    expect(screen.queryByText(/OAuth protected-resource metadata/i)).toBeNull();
   });
 
 });

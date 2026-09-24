@@ -300,6 +300,25 @@ set +e
 dcr_wrong_host_rc=$?
 set -e
 [[ $dcr_wrong_host_rc -ne 0 ]] && pass 'DCR diagnostic rejects unexpected registration endpoint host' || fail 'DCR diagnostic rejects unexpected registration endpoint host'
+
+(
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  export RP_CFG_ZITADEL_DOMAIN
+  curl(){ printf '%s\n' '{"issuer":"https://auth.example.test","registration_endpoint":"https://auth.example.test/oauth/v2/register","code_challenge_methods_supported":["S256"]}'; }
+  rp_mcp_oauth_authorization_server_metadata_advertised
+) && pass 'RFC 8414 MCP OAuth diagnostic accepts DCR plus PKCE S256' || fail 'RFC 8414 MCP OAuth diagnostic accepts DCR plus PKCE S256'
+
+set +e
+(
+  RP_CFG_ZITADEL_DOMAIN='auth.example.test'
+  export RP_CFG_ZITADEL_DOMAIN
+  curl(){ printf '%s\n' '{"issuer":"https://auth.example.test","registration_endpoint":"https://auth.example.test/oauth/v2/register","code_challenge_methods_supported":["plain"]}'; }
+  rp_mcp_oauth_authorization_server_metadata_advertised
+)
+mcp_oauth_missing_s256_rc=$?
+set -e
+[[ $mcp_oauth_missing_s256_rc -ne 0 ]] && pass 'RFC 8414 MCP OAuth diagnostic rejects missing PKCE S256' || fail 'RFC 8414 MCP OAuth diagnostic rejects missing PKCE S256'
+
 [[ "$entrypoint_source" == *'rp_reconfigure'* ]] && pass 'entrypoint dispatches reconfigure lifecycle' || fail 'entrypoint dispatches reconfigure lifecycle'
 [[ "$entrypoint_source" == *'rp_run_diagnostics'* ]] && pass 'entrypoint dispatches diagnostics lifecycle' || fail 'entrypoint dispatches diagnostics lifecycle'
 [[ "$entrypoint_source" == *'rp_ui_mode_operation'* ]] && pass 'non-primary modes use shared TUI operation wrapper' || fail 'non-primary modes use shared TUI operation wrapper'

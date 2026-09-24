@@ -359,6 +359,12 @@ services:
         - traefik.http.routers.resourceportal-web.tls.domains[0].main=__ZITADEL_DOMAIN__
         - traefik.http.routers.resourceportal-web.tls.domains[0].sans=__DOMAIN__
         - traefik.http.services.resourceportal-web.loadbalancer.server.port=5173
+        - traefik.http.routers.resourceportal-oauth-metadata.rule=Host(`__ZITADEL_DOMAIN__`) && Path(`/.well-known/oauth-authorization-server`)
+        - traefik.http.routers.resourceportal-oauth-metadata.entrypoints=websecure
+        - traefik.http.routers.resourceportal-oauth-metadata.tls=true
+        - traefik.http.routers.resourceportal-oauth-metadata.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.resourceportal-oauth-metadata.priority=1000
+        - traefik.http.routers.resourceportal-oauth-metadata.service=resourceportal-web
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.regex=^https?://__LEGACY_DOMAIN_REGEX__/(.*)
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.replacement=https://__DOMAIN__/$${1}
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.permanent=true

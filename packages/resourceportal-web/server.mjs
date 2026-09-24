@@ -4,7 +4,11 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveApiTarget, resolveProxyHeaders } from "./proxy-target.mjs";
+import {
+  isApiProxyPath,
+  resolveApiTarget,
+  resolveProxyHeaders,
+} from "./proxy-target.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const production = process.env.NODE_ENV === "production";
@@ -27,10 +31,6 @@ if (production) {
     server: { middlewareMode: true },
     appType: "custom",
   });
-}
-
-function isApiPath(pathname) {
-  return pathname === "/api" || pathname.startsWith("/api/");
 }
 
 function proxyApi(request, response) {
@@ -136,7 +136,7 @@ async function renderDocument(request, response, url) {
 const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://resourceportal.local");
 
-  if (isApiPath(url.pathname)) {
+  if (isApiProxyPath(url.pathname)) {
     proxyApi(request, response);
     return;
   }

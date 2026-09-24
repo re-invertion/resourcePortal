@@ -60,6 +60,10 @@ async function bootstrap() {
         path: ".well-known/oauth-protected-resource/api/tenants/:mcpTenantId/mcp",
         method: RequestMethod.GET,
       },
+      {
+        path: ".well-known/oauth-authorization-server",
+        method: RequestMethod.GET,
+      },
     ],
   });
   const fastify = app.getHttpAdapter().getInstance();

@@ -1,5 +1,15 @@
 import { isIP } from "node:net";
 
+export function isApiProxyPath(pathname) {
+  return (
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/.well-known/oauth-authorization-server" ||
+    pathname === "/.well-known/oauth-protected-resource" ||
+    pathname.startsWith("/.well-known/oauth-protected-resource/")
+  );
+}
+
 export function resolveApiTarget(requestUrl, apiOrigin) {
   const localRequest = new URL(requestUrl ?? "/api", "http://resourceportal.local");
   return new URL(`${localRequest.pathname}${localRequest.search}`, apiOrigin).toString();
