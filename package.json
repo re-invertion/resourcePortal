@@ -23,7 +23,7 @@
     "test:cli-release": "bash test/cli/test-release-package.sh",
     "postinstall": "node scripts/postinstall-prisma.mjs",
     "api:worker": "npm --workspace @resource-portal/api run worker",
-    "test:fastfix:mcp-oauth": "npm --workspace @resource-portal/api test -- src/mcp/mcp-oauth-dcr.service.spec.ts src/mcp/mcp-oauth-metadata.controller.spec.ts src/mcp/tenant-mcp-settings.service.spec.ts src/mcp/tenant-mcp-access.guard.spec.ts src/auth/dev-auth.guard.mcp.spec.ts src/auth/oidc-auth.service.spec.ts && npm --workspace @resource-portal/web test -- proxy-target.test.mjs && bash test/installer/test-zitadel-management.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-workflows.sh"
+    "test:fastfix:mcp-oauth": "npm --workspace @resource-portal/api test -- src/mcp/mcp-oauth-dcr.service.spec.ts src/mcp/mcp-oauth-metadata.controller.spec.ts src/mcp/tenant-mcp-settings.service.spec.ts src/mcp/tenant-mcp-access.guard.spec.ts src/auth/dev-auth.guard.mcp.spec.ts src/auth/oidc-auth.service.spec.ts scripts/zitadel-api-response.spec.ts && npm --workspace @resource-portal/web test -- proxy-target.test.mjs && bash test/installer/test-zitadel-management.sh && bash test/installer/test-control-plane.sh && bash test/installer/test-workflows.sh"
   },
   "devDependencies": {
     "playwright": "^1.63.0"

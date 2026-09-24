@@ -574,10 +574,7 @@ async function zitadelApi<T>(
   const payload = text ? (JSON.parse(text) as unknown) : {};
 
   if (!response.ok) {
-    if (
-      method === "PUT" &&
-      isZitadelNoChangesResponse(response.status, payload)
-    ) {
+    if (isZitadelNoChangesResponse(response.status, payload)) {
       return payload as T;
     }
     throw new Error(
