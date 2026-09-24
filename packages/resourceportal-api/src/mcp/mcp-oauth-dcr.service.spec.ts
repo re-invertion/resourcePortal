@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("McpOAuthDcrService", () => {
-  it("forces dynamically registered MCP clients to JWT access tokens before returning 201", async () => {
+  it("uses the v2 partial application update so JWT conversion preserves public-client OAuth settings", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -65,14 +65,21 @@ describe("McpOAuthDcrService", () => {
     expect(result.status).toBe(201);
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "http://zitadel:8080/management/v1/projects/dcr-project/apps/app-1/oidc_config",
+      "http://zitadel:8080/zitadel.application.v2.ApplicationService/UpdateApplication",
       expect.objectContaining({
-        method: "PUT",
-        body: JSON.stringify({ accessTokenType: "OIDC_TOKEN_TYPE_JWT" }),
+        method: "POST",
+        body: JSON.stringify({
+          applicationId: "app-1",
+          projectId: "dcr-project",
+          oidcConfiguration: {
+            accessTokenType: "OIDC_TOKEN_TYPE_JWT",
+          },
+        }),
       }),
     );
     const managementOptions = fetchMock.mock.calls[3]?.[1] as RequestInit;
     expect(managementOptions.headers).toMatchObject({
+      "connect-protocol-version": "1",
       "x-zitadel-instance-host": "auth.resource-portal.test",
       "x-zitadel-public-host": "auth.resource-portal.test",
     });
