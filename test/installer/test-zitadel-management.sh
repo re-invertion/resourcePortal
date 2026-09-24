@@ -294,6 +294,7 @@ upgrade_preserves_management_state() (
   export RP_CFG_DOMAIN RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }
+  rp_upgrade_quiesce_database_clients(){ return 0; }
   rp_upgrade_prepare_postgres_services(){ return 0; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-source:%s\n' "$1" >>"$log"; }
   rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth:%s
@@ -333,7 +334,8 @@ upgrade_bridges_legacy_zitadel_before_target() (
   docker(){
     case "$1 $2" in
       'service inspect')
-        if [[ "$*" == *'--format'* ]]; then cat "$state"; fi
+        if [[ "$*" == *'.Spec.Mode.Replicated'* ]]; then printf 'replicated\n';
+        elif [[ "$*" == *'--format'* ]]; then cat "$state"; fi
         return 0
         ;;
       'service update')
@@ -372,7 +374,8 @@ upgrade_skips_bridge_for_v0212_and_newer() (
   docker(){
     case "$1 $2" in
       'service inspect')
-        if [[ "$*" == *'--format'* ]]; then cat "$state"; fi
+        if [[ "$*" == *'.Spec.Mode.Replicated'* ]]; then printf 'replicated\n';
+        elif [[ "$*" == *'--format'* ]]; then cat "$state"; fi
         return 0
         ;;
       'service update')

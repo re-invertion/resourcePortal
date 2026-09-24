@@ -117,6 +117,32 @@ rp_upgrade_update_service_image() {
   }
 }
 
+rp_upgrade_set_service_replicas() {
+  local service_name="$1" replicas="$2" description="${3:-$1}" mode
+  docker service inspect "$service_name" >/dev/null 2>&1 || return 0
+  mode="$(docker service inspect "$service_name" --format '{{if .Spec.Mode.Replicated}}replicated{{else}}other{{end}}')" || return 1
+  [[ "$mode" == replicated ]] || {
+    printf 'Cannot scale non-replicated upgrade dependency: %s\n' "$description" >&2
+    return 1
+  }
+  printf 'Scaling %s to %s replica(s) for database-safe upgrade.\n' "$description" "$replicas" >&2
+  docker service update --detach=false --replicas "$replicas" "$service_name" >/dev/null || return 1
+}
+
+rp_upgrade_quiesce_database_clients() {
+  local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" service service_name
+  for service in api worker dr-reconciliation zitadel; do
+    service_name="${stack_name}_${service}"
+    rp_upgrade_set_service_replicas "$service_name" 0 "$service" || return 1
+  done
+  for service_name in "${stack_name}_egress-guard" "${stack_name}-installer-enrollment"; do
+    if docker service inspect "$service_name" >/dev/null 2>&1; then
+      printf 'Removing transient database client for upgrade: %s\n' "$service_name" >&2
+      docker service rm "$service_name" >/dev/null || return 1
+    fi
+  done
+}
+
 rp_upgrade_prepare_postgres_services() {
   local stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
   local target_image="${RP_CFG_POSTGRES_IMAGE:-}" service
@@ -192,6 +218,7 @@ rp_upgrade_prepare_zitadel_for_mcp_oauth() {
     printf 'ZITADEL service is unavailable for upgrade reconciliation: %s\n' "$service_name" >&2
     return 1
   }
+  rp_upgrade_set_service_replicas "$service_name" 1 'ZITADEL' || return 1
 
   current_image="$(docker service inspect "$service_name" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')" || return 1
   if [[ "$current_image" == "$target_image" ]]; then
@@ -230,6 +257,7 @@ rp_upgrade_apply() {
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
+  rp_upgrade_quiesce_database_clients || return 1
   rp_upgrade_prepare_postgres_services || return 1
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || return 1
   rp_run_zitadel_mcp_oauth_reconcile || return 1
