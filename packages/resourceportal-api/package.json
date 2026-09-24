@@ -23,7 +23,8 @@
     "smoke:stage14-storage-backend": "ts-node --files scripts/smoke-stage14-storage-backend.ts",
     "smoke:stage15-capacity": "ts-node --files scripts/smoke-stage15-capacity.ts",
     "smoke:stage16-operations": "ts-node --files scripts/smoke-stage16-operations.ts",
-    "worker": "ts-node --files src/worker.runner.ts"
+    "worker": "ts-node --files src/worker.runner.ts",
+    "migrate:penpot-runtime-secrets": "node dist/scripts/migrate-penpot-runtime-secrets.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
