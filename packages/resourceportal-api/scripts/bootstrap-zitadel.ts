@@ -22,6 +22,8 @@ type App = {
   name: string;
   oidcConfig?: {
     clientId?: string;
+    responseTypes?: string[];
+    grantTypes?: string[];
   };
 };
 
@@ -276,6 +278,11 @@ async function reconcileMcpDcrJwtAccessTokens(pat: string) {
   );
   for (const app of apps.result ?? []) {
     if (!app.id || !app.oidcConfig?.clientId) continue;
+    if (!app.oidcConfig.responseTypes?.length || !app.oidcConfig.grantTypes?.length) {
+      throw new Error(
+        `ZITADEL DCR application ${app.id} has incomplete OIDC response/grant configuration`,
+      );
+    }
     await zitadelApi(
       pat,
       "/zitadel.application.v2.ApplicationService/UpdateApplication",
@@ -283,6 +290,8 @@ async function reconcileMcpDcrJwtAccessTokens(pat: string) {
         applicationId: app.id,
         projectId: dcrProject.id,
         oidcConfiguration: {
+          responseTypes: app.oidcConfig.responseTypes,
+          grantTypes: app.oidcConfig.grantTypes,
           accessTokenType: "OIDC_TOKEN_TYPE_JWT",
         },
       },

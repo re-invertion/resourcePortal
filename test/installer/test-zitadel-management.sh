@@ -43,6 +43,8 @@ contains "$bootstrap_source" 'reconcileMcpDcrJwtAccessTokens' 'bootstrap reconci
 contains "$bootstrap_source" 'accessTokenType: "OIDC_TOKEN_TYPE_JWT"' 'bootstrap forces DCR clients to JWT access tokens'
 contains "$bootstrap_source" '"/zitadel.application.v2.ApplicationService/UpdateApplication"' 'bootstrap uses v2 partial application updates for DCR JWT compatibility'
 contains "$bootstrap_source" '"connect-protocol-version": "1"' 'bootstrap authenticates application v2 updates with Connect protocol'
+contains "$bootstrap_source" 'responseTypes: app.oidcConfig.responseTypes' 'bootstrap preserves DCR response types during JWT conversion'
+contains "$bootstrap_source" 'grantTypes: app.oidcConfig.grantTypes' 'bootstrap preserves DCR grant types during JWT conversion'
 not_contains "$bootstrap_source" 'apps/${app.id}/oidc_config' 'bootstrap no longer uses destructive legacy OIDC config PUT for DCR clients'
 not_contains "$bootstrap_source" 'method === "PUT" &&' 'bootstrap accepts ZITADEL no-changes responses for v2 POST updates too'
 
