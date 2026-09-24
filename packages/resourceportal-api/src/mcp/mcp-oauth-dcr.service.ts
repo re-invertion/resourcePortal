@@ -17,8 +17,14 @@ type ProjectSearchResponse = {
   result?: Array<{ id?: string; name?: string }>;
 };
 
+type DcrOidcConfig = {
+  clientId?: string;
+  responseTypes?: string[];
+  grantTypes?: string[];
+};
+
 type AppSearchResponse = {
-  result?: Array<{ id?: string; oidcConfig?: { clientId?: string } }>;
+  result?: Array<{ id?: string; oidcConfig?: DcrOidcConfig }>;
 };
 
 @Injectable()
@@ -69,14 +75,23 @@ export class McpOAuthDcrService {
 
   private async forceJwtAccessToken(clientId: string) {
     const projectId = await this.findDcrProjectId();
-    const appId = await this.findDcrAppId(projectId, clientId);
+    const app = await this.findDcrApp(projectId, clientId);
+    const responseTypes = app.oidcConfig?.responseTypes;
+    const grantTypes = app.oidcConfig?.grantTypes;
+    if (!responseTypes?.length || !grantTypes?.length) {
+      throw new BadGatewayException(
+        "ZITADEL DCR application OAuth configuration was incomplete after registration",
+      );
+    }
     await this.managementRequest(
       "POST",
       "/zitadel.application.v2.ApplicationService/UpdateApplication",
       {
-        applicationId: appId,
+        applicationId: app.id,
         projectId,
         oidcConfiguration: {
+          responseTypes,
+          grantTypes,
           accessTokenType: "OIDC_TOKEN_TYPE_JWT",
         },
       },
@@ -98,7 +113,7 @@ export class McpOAuthDcrService {
     throw new BadGatewayException("ZITADEL DCR project was not visible after registration");
   }
 
-  private async findDcrAppId(projectId: string, clientId: string) {
+  private async findDcrApp(projectId: string, clientId: string) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const apps = await this.managementRequest<AppSearchResponse>(
         "POST",
@@ -106,7 +121,7 @@ export class McpOAuthDcrService {
         {},
       );
       const app = apps.result?.find((candidate) => candidate.oidcConfig?.clientId === clientId);
-      if (app?.id) return app.id;
+      if (app?.id) return app as typeof app & { id: string };
       await sleep(100);
     }
     throw new BadGatewayException("ZITADEL DCR application was not visible after registration");

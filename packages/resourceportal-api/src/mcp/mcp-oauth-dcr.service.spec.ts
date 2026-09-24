@@ -43,7 +43,19 @@ describe("McpOAuthDcrService", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            result: [{ id: "app-1", oidcConfig: { clientId: "client-1" } }],
+            result: [
+              {
+                id: "app-1",
+                oidcConfig: {
+                  clientId: "client-1",
+                  responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+                  grantTypes: [
+                    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+                    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+                  ],
+                },
+              },
+            ],
           }),
           { status: 200 },
         ),
@@ -72,6 +84,11 @@ describe("McpOAuthDcrService", () => {
           applicationId: "app-1",
           projectId: "dcr-project",
           oidcConfiguration: {
+            responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+            grantTypes: [
+              "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+              "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+            ],
             accessTokenType: "OIDC_TOKEN_TYPE_JWT",
           },
         }),
@@ -122,7 +139,19 @@ describe("McpOAuthDcrService", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            result: [{ id: "app-1", oidcConfig: { clientId: "client-1" } }],
+            result: [
+              {
+                id: "app-1",
+                oidcConfig: {
+                  clientId: "client-1",
+                  responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
+                  grantTypes: [
+                    "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+                    "OIDC_GRANT_TYPE_REFRESH_TOKEN",
+                  ],
+                },
+              },
+            ],
           }),
           { status: 200 },
         ),
