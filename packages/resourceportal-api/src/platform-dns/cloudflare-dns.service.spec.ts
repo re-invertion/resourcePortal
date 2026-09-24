@@ -72,10 +72,7 @@ describe("CloudflareDnsService", () => {
             }),
           );
         }
-        if (
-          url.endsWith("/dns_records/probe-1") &&
-          init?.method === "DELETE"
-        ) {
+        if (url.endsWith("/dns_records/probe-1") && init?.method === "DELETE") {
           return Promise.resolve(response({ id: "probe-1" }));
         }
         return Promise.reject(
@@ -189,6 +186,141 @@ describe("CloudflareDnsService", () => {
     });
   });
 
+  it("adopts an exact legacy CNAME that has no ownership comment", async () => {
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (
+        url.includes("/dns_records?") &&
+        (!init?.method || init.method === "GET")
+      ) {
+        return Promise.resolve(
+          response([
+            {
+              id: "legacy-1",
+              type: "CNAME",
+              name: "penpot.resource-portal.pl",
+              content: "resource-portal.pl",
+              comment: null,
+            },
+          ]),
+        );
+      }
+      if (url.endsWith("/dns_records/legacy-1") && init?.method === "PATCH") {
+        return Promise.resolve(
+          response({
+            id: "legacy-1",
+            type: "CNAME",
+            name: "penpot.resource-portal.pl",
+            content: "resource-portal.pl",
+            comment: jsonBody(init).comment,
+          }),
+        );
+      }
+      return Promise.reject(
+        new Error(`Unexpected ${init?.method ?? "GET"} ${url}`),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new CloudflareDnsService();
+
+    await expect(
+      service.ensureManagedCname({
+        apiToken: "secret-token",
+        zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        hostname: "penpot.resource-portal.pl",
+        targetHostname: "resource-portal.pl",
+      }),
+    ).resolves.toMatchObject({
+      created: false,
+      adopted: true,
+      record: { id: "legacy-1", comment: CLOUDFLARE_MANAGED_RECORD_COMMENT },
+    });
+
+    const patch = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "PATCH",
+    );
+    expect(jsonBody(patch?.[1])).toEqual({
+      comment: CLOUDFLARE_MANAGED_RECORD_COMMENT,
+    });
+  });
+
+  it("adopts an exact legacy CNAME while checking managed-domain existence", async () => {
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (
+        url.includes("/dns_records?") &&
+        (!init?.method || init.method === "GET")
+      ) {
+        return Promise.resolve(
+          response([
+            {
+              id: "legacy-1",
+              type: "CNAME",
+              name: "penpot.resource-portal.pl",
+              content: "resource-portal.pl",
+            },
+          ]),
+        );
+      }
+      if (url.endsWith("/dns_records/legacy-1") && init?.method === "PATCH") {
+        return Promise.resolve(
+          response({
+            id: "legacy-1",
+            type: "CNAME",
+            name: "penpot.resource-portal.pl",
+            content: "resource-portal.pl",
+            comment: CLOUDFLARE_MANAGED_RECORD_COMMENT,
+          }),
+        );
+      }
+      return Promise.reject(
+        new Error(`Unexpected ${init?.method ?? "GET"} ${url}`),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new CloudflareDnsService();
+
+    await expect(
+      service.hasManagedCname({
+        apiToken: "secret-token",
+        zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        hostname: "penpot.resource-portal.pl",
+        targetHostname: "resource-portal.pl",
+      }),
+    ).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not adopt an exact CNAME that carries a foreign ownership comment", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        response([
+          {
+            id: "foreign-cname",
+            type: "CNAME",
+            name: "penpot.resource-portal.pl",
+            content: "resource-portal.pl",
+            comment: "Managed externally",
+          },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const service = new CloudflareDnsService();
+
+    await expect(
+      service.ensureManagedCname({
+        apiToken: "secret-token",
+        zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        hostname: "penpot.resource-portal.pl",
+        targetHostname: "resource-portal.pl",
+      }),
+    ).rejects.toBeInstanceOf(CloudflareDnsRecordConflictError);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to overwrite an unmanaged record with the requested hostname", async () => {
     vi.stubGlobal(
       "fetch",
@@ -219,9 +351,7 @@ describe("CloudflareDnsService", () => {
       expect(error).toMatchObject({
         hostname: "penpot.resource-portal.pl",
         category: "configuration",
-        records: [
-          { type: "A", content: "203.0.113.5" },
-        ],
+        records: [{ type: "A", content: "203.0.113.5" }],
       });
       expect((error as Error).message).toContain(
         "Remove or rename the existing record in Cloudflare",
@@ -233,35 +363,46 @@ describe("CloudflareDnsService", () => {
     const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
       const url = requestUrl(input);
       if (url.endsWith("/zones/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) {
-        return Promise.resolve(response({
-          id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          name: "example.com",
-          status: "active",
-        }));
+        return Promise.resolve(
+          response({
+            id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            name: "example.com",
+            status: "active",
+          }),
+        );
       }
-      if (url.includes("/dns_records?") && (!init?.method || init.method === "GET")) {
+      if (
+        url.includes("/dns_records?") &&
+        (!init?.method || init.method === "GET")
+      ) {
         return Promise.resolve(response([]));
       }
       if (url.endsWith("/dns_records") && init?.method === "POST") {
         return Promise.resolve(response({ id: "txt-1", ...jsonBody(init) }));
       }
-      return Promise.reject(new Error(`Unexpected ${init?.method ?? "GET"} ${url}`));
+      return Promise.reject(
+        new Error(`Unexpected ${init?.method ?? "GET"} ${url}`),
+      );
     });
     vi.stubGlobal("fetch", fetchMock);
     const service = new CloudflareDnsService();
 
-    await expect(service.ensureVerificationTxt({
-      apiToken: "oauth-token",
-      zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      rootDomain: "apps.example.com",
-      content: "rp-domain-verification=abc123",
-    })).resolves.toMatchObject({
+    await expect(
+      service.ensureVerificationTxt({
+        apiToken: "oauth-token",
+        zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        rootDomain: "apps.example.com",
+        content: "rp-domain-verification=abc123",
+      }),
+    ).resolves.toMatchObject({
       created: true,
       zone: { name: "example.com" },
       record: { id: "txt-1" },
     });
 
-    const create = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    const create = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "POST",
+    );
     expect(jsonBody(create?.[1])).toEqual({
       type: "TXT",
       name: "apps.example.com",
@@ -270,5 +411,4 @@ describe("CloudflareDnsService", () => {
       comment: "Managed by ResourcePortal custom-domain verification",
     });
   });
-
 });
