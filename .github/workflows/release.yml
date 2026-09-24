@@ -28,7 +28,20 @@ jobs:
           cache: npm
       - name: Install Node dependencies
         run: npm ci
+      - name: Determine release validation mode
+        id: release-mode
+        shell: bash
+        run: |
+          if git log -1 --pretty=%B | grep -Fq '[fastfix]'; then
+            echo "fastfix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fastfix=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Validate targeted fastfix before publishing
+        if: steps.release-mode.outputs.fastfix == 'true'
+        run: npm run test:fastfix:mcp-oauth
       - name: Validate Production Installer contracts before publishing
+        if: steps.release-mode.outputs.fastfix != 'true'
         run: npm run test:installer
       - name: Validate installable CLI release package before publishing
         run: npm run test:cli-release
