@@ -163,6 +163,39 @@ contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade ref
 contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
 contains "$upgrade_source" 'case "$current" in' 'upgrade preserves explicit tenant-workloads false opt-out'
 contains "$upgrade_source" 'rp_upgrade_prepare_postgres_services' 'upgrade pre-rolls PostgreSQL before dependent services'
+contains "$upgrade_source" 'rp_upgrade_quiesce_database_clients' 'upgrade quiesces old database clients before PostgreSQL rollout'
+
+
+upgrade_quiesces_database_clients_before_postgres() (
+  local log stack
+  log="$(mktemp /tmp/rp-upgrade-quiesce.XXXXXX)"
+  trap 'rm -f "$log"' EXIT
+  stack='resourceportal-control-plane'
+  RP_CFG_STACK_NAME="$stack"
+  export RP_CFG_STACK_NAME
+  docker() {
+    case "$1 $2" in
+      'service inspect')
+        if [[ "$*" == *'.Spec.Mode.Replicated'* ]]; then printf 'replicated\n'; fi
+        return 0
+        ;;
+      'service update')
+        local replicas='' service="${*: -1}"
+        while (( $# > 0 )); do
+          if [[ "$1" == --replicas ]]; then replicas="$2"; shift 2; continue; fi
+          shift
+        done
+        printf 'scale:%s:%s\n' "$service" "$replicas" >>"$log"
+        ;;
+      'service rm') printf 'rm:%s\n' "$3" >>"$log" ;;
+      *) return 0 ;;
+    esac
+  }
+  rp_upgrade_quiesce_database_clients
+  expected=$'scale:resourceportal-control-plane_api:0\nscale:resourceportal-control-plane_worker:0\nscale:resourceportal-control-plane_dr-reconciliation:0\nscale:resourceportal-control-plane_zitadel:0\nrm:resourceportal-control-plane_egress-guard\nrm:resourceportal-control-plane-installer-enrollment'
+  [[ "$(cat "$log")" == "$expected" ]]
+)
+status 0 'upgrade quiesces old DB clients before database rollout' upgrade_quiesces_database_clients_before_postgres
 
 upgrade_prerolls_postgres_before_dependents() (
   local log target old stack
@@ -219,6 +252,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_pull_release_images(){ printf 'pull\n' >>"$log"; }
   rp_apply_release_manifest_images(){ printf 'manifest-images\n' >>"$log"; }
   rp_upgrade_ensure_v020_node_labels(){ printf 'labels\n' >>"$log"; }
+  rp_upgrade_quiesce_database_clients(){ printf 'clients-quiesced\n' >>"$log"; }
   rp_upgrade_prepare_postgres_services(){ printf 'postgres-ready\n' >>"$log"; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-ready\n' >>"$log"; }
   rp_run_zitadel_mcp_oauth_reconcile(){ printf 'mcp-oauth\n' >>"$log"; }
@@ -230,11 +264,12 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_config_write(){ printf 'persist-config\n' >>"$log"; }
   rp_write_stack(){ printf 'persist-stack\n' >>"$log"; }
   rp_upgrade_apply "$manifest" "$previous"
+  quiesce_line="$(grep -n '^clients-quiesced$' "$log" | cut -d: -f1)"
   postgres_line="$(grep -n '^postgres-ready$' "$log" | cut -d: -f1)"
   zitadel_line="$(grep -n '^zitadel-ready$' "$log" | cut -d: -f1)"
   migration_line="$(grep -n '^migrations$' "$log" | cut -d: -f1)"
   deploy_line="$(grep -n '^deploy:final$' "$log" | cut -d: -f1)"
-  [[ "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
+  [[ "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
 )
 status 0 'upgrade gates PostgreSQL before ZITADEL, migrations and final rollout' upgrade_orders_dependencies_before_final_rollout
 

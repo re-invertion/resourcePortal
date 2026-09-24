@@ -18,7 +18,7 @@ import { OperationsWorkerService } from "./operations/operations-worker.service"
 import { DeploymentArtifactSecurityMigrationService } from "./security/deployment-artifact-security-migration.service";
 import { LegacySecretMigrationService } from "./security/legacy-secret-migration.service";
 import { VolumeUsageReconcilerService } from "./volumes/volume-usage-reconciler.service";
-import { isTransientDatabaseConnectivityError } from "./worker-database-retry";
+import { isTransientDatabaseConnectivityError } from "./prisma/database-connectivity";
 import { WorkerModule } from "./worker.module";
 
 const logger = new Logger("ResourcePortalWorker");
