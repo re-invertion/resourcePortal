@@ -208,6 +208,7 @@ services:
       ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token
       ZITADEL_ORGANIZATION_ID: __ZITADEL_ORGANIZATION_ID__
       ZITADEL_PROJECT_ID: __ZITADEL_PROJECT_ID__
+      ZITADEL_INTERNAL_URL: http://zitadel:8080
       OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
       OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
       OIDC_CLI_CLIENT_ID: __OIDC_CLI_CLIENT_ID__
@@ -365,6 +366,12 @@ services:
         - traefik.http.routers.resourceportal-oauth-metadata.tls.certresolver=__ACME_CERT_RESOLVER__
         - traefik.http.routers.resourceportal-oauth-metadata.priority=1000
         - traefik.http.routers.resourceportal-oauth-metadata.service=resourceportal-web
+        - traefik.http.routers.resourceportal-oauth-dcr.rule=Host(`__ZITADEL_DOMAIN__`) && Path(`/oauth/v2/register`)
+        - traefik.http.routers.resourceportal-oauth-dcr.entrypoints=websecure
+        - traefik.http.routers.resourceportal-oauth-dcr.tls=true
+        - traefik.http.routers.resourceportal-oauth-dcr.tls.certresolver=__ACME_CERT_RESOLVER__
+        - traefik.http.routers.resourceportal-oauth-dcr.priority=1001
+        - traefik.http.routers.resourceportal-oauth-dcr.service=resourceportal-web
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.regex=^https?://__LEGACY_DOMAIN_REGEX__/(.*)
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.replacement=https://__DOMAIN__/$${1}
         - traefik.http.middlewares.rp-legacy-portal.redirectregex.permanent=true

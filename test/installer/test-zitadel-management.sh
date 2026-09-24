@@ -39,6 +39,8 @@ contains "$bootstrap_source" 'ZITADEL_BOOTSTRAP_WEB_OIDC_ONLY' 'bootstrap suppor
 contains "$bootstrap_source" '"/v2/settings/security"' 'bootstrap configures ZITADEL security settings for MCP OAuth'
 contains "$bootstrap_source" 'dynamicClientRegistration:' 'bootstrap configures Dynamic Client Registration'
 contains "$bootstrap_source" 'allowUnauthenticated: true' 'bootstrap enables unauthenticated DCR required for automatic MCP client registration'
+contains "$bootstrap_source" 'reconcileMcpDcrJwtAccessTokens' 'bootstrap reconciles DCR clients for MCP token compatibility'
+contains "$bootstrap_source" 'accessTokenType: "OIDC_TOKEN_TYPE_JWT"' 'bootstrap forces DCR clients to JWT access tokens'
 
 secret_fixture="$(mktemp /tmp/rp-zitadel-management-secret.XXXXXX)"
 printf 'management-token-material' >"$secret_fixture"

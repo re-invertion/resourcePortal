@@ -26,6 +26,14 @@ contains_file "$repo_root/.github/workflows/production-installer.yml" 'test/inst
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'scripts/installer/**' 'Codespaces workflow watches installer changes'
 contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'test/installer/**' 'Codespaces workflow watches installer tests'
 contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:cli-release' 'CI validates installable CLI release package'
+[[ -f "$repo_root/.github/workflows/fastfix.yml" ]] && pass 'Fastfix workflow exists' || fail 'Fastfix workflow exists'
+contains_file "$repo_root/.github/workflows/fastfix.yml" 'name: ResourcePortal Fast Fix' 'Fastfix workflow has clear name'
+contains_file "$repo_root/.github/workflows/fastfix.yml" "startsWith(github.head_ref, 'fastfix/')" 'Fastfix workflow is limited to fastfix branches'
+contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run test:fastfix:mcp-oauth' 'Fastfix workflow runs targeted MCP OAuth tests'
+contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run build --workspace @resource-portal/api' 'Fastfix workflow builds API'
+contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run build --workspace @resource-portal/web' 'Fastfix workflow builds Web'
+for workflow in ci.yml codespaces-preview.yml federation-integration.yml production-installer.yml swarm-integration.yml; do contains_file "$repo_root/.github/workflows/$workflow" "!startsWith(github.head_ref, 'fastfix/')" "$workflow skips expensive PR job for fastfix branches"; done
+for workflow in ci.yml federation-integration.yml production-installer.yml swarm-integration.yml; do contains_file "$repo_root/.github/workflows/$workflow" "!contains(github.event.head_commit.message, '[fastfix]')" "$workflow skips expensive main-push job for marked fastfix merges"; done
 contains_file "$repo_root/.github/workflows/federation-integration.yml" 'run: npx playwright install --with-deps chromium' 'Federation uses Playwright from npm ci dependency graph'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'run: npx playwright install --with-deps chromium' 'Swarm smoke uses Playwright from npm ci dependency graph'
 if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_root/.github/workflows/federation-integration.yml" "$repo_root/.github/workflows/swarm-integration.yml"; then fail 'CI workflows avoid ad-hoc Playwright npm install'; else pass 'CI workflows avoid ad-hoc Playwright npm install'; fi

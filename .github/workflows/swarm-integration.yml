@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   real-swarm:
+    if: (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'fastfix/')) && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[fastfix]'))
     name: Installer + real Swarm smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 30

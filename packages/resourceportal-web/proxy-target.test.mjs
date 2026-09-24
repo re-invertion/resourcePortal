@@ -10,6 +10,7 @@ describe("production API proxy target", () => {
   it("proxies MCP OAuth well-known endpoints to the API instead of SSR", () => {
     expect(isApiProxyPath("/.well-known/oauth-protected-resource/api/tenants/t1/mcp")).toBe(true);
     expect(isApiProxyPath("/.well-known/oauth-authorization-server")).toBe(true);
+    expect(isApiProxyPath("/oauth/v2/register")).toBe(true);
     expect(isApiProxyPath("/.well-known/openid-configuration")).toBe(false);
     expect(isApiProxyPath("/tenants/t1/settings")).toBe(false);
   });
