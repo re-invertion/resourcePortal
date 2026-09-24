@@ -257,12 +257,18 @@ export class TenantMcpSettingsService {
 
     try {
       const discovery = await this.oidc.getDiscovery();
+      const dynamicClientRegistrationAvailable = Boolean(
+        discovery.registrationEndpoint,
+      );
+      const pkceS256Available =
+        discovery.codeChallengeMethodsSupported?.includes("S256") === true;
       return {
         issuer,
         scopes,
         discoveryAvailable: true,
-        dynamicClientRegistrationAvailable: Boolean(discovery.registrationEndpoint),
-        openAiReady: Boolean(discovery.registrationEndpoint),
+        dynamicClientRegistrationAvailable,
+        pkceS256Available,
+        openAiReady: dynamicClientRegistrationAvailable && pkceS256Available,
         transport: "Streamable HTTP",
         protocol: "MCP 2026-07-28 with 2025-era compatibility",
       };
@@ -272,6 +278,7 @@ export class TenantMcpSettingsService {
         scopes,
         discoveryAvailable: false,
         dynamicClientRegistrationAvailable: false,
+        pkceS256Available: false,
         openAiReady: false,
         transport: "Streamable HTTP",
         protocol: "MCP 2026-07-28 with 2025-era compatibility",

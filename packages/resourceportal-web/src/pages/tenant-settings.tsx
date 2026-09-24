@@ -72,9 +72,6 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
 
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const mcpUrl = origin ? `${origin}/api/tenants/${encodeURIComponent(tenantId)}/mcp` : `/api/tenants/${tenantId}/mcp`;
-  const metadataUrl = origin
-    ? `${origin}/.well-known/oauth-protected-resource/api/tenants/${encodeURIComponent(tenantId)}/mcp`
-    : `/.well-known/oauth-protected-resource/api/tenants/${tenantId}/mcp`;
 
   function toggleMember(membershipId: string, checked: boolean) {
     setSelected((current) =>
@@ -193,17 +190,23 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
       </Card>
 
       <Card className="mt-6 overflow-hidden">
-        <div className="border-b border-[#E1E7F0] px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">MCP connection</h2><p className="mt-1 text-sm text-[#5B6678]">Enable MCP, then paste the server URL into OpenAI/ChatGPT or another MCP host. OAuth registration and account linking are discovered automatically.</p></div>{oauth?.openAiReady ? <StatusText tone="success">OpenAI / ChatGPT ready</StatusText> : <StatusText tone="warning">OAuth setup incomplete</StatusText>}</div></div>
-        <div className="grid gap-4 p-5 lg:grid-cols-2">
-          <div><p className="text-xs font-medium text-[#718096]">MCP server URL</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code></div>
-          <div><p className="text-xs font-medium text-[#718096]">OAuth protected-resource metadata</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{metadataUrl}</code></div>
-          <div><p className="text-xs font-medium text-[#718096]">OAuth issuer</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{text(oauth?.issuer, "Not configured")}</code></div>
-          <div><p className="text-xs font-medium text-[#718096]">OAuth discovery</p><div className="mt-2"><StatusText tone={oauth?.discoveryAvailable ? "success" : "warning"}>{oauth?.discoveryAvailable ? "Available" : "Unavailable"}</StatusText></div></div>
-          <div className="lg:col-span-2"><p className="text-xs font-medium text-[#718096]">Required/requested scopes</p><code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{oauth?.scopes?.join(" ") || "Unavailable"}</code></div>
+        <div className="border-b border-[#E1E7F0] px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-semibold">MCP connection</h2>
+              <p className="mt-1 text-sm text-[#5B6678]">Paste this single server URL into OpenAI/ChatGPT or another MCP host. OAuth discovery, client registration and account linking happen automatically.</p>
+            </div>
+            {oauth?.openAiReady ? <StatusText tone="success">OpenAI / ChatGPT ready</StatusText> : <StatusText tone="warning">OAuth setup incomplete</StatusText>}
+          </div>
+        </div>
+        <div className="p-5">
+          <p className="text-xs font-medium text-[#718096]">MCP server URL</p>
+          <code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code>
+          <p className="mt-2 text-xs leading-5 text-[#718096]">No metadata URL, Client ID or client secret needs to be copied into the MCP client.</p>
         </div>
         <div className="space-y-3 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5">
-          <Callout title="Automatic OpenAI account linking">OpenAI can discover the protected-resource metadata, OAuth issuer and required scopes directly from this MCP URL. When a protected tool is invoked, ResourcePortal returns the standard MCP OAuth challenge and OpenAI starts account linking automatically.</Callout>
-          {!oauth?.dynamicClientRegistrationAvailable ? <Callout tone="warning" title="Platform OAuth bootstrap is incomplete">The identity server is not advertising Dynamic Client Registration, so zero-configuration OpenAI linking is not ready. The platform operator should run a v0.2.10+ installer repair/upgrade; tenant users should not create a manual OAuth client.</Callout> : <Callout tone="success" title="No Client ID or secret required">ResourcePortal automatically prepares ZITADEL Dynamic Client Registration for MCP. OpenAI/ChatGPT can register its OAuth client, request ResourcePortal scopes, and complete user sign-in without tenant-side OAuth application setup.</Callout>}
+          <Callout title="Automatic OAuth account linking">Compatible MCP clients discover ResourcePortal protected-resource metadata and the authorization server from the MCP URL, then use OAuth Authorization Code + PKCE automatically.</Callout>
+          {!oauth?.openAiReady ? <Callout tone="warning" title="Platform OAuth bootstrap is incomplete">Automatic linking requires Dynamic Client Registration and PKCE S256. The platform operator should run the current ResourcePortal upgrade or repair; tenant users should not create a manual OAuth client.</Callout> : <Callout tone="success" title="No Client ID or secret required">ResourcePortal prepares ZITADEL Dynamic Client Registration for MCP and publishes standards-compatible OAuth discovery metadata, so clients can register and complete user sign-in automatically.</Callout>}
         </div>
       </Card>
     </main>

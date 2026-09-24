@@ -14,6 +14,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { CurrentUser } from "../auth/current-user.decorator";
+import { OidcAuthService } from "../auth/oidc-auth.service";
 import { Public } from "../auth/public.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
@@ -78,6 +79,56 @@ export class TenantMcpController {
       },
       reply,
     );
+  }
+}
+
+@Public()
+@AllowDuringPlatformMaintenance()
+@Controller(".well-known/oauth-authorization-server")
+export class McpOAuthAuthorizationServerMetadataController {
+  constructor(
+    private readonly oidc: OidcAuthService,
+    private readonly config: ConfigService,
+  ) {}
+
+  @Get()
+  @Header("access-control-allow-origin", "*")
+  @Header("cache-control", "public, max-age=300")
+  async metadata() {
+    const discovery = await this.oidc.getDiscovery();
+    const projectId = this.config.get<string>("ZITADEL_PROJECT_ID");
+    const organizationId = this.config.get<string>("ZITADEL_ORGANIZATION_ID");
+    const resourcePortalScopes = [
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+      ...(projectId ? [`urn:zitadel:iam:org:project:id:${projectId}:aud`] : []),
+      ...(organizationId ? [`urn:zitadel:iam:org:id:${organizationId}`] : []),
+    ];
+
+    return {
+      issuer: discovery.issuer,
+      authorization_endpoint: discovery.authorizationEndpoint,
+      token_endpoint: discovery.tokenEndpoint,
+      registration_endpoint: discovery.registrationEndpoint,
+      jwks_uri: discovery.jwksUri,
+      userinfo_endpoint: discovery.userInfoEndpoint,
+      revocation_endpoint: discovery.revocationEndpoint,
+      introspection_endpoint: discovery.introspectionEndpoint,
+      device_authorization_endpoint: discovery.deviceAuthorizationEndpoint,
+      scopes_supported: [
+        ...new Set([...(discovery.scopesSupported ?? []), ...resourcePortalScopes]),
+      ],
+      response_types_supported: discovery.responseTypesSupported,
+      response_modes_supported: discovery.responseModesSupported,
+      grant_types_supported: discovery.grantTypesSupported,
+      token_endpoint_auth_methods_supported:
+        discovery.tokenEndpointAuthMethodsSupported,
+      code_challenge_methods_supported: discovery.codeChallengeMethodsSupported,
+      authorization_response_iss_parameter_supported:
+        discovery.authorizationResponseIssParameterSupported ?? false,
+    };
   }
 }
 

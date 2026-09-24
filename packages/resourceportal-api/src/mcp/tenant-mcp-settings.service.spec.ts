@@ -32,7 +32,10 @@ function fixture() {
     }),
   };
   const oidc = {
-    getDiscovery: vi.fn().mockResolvedValue({ registrationEndpoint: "https://auth.example.com/oauth/v2/register" }),
+    getDiscovery: vi.fn().mockResolvedValue({
+      registrationEndpoint: "https://auth.example.com/oauth/v2/register",
+      codeChallengeMethodsSupported: ["S256"],
+    }),
   };
   return {
     service: new TenantMcpSettingsService(prisma as never, config as never, oidc as never),
@@ -61,6 +64,7 @@ describe("TenantMcpSettingsService", () => {
         issuer: "https://auth.example.com",
         discoveryAvailable: true,
         dynamicClientRegistrationAvailable: true,
+        pkceS256Available: true,
         openAiReady: true,
         transport: "Streamable HTTP",
         protocol: "MCP 2026-07-28 with 2025-era compatibility",
