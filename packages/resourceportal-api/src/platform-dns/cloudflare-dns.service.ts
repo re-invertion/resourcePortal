@@ -147,7 +147,11 @@ export class CloudflareDnsService {
         "configuration",
       );
     }
-    const records = await this.listRecords(input.apiToken, input.zoneId, rootDomain);
+    const records = await this.listRecords(
+      input.apiToken,
+      input.zoneId,
+      rootDomain,
+    );
     const existing = records.find(
       (record) =>
         record.type === "TXT" &&
@@ -173,15 +177,31 @@ export class CloudflareDnsService {
   }) {
     const hostname = normalizeHostname(input.hostname);
     const targetHostname = normalizeHostname(input.targetHostname);
-    const records = await this.listRecords(input.apiToken, input.zoneId, hostname);
-    const owned = records.find(
-      (record) =>
-        record.type === "CNAME" &&
-        normalizeHostname(record.name) === hostname &&
-        normalizeHostname(record.content) === targetHostname &&
-        record.comment === CLOUDFLARE_MANAGED_RECORD_COMMENT,
+    const records = await this.listRecords(
+      input.apiToken,
+      input.zoneId,
+      hostname,
     );
-    if (owned) return { record: owned, created: false };
+    const owned = this.findOwnedManagedCname(records, hostname, targetHostname);
+    if (owned) return { record: owned, created: false, adopted: false };
+
+    const legacy = this.findLegacyManagedCname(
+      records,
+      hostname,
+      targetHostname,
+    );
+    if (legacy) {
+      const adopted = await this.updateRecord(
+        input.apiToken,
+        input.zoneId,
+        legacy.id,
+        {
+          comment: CLOUDFLARE_MANAGED_RECORD_COMMENT,
+        },
+      );
+      return { record: adopted, created: false, adopted: true };
+    }
+
     if (records.length > 0) {
       throw new CloudflareDnsRecordConflictError(hostname, records);
     }
@@ -205,7 +225,11 @@ export class CloudflareDnsService {
   }) {
     const hostname = normalizeHostname(input.hostname);
     const targetHostname = normalizeHostname(input.targetHostname);
-    const records = await this.listRecords(input.apiToken, input.zoneId, hostname);
+    const records = await this.listRecords(
+      input.apiToken,
+      input.zoneId,
+      hostname,
+    );
     const owned = records.filter(
       (record) =>
         record.type === "CNAME" &&
@@ -227,13 +251,53 @@ export class CloudflareDnsService {
   }) {
     const hostname = normalizeHostname(input.hostname);
     const targetHostname = normalizeHostname(input.targetHostname);
-    const records = await this.listRecords(input.apiToken, input.zoneId, hostname);
-    return records.some(
+    const records = await this.listRecords(
+      input.apiToken,
+      input.zoneId,
+      hostname,
+    );
+    if (this.findOwnedManagedCname(records, hostname, targetHostname)) {
+      return true;
+    }
+
+    const legacy = this.findLegacyManagedCname(
+      records,
+      hostname,
+      targetHostname,
+    );
+    if (!legacy) return false;
+
+    await this.updateRecord(input.apiToken, input.zoneId, legacy.id, {
+      comment: CLOUDFLARE_MANAGED_RECORD_COMMENT,
+    });
+    return true;
+  }
+
+  private findOwnedManagedCname(
+    records: CloudflareDnsRecord[],
+    hostname: string,
+    targetHostname: string,
+  ) {
+    return records.find(
       (record) =>
         record.type === "CNAME" &&
         normalizeHostname(record.name) === hostname &&
         normalizeHostname(record.content) === targetHostname &&
         record.comment === CLOUDFLARE_MANAGED_RECORD_COMMENT,
+    );
+  }
+
+  private findLegacyManagedCname(
+    records: CloudflareDnsRecord[],
+    hostname: string,
+    targetHostname: string,
+  ) {
+    return records.find(
+      (record) =>
+        record.type === "CNAME" &&
+        normalizeHostname(record.name) === hostname &&
+        normalizeHostname(record.content) === targetHostname &&
+        !record.comment?.trim(),
     );
   }
 
@@ -285,6 +349,19 @@ export class CloudflareDnsService {
       `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
       apiToken,
       { method: "DELETE" },
+    );
+  }
+
+  private updateRecord(
+    apiToken: string,
+    zoneId: string,
+    recordId: string,
+    body: Record<string, unknown>,
+  ) {
+    return this.request<CloudflareDnsRecord>(
+      `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`,
+      apiToken,
+      { method: "PATCH", body: JSON.stringify(body) },
     );
   }
 
