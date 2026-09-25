@@ -5,6 +5,7 @@ import { DomainCertificateReconcilerService } from "./internal/domain-certificat
 import { IngressReconcilerService } from "./internal/ingress-reconciler.service";
 import { RuntimeDriftReconcilerService } from "./internal/runtime-drift-reconciler.service";
 import { NetworkEgressReconcilerService } from "./network-egress/network-egress-reconciler.service";
+import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
 import {
   errorMessage,
   operationCorrelationId,
@@ -58,6 +59,7 @@ async function main() {
   const drift = app.get(RuntimeDriftReconcilerService);
   const volumeUsage = app.get(VolumeUsageReconcilerService);
   const egressPolicy = app.get(NetworkEgressReconcilerService);
+  const gateRuntime = app.get(GateRuntimeReconcilerService);
   const runtimeObservability = app.get(WorkerRuntimeObservabilityService);
 
   const workerId = config.get<string>("WORKER_ID") ?? `worker-${process.pid}`;
@@ -97,6 +99,12 @@ async function main() {
       10_000,
       2_000,
     ),
+    gateRuntime: readInt(
+      config,
+      "GATE_RUNTIME_RECONCILE_INTERVAL_MS",
+      10_000,
+      2_000,
+    ),
   };
   const next = {
     certificate: 0,
@@ -105,6 +113,7 @@ async function main() {
     volumeUsage: 0,
     legacySecrets: 0,
     egressPolicy: 0,
+    gateRuntime: 0,
   };
   let stopping = false;
   let crashed = false;
@@ -265,6 +274,7 @@ async function main() {
       await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
       await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
       await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
+      await startupReconcile("gateRuntime", () => gateRuntime.reconcile());
     }
 
     while (!stopping) {
@@ -280,6 +290,7 @@ async function main() {
         await reconcile("volumeUsage", () => volumeUsage.reconcileBatch());
         await reconcile("legacySecrets", () => legacySecrets.migrateAll());
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
+        await reconcile("gateRuntime", () => gateRuntime.reconcile());
       }
 
       let processed;

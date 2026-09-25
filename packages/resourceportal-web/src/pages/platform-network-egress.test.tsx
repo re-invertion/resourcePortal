@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PlatformNetworkEgressPage } from "./platform-network-egress";
 
@@ -58,113 +58,73 @@ it("shows default private-network isolation as applied", async () => {
   ).toBe(true);
 });
 
-it("creates an App Group-scoped TCP exception without redeploying the application", async () => {
+it("shows existing private-network exceptions as cleanup-only and allows deletion", async () => {
+  const legacy = {
+    ...initial,
+    enforcement: {
+      ...initial.enforcement,
+      lastResult: { revision: 4, enabled: true, rules: 1 },
+    },
+    rules: [
+      {
+        id: "rule-1",
+        appGroupId: initial.appGroups[0].id,
+        appGroupName: "penpot",
+        tenantId: initial.appGroups[0].tenantId,
+        tenantName: "Design",
+        destinationCidr: "192.168.100.50/32",
+        protocol: "tcp",
+        port: 443,
+        description: "Legacy monitoring",
+      },
+    ],
+  };
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (
-      url === "/api/platform/network-egress/rules" &&
-      init?.method === "POST"
-    ) {
-      return Promise.resolve(
-        json({
-          id: "rule-1",
-          appGroupId: initial.appGroups[0].id,
-          destinationCidr: "192.168.100.50/32",
-          protocol: "tcp",
-          port: 443,
-        }),
-      );
+    if (url === "/api/platform/network-egress/rules/rule-1" && init?.method === "DELETE") {
+      return Promise.resolve(json({ deleted: true }));
     }
     if (url === "/api/platform/network-egress") {
-      return Promise.resolve(json(initial));
+      return Promise.resolve(json(legacy));
     }
     return Promise.resolve(json({}));
   });
   vi.stubGlobal("fetch", fetchMock);
 
   render(<PlatformNetworkEgressPage />);
-  await screen.findByText("Tenant private-network isolation");
+  expect(await screen.findByText("Legacy private-network exceptions cleanup")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Add exception" })).toBeNull();
+  expect(screen.getByText("192.168.100.50/32")).toBeTruthy();
 
-  fireEvent.change(screen.getByLabelText(/Destination IP \/ CIDR/i), {
-    target: { value: "192.168.100.50/32" },
-  });
-  fireEvent.change(screen.getByLabelText("Protocol"), {
-    target: { value: "tcp" },
-  });
-  fireEvent.change(screen.getByLabelText(/Port/i), {
-    target: { value: "443" },
-  });
-  fireEvent.change(screen.getByLabelText("Description"), {
-    target: { value: "Monitoring API" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Add exception" }));
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Remove egress rule for 192.168.100.50/32",
+    }),
+  );
+  const confirm = await screen.findByRole("dialog");
+  fireEvent.click(
+    within(confirm).getByRole("button", { name: "Remove exception" }),
+  );
 
   await waitFor(() => {
-    const request = fetchMock.mock.calls.find(
-      ([url, init]) =>
-        String(url) === "/api/platform/network-egress/rules" &&
-        init?.method === "POST",
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/platform/network-egress/rules/rule-1",
+      expect.objectContaining({ method: "DELETE" }),
     );
-    expect(request).toBeTruthy();
-    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
-      appGroupId: "11111111-1111-4111-8111-111111111111",
-      destinationCidr: "192.168.100.50/32",
-      protocol: "tcp",
-      port: 443,
-      description: "Monitoring API",
-    });
   });
 });
 
-it("grants privileged networking to a selected App Group through the Platform Admin API", async () => {
-  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (
-      url ===
-        "/api/platform/network-egress/app-groups/11111111-1111-4111-8111-111111111111" &&
-      init?.method === "PATCH"
-    ) {
-      return Promise.resolve(
-        json({
-          id: initial.appGroups[0].id,
-          networkPrivileged: true,
-          changed: true,
-          deploymentRequired: false,
-        }),
-      );
-    }
-    if (url === "/api/platform/network-egress") {
-      return Promise.resolve(json(initial));
-    }
-    return Promise.resolve(json({}));
-  });
-  vi.stubGlobal("fetch", fetchMock);
+it("shows legacy privileged networking as cleanup-only and does not offer new grants", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(json(initial))),
+  );
 
   render(<PlatformNetworkEgressPage />);
-  await screen.findByText("Privileged App Group networking");
+  expect(
+    await screen.findByText("Legacy privileged networking cleanup"),
+  ).toBeTruthy();
   expect(screen.getByText("Internal source: 192.168.100.0/24")).toBeTruthy();
-
-  const grant = screen.getByRole("button", { name: "Grant privilege" });
-  await waitFor(() => expect((grant as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(grant);
-  const dialog = screen.getByRole("dialog", {
-    name: "Grant privileged networking?",
-  });
-  expect(dialog).toBeTruthy();
-  const confirm = Array.from(dialog.querySelectorAll("button")).find(
-    (button) => button.textContent === "Grant privilege",
-  );
-  expect(confirm).toBeTruthy();
-  fireEvent.click(confirm as HTMLButtonElement);
-
-  await waitFor(() => {
-    const request = fetchMock.mock.calls.find(
-      ([url, init]) =>
-        String(url) ===
-          "/api/platform/network-egress/app-groups/11111111-1111-4111-8111-111111111111" &&
-        init?.method === "PATCH",
-    );
-    expect(request).toBeTruthy();
-    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ privileged: true });
-  });
+  expect(screen.getByText("No legacy privilege")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Grant privilege/i })).toBeNull();
 });

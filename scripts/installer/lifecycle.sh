@@ -100,6 +100,7 @@ rp_collect_primary_config() {
     fi
   fi
   rp_prompt_if_empty RP_CFG_DOMAIN 'ResourcePortal domain' 'Public ResourcePortal hostname' ''
+  [[ -n "${RP_CFG_GATE_ENDPOINT_HOST:-}" ]] || { RP_CFG_GATE_ENDPOINT_HOST="$RP_CFG_DOMAIN"; export RP_CFG_GATE_ENDPOINT_HOST; }
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || { RP_CFG_ZITADEL_DOMAIN="auth.${RP_CFG_DOMAIN}"; export RP_CFG_ZITADEL_DOMAIN; }
   rp_prompt_if_empty RP_CFG_INGRESS_ADDRESSES 'Ingress' 'Expected public ingress IP address(es), comma-separated' "${detected_public_address:-$RP_CFG_SWARM_ADVERTISE_ADDR}"
   rp_prompt_if_empty RP_CFG_ACME_EMAIL 'TLS / ACME' 'ACME contact email' ''

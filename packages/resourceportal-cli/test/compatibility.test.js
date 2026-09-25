@@ -114,6 +114,57 @@ test("global help exposes post-Stage-8 compatibility commands", () => {
 });
 
 
+
+test("network attach-app sends optimistic revision through the published CLI", async () => {
+  const tenantId = "00000000-0000-4000-8000-000000000001";
+  const networkId = "11111111-1111-4111-8111-111111111111";
+  const appId = "22222222-2222-4222-8222-222222222222";
+  const request = await captureJsonRequest([
+    "network",
+    "attach-app",
+    tenantId,
+    networkId,
+    appId,
+    "--expected-revision",
+    "7",
+    "--address",
+    "10.240.10.10",
+    "--idempotency-key",
+    "network-cli-test",
+  ]);
+
+  assert.equal(request.method, "POST");
+  assert.equal(
+    request.url,
+    `/api/tenants/${tenantId}/networking/networks/${networkId}/attachments`,
+  );
+  assert.deepEqual(request.body, {
+    singleAppId: appId,
+    expectedRevision: 7,
+    address: "10.240.10.10",
+  });
+});
+
+test("gate create uses the tenant networking API", async () => {
+  const tenantId = "00000000-0000-4000-8000-000000000001";
+  const request = await captureJsonRequest([
+    "gate",
+    "create",
+    tenantId,
+    "--name",
+    "office",
+    "--description",
+    "Office VPN router",
+  ]);
+
+  assert.equal(request.method, "POST");
+  assert.equal(request.url, `/api/tenants/${tenantId}/networking/gates`);
+  assert.deepEqual(request.body, {
+    name: "office",
+    description: "Office VPN router",
+  });
+});
+
 test("tenant MCP settings preserve selected membership IDs as an array", async () => {
   const request = await captureJsonRequest([
     "tenant-mcp",

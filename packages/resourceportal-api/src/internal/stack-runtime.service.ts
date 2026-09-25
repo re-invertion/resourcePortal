@@ -14,6 +14,73 @@ type RuntimeResult = {
 export class StackRuntimeService {
   constructor(private readonly config: ConfigService) {}
 
+  async reconcileTenantNetwork(input: {
+    networkName: string;
+    subnet: string;
+    networkId: string;
+    tenantId: string;
+  }) {
+    const network = await this.inspectNetwork(input.networkName);
+    if (network.success) {
+      return { success: true, changed: false };
+    }
+    if (!network.missing) {
+      return { success: false, changed: false, error: network.error };
+    }
+
+    const create = await this.runDocker([
+      "network",
+      "create",
+      "--driver",
+      "overlay",
+      "--attachable",
+      "--opt",
+      "encrypted",
+      "--subnet",
+      input.subnet,
+      "--label",
+      "resourceportal.managed=true",
+      "--label",
+      "resourceportal.network.kind=tenant-network",
+      "--label",
+      `resourceportal.network.id=${input.networkId}`,
+      "--label",
+      `resourceportal.tenant-id=${input.tenantId}`,
+      input.networkName,
+    ]);
+    return create.exitCode === 0
+      ? { success: true, changed: true }
+      : {
+          success: false,
+          changed: false,
+          error:
+            create.stderr ||
+            create.stdout ||
+            `docker network create ${input.networkName} failed`,
+        };
+  }
+
+  async removeTenantNetwork(networkName: string) {
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      return network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+    const remove = await this.runDocker(["network", "rm", networkName]);
+    if (remove.exitCode !== 0 && !this.isMissingNetwork(remove.stderr)) {
+      return {
+        success: false,
+        changed: false,
+        error:
+          remove.stderr ||
+          remove.stdout ||
+          `docker network rm ${networkName} failed`,
+      };
+    }
+    return { success: true, changed: true };
+  }
+
   async scaleServices(
     services: Array<{
       stackName: string;

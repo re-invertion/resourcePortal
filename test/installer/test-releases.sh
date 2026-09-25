@@ -252,6 +252,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_pull_release_images(){ printf 'pull\n' >>"$log"; }
   rp_apply_release_manifest_images(){ printf 'manifest-images\n' >>"$log"; }
   rp_upgrade_ensure_v020_node_labels(){ printf 'labels\n' >>"$log"; }
+  rp_upgrade_refresh_firewall(){ printf 'firewall\n' >>"$log"; }
   rp_upgrade_quiesce_database_clients(){ printf 'clients-quiesced\n' >>"$log"; }
   rp_upgrade_prepare_postgres_services(){ printf 'postgres-ready\n' >>"$log"; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'zitadel-ready\n' >>"$log"; }
@@ -264,12 +265,13 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_config_write(){ printf 'persist-config\n' >>"$log"; }
   rp_write_stack(){ printf 'persist-stack\n' >>"$log"; }
   rp_upgrade_apply "$manifest" "$previous"
+  firewall_line="$(grep -n '^firewall$' "$log" | cut -d: -f1)"
   quiesce_line="$(grep -n '^clients-quiesced$' "$log" | cut -d: -f1)"
   postgres_line="$(grep -n '^postgres-ready$' "$log" | cut -d: -f1)"
   zitadel_line="$(grep -n '^zitadel-ready$' "$log" | cut -d: -f1)"
   migration_line="$(grep -n '^migrations$' "$log" | cut -d: -f1)"
   deploy_line="$(grep -n '^deploy:final$' "$log" | cut -d: -f1)"
-  [[ "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
+  [[ "$firewall_line" -lt "$quiesce_line" && "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
 )
 status 0 'upgrade gates PostgreSQL before ZITADEL, migrations and final rollout' upgrade_orders_dependencies_before_final_rollout
 

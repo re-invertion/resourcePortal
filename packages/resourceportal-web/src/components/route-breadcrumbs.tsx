@@ -130,7 +130,7 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
     return crumbs;
   }
 
-  if (["storage-networking", "volumes", "registries", "domains"].includes(section)) {
+  if (["storage-networking", "networking", "volumes", "registries", "domains"].includes(section)) {
     const crumbs: Crumb[] = [
       root,
       { label: "Storage & Networking", href: tenantHref(tenantId, "storage-networking") },
@@ -138,6 +138,7 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
     if (section === "storage-networking") return crumbs;
 
     const names: Record<string, string> = {
+      networking: "Networking",
       volumes: "Volumes",
       registries: "Registries",
       domains: "Domains",

@@ -13,8 +13,38 @@ const root = "/api/tenants/t1/app-groups/ag1";
 
 afterEach(() => vi.unstubAllGlobals());
 
+function baseFetch(options?: { privileged?: boolean; exposures?: unknown[] }) {
+  const privileged = options?.privileged ?? false;
+  const exposures = options?.exposures ?? [];
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === root && (!init?.method || init.method === "GET")) {
+      return json({ id: "ag1", networkPrivileged: privileged });
+    }
+    if (
+      path.endsWith("/single-apps") &&
+      (!init?.method || init.method === "GET")
+    ) {
+      return json([{ id: "app1", name: "web" }]);
+    }
+    if (
+      path === `${root}/internal-port-exposures` &&
+      (!init?.method || init.method === "GET")
+    ) {
+      return json(exposures);
+    }
+    if (
+      path.endsWith("/single-apps/app1/http-endpoints") &&
+      (!init?.method || init.method === "GET")
+    ) {
+      return json([]);
+    }
+    return json({});
+  });
+}
+
 describe("AppGroupNetworking", () => {
-  it("confirms in-app before deleting an endpoint", async () => {
+  it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === root && (!init?.method || init.method === "GET")) {
@@ -48,7 +78,6 @@ describe("AppGroupNetworking", () => {
       return json({});
     });
     vi.stubGlobal("fetch", fetchMock);
-    const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
 
@@ -59,7 +88,6 @@ describe("AppGroupNetworking", () => {
     expect(
       screen.getByRole("dialog", { name: "Delete endpoint public?" }),
     ).toBeTruthy();
-    expect(nativeConfirm).not.toHaveBeenCalled();
     expect(
       fetchMock.mock.calls.some(
         ([_, init]) => (init as RequestInit | undefined)?.method === "DELETE",
@@ -78,179 +106,67 @@ describe("AppGroupNetworking", () => {
     );
   });
 
-  it("does not expose internal port controls for a standard App Group", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      if (path === root) return json({ id: "ag1", networkPrivileged: false });
-      if (path.endsWith("/single-apps")) {
-        return json([{ id: "app1", name: "dns" }]);
-      }
-      if (path.endsWith("/internal-port-exposures")) return json([]);
-      if (path.endsWith("/http-endpoints")) return json([]);
-      return json({});
-    });
+  it("shows the legacy networking section as migration-only without Add/Edit controls", async () => {
+    const fetchMock = baseFetch({ privileged: true, exposures: [] });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
 
-    expect(await screen.findByText("Platform Admin required")).toBeTruthy();
-    expect(screen.getByText("Privileged networking is disabled")).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: "Add internal port" }),
+      await screen.findByText("Legacy Internal Port Exposures"),
+    ).toBeTruthy();
+    expect(screen.getByText("No legacy exposures")).toBeTruthy();
+    expect(screen.getByText("Legacy privilege active")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Open tenant Networking" }).getAttribute("href"),
+    ).toBe("/tenants/t1/networking");
+    expect(
+      screen.queryByRole("button", { name: /Add internal port/i }),
     ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).toBeNull();
   });
 
-  it("creates UDP/53 internal exposure for a privileged App Group", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      if (path === root && (!init?.method || init.method === "GET")) {
-        return json({ id: "ag1", networkPrivileged: true });
-      }
-      if (
-        path.endsWith("/single-apps") &&
-        (!init?.method || init.method === "GET")
-      ) {
-        return json([{ id: "app1", name: "dns" }]);
-      }
-      if (
-        path === `${root}/internal-port-exposures` &&
-        (!init?.method || init.method === "GET")
-      ) {
-        return json([]);
-      }
-      if (
-        path.endsWith("/single-apps/app1/http-endpoints") &&
-        (!init?.method || init.method === "GET")
-      ) {
-        return json([]);
-      }
-      if (
-        path.endsWith("/single-apps/app1/internal-port-exposures") &&
-        init?.method === "POST"
-      ) {
-        return json({ id: "int1" });
-      }
-      return json({});
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
-
-    const add = await screen.findByRole("button", { name: "Add internal port" });
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(add);
-    await screen.findByText("Exposure name");
-    fireEvent.change(screen.getByLabelText(/Exposure name/i), {
-      target: { value: "dns-udp" },
-    });
-    fireEvent.change(screen.getByLabelText(/^Protocol$/i), {
-      target: { value: "udp" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create internal port" }));
-
-    await waitFor(() => {
-      const request = fetchMock.mock.calls.find(
-        ([path, init]) =>
-          String(path).endsWith("/single-apps/app1/internal-port-exposures") &&
-          init?.method === "POST",
-      );
-      expect(request).toBeTruthy();
-      expect(JSON.parse(String(request?.[1]?.body))).toEqual({
-        name: "dns-udp",
-        containerPort: 53,
-        publishedPort: 53,
-        protocol: "udp",
-      });
-    });
-  });
-
-  it("shows internal port publishing only after Platform Admin grants privileged networking", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      if (path.endsWith("/app-groups/ag1") && (!init?.method || init.method === "GET")) {
-        return json({ id: "ag1", networkPrivileged: false });
-      }
-      if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) {
-        return json([{ id: "app1", name: "dns" }]);
-      }
-      if (path.endsWith("/internal-port-exposures") && (!init?.method || init.method === "GET")) {
-        return json([]);
-      }
-      if (path.endsWith("/single-apps/app1/http-endpoints") && (!init?.method || init.method === "GET")) {
-        return json([]);
-      }
-      return json({});
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
-
-    expect(await screen.findByText("Privileged networking is disabled")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Add internal port/i })).toBeNull();
-  });
-
-  it("creates a UDP/53 internal exposure for a privileged App Group", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      if (path.endsWith("/app-groups/ag1") && (!init?.method || init.method === "GET")) {
-        return json({ id: "ag1", networkPrivileged: true });
-      }
-      if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) {
-        return json([{ id: "app1", name: "dns" }]);
-      }
-      if (path.endsWith("/internal-port-exposures") && (!init?.method || init.method === "GET")) {
-        return json([]);
-      }
-      if (path.endsWith("/single-apps/app1/http-endpoints") && (!init?.method || init.method === "GET")) {
-        return json([]);
-      }
-      if (
-        path.endsWith("/single-apps/app1/internal-port-exposures") &&
-        init?.method === "POST"
-      ) {
-        return json({
-          id: "port1",
+  it("allows deleting an existing legacy exposure but never editing it", async () => {
+    const fetchMock = baseFetch({
+      privileged: true,
+      exposures: [
+        {
+          id: "int1",
           singleAppId: "app1",
+          singleAppName: "web",
           name: "dns-udp",
           containerPort: 53,
           publishedPort: 53,
           protocol: "udp",
-        });
-      }
-      return json({});
+        },
+      ],
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
 
-    const add = await screen.findByRole("button", { name: /Add internal port/i });
-    fireEvent.click(add);
-    fireEvent.change(screen.getByPlaceholderText("dns-udp"), {
-      target: { value: "dns-udp" },
-    });
-    const protocolSelect = screen
-      .getAllByRole("combobox")
-      .find((element) => (element as HTMLSelectElement).value === "tcp");
-    expect(protocolSelect).toBeTruthy();
-    fireEvent.change(protocolSelect as HTMLSelectElement, {
-      target: { value: "udp" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create internal port" }));
+    expect(await screen.findByText("1 to migrate")).toBeTruthy();
+    expect(screen.getByText("53 → 53")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Edit$/i })).toBeNull();
 
-    await waitFor(() => {
-      const request = fetchMock.mock.calls.find(
-        ([path, init]) =>
-          String(path).endsWith("/single-apps/app1/internal-port-exposures") &&
-          (init as RequestInit | undefined)?.method === "POST",
-      );
-      expect(request).toBeTruthy();
-      expect(JSON.parse(String((request?.[1] as RequestInit | undefined)?.body))).toEqual({
-        name: "dns-udp",
-        containerPort: 53,
-        publishedPort: 53,
-        protocol: "udp",
-      });
-    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Delete legacy internal port dns-udp",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete legacy exposure" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([path, init]) =>
+            String(path).endsWith(
+              "/single-apps/app1/internal-port-exposures/int1",
+            ) && (init as RequestInit | undefined)?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
   });
-
 });

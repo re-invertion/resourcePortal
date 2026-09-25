@@ -23,6 +23,7 @@ export RP_CFG_POSTGRES_IMAGE='postgres:17-alpine@sha256:cccccccccccccccccccccccc
 export RP_CFG_ZITADEL_IMAGE='ghcr.io/zitadel/zitadel:v4.0.0@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 export RP_CFG_TRAEFIK_IMAGE='traefik:v3.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 export RP_CFG_DOMAIN='rp.example.com'
+export RP_CFG_GATE_ENDPOINT_HOST='gate.rp.example.com'
 export RP_CFG_ZITADEL_DOMAIN='auth.rp.example.com'
 export RP_CFG_INGRESS_ADDRESSES='203.0.113.10'
 export RP_CFG_ACME_EMAIL='admin@example.com'
@@ -61,6 +62,7 @@ contains "$ingress" 'replicas: 0 # RP_API_REPLICAS' 'ingress state still gates A
 contains "$ingress" 'replicas: 0 # RP_WEB_REPLICAS' 'ingress state still gates Web'
 contains "$ingress" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'ingress state keeps ZITADEL available'
 contains "$ingress" 'traefik.swarm.network=resourceportal-control-plane_rp-ingress' 'ZITADEL pins Traefik to ingress network'
+contains "$final" 'RESOURCEPORTAL_GATE_ENDPOINT_HOST: gate.rp.example.com' 'API receives explicit public ResourcePortalGate endpoint host'
 
 # Resume can reach ingress with bootstrap already checkpointed. Ingress must
 # therefore ensure the Traefik ACME bind source exists immediately before the

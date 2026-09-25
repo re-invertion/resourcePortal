@@ -9,6 +9,7 @@ import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
 import { TenantHelpPage } from "./help";
 import { TenantSettingsPage } from "./tenant-settings";
+import { TenantNetworkingPage } from "./tenant-networking";
 
 type TenantPageProps = {
   tenantId: string;
@@ -27,6 +28,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   }
   if (section === "app-groups") return (segments.length || resourceId) ? <AppGroupRoute tenantId={tenantId} segments={segments.length ? segments : [resourceId!]} /> : <ApplicationsPage tenantId={tenantId} />;
   if (section === "storage-networking") return <TenantStorageNetworking tenantId={tenantId} />;
+  if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} />;
   if (section === "access") return <TenantAccess tenantId={tenantId} />;
   if (section === "activity") return <TenantActivity tenantId={tenantId} />;
   if (section === "billing") return <TenantBilling tenantId={tenantId} />;

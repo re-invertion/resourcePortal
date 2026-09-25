@@ -38,6 +38,7 @@ rp_render_ufw_rules() {
   if [[ "$ingress_enabled" == "true" ]]; then
     printf 'allow 80/tcp comment ResourcePortal-HTTP\n'
     printf 'allow 443/tcp comment ResourcePortal-HTTPS\n'
+    printf 'allow 52000:52999/udp comment ResourcePortal-Gate-WireGuard\n'
   fi
 }
 
@@ -59,6 +60,7 @@ rp_configure_ufw() {
   if [[ "$ingress_enabled" == "true" ]]; then
     ufw allow 80/tcp comment ResourcePortal-HTTP
     ufw allow 443/tcp comment ResourcePortal-HTTPS
+    ufw allow 52000:52999/udp comment ResourcePortal-Gate-WireGuard
   fi
   ufw --force enable
   ufw reload

@@ -47,6 +47,58 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     spawnMock.mockReset();
   });
 
+  it("creates an encrypted managed tenant overlay with the requested subnet", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("", 1, "No such network"))
+      .mockImplementationOnce(() => dockerProcess("network-id"));
+
+    const result = await service().reconcileTenantNetwork({
+      networkName: "rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      subnet: "10.200.12.0/24",
+      networkId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      tenantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
+
+    expect(result).toEqual({ success: true, changed: true });
+    expect(spawnMock.mock.calls[1]?.[1]).toEqual([
+      "network",
+      "create",
+      "--driver",
+      "overlay",
+      "--attachable",
+      "--opt",
+      "encrypted",
+      "--subnet",
+      "10.200.12.0/24",
+      "--label",
+      "resourceportal.managed=true",
+      "--label",
+      "resourceportal.network.kind=tenant-network",
+      "--label",
+      "resourceportal.network.id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "--label",
+      "resourceportal.tenant-id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ]);
+  });
+
+  it("removes a managed tenant Network only after Docker reports it can be removed", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("network-id"))
+      .mockImplementationOnce(() => dockerProcess("rp-network-id"));
+
+    const result = await service().removeTenantNetwork(
+      "rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+
+    expect(result).toEqual({ success: true, changed: true });
+    expect(spawnMock.mock.calls[1]?.[1]).toEqual([
+      "network",
+      "rm",
+      "rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ]);
+  });
+
   it("removes stale and publishes changed/missing Traefik labels in one update", async () => {
     spawnMock
       .mockImplementationOnce(() =>
