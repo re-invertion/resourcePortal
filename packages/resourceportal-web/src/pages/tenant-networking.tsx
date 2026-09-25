@@ -1,19 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import {
-  Background,
-  Controls,
-  Handle,
-  MiniMap,
-  Position,
-  ReactFlow,
-  useEdgesState,
-  useNodesState,
-  type Connection,
-  type Edge,
-  type Node,
-  type NodeProps,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { useState, type FormEvent } from "react";
+import { type Connection, type Edge } from "@xyflow/react";
 import { apiRequest } from "../api/client";
 import {
   Button,
@@ -25,7 +11,6 @@ import {
   Dialog,
   EmptyState,
   Field,
-  GridIcon,
   NetworkIcon,
   PageHeader,
   PlusIcon,
@@ -36,106 +21,13 @@ import {
   statusTone,
 } from "../components/design-system";
 import { formatDate, useApi } from "../hooks/use-api";
-
-type ApplicationAttachment = {
-  id: string;
-  networkId: string;
-  address: string;
-};
-
-type Application = {
-  id: string;
-  name: string;
-  image?: string;
-  runtimeState?: string;
-  networkAttachments: ApplicationAttachment[];
-};
-
-type AppGroup = {
-  id: string;
-  name: string;
-  hasPendingChanges: boolean;
-  currentDeploymentVersion?: number | null;
-  appGroupNetwork?: {
-    name: string;
-  } | null;
-  singleApps: Application[];
-};
-
-type NetworkAttachment = {
-  id: string;
-  address: string;
-  singleAppId: string;
-  singleApp: {
-    id: string;
-    name: string;
-    appGroup: {
-      id: string;
-      name: string;
-      hasPendingChanges: boolean;
-    };
-  };
-};
-
-type NetworkResource = {
-  id: string;
-  name: string;
-  description?: string | null;
-  cidr: string;
-  overlayCidr: string;
-  status: string;
-  revision: number;
-  lastObservedAt?: string | null;
-  lastError?: string | null;
-  attachments: NetworkAttachment[];
-  gateAttachments: Array<{
-    id: string;
-    status: string;
-    enabled: boolean;
-    gate: {
-      id: string;
-      name: string;
-      status: string;
-      lastSeenAt?: string | null;
-    };
-  }>;
-};
-
-type GateNetworkLink = {
-  id: string;
-  status: string;
-  enabled: boolean;
-  lastError?: string | null;
-  network: {
-    id: string;
-    name: string;
-    cidr: string;
-  };
-};
-
-type GateResource = {
-  id: string;
-  name: string;
-  description?: string | null;
-  status: string;
-  configRevision: number;
-  serverListenPort?: number | null;
-  clientTunnelAddress?: string | null;
-  serverTunnelAddress?: string | null;
-  lanAddresses: string[];
-  lanCidrs: string[];
-  agentVersion?: string | null;
-  lastSeenAt?: string | null;
-  lastError?: string | null;
-  revokedAt?: string | null;
-  networks: GateNetworkLink[];
-};
-
-type Topology = {
-  networks: NetworkResource[];
-  gates: GateResource[];
-  appGroups: AppGroup[];
-};
+import {
+  TenantNetworkingGraph,
+  type GateResource,
+  type NetworkResource,
+  type Topology,
+  type TopologyEdgeData,
+} from "./tenant-networking-graph";
 
 type Operation = {
   id: string;
@@ -152,325 +44,6 @@ type EnrollmentResponse = {
   };
   gate?: GateResource;
 };
-
-type TopologyNodeData =
-  | {
-      kind: "application";
-      appId: string;
-      appGroupId: string;
-      label: string;
-      groupName: string;
-      runtimeState?: string;
-      pending: boolean;
-    }
-  | {
-      kind: "app-group-network";
-      appGroupId: string;
-      label: string;
-      swarmNetworkName: string;
-      attachmentCount: number;
-      pending: boolean;
-    }
-  | {
-      kind: "network";
-      networkId: string;
-      label: string;
-      cidr: string;
-      revision: number;
-      status: string;
-      attachmentCount: number;
-    }
-  | {
-      kind: "gate";
-      gateId: string;
-      label: string;
-      status: string;
-      revision: number;
-      lanAddress?: string;
-      lastSeenAt?: string | null;
-    };
-
-type TopologyEdgeData =
-  | {
-      kind: "app-group-network";
-      appGroupId: string;
-    }
-  | {
-      kind: "application-network";
-      networkId: string;
-      attachmentId: string;
-      revision: number;
-      address: string;
-    }
-  | {
-      kind: "gate-network";
-      gateId: string;
-      networkId: string;
-      revision: number;
-    };
-
-function nodeData(props: NodeProps) {
-  return props.data as unknown as TopologyNodeData;
-}
-
-function ApplicationNode(props: NodeProps) {
-  const data = nodeData(props);
-  if (data.kind !== "application") return null;
-  return (
-    <div className="min-w-[230px] rounded-xl border border-[#C9D6E7] bg-white px-4 py-3 shadow-[0_4px_16px_rgba(36,74,120,.08)]">
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]">
-          <GridIcon size={17} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-[13px] text-[#172033]">{data.label}</strong>
-          <span className="mt-0.5 block truncate text-[11px] text-[#718096]">{data.groupName}</span>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <StatusBadge tone={statusTone(data.runtimeState)}>{data.runtimeState || "Unknown"}</StatusBadge>
-            {data.pending ? <StatusBadge tone="warning">Pending deploy</StatusBadge> : null}
-          </div>
-        </div>
-      </div>
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-white !bg-[#1769E0]"
-      />
-    </div>
-  );
-}
-
-function AppGroupNetworkNode(props: NodeProps) {
-  const data = nodeData(props);
-  if (data.kind !== "app-group-network") return null;
-  return (
-    <div className="min-w-[250px] rounded-xl border border-[#C9D6E7] bg-[#F8FAFD] px-4 py-3 shadow-[0_4px_16px_rgba(36,74,120,.06)]">
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#EEF2F7] text-[#526070]">
-          <NetworkIcon size={18} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-sm text-[#172033]">{data.label}</strong>
-          <span className="mt-0.5 block text-[11px] font-medium uppercase tracking-[.03em] text-[#718096]">
-            App Group network
-          </span>
-          <code className="mt-1 block truncate text-[11px] text-[#526070]">{data.swarmNetworkName}</code>
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] text-[#718096]">{data.attachmentCount} apps</span>
-            {data.pending ? <StatusBadge tone="warning">Pending deploy</StatusBadge> : null}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NetworkNode(props: NodeProps) {
-  const data = nodeData(props);
-  if (data.kind !== "network") return null;
-  return (
-    <div className="min-w-[250px] rounded-xl border-2 border-[#8BB7ED] bg-[#F7FBFF] px-4 py-3 shadow-[0_5px_18px_rgba(23,105,224,.10)]">
-      <Handle
-        id="applications"
-        type="target"
-        position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-white !bg-[#1769E0]"
-      />
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#DDEEFF] text-[#1769E0]">
-          <NetworkIcon size={18} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-sm text-[#172033]">{data.label}</strong>
-          <code className="mt-1 block text-[11px] text-[#526070]">{data.cidr}</code>
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <StatusBadge tone={statusTone(data.status)}>{data.status}</StatusBadge>
-            <span className="text-[11px] text-[#718096]">{data.attachmentCount} apps · rev {data.revision}</span>
-          </div>
-        </div>
-      </div>
-      <Handle
-        id="gates"
-        type="target"
-        position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-white !bg-[#137A4A]"
-      />
-    </div>
-  );
-}
-
-function GateNode(props: NodeProps) {
-  const data = nodeData(props);
-  if (data.kind !== "gate") return null;
-  return (
-    <div className="min-w-[240px] rounded-xl border border-[#B8D9C8] bg-[#F6FCF8] px-4 py-3 shadow-[0_4px_16px_rgba(19,122,74,.08)]">
-      <Handle
-        type="source"
-        position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-white !bg-[#137A4A]"
-      />
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E2F5EB] text-[#137A4A]">
-          <ServerIcon size={17} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-[13px] text-[#172033]">{data.label}</strong>
-          <span className="mt-0.5 block truncate text-[11px] text-[#718096]">
-            {data.lanAddress ? `LAN ${data.lanAddress}` : "Awaiting LAN address"}
-          </span>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <StatusBadge tone={statusTone(data.status)}>{data.status}</StatusBadge>
-            <span className="self-center text-[11px] text-[#718096]">rev {data.revision}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const nodeTypes = {
-  application: ApplicationNode,
-  appGroupNetwork: AppGroupNetworkNode,
-  network: NetworkNode,
-  gate: GateNode,
-};
-
-function topologyNodes(data: Topology): Node[] {
-  const nodes: Node[] = [];
-  let appIndex = 0;
-  for (const group of data.appGroups) {
-    for (const app of group.singleApps) {
-      nodes.push({
-        id: `app:${app.id}`,
-        type: "application",
-        position: { x: 20, y: 30 + appIndex * 130 },
-        data: {
-          kind: "application",
-          appId: app.id,
-          appGroupId: group.id,
-          label: app.name,
-          groupName: group.name,
-          runtimeState: app.runtimeState,
-          pending: group.hasPendingChanges,
-        } satisfies TopologyNodeData,
-      });
-      appIndex += 1;
-    }
-  }
-
-  let appGroupNetworkIndex = 0;
-  for (const group of data.appGroups) {
-    if (!group.appGroupNetwork) continue;
-    nodes.push({
-      id: `app-group-network:${group.id}`,
-      type: "appGroupNetwork",
-      position: { x: 390, y: 30 + appGroupNetworkIndex * 155 },
-      data: {
-        kind: "app-group-network",
-        appGroupId: group.id,
-        label: group.name,
-        swarmNetworkName: group.appGroupNetwork.name,
-        attachmentCount: group.singleApps.length,
-        pending: group.hasPendingChanges,
-      } satisfies TopologyNodeData,
-    });
-    appGroupNetworkIndex += 1;
-  }
-
-  data.networks.forEach((network, index) => {
-    nodes.push({
-      id: `network:${network.id}`,
-      type: "network",
-      position: { x: 760, y: 30 + index * 155 },
-      data: {
-        kind: "network",
-        networkId: network.id,
-        label: network.name,
-        cidr: network.cidr,
-        revision: network.revision,
-        status: network.status,
-        attachmentCount: network.attachments.length,
-      } satisfies TopologyNodeData,
-    });
-  });
-
-  data.gates.forEach((gate, index) => {
-    nodes.push({
-      id: `gate:${gate.id}`,
-      type: "gate",
-      position: { x: 1150, y: 30 + index * 155 },
-      data: {
-        kind: "gate",
-        gateId: gate.id,
-        label: gate.name,
-        status: gate.status,
-        revision: gate.configRevision,
-        lanAddress: gate.lanAddresses?.[0],
-        lastSeenAt: gate.lastSeenAt,
-      } satisfies TopologyNodeData,
-    });
-  });
-  return nodes;
-}
-
-function topologyEdges(data: Topology): Edge[] {
-  const edges: Edge[] = [];
-  for (const group of data.appGroups) {
-    if (!group.appGroupNetwork) continue;
-    for (const app of group.singleApps) {
-      edges.push({
-        id: `app-group-edge:${group.id}:${app.id}`,
-        source: `app:${app.id}`,
-        target: `app-group-network:${group.id}`,
-        data: {
-          kind: "app-group-network",
-          appGroupId: group.id,
-        } satisfies TopologyEdgeData,
-        selectable: false,
-        animated: false,
-        style: { strokeWidth: 2 },
-      });
-    }
-  }
-  for (const network of data.networks) {
-    for (const attachment of network.attachments) {
-      edges.push({
-        id: `app-edge:${attachment.id}`,
-        source: `app:${attachment.singleAppId}`,
-        target: `network:${network.id}`,
-        data: {
-          kind: "application-network",
-          networkId: network.id,
-          attachmentId: attachment.id,
-          revision: network.revision,
-          address: attachment.address,
-        } satisfies TopologyEdgeData,
-        label: attachment.address,
-        animated: false,
-        style: { strokeWidth: 2 },
-      });
-    }
-  }
-  for (const gate of data.gates) {
-    for (const link of gate.networks ?? []) {
-      edges.push({
-        id: `gate-edge:${gate.id}:${link.network.id}`,
-        source: `gate:${gate.id}`,
-        target: `network:${link.network.id}`,
-        data: {
-          kind: "gate-network",
-          gateId: gate.id,
-          networkId: link.network.id,
-          revision: gate.configRevision,
-        } satisfies TopologyEdgeData,
-        label: "routed VPN",
-        animated: gate.status === "Ready",
-        style: { strokeWidth: 2 },
-      });
-    }
-  }
-  return edges;
-}
 
 function operationTerminal(status: string) {
   return ["Succeeded", "Failed", "RolledBack", "RollbackFailed"].includes(status);
@@ -499,9 +72,6 @@ function installCommand(response: EnrollmentResponse) {
 export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/networking`;
   const topology = useApi<Topology>(`${root}/topology`);
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [selectedEdge, setSelectedEdge] = useState<Edge>();
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "warning" | "danger"; message: string }>();
   const [networkOpen, setNetworkOpen] = useState(false);
@@ -510,95 +80,92 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const [gateForm, setGateForm] = useState({ name: "", description: "" });
   const [enrollment, setEnrollment] = useState<EnrollmentResponse>();
 
-  useEffect(() => {
-    if (!topology.data) return;
-    setNodes(topologyNodes(topology.data));
-    setEdges(topologyEdges(topology.data));
-  }, [topology.data, setEdges, setNodes]);
 
-  const nodeMap = useMemo(
-    () => new Map(nodes.map((node) => [node.id, node])),
-    [nodes],
-  );
+  async function submitConnection(connection: Connection) {
+    const sourceId = connection.source;
+    const targetId = connection.target;
+    if (!sourceId || !targetId?.startsWith("network:")) {
+      setNotice({
+        tone: "danger",
+        message: "Connect an Application or ResourcePortalGate node to a Network node.",
+      });
+      return;
+    }
 
-  const submitConnection = useCallback(
-    async (connection: Connection) => {
-      const source = connection.source ? nodeMap.get(connection.source) : undefined;
-      const target = connection.target ? nodeMap.get(connection.target) : undefined;
-      const sourceData = source?.data as TopologyNodeData | undefined;
-      const targetData = target?.data as TopologyNodeData | undefined;
-      if (!sourceData || !targetData || targetData.kind !== "network") {
-        setNotice({
-          tone: "danger",
-          message: "Connect an Application or ResourcePortalGate node to a Network node.",
-        });
-        return;
+    const networkId = targetId.slice("network:".length);
+    const network = topology.data?.networks.find((item) => item.id === networkId);
+    if (!network) {
+      setNotice({ tone: "danger", message: "The selected Network is no longer available." });
+      return;
+    }
+
+    setWorking(true);
+    setNotice(undefined);
+    try {
+      let operation: Operation;
+      const headers = { "idempotency-key": crypto.randomUUID() };
+      if (sourceId.startsWith("app:")) {
+        const appId = sourceId.slice("app:".length);
+        const appExists = topology.data?.appGroups.some((group) =>
+          group.singleApps.some((app) => app.id === appId),
+        );
+        if (!appExists) throw new Error("The selected Application is no longer available.");
+        operation = await apiRequest<Operation>(
+          `${root}/networks/${encodeURIComponent(network.id)}/attachments`,
+          {
+            method: "POST",
+            headers,
+            body: {
+              singleAppId: appId,
+              expectedRevision: network.revision,
+            },
+          },
+        );
+      } else if (sourceId.startsWith("gate:")) {
+        const gateId = sourceId.slice("gate:".length);
+        const gate = topology.data?.gates.find((item) => item.id === gateId);
+        if (!gate) throw new Error("The selected ResourcePortalGate is no longer available.");
+        operation = await apiRequest<Operation>(
+          `${root}/gates/${encodeURIComponent(gate.id)}/networks`,
+          {
+            method: "POST",
+            headers,
+            body: {
+              networkId: network.id,
+              expectedRevision: gate.configRevision,
+            },
+          },
+        );
+      } else {
+        throw new Error("Only Applications and Gates can initiate Network connections.");
       }
 
-      setWorking(true);
-      setNotice(undefined);
-      try {
-        let operation: Operation;
-        const headers = { "idempotency-key": crypto.randomUUID() };
-        if (sourceData.kind === "application") {
-          operation = await apiRequest<Operation>(
-            `${root}/networks/${encodeURIComponent(targetData.networkId)}/attachments`,
-            {
-              method: "POST",
-              headers,
-              body: {
-                singleAppId: sourceData.appId,
-                expectedRevision: targetData.revision,
-              },
-            },
-          );
-        } else if (sourceData.kind === "gate") {
-          operation = await apiRequest<Operation>(
-            `${root}/gates/${encodeURIComponent(sourceData.gateId)}/networks`,
-            {
-              method: "POST",
-              headers,
-              body: {
-                networkId: targetData.networkId,
-                expectedRevision: sourceData.revision,
-              },
-            },
-          );
-        } else {
-          throw new Error("Only Applications and Gates can initiate Network connections.");
-        }
-        await waitForOperation(tenantId, operation);
-        await topology.reload();
-        setNotice({
-          tone: "success",
-          message:
-            sourceData.kind === "application"
-              ? "Application connected. Deploy the affected App Group to apply the new Network attachment."
-              : "ResourcePortalGate route connected and queued for runtime reconciliation.",
-        });
-      } catch (error) {
-        setNotice({
-          tone: "danger",
-          message: error instanceof Error ? error.message : "Unable to connect topology nodes.",
-        });
-      } finally {
-        setWorking(false);
-      }
-    },
-    [nodeMap, root, tenantId, topology],
-  );
+      await waitForOperation(tenantId, operation);
+      await topology.reload();
+      setNotice({
+        tone: "success",
+        message: sourceId.startsWith("app:")
+          ? "Application connected. Deploy the affected App Group to apply the new Network attachment."
+          : "ResourcePortalGate route connected and queued for runtime reconciliation.",
+      });
+    } catch (error) {
+      setNotice({
+        tone: "danger",
+        message: error instanceof Error ? error.message : "Unable to connect topology nodes.",
+      });
+    } finally {
+      setWorking(false);
+    }
+  }
 
-  async function disconnectSelected() {
-    const data = selectedEdge?.data as TopologyEdgeData | undefined;
+  async function disconnectEdge(edge: Edge) {
+    const data = edge.data as TopologyEdgeData | undefined;
     if (!data) return;
     setWorking(true);
     setNotice(undefined);
     try {
       let operation: Operation;
       const headers = { "idempotency-key": crypto.randomUUID() };
-      if (data.kind === "app-group-network") {
-        return;
-      }
       if (data.kind === "application-network") {
         operation = await apiRequest<Operation>(
           `${root}/networks/${encodeURIComponent(data.networkId)}/attachments/${encodeURIComponent(data.attachmentId)}?revision=${data.revision}`,
@@ -611,7 +178,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         );
       }
       await waitForOperation(tenantId, operation);
-      setSelectedEdge(undefined);
       await topology.reload();
       setNotice({
         tone: "success",
@@ -863,74 +429,23 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         </div>
       ) : null}
 
-      <Callout
-        title="How to connect"
-        action={selectedEdge ? (
-          <ConfirmActionButton
-            size="sm"
-            triggerVariant="ghost"
-            disabled={working}
-            confirmTitle="Disconnect selected topology edge?"
-            confirmDescription="Application changes require an App Group deployment. Gate route changes reconcile automatically."
-            confirmLabel="Disconnect"
-            onConfirm={disconnectSelected}
-          >
-            Disconnect selected
-          </ConfirmActionButton>
-        ) : undefined}
-      >
-        Drag from an Application or ResourcePortalGate handle into a Network. Select an existing edge to disconnect it. Application edges update desired state and require Deploy changes in that App Group.
+      <Callout title="How to connect">
+        Drag from an Application or ResourcePortalGate handle into a Network. Click any node or connection to inspect its real state. Application connections update desired state and require Deploy changes in that App Group; Gate routes reconcile automatically.
       </Callout>
 
       <Card className="mt-5 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E1E7F0] px-5 py-3">
-          <div>
-            <h2 className="font-semibold text-[#172033]">Topology</h2>
-            <p className="mt-0.5 text-xs text-[#718096]">
-              Applications → App Group networks · Applications → tenant Networks ← ResourcePortalGate
-            </p>
+        {topology.data ? (
+          <TenantNetworkingGraph
+            topology={topology.data}
+            working={working}
+            onConnect={submitConnection}
+            onDisconnect={disconnectEdge}
+          />
+        ) : (
+          <div className="flex min-h-[420px] items-center justify-center bg-[#F8FAFD] px-6 text-sm text-[#718096]">
+            {topology.loading ? "Loading network topology…" : "Network topology is unavailable."}
           </div>
-          {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : null}
-        </div>
-        <div className="h-[620px] min-h-[420px] bg-[#F8FAFD]">
-          {(topology.data?.networks.length ?? 0) === 0 &&
-          (topology.data?.appGroups.flatMap((group) => group.singleApps).length ?? 0) === 0 &&
-          (topology.data?.gates.length ?? 0) === 0 &&
-          !topology.loading ? (
-            <EmptyState
-              icon={<NetworkIcon />}
-              title="No networking resources yet"
-              description="Create a Network, then connect applications or add a ResourcePortalGate."
-              action={<Button variant="primary" onClick={() => setNetworkOpen(true)}>Create Network</Button>}
-            />
-          ) : (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={(connection) => void submitConnection(connection)}
-              onEdgeClick={(_, edge) => {
-                const data = edge.data as TopologyEdgeData | undefined;
-                if (data?.kind !== "app-group-network") setSelectedEdge(edge);
-              }}
-              onPaneClick={() => setSelectedEdge(undefined)}
-              edgesFocusable
-              nodesConnectable={!working}
-              nodesDraggable
-              fitView
-              fitViewOptions={{ padding: 0.18 }}
-              minZoom={0.35}
-              maxZoom={1.6}
-              deleteKeyCode={null}
-            >
-              <Background gap={22} size={1} />
-              <MiniMap pannable zoomable />
-              <Controls />
-            </ReactFlow>
-          )}
-        </div>
+        )}
       </Card>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
