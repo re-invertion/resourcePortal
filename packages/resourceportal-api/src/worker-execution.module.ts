@@ -22,6 +22,9 @@ import { InfrastructureOperationExecutor } from "./operations/executors/infrastr
 import { InstallerEnrollmentOperationExecutor } from "./operations/executors/installer-enrollment-operation.executor";
 import { RuntimeOperationExecutor } from "./operations/executors/runtime-operation.executor";
 import { VolumeOperationExecutor } from "./operations/executors/volume-operation.executors";
+import { NetworkTopologyOperationExecutor } from "./operations/executors/network-topology-operation.executor";
+import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
+import { NetworkingModule } from "./networking/networking.module";
 import { OperationExecutorRegistry } from "./operations/operation-executor-registry";
 import { OperationsModule } from "./operations/operations.module";
 import { OperationsWorkerService } from "./operations/operations-worker.service";
@@ -39,6 +42,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     OperationsModule,
     PlatformInfrastructureModule,
     PlatformMaintenanceModule,
+    NetworkingModule,
     PrismaModule,
     SecurityModule,
     StorageBackendsModule,
@@ -52,9 +56,11 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainCertificateReconcilerService,
     DomainOperationExecutor,
     IngressReconcilerService,
+    GateRuntimeReconcilerService,
     InstallerEnrollmentNodeLabelService,
     InfrastructureOperationExecutor,
     InstallerEnrollmentOperationExecutor,
+    NetworkTopologyOperationExecutor,
     OperationsWorkerService,
     RuntimeDriftReconcilerService,
     RuntimeOperationExecutor,
@@ -76,6 +82,7 @@ import { VolumesModule } from "./volumes/volumes.module";
         runtimeExecutor: RuntimeOperationExecutor,
         volumeExecutor: VolumeOperationExecutor,
         domainExecutor: DomainOperationExecutor,
+        networkTopologyExecutor: NetworkTopologyOperationExecutor,
       ) =>
         new OperationExecutorRegistry([
           deploymentExecutor,
@@ -84,6 +91,7 @@ import { VolumesModule } from "./volumes/volumes.module";
           runtimeExecutor,
           volumeExecutor,
           domainExecutor,
+          networkTopologyExecutor,
         ]),
       inject: [
         DeploymentOperationExecutor,
@@ -92,6 +100,7 @@ import { VolumesModule } from "./volumes/volumes.module";
         RuntimeOperationExecutor,
         VolumeOperationExecutor,
         DomainOperationExecutor,
+        NetworkTopologyOperationExecutor,
       ],
     },
   ],
@@ -99,6 +108,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     DeploymentExecutionService,
     DomainCertificateReconcilerService,
     IngressReconcilerService,
+    GateRuntimeReconcilerService,
     OperationsWorkerService,
     RuntimeDriftReconcilerService,
     StackApplyService,

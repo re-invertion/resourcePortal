@@ -9,7 +9,8 @@ export type WorkerReconcileKey =
   | "drift"
   | "volumeUsage"
   | "legacySecrets"
-  | "egressPolicy";
+  | "egressPolicy"
+  | "gateRuntime";
 
 @Injectable()
 export class WorkerRuntimeObservabilityService {

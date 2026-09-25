@@ -45,14 +45,6 @@ export function AppGroupNetworking({
   const [port, setPort] = useState(8080);
   const [protocol, setProtocol] = useState("HTTP_REDIRECT_TO_HTTPS");
 
-  const [internalOpen, setInternalOpen] = useState(false);
-  const [internalEditing, setInternalEditing] = useState<R>();
-  const [internalAppId, setInternalAppId] = useState("");
-  const [internalName, setInternalName] = useState("");
-  const [internalContainerPort, setInternalContainerPort] = useState(53);
-  const [internalPublishedPort, setInternalPublishedPort] = useState(53);
-  const [internalProtocol, setInternalProtocol] = useState<"tcp" | "udp">("tcp");
-
   const networkPrivileged = appGroup.networkPrivileged === true;
 
   const load = useCallback(async () => {
@@ -68,9 +60,6 @@ export function AppGroupNetworking({
       setAppGroup(group);
       setApps(appList);
       setAppId((current) => current || (appList[0] ? idOf(appList[0]) : ""));
-      setInternalAppId((current) =>
-        current || (appList[0] ? idOf(appList[0]) : ""),
-      );
       setInternalRows(items<R>(exposureResult));
       const all = await Promise.all(
         appList.map(async (app) =>
@@ -136,59 +125,6 @@ export function AppGroupNetworking({
       setError(
         caught instanceof Error ? caught.message : "Endpoint could not be deleted.",
       );
-    }
-  }
-
-  function beginInternal(row?: R) {
-    setInternalEditing(row);
-    setInternalAppId(
-      row ? text(row.singleAppId) : apps[0] ? idOf(apps[0]) : "",
-    );
-    setInternalName(text(row?.name, ""));
-    setInternalContainerPort(Number(row?.containerPort ?? 53));
-    setInternalPublishedPort(Number(row?.publishedPort ?? 53));
-    setInternalProtocol(text(row?.protocol, "tcp") === "udp" ? "udp" : "tcp");
-    setInternalOpen(true);
-  }
-
-  async function saveInternal() {
-    if (
-      !networkPrivileged ||
-      !internalAppId ||
-      !internalName ||
-      !internalContainerPort ||
-      !internalPublishedPort
-    ) {
-      return;
-    }
-    setWorking(true);
-    setError(undefined);
-    try {
-      const base = `${root}/single-apps/${encodeURIComponent(internalAppId)}/internal-port-exposures`;
-      const exposureId = internalEditing ? idOf(internalEditing) : "";
-      await apiRequest(
-        `${base}${exposureId ? `/${encodeURIComponent(exposureId)}` : ""}`,
-        {
-          method: exposureId ? "PATCH" : "POST",
-          body: {
-            name: internalName,
-            containerPort: internalContainerPort,
-            publishedPort: internalPublishedPort,
-            protocol: internalProtocol,
-          },
-        },
-      );
-      setInternalOpen(false);
-      setInternalEditing(undefined);
-      await load();
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Internal port exposure could not be saved.",
-      );
-    } finally {
-      setWorking(false);
     }
   }
 
@@ -330,124 +266,51 @@ export function AppGroupNetworking({
       </Card>
 
       <Card className="p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3">
-            <NetworkIcon className="mt-0.5 text-[#1769E0]" />
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="font-semibold">Internal Port Exposures</h3>
-                <StatusBadge tone={networkPrivileged ? "warning" : "neutral"}>
-                  {networkPrivileged ? "Privileged networking" : "Platform Admin required"}
-                </StatusBadge>
-              </div>
-              <p className="mt-1 text-sm leading-5 text-[#5B6678]">
-                Publish TCP or UDP directly on Swarm nodes for trusted internal-network clients. Internet sources are rejected by the ResourcePortal network guard.
-              </p>
+        <div className="flex items-start gap-3">
+          <NetworkIcon className="mt-0.5 text-[#1769E0]" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-semibold">Legacy Internal Port Exposures</h3>
+              <StatusBadge tone={internalRows.length > 0 ? "warning" : "neutral"}>
+                {internalRows.length > 0 ? `${internalRows.length} to migrate` : "No legacy exposures"}
+              </StatusBadge>
+              {networkPrivileged ? (
+                <StatusBadge tone="warning">Legacy privilege active</StatusBadge>
+              ) : null}
             </div>
-          </div>
-          {networkPrivileged ? (
-            <Button
-              variant="primary"
-              disabled={!apps.length}
-              onClick={() => beginInternal()}
+            <p className="mt-1 text-sm leading-5 text-[#5B6678]">
+              Privileged networking and host-published Internal Port Exposures are deprecated.
+              New exposures cannot be created or edited. Delete each legacy exposure, deploy the
+              App Group to remove the published port, then use tenant Networks and ResourcePortalGate.
+            </p>
+            <a
+              className="mt-3 inline-block text-sm font-semibold text-[#0F56A7] hover:underline"
+              href={`/tenants/${encodeURIComponent(tenantId)}/networking`}
             >
-              <PlusIcon size={15} /> Add internal port
-            </Button>
-          ) : null}
+              Open tenant Networking
+            </a>
+          </div>
         </div>
-
-        {!networkPrivileged ? (
+        {internalRows.length > 0 ? (
           <div className="mt-4">
-            <Callout tone="warning" title="Privileged networking is disabled">
-              A Platform Administrator must grant privileged networking to this App Group before private-network egress or internal TCP/UDP publishing can be configured.
+            <Callout tone="warning" title="Cleanup requires a deployment">
+              Deleting a row changes desired state only. The currently deployed host port remains
+              firewall-protected until you deploy this App Group.
             </Callout>
           </div>
-        ) : (
-          <div className="mt-4">
-            <Callout tone="warning" title="Deployment required for port changes">
-              Adding, editing or removing an internal port changes the App Group deployment artifact. Deploy the App Group to apply the published-port change.
-            </Callout>
-          </div>
-        )}
+        ) : null}
       </Card>
 
-      {networkPrivileged && internalOpen ? (
-        <Card className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-5">
-          <Field label="Application" required>
-            <Select
-              value={internalAppId}
-              onChange={(event) => setInternalAppId(event.target.value)}
-              disabled={Boolean(internalEditing)}
-            >
-              {apps.map((app) => (
-                <option key={idOf(app)} value={idOf(app)}>
-                  {text(app.name, "Application")}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Exposure name" required>
-            <TextInput
-              value={internalName}
-              onChange={(event) => setInternalName(event.target.value)}
-              placeholder="dns-udp"
-            />
-          </Field>
-          <Field label="Container port" required>
-            <NumberInput
-              min={1}
-              max={65535}
-              value={internalContainerPort}
-              onChange={(event) => setInternalContainerPort(Number(event.target.value))}
-            />
-          </Field>
-          <Field label="Published port" required hint="SSH, ResourcePortal, NFS, Swarm and enrollment host ports are reserved">
-            <NumberInput
-              min={1}
-              max={65535}
-              value={internalPublishedPort}
-              onChange={(event) => setInternalPublishedPort(Number(event.target.value))}
-            />
-          </Field>
-          <Field label="Protocol">
-            <Select
-              value={internalProtocol}
-              onChange={(event) =>
-                setInternalProtocol(event.target.value === "udp" ? "udp" : "tcp")
-              }
-            >
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-            </Select>
-          </Field>
-          <div className="flex gap-2 md:col-span-2 xl:col-span-5">
-            <Button
-              variant="primary"
-              disabled={working}
-              onClick={() => void saveInternal()}
-            >
-              {working
-                ? "Saving…"
-                : internalEditing
-                  ? "Save internal port"
-                  : "Create internal port"}
-            </Button>
-            <Button onClick={() => setInternalOpen(false)}>Cancel</Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {networkPrivileged ? (
+      {internalRows.length > 0 ? (
         <Card className="overflow-hidden">
           <DataTable
             embedded
             loading={loading}
             columns={[
               { key: "app", label: "Application" },
-              { key: "name", label: "Exposure" },
+              { key: "name", label: "Legacy exposure" },
               { key: "mapping", label: "Port mapping" },
               { key: "protocol", label: "Protocol" },
-              { key: "scope", label: "Scope" },
               { key: "actions", label: "" },
             ]}
             rows={internalRows.map((row) => ({
@@ -457,34 +320,21 @@ export function AppGroupNetworking({
                 name: text(row.name),
                 mapping: `${text(row.publishedPort)} → ${text(row.containerPort)}`,
                 protocol: text(row.protocol, "tcp").toUpperCase(),
-                scope: "Internal network only",
                 actions: (
-                  <div className="flex justify-end gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => beginInternal(row)}>
-                      Edit
-                    </Button>
-                    <ConfirmActionButton
-                      size="sm"
-                      triggerVariant="ghost"
-                      ariaLabel={`Delete internal port ${text(row.name)}`}
-                      confirmTitle={`Delete internal port ${text(row.name)}?`}
-                      confirmDescription="The currently deployed port remains active and firewall-protected until you deploy the App Group changes."
-                      confirmLabel="Delete internal port"
-                      onConfirm={() => removeInternal(row)}
-                    >
-                      <TrashIcon size={15} />
-                    </ConfirmActionButton>
-                  </div>
+                  <ConfirmActionButton
+                    size="sm"
+                    triggerVariant="ghost"
+                    ariaLabel={`Delete legacy internal port ${text(row.name)}`}
+                    confirmTitle={`Delete legacy internal port ${text(row.name)}?`}
+                    confirmDescription="The deployed port remains active and firewall-protected until you deploy the App Group changes."
+                    confirmLabel="Delete legacy exposure"
+                    onConfirm={() => removeInternal(row)}
+                  >
+                    <TrashIcon size={15} /> Remove
+                  </ConfirmActionButton>
                 ),
               },
             }))}
-            empty={
-              <EmptyState
-                icon={<NetworkIcon />}
-                title="No internal ports"
-                description="Publish TCP or UDP only when this trusted App Group needs to serve clients on the internal network."
-              />
-            }
           />
         </Card>
       ) : null}

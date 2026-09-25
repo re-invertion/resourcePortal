@@ -37,6 +37,10 @@ import {
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
 import { appGroupNetworkName, renderTraefikLabels } from "./traefik-routing";
 import { StackVolumeProvisionerService } from "./stack-volume-provisioner.service";
+import {
+  networkAttachmentAlias,
+  networkComposeAlias,
+} from "../networking/network-runtime-names";
 
 const DEFAULT_LEASE_SECONDS = 300;
 
@@ -116,6 +120,17 @@ type StackConfigSingleApp = {
     containerPort: number;
     publishedPort: number;
     protocol: string;
+  }>;
+  networkAttachments?: Array<{
+    id: string;
+    address: string;
+    network: {
+      id: string;
+      name: string;
+      cidr: string;
+      overlayCidr: string;
+      swarmNetworkName: string;
+    };
   }>;
   httpEndpoints: Array<{
     id: string;
@@ -1204,6 +1219,7 @@ export class DeploymentExecutionService {
         ]),
       ),
       networks: this.renderNetworks(snapshot),
+      "x-resourceportal-networks": this.renderNetworkMetadata(snapshot),
       secrets: this.renderSecrets(snapshot),
       configs: this.renderConfigs(snapshot),
     });
@@ -1582,7 +1598,7 @@ export class DeploymentExecutionService {
       read_only: singleApp.readOnlyRootFilesystem ? true : undefined,
       stop_grace_period: `${singleApp.stopGracePeriodSeconds}s`,
       healthcheck: this.renderHealthCheck(singleApp.healthCheck),
-      networks: ["default"],
+      networks: this.renderServiceNetworks(singleApp),
       ports: this.renderInternalPortExposures(singleApp),
       volumes:
         singleApp.volumes.length > 0
@@ -1645,6 +1661,13 @@ export class DeploymentExecutionService {
       "resourceportal.workload": "tenant",
       "resourceportal.app-group-id": snapshot.appGroup.id,
       "resourceportal.tenant-id": snapshot.appGroup.tenantId,
+      "resourceportal.network-ids":
+        (singleApp.networkAttachments?.length ?? 0) > 0
+          ? singleApp.networkAttachments
+              ?.map((attachment) => attachment.network.id)
+              .sort()
+              .join(",")
+          : undefined,
       "resourceportal.internal-port-exposures-b64":
         exposures.length > 0
           ? Buffer.from(
@@ -1725,12 +1748,62 @@ export class DeploymentExecutionService {
   }
 
   private renderNetworks(snapshot: StackConfigSnapshot) {
-    return {
+    const networks: Record<string, { external: true; name: string }> = {
       default: {
         external: true,
         name: appGroupNetworkName(snapshot.appGroup.id),
       },
     };
+    for (const singleApp of snapshot.singleApps) {
+      for (const attachment of singleApp.networkAttachments ?? []) {
+        networks[networkComposeAlias(attachment.network.id)] = {
+          external: true,
+          name: attachment.network.swarmNetworkName,
+        };
+      }
+    }
+    return networks;
+  }
+
+  private renderServiceNetworks(singleApp: StackConfigSingleApp) {
+    const attachments = singleApp.networkAttachments ?? [];
+    if (attachments.length === 0) return ["default"];
+    return {
+      default: {},
+      ...Object.fromEntries(
+        attachments.map((attachment) => [
+          networkComposeAlias(attachment.network.id),
+          {
+            aliases: [networkAttachmentAlias(attachment.id)],
+          },
+        ]),
+      ),
+    };
+  }
+
+  private renderNetworkMetadata(snapshot: StackConfigSnapshot) {
+    const networks = new Map<
+      string,
+      {
+        id: string;
+        tenantId: string;
+        cidr: string;
+        overlayCidr: string;
+        swarmNetworkName: string;
+      }
+    >();
+    for (const singleApp of snapshot.singleApps) {
+      for (const attachment of singleApp.networkAttachments ?? []) {
+        networks.set(attachment.network.id, {
+          id: attachment.network.id,
+          tenantId: snapshot.appGroup.tenantId,
+          cidr: attachment.network.cidr,
+          overlayCidr: attachment.network.overlayCidr,
+          swarmNetworkName: attachment.network.swarmNetworkName,
+        });
+      }
+    }
+    return networks.size > 0 ? [...networks.values()] : undefined;
   }
 
   private renderSecrets(snapshot: StackConfigSnapshot) {

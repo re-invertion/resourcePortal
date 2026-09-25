@@ -240,6 +240,20 @@ rp_upgrade_prepare_zitadel_for_mcp_oauth() {
   fi
 }
 
+rp_upgrade_refresh_firewall() {
+  local ssh_port
+  # resourceportal-install.sh sources firewall.sh before upgrade dispatch.
+  # Keep isolated unit sourcing safe while making real upgrades fail closed.
+  if ! declare -F rp_detect_ssh_port >/dev/null || ! declare -F rp_configure_ufw >/dev/null; then
+    return 0
+  fi
+  ssh_port="$(rp_detect_ssh_port)" || {
+    printf 'Unable to determine SSH port while refreshing ResourcePortal firewall rules.\n' >&2
+    return 1
+  }
+  rp_configure_ufw "$ssh_port" "${RP_CFG_CLUSTER_CIDR:?RP_CFG_CLUSTER_CIDR is required}" true
+}
+
 rp_upgrade_refresh_enrollment_listener() {
   # resourceportal-install.sh sources lifecycle.sh after upgrade.sh, so the
   # primary enrollment helper is available by the time upgrade dispatch runs.
@@ -257,6 +271,7 @@ rp_upgrade_apply() {
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
+  rp_upgrade_refresh_firewall || return 1
   rp_upgrade_quiesce_database_clients || return 1
   rp_upgrade_prepare_postgres_services || return 1
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || return 1

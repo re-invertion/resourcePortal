@@ -210,6 +210,95 @@ const commands: Command[] = [
   collectionListCommand("variable", "variables"),
   collectionListCommand("config", "configs"),
   collectionListCommand("secret", "secrets"),
+  command("network", "topology", "<tenantId>", "Show tenant Network/Gate topology.", (p, c) =>
+    c.networking.topology(arg(p, 0, "tenantId")),
+  ),
+  command("network", "list", "<tenantId>", "List tenant Networks.", (p, c) =>
+    c.networking.listNetworks(arg(p, 0, "tenantId")),
+  ),
+  command("network", "create", "<tenantId> --name NAME [--cidr CIDR]", "Create a tenant Network.", (p, c) =>
+    c.networking.createNetwork(
+      arg(p, 0, "tenantId"),
+      bodyFromFlags(p.flags, ["name"], ["description", "cidr"]) as {
+        name: string;
+        description?: string;
+        cidr?: string;
+      },
+    ),
+  ),
+  command("network", "update", "<tenantId> <networkId> --expected-revision N [flags]", "Update Network metadata with optimistic concurrency.", (p, c) =>
+    c.networking.updateNetwork(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "networkId"),
+      bodyFromFlags(p.flags, ["expectedRevision"], ["name", "description"]) as {
+        expectedRevision: number;
+        name?: string;
+        description?: string;
+      },
+    ),
+  ),
+  command("network", "delete", "<tenantId> <networkId>", "Delete an empty Network after runtime cleanup.", (p, c) =>
+    c.networking.deleteNetwork(arg(p, 0, "tenantId"), arg(p, 1, "networkId")),
+  ),
+  command("network", "attach-app", "<tenantId> <networkId> <appId> --expected-revision N [--address IP]", "Attach an application to a Network. Deploy the affected App Group afterwards.", (p, c) =>
+    c.networking.attachApplication(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "networkId"),
+      {
+        singleAppId: arg(p, 2, "appId"),
+        expectedRevision: Number(flag(p.flags, "expectedRevision")),
+        ...(p.flags.address === undefined ? {} : { address: String(flag(p.flags, "address")) }),
+      },
+      optionalString(p.flags.idempotencyKey),
+    ),
+  ),
+  command("network", "detach-app", "<tenantId> <networkId> <attachmentId> --expected-revision N", "Detach an application from a Network. Deploy the affected App Group afterwards.", (p, c) =>
+    c.networking.detachApplication(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "networkId"),
+      arg(p, 2, "attachmentId"),
+      Number(flag(p.flags, "expectedRevision")),
+      optionalString(p.flags.idempotencyKey),
+    ),
+  ),
+  command("gate", "list", "<tenantId>", "List ResourcePortalGate instances.", (p, c) =>
+    c.networking.listGates(arg(p, 0, "tenantId")),
+  ),
+  command("gate", "create", "<tenantId> --name NAME", "Create ResourcePortalGate and return one-time enrollment.", (p, c) =>
+    c.networking.createGate(
+      arg(p, 0, "tenantId"),
+      bodyFromFlags(p.flags, ["name"], ["description"]) as {
+        name: string;
+        description?: string;
+      },
+    ),
+  ),
+  command("gate", "enrollment", "<tenantId> <gateId>", "Rotate ResourcePortalGate enrollment token.", (p, c) =>
+    c.networking.rotateGateEnrollment(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
+  ),
+  command("gate", "attach-network", "<tenantId> <gateId> <networkId> --expected-revision N", "Route a tenant Network through ResourcePortalGate.", (p, c) =>
+    c.networking.attachGateNetwork(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "gateId"),
+      {
+        networkId: arg(p, 2, "networkId"),
+        expectedRevision: Number(flag(p.flags, "expectedRevision")),
+      },
+      optionalString(p.flags.idempotencyKey),
+    ),
+  ),
+  command("gate", "detach-network", "<tenantId> <gateId> <networkId> --expected-revision N", "Stop routing a tenant Network through ResourcePortalGate.", (p, c) =>
+    c.networking.detachGateNetwork(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "gateId"),
+      arg(p, 2, "networkId"),
+      Number(flag(p.flags, "expectedRevision")),
+      optionalString(p.flags.idempotencyKey),
+    ),
+  ),
+  command("gate", "revoke", "<tenantId> <gateId>", "Revoke ResourcePortalGate and remove its RP-side VPN runtime.", (p, c) =>
+    c.networking.revokeGate(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
+  ),
   command("volume", "list", "<tenantId>", "List volumes.", (p, c) =>
     c.volumes.list(arg(p, 0, "tenantId")),
   ),

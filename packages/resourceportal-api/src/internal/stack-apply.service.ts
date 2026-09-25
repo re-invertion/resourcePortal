@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
+import { parse } from "yaml";
 import { deploymentArtifactMatches } from "./deployment-artifact";
 import { inspectAppGroupNetworkTopology } from "./app-group-networking";
 import {
@@ -71,6 +72,45 @@ export class StackApplyService {
       };
     }
 
+    let tenantNetworks: Array<{
+      id: string;
+      tenantId: string;
+      overlayCidr: string;
+      swarmNetworkName: string;
+    }>;
+    try {
+      tenantNetworks = this.tenantNetworksFromArtifact(params.renderedStack);
+    } catch (error) {
+      return {
+        command: "parse rendered stack tenant networks",
+        stackName: params.stackName,
+        exitCode: 2,
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    for (const network of tenantNetworks) {
+      const result = await this.runtime.reconcileTenantNetwork({
+        networkName: network.swarmNetworkName,
+        subnet: network.overlayCidr,
+        networkId: network.id,
+        tenantId: network.tenantId,
+      });
+      if (!result.success) {
+        return {
+          command: `prepare tenant network ${network.swarmNetworkName}`,
+          stackName: params.stackName,
+          exitCode: 1,
+          stdout: "",
+          stderr:
+            "error" in result && typeof result.error === "string"
+              ? result.error
+              : "Failed to prepare tenant network",
+        };
+      }
+    }
+
     const prepared =
       topology.mode === "single"
         ? await this.runtime.reconcileAppGroupNetwork({
@@ -120,6 +160,36 @@ export class StackApplyService {
     }
 
     return { ...result, stackName: params.stackName };
+  }
+
+  private tenantNetworksFromArtifact(renderedStack: string) {
+    const parsed = parse(renderedStack) as
+      | {
+          "x-resourceportal-networks"?: unknown;
+        }
+      | null;
+    const raw = parsed?.["x-resourceportal-networks"];
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw)) {
+      throw new Error("x-resourceportal-networks must be an array");
+    }
+    return raw.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error("Invalid ResourcePortal network metadata");
+      }
+      const value = item as Record<string, unknown>;
+      for (const key of ["id", "tenantId", "overlayCidr", "swarmNetworkName"]) {
+        if (typeof value[key] !== "string" || !String(value[key]).trim()) {
+          throw new Error(`Invalid ResourcePortal network metadata field ${key}`);
+        }
+      }
+      return {
+        id: String(value.id),
+        tenantId: String(value.tenantId),
+        overlayCidr: String(value.overlayCidr),
+        swarmNetworkName: String(value.swarmNetworkName),
+      };
+    });
   }
 
   private run(

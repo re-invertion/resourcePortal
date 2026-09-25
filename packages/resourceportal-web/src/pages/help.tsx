@@ -11,6 +11,7 @@ import {
   HelpIcon,
   KeyIcon,
   LinkButton,
+  NetworkIcon,
   RegistryIcon,
   SettingsIcon,
   UsersIcon,
@@ -30,7 +31,8 @@ const sections: HelpSection[] = [
   { id: "app-group-yaml", label: "Import from YAML" },
   { id: "registry", label: "Private image registries" },
   { id: "volume", label: "Persistent storage" },
-  { id: "domain", label: "Domains & networking" },
+  { id: "private-networking", label: "Private Networks & Gate" },
+  { id: "domain", label: "Domains & HTTP routing" },
   { id: "tenant-access", label: "Invite tenant users" },
   { id: "credentials", label: "Credentials & secrets" },
   { id: "tenant-mcp", label: "Tenant MCP" },
@@ -361,8 +363,8 @@ spec:
               ResourcePortal applies a valid manifest atomically: if any create or attachment step fails, the import is rolled back. After a manifest containing applications is imported, review the App Group and use <strong>Deploy changes</strong> to apply the desired configuration to the runtime.
             </InfoBox>
 
-            <InfoBox title="Privileged networking is not importable">
-              Tenant YAML cannot set <strong>networkPrivileged</strong> or define Internal Port Exposures. Those capabilities remain under Platform Admin control. Import the standard App Group first; a Platform Administrator can grant privileged networking separately when it is actually required.
+            <InfoBox title="Legacy privileged networking is deprecated">
+              Tenant YAML cannot set <strong>networkPrivileged</strong> or define Internal Port Exposures. New privileged grants and new private-network egress exceptions are disabled. Use <strong>Storage & Networking → Networking</strong> to connect applications to tenant Networks and attach a ResourcePortalGate when those Networks must be reachable from a local LAN. Existing legacy exposures remain visible only so they can be removed and safely deployed away.
             </InfoBox>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -422,6 +424,43 @@ spec:
             </InfoBox>
 
             <div className="mt-5"><LinkButton href={tenantHref(tenantId, "volumes")}>Open Volumes</LinkButton></div>
+          </HelpArticle>
+
+
+          <HelpArticle
+            id="private-networking"
+            icon={<NetworkIcon />}
+            title="Connect applications with private Networks"
+            description="Tenant Networks provide private connectivity across applications and App Groups. ResourcePortalGate can route selected Networks into a local LAN through WireGuard."
+          >
+            <Subheading>Connect applications</Subheading>
+            <StepList>
+              <span>Open <strong>Storage & Networking → Networking</strong> and create a Network. ResourcePortal assigns a private CIDR automatically unless you choose a compatible custom private CIDR.</span>
+              <span>On the topology canvas, drag from an application to the Network. The application receives a stable private address from that Network.</span>
+              <span>Deploy every affected App Group. A topology connection is desired state until its App Group deployment applies the additional Swarm Network attachment.</span>
+              <span>Applications connected to the same Network can communicate over that private Network. Networks can include applications from different App Groups in the same tenant.</span>
+            </StepList>
+
+            <Subheading>Expose a Network to your LAN with ResourcePortalGate</Subheading>
+            <StepList>
+              <span>Create a <strong>ResourcePortalGate</strong> on the Networking page and copy the one-time installation command.</span>
+              <span>Run the installer on a Linux host in the LAN that should act as the VPN router. The installer creates a systemd service and a WireGuard identity locally.</span>
+              <span>Wait until the Gate appears as <strong>Ready</strong> and reports a LAN address.</span>
+              <span>Connect the Gate node to one or more Network nodes. Each Gate→Network edge means that Network is routed through the encrypted Gate tunnel.</span>
+              <span>If the Gate host is not the LAN default router, add a static route on your LAN router for each RP Network CIDR using the Gate LAN address as the next hop. The Networking page shows the exact route plan.</span>
+            </StepList>
+
+            <InfoBox title="V1 uses IP addresses, not DNS">
+              ResourcePortalGate v1 does not provide private DNS or service discovery. Connect to the stable private IP shown on the application→Network edge. DNS can be added later without changing the Network/Gate routing model.
+            </InfoBox>
+
+            <InfoBox title="Direction of access">
+              Gate v1 is designed for <strong>LAN → ResourcePortal Network</strong> access. Connecting a Gate does not automatically allow applications in ResourcePortal to initiate connections to the entire LAN.
+            </InfoBox>
+
+            <div className="mt-5">
+              <LinkButton href={tenantHref(tenantId, "networking")}>Open Networking</LinkButton>
+            </div>
           </HelpArticle>
 
           <HelpArticle

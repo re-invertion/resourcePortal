@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import { ConflictException } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthenticatedUser } from "../auth/types";
@@ -152,42 +153,27 @@ describe("NetworkEgressService", () => {
     expect(auditArgs?.data.action).toBe("platform_network_egress.update");
   });
 
-  it("normalizes an App Group exception and increments policy revision", async () => {
+  it("rejects creation of new legacy App Group private-network exceptions", async () => {
     const { service, tx } = fixture();
-    const rule = await service.createRule(
-      {
-        appGroupId: "11111111-1111-4111-8111-111111111111",
-        destinationCidr: "192.168.100.55/24",
-        protocol: "tcp",
-        port: 443,
-        description: "  monitoring  ",
-      },
-      actor,
-    );
 
-    expect(rule).toMatchObject({
-      destinationCidr: "192.168.100.0/24",
-      protocol: "tcp",
-      port: 443,
-      description: "monitoring",
-    });
-    const policyArgs = tx.platformEgressPolicy.upsert.mock.calls.at(-1)?.[0];
-    expect(policyArgs?.update.revision).toEqual({ increment: 1 });
-  });
-
-  it("rejects a port when protocol is any", async () => {
-    const { service } = fixture();
     await expect(
       service.createRule(
         {
           appGroupId: "11111111-1111-4111-8111-111111111111",
           destinationCidr: "192.168.100.50/32",
-          protocol: "any",
+          protocol: "tcp",
           port: 443,
+          description: "monitoring",
         },
         actor,
       ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      constructor: ConflictException,
+      message: expect.stringMatching(/deprecated.*read-only.*ResourcePortalGate/i),
+    });
+
+    expect(tx.platformEgressAllowRule.create).not.toHaveBeenCalled();
+    expect(tx.platformEgressPolicy.upsert).not.toHaveBeenCalled();
   });
 
   it("produces a stable worker snapshot with private ranges and normalized rules", async () => {
@@ -234,7 +220,7 @@ describe("NetworkEgressService", () => {
     ]);
   });
 
-  it("grants privileged networking immediately without marking an App Group deployment pending", async () => {
+  it("blocks new privileged networking grants during migration", async () => {
     const { service, prisma, tx } = fixture();
     prisma.appGroup.findUnique.mockResolvedValue({
       id: "11111111-1111-4111-8111-111111111111",
@@ -255,23 +241,12 @@ describe("NetworkEgressService", () => {
         { privileged: true },
         actor,
       ),
-    ).resolves.toEqual({
-      id: "11111111-1111-4111-8111-111111111111",
-      networkPrivileged: true,
-      changed: true,
-      deploymentRequired: false,
+    ).rejects.toMatchObject({
+      constructor: ConflictException,
+      message: expect.stringMatching(/deprecated.*Networks.*ResourcePortalGate/i),
     });
 
-    const updateArgs = tx.appGroup.update.mock.calls[0]?.[0];
-    expect(updateArgs?.data).toEqual({
-      networkPrivileged: true,
-      updatedBy: actor.id,
-    });
-    expect(tx.platformEgressPolicy.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: { revision: { increment: 1 }, updatedBy: actor.id },
-      }),
-    );
+    expect(tx.appGroup.update).not.toHaveBeenCalled();
   });
 
   it("blocks privilege revocation while Internal Port Exposures still exist", async () => {

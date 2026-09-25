@@ -4,7 +4,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import { DeploymentExecutionService } from "./deployment-execution.service";
 
 type StackService = {
-  networks?: string[];
+  networks?: string[] | Record<string, { aliases?: string[] }>;
   labels?: Record<string, string>;
   ports?: Array<{ target: number; published: number; protocol: string; mode: string }>;
   deploy: {
@@ -16,6 +16,13 @@ type StackService = {
 type ParsedStack = {
   networks: Record<string, unknown>;
   services: Record<string, StackService>;
+  "x-resourceportal-networks"?: Array<{
+    id: string;
+    tenantId: string;
+    cidr: string;
+    overlayCidr: string;
+    swarmNetworkName: string;
+  }>;
 };
 
 type UpdateManyArgs = {
@@ -235,6 +242,64 @@ describe("v0.2 tenant placement and App Group network rendering", () => {
     expect(stack.services.internal_web.networks).toEqual(["default"]);
     expect(stack.services.internal_web.deploy.labels).toBeUndefined();
   });
+  it("attaches an application to additional first-class tenant networks", async () => {
+    const appGroupId = "88888888-8888-4888-8888-888888888888";
+    const networkId = "99999999-9999-4999-8999-999999999999";
+    const rendered = await renderStack(
+      JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+          name: "shared-network-app",
+          runtimeState: "Running",
+          runtimeDraftRevision: 1,
+        },
+        singleApps: [
+          app({
+            networkAttachments: [
+              {
+                id: "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb",
+                address: "10.240.12.10",
+                network: {
+                  id: networkId,
+                  name: "backend",
+                  cidr: "10.240.12.0/24",
+                  overlayCidr: "10.200.12.0/24",
+                  swarmNetworkName: `rp-network-${networkId}`,
+                },
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const stack = parsedStack(rendered);
+    const alias = `rpnet_${networkId.replaceAll("-", "_")}`;
+    expect(stack.services.app.networks).toEqual({
+      default: {},
+      [alias]: {
+        aliases: ["rp-att-bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb"],
+      },
+    });
+    expect(stack.networks[alias]).toEqual({
+      external: true,
+      name: `rp-network-${networkId}`,
+    });
+    expect(stack["x-resourceportal-networks"]).toEqual([
+      {
+        id: networkId,
+        tenantId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        cidr: "10.240.12.0/24",
+        overlayCidr: "10.200.12.0/24",
+        swarmNetworkName: `rp-network-${networkId}`,
+      },
+    ]);
+    expect(stack.services.app.labels?.["resourceportal.network-ids"]).toBe(
+      networkId,
+    );
+  });
+
   it("publishes privileged App Group internal ports in host mode with guard metadata", async () => {
     const appGroupId = "55555555-5555-4555-8555-555555555555";
     const rendered = await renderStack(

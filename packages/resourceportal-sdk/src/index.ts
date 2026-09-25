@@ -11,6 +11,46 @@ export type ResourcePortalRequestOptions = {
   idempotencyKey?: string;
 };
 
+export type TenantNetwork = {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string | null;
+  cidr: string;
+  overlayCidr: string;
+  swarmNetworkName: string;
+  status: string;
+  revision: number;
+  lastObservedAt?: string | null;
+  lastError?: string | null;
+};
+
+export type ResourcePortalGate = {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string | null;
+  status: string;
+  configRevision: number;
+  serverListenPort?: number | null;
+  clientTunnelAddress?: string | null;
+  serverTunnelAddress?: string | null;
+  lanAddresses: string[];
+  lanCidrs: string[];
+  agentVersion?: string | null;
+  lastSeenAt?: string | null;
+  lastError?: string | null;
+  revokedAt?: string | null;
+};
+
+export type NetworkTopologyOperation = {
+  id: string;
+  type: "NETWORK_TOPOLOGY_CHANGE";
+  status: string;
+  resourceId?: string | null;
+  errorMessage?: string | null;
+};
+
 export type TenantSearchKind =
   | "appGroup"
   | "application"
@@ -364,6 +404,101 @@ export class ResourcePortalClient {
     ) =>
       this.request(
         `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/internal-port-exposures/${encode(exposureId)}`,
+        { method: "DELETE" },
+      ),
+  };
+
+  readonly networking = {
+    topology: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/networking/topology`),
+    listNetworks: (tenantId: string) =>
+      this.request<TenantNetwork[]>(
+        `/tenants/${encode(tenantId)}/networking/networks`,
+      ),
+    createNetwork: (
+      tenantId: string,
+      body: { name: string; description?: string; cidr?: string },
+    ) =>
+      this.request<TenantNetwork>(
+        `/tenants/${encode(tenantId)}/networking/networks`,
+        { method: "POST", body },
+      ),
+    updateNetwork: (
+      tenantId: string,
+      networkId: string,
+      body: { name?: string; description?: string; expectedRevision: number },
+    ) =>
+      this.request<TenantNetwork>(
+        `/tenants/${encode(tenantId)}/networking/networks/${encode(networkId)}`,
+        { method: "PATCH", body },
+      ),
+    deleteNetwork: (tenantId: string, networkId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/networking/networks/${encode(networkId)}`,
+        { method: "DELETE" },
+      ),
+    attachApplication: (
+      tenantId: string,
+      networkId: string,
+      body: { singleAppId: string; address?: string; expectedRevision: number },
+      idempotencyKey?: string,
+    ) =>
+      this.request<NetworkTopologyOperation>(
+        `/tenants/${encode(tenantId)}/networking/networks/${encode(networkId)}/attachments`,
+        { method: "POST", body, idempotencyKey },
+      ),
+    detachApplication: (
+      tenantId: string,
+      networkId: string,
+      attachmentId: string,
+      expectedRevision: number,
+      idempotencyKey?: string,
+    ) =>
+      this.request<NetworkTopologyOperation>(
+        `/tenants/${encode(tenantId)}/networking/networks/${encode(networkId)}/attachments/${encode(attachmentId)}?revision=${encode(String(expectedRevision))}`,
+        { method: "DELETE", idempotencyKey },
+      ),
+    listGates: (tenantId: string) =>
+      this.request<ResourcePortalGate[]>(
+        `/tenants/${encode(tenantId)}/networking/gates`,
+      ),
+    createGate: (
+      tenantId: string,
+      body: { name: string; description?: string },
+    ) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/networking/gates`,
+        { method: "POST", body },
+      ),
+    rotateGateEnrollment: (tenantId: string, gateId: string) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/enrollment`,
+        { method: "POST" },
+      ),
+    attachGateNetwork: (
+      tenantId: string,
+      gateId: string,
+      body: { networkId: string; expectedRevision: number },
+      idempotencyKey?: string,
+    ) =>
+      this.request<NetworkTopologyOperation>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/networks`,
+        { method: "POST", body, idempotencyKey },
+      ),
+    detachGateNetwork: (
+      tenantId: string,
+      gateId: string,
+      networkId: string,
+      expectedRevision: number,
+      idempotencyKey?: string,
+    ) =>
+      this.request<NetworkTopologyOperation>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/networks/${encode(networkId)}?revision=${encode(String(expectedRevision))}`,
+        { method: "DELETE", idempotencyKey },
+      ),
+    revokeGate: (tenantId: string, gateId: string) =>
+      this.request<ResourcePortalGate>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}`,
         { method: "DELETE" },
       ),
   };

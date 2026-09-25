@@ -58,12 +58,13 @@ assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 2049 proto tcp' "r
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 7443 proto tcp comment ResourcePortal-Enrollment' "restrict enrollment listener"
 assert_contains "$rules" 'allow 80/tcp comment ResourcePortal-HTTP' "public HTTP ingress"
 assert_contains "$rules" 'allow 443/tcp comment ResourcePortal-HTTPS' "public HTTPS ingress"
+assert_contains "$rules" 'allow 52000:52999/udp comment ResourcePortal-Gate-WireGuard' "public ResourcePortalGate WireGuard ingress range"
 assert_before "$rules" 'allow 2222/tcp comment ResourcePortal-SSH' 'allow 80/tcp comment ResourcePortal-HTTP' "SSH rule rendered before public ingress"
 
 rules_no_ingress="$(rp_render_ufw_rules 22 10.20.0.0/24 false)"
-if [[ "$rules_no_ingress" == *'allow 80/tcp'* || "$rules_no_ingress" == *'allow 443/tcp'* ]]; then
-  printf 'FAIL: non-ingress node does not expose HTTP/HTTPS\n' >&2; failures=$((failures + 1))
-else printf 'PASS: non-ingress node does not expose HTTP/HTTPS\n'; fi
+if [[ "$rules_no_ingress" == *'allow 80/tcp'* || "$rules_no_ingress" == *'allow 443/tcp'* || "$rules_no_ingress" == *'52000:52999/udp'* ]]; then
+  printf 'FAIL: non-ingress node does not expose public HTTP/HTTPS or Gate WireGuard ports\n' >&2; failures=$((failures + 1))
+else printf 'PASS: non-ingress node does not expose public HTTP/HTTPS or Gate WireGuard ports\n'; fi
 
 assert_eq "healthy" "$(rp_manager_quorum_state 1 1)" "single manager is valid quorum"
 assert_eq "recommend-3" "$(rp_manager_quorum_recommendation 1)" "single manager gets HA recommendation"

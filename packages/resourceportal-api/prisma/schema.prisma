@@ -234,6 +234,8 @@ model Tenant {
   cloudflareOAuthStates      CloudflareOAuthState[]
   cloudflareOAuthConnections CloudflareOAuthConnection[]
   registries                 Registry[]
+  networks                   Network[]
+  resourcePortalGates        ResourcePortalGate[]
   auditEntries               AuditLogEntry[]
   operations                 Operation[]
   createdAt                  DateTime                    @default(now())
@@ -626,6 +628,7 @@ model SingleApp {
   registry                Registry?              @relation(fields: [registryId], references: [id], onDelete: Restrict)
   httpEndpoints           HttpEndpoint[]
   internalPortExposures   InternalPortExposure[]
+  networkAttachments      NetworkAttachment[]
   volumeAttachments       VolumeAttachment[]
   variableAttachments     VariableAttachment[]
   configAttachments       ConfigAttachment[]
@@ -875,6 +878,111 @@ model InternalPortExposure {
   @@unique([singleAppId, name], map: "InternalPortExposure_singleAppId_name_key")
   @@unique([protocol, publishedPort], map: "InternalPortExposure_protocol_publishedPort_key")
   @@index([appGroupId], map: "InternalPortExposure_appGroupId_idx")
+}
+
+model Network {
+  id               String                  @id @default(uuid()) @db.Uuid
+  tenantId         String                  @db.Uuid
+  name             String
+  description      String?
+  cidr             String                  @unique
+  overlayCidr      String                  @unique
+  swarmNetworkName String                  @unique
+  status           String                  @default("Provisioning")
+  revision         Int                     @default(1)
+  lastObservedAt   DateTime?
+  lastError        String?
+  createdBy        String                  @db.Uuid
+  updatedBy        String                  @db.Uuid
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  attachments      NetworkAttachment[]
+  gateAttachments  GateNetworkAttachment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model NetworkAttachment {
+  id                 String    @id @default(uuid()) @db.Uuid
+  networkId          String    @db.Uuid
+  singleAppId        String    @db.Uuid
+  address            String
+  observedServiceVip String?
+  lastObservedAt     DateTime?
+  createdBy          String    @db.Uuid
+  createdAt          DateTime  @default(now())
+  network            Network   @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  singleApp          SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+
+  @@unique([networkId, singleAppId])
+  @@unique([networkId, address])
+  @@index([singleAppId])
+}
+
+model ResourcePortalGate {
+  id                         String                         @id @default(uuid()) @db.Uuid
+  tenantId                   String                         @db.Uuid
+  name                       String
+  description                String?
+  status                     String                         @default("PendingEnrollment")
+  publicKey                  String?                        @unique
+  serverPublicKey            String?                        @unique
+  serverPrivateKeyCiphertext String?
+  serverKeyVersion           Int                            @default(1)
+  serverListenPort           Int?                           @unique
+  clientTunnelAddress        String?                        @unique
+  serverTunnelAddress        String?                        @unique
+  agentTokenHash             String?                        @unique
+  configRevision             Int                            @default(1)
+  lanAddresses               String[]                       @default([])
+  lanCidrs                   String[]                       @default([])
+  agentVersion               String?
+  lastSeenAt                 DateTime?
+  lastError                  String?
+  revokedAt                  DateTime?
+  createdBy                  String                         @db.Uuid
+  updatedBy                  String                         @db.Uuid
+  createdAt                  DateTime                       @default(now())
+  updatedAt                  DateTime                       @updatedAt
+  tenant                     Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  networks                   GateNetworkAttachment[]
+  enrollments                ResourcePortalGateEnrollment[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model GateNetworkAttachment {
+  id             String             @id @default(uuid()) @db.Uuid
+  gateId         String             @db.Uuid
+  networkId      String             @db.Uuid
+  status         String             @default("Pending")
+  enabled        Boolean            @default(true)
+  lastObservedAt DateTime?
+  lastError      String?
+  createdBy      String             @db.Uuid
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  gate           ResourcePortalGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
+  network        Network            @relation(fields: [networkId], references: [id], onDelete: Cascade)
+
+  @@unique([gateId, networkId])
+  @@index([networkId])
+}
+
+model ResourcePortalGateEnrollment {
+  id        String             @id @default(uuid()) @db.Uuid
+  gateId    String             @db.Uuid
+  tokenHash String             @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdBy String             @db.Uuid
+  createdAt DateTime           @default(now())
+  gate      ResourcePortalGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
+
+  @@index([gateId, expiresAt])
 }
 
 model Registry {

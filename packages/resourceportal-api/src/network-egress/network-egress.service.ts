@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -13,7 +12,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { CreateNetworkEgressRuleDto } from "./dto/create-network-egress-rule.dto";
 import type { UpdateNetworkEgressPolicyDto } from "./dto/update-network-egress-policy.dto";
 import type { UpdateAppGroupNetworkPrivilegeDto } from "./dto/update-app-group-network-privilege.dto";
-import { parseAndNormalizeCidr } from "./network-egress.cidr";
 import {
   DEFAULT_BLOCKED_IPV4_CIDRS,
   DEFAULT_BLOCKED_IPV6_CIDRS,
@@ -174,6 +172,11 @@ export class NetworkEgressService {
       },
     });
     if (!existing) throw new NotFoundException("App Group not found");
+    if (dto.privileged && !existing.networkPrivileged) {
+      throw new ConflictException(
+        "Privileged App Group networking is deprecated. Use tenant Networks and ResourcePortalGate instead.",
+      );
+    }
     if (existing.networkPrivileged === dto.privileged) {
       return {
         id: existing.id,
@@ -235,85 +238,14 @@ export class NetworkEgressService {
     };
   }
 
-  async createRule(dto: CreateNetworkEgressRuleDto, actor: AuthenticatedUser) {
-    const appGroup = await this.prisma.appGroup.findUnique({
-      where: { id: dto.appGroupId },
-      select: {
-        id: true,
-        name: true,
-        tenant: { select: { id: true, name: true } },
-      },
-    });
-    if (!appGroup) throw new NotFoundException("App Group not found");
-
-    const destination = parseAndNormalizeCidr(dto.destinationCidr);
-    if (!destination) {
-      throw new BadRequestException(
-        "destinationCidr must be a valid IPv4 or IPv6 address/CIDR",
-      );
-    }
-    const protocol = dto.protocol ?? "any";
-    if (protocol === "any" && dto.port !== undefined) {
-      throw new BadRequestException(
-        "A port can only be specified with tcp or udp protocol",
-      );
-    }
-    const port = dto.port ?? 0;
-    const description = dto.description?.trim() || null;
-
-    try {
-      const rule = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.platformEgressAllowRule.create({
-          data: {
-            appGroupId: appGroup.id,
-            destinationCidr: destination.normalized,
-            protocol,
-            port,
-            description,
-            createdBy: actor.id,
-            updatedBy: actor.id,
-          },
-        });
-        await tx.platformEgressPolicy.upsert({
-          where: { id: PLATFORM_EGRESS_POLICY_ID },
-          create: {
-            id: PLATFORM_EGRESS_POLICY_ID,
-            enabled: true,
-            revision: 1,
-            updatedBy: actor.id,
-          },
-          update: { revision: { increment: 1 }, updatedBy: actor.id },
-        });
-        await this.audit(tx, actor, {
-          action: "platform_network_egress.rule.create",
-          resourceType: "PlatformEgressAllowRule",
-          resourceId: created.id,
-          resourceName: `${appGroup.name}: ${destination.normalized}`,
-          changes: {
-            appGroupId: appGroup.id,
-            destinationCidr: destination.normalized,
-            protocol,
-            port: port || null,
-          },
-        });
-        return created;
-      });
-      return {
-        ...rule,
-        port: rule.port === 0 ? null : rule.port,
-        appGroupName: appGroup.name,
-        tenantId: appGroup.tenant.id,
-        tenantName: appGroup.tenant.name,
-      };
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        throw new ConflictException("An identical egress allow rule already exists");
-      }
-      throw error;
-    }
+  createRule(dto: CreateNetworkEgressRuleDto, actor: AuthenticatedUser) {
+    void dto;
+    void actor;
+    return Promise.reject(
+      new ConflictException(
+        "Legacy App Group private-network egress exceptions are deprecated and read-only. Remove existing exceptions during migration; ResourcePortalGate v1 supports LAN to RP Networks only.",
+      ),
+    );
   }
 
   async deleteRule(ruleId: string, actor: AuthenticatedUser) {

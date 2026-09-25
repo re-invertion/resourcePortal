@@ -62,6 +62,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "mcp/mcp-oauth-dcr.controller.ts",
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
+    "networking/networking.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
@@ -93,6 +94,9 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   await client.storageBackends.list();
   await client.search.tenant("tenant id", "checkout", 15);
   await client.operations.list("tenant id");
+  await client.networking.topology("tenant id");
+  await client.networking.listNetworks("tenant id");
+  await client.networking.listGates("tenant id");
   await client.platformMaintenance.get();
   await client.oauthApplications.list("tenant id");
   await client.platformOauthApplications.list();
@@ -111,6 +115,9 @@ test("exposes every post-Stage-8 public management resource family", async () =>
       "/api/platform/storage-backends",
       "/api/tenants/tenant%20id/search",
       "/api/tenants/tenant%20id/operations",
+      "/api/tenants/tenant%20id/networking/topology",
+      "/api/tenants/tenant%20id/networking/networks",
+      "/api/tenants/tenant%20id/networking/gates",
       "/api/platform/maintenance",
       "/api/tenants/tenant%20id/oauth-applications",
       "/api/platform/oauth-applications",
@@ -224,6 +231,69 @@ test("uses canonical methods and bodies for representative mutations", async () 
       enabled: true,
       accessMode: "SelectedMembers",
       allowedMembershipIds: ["membership-id"],
+    }),
+  );
+});
+
+
+test("uses revisions and idempotency keys for Network topology mutations", async () => {
+  const { client, calls } = recordingClient();
+
+  await client.networking.attachApplication(
+    "tenant id",
+    "network id",
+    {
+      singleAppId: "app id",
+      address: "10.240.10.10",
+      expectedRevision: 7,
+    },
+    "idem-app",
+  );
+  await client.networking.detachApplication(
+    "tenant id",
+    "network id",
+    "attachment id",
+    8,
+    "idem-detach",
+  );
+  await client.networking.attachGateNetwork(
+    "tenant id",
+    "gate id",
+    { networkId: "network id", expectedRevision: 4 },
+    "idem-gate",
+  );
+  await client.networking.detachGateNetwork(
+    "tenant id",
+    "gate id",
+    "network id",
+    5,
+    "idem-gate-detach",
+  );
+
+  assert.deepEqual(
+    calls.map((call) => [call.init.method, pathOf(call)]),
+    [
+      ["POST", "/api/tenants/tenant%20id/networking/networks/network%20id/attachments"],
+      ["DELETE", "/api/tenants/tenant%20id/networking/networks/network%20id/attachments/attachment%20id"],
+      ["POST", "/api/tenants/tenant%20id/networking/gates/gate%20id/networks"],
+      ["DELETE", "/api/tenants/tenant%20id/networking/gates/gate%20id/networks/network%20id"],
+    ],
+  );
+  assert.equal(new URL(calls[1].url).searchParams.get("revision"), "8");
+  assert.equal(new URL(calls[3].url).searchParams.get("revision"), "5");
+  assert.equal(new Headers(calls[0].init.headers).get("idempotency-key"), "idem-app");
+  assert.equal(new Headers(calls[1].init.headers).get("idempotency-key"), "idem-detach");
+  assert.equal(new Headers(calls[2].init.headers).get("idempotency-key"), "idem-gate");
+  assert.equal(
+    new Headers(calls[3].init.headers).get("idempotency-key"),
+    "idem-gate-detach",
+  );
+  assert.equal(
+    calls[0].init.body,
+    JSON.stringify({
+      singleAppId: "app id",
+      address: "10.240.10.10",
+      expectedRevision: 7,
     }),
   );
 });

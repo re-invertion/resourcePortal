@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import {
   Button,
@@ -12,7 +12,6 @@ import {
   PageHeader,
   Select,
   StatusBadge,
-  TextInput,
   Toggle,
   TrashIcon,
 } from "../components/design-system";
@@ -61,18 +60,9 @@ type EgressState = {
   rules: EgressRule[];
 };
 
-const emptyForm = {
-  appGroupId: "",
-  destinationCidr: "",
-  protocol: "any" as "any" | "tcp" | "udp",
-  port: "",
-  description: "",
-};
-
 export function PlatformNetworkEgressPage() {
   const state = useApi<EgressState>("/api/platform/network-egress");
   const [enabled, setEnabled] = useState(true);
-  const [form, setForm] = useState(emptyForm);
   const [privilegedAppGroupId, setPrivilegedAppGroupId] = useState("");
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<{
@@ -83,16 +73,10 @@ export function PlatformNetworkEgressPage() {
   useEffect(() => {
     if (!state.data) return;
     setEnabled(state.data.enabled);
-    if (!form.appGroupId && state.data.appGroups[0]?.id) {
-      setForm((current) => ({
-        ...current,
-        appGroupId: state.data?.appGroups[0]?.id ?? "",
-      }));
-    }
     if (!privilegedAppGroupId && state.data.appGroups[0]?.id) {
       setPrivilegedAppGroupId(state.data.appGroups[0].id);
     }
-  }, [state.data, form.appGroupId, privilegedAppGroupId]);
+  }, [state.data, privilegedAppGroupId]);
 
   const appliedRevision = state.data?.enforcement?.lastResult?.revision;
   const enforcementHealthy = Boolean(
@@ -155,42 +139,6 @@ export function PlatformNetworkEgressPage() {
           error instanceof Error
             ? error.message
             : "Unable to update App Group network privilege.",
-      });
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function createRule(event: FormEvent) {
-    event.preventDefault();
-    setWorking(true);
-    setNotice(undefined);
-    try {
-      const port = form.port.trim() ? Number.parseInt(form.port, 10) : undefined;
-      await apiRequest("/api/platform/network-egress/rules", {
-        method: "POST",
-        body: {
-          appGroupId: form.appGroupId,
-          destinationCidr: form.destinationCidr.trim(),
-          protocol: form.protocol,
-          port,
-          description: form.description.trim() || undefined,
-        },
-      });
-      setForm((current) => ({
-        ...emptyForm,
-        appGroupId: current.appGroupId,
-      }));
-      await state.reload();
-      setNotice({
-        tone: "success",
-        message: "Private-network exception added. It will be applied by the egress guard without redeploying the App Group.",
-      });
-    } catch (error) {
-      setNotice({
-        tone: "danger",
-        message:
-          error instanceof Error ? error.message : "Unable to add egress rule.",
       });
     } finally {
       setWorking(false);
@@ -360,10 +308,10 @@ export function PlatformNetworkEgressPage() {
           <div className="max-w-2xl">
             <div className="flex items-center gap-2">
               <NetworkIcon size={18} className="text-[#1769E0]" />
-              <h2 className="font-semibold text-[#172033]">Privileged App Group networking</h2>
+              <h2 className="font-semibold text-[#172033]">Legacy privileged networking cleanup</h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-[#5B6678]">
-              Privileged App Groups bypass the private-network egress deny and may publish explicit TCP/UDP ports to the trusted internal network. This does not grant Docker privileged mode or host filesystem access.
+              Privileged App Group networking is deprecated. Existing legacy groups remain protected during migration, but new grants are disabled. Remove and deploy all legacy Internal Port Exposures, then revoke the remaining privilege. New private connectivity belongs in tenant Networks and ResourcePortalGate.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {(state.data?.internalNetworkCidrs ?? []).map((cidr) => (
@@ -409,25 +357,15 @@ export function PlatformNetworkEgressPage() {
                   (selectedPrivilegedGroup?.internalPortExposureCount ?? 0) > 0 ||
                   (selectedPrivilegedGroup?.deployedInternalPortExposureCount ?? 0) > 0
                 }
-                confirmTitle="Revoke privileged networking?"
-                confirmDescription="The App Group will immediately return to the standard private-network egress policy. Remove and deploy all internal port exposures first."
-                confirmLabel="Revoke privilege"
+                confirmTitle="Revoke legacy privileged networking?"
+                confirmDescription="The App Group will return to the standard private-network egress policy. Remove and deploy all legacy Internal Port Exposures first."
+                confirmLabel="Revoke legacy privilege"
                 onConfirm={() => updatePrivilege(false)}
               >
                 Revoke privilege
               </ConfirmActionButton>
             ) : (
-              <ConfirmActionButton
-                size="sm"
-                triggerVariant="ghost"
-                disabled={working || !selectedPrivilegedGroup}
-                confirmTitle="Grant privileged networking?"
-                confirmDescription="This App Group will be allowed to reach private infrastructure and its editors will be able to publish explicitly configured TCP/UDP ports to the internal network."
-                confirmLabel="Grant privilege"
-                onConfirm={() => updatePrivilege(true)}
-              >
-                Grant privilege
-              </ConfirmActionButton>
+              <StatusBadge tone="success">No legacy privilege</StatusBadge>
             )}
           </div>
         </div>
@@ -450,82 +388,16 @@ export function PlatformNetworkEgressPage() {
         </div>
       </Card>
 
-      <Card className="mb-6 overflow-hidden">
-        <div className="border-b border-[#E1E7F0] px-5 py-4">
-          <h2 className="font-semibold text-[#172033]">Add private-network exception</h2>
-          <p className="mt-1 text-xs text-[#718096]">
-            Exceptions belong to one App Group. They do not grant access to other tenants or bypass the destination host firewall.
-          </p>
-        </div>
-        <form className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-5" onSubmit={(event) => void createRule(event)}>
-          <Field label="App Group" required>
-            <Select
-              value={form.appGroupId}
-              required
-              onChange={(event) => setForm({ ...form, appGroupId: event.target.value })}
-            >
-              {(state.data?.appGroups ?? []).length === 0 ? (
-                <option value="">No App Groups available</option>
-              ) : null}
-              {(state.data?.appGroups ?? []).map((appGroup) => (
-                <option key={appGroup.id} value={appGroup.id}>
-                  {appGroup.tenantName} / {appGroup.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Destination IP / CIDR" required hint="Example: 192.168.100.50/32">
-            <TextInput
-              value={form.destinationCidr}
-              required
-              placeholder="192.168.100.50/32"
-              onChange={(event) => setForm({ ...form, destinationCidr: event.target.value })}
-            />
-          </Field>
-          <Field label="Protocol">
-            <Select
-              value={form.protocol}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  protocol: event.target.value as "any" | "tcp" | "udp",
-                  port: event.target.value === "any" ? "" : form.port,
-                })
-              }
-            >
-              <option value="any">Any</option>
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-            </Select>
-          </Field>
-          <Field label="Port" hint={form.protocol === "any" ? "Not used for Any" : "Blank = all ports"}>
-            <TextInput
-              type="number"
-              min={1}
-              max={65535}
-              disabled={form.protocol === "any"}
-              value={form.port}
-              placeholder="443"
-              onChange={(event) => setForm({ ...form, port: event.target.value })}
-            />
-          </Field>
-          <Field label="Description">
-            <TextInput
-              value={form.description}
-              placeholder="Monitoring API"
-              onChange={(event) => setForm({ ...form, description: event.target.value })}
-            />
-          </Field>
-          <div className="md:col-span-2 xl:col-span-5">
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={working || !form.appGroupId || !form.destinationCidr.trim()}
-            >
-              Add exception
-            </Button>
+      <Card className="mb-6 p-5">
+        <div className="flex items-start gap-3">
+          <NetworkIcon className="mt-0.5 text-[#1769E0]" />
+          <div>
+            <h2 className="font-semibold text-[#172033]">Legacy private-network exceptions cleanup</h2>
+            <p className="mt-1 text-sm leading-6 text-[#5B6678]">
+              Creating new App Group private-network egress exceptions is disabled. Existing rules remain enforced only so upgrades do not silently change traffic. Remove them after migrating the workload to the new tenant Network model.
+            </p>
           </div>
-        </form>
+        </div>
       </Card>
 
       <DataTable

@@ -50,6 +50,10 @@ function hangingDockerProcess() {
 
 function fixture(applyTimeoutMs?: number) {
   const runtime = {
+    reconcileTenantNetwork: vi.fn().mockResolvedValue({
+      success: true,
+      changed: false,
+    }),
     reconcileAppGroupNetwork: vi.fn().mockResolvedValue({
       success: true,
       changed: false,
@@ -85,6 +89,10 @@ function publicStack() {
 
 function privateStack() {
   return `version: "3.9"\nservices:\n  worker:\n    image: busybox\n    networks: [default]\nnetworks:\n  default:\n    external: true\n    name: ${appGroupNetwork}\n`;
+}
+
+function advancedNetworkStack() {
+  return `version: "3.9"\nservices:\n  worker:\n    image: busybox\n    networks: [default, rpnet_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa]\nnetworks:\n  default:\n    external: true\n    name: ${appGroupNetwork}\n  rpnet_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa:\n    external: true\n    name: rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nx-resourceportal-networks:\n  - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n    tenantId: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\n    cidr: 10.240.12.0/24\n    overlayCidr: 10.200.12.0/24\n    swarmNetworkName: rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n`;
 }
 
 function legacyPublicStack() {
@@ -144,6 +152,27 @@ describe("StackApplyService exact deployment artifact", () => {
     expect(result.exitCode).toBe(0);
     expect(child?.capturedInput()).toBe(renderedStack);
     expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares first-class tenant networks before deploying the stack", async () => {
+    const renderedStack = advancedNetworkStack();
+    spawnMock.mockImplementationOnce(() => dockerProcess("stack updated"));
+    const { runtime, service } = fixture();
+
+    const result = await service.applyStack({
+      stackName: "rp_11111111_1111_4111_8111_111111111111",
+      renderedStack,
+      artifactSha256: deploymentArtifactSha256(renderedStack),
+      appGroupId,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(runtime.reconcileTenantNetwork).toHaveBeenCalledWith({
+      networkName: "rp-network-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      subnet: "10.200.12.0/24",
+      networkId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      tenantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
   });
 
   it("ensures the one App Group network and attaches Traefik before a public v0.2 deploy", async () => {

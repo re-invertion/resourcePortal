@@ -46,6 +46,8 @@ ENV NODE_ENV=production
 RUN apk add --no-cache \
     docker-cli \
     iptables \
+    iproute2 \
+    wireguard-tools \
     e2fsprogs-extra \
     findmnt \
     quota-tools \

@@ -13,7 +13,7 @@ type SearchItem = { id: string; label: string; description: string; href: string
 function tenantItems(route: Extract<AppRoute, { kind: "tenant" }>): NavItem[] {
   const tenant = route.tenantId;
   const appActive = route.section === "applications" || route.section === "app-groups";
-  const storageActive = ["storage-networking", "volumes", "registries", "domains"].includes(route.section);
+  const storageActive = ["storage-networking", "networking", "volumes", "registries", "domains"].includes(route.section);
   const accessActive = ["access", "administration", "credentials", "identity-providers", "groups"].includes(route.section);
   const activityActive = ["activity", "operations", "audit"].includes(route.section);
   return [
@@ -88,7 +88,8 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
     item("overview", "Overview", "Tenant dashboard and resource summary", "overview", "dashboard home"),
     item("applications", "Applications", "App Groups and deployed applications", "applications", "apps containers workloads app groups"),
     { id: "nav-create-app-group", label: "Create App Group", description: "Create a new deployment workspace", href: tenantHref(tenantId, "applications", "new"), category: "Action", keywords: "new application group create" },
-    item("storage", "Storage & Networking", "Storage, registries and domains", "storage-networking", "network"),
+    item("storage", "Storage & Networking", "Storage, private Networks, registries and domains", "storage-networking", "network"),
+    item("networking", "Networking", "Private Networks and ResourcePortalGate topology", "networking", "network vpn gate wireguard topology"),
     item("volumes", "Volumes", "Persistent tenant storage", "volumes", "disk storage persistent"),
     item("registries", "Registries", "Container image registries", "registries", "docker image registry"),
     item("domains", "Domains", "Managed and custom domains", "domains", "dns hostname tls"),
