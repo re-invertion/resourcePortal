@@ -38,6 +38,27 @@ JSON
 status 0 'valid release manifest accepted' rp_validate_release_manifest "$manifest"
 eq '0.2.0' "$(rp_manifest_value "$manifest" '.version')" 'reads release version'
 
+pull_release_images_reuses_local_digest() (
+  local calls
+  calls="$(mktemp)"
+  trap 'rm -f "$calls"' EXIT
+  docker() {
+    if [[ "$1" == image && "$2" == inspect ]]; then
+      [[ "$3" == traefik@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ]]
+      return
+    fi
+    if [[ "$1" == pull ]]; then
+      printf '%s\n' "$2" >>"$calls"
+      return 0
+    fi
+    return 1
+  }
+  rp_pull_release_images "$manifest" || return 1
+  grep -Fq 'ghcr.io/re-invertion/resourceportal-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$calls" || return 1
+  ! grep -Fq 'traefik@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$calls"
+)
+status 0 'upgrade reuses an exact local release digest instead of pulling it again' pull_release_images_reuses_local_digest
+
 persist_state="$(mktemp -d /tmp/rp-release-state.XXXXXX)"
 RP_INSTALLER_STATE_DIR="$persist_state"
 export RP_INSTALLER_STATE_DIR

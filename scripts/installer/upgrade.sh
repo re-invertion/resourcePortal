@@ -15,8 +15,15 @@ rp_upgrade_preflight() {
 rp_pull_release_images() {
   local manifest="$1" image
   rp_validate_release_manifest "$manifest" || return 1
-  while IFS= read -r image; do docker pull "$image" >/dev/null || return 1; done \
-    < <(jq -r '.images | [.api,.web,.postgres,.zitadel,.traefik][]' "$manifest")
+  while IFS= read -r image; do
+    # Release manifests use immutable digests. If Docker already has the exact
+    # digest locally, pulling it again adds no integrity and can fail solely
+    # because an upstream registry rate-limits an otherwise safe upgrade.
+    if docker image inspect "$image" >/dev/null 2>&1; then
+      continue
+    fi
+    docker pull "$image" >/dev/null || return 1
+  done < <(jq -r '.images | [.api,.web,.postgres,.zitadel,.traefik][]' "$manifest")
 }
 
 rp_upgrade_label_value() {
