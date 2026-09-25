@@ -144,6 +144,7 @@ contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADE
 contains "$final" 'OIDC_CLI_CLIENT_ID: zitadel-cli-client-789' 'API receives public CLI OAuth client id'
 contains "$final" 'MANAGED_DOMAIN_BASE: rp.example.com' 'API receives managed ResourcePortal domain base'
 contains "$final" 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' 'API receives canonical DNS target hostname'
+contains "$final" 'RESOURCEPORTAL_VERSION: 0.2.0' 'API receives deployed ResourcePortal release version'
 contains "$final" 'RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: 10.20.0.0/24' 'API receives trusted internal network CIDR'
 internal_network_cidr_count="$(grep -c 'RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: 10.20.0.0/24' <<<"$final" || true)"
 [[ "$internal_network_cidr_count" == 2 ]] && pass 'API and worker receive trusted internal network CIDR' || fail 'API and worker receive trusted internal network CIDR'

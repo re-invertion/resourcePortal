@@ -51,6 +51,17 @@ describe("AppShell", () => {
     expect(screen.getByLabelText("ResourcePortal")).toBeTruthy();
   });
 
+  it("shows the running ResourcePortal version below Help", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/health/live") {
+        return new Response(JSON.stringify({ status: "ok", service: "resource-portal-api", version: "0.2.26" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    expect((await screen.findByLabelText("ResourcePortal version")).textContent).toBe("ResourcePortal v0.2.26");
+  });
+
 
   it("searches tenant resources through one backend request", async () => {
     const json = (value: unknown) => Promise.resolve(new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }));

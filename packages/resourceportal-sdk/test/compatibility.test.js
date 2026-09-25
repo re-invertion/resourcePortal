@@ -59,6 +59,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
     "internal/installer-enrollment.controller.ts",
+    "mcp/mcp-oauth-dcr.controller.ts",
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",

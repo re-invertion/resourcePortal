@@ -42,6 +42,8 @@ describe("TenantSettingsPage", () => {
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
 
     expect(await screen.findByRole("heading", { name: "Tenant settings" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "MCP" }).getAttribute("href")).toBe("#mcp");
     expect(await screen.findByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
     expect(screen.queryByText("https://auth.example.com")).toBeNull();
     fireEvent.click(screen.getByText("Enable MCP for this tenant"));
@@ -60,19 +62,21 @@ describe("TenantSettingsPage", () => {
     });
   });
 
-  it("shows zero-config OpenAI guidance when platform OAuth bootstrap is incomplete", async () => {
+  it("shows concise technical OAuth status when platform setup is incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false, pkceS256Available: false, openAiReady: false } });
+      if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false, pkceS256Available: false, openAiReady: false, transport: "Streamable HTTP", protocol: "MCP" } });
       return json([]);
     }));
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
-    expect(await screen.findByText("Platform OAuth bootstrap is incomplete")).toBeTruthy();
-    expect(screen.getByText(/tenant users should not create a manual OAuth client/i)).toBeTruthy();
+    expect((await screen.findAllByText("OAuth setup incomplete")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Dynamic Client Registration and PKCE S256 must be available/i)).toBeTruthy();
     expect(screen.getByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
+    expect(screen.queryByText("Automatic OAuth account linking")).toBeNull();
+    expect(screen.queryByText("No Client ID or secret required")).toBeNull();
   });
 
-  it("shows OpenAI ready status and no-client-secret guidance when DCR is advertised", async () => {
+  it("shows MCP endpoint and capability state without marketing copy", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/mcp-settings")) return json({
@@ -93,12 +97,12 @@ describe("TenantSettingsPage", () => {
       return json([]);
     }));
     render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
-    expect(await screen.findByText("OpenAI / ChatGPT ready")).toBeTruthy();
-    expect(screen.getByText("No Client ID or secret required")).toBeTruthy();
-    expect(screen.getByText(/publishes standards-compatible OAuth discovery metadata/i)).toBeTruthy();
+    expect(await screen.findByText("OAuth ready")).toBeTruthy();
+    expect(screen.getByText("Dynamic client registration / PKCE S256")).toBeTruthy();
+    expect(screen.getByText("MCP 2026-07-28 with 2025-era compatibility")).toBeTruthy();
+    expect(screen.queryByText("Automatic OAuth account linking")).toBeNull();
+    expect(screen.queryByText("No Client ID or secret required")).toBeNull();
     expect(screen.queryByText("https://auth.example.com")).toBeNull();
     expect(screen.queryByText(/offline_access/)).toBeNull();
-    expect(screen.queryByText(/OAuth protected-resource metadata/i)).toBeNull();
   });
-
 });

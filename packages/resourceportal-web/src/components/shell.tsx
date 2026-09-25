@@ -296,7 +296,20 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
 
 export function AppShell({ user, route, tenants = [], showPlatformAdmin = false, onLogout, onTenantChange, children }: { user: User; route: Extract<AppRoute, { kind: "tenant" | "platform" }>; tenants?: TenantSummary[]; showPlatformAdmin?: boolean; onLogout: () => void; onTenantChange?: (tenantId: string) => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [releaseVersion, setReleaseVersion] = useState("");
   const items = route.kind === "tenant" ? tenantItems(route) : platformItems(route);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest("/api/health/live")
+      .then((payload) => {
+        if (!active || !payload || typeof payload !== "object") return;
+        const version = stringValue((payload as Record<string, unknown>).version);
+        if (version) setReleaseVersion(version.startsWith("v") ? version : `v${version}`);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const userName = user.displayName || user.email || "Account";
   const initials = userName.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join("") || "RP";
   const helpHref = route.kind === "tenant" ? tenantHref(route.tenantId, "help") : "/health";
@@ -335,7 +348,7 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
       <div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">{route.kind === "tenant" ? "Tenant" : "Platform"}</div>
       <nav aria-label="Workspace" className="space-y-1">{items.map(item => <NavLink key={item.href} item={item} onNavigate={() => setMobileOpen(false)} />)}</nav>
       {route.kind === "tenant" ? <div className="mt-5 border-t border-[#D7E0EC] pt-4"><div className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">Platform</div>{showPlatformAdmin ? <nav aria-label="Platform administration"><NavLink onNavigate={() => setMobileOpen(false)} item={{ label: "Platform Admin", href: platformHref("overview"), icon: <SettingsIcon />, active: false }} /></nav> : <p className="px-3 py-2 text-xs text-[#8A96A8]">Platform Admin access is not assigned.</p>}</div> : <div className="mt-5 border-t border-[#D7E0EC] pt-4"><a className="flex h-10 items-center gap-3 rounded-md px-3 text-[13px] font-medium text-[#263449] hover:bg-[#EEF3F9]" href="/tenants"><GridIcon />Tenant workspaces</a></div>}
-      <div className="mt-auto"><a href={helpHref} aria-current={route.kind === "tenant" && route.section === "help" ? "page" : undefined} className={`flex h-10 items-center gap-3 rounded-md px-3 text-[13px] font-medium transition ${route.kind === "tenant" && route.section === "help" ? "bg-[#E7F1FF] text-[#0F4F9B]" : "text-[#526070] hover:bg-[#EEF3F9]"}`}><HelpIcon />{helpLabel}</a></div>
+      <div className="mt-auto"><a href={helpHref} aria-current={route.kind === "tenant" && route.section === "help" ? "page" : undefined} className={`flex h-10 items-center gap-3 rounded-md px-3 text-[13px] font-medium transition ${route.kind === "tenant" && route.section === "help" ? "bg-[#E7F1FF] text-[#0F4F9B]" : "text-[#526070] hover:bg-[#EEF3F9]"}`}><HelpIcon />{helpLabel}</a>{releaseVersion ? <p aria-label="ResourcePortal version" className="mt-1 px-3 text-[10px] font-medium tracking-[0.01em] text-[#8A96A8]">ResourcePortal {releaseVersion}</p> : null}</div>
     </aside>
 
     <div className="min-w-0 lg:pl-[228px]">
