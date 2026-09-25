@@ -56,7 +56,6 @@ export class NetworkEgressReconcilerService {
         changed: false,
         revision: policy.revision,
         enabled: policy.enabled,
-        rules: policy.rules.length,
         digest: egressPolicyDigest(policy),
       };
     }
@@ -76,7 +75,6 @@ export class NetworkEgressReconcilerService {
       changed: true,
       revision: policy.revision,
       enabled: policy.enabled,
-      rules: policy.rules.length,
       digest: egressPolicyDigest(policy),
     };
   }

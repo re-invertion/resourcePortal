@@ -95,21 +95,30 @@ rp_ufw_has_surviving_ssh_rule() {
 }
 
 rp_remove_resourceportal_egress_firewall_rules() {
-  local binary parent child parent_child
+  local binary parent child rule
   for binary in iptables ip6tables; do
     command -v "$binary" >/dev/null 2>&1 || continue
-    for parent_child in \
-      'DOCKER-USER RP-TENANT-INTERNAL-PORTS' \
-      'DOCKER-USER RP-TENANT-EGRESS' \
-      'INPUT RP-TENANT-HOST'; do
-      read -r parent child <<<"$parent_child"
-      while "$binary" -w 5 -C "$parent" -j "$child" >/dev/null 2>&1; do
-        "$binary" -w 5 -D "$parent" -j "$child" >/dev/null 2>&1 || return 1
-      done
-      if "$binary" -w 5 -S "$child" >/dev/null 2>&1; then
-        "$binary" -w 5 -F "$child" >/dev/null 2>&1 || return 1
-        "$binary" -w 5 -X "$child" >/dev/null 2>&1 || return 1
-      fi
+    for parent in DOCKER-USER INPUT; do
+      while IFS= read -r rule; do
+        [[ "$rule" == "-A $parent "* ]] || continue
+        child="$(awk '{
+          for (i = 1; i <= NF; i++) {
+            if ($i == "-j" && i < NF) {
+              print $(i + 1)
+              exit
+            }
+          }
+        }' <<<"$rule")"
+        [[ "$child" == RP-TENANT-* ]] || continue
+
+        while "$binary" -w 5 -C "$parent" -j "$child" >/dev/null 2>&1; do
+          "$binary" -w 5 -D "$parent" -j "$child" >/dev/null 2>&1 || return 1
+        done
+        if "$binary" -w 5 -S "$child" >/dev/null 2>&1; then
+          "$binary" -w 5 -F "$child" >/dev/null 2>&1 || return 1
+          "$binary" -w 5 -X "$child" >/dev/null 2>&1 || return 1
+        fi
+      done < <("$binary" -w 5 -S "$parent" 2>/dev/null || true)
     done
   done
 }

@@ -43,11 +43,15 @@ function sourceFiles(root: string): string[] {
 describe("Prisma schema source of truth", () => {
   it("models every table created by migration history", () => {
     const models = modelNames();
+    const sql = migrationSql();
     const tables = new Set(
-      [...migrationSql().matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+"([^"]+)"/gi)].map(
+      [...sql.matchAll(/CREATE TABLE(?: IF NOT EXISTS)?\s+"([^"]+)"/gi)].map(
         (match) => match[1],
       ),
     );
+    for (const match of sql.matchAll(/DROP TABLE(?: IF EXISTS)?\s+"([^"]+)"/gi)) {
+      tables.delete(match[1]);
+    }
     expect([...tables].filter((table) => !models.has(table)).sort()).toEqual([]);
     expect(models.size).toBe(tables.size);
   });

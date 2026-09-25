@@ -115,6 +115,10 @@ const topology = {
       id: "11111111-1111-4111-8111-111111111111",
       name: "services",
       hasPendingChanges: false,
+      currentDeploymentVersion: 2,
+      appGroupNetwork: {
+        name: "rp-appgroup-11111111-1111-4111-8111-111111111111",
+      },
       singleApps: [
         {
           id: "33333333-3333-4333-8333-333333333333",
@@ -144,9 +148,10 @@ it("renders topology fallback and a concrete LAN static-route plan", async () =>
   expect(screen.getAllByText("office").length).toBeGreaterThan(0);
   expect(screen.getByText("10.240.10.0/24 via 192.168.50.2")).toBeTruthy();
   await waitFor(() =>
-    expect(screen.getByTestId("react-flow").textContent).toContain("3 nodes"),
+    expect(screen.getByTestId("react-flow").textContent).toContain("4 nodes"),
   );
-  expect(screen.getByTestId("react-flow").textContent).toContain("1 edges");
+  expect(screen.getByTestId("react-flow").textContent).toContain("2 edges");
+  expect(screen.queryByText("Interactive")).toBeNull();
 });
 
 it("turns a React Flow Application→Network connection into a durable topology Operation", async () => {
@@ -188,7 +193,7 @@ it("turns a React Flow Application→Network connection into a durable topology 
 
   render(<TenantNetworkingPage tenantId="tenant-1" />);
   await waitFor(() =>
-    expect(screen.getByTestId("react-flow").textContent).toContain("3 nodes"),
+    expect(screen.getByTestId("react-flow").textContent).toContain("4 nodes"),
   );
 
   fireEvent.click(screen.getByRole("button", { name: "mock-connect-app" }));

@@ -9,6 +9,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
+import { appGroupNetworkName } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import type { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
@@ -230,6 +231,7 @@ export class NetworkingService {
           id: true,
           name: true,
           hasPendingChanges: true,
+          currentDeploymentVersion: true,
           singleApps: {
             where: { pendingDeletion: false },
             orderBy: { name: "asc" },
@@ -255,7 +257,13 @@ export class NetworkingService {
     return {
       networks,
       gates: gates.map((gate) => this.publicGate(gate)),
-      appGroups,
+      appGroups: appGroups.map((appGroup) => ({
+        ...appGroup,
+        appGroupNetwork:
+          appGroup.currentDeploymentVersion === null
+            ? null
+            : { name: appGroupNetworkName(appGroup.id) },
+      })),
     };
   }
 

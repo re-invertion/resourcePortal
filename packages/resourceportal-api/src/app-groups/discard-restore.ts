@@ -30,13 +30,6 @@ type DiscardSnapshot = {
       protocolMode: string;
       domains?: Array<{ id: string }>;
     }>;
-    internalPortExposures?: Array<{
-      id: string;
-      name: string;
-      containerPort: number;
-      publishedPort: number;
-      protocol: string;
-    }>;
   }>;
 };
 
@@ -78,15 +71,6 @@ export function buildDiscardRestorePlan(snapshot: DiscardSnapshot) {
   const domainAssignments: Array<{
     domainId: string;
     httpEndpointId: string;
-  }> = [];
-  const internalPortExposures: Array<{
-    id: string;
-    appGroupId?: string;
-    singleAppId: string;
-    name: string;
-    containerPort: number;
-    publishedPort: number;
-    protocol: string;
   }> = [];
 
   for (const singleApp of snapshot.singleApps) {
@@ -146,16 +130,6 @@ export function buildDiscardRestorePlan(snapshot: DiscardSnapshot) {
       }
     }
 
-    for (const exposure of singleApp.internalPortExposures ?? []) {
-      internalPortExposures.push({
-        id: exposure.id,
-        singleAppId: singleApp.id,
-        name: exposure.name,
-        containerPort: exposure.containerPort,
-        publishedPort: exposure.publishedPort,
-        protocol: exposure.protocol,
-      });
-    }
   }
 
   return {
@@ -166,6 +140,5 @@ export function buildDiscardRestorePlan(snapshot: DiscardSnapshot) {
     volumeAttachments,
     httpEndpoints,
     domainAssignments,
-    internalPortExposures,
   };
 }

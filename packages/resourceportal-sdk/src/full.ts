@@ -49,46 +49,12 @@ export type PlatformDnsUpdate = {
   apiToken?: string;
 };
 
-export type PlatformNetworkEgressRule = {
-  id: string;
-  appGroupId: string;
-  appGroupName: string;
-  tenantId: string;
-  tenantName: string;
-  destinationCidr: string;
-  protocol: "any" | "tcp" | "udp";
-  port: number | null;
-  description: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export type PlatformNetworkEgressState = {
   enabled: boolean;
   revision: number;
   protectedCidrs: string[];
-  internalNetworkCidrs: string[];
   updatedAt: string;
   enforcement: unknown;
-  appGroups: Array<{
-    id: string;
-    name: string;
-    tenantId: string;
-    tenantName: string;
-    networkPrivileged: boolean;
-    hasPendingChanges: boolean;
-    internalPortExposureCount: number;
-    deployedInternalPortExposureCount: number;
-  }>;
-  rules: PlatformNetworkEgressRule[];
-};
-
-export type CreatePlatformNetworkEgressRule = {
-  appGroupId: string;
-  destinationCidr: string;
-  protocol?: "any" | "tcp" | "udp";
-  port?: number;
-  description?: string;
 };
 
 export class ResourcePortalApiError extends BaseResourcePortalApiError {
@@ -162,25 +128,6 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
         "/platform/network-egress",
         { method: "PATCH", body: { enabled } },
       ),
-    createRule: (body: CreatePlatformNetworkEgressRule) =>
-      this.request<PlatformNetworkEgressRule>("/platform/network-egress/rules", {
-        method: "POST",
-        body,
-      }),
-    deleteRule: (ruleId: string) =>
-      this.request(`/platform/network-egress/rules/${encode(ruleId)}`, {
-        method: "DELETE",
-      }),
-    setAppGroupPrivilege: (appGroupId: string, privileged: boolean) =>
-      this.request<{
-        id: string;
-        networkPrivileged: boolean;
-        changed: boolean;
-        deploymentRequired?: boolean;
-      }>(`/platform/network-egress/app-groups/${encode(appGroupId)}`, {
-        method: "PATCH",
-        body: { privileged },
-      }),
   };
 
   readonly platformInfrastructure = {

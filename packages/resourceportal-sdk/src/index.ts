@@ -370,44 +370,6 @@ export class ResourcePortalClient {
   readonly secrets = resourceCollection(this, "secrets");
   readonly endpoints = nestedCollection(this, "http-endpoints");
 
-  readonly internalPortExposures = {
-    list: (tenantId: string, appGroupId: string) =>
-      this.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/internal-port-exposures`,
-      ),
-    create: (
-      tenantId: string,
-      appGroupId: string,
-      singleAppId: string,
-      body: unknown,
-    ) =>
-      this.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/internal-port-exposures`,
-        { method: "POST", body },
-      ),
-    update: (
-      tenantId: string,
-      appGroupId: string,
-      singleAppId: string,
-      exposureId: string,
-      body: unknown,
-    ) =>
-      this.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/internal-port-exposures/${encode(exposureId)}`,
-        { method: "PATCH", body },
-      ),
-    delete: (
-      tenantId: string,
-      appGroupId: string,
-      singleAppId: string,
-      exposureId: string,
-    ) =>
-      this.request(
-        `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps/${encode(singleAppId)}/internal-port-exposures/${encode(exposureId)}`,
-        { method: "DELETE" },
-      ),
-  };
-
   readonly networking = {
     topology: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/networking/topology`),

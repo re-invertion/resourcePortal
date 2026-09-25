@@ -12,7 +12,6 @@ import {
   DeploymentStatus,
   Domain,
   HttpEndpoint,
-  InternalPortExposure,
   Network,
   NetworkAttachment,
   Prisma,
@@ -42,7 +41,6 @@ import { AttachVolumeDto } from "./dto/attach-volume.dto";
 import { CreateAppGroupDto } from "./dto/create-app-group.dto";
 import { CreateConfigDto } from "./dto/create-config.dto";
 import { CreateHttpEndpointDto } from "./dto/create-http-endpoint.dto";
-import { CreateInternalPortExposureDto } from "./dto/create-internal-port-exposure.dto";
 import { CreateSecretDto } from "./dto/create-secret.dto";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { CreateVariableDto } from "./dto/create-variable.dto";
@@ -50,7 +48,6 @@ import { DeployAppGroupDto } from "./dto/deploy-app-group.dto";
 import { RollbackDeploymentDto } from "./dto/rollback-deployment.dto";
 import { UpdateConfigDto } from "./dto/update-config.dto";
 import { UpdateHttpEndpointDto } from "./dto/update-http-endpoint.dto";
-import { UpdateInternalPortExposureDto } from "./dto/update-internal-port-exposure.dto";
 import {
   RUNTIME_CONFIG_NAME_PATTERN,
   UpdateRuntimeConfigDto,
@@ -59,7 +56,6 @@ import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
 import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
-import { stackConfigHasInternalPortExposures } from "./internal-port-exposure-snapshot";
 import {
   mapAppGroup,
   mapAppGroupDeployment,
@@ -105,7 +101,6 @@ type DeployableDraft = AppGroup & {
     createdAt: Date;
     updatedAt: Date;
     httpEndpoints: Array<HttpEndpoint & { domains: Domain[] }>;
-    internalPortExposures: InternalPortExposure[];
     networkAttachments: Array<NetworkAttachment & { network: Network }>;
     volumeAttachments: Array<VolumeAttachment & { volume: Volume }>;
     variableAttachments: Array<VariableAttachment & { variable: Variable }>;
@@ -610,18 +605,9 @@ export class AppGroupsService {
         select: {
           name: true,
           runtimeDraftRevision: true,
-          networkPrivileged: true,
         },
       });
 
-      if (
-        !appGroup.networkPrivileged &&
-        stackConfigHasInternalPortExposures(targetDeployment.stackConfig)
-      ) {
-        throw new ConflictException(
-          "Rollback target contains Internal Port Exposures and requires Platform Admin privileged networking",
-        );
-      }
       const tenant = await tx.tenant.findUniqueOrThrow({
         where: { id: tenantId },
         select: { name: true },
@@ -1726,82 +1712,6 @@ export class AppGroupsService {
     return { deleted: true };
   }
 
-  async listInternalPortExposures(tenantId: string, appGroupId: string) {
-    await this.ensureAppGroupBelongsToTenant(tenantId, appGroupId);
-    const exposures = await this.prisma.internalPortExposure.findMany({
-      where: { appGroupId },
-      include: { singleApp: { select: { id: true, name: true } } },
-      orderBy: [{ publishedPort: "asc" }, { protocol: "asc" }, { name: "asc" }],
-    });
-    return exposures.map((exposure) => ({
-      ...exposure,
-      singleAppName: exposure.singleApp.name,
-      singleApp: undefined,
-    }));
-  }
-
-  async createInternalPortExposure(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    dto: CreateInternalPortExposureDto,
-    actor: AuthenticatedUser,
-  ) {
-    void dto;
-    void actor;
-    await this.ensureSingleAppBelongsToAppGroup(
-      tenantId,
-      appGroupId,
-      singleAppId,
-    );
-    throw new ConflictException(
-      "Internal Port Exposures are deprecated and read-only. Use tenant Networks and ResourcePortalGate instead.",
-    );
-  }
-
-  async updateInternalPortExposure(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    exposureId: string,
-    dto: UpdateInternalPortExposureDto,
-    actor: AuthenticatedUser,
-  ) {
-    void dto;
-    void actor;
-    await this.ensureSingleAppBelongsToAppGroup(
-      tenantId,
-      appGroupId,
-      singleAppId,
-    );
-    await this.findInternalPortExposureOrThrow(
-      appGroupId,
-      singleAppId,
-      exposureId,
-    );
-    throw new ConflictException(
-      "Internal Port Exposures are deprecated and read-only. Delete the legacy exposure and use tenant Networks/ResourcePortalGate instead.",
-    );
-  }
-
-  async deleteInternalPortExposure(
-    tenantId: string,
-    appGroupId: string,
-    singleAppId: string,
-    exposureId: string,
-    actor: AuthenticatedUser,
-  ) {
-    await this.ensureSingleAppBelongsToAppGroup(tenantId, appGroupId, singleAppId);
-    await this.findInternalPortExposureOrThrow(
-      appGroupId, singleAppId, exposureId,
-    );
-    await this.prisma.$transaction(async (tx) => {
-      await tx.internalPortExposure.delete({ where: { id: exposureId } });
-      await this.markAppGroupDraftChanged(tx, appGroupId, actor.id);
-    });
-    return { deleted: true };
-  }
-
   async updateSingleAppRuntimeConfig(
     tenantId: string,
     appGroupId: string,
@@ -1976,20 +1886,6 @@ export class AppGroupsService {
 
 
 
-
-  private async findInternalPortExposureOrThrow(
-    appGroupId: string,
-    singleAppId: string,
-    exposureId: string,
-  ) {
-    const exposure = await this.prisma.internalPortExposure.findFirst({
-      where: { id: exposureId, appGroupId, singleAppId },
-    });
-    if (!exposure) {
-      throw new NotFoundException("Internal port exposure not found");
-    }
-    return exposure;
-  }
 
   private async ensureAppGroupBelongsToTenant(
     tenantId: string,
@@ -2390,9 +2286,6 @@ export class AppGroupsService {
               orderBy: { name: "asc" },
               include: { domains: { orderBy: { hostname: "asc" } } },
             },
-            internalPortExposures: {
-              orderBy: [{ publishedPort: "asc" }, { protocol: "asc" }],
-            },
             networkAttachments: {
               orderBy: { createdAt: "asc" },
               include: { network: true },
@@ -2469,25 +2362,6 @@ export class AppGroupsService {
       throw new ConflictException("AppGroup has invalid HTTP endpoints");
     }
 
-    const internalPortExposures = activeSingleApps.flatMap(
-      (singleApp) => singleApp.internalPortExposures,
-    );
-    if (internalPortExposures.length > 0 && !draft.networkPrivileged) {
-      throw new ConflictException(
-        "Internal Port Exposures require Platform Admin privileged networking",
-      );
-    }
-    const invalidInternalPorts = internalPortExposures.filter(
-      (exposure) =>
-        exposure.containerPort < 1 ||
-        exposure.containerPort > 65535 ||
-        exposure.publishedPort < 1 ||
-        exposure.publishedPort > 65535 ||
-        !["tcp", "udp"].includes(exposure.protocol),
-    );
-    if (invalidInternalPorts.length > 0) {
-      throw new ConflictException("AppGroup has invalid Internal Port Exposures");
-    }
   }
 
   private buildStackConfigSnapshot(draft: DeployableDraft, note?: string) {
@@ -2566,13 +2440,6 @@ export class AppGroupsService {
               dnsStatus: domain.dnsStatus,
               certificateStatus: domain.certificateStatus,
             })),
-          })),
-          internalPortExposures: singleApp.internalPortExposures.map((exposure) => ({
-            id: exposure.id,
-            name: exposure.name,
-            containerPort: exposure.containerPort,
-            publishedPort: exposure.publishedPort,
-            protocol: exposure.protocol,
           })),
           networkAttachments: singleApp.networkAttachments.map((attachment) => ({
             id: attachment.id,

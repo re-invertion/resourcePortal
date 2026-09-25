@@ -112,20 +112,28 @@ rm -f "$ufw_log"
 
 egress_fw_log="$(mktemp /tmp/rp-egress-fw-cleanup.XXXXXX)"
 : >"$egress_fw_log"
-rp_test_chain_internal=true
 rp_test_chain_forward=true
+rp_test_chain_stale=true
 rp_test_chain_host=true
 iptables() {
   printf 'iptables %s\n' "$*" >>"$egress_fw_log"
   case "$*" in
-    '-w 5 -C DOCKER-USER -j RP-TENANT-INTERNAL-PORTS') [[ "$rp_test_chain_internal" == true ]] ;;
-    '-w 5 -D DOCKER-USER -j RP-TENANT-INTERNAL-PORTS') rp_test_chain_internal=false; return 0 ;;
+    '-w 5 -S DOCKER-USER')
+      printf '%s\n' '-A DOCKER-USER -j RP-TENANT-EGRESS' '-A DOCKER-USER -j RP-TENANT-STALE'
+      return 0
+      ;;
+    '-w 5 -S INPUT')
+      printf '%s\n' '-A INPUT -j RP-TENANT-HOST'
+      return 0
+      ;;
     '-w 5 -C DOCKER-USER -j RP-TENANT-EGRESS') [[ "$rp_test_chain_forward" == true ]] ;;
     '-w 5 -D DOCKER-USER -j RP-TENANT-EGRESS') rp_test_chain_forward=false; return 0 ;;
+    '-w 5 -C DOCKER-USER -j RP-TENANT-STALE') [[ "$rp_test_chain_stale" == true ]] ;;
+    '-w 5 -D DOCKER-USER -j RP-TENANT-STALE') rp_test_chain_stale=false; return 0 ;;
     '-w 5 -C INPUT -j RP-TENANT-HOST') [[ "$rp_test_chain_host" == true ]] ;;
     '-w 5 -D INPUT -j RP-TENANT-HOST') rp_test_chain_host=false; return 0 ;;
-    '-w 5 -S RP-TENANT-INTERNAL-PORTS'|'-w 5 -S RP-TENANT-EGRESS'|'-w 5 -S RP-TENANT-HOST') return 0 ;;
-    '-w 5 -F RP-TENANT-INTERNAL-PORTS'|'-w 5 -X RP-TENANT-INTERNAL-PORTS'|'-w 5 -F RP-TENANT-EGRESS'|'-w 5 -F RP-TENANT-HOST'|'-w 5 -X RP-TENANT-EGRESS'|'-w 5 -X RP-TENANT-HOST') return 0 ;;
+    '-w 5 -S RP-TENANT-EGRESS'|'-w 5 -S RP-TENANT-STALE'|'-w 5 -S RP-TENANT-HOST') return 0 ;;
+    '-w 5 -F RP-TENANT-EGRESS'|'-w 5 -X RP-TENANT-EGRESS'|'-w 5 -F RP-TENANT-STALE'|'-w 5 -X RP-TENANT-STALE'|'-w 5 -F RP-TENANT-HOST'|'-w 5 -X RP-TENANT-HOST') return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -133,12 +141,11 @@ ip6tables() { return 1; }
 rp_remove_resourceportal_egress_firewall_rules
 unset -f iptables ip6tables
 egress_fw_cleanup="$(cat "$egress_fw_log")"
-assert_contains "$egress_fw_cleanup" '-D DOCKER-USER -j RP-TENANT-INTERNAL-PORTS' 'egress cleanup removes ResourcePortal internal-port jump'
-assert_contains "$egress_fw_cleanup" '-F RP-TENANT-INTERNAL-PORTS' 'egress cleanup flushes ResourcePortal internal-port chain'
-assert_contains "$egress_fw_cleanup" '-X RP-TENANT-INTERNAL-PORTS' 'egress cleanup deletes ResourcePortal internal-port chain'
 assert_contains "$egress_fw_cleanup" '-D DOCKER-USER -j RP-TENANT-EGRESS' 'egress cleanup removes ResourcePortal forwarding jump'
 assert_contains "$egress_fw_cleanup" '-F RP-TENANT-EGRESS' 'egress cleanup flushes ResourcePortal forwarding chain'
 assert_contains "$egress_fw_cleanup" '-X RP-TENANT-EGRESS' 'egress cleanup deletes ResourcePortal forwarding chain'
+assert_contains "$egress_fw_cleanup" '-D DOCKER-USER -j RP-TENANT-STALE' 'egress cleanup removes stale ResourcePortal-owned jump generically'
+assert_contains "$egress_fw_cleanup" '-X RP-TENANT-STALE' 'egress cleanup deletes stale ResourcePortal-owned chain generically'
 assert_contains "$egress_fw_cleanup" '-D INPUT -j RP-TENANT-HOST' 'egress cleanup removes ResourcePortal host-input jump'
 assert_contains "$egress_fw_cleanup" '-X RP-TENANT-HOST' 'egress cleanup deletes ResourcePortal host-input chain'
 assert_not_contains "$egress_fw_cleanup" '-F DOCKER-USER' 'egress cleanup never flushes Docker-owned forwarding chain'

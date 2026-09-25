@@ -25,7 +25,6 @@ import { AttachVolumeDto } from "./dto/attach-volume.dto";
 import { CreateAppGroupDto } from "./dto/create-app-group.dto";
 import { CreateConfigDto } from "./dto/create-config.dto";
 import { CreateHttpEndpointDto } from "./dto/create-http-endpoint.dto";
-import { CreateInternalPortExposureDto } from "./dto/create-internal-port-exposure.dto";
 import { CreateSecretDto } from "./dto/create-secret.dto";
 import { CreateSingleAppDto } from "./dto/create-single-app.dto";
 import { CreateVariableDto } from "./dto/create-variable.dto";
@@ -33,7 +32,6 @@ import { DeployAppGroupDto } from "./dto/deploy-app-group.dto";
 import { RollbackDeploymentDto } from "./dto/rollback-deployment.dto";
 import { UpdateConfigDto } from "./dto/update-config.dto";
 import { UpdateHttpEndpointDto } from "./dto/update-http-endpoint.dto";
-import { UpdateInternalPortExposureDto } from "./dto/update-internal-port-exposure.dto";
 import { UpdateRuntimeConfigDto } from "./dto/update-runtime-config.dto";
 import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
@@ -590,58 +588,6 @@ export class AppGroupsController {
       singleAppId,
       httpEndpointId,
       user,
-    );
-  }
-
-  @RequirePermissions("endpoint.read")
-  @Get(":appGroupId/internal-port-exposures")
-  listInternalPortExposures(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
-  ) {
-    return this.appGroupsService.listInternalPortExposures(tenantId, appGroupId);
-  }
-
-  @RequirePermissions("endpoint.create")
-  @Post(":appGroupId/single-apps/:singleAppId/internal-port-exposures")
-  createInternalPortExposure(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
-    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
-    @Body() dto: CreateInternalPortExposureDto,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.appGroupsService.createInternalPortExposure(
-      tenantId, appGroupId, singleAppId, dto, user,
-    );
-  }
-
-  @RequirePermissions("endpoint.update")
-  @Patch(":appGroupId/single-apps/:singleAppId/internal-port-exposures/:exposureId")
-  updateInternalPortExposure(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
-    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
-    @Param("exposureId", ParseUUIDPipe) exposureId: string,
-    @Body() dto: UpdateInternalPortExposureDto,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.appGroupsService.updateInternalPortExposure(
-      tenantId, appGroupId, singleAppId, exposureId, dto, user,
-    );
-  }
-
-  @RequirePermissions("endpoint.delete")
-  @Delete(":appGroupId/single-apps/:singleAppId/internal-port-exposures/:exposureId")
-  deleteInternalPortExposure(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
-    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
-    @Param("exposureId", ParseUUIDPipe) exposureId: string,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.appGroupsService.deleteInternalPortExposure(
-      tenantId, appGroupId, singleAppId, exposureId, user,
     );
   }
 

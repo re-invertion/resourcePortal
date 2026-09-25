@@ -55,6 +55,10 @@ type AppGroup = {
   id: string;
   name: string;
   hasPendingChanges: boolean;
+  currentDeploymentVersion?: number | null;
+  appGroupNetwork?: {
+    name: string;
+  } | null;
   singleApps: Application[];
 };
 
@@ -160,6 +164,14 @@ type TopologyNodeData =
       pending: boolean;
     }
   | {
+      kind: "app-group-network";
+      appGroupId: string;
+      label: string;
+      swarmNetworkName: string;
+      attachmentCount: number;
+      pending: boolean;
+    }
+  | {
       kind: "network";
       networkId: string;
       label: string;
@@ -179,6 +191,10 @@ type TopologyNodeData =
     };
 
 type TopologyEdgeData =
+  | {
+      kind: "app-group-network";
+      appGroupId: string;
+    }
   | {
       kind: "application-network";
       networkId: string;
@@ -220,6 +236,31 @@ function ApplicationNode(props: NodeProps) {
         position={Position.Right}
         className="!h-3 !w-3 !border-2 !border-white !bg-[#1769E0]"
       />
+    </div>
+  );
+}
+
+function AppGroupNetworkNode(props: NodeProps) {
+  const data = nodeData(props);
+  if (data.kind !== "app-group-network") return null;
+  return (
+    <div className="min-w-[250px] rounded-xl border border-[#C9D6E7] bg-[#F8FAFD] px-4 py-3 shadow-[0_4px_16px_rgba(36,74,120,.06)]">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#EEF2F7] text-[#526070]">
+          <NetworkIcon size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <strong className="block truncate text-sm text-[#172033]">{data.label}</strong>
+          <span className="mt-0.5 block text-[11px] font-medium uppercase tracking-[.03em] text-[#718096]">
+            App Group network
+          </span>
+          <code className="mt-1 block truncate text-[11px] text-[#526070]">{data.swarmNetworkName}</code>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-[#718096]">{data.attachmentCount} apps</span>
+            {data.pending ? <StatusBadge tone="warning">Pending deploy</StatusBadge> : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -289,6 +330,7 @@ function GateNode(props: NodeProps) {
 
 const nodeTypes = {
   application: ApplicationNode,
+  appGroupNetwork: AppGroupNetworkNode,
   network: NetworkNode,
   gate: GateNode,
 };
@@ -316,11 +358,30 @@ function topologyNodes(data: Topology): Node[] {
     }
   }
 
+  let appGroupNetworkIndex = 0;
+  for (const group of data.appGroups) {
+    if (!group.appGroupNetwork) continue;
+    nodes.push({
+      id: `app-group-network:${group.id}`,
+      type: "appGroupNetwork",
+      position: { x: 390, y: 30 + appGroupNetworkIndex * 155 },
+      data: {
+        kind: "app-group-network",
+        appGroupId: group.id,
+        label: group.name,
+        swarmNetworkName: group.appGroupNetwork.name,
+        attachmentCount: group.singleApps.length,
+        pending: group.hasPendingChanges,
+      } satisfies TopologyNodeData,
+    });
+    appGroupNetworkIndex += 1;
+  }
+
   data.networks.forEach((network, index) => {
     nodes.push({
       id: `network:${network.id}`,
       type: "network",
-      position: { x: 410, y: 30 + index * 155 },
+      position: { x: 760, y: 30 + index * 155 },
       data: {
         kind: "network",
         networkId: network.id,
@@ -337,7 +398,7 @@ function topologyNodes(data: Topology): Node[] {
     nodes.push({
       id: `gate:${gate.id}`,
       type: "gate",
-      position: { x: 820, y: 30 + index * 155 },
+      position: { x: 1150, y: 30 + index * 155 },
       data: {
         kind: "gate",
         gateId: gate.id,
@@ -354,6 +415,23 @@ function topologyNodes(data: Topology): Node[] {
 
 function topologyEdges(data: Topology): Edge[] {
   const edges: Edge[] = [];
+  for (const group of data.appGroups) {
+    if (!group.appGroupNetwork) continue;
+    for (const app of group.singleApps) {
+      edges.push({
+        id: `app-group-edge:${group.id}:${app.id}`,
+        source: `app:${app.id}`,
+        target: `app-group-network:${group.id}`,
+        data: {
+          kind: "app-group-network",
+          appGroupId: group.id,
+        } satisfies TopologyEdgeData,
+        selectable: false,
+        animated: false,
+        style: { strokeWidth: 2 },
+      });
+    }
+  }
   for (const network of data.networks) {
     for (const attachment of network.attachments) {
       edges.push({
@@ -518,6 +596,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     try {
       let operation: Operation;
       const headers = { "idempotency-key": crypto.randomUUID() };
+      if (data.kind === "app-group-network") {
+        return;
+      }
       if (data.kind === "application-network") {
         operation = await apiRequest<Operation>(
           `${root}/networks/${encodeURIComponent(data.networkId)}/attachments/${encodeURIComponent(data.attachmentId)}?revision=${data.revision}`,
@@ -806,10 +887,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           <div>
             <h2 className="font-semibold text-[#172033]">Topology</h2>
             <p className="mt-0.5 text-xs text-[#718096]">
-              Applications → tenant Networks ← ResourcePortalGate
+              Applications → App Group networks · Applications → tenant Networks ← ResourcePortalGate
             </p>
           </div>
-          {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : <StatusBadge tone="success">Interactive</StatusBadge>}
+          {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : null}
         </div>
         <div className="h-[620px] min-h-[420px] bg-[#F8FAFD]">
           {(topology.data?.networks.length ?? 0) === 0 &&
@@ -830,7 +911,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={(connection) => void submitConnection(connection)}
-              onEdgeClick={(_, edge) => setSelectedEdge(edge)}
+              onEdgeClick={(_, edge) => {
+                const data = edge.data as TopologyEdgeData | undefined;
+                if (data?.kind !== "app-group-network") setSelectedEdge(edge);
+              }}
               onPaneClick={() => setSelectedEdge(undefined)}
               edgesFocusable
               nodesConnectable={!working}

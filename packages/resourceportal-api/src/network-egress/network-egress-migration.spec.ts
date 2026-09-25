@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const migration = readFileSync(
+const baseMigration = readFileSync(
   resolve(
     __dirname,
     "../../prisma/migrations/20260920170000_v022_network_egress_policy/migration.sql",
@@ -10,48 +10,39 @@ const migration = readFileSync(
   "utf8",
 );
 
-
-const privilegedMigration = readFileSync(
+const cleanupMigration = readFileSync(
   resolve(
     __dirname,
-    "../../prisma/migrations/20260920184500_v022_privileged_networking/migration.sql",
+    "../../prisma/migrations/20260925165500_remove_legacy_privileged_networking/migration.sql",
   ),
   "utf8",
 );
 
-describe("v0.2.2 network egress migration", () => {
-  it("is additive and enables private-network protection by default", () => {
-    expect(migration).toContain('CREATE TABLE "PlatformEgressPolicy"');
-    expect(migration).toContain('CREATE TABLE "PlatformEgressAllowRule"');
-    expect(migration).toContain(
+describe("network egress migrations", () => {
+  it("keeps the global private-network protection policy enabled by default", () => {
+    expect(baseMigration).toContain('CREATE TABLE "PlatformEgressPolicy"');
+    expect(baseMigration).toContain(
       "'00000000-0000-4000-8000-000000000022', true, 1",
     );
-    expect(migration).toContain(
-      'FOREIGN KEY ("appGroupId") REFERENCES "AppGroup"("id")',
-    );
-    expect(migration).not.toMatch(/\bDROP\s+(TABLE|COLUMN|TYPE|INDEX)\b/i);
-    expect(migration).not.toMatch(/\bTRUNCATE\b/i);
-    expect(migration).not.toMatch(/\bDELETE\s+FROM\b/i);
-    expect(migration).not.toMatch(/ALTER TABLE "AppGroup" .*DROP/i);
   });
 
-  it("adds privileged networking and internal port exposure without destructive upgrade steps", () => {
-    expect(privilegedMigration).toContain(
-      'ADD COLUMN "networkPrivileged" BOOLEAN NOT NULL DEFAULT false',
+  it("refuses destructive cleanup while deprecated networking state still exists", () => {
+    expect(cleanupMigration).toContain(
+      'IF EXISTS (SELECT 1 FROM "AppGroup" WHERE "networkPrivileged" = true)',
     );
-    expect(privilegedMigration).toContain('CREATE TABLE "InternalPortExposure"');
-    expect(privilegedMigration).toContain(
-      '"InternalPortExposure_protocol_publishedPort_key"',
+    expect(cleanupMigration).toContain(
+      'IF EXISTS (SELECT 1 FROM "InternalPortExposure" LIMIT 1)',
     );
-    expect(privilegedMigration).toContain(
-      'FOREIGN KEY ("appGroupId") REFERENCES "AppGroup"("id")',
+    expect(cleanupMigration).toContain(
+      'IF EXISTS (SELECT 1 FROM "PlatformEgressAllowRule" LIMIT 1)',
     );
-    expect(privilegedMigration).toContain(
-      'FOREIGN KEY ("singleAppId") REFERENCES "SingleApp"("id")',
-    );
-    expect(privilegedMigration).not.toMatch(/\bDROP\s+(TABLE|COLUMN|TYPE|INDEX)\b/i);
-    expect(privilegedMigration).not.toMatch(/\bTRUNCATE\b/i);
-    expect(privilegedMigration).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
+  it("removes the deprecated schema after the safety checks", () => {
+    expect(cleanupMigration).toContain('DROP TABLE "InternalPortExposure"');
+    expect(cleanupMigration).toContain('DROP TABLE "PlatformEgressAllowRule"');
+    expect(cleanupMigration).toContain(
+      'ALTER TABLE "AppGroup" DROP COLUMN "networkPrivileged"',
+    );
+  });
 });

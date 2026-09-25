@@ -76,13 +76,6 @@ type RestorableStackConfigSnapshot = {
       protocolMode: string;
       domains?: Array<{ id: string }>;
     }>;
-    internalPortExposures?: Array<{
-      id: string;
-      name: string;
-      containerPort: number;
-      publishedPort: number;
-      protocol: string;
-    }>;
     volumes?: Array<{
       id: string;
       volumeId: string;
@@ -244,16 +237,12 @@ export class Stage3AppGroupsService extends AppGroupsService {
         tx.secretAttachment.deleteMany({
           where: { singleApp: { appGroupId } },
         }),
-        tx.internalPortExposure.deleteMany({
-          where: { appGroupId },
-        }),
       ]);
 
       await this.restoreVariables(tx, appGroupId, actor, restorePlan);
       await this.restoreConfigs(tx, appGroupId, actor, restorePlan);
       await this.restoreVolumes(tx, tenantId, actor, restorePlan);
       await this.restoreHttpEndpoints(tx, tenantId, appGroupId, restorePlan);
-      await this.restoreInternalPortExposures(tx, appGroupId, actor, restorePlan);
       await this.restoreSecretAttachments(tx, actor, deployedSnapshot);
 
       const secretVersionDrift = await this.hasStage3SecretVersionDrift(
@@ -536,23 +525,6 @@ export class Stage3AppGroupsService extends AppGroupsService {
         data: { httpEndpointId: assignment.httpEndpointId },
       });
     }
-  }
-
-  private async restoreInternalPortExposures(
-    tx: Prisma.TransactionClient,
-    appGroupId: string,
-    actor: AuthenticatedUser,
-    restorePlan: ReturnType<typeof buildDiscardRestorePlan>,
-  ) {
-    if (restorePlan.internalPortExposures.length === 0) return;
-    await tx.internalPortExposure.createMany({
-      data: restorePlan.internalPortExposures.map((exposure) => ({
-        ...exposure,
-        appGroupId,
-        createdBy: actor.id,
-        updatedBy: actor.id,
-      })),
-    });
   }
 
   private async restoreSecretAttachments(

@@ -1,311 +1,116 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { ConflictException } from "@nestjs/common";
-import type { ConfigService } from "@nestjs/config";
 import { describe, expect, it, vi } from "vitest";
-import type { AuthenticatedUser } from "../auth/types";
 import type { PrismaService } from "../prisma/prisma.service";
+import type { AuthenticatedUser } from "../auth/types";
 import { NetworkEgressService } from "./network-egress.service";
-import { PLATFORM_EGRESS_POLICY_ID } from "./network-egress.constants";
+import {
+  DEFAULT_BLOCKED_IPV4_CIDRS,
+  DEFAULT_BLOCKED_IPV6_CIDRS,
+  PLATFORM_EGRESS_POLICY_ID,
+} from "./network-egress.constants";
 
 const actor = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   email: "admin@example.com",
   displayName: "Admin",
   status: "Active",
-} as AuthenticatedUser;
+} as const satisfies AuthenticatedUser;
 
 function fixture() {
-  let policy = {
-    id: PLATFORM_EGRESS_POLICY_ID,
-    enabled: true,
-    revision: 1,
-    updatedBy: null as string | null,
-    createdAt: new Date("2026-09-20T16:00:00Z"),
-    updatedAt: new Date("2026-09-20T16:00:00Z"),
-  };
-  const rules: Array<{
-    id: string;
-    appGroupId: string;
-    destinationCidr: string;
-    protocol: string;
-    port: number;
-    description: string | null;
-    createdBy: string;
-    updatedBy: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }> = [];
-  const policyUpsert = vi.fn(
-    ({ create, update }: { create: Record<string, unknown>; update: Record<string, unknown> }) => {
-      if (update.revision && typeof update.revision === "object") {
-        policy = {
-          ...policy,
-          enabled:
-            typeof update.enabled === "boolean" ? update.enabled : policy.enabled,
-          revision: policy.revision + 1,
-          updatedBy:
-            typeof update.updatedBy === "string" ? update.updatedBy : policy.updatedBy,
-          updatedAt: new Date(),
-        };
-      } else if (typeof update.enabled === "boolean") {
-        policy = { ...policy, enabled: update.enabled, updatedAt: new Date() };
-      } else if (policy.id !== PLATFORM_EGRESS_POLICY_ID) {
-        policy = create as typeof policy;
-      }
-      return Promise.resolve(policy);
-    },
-  );
-  const ruleCreate = vi.fn(({ data }: { data: Record<string, unknown> }) => {
-    const rule = {
-      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      appGroupId: String(data.appGroupId),
-      destinationCidr: String(data.destinationCidr),
-      protocol: String(data.protocol),
-      port: Number(data.port),
-      description:
-        typeof data.description === "string" ? data.description : null,
-      createdBy: String(data.createdBy),
-      updatedBy: String(data.updatedBy),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    rules.push(rule);
-    return Promise.resolve(rule);
-  });
-  const appGroupUpdate = vi.fn(
-    ({ data }: { data: { networkPrivileged?: boolean } }) =>
-      Promise.resolve({
-        id: "11111111-1111-4111-8111-111111111111",
-        name: "penpot",
-        networkPrivileged: data.networkPrivileged ?? false,
-      }),
-  );
   const tx = {
-    platformEgressPolicy: { upsert: policyUpsert },
-    platformEgressAllowRule: {
-      create: ruleCreate,
-      delete: vi.fn().mockResolvedValue({}),
-    },
-    appGroup: { update: appGroupUpdate },
-    auditLogEntry: {
-      create: vi.fn((args: { data: Record<string, unknown> }) => {
-        void args;
-        return Promise.resolve({});
+    platformEgressPolicy: {
+      upsert: vi.fn().mockResolvedValue({
+        id: PLATFORM_EGRESS_POLICY_ID,
+        enabled: false,
+        revision: 2,
+        updatedAt: new Date("2026-09-25T12:00:00.000Z"),
       }),
+    },
+    auditLogEntry: {
+      create: vi.fn().mockResolvedValue({}),
     },
   };
   const prisma = {
     platformEgressPolicy: {
-      upsert: vi.fn(() => Promise.resolve(policy)),
-    },
-    platformEgressAllowRule: {
-      findMany: vi.fn(() => Promise.resolve([...rules])),
-      findUnique: vi.fn().mockResolvedValue(null),
-    },
-    appGroup: {
-      findUnique: vi.fn().mockResolvedValue({
-        id: "11111111-1111-4111-8111-111111111111",
-        name: "penpot",
-        networkPrivileged: false,
-        hasPendingChanges: false,
-        currentDeploymentVersion: null,
-        _count: { internalPortExposures: 0 },
-        tenant: {
-          id: "22222222-2222-4222-8222-222222222222",
-          name: "Design",
-        },
+      upsert: vi.fn().mockResolvedValue({
+        id: PLATFORM_EGRESS_POLICY_ID,
+        enabled: true,
+        revision: 3,
+        updatedAt: new Date("2026-09-25T12:00:00.000Z"),
       }),
-      findMany: vi.fn().mockResolvedValue([]),
     },
-    appGroupDeployment: {
-      findFirst: vi.fn().mockResolvedValue(null),
+    workerReconciliationState: {
+      findFirst: vi.fn().mockResolvedValue({
+        lastSuccessAt: new Date("2026-09-25T12:01:00.000Z"),
+        lastFailureAt: null,
+        lastCompletedAt: new Date("2026-09-25T12:01:00.000Z"),
+        lastResult: { revision: 3, enabled: true },
+        lastError: null,
+      }),
     },
-    workerReconciliationState: { findFirst: vi.fn().mockResolvedValue(null) },
-    $transaction: vi.fn(
-      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-    ),
-  };
-  const config = {
-    get: vi.fn((key: string) =>
-      key === "RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS"
-        ? "192.168.100.0/24"
-        : undefined,
-    ),
-  };
-  return {
-    prisma,
-    tx,
-    service: new NetworkEgressService(
-      prisma as unknown as PrismaService,
-      config as unknown as ConfigService,
-    ),
-  };
+    $transaction: vi
+      .fn()
+      .mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+      ),
+  } as unknown as PrismaService;
+
+  return { service: new NetworkEgressService(prisma), prisma, tx };
 }
 
 describe("NetworkEgressService", () => {
   it("increments the desired revision when Platform Admin changes enforcement", async () => {
     const { service, tx } = fixture();
-    await expect(service.updatePolicy({ enabled: false }, actor)).resolves.toMatchObject({
-      enabled: false,
-      revision: 2,
-    });
-    const auditArgs = tx.auditLogEntry.create.mock.calls[0]?.[0];
-    expect(auditArgs?.data.action).toBe("platform_network_egress.update");
-  });
 
-  it("rejects creation of new legacy App Group private-network exceptions", async () => {
-    const { service, tx } = fixture();
+    const result = await service.updatePolicy({ enabled: false }, actor);
 
-    await expect(
-      service.createRule(
-        {
-          appGroupId: "11111111-1111-4111-8111-111111111111",
-          destinationCidr: "192.168.100.50/32",
-          protocol: "tcp",
-          port: 443,
-          description: "monitoring",
-        },
-        actor,
-      ),
-    ).rejects.toMatchObject({
-      constructor: ConflictException,
-      message: expect.stringMatching(/deprecated.*read-only.*ResourcePortalGate/i),
-    });
-
-    expect(tx.platformEgressAllowRule.create).not.toHaveBeenCalled();
-    expect(tx.platformEgressPolicy.upsert).not.toHaveBeenCalled();
-  });
-
-  it("produces a stable worker snapshot with private ranges and normalized rules", async () => {
-    const { service, prisma } = fixture();
-    prisma.platformEgressAllowRule.findMany.mockResolvedValue([
-      {
-        id: "rule-1",
-        appGroupId: "11111111-1111-4111-8111-111111111111",
-        destinationCidr: "192.168.100.50/32",
-        protocol: "tcp",
-        port: 443,
-        description: null,
-        createdBy: actor.id,
+    expect(tx.platformEgressPolicy.upsert).toHaveBeenCalledWith({
+      where: { id: PLATFORM_EGRESS_POLICY_ID },
+      create: {
+        id: PLATFORM_EGRESS_POLICY_ID,
+        enabled: false,
         updatedBy: actor.id,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       },
-    ]);
+      update: {
+        enabled: false,
+        revision: { increment: 1 },
+        updatedBy: actor.id,
+      },
+    });
+    expect(result).toMatchObject({ enabled: false, revision: 2 });
+    expect(tx.auditLogEntry.create).toHaveBeenCalled();
+  });
+
+  it("produces a version 2 fail-closed worker snapshot without per-App-Group exceptions", async () => {
+    const { service } = fixture();
 
     const snapshot = await service.policySnapshot();
-    expect(snapshot.version).toBe(1);
-    expect(snapshot.enabled).toBe(true);
-    expect(snapshot.revision).toBe(1);
-    expect(snapshot.blockedIpv4Cidrs).toContain("10.0.0.0/8");
-    expect(snapshot.blockedIpv4Cidrs).toContain("192.168.0.0/16");
-    expect(snapshot.internalNetworkCidrs).toEqual(["192.168.100.0/24"]);
-    expect(snapshot.privilegedAppGroupIds).toEqual([]);
-    expect(
-      snapshot.rules.map((rule) => ({
-        id: rule.id,
-        appGroupId: rule.appGroupId,
-        destinationCidr: rule.destinationCidr,
-        protocol: rule.protocol,
-        port: rule.port,
-      })),
-    ).toEqual([
-      {
-        id: "rule-1",
-        appGroupId: "11111111-1111-4111-8111-111111111111",
-        destinationCidr: "192.168.100.50/32",
-        protocol: "tcp",
-        port: 443,
-      },
+
+    expect(snapshot).toEqual({
+      version: 2,
+      enabled: true,
+      revision: 3,
+      blockedIpv4Cidrs: DEFAULT_BLOCKED_IPV4_CIDRS,
+      blockedIpv6Cidrs: DEFAULT_BLOCKED_IPV6_CIDRS,
+    });
+    expect(snapshot).not.toHaveProperty("rules");
+    expect(snapshot).not.toHaveProperty("privilegedAppGroupIds");
+  });
+
+  it("returns only global policy and enforcement state to Platform Admin", async () => {
+    const { service } = fixture();
+
+    const state = await service.getPlatformState();
+
+    expect(state.enabled).toBe(true);
+    expect(state.revision).toBe(3);
+    expect(state.protectedCidrs).toEqual([
+      ...DEFAULT_BLOCKED_IPV4_CIDRS,
+      ...DEFAULT_BLOCKED_IPV6_CIDRS,
     ]);
+    expect(state.enforcement).toMatchObject({
+      lastResult: { revision: 3, enabled: true },
+    });
+    expect(state).not.toHaveProperty("appGroups");
+    expect(state).not.toHaveProperty("rules");
   });
-
-  it("blocks new privileged networking grants during migration", async () => {
-    const { service, prisma, tx } = fixture();
-    prisma.appGroup.findUnique.mockResolvedValue({
-      id: "11111111-1111-4111-8111-111111111111",
-      name: "penpot",
-      networkPrivileged: false,
-      hasPendingChanges: false,
-      currentDeploymentVersion: null,
-      _count: { internalPortExposures: 0 },
-      tenant: {
-        id: "22222222-2222-4222-8222-222222222222",
-        name: "Design",
-      },
-    });
-
-    await expect(
-      service.updateAppGroupPrivilege(
-        "11111111-1111-4111-8111-111111111111",
-        { privileged: true },
-        actor,
-      ),
-    ).rejects.toMatchObject({
-      constructor: ConflictException,
-      message: expect.stringMatching(/deprecated.*Networks.*ResourcePortalGate/i),
-    });
-
-    expect(tx.appGroup.update).not.toHaveBeenCalled();
-  });
-
-  it("blocks privilege revocation while Internal Port Exposures still exist", async () => {
-    const { service, prisma } = fixture();
-    prisma.appGroup.findUnique.mockResolvedValue({
-      id: "11111111-1111-4111-8111-111111111111",
-      name: "penpot",
-      networkPrivileged: true,
-      hasPendingChanges: false,
-      currentDeploymentVersion: 2,
-      _count: { internalPortExposures: 1 },
-      tenant: {
-        id: "22222222-2222-4222-8222-222222222222",
-        name: "Design",
-      },
-    });
-
-    await expect(
-      service.updateAppGroupPrivilege(
-        "11111111-1111-4111-8111-111111111111",
-        { privileged: false },
-        actor,
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
-  });
-
-  it("blocks privilege revocation until deployed Internal Port Exposure removal is applied", async () => {
-    const { service, prisma } = fixture();
-    prisma.appGroup.findUnique.mockResolvedValue({
-      id: "11111111-1111-4111-8111-111111111111",
-      name: "penpot",
-      networkPrivileged: true,
-      hasPendingChanges: true,
-      currentDeploymentVersion: 7,
-      _count: { internalPortExposures: 0 },
-      tenant: {
-        id: "22222222-2222-4222-8222-222222222222",
-        name: "Design",
-      },
-    });
-    prisma.appGroupDeployment.findFirst.mockResolvedValue({
-      stackConfig: JSON.stringify({
-        singleApps: [
-          {
-            internalPortExposures: [
-              { name: "dns", containerPort: 53, publishedPort: 5353, protocol: "udp" },
-            ],
-          },
-        ],
-      }),
-    });
-
-    await expect(
-      service.updateAppGroupPrivilege(
-        "11111111-1111-4111-8111-111111111111",
-        { privileged: false },
-        actor,
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
-  });
-
 });

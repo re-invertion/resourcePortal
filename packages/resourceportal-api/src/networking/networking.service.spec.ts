@@ -63,6 +63,9 @@ function fixture(overrides: Record<string, any> = {}) {
     singleApp: {
       findFirst: vi.fn(),
     },
+    appGroup: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     resourcePortalGate: {
       findMany: vi.fn().mockResolvedValue([]),
       findFirst: vi.fn(),
@@ -113,6 +116,49 @@ function fixture(overrides: Record<string, any> = {}) {
 }
 
 describe("NetworkingService control plane", () => {
+  it("includes the deployed App Group network and its real application membership in topology", async () => {
+    const { service, prisma } = fixture();
+    (prisma.appGroup.findMany as any).mockResolvedValue([
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "penpot",
+        hasPendingChanges: false,
+        currentDeploymentVersion: 4,
+        singleApps: [
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "frontend",
+            image: "penpot/frontend:latest",
+            runtimeState: "Running",
+            networkAttachments: [],
+          },
+          {
+            id: "44444444-4444-4444-8444-444444444444",
+            name: "backend",
+            image: "penpot/backend:latest",
+            runtimeState: "Running",
+            networkAttachments: [],
+          },
+        ],
+      },
+    ]);
+
+    const result = await service.topology(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+
+    expect(result.appGroups[0]).toMatchObject({
+      id: "11111111-1111-4111-8111-111111111111",
+      appGroupNetwork: {
+        name: "rp-appgroup-11111111-1111-4111-8111-111111111111",
+      },
+      singleApps: [
+        { id: "33333333-3333-4333-8333-333333333333" },
+        { id: "44444444-4444-4444-8444-444444444444" },
+      ],
+    });
+  });
+
   it("creates a Network with separate stable and overlay CIDRs", async () => {
     const { service, tx } = fixture();
     tx.network.create.mockImplementation(({ data }: any) =>
