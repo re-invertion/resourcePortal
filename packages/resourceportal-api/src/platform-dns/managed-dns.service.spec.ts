@@ -107,6 +107,15 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ManagedDnsService", () => {
+  it("derives the Cloudflare OAuth redirect URI from the canonical public hostname when PUBLIC_API_URL is absent", async () => {
+    const { service } = fixture();
+
+    await expect(service.getPlatformState()).resolves.toMatchObject({
+      oauthRedirectUri:
+        "https://resource-portal.pl/api/integrations/cloudflare/oauth/callback",
+    });
+  });
+
   it("keeps tenant managed domains unavailable until Cloudflare is configured, validated and enabled", async () => {
     const { service } = fixture();
     await expect(service.getTenantCapabilities()).resolves.toEqual({

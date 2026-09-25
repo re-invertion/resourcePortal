@@ -340,9 +340,17 @@ export class ManagedDnsService {
   }
 
   private cloudflareOauthRedirectUri() {
-    const base = this.config
-      .get<string>("PUBLIC_API_URL", `http://localhost:${this.config.get("PORT", 3000)}`)
-      .replace(/\/$/, "");
+    const configuredBase = this.config.get<string>("PUBLIC_API_URL")?.trim();
+    const publicHostname = this.config
+      .get<string>("RESOURCEPORTAL_PUBLIC_HOSTNAME")
+      ?.trim();
+
+    const base = configuredBase
+      ? configuredBase.replace(/\/$/, "")
+      : publicHostname
+        ? `https://${normalizeHostname(publicHostname)}`
+        : `http://localhost:${this.config.get("PORT", 3000)}`;
+
     return `${base}/api/integrations/cloudflare/oauth/callback`;
   }
 

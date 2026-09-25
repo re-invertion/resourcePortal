@@ -144,6 +144,7 @@ contains "$final" 'ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_manage
 contains "$final" 'ZITADEL_ORGANIZATION_ID: zitadel-org-123' 'API receives ZITADEL organization id'
 contains "$final" 'ZITADEL_PROJECT_ID: zitadel-project-456' 'API receives ZITADEL project id'
 contains "$final" 'OIDC_CLI_CLIENT_ID: zitadel-cli-client-789' 'API receives public CLI OAuth client id'
+contains "$final" 'PUBLIC_API_URL: https://rp.example.com' 'API receives canonical public API URL for OAuth callbacks'
 contains "$final" 'MANAGED_DOMAIN_BASE: rp.example.com' 'API receives managed ResourcePortal domain base'
 contains "$final" 'RESOURCEPORTAL_PUBLIC_HOSTNAME: rp.example.com' 'API receives canonical DNS target hostname'
 contains "$final" 'RESOURCEPORTAL_VERSION: 0.2.0' 'API receives deployed ResourcePortal release version'
