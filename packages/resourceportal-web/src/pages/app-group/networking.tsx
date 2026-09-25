@@ -13,7 +13,6 @@ import {
   NumberInput,
   PlusIcon,
   Select,
-  StatusBadge,
   TextInput,
   TrashIcon,
 } from "../../components/design-system";
@@ -30,10 +29,8 @@ export function AppGroupNetworking({
   appGroupId: string;
 }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/app-groups/${encodeURIComponent(appGroupId)}`;
-  const [appGroup, setAppGroup] = useState<R>({});
   const [apps, setApps] = useState<R[]>([]);
   const [rows, setRows] = useState<EndpointRow[]>([]);
-  const [internalRows, setInternalRows] = useState<R[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
@@ -45,22 +42,14 @@ export function AppGroupNetworking({
   const [port, setPort] = useState(8080);
   const [protocol, setProtocol] = useState("HTTP_REDIRECT_TO_HTTPS");
 
-  const networkPrivileged = appGroup.networkPrivileged === true;
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const [group, appResult, exposureResult] = await Promise.all([
-        apiRequest<R>(root),
-        apiRequest(`${root}/single-apps`),
-        apiRequest(`${root}/internal-port-exposures`),
-      ]);
+      const appResult = await apiRequest(`${root}/single-apps`);
       const appList = items<R>(appResult);
-      setAppGroup(group);
       setApps(appList);
       setAppId((current) => current || (appList[0] ? idOf(appList[0]) : ""));
-      setInternalRows(items<R>(exposureResult));
       const all = await Promise.all(
         appList.map(async (app) =>
           items<R>(
@@ -128,31 +117,20 @@ export function AppGroupNetworking({
     }
   }
 
-  async function removeInternal(row: R) {
-    const singleAppId = text(row.singleAppId);
-    try {
-      await apiRequest(
-        `${root}/single-apps/${encodeURIComponent(singleAppId)}/internal-port-exposures/${encodeURIComponent(idOf(row))}`,
-        { method: "DELETE" },
-      );
-      await load();
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Internal port exposure could not be deleted.",
-      );
-    }
-  }
-
   return (
     <section className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold">Networking</h2>
           <p className="mt-1 text-sm text-[#5B6678]">
-            HTTP routing and controlled internal-network port exposure for applications in this App Group.
+            HTTP routing for applications in this App Group. Private network membership is managed from tenant Networking.
           </p>
+          <a
+            className="mt-2 inline-block text-sm font-semibold text-[#0F56A7] hover:underline"
+            href={`/tenants/${encodeURIComponent(tenantId)}/networking`}
+          >
+            Open tenant Networking
+          </a>
         </div>
         <Button variant="primary" disabled={!apps.length} onClick={() => begin()}>
           <PlusIcon size={15} /> Add endpoint
@@ -263,98 +241,6 @@ export function AppGroupNetworking({
             />
           }
         />
-      </Card>
-
-      <Card className="p-5">
-        <div className="flex items-start gap-3">
-          <NetworkIcon className="mt-0.5 text-[#1769E0]" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-semibold">Legacy Internal Port Exposures</h3>
-              <StatusBadge tone={internalRows.length > 0 ? "warning" : "neutral"}>
-                {internalRows.length > 0 ? `${internalRows.length} to migrate` : "No legacy exposures"}
-              </StatusBadge>
-              {networkPrivileged ? (
-                <StatusBadge tone="warning">Legacy privilege active</StatusBadge>
-              ) : null}
-            </div>
-            <p className="mt-1 text-sm leading-5 text-[#5B6678]">
-              Privileged networking and host-published Internal Port Exposures are deprecated.
-              New exposures cannot be created or edited. Delete each legacy exposure, deploy the
-              App Group to remove the published port, then use tenant Networks and ResourcePortalGate.
-            </p>
-            <a
-              className="mt-3 inline-block text-sm font-semibold text-[#0F56A7] hover:underline"
-              href={`/tenants/${encodeURIComponent(tenantId)}/networking`}
-            >
-              Open tenant Networking
-            </a>
-          </div>
-        </div>
-        {internalRows.length > 0 ? (
-          <div className="mt-4">
-            <Callout tone="warning" title="Cleanup requires a deployment">
-              Deleting a row changes desired state only. The currently deployed host port remains
-              firewall-protected until you deploy this App Group.
-            </Callout>
-          </div>
-        ) : null}
-      </Card>
-
-      {internalRows.length > 0 ? (
-        <Card className="overflow-hidden">
-          <DataTable
-            embedded
-            loading={loading}
-            columns={[
-              { key: "app", label: "Application" },
-              { key: "name", label: "Legacy exposure" },
-              { key: "mapping", label: "Port mapping" },
-              { key: "protocol", label: "Protocol" },
-              { key: "actions", label: "" },
-            ]}
-            rows={internalRows.map((row) => ({
-              key: idOf(row),
-              cells: {
-                app: text(row.singleAppName, text(row.singleAppId)),
-                name: text(row.name),
-                mapping: `${text(row.publishedPort)} → ${text(row.containerPort)}`,
-                protocol: text(row.protocol, "tcp").toUpperCase(),
-                actions: (
-                  <ConfirmActionButton
-                    size="sm"
-                    triggerVariant="ghost"
-                    ariaLabel={`Delete legacy internal port ${text(row.name)}`}
-                    confirmTitle={`Delete legacy internal port ${text(row.name)}?`}
-                    confirmDescription="The deployed port remains active and firewall-protected until you deploy the App Group changes."
-                    confirmLabel="Delete legacy exposure"
-                    onConfirm={() => removeInternal(row)}
-                  >
-                    <TrashIcon size={15} /> Remove
-                  </ConfirmActionButton>
-                ),
-              },
-            }))}
-          />
-        </Card>
-      ) : null}
-
-      <Card className="p-5">
-        <div className="flex items-start gap-3">
-          <GlobeIcon className="mt-0.5 text-[#1769E0]" />
-          <div>
-            <h3 className="font-semibold">Domains & routing</h3>
-            <p className="mt-1 text-sm text-[#5B6678]">
-              Tenant domains are managed centrally and can be used by routing policies supported by the platform.
-            </p>
-            <a
-              className="mt-2 inline-block text-sm font-semibold text-[#0F56A7] hover:underline"
-              href={`/tenants/${encodeURIComponent(tenantId)}/domains`}
-            >
-              Manage tenant domains
-            </a>
-          </div>
-        </div>
       </Card>
     </section>
   );

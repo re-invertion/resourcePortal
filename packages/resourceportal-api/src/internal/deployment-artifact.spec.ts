@@ -177,7 +177,6 @@ describe("deployment artifact integrity", () => {
           restartPolicy: {},
           updatePolicy: {},
           httpEndpoints: [],
-          internalPortExposures: [],
           volumes: [],
         },
       ],

@@ -18,7 +18,6 @@ function draft(environment: Record<string, string>, variableTarget?: string) {
     tenantId: "tenant-1",
     name: "group",
     hasPendingChanges: true,
-    networkPrivileged: false,
     singleApps: [
       {
         name: "api",
@@ -28,7 +27,6 @@ function draft(environment: Record<string, string>, variableTarget?: string) {
           ? [{ targetName: variableTarget, variable: { value: "value" } }]
           : [],
         httpEndpoints: [],
-        internalPortExposures: [],
       },
     ],
   };

@@ -1,10 +1,10 @@
 # Advanced Networking and ResourcePortalGate
 
-Status: implemented and locally verified on branch `feat/advanced-networking-resourceportal-gate`; not yet merged, released or deployed.
+Status: implemented.
 
 ## Scope
 
-Advanced Networking replaces the legacy privileged App Group networking path with tenant-scoped `Network` resources and `ResourcePortalGate`.
+Advanced Networking provides tenant-scoped `Network` resources, automatic App Group networks and `ResourcePortalGate`.
 
 V1 intentionally provides:
 
@@ -69,46 +69,17 @@ The implementation is designed around these constraints:
 - Network deletion is staged as `Deleting`; the DB record is removed only after Docker confirms the managed overlay can be removed;
 - an overlay still used by a previous deployment remains in `Deleting` and is retried rather than being force-removed.
 
-## Legacy privileged networking migration
+## Current network model
 
-The DB migration is additive. Existing `networkPrivileged`, Internal Port Exposures and platform egress rules are not deleted during schema upgrade.
+Every deployed App Group has its own automatic overlay network, and the topology API exposes that network together with the applications that actually belong to it. Tenant-scoped `Network` resources add explicit cross-App-Group connectivity, while ResourcePortalGate provides routed LAN access only to the Networks selected by the tenant.
 
-After upgrade:
+The Networking canvas is derived from current ResourcePortal state. It renders automatic App Group membership, explicit application-to-Network attachments and Gate-to-Network attachments; it does not synthesize decorative topology edges or status labels.
 
-- new Internal Port Exposures are rejected,
-- edits to existing Internal Port Exposures are rejected,
-- existing Internal Port Exposures remain listable and deletable,
-- new `networkPrivileged=false → true` grants are rejected,
-- new legacy App Group private-network egress exceptions are rejected,
-- existing egress exceptions remain enforced until explicitly removed,
-- privilege can only be revoked after draft and deployed legacy exposures are gone.
+Platform private-network egress protection remains a single global policy. When enabled, tenant workloads are blocked from protected private-address ranges outside ResourcePortal-managed Networks. There are no per-App-Group bypass controls.
 
-Safe migration sequence for a legacy workload:
+## Upgrade safety
 
-1. Create tenant Networks and connect applications.
-2. Deploy affected App Groups.
-3. Create/enroll a Gate if LAN access is required.
-4. Attach the Gate to required Networks and configure LAN static routes.
-5. Verify connectivity through stable Network addresses.
-6. Remove legacy Internal Port Exposures.
-7. Deploy the exposure removal.
-8. Remove old platform egress exceptions.
-9. Revoke legacy privileged networking.
-
-This avoids both unexpected exposure and sudden loss of connectivity during upgrade.
-
-## Rollout and rollback
-
-Recommended rollout:
-
-1. Apply the additive Prisma migration.
-2. Deploy API/Worker/Web with legacy creation paths disabled.
-3. Verify Network/Gate API, Worker reconciliation and topology UI.
-4. Migrate legacy workloads gradually using the sequence above.
-5. Keep legacy rows/schema until all deployments have drained the old path.
-6. Remove the legacy schema only in a later release after production inventory confirms no remaining consumers.
-
-Rollback before legacy cleanup is straightforward because the migration is additive and existing legacy data is retained. After a workload has intentionally removed/deployed its legacy exposure, rollback does not recreate that exposure automatically.
+The schema cleanup migration refuses to run while state incompatible with the current networking model is still present. This prevents an upgrade from silently discarding active network configuration. Once the precondition is satisfied, the current schema contains only the supported networking resources and global egress policy.
 
 ## Verification completed
 

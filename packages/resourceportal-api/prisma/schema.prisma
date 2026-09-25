@@ -575,7 +575,6 @@ model AppGroup {
   lastDeploymentBy         String?
   hasPendingChanges        Boolean                   @default(false)
   runtimeDraftRevision     Int                       @default(0)
-  networkPrivileged        Boolean                   @default(false)
   createdBy                String                    @db.Uuid
   updatedBy                String
   createdAt                DateTime                  @default(now())
@@ -586,8 +585,6 @@ model AppGroup {
   secrets                  Secret[]
   configs                  Config[]
   deployments              AppGroupDeployment[]
-  egressAllowRules         PlatformEgressAllowRule[]
-  internalPortExposures    InternalPortExposure[]
 
   @@unique([tenantId, name])
 }
@@ -627,7 +624,6 @@ model SingleApp {
   appGroup                AppGroup               @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
   registry                Registry?              @relation(fields: [registryId], references: [id], onDelete: Restrict)
   httpEndpoints           HttpEndpoint[]
-  internalPortExposures   InternalPortExposure[]
   networkAttachments      NetworkAttachment[]
   volumeAttachments       VolumeAttachment[]
   variableAttachments     VariableAttachment[]
@@ -858,26 +854,6 @@ model HttpEndpoint {
   domains       Domain[]
 
   @@unique([singleAppId, name])
-}
-
-model InternalPortExposure {
-  id            String    @id @default(uuid()) @db.Uuid
-  appGroupId    String    @db.Uuid
-  singleAppId   String    @db.Uuid
-  name          String
-  containerPort Int
-  publishedPort Int
-  protocol      String    @default("tcp")
-  createdBy     String    @db.Uuid
-  updatedBy     String    @db.Uuid
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  appGroup      AppGroup  @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
-  singleApp     SingleApp @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
-
-  @@unique([singleAppId, name], map: "InternalPortExposure_singleAppId_name_key")
-  @@unique([protocol, publishedPort], map: "InternalPortExposure_protocol_publishedPort_key")
-  @@index([appGroupId], map: "InternalPortExposure_appGroupId_idx")
 }
 
 model Network {
@@ -1205,23 +1181,6 @@ model PlatformEgressPolicy {
   updatedBy String?  @db.Uuid
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
-
-model PlatformEgressAllowRule {
-  id              String   @id @default(uuid()) @db.Uuid
-  appGroupId      String   @db.Uuid
-  destinationCidr String
-  protocol        String   @default("any")
-  port            Int      @default(0)
-  description     String?
-  createdBy       String   @db.Uuid
-  updatedBy       String   @db.Uuid
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  appGroup        AppGroup @relation(fields: [appGroupId], references: [id], onDelete: Cascade)
-
-  @@unique([appGroupId, destinationCidr, protocol, port], map: "PlatformEgressAllowRule_scope_key")
-  @@index([appGroupId], map: "PlatformEgressAllowRule_appGroupId_idx")
 }
 
 model SwarmCluster {

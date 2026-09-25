@@ -363,8 +363,8 @@ spec:
               ResourcePortal applies a valid manifest atomically: if any create or attachment step fails, the import is rolled back. After a manifest containing applications is imported, review the App Group and use <strong>Deploy changes</strong> to apply the desired configuration to the runtime.
             </InfoBox>
 
-            <InfoBox title="Legacy privileged networking is deprecated">
-              Tenant YAML cannot set <strong>networkPrivileged</strong> or define Internal Port Exposures. New privileged grants and new private-network egress exceptions are disabled. Use <strong>Storage & Networking → Networking</strong> to connect applications to tenant Networks and attach a ResourcePortalGate when those Networks must be reachable from a local LAN. Existing legacy exposures remain visible only so they can be removed and safely deployed away.
+            <InfoBox title="Private application connectivity">
+              Use <strong>Storage & Networking → Networking</strong> to connect applications to tenant Networks. Applications in the same deployed App Group also share the App Group network automatically. Attach a ResourcePortalGate when selected tenant Networks must be reachable from a local LAN.
             </InfoBox>
 
             <div className="mt-5 flex flex-wrap gap-2">
