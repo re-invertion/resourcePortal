@@ -15,6 +15,7 @@ import {
   UsersIcon,
 } from "../components/design-system";
 import { idOf, items, text, useApi } from "../hooks/use-api";
+import { SectionNav } from "../components/ui";
 
 type R = Record<string, unknown>;
 type AccessMode = "AllMembers" | "SelectedMembers";
@@ -27,6 +28,7 @@ type McpSettings = {
     scopes?: string[];
     discoveryAvailable?: boolean;
     dynamicClientRegistrationAvailable?: boolean;
+    pkceS256Available?: boolean;
     openAiReady?: boolean;
     transport?: string;
     protocol?: string;
@@ -111,6 +113,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         title="Tenant settings"
         description="Tenant-wide features and integration settings controlled by tenant administrators."
       />
+      <div className="mb-5"><SectionNav label="Settings sections" items={[{ label: "MCP", href: "#mcp" }]} /></div>
       {success ? <div className="mb-4" role="status"><Callout tone="success" title={success} /></div> : null}
       {error || settings.error ? (
         <div className="mb-4">
@@ -125,7 +128,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><SettingsIcon size={18} /></span>
           <div>
             <h2 className="font-semibold">Model Context Protocol (MCP)</h2>
-            <p className="mt-1 text-sm text-[#5B6678]">Standards-compliant Streamable HTTP MCP for OpenAI/ChatGPT and other MCP clients, using ResourcePortal OAuth and the tenant's existing RBAC.</p>
+            <p className="mt-1 text-sm text-[#5B6678]">Configure tenant MCP access, authorization and the endpoint exposed to MCP clients.</p>
           </div>
         </div>
 
@@ -194,19 +197,23 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="font-semibold">MCP connection</h2>
-              <p className="mt-1 text-sm text-[#5B6678]">Paste this single server URL into OpenAI/ChatGPT or another MCP host. OAuth discovery, client registration and account linking happen automatically.</p>
+              <p className="mt-1 text-sm text-[#5B6678]">Server endpoint and OAuth capabilities used by MCP clients.</p>
             </div>
-            {oauth?.openAiReady ? <StatusText tone="success">OpenAI / ChatGPT ready</StatusText> : <StatusText tone="warning">OAuth setup incomplete</StatusText>}
+            {oauth?.openAiReady ? <StatusText tone="success">OAuth ready</StatusText> : <StatusText tone="warning">OAuth setup incomplete</StatusText>}
           </div>
         </div>
-        <div className="p-5">
-          <p className="text-xs font-medium text-[#718096]">MCP server URL</p>
-          <code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code>
-          <p className="mt-2 text-xs leading-5 text-[#718096]">No metadata URL, Client ID or client secret needs to be copied into the MCP client.</p>
-        </div>
-        <div className="space-y-3 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5">
-          <Callout title="Automatic OAuth account linking">Compatible MCP clients discover ResourcePortal protected-resource metadata and the authorization server from the MCP URL, then use OAuth Authorization Code + PKCE automatically.</Callout>
-          {!oauth?.openAiReady ? <Callout tone="warning" title="Platform OAuth bootstrap is incomplete">Automatic linking requires Dynamic Client Registration and PKCE S256. The platform operator should run the current ResourcePortal upgrade or repair; tenant users should not create a manual OAuth client.</Callout> : <Callout tone="success" title="No Client ID or secret required">ResourcePortal prepares ZITADEL Dynamic Client Registration for MCP and publishes standards-compatible OAuth discovery metadata, so clients can register and complete user sign-in automatically.</Callout>}
+        <div className="space-y-4 p-5">
+          <div>
+            <p className="text-xs font-medium text-[#718096]">MCP server URL</p>
+            <code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code>
+          </div>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Transport</dt><dd className="mt-1 font-medium">{oauth?.transport ?? "Streamable HTTP"}</dd></div>
+            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Protocol</dt><dd className="mt-1 font-medium">{oauth?.protocol ?? "MCP"}</dd></div>
+            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">OAuth discovery</dt><dd className="mt-1 font-medium">{oauth?.discoveryAvailable ? "Available" : "Unavailable"}</dd></div>
+            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Dynamic client registration / PKCE S256</dt><dd className="mt-1 font-medium">{oauth?.dynamicClientRegistrationAvailable && oauth?.pkceS256Available ? "Available" : "Unavailable"}</dd></div>
+          </dl>
+          {!oauth?.openAiReady ? <Callout tone="warning" title="OAuth setup incomplete">Dynamic Client Registration and PKCE S256 must be available before compatible MCP clients can complete OAuth authorization. Run the current ResourcePortal upgrade or platform repair.</Callout> : null}
         </div>
       </Card>
     </main>

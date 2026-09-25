@@ -1,4 +1,5 @@
 import { Controller, Get, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Public } from "../auth/public.decorator";
 import { WorkerRuntimeObservabilityService } from "../observability/worker-runtime-observability.service";
 import { AllowDuringPlatformMaintenance } from "../platform-maintenance/allow-during-platform-maintenance.decorator";
@@ -12,6 +13,8 @@ export class HealthController {
     private readonly prisma: PrismaService,
     @Optional()
     private readonly workerObservability?: WorkerRuntimeObservabilityService,
+    @Optional()
+    private readonly config?: ConfigService,
   ) {}
 
   @Get()
@@ -21,9 +24,11 @@ export class HealthController {
 
   @Get("live")
   getLiveness() {
+    const version = this.releaseVersion();
     return {
       status: "ok",
       service: "resource-portal-api",
+      ...(version ? { version } : {}),
     };
   }
 
@@ -43,13 +48,19 @@ export class HealthController {
   @Get("ready")
   async getReadiness() {
     await this.prisma.$queryRaw`SELECT 1`;
+    const version = this.releaseVersion();
 
     return {
       status: "ok",
       service: "resource-portal-api",
+      ...(version ? { version } : {}),
       dependencies: {
         postgres: "ok",
       },
     };
+  }
+
+  private releaseVersion() {
+    return this.config?.get<string>("RESOURCEPORTAL_VERSION")?.trim() || undefined;
   }
 }

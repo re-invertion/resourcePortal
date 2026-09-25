@@ -159,4 +159,42 @@ describe("TenantMcpSettingsService", () => {
     prisma.tenantMcpSettings.findUnique.mockResolvedValue({ enabled: true, accessMode: "AllMembers", allowedMembers: [] });
     await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).resolves.toMatchObject({ id: "membership-id" });
   });
+
+  it("records MCP tool calls in the tenant audit log without request credentials", async () => {
+    const { service, prisma } = fixture();
+
+    await service.recordToolCall({
+      tenantId: "tenant-id",
+      actor,
+      toolName: "resourceportal_list_app_groups",
+      method: "GET",
+      path: "/app-groups",
+      statusCode: 200,
+      success: true,
+      requestId: "req-1",
+      correlationId: "corr-1",
+    });
+
+    expect(prisma.auditLogEntry.create).toHaveBeenCalledTimes(1);
+    expect(prisma.auditLogEntry.create.mock.calls[0]?.[0]).toMatchObject({
+      data: {
+        tenantId: "tenant-id",
+        actor: actor.id,
+        action: "tenant.mcp.tool.call",
+        resourceType: "TenantMcp",
+        result: "Success",
+        requestId: "req-1",
+        correlationId: "corr-1",
+        changes: {
+          toolName: "resourceportal_list_app_groups",
+          method: "GET",
+          path: "/app-groups",
+          statusCode: 200,
+        },
+      },
+    });
+    expect(JSON.stringify(prisma.auditLogEntry.create.mock.calls[0]?.[0])).not.toMatch(
+      /authorization|bearer|token|secret/i,
+    );
+  });
 });
