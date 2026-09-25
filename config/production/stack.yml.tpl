@@ -217,6 +217,7 @@ services:
       RP_OIDC_EXTRA_CA_B64: "__OIDC_EXTRA_CA_B64__"
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
+      PUBLIC_API_URL: https://__DOMAIN__
       PLATFORM_ADMIN_USER_IDS: __PLATFORM_ADMIN_IDS__
       MANAGED_DOMAIN_BASE: __MANAGED_DOMAIN_BASE__
       RESOURCEPORTAL_PUBLIC_HOSTNAME: __DOMAIN__
