@@ -296,7 +296,10 @@ const commands: Command[] = [
       optionalString(p.flags.idempotencyKey),
     ),
   ),
-  command("gate", "revoke", "<tenantId> <gateId>", "Revoke ResourcePortalGate and remove its RP-side VPN runtime.", (p, c) =>
+  command("gate", "delete", "<tenantId> <gateId>", "Permanently delete ResourcePortalGate after removing its RP-side VPN runtime.", (p, c) =>
+    c.networking.deleteGate(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
+  ),
+  command("gate", "revoke", "<tenantId> <gateId>", "Compatibility alias for permanent ResourcePortalGate deletion.", (p, c) =>
     c.networking.revokeGate(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
   ),
   command("volume", "list", "<tenantId>", "List volumes.", (p, c) =>

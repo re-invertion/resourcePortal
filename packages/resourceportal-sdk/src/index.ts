@@ -458,6 +458,11 @@ export class ResourcePortalClient {
         `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/networks/${encode(networkId)}?revision=${encode(String(expectedRevision))}`,
         { method: "DELETE", idempotencyKey },
       ),
+    deleteGate: (tenantId: string, gateId: string) =>
+      this.request<ResourcePortalGate>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}`,
+        { method: "DELETE" },
+      ),
     revokeGate: (tenantId: string, gateId: string) =>
       this.request<ResourcePortalGate>(
         `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}`,

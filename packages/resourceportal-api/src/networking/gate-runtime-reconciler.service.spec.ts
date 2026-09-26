@@ -9,10 +9,13 @@ import { GateRuntimeReconcilerService } from "./gate-runtime-reconciler.service"
 
 class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
   readonly dockerCalls: Array<{ args: string[]; stdin?: string }> = [];
+  readonly dockerResults: Array<{ exitCode: number; stdout: string; stderr: string }> = [];
 
   protected override runDocker(args: string[], stdin?: string) {
     this.dockerCalls.push({ args, stdin });
-    return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    return Promise.resolve(
+      this.dockerResults.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
+    );
   }
 }
 
@@ -21,6 +24,7 @@ function fixture(gates: any[], deletingNetworks: any[] = []) {
     resourcePortalGate: {
       findMany: vi.fn().mockResolvedValue(gates),
       update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
     },
     gateNetworkAttachment: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -155,11 +159,11 @@ describe("GateRuntimeReconcilerService", () => {
     ]);
   });
 
-  it("removes the runtime and private key when a Gate is revoked", async () => {
-    const { service } = fixture([
+  it("permanently deletes a Gate only after its runtime and private key are removed", async () => {
+    const { service, prisma } = fixture([
       {
         ...readyGate,
-        status: "Revoked",
+        status: "Deleting",
         revokedAt: new Date(),
         networks: [],
       },
@@ -177,6 +181,56 @@ describe("GateRuntimeReconcilerService", () => {
         "rp-gate-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa-private-key-v2",
       ],
     ]);
+    expect((prisma.resourcePortalGate.delete as any)).toHaveBeenCalledWith({
+      where: { id: readyGate.id },
+    });
+  });
+
+  it("permanently deletes legacy Revoked Gate records after runtime cleanup", async () => {
+    const { service, prisma } = fixture([
+      {
+        ...readyGate,
+        status: "Revoked",
+        revokedAt: new Date(),
+        networks: [],
+      },
+    ]);
+
+    await expect(service.reconcile()).resolves.toMatchObject({
+      removed: 1,
+      failed: 0,
+    });
+    expect((prisma.resourcePortalGate.delete as any)).toHaveBeenCalledWith({
+      where: { id: readyGate.id },
+    });
+  });
+
+  it("keeps the Gate record when its private key secret cannot be removed", async () => {
+    const { service, prisma } = fixture([
+      {
+        ...readyGate,
+        status: "Deleting",
+        revokedAt: new Date(),
+        networks: [],
+      },
+    ]);
+    service.dockerResults.push(
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "secret is in use by service" },
+    );
+
+    await expect(service.reconcile()).resolves.toMatchObject({
+      removed: 0,
+      failed: 1,
+    });
+    expect((prisma.resourcePortalGate.delete as any)).not.toHaveBeenCalled();
+    expect((prisma.resourcePortalGate.update as any)).toHaveBeenCalledWith({
+      where: { id: readyGate.id },
+      data: expect.objectContaining({
+        status: "Error",
+        lastError: expect.stringContaining("secret is in use"),
+      }),
+    });
   });
   it("deletes a Network record only after the managed Swarm overlay is removed", async () => {
     const deleting = {

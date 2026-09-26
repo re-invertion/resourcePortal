@@ -867,7 +867,7 @@ function GraphInspector({
   focusNetworkId,
   onFocusNetwork,
   onDisconnect,
-  onRevokeGate,
+  onDeleteGate,
   working,
 }: {
   topology: Topology;
@@ -876,7 +876,7 @@ function GraphInspector({
   focusNetworkId: string;
   onFocusNetwork: (networkId: string) => void;
   onDisconnect: (edge: Edge) => void;
-  onRevokeGate: (gate: GateResource) => void;
+  onDeleteGate: (gate: GateResource) => void;
   working: boolean;
 }) {
   const data = selectedNode?.data as TopologyNodeData | undefined;
@@ -1052,9 +1052,9 @@ function GraphInspector({
           triggerVariant="danger"
           disabled={working || !gate || Boolean(gate.revokedAt)}
           confirmTitle="Delete VPN?"
-          confirmDescription="This revokes the ResourcePortalGate, removes its RP-side WireGuard/VPN stack and invalidates the agent token. Routes through this Gate will stop working."
+          confirmDescription="This permanently deletes the ResourcePortalGate after its RP-side WireGuard/VPN stack and private key secret are removed. The agent token is invalidated immediately and all routes through this Gate stop working."
           confirmLabel="Delete VPN"
-          onConfirm={() => gate && onRevokeGate(gate)}
+          onConfirm={() => gate && onDeleteGate(gate)}
         >
           <TrashIcon size={14} /> Delete VPN
         </ConfirmActionButton>
@@ -1068,13 +1068,13 @@ export function TenantNetworkingGraph({
   working,
   onConnect,
   onDisconnect,
-  onRevokeGate,
+  onDeleteGate,
 }: {
   topology: Topology;
   working: boolean;
   onConnect: (connection: Connection) => void | Promise<void>;
   onDisconnect: (edge: Edge) => void | Promise<void>;
-  onRevokeGate: (gate: GateResource) => void | Promise<void>;
+  onDeleteGate: (gate: GateResource) => void | Promise<void>;
 }) {
   const [filters, setFilters] = useState<TopologyGraphFilters>({
     query: "",
@@ -1309,7 +1309,7 @@ export function TenantNetworkingGraph({
               setFilters((current) => ({ ...current, focusNetworkId: networkId }))
             }
             onDisconnect={(edge) => void onDisconnect(edge)}
-            onRevokeGate={(gate) => void onRevokeGate(gate)}
+            onDeleteGate={(gate) => void onDeleteGate(gate)}
             working={working}
           />
         </div>

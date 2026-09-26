@@ -165,6 +165,23 @@ test("gate create uses the tenant networking API", async () => {
   });
 });
 
+test("gate delete uses permanent ResourcePortalGate deletion endpoint", async () => {
+  const tenantId = "00000000-0000-4000-8000-000000000001";
+  const gateId = "00000000-0000-4000-8000-000000000002";
+  const request = await captureJsonRequest([
+    "gate",
+    "delete",
+    tenantId,
+    gateId,
+  ]);
+
+  assert.equal(request.method, "DELETE");
+  assert.equal(
+    request.url,
+    `/api/tenants/${tenantId}/networking/gates/${gateId}`,
+  );
+});
+
 test("tenant MCP settings preserve selected membership IDs as an array", async () => {
   const request = await captureJsonRequest([
     "tenant-mcp",

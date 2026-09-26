@@ -210,7 +210,7 @@ export class NetworkingService {
         },
       }),
       this.prisma.resourcePortalGate.findMany({
-        where: { tenantId },
+        where: { tenantId, revokedAt: null },
         orderBy: { name: "asc" },
         include: {
           networks: {
@@ -572,7 +572,7 @@ export class NetworkingService {
 
   async listGates(tenantId: string) {
     const gates = await this.prisma.resourcePortalGate.findMany({
-      where: { tenantId },
+      where: { tenantId, revokedAt: null },
       orderBy: { name: "asc" },
       include: {
         networks: {
@@ -817,7 +817,7 @@ export class NetworkingService {
       const value = await tx.resourcePortalGate.update({
         where: { id: gateId },
         data: {
-          status: "Revoked",
+          status: "Deleting",
           revokedAt,
           agentTokenHash: null,
           configRevision: { increment: 1 },
@@ -829,11 +829,14 @@ export class NetworkingService {
         data: { usedAt: revokedAt },
       });
       await this.audit(tx, tenantId, actor, {
-        action: "gate.revoke",
+        action: "gate.delete.requested",
         resourceType: "ResourcePortalGate",
         resourceId: gate.id,
         resourceName: gate.name,
-        changes: { revokedAt: revokedAt.toISOString() },
+        changes: {
+          revokedAt: revokedAt.toISOString(),
+          cleanupRequired: true,
+        },
       });
       return value;
     });
