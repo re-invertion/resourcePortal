@@ -32,6 +32,7 @@ vi.mock("@xyflow/react", async () => {
     }) => {
       const network = nodes.find((node) => node.id.startsWith("network:"));
       const application = nodes.find((node) => node.id.startsWith("app:"));
+      const gate = nodes.find((node) => node.id.startsWith("gate:"));
       const edge = edges[0];
       return (
         <div data-testid="react-flow">
@@ -55,6 +56,9 @@ vi.mock("@xyflow/react", async () => {
           </button>
           <button type="button" onClick={() => application && onNodeClick?.({}, application)}>
             mock-select-application
+          </button>
+          <button type="button" onClick={() => gate && onNodeClick?.({}, gate)}>
+            mock-select-gate
           </button>
           <button type="button" onClick={() => edge && onEdgeClick?.({}, edge)}>
             mock-select-edge
@@ -531,12 +535,12 @@ it("disconnects a real graph edge from the inspector", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "mock-select-edge" }));
   expect(await screen.findByText("Application → Network")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+  fireEvent.click(screen.getByRole("button", { name: "Delete connection" }));
 
   const dialog = await screen.findByRole("dialog", {
-    name: "Disconnect topology connection?",
+    name: "Delete network connection?",
   });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete connection" }));
 
   await waitFor(() => {
     expect(
@@ -545,6 +549,42 @@ it("disconnects a real graph edge from the inspector", async () => {
           String(input).includes(
             `/networking/networks/${networkId}/attachments/app-link-1?revision=7`,
           ) && init?.method === "DELETE",
+      ),
+    ).toBe(true);
+  });
+});
+
+it("deletes a VPN Gate from the graph inspector after confirmation", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/networking/topology")) {
+      return Promise.resolve(json(topology));
+    }
+    if (url.endsWith(`/networking/gates/${gateId}`) && init?.method === "DELETE") {
+      return Promise.resolve(json({ id: gateId, revokedAt: "2026-09-26T08:00:00.000Z" }));
+    }
+    return Promise.resolve(json({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<TenantNetworkingPage tenantId="tenant-1" />);
+  await waitFor(() =>
+    expect(screen.getByTestId("react-flow").textContent).toContain("4 nodes"),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "mock-select-gate" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete VPN" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Delete VPN?" });
+  expect(dialog.textContent).toContain("WireGuard/VPN");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete VPN" }));
+
+  await waitFor(() => {
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith(`/networking/gates/${gateId}`) &&
+          init?.method === "DELETE",
       ),
     ).toBe(true);
   });
