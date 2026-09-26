@@ -57,11 +57,10 @@ export class GateRuntimeReconcilerService {
     let failed = 0;
     for (const gate of gates) {
       try {
-        if (gate.revokedAt || gate.status === "Revoked") {
+        if (gate.revokedAt || gate.status === "Revoked" || gate.status === "Deleting") {
           await this.removeGateRuntime(gate.id, gate.serverKeyVersion);
-          await this.prisma.resourcePortalGate.update({
+          await this.prisma.resourcePortalGate.delete({
             where: { id: gate.id },
-            data: { status: "Revoked", lastError: null },
           });
           removed += 1;
           continue;
@@ -272,11 +271,20 @@ export class GateRuntimeReconcilerService {
 
   private async removeGateRuntime(gateId: string, keyVersion: number) {
     await this.removeStack(gateStackName(gateId));
-    await this.runDocker([
-      "secret",
-      "rm",
-      gatePrivateSecretName(gateId, keyVersion),
-    ]);
+    const secretName = gatePrivateSecretName(gateId, keyVersion);
+    const result = await this.runDocker(["secret", "rm", secretName]);
+    if (
+      result.exitCode !== 0 &&
+      !/not found|no such secret|does not exist/i.test(
+        `${result.stderr} ${result.stdout}`,
+      )
+    ) {
+      throw new Error(
+        result.stderr ||
+          result.stdout ||
+          `Unable to remove ResourcePortalGate secret ${secretName}`,
+      );
+    }
   }
 
   private async removeStack(stackName: string) {

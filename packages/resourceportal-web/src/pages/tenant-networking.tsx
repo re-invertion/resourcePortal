@@ -287,18 +287,18 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     }
   }
 
-  async function revokeGate(gate: GateResource) {
+  async function deleteGate(gate: GateResource) {
     setWorking(true);
     try {
       await apiRequest(`${root}/gates/${encodeURIComponent(gate.id)}`, {
         method: "DELETE",
       });
       await topology.reload();
-      setNotice({ tone: "warning", message: `ResourcePortalGate ${gate.name} revoked.` });
+      setNotice({ tone: "success", message: `ResourcePortalGate ${gate.name} deletion requested.` });
     } catch (error) {
       setNotice({
         tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to revoke Gate.",
+        message: error instanceof Error ? error.message : "Unable to delete Gate.",
       });
     } finally {
       setWorking(false);
@@ -357,12 +357,12 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             size="sm"
             triggerVariant="ghost"
             disabled={working || Boolean(gate.revokedAt)}
-            confirmTitle="Revoke ResourcePortalGate?"
-            confirmDescription="The RP-side VPN stack is removed and the agent token becomes invalid."
-            confirmLabel="Revoke Gate"
-            onConfirm={() => revokeGate(gate)}
+            confirmTitle="Delete ResourcePortalGate?"
+            confirmDescription="The agent token is invalidated immediately. The Gate record is permanently deleted after its RP-side VPN stack and private key secret are removed."
+            confirmLabel="Delete Gate"
+            onConfirm={() => deleteGate(gate)}
           >
-            Revoke
+            Delete
           </ConfirmActionButton>
         </div>
       ),
@@ -440,7 +440,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             working={working}
             onConnect={submitConnection}
             onDisconnect={disconnectEdge}
-            onRevokeGate={revokeGate}
+            onDeleteGate={deleteGate}
           />
         ) : (
           <div className="flex min-h-[420px] items-center justify-center bg-[#F8FAFD] px-6 text-sm text-[#718096]">

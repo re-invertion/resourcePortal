@@ -293,6 +293,73 @@ describe("NetworkingService control plane", () => {
     });
   });
 
+  it("marks a Gate as Deleting, invalidates its token, and audits permanent deletion", async () => {
+    const { service, prisma, tx } = fixture();
+    const gate = {
+      id: "77777777-7777-4777-8777-777777777777",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      name: "office",
+      status: "Ready",
+      revokedAt: null,
+      agentTokenHash: "token-hash",
+      configRevision: 3,
+      lanAddresses: [],
+      lanCidrs: [],
+    };
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
+    tx.resourcePortalGate.update.mockImplementation(({ data }: any) =>
+      Promise.resolve({ ...gate, ...data, revokedAt: data.revokedAt }),
+    );
+
+    const result = await service.revokeGate(
+      "11111111-1111-4111-8111-111111111111",
+      gate.id,
+      actor,
+    );
+
+    expect(result).toMatchObject({
+      id: gate.id,
+      status: "Deleting",
+      revokedAt: expect.any(Date),
+    });
+    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith({
+      where: { id: gate.id },
+      data: expect.objectContaining({
+        status: "Deleting",
+        agentTokenHash: null,
+        configRevision: { increment: 1 },
+        updatedBy: actor.id,
+        revokedAt: expect.any(Date),
+      }),
+    });
+    expect(tx.resourcePortalGateEnrollment.updateMany).toHaveBeenCalledWith({
+      where: { gateId: gate.id, usedAt: null },
+      data: { usedAt: expect.any(Date) },
+    });
+    expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "gate.delete.requested",
+        resourceType: "ResourcePortalGate",
+        resourceId: gate.id,
+      }),
+    });
+  });
+
+  it("excludes Gates pending permanent deletion from tenant Gate listings", async () => {
+    const { service, prisma } = fixture();
+
+    await service.listGates("11111111-1111-4111-8111-111111111111");
+
+    expect(prisma.resourcePortalGate.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          tenantId: "11111111-1111-4111-8111-111111111111",
+          revokedAt: null,
+        },
+      }),
+    );
+  });
+
   it("rejects application attachment when the app is outside the Network tenant", async () => {
     const { service, prisma } = fixture();
     (prisma.network.findFirst as any).mockResolvedValue({
