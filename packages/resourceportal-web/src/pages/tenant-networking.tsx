@@ -440,6 +440,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             working={working}
             onConnect={submitConnection}
             onDisconnect={disconnectEdge}
+            onRevokeGate={revokeGate}
           />
         ) : (
           <div className="flex min-h-[420px] items-center justify-center bg-[#F8FAFD] px-6 text-sm text-[#718096]">

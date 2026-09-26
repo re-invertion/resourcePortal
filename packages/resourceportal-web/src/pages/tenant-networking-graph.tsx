@@ -29,6 +29,7 @@ import {
   Select,
   ServerIcon,
   StatusBadge,
+  TrashIcon,
   cx,
   statusTone,
 } from "../components/design-system";
@@ -866,6 +867,7 @@ function GraphInspector({
   focusNetworkId,
   onFocusNetwork,
   onDisconnect,
+  onRevokeGate,
   working,
 }: {
   topology: Topology;
@@ -874,6 +876,7 @@ function GraphInspector({
   focusNetworkId: string;
   onFocusNetwork: (networkId: string) => void;
   onDisconnect: (edge: Edge) => void;
+  onRevokeGate: (gate: GateResource) => void;
   working: boolean;
 }) {
   const data = selectedNode?.data as TopologyNodeData | undefined;
@@ -928,18 +931,19 @@ function GraphInspector({
         <div className="mt-5">
           <ConfirmActionButton
             size="sm"
-            triggerVariant="secondary"
+            triggerVariant="danger"
             disabled={working}
-            confirmTitle="Disconnect topology connection?"
+            confirmTitle={applicationLink ? "Delete network connection?" : "Delete VPN route?"}
             confirmDescription={
               applicationLink
-                ? "The desired state changes immediately. Deploy the affected App Group to apply it to the runtime."
-                : "The Gate route is removed and reconciled automatically."
+                ? "This removes the Application → Network attachment from desired state. Deploy the affected App Group to apply the change to the runtime."
+                : "This removes the WireGuard route between this ResourcePortalGate and Network. The Gate remains installed."
             }
-            confirmLabel="Disconnect"
+            confirmLabel={applicationLink ? "Delete connection" : "Delete VPN route"}
             onConfirm={() => onDisconnect(selectedEdge!)}
           >
-            Disconnect
+            <TrashIcon size={14} />
+            {applicationLink ? "Delete connection" : "Delete VPN route"}
           </ConfirmActionButton>
         </div>
       </aside>
@@ -1042,6 +1046,19 @@ function GraphInspector({
         <DetailRow label="Agent">{gate?.agentVersion || "—"}</DetailRow>
         {data.lastError ? <DetailRow label="Last error">{data.lastError}</DetailRow> : null}
       </dl>
+      <div className="mt-5">
+        <ConfirmActionButton
+          size="sm"
+          triggerVariant="danger"
+          disabled={working || !gate || Boolean(gate.revokedAt)}
+          confirmTitle="Delete VPN?"
+          confirmDescription="This revokes the ResourcePortalGate, removes its RP-side WireGuard/VPN stack and invalidates the agent token. Routes through this Gate will stop working."
+          confirmLabel="Delete VPN"
+          onConfirm={() => gate && onRevokeGate(gate)}
+        >
+          <TrashIcon size={14} /> Delete VPN
+        </ConfirmActionButton>
+      </div>
     </aside>
   );
 }
@@ -1051,11 +1068,13 @@ export function TenantNetworkingGraph({
   working,
   onConnect,
   onDisconnect,
+  onRevokeGate,
 }: {
   topology: Topology;
   working: boolean;
   onConnect: (connection: Connection) => void | Promise<void>;
   onDisconnect: (edge: Edge) => void | Promise<void>;
+  onRevokeGate: (gate: GateResource) => void | Promise<void>;
 }) {
   const [filters, setFilters] = useState<TopologyGraphFilters>({
     query: "",
@@ -1290,6 +1309,7 @@ export function TenantNetworkingGraph({
               setFilters((current) => ({ ...current, focusNetworkId: networkId }))
             }
             onDisconnect={(edge) => void onDisconnect(edge)}
+            onRevokeGate={(gate) => void onRevokeGate(gate)}
             working={working}
           />
         </div>
