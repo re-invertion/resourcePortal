@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PlatformDnsPage } from "./platform-dns";
+import { ToastViewport } from "../components/toast";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -103,7 +104,7 @@ it("shows an actionable Cloudflare DNS conflict instead of Internal Server Error
   });
   vi.stubGlobal("fetch", fetchMock);
 
-  render(<PlatformDnsPage />);
+  render(<><PlatformDnsPage /><ToastViewport /></>);
   await screen.findByText("Cloudflare managed DNS");
   fireEvent.change(screen.getByLabelText(/Cloudflare Zone ID/i), {
     target: { value: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },

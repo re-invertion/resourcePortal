@@ -82,6 +82,7 @@ vi.mock("@xyflow/react", async () => {
 });
 
 import { TenantNetworkingPage } from "./tenant-networking";
+import { ToastViewport } from "../components/toast";
 import {
   buildTopologyGraph,
   type Topology,
@@ -468,7 +469,7 @@ it("turns a React Flow Application→Network connection into a durable topology 
   });
   vi.stubGlobal("fetch", fetchMock);
 
-  render(<TenantNetworkingPage tenantId="tenant-1" />);
+  render(<><TenantNetworkingPage tenantId="tenant-1" /><ToastViewport /></>);
   await waitFor(() =>
     expect(screen.getByTestId("react-flow").textContent).toContain("4 nodes"),
   );

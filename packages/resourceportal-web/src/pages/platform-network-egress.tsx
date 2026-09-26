@@ -11,6 +11,7 @@ import {
   Toggle,
 } from "../components/design-system";
 import { formatDate, useApi } from "../hooks/use-api";
+import { toast } from "../components/toast";
 
 type ReconciliationState = {
   lastSuccessAt?: string | null;
@@ -32,10 +33,6 @@ export function PlatformNetworkEgressPage() {
   const state = useApi<EgressState>("/api/platform/network-egress");
   const [enabled, setEnabled] = useState(true);
   const [working, setWorking] = useState(false);
-  const [notice, setNotice] = useState<{
-    tone: "success" | "danger" | "warning";
-    message: string;
-  }>();
 
   useEffect(() => {
     if (state.data) setEnabled(state.data.enabled);
@@ -53,27 +50,19 @@ export function PlatformNetworkEgressPage() {
 
   async function updatePolicy() {
     setWorking(true);
-    setNotice(undefined);
     try {
       await apiRequest("/api/platform/network-egress", {
         method: "PATCH",
         body: { enabled },
       });
       await state.reload();
-      setNotice({
-        tone: enabled ? "success" : "warning",
-        message: enabled
-          ? "Private-network egress protection is enabled. The worker will propagate the policy to every Swarm node."
-          : "Private-network egress protection is disabled. Tenant workloads can reach private networks subject to the host firewall.",
-      });
+      if (enabled) {
+        toast.success("Private-network egress protection is enabled. The worker will propagate the policy to every Swarm node.");
+      } else {
+        toast.warning("Private-network egress protection is disabled.","Tenant workloads can reach private networks subject to the host firewall.");
+      }
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to update network egress policy.",
-      });
+      toast.errorFrom(error, "Unable to update network egress policy.");
     } finally {
       setWorking(false);
     }
@@ -87,11 +76,6 @@ export function PlatformNetworkEgressPage() {
         description="Control whether tenant workloads may reach private infrastructure outside ResourcePortal-managed tenant Networks."
       />
 
-      {notice ? (
-        <div className="mb-5">
-          <Callout tone={notice.tone} title={notice.message} />
-        </div>
-      ) : null}
       {state.error ? (
         <div className="mb-5">
           <Callout tone="danger" title="Network egress policy unavailable">

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ResourcePanel } from "./resource";
+import { ToastViewport } from "./toast";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -19,12 +20,15 @@ describe("cloud-style resource creation", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <ResourcePanel
-        title="Volumes"
-        listPath="/api/tenants/t1/volumes"
-        createPath="/api/tenants/t1/volumes"
-        createInitialValue={{ name: "", sizeGiB: 20 }}
-      />,
+      <>
+        <ResourcePanel
+          title="Volumes"
+          listPath="/api/tenants/t1/volumes"
+          createPath="/api/tenants/t1/volumes"
+          createInitialValue={{ name: "", sizeGiB: 20 }}
+        />
+        <ToastViewport />
+      </>,
     );
 
     expect(await screen.findByText("No Volumes yet.")).toBeTruthy();

@@ -13,6 +13,7 @@ import {
   statusTone,
 } from "../components/design-system";
 import { formatDate, text, useApi } from "../hooks/use-api";
+import { toast } from "../components/toast";
 
 type DnsState = {
   provider?: string;
@@ -41,7 +42,6 @@ export function PlatformDnsPage() {
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [working, setWorking] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "success" | "danger"; message: string }>();
 
   useEffect(() => {
     if (!dns.data) return;
@@ -55,7 +55,6 @@ export function PlatformDnsPage() {
   async function save(event: FormEvent) {
     event.preventDefault();
     setWorking(true);
-    setNotice(undefined);
     try {
       await apiRequest("/api/platform/dns", {
         method: "PATCH",
@@ -70,9 +69,9 @@ export function PlatformDnsPage() {
       await dns.reload();
       setApiToken("");
       setOauthClientSecret("");
-      setNotice({ tone: "success", message: enabled ? "Cloudflare DNS connected and managed domains enabled." : "DNS configuration saved." });
+      toast.success(enabled ? "Cloudflare DNS connected and managed domains enabled." : "DNS configuration saved.");
     } catch (error) {
-      setNotice({ tone: "danger", message: error instanceof Error ? error.message : "DNS configuration failed." });
+      toast.errorFrom(error, "DNS configuration failed.");
     } finally {
       setWorking(false);
     }
@@ -80,13 +79,12 @@ export function PlatformDnsPage() {
 
   async function validate() {
     setWorking(true);
-    setNotice(undefined);
     try {
       await apiRequest("/api/platform/dns/validate", { method: "POST" });
       await dns.reload();
-      setNotice({ tone: "success", message: "Cloudflare token, zone access and DNS write/delete permissions were validated." });
+      toast.success("Cloudflare token, zone access and DNS write/delete permissions were validated.");
     } catch (error) {
-      setNotice({ tone: "danger", message: error instanceof Error ? error.message : "Cloudflare validation failed." });
+      toast.errorFrom(error, "Cloudflare validation failed.");
     } finally {
       setWorking(false);
     }
@@ -96,7 +94,6 @@ export function PlatformDnsPage() {
 
   return <main>
     <PageHeader eyebrow="Platform Admin" title="DNS & Domains" description="Connect ResourcePortal to Cloudflare and control whether tenants may use managed ResourcePortal domains." />
-    {notice ? <div className="mb-5"><Callout tone={notice.tone} title={notice.message} /></div> : null}
     {dns.error ? <Callout tone="danger" title="DNS configuration unavailable">{dns.error instanceof Error ? dns.error.message : "The platform DNS API could not be loaded."}</Callout> : null}
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,.85fr)]">
       <Card className="overflow-hidden">

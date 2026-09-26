@@ -12,6 +12,7 @@ import {
   PageHeader,
   Stepper,
 } from "../components/design-system";
+import { toast } from "../components/toast";
 
 type ManifestIssue = {
   path: string;
@@ -55,7 +56,6 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
   const [fileName, setFileName] = useState("");
   const [yaml, setYaml] = useState("");
   const [validation, setValidation] = useState<ManifestValidation>();
-  const [error, setError] = useState<string>();
   const [validating, setValidating] = useState(false);
   const [applying, setApplying] = useState(false);
 
@@ -64,40 +64,39 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
   async function chooseFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     setValidation(undefined);
-    setError(undefined);
     setYaml("");
     setFileName(file?.name ?? "");
     if (!file) return;
 
     if (!/\.ya?ml$/i.test(file.name)) {
-      setError("Choose a .yml or .yaml file.");
+      toast.error("Choose a .yml or .yaml file.");
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
-      setError("The manifest is larger than the 512 KB limit.");
+      toast.error("The manifest is larger than the 512 KB limit.");
       return;
     }
 
     try {
       setYaml(await file.text());
     } catch {
-      setError("The selected file could not be read.");
+      toast.error("The selected file could not be read.");
     }
   }
 
   async function validate() {
     if (!yaml) return;
     setValidating(true);
-    setError(undefined);
     try {
       const result = await apiRequest<ManifestValidation>(
         `/api/tenants/${encodeURIComponent(tenantId)}/app-groups/import/validate`,
         { method: "POST", body: { yaml } },
       );
       setValidation(result);
+      if (result.valid) toast.success("Manifest validation passed.");
     } catch (cause) {
       setValidation(undefined);
-      setError(cause instanceof Error ? cause.message : "The manifest could not be validated.");
+      toast.errorFrom(cause, "The manifest could not be validated.");
     } finally {
       setValidating(false);
     }
@@ -106,7 +105,6 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
   async function apply() {
     if (!yaml || !validation?.valid) return;
     setApplying(true);
-    setError(undefined);
     try {
       const result = await apiRequest<AppliedManifest>(
         `/api/tenants/${encodeURIComponent(tenantId)}/app-groups/import/apply`,
@@ -114,7 +112,7 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
       );
       window.location.assign(appGroupHref(tenantId, result.id));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The App Group could not be imported.");
+      toast.errorFrom(cause, "The App Group could not be imported.");
       setApplying(false);
     }
   }
@@ -164,7 +162,6 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
           <strong>{fileName}</strong> is ready to validate. Validation does not create or modify resources.
         </Callout> : null}
 
-        {error ? <Callout tone="danger" title="Import request failed">{error}</Callout> : null}
 
         {validation && !validation.valid ? <Callout tone="danger" title="Manifest cannot be applied">
           <p>Fix the following validation errors and select the updated file again.</p>

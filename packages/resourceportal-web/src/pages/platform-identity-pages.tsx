@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { apiRequest } from "../api/client";
 import { Button, Card, DataTable, Dialog, EmptyState, Field, KeyIcon, LockIcon, MetricCard, PageHeader, Select, StatusBadge, TextInput, UsersIcon, statusTone } from "../components/design-system";
 import { formatDate, idOf, items, text, useApi } from "../hooks/use-api";
+import { toast } from "../components/toast";
 
 type Row = Record<string, unknown>;
 type IdentityForm = { name: string; protocol: "OIDC" | "SAML"; issuer: string; metadataUrl: string; clientId: string; clientSecret: string; enabled: boolean };
@@ -20,33 +21,31 @@ export function PlatformIdentityProvidersPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<IdentityForm>(emptyIdentity);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string>();
 
   async function createProvider(event: FormEvent) {
     event.preventDefault();
-    setBusy(true); setNotice(undefined);
+    setBusy(true);
     const body: Row = { name: form.name.trim(), protocol: form.protocol, enabled: form.enabled };
     if (form.protocol === "OIDC") Object.assign(body, { issuer: form.issuer.trim(), clientId: form.clientId.trim(), clientSecret: form.clientSecret, scopes: ["openid", "profile", "email"], usePkce: true });
     else Object.assign(body, { metadataUrl: form.metadataUrl.trim() });
     try {
       await apiRequest("/api/platform/identity-providers", { method: "POST", body });
-      await providers.reload(); setOpen(false); setForm(emptyIdentity); setNotice("Identity provider created.");
-    } catch (error) { setNotice(`Identity provider creation failed: ${message(error)}`); }
+      await providers.reload(); setOpen(false); setForm(emptyIdentity); toast.success("Identity provider created.");
+    } catch (error) { toast.error(`Identity provider creation failed: ${message(error)}`); }
     finally { setBusy(false); }
   }
 
   async function setEnabled(id: string, enabled: boolean) {
-    setBusy(true); setNotice(undefined);
+    setBusy(true);
     try {
       await apiRequest(`/api/platform/identity-providers/${encodeURIComponent(id)}`, { method: "PATCH", body: { enabled } });
-      await providers.reload(); setNotice(`Identity provider ${enabled ? "enabled" : "disabled"}.`);
-    } catch (error) { setNotice(`Identity provider update failed: ${message(error)}`); }
+      await providers.reload(); toast.success(`Identity provider ${enabled ? "enabled" : "disabled"}.`);
+    } catch (error) { toast.error(`Identity provider update failed: ${message(error)}`); }
     finally { setBusy(false); }
   }
 
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Identity providers" description="OIDC and SAML providers configured for platform sign-in." actions={<Button variant="primary" onClick={() => setOpen(true)}>Add identity provider</Button>} />
-    {notice ? <div role="status" className="mb-5 rounded-lg border border-[#D7E0EC] bg-white px-4 py-3 text-sm text-[#42526B]">{notice}</div> : null}
     <section className="mb-6 grid gap-4 sm:grid-cols-3" aria-label="Identity provider summary"><MetricCard label="Identity providers" value={String(rows.length)} icon={<UsersIcon />} loading={providers.loading} error={providers.error} /></section>
     <Card className="overflow-hidden"><DataTable embedded className="rounded-none border-0" loading={providers.loading} columns={[{key:"name",label:"Provider"},{key:"protocol",label:"Protocol"},{key:"status",label:"Status"},{key:"source",label:"Issuer / metadata"},{key:"actions",label:"Actions"}]} rows={rows.map((row) => { const id=idOf(row); const enabled=bool(row.enabled); return {key:id||text(row.name),cells:{name:<strong>{text(row.name,"Unnamed provider")}</strong>,protocol:titleCase(row.protocol),status:<StatusBadge tone={enabled?"success":"neutral"}>{enabled?"Enabled":"Disabled"}</StatusBadge>,source:text(valueOf(row,"issuer","metadataUrl"),"—"),actions:id?<Button size="sm" disabled={busy} onClick={() => void setEnabled(id,!enabled)}>{enabled?"Disable":"Enable"}</Button>:"—"}}; })} empty={<EmptyState icon={<UsersIcon />} title="No platform identity providers" description="Add an OIDC or SAML provider when external federation is required." />} /></Card>
     <Dialog open={open} onClose={() => setOpen(false)} title="Add identity provider" description="Create a platform-wide federation provider using the backend configuration API." actions={<><Button onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" type="submit" form="platform-idp-form" disabled={busy || !form.name.trim()}>Create identity provider</Button></>}>

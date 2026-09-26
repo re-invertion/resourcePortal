@@ -47,7 +47,6 @@ export function App({ initialPath }: AppProps = {}) {
 
 function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant[]; reload: () => Promise<void> }) {
   const active = useMemo(() => tenants.filter((tenant) => tenant.status === undefined || tenant.status === "Active"), [tenants]);
-  const [error, setError] = useState<unknown>();
   const [createOpen, setCreateOpen] = useState(active.length === 0);
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -78,9 +77,7 @@ function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant
         {active.length ? <Button variant="primary" className="max-w-full shrink-0" onClick={() => setCreateOpen(true)}><PlusIcon size={16}/>Create tenant</Button> : null}
       </div>
 
-      {error ? <div className="mt-5 min-w-0"><ErrorState error={error}/></div> : null}
-
-      {createOpen ? <div className="mt-6 min-w-0"><CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { setError(undefined); try { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); setCreateOpen(false); } catch (cause) { setError(cause); throw cause; } }} /></div> : active.length ? <>
+      {createOpen ? <div className="mt-6 min-w-0"><CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); setCreateOpen(false); }} /></div> : active.length ? <>
         <label className="relative mt-7 block min-w-0">
           <span className="sr-only">Search tenants</span>
           <SearchIcon size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#718096]"/>

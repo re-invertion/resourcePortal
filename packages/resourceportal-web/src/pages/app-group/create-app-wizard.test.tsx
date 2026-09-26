@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateApplicationWizard } from "./create-app-wizard";
+import { ToastViewport } from "../../components/toast";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -38,7 +39,7 @@ describe("CreateApplicationWizard", () => {
   }
 
   async function openStorage() {
-    render(<CreateApplicationWizard tenantId="t1" appGroupId="ag1" />);
+    render(<><CreateApplicationWizard tenantId="t1" appGroupId="ag1" /><ToastViewport /></>);
     enterBasics();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByRole("heading", { name: "Volumes" })).toBeTruthy();
@@ -122,7 +123,8 @@ describe("CreateApplicationWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Create application" }));
 
-    expect(await screen.findByText(/compensated for the partial failure/i)).toBeTruthy();
+    expect(await screen.findByText(/Partial application creation was cleaned up/i)).toBeTruthy();
+    expect(screen.getByText(/marked for deletion/i)).toBeTruthy();
     await waitFor(() => expect(mutations).toHaveLength(4));
     expect(mutations.map(({ path, method }) => [method, path])).toEqual([
       ["POST", "/api/tenants/t1/app-groups/ag1/single-apps"],

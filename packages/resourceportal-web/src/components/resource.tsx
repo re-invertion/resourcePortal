@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiRequest } from "../api/client";
 import { CreateResourceWorkspace, resourceCreationMeta } from "./create-resource";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential, type ReferenceOptions } from "./forms";
+import { toast } from "./toast";
 
 type FormTemplate = Record<string, unknown>;
 
@@ -175,7 +176,6 @@ export function ResourcePanel(props: ResourcePanelProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [success, setSuccess] = useState<string>();
   const [workspace, setWorkspace] = useState<Workspace>();
   const creation = useMemo(() => resourceCreationMeta(props.title), [props.title]);
   const explicitSourceKey = JSON.stringify(props.referenceOptionSources ?? {});
@@ -244,15 +244,13 @@ export function ResourcePanel(props: ResourcePanelProps) {
     oneTimeResponse = false,
     successMessage = "Saved.",
   ) {
-    setError(undefined);
-    setSuccess(undefined);
     try {
       const result = await apiRequest(path, { method, body });
       if (oneTimeResponse) setOneTime(result);
       await reload();
-      setSuccess(successMessage);
+      toast.success(successMessage);
     } catch (cause) {
-      setError(cause);
+      toast.errorFrom(cause);
       throw cause;
     }
   }
@@ -278,7 +276,6 @@ export function ResourcePanel(props: ResourcePanelProps) {
       </div>
     </header>
     {error ? <ErrorState error={error} /> : null}
-    {success ? <p className="rp-success-message" role="status">{success}</p> : null}
     {oneTime != null ? <OneTimeCredential value={oneTime} /> : null}
     {canCreate && createOpen ? <CreateResourceWorkspace
       title={props.title}

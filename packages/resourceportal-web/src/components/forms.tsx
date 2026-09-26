@@ -11,6 +11,7 @@ import {
   type ReferenceOptions,
 } from "./form-contracts";
 import { useAutomaticReferenceOptions } from "./reference-options";
+import { toast } from "./toast";
 
 export type { ReferenceOption, ReferenceOptions } from "./form-contracts";
 
@@ -263,7 +264,6 @@ function ObjectShapeFields({ values, onChange, disabled, references, errors, tou
 
 function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { runtime: PreviewFormikRuntime; initialValue: Payload }) {
   const initial = useMemo(() => cloneValue(initialValue), [initialValue]);
-  const [error, setError] = useState<string>();
   const yup = previewYupRuntime();
   const validationSchema = useMemo(() => yup ? buildYupSchema(initial, yup, referenceOptions, fieldType, labelFor) : undefined, [initial, yup, referenceOptions]);
   const formik = runtime.useFormik({
@@ -273,50 +273,44 @@ function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSub
     validateOnChange: true,
     validationSchema,
     onSubmit: async (values, helpers) => {
-      setError(undefined);
       try { await onSubmit(cleanPayload(values)); }
-      catch (cause) { setError(payloadError(cause)); }
+      catch (cause) { toast.errorFrom(cause, payloadError(cause)); }
       finally { helpers.setSubmitting(false); }
     },
   });
-  return <form className="rp-structured-form" onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); }} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); }} /><button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { initialValue: Payload }) {
   const initial = useMemo(() => cloneValue(initialValue), [initialValue]);
   const [values, setValues] = useState<Payload>(initial);
-  const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   useEffect(() => setValues(cloneValue(initial)), [initial]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
     try { setSubmitting(true); await onSubmit(cleanPayload(values)); }
-    catch (cause) { setError(payloadError(cause)); }
+    catch (cause) { toast.errorFrom(cause, payloadError(cause)); }
     finally { setSubmitting(false); }
   }
-  return <form className="rp-structured-form" onSubmit={submit}><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} />{error ? <p role="alert">{error}</p> : null}<button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={submit}><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} /><button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function DynamicPayloadForm({ submitLabel, onSubmit, disabled = false }: JsonPayloadFormProps) {
   const [rows, setRows] = useState<DynamicRow[]>([{ id: rowId(), key: "", type: "text", value: "" }]);
-  const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
     try {
       setSubmitting(true);
       const payload = rows.reduce<Payload>((result, row) => { const key = row.key.trim(); const value = cleanValue(row.value); if (key && value !== undefined) result[key] = value; return result; }, {});
       await onSubmit(payload);
-    } catch (cause) { setError(payloadError(cause)); }
+    } catch (cause) { toast.errorFrom(cause, payloadError(cause)); }
     finally { setSubmitting(false); }
   }
   return (
     <form className="rp-structured-form rp-dynamic-form" onSubmit={submit}>
       {rows.map((row, index) => <fieldset key={row.id}><legend>{`Field ${index + 1}`}</legend><label>Field name<input aria-label={`Field name ${index + 1}`} value={row.key} disabled={disabled || submitting} onChange={(event) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, key: event.target.value } : item))} /></label><label>Field type<select aria-label={`Field type ${index + 1}`} value={row.type} disabled={disabled || submitting} onChange={(event) => { const type = event.target.value as DynamicType; setRows((current) => current.map((item) => item.id === row.id ? { ...item, type, value: defaultValue(type) } : item)); }}><option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="list">List</option><option value="object">Object</option></select></label><ValueEditor label={`Field value ${index + 1}`} fieldKey={row.key} value={row.value} forcedType={row.type} disabled={disabled || submitting} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, value } : item))} /><button type="button" disabled={disabled || submitting} onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}>Remove field</button></fieldset>)}
       <button type="button" disabled={disabled || submitting} onClick={() => setRows((current) => [...current, { id: rowId(), key: "", type: "text", value: "" }])}>Add field</button>
-      {error ? <p role="alert">{error}</p> : null}
       <button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button>
     </form>
   );

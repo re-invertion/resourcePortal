@@ -12,6 +12,7 @@ import {
   UsersIcon,
 } from "../components/design-system";
 import { tenantHref } from "../router/router";
+import { toast } from "../components/toast";
 
 type InvitationPreview = {
   tenant: { id: string; name: string; displayName: string };
@@ -72,7 +73,6 @@ export function InvitationPage({
   async function accept() {
     if (!preview || preview.status === "Expired") return;
     setWorking(true);
-    setError(undefined);
     try {
       const membership = await apiRequest<{ tenantId: string }>("/api/invitations/accept", {
         method: "POST",
@@ -80,7 +80,7 @@ export function InvitationPage({
       });
       navigate(tenantHref(membership.tenantId || preview.tenant.id, "overview"));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Invitation could not be accepted.");
+      toast.errorFrom(cause, "Invitation could not be accepted.");
     } finally {
       setWorking(false);
     }

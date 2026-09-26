@@ -2,6 +2,7 @@ import * as React from "react";
 import { StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { App } from "./App";
+import { ToastViewport } from "./components/toast";
 import "./styles.css";
 
 const FORMIK_PREVIEW_URL = "https://cdn.jsdelivr.net/npm/formik@2.2.9/dist/formik.umd.production.min.js";
@@ -88,7 +89,7 @@ async function bootstrap() {
   if (!root) throw new Error("Missing #root mount point");
 
   await loadPreviewUi();
-  hydrateRoot(root, <StrictMode><App initialPath={window.location.pathname} /></StrictMode>);
+  hydrateRoot(root, <StrictMode><App initialPath={window.location.pathname} /><ToastViewport /></StrictMode>);
 }
 
 registerResourcePortalServiceWorker();

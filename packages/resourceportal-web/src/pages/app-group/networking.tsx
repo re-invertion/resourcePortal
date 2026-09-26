@@ -17,6 +17,7 @@ import {
   TrashIcon,
 } from "../../components/design-system";
 import { idOf, items, text } from "../../hooks/use-api";
+import { toast } from "../../components/toast";
 
 type R = Record<string, unknown>;
 type EndpointRow = { app: R; endpoint: R };
@@ -32,7 +33,7 @@ export function AppGroupNetworking({
   const [apps, setApps] = useState<R[]>([]);
   const [rows, setRows] = useState<EndpointRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>();
+  const [loadError, setLoadError] = useState<string>();
   const [working, setWorking] = useState(false);
 
   const [open, setOpen] = useState(false);
@@ -44,7 +45,7 @@ export function AppGroupNetworking({
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError(undefined);
+    setLoadError(undefined);
     try {
       const appResult = await apiRequest(`${root}/single-apps`);
       const appList = items<R>(appResult);
@@ -61,7 +62,7 @@ export function AppGroupNetworking({
       );
       setRows(all.flat());
     } catch (caught) {
-      setError(
+      setLoadError(
         caught instanceof Error ? caught.message : "Networking could not be loaded.",
       );
     } finally {
@@ -85,7 +86,6 @@ export function AppGroupNetworking({
   async function save() {
     if (!appId || !name || !port) return;
     setWorking(true);
-    setError(undefined);
     try {
       const base = `${root}/single-apps/${encodeURIComponent(appId)}/http-endpoints`;
       const endpointId = editing ? idOf(editing.endpoint) : "";
@@ -96,8 +96,9 @@ export function AppGroupNetworking({
       setOpen(false);
       setEditing(undefined);
       await load();
+      toast.success(endpointId ? "Endpoint updated." : "Endpoint created.");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Endpoint could not be saved.");
+      toast.errorFrom(caught, "Endpoint could not be saved.");
     } finally {
       setWorking(false);
     }
@@ -110,10 +111,9 @@ export function AppGroupNetworking({
         { method: "DELETE" },
       );
       await load();
+      toast.success("Endpoint deleted.");
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Endpoint could not be deleted.",
-      );
+      toast.errorFrom(caught, "Endpoint could not be deleted.");
     }
   }
 
@@ -137,9 +137,9 @@ export function AppGroupNetworking({
         </Button>
       </div>
 
-      {error ? (
-        <Callout tone="danger" title="Networking request failed">
-          {error}
+      {loadError ? (
+        <Callout tone="danger" title="Networking could not be loaded">
+          {loadError}
         </Callout>
       ) : null}
 

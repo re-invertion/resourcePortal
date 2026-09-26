@@ -16,6 +16,7 @@ import {
 } from "../components/design-system";
 import { idOf, items, text, useApi } from "../hooks/use-api";
 import { SectionNav } from "../components/ui";
+import { toast } from "../components/toast";
 
 type R = Record<string, unknown>;
 type AccessMode = "AllMembers" | "SelectedMembers";
@@ -57,8 +58,6 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
   const [accessMode, setAccessMode] = useState<AccessMode>("SelectedMembers");
   const [selected, setSelected] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
-  const [error, setError] = useState<string>();
-  const [success, setSuccess] = useState<string>();
 
   useEffect(() => {
     if (!settings.data) return;
@@ -83,8 +82,6 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
 
   async function save() {
     setWorking(true);
-    setError(undefined);
-    setSuccess(undefined);
     try {
       await apiRequest(`${root}/mcp-settings`, {
         method: "PATCH",
@@ -95,9 +92,9 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         },
       });
       await settings.reload();
-      setSuccess("Tenant MCP settings saved.");
+      toast.success("Tenant MCP settings saved.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Tenant MCP settings could not be saved.");
+      toast.errorFrom(cause, "Tenant MCP settings could not be saved.");
     } finally {
       setWorking(false);
     }
@@ -114,11 +111,10 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         description="Tenant-wide features and integration settings controlled by tenant administrators."
       />
       <div className="mb-5"><SectionNav label="Settings sections" items={[{ label: "MCP", href: "#mcp" }]} /></div>
-      {success ? <div className="mb-4" role="status"><Callout tone="success" title={success} /></div> : null}
-      {error || settings.error ? (
+      {settings.error ? (
         <div className="mb-4">
           <Callout tone="danger" title="Tenant settings unavailable">
-            {error ?? (settings.error instanceof Error ? settings.error.message : "The settings request failed.")}
+            {settings.error instanceof Error ? settings.error.message : "The settings request failed."}
           </Callout>
         </div>
       ) : null}

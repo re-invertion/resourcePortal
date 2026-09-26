@@ -28,6 +28,7 @@ import {
   type Topology,
   type TopologyEdgeData,
 } from "./tenant-networking-graph";
+import { toast } from "../components/toast";
 
 type Operation = {
   id: string;
@@ -73,7 +74,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/networking`;
   const topology = useApi<Topology>(`${root}/topology`);
   const [working, setWorking] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "success" | "warning" | "danger"; message: string }>();
   const [networkOpen, setNetworkOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [networkForm, setNetworkForm] = useState({ name: "", description: "", cidr: "" });
@@ -85,22 +85,18 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     const sourceId = connection.source;
     const targetId = connection.target;
     if (!sourceId || !targetId?.startsWith("network:")) {
-      setNotice({
-        tone: "danger",
-        message: "Connect an Application or ResourcePortalGate node to a Network node.",
-      });
+      toast.error("Connect an Application or ResourcePortalGate node to a Network node.");
       return;
     }
 
     const networkId = targetId.slice("network:".length);
     const network = topology.data?.networks.find((item) => item.id === networkId);
     if (!network) {
-      setNotice({ tone: "danger", message: "The selected Network is no longer available." });
+      toast.error("The selected Network is no longer available.");
       return;
     }
 
     setWorking(true);
-    setNotice(undefined);
     try {
       let operation: Operation;
       const headers = { "idempotency-key": crypto.randomUUID() };
@@ -142,17 +138,11 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
       await waitForOperation(tenantId, operation);
       await topology.reload();
-      setNotice({
-        tone: "success",
-        message: sourceId.startsWith("app:")
-          ? "Application connected. Deploy the affected App Group to apply the new Network attachment."
-          : "ResourcePortalGate route connected and queued for runtime reconciliation.",
-      });
+      toast.success(sourceId.startsWith("app:")
+        ? "Application connected. Deploy the affected App Group to apply the new Network attachment."
+        : "ResourcePortalGate route connected and queued for runtime reconciliation.");
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to connect topology nodes.",
-      });
+      toast.errorFrom(error, "Unable to connect topology nodes.");
     } finally {
       setWorking(false);
     }
@@ -162,7 +152,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     const data = edge.data as TopologyEdgeData | undefined;
     if (!data) return;
     setWorking(true);
-    setNotice(undefined);
     try {
       let operation: Operation;
       const headers = { "idempotency-key": crypto.randomUUID() };
@@ -179,18 +168,11 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       }
       await waitForOperation(tenantId, operation);
       await topology.reload();
-      setNotice({
-        tone: "success",
-        message:
-          data.kind === "application-network"
-            ? "Application disconnected. Deploy the App Group to apply the change."
-            : "Gate route disconnected.",
-      });
+      toast.success(data.kind === "application-network"
+        ? "Application disconnected. Deploy the App Group to apply the change."
+        : "Gate route disconnected.");
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to disconnect topology edge.",
-      });
+      toast.errorFrom(error, "Unable to disconnect topology edge.");
     } finally {
       setWorking(false);
     }
@@ -199,7 +181,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   async function createNetwork(event: FormEvent) {
     event.preventDefault();
     setWorking(true);
-    setNotice(undefined);
     try {
       await apiRequest(`${root}/networks`, {
         method: "POST",
@@ -212,12 +193,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       setNetworkForm({ name: "", description: "", cidr: "" });
       setNetworkOpen(false);
       await topology.reload();
-      setNotice({ tone: "success", message: "Network created." });
+      toast.success("Network created.");
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to create Network.",
-      });
+      toast.errorFrom(error, "Unable to create Network.");
     } finally {
       setWorking(false);
     }
@@ -226,7 +204,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   async function createGate(event: FormEvent) {
     event.preventDefault();
     setWorking(true);
-    setNotice(undefined);
     try {
       const response = await apiRequest<EnrollmentResponse>(`${root}/gates`, {
         method: "POST",
@@ -239,10 +216,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       setGateForm({ name: "", description: "" });
       await topology.reload();
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to create ResourcePortalGate.",
-      });
+      toast.errorFrom(error, "Unable to create ResourcePortalGate.");
     } finally {
       setWorking(false);
     }
@@ -250,7 +224,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
   async function rotateEnrollment(gate: GateResource) {
     setWorking(true);
-    setNotice(undefined);
     try {
       const response = await apiRequest<EnrollmentResponse>(
         `${root}/gates/${encodeURIComponent(gate.id)}/enrollment`,
@@ -260,10 +233,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       setGateOpen(true);
       await topology.reload();
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to rotate Gate enrollment.",
-      });
+      toast.errorFrom(error, "Unable to rotate Gate enrollment.");
     } finally {
       setWorking(false);
     }
@@ -276,12 +246,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         method: "DELETE",
       });
       await topology.reload();
-      setNotice({ tone: "success", message: `Network ${network.name} deleted.` });
+      toast.success(`Network ${network.name} deleted.`);
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to delete Network.",
-      });
+      toast.errorFrom(error, "Unable to delete Network.");
     } finally {
       setWorking(false);
     }
@@ -294,12 +261,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         method: "DELETE",
       });
       await topology.reload();
-      setNotice({ tone: "success", message: `ResourcePortalGate ${gate.name} deletion requested.` });
+      toast.success(`ResourcePortalGate ${gate.name} deletion requested.`);
     } catch (error) {
-      setNotice({
-        tone: "danger",
-        message: error instanceof Error ? error.message : "Unable to delete Gate.",
-      });
+      toast.errorFrom(error, "Unable to delete Gate.");
     } finally {
       setWorking(false);
     }
@@ -416,11 +380,6 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         }
       />
 
-      {notice ? (
-        <div className="mb-5">
-          <Callout tone={notice.tone} title={notice.message} />
-        </div>
-      ) : null}
       {topology.error ? (
         <div className="mb-5">
           <Callout tone="danger" title="Networking topology unavailable">

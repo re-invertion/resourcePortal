@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReadableDataView, ReadOnlyPanel, ResourcePanel } from "./resource";
+import { ToastViewport } from "./toast";
 
 describe("permission-aware controls", () => {
   it("hides a create control when known permissions do not include it", async () => {
@@ -96,7 +97,7 @@ describe("resource list usability", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "ag1", name: "renamed" }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "ag1", name: "renamed" }]), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<ResourcePanel title="AppGroups" listPath="/api/tenants/t/app-groups" itemPath={(item) => `/api/tenants/t/app-groups/${String(item.id)}`} updateInitialValue={{ name: "" }} />);
+    render(<><ResourcePanel title="AppGroups" listPath="/api/tenants/t/app-groups" itemPath={(item) => `/api/tenants/t/app-groups/${String(item.id)}`} updateInitialValue={{ name: "" }} /><ToastViewport /></>);
 
     const row = await screen.findByRole("row", { name: /group/i });
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
@@ -131,7 +132,7 @@ describe("resource list usability", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify([{ id: "registry-1", name: "registry" }]), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ResourcePanel title="Registries" listPath="/api/tenants/t/registries" actions={[{ label: "Validate", method: "POST", path: () => "/api/tenants/t/registries/registry-1/validate" }]} />);
+    render(<><ResourcePanel title="Registries" listPath="/api/tenants/t/registries" actions={[{ label: "Validate", method: "POST", path: () => "/api/tenants/t/registries/registry-1/validate" }]} /><ToastViewport /></>);
 
     const row = await screen.findByRole("row", { name: /registry/i });
     expect(within(row).queryByText("More actions")).toBeNull();

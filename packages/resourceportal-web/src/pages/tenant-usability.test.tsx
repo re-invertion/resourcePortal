@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TenantPage } from "./tenant";
+import { ToastViewport } from "../components/toast";
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 
@@ -166,7 +167,7 @@ describe("tenant action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TenantPage tenantId="t" section="administration" userId="u" />);
+    render(<><TenantPage tenantId="t" section="administration" userId="u" /><ToastViewport /></>);
     await screen.findByRole("heading", { name: "Authentication policy" });
     fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
 

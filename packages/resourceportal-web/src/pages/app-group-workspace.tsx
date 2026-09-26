@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
 import { SectionNav, StatusBadge } from "../components/ui";
+import { toast } from "../components/toast";
 
 type AppGroupView = Record<string, unknown>;
 
@@ -55,7 +56,6 @@ export function AppGroupWorkspace({
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/app-groups/${encodeURIComponent(appGroupId)}`;
   const [appGroup, setAppGroup] = useState<AppGroupView>();
   const [loadError, setLoadError] = useState<unknown>();
-  const [actionError, setActionError] = useState<unknown>();
   const [working, setWorking] = useState<string>();
 
   const load = useCallback(async () => {
@@ -81,12 +81,12 @@ export function AppGroupWorkspace({
 
   async function runtimeAction(action: "start" | "stop" | "restart") {
     setWorking(action);
-    setActionError(undefined);
     try {
       await apiRequest(`${root}/runtime/${action}`, { method: "POST" });
       await load();
+      toast.success(`App Group ${action === "start" ? "started" : action === "stop" ? "stopped" : "restarted"}.`);
     } catch (error) {
-      setActionError(error);
+      toast.errorFrom(error, `App Group ${action} failed.`);
     } finally {
       setWorking(undefined);
     }
@@ -107,7 +107,6 @@ export function AppGroupWorkspace({
     </header>
 
     {loadError ? <div className="rp-workspace-alert" role="alert"><strong>App Group details are unavailable.</strong><p>Other tenant navigation remains available. Refresh this page to retry.</p></div> : null}
-    {actionError ? <div className="rp-workspace-alert" role="alert"><strong>Runtime action failed.</strong><p>{actionError instanceof Error ? actionError.message : "The request could not be completed."}</p></div> : null}
     {blocker ? <div className="rp-workspace-alert" data-tone={blockers.includes("BillingSuspended") ? "negative" : "warning"} role="alert"><div><strong>{blocker.title}</strong><p>{blocker.detail}</p></div>{blocker.action === "billing" ? <a href={tenantHref(tenantId, "billing")}>Add credits</a> : <a href="#deployments">Review deployment</a>}</div> : null}
 
     <SectionNav label="App Group sections" items={[{ label: "Overview", href: "#overview" }, { label: "Apps", href: "#apps" }, { label: "Config", href: "#config" }, { label: "Networking", href: "#networking" }, { label: "Deployments", href: "#deployments" }, { label: "Activity", href: "#activity" }]} />

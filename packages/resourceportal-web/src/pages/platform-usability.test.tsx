@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformPage } from "./platform";
+import { ToastViewport } from "../components/toast";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -18,7 +19,7 @@ describe("platform action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<PlatformPage section="infrastructure" />);
+    render(<><PlatformPage section="infrastructure" /><ToastViewport /></>);
     expect((await screen.findAllByText("Ready")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Reconcile Swarm cluster" }));
 
@@ -54,7 +55,7 @@ describe("platform action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<PlatformPage section="maintenance" />);
+    render(<><PlatformPage section="maintenance" /><ToastViewport /></>);
     await screen.findByText("Maintenance state");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("dialog", { name: /confirm maintenance change/i })).toBeTruthy();

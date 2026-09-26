@@ -204,9 +204,6 @@
     @apply mb-3 text-slate-600;
   }
 
-  .rp-success-message {
-    @apply my-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm font-medium text-green-800;
-  }
 
   .rp-selected-resource {
     @apply my-3 flex flex-wrap items-center gap-3 rounded-md border border-blue-200 bg-blue-50 p-3;
@@ -487,7 +484,6 @@
   .rp-list-toolbar label { @apply gap-1 text-xs text-slate-500; }
   .rp-list-toolbar input, .rp-list-toolbar select { @apply bg-white; }
   .rp-empty-state { @apply rounded-xl border-slate-200 bg-slate-50/70; }
-  .rp-success-message { @apply rounded-xl border-emerald-200 bg-emerald-50 text-emerald-800; }
   .rp-selected-resource { @apply rounded-xl border-blue-100 bg-blue-50; }
   .rp-settings-editor, .rp-action-panel, .rp-attachment-manager { @apply my-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm; }
   .rp-settings-editor > header, .rp-attachment-manager > header { @apply flex items-start border-b border-slate-100 px-5 py-4; }
