@@ -48,20 +48,20 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@eslint/js": "^9.34.0",
+    "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/client": "^2.0.0",
-    "@nestjs/cli": "^11.0.10",
-    "@nestjs/schematics": "^11.0.7",
-    "@nestjs/testing": "^12.0.3",
-    "@types/node": "^24.3.0",
-    "eslint": "^9.34.0",
+    "@nestjs/cli": "^12.0.5",
+    "@nestjs/schematics": "^12.0.5",
+    "@nestjs/testing": "^12.1.0",
+    "@types/node": "^26.6.2",
+    "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^16.3.0",
+    "globals": "^17.12.0",
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.2",
-    "typescript-eslint": "^8.40.0",
-    "vitest": "4.1.11"
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "5.0.1"
   },
   "prisma": {
     "seed": "ts-node src/prisma/seed.ts"
