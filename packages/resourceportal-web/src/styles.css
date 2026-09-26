@@ -133,6 +133,15 @@
     @apply my-3 max-w-full overflow-auto rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-100;
   }
 
+  pre code {
+    @apply rounded-none bg-transparent p-0 text-inherit;
+  }
+
+  pre::selection,
+  pre *::selection {
+    @apply bg-blue-600 text-white;
+  }
+
   code {
     @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-xs;
   }
