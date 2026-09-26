@@ -629,7 +629,7 @@ spec:
 
             <Subheading>Usage charts</Subheading>
             <Paragraph>
-              The Credits over time chart compares credits actually charged with the theoretical cost calculated for usage samples. Replica usage compares billed replicas with desired replicas so you can see whether a workload was configured to run even when no billable replicas were active.
+              Billing uses one interactive usage chart above the transaction list. Choose 24 hours, 7 days, 30 days or the full history, then switch between Credits and Replicas. Credits compares the amount actually charged with theoretical cost; Replicas compares average billed replicas with desired replicas. You can hide either series to focus on one signal. Longer periods are aggregated into larger time buckets so the chart remains readable without dropping the selected history.
             </Paragraph>
 
             <Subheading>Transactions</Subheading>

@@ -142,3 +142,9 @@ export class UsageHistoryQueryDto {
   @IsDateString()
   to?: string;
 }
+
+export class UsageSeriesQueryDto extends UsageHistoryQueryDto {
+  @IsOptional()
+  @IsIn(["15m", "2h", "12h", "1d"])
+  bucket: "15m" | "2h" | "12h" | "1d" = "2h";
+}

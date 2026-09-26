@@ -26,7 +26,7 @@ describe("billing funding UI", () => {
         return json({ cpu: 2, memoryBytes: 1024, gpu: 0, storageBytes: 2048, maxSingleApps: 5, maxVolumes: 5 });
       }
       if (url === "/api/tenants/t1/billing/transactions") return json([]);
-      if (url === "/api/tenants/t1/billing/usage-records") return json([]);
+      if (url.startsWith("/api/tenants/t1/billing/usage-series?")) return json([]);
       if (url === "/api/tenants/t1/billing/vouchers/redeem" && method === "POST") {
         return json({ billing: { balanceCredits: "125" } });
       }
@@ -75,7 +75,7 @@ describe("billing funding UI", () => {
         amountPln: "-0.25",
         createdAt: "2026-09-19T11:13:55.182Z",
       }] });
-      if (url === "/api/tenants/t1/billing/usage-records") return json({ items: [{
+      if (url.startsWith("/api/tenants/t1/billing/usage-series?")) return json({ items: [{
         id: "usage-1",
         resourceType: "SingleApp",
         periodStart: "2026-09-19T11:16:00.000Z",
@@ -97,10 +97,25 @@ describe("billing funding UI", () => {
 
     expect(await screen.findByText("-25 credits")).toBeTruthy();
     expect(screen.getByText("-0.25 PLN")).toBeTruthy();
-    expect(screen.getByText("0 credits")).toBeTruthy();
+    expect(screen.getAllByText("0 credits").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/0 PLN/)).toBeTruthy();
-    expect(screen.getByText(/theoretical 0 credits/)).toBeTruthy();
-    expect(screen.getByText(/0\/1 replicas billed/)).toBeTruthy();
+    expect(screen.getAllByText("Theoretical").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/latest 0\/1 billed\/desired/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "7d" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Credits" }).getAttribute("aria-pressed")).toBe("true");
+    const firstUsageUrl = String(fetchMock.mock.calls.find(([input]) => String(input).startsWith("/api/tenants/t1/billing/usage-series?"))?.[0]);
+    const firstUsageParams = new URL(firstUsageUrl, "http://resourceportal.test").searchParams;
+    expect(firstUsageParams.get("bucket")).toBe("2h");
+    expect(firstUsageParams.get("from")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "30d" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "30d" }).getAttribute("aria-pressed")).toBe("true");
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/tenants/t1/billing/usage-series?")).length).toBeGreaterThanOrEqual(2);
+    });
+
+    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
+    expect(headings.indexOf("Usage")).toBeLessThan(headings.indexOf("Transactions"));
     expect(screen.queryByText("—")).toBeNull();
   });
 

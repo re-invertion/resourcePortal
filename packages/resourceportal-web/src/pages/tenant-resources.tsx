@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
-import { BillingUsageCharts } from "../components/billing-usage-charts";
+import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
 import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, NumberInput, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatBytes, formatDate, idOf, items, text, useApi } from "../hooks/use-api";
@@ -66,11 +66,130 @@ export function TenantActivity({tenantId}:{tenantId:string}) {
 
 export function TenantBilling({tenantId}:{tenantId:string}) {
   const root=`/api/tenants/${encodeURIComponent(tenantId)}`;
-  const billing=useApi<R>(`${root}/billing`); const quota=useApi<R|undefined>(`${root}/quota`); const transactions=useApi<unknown>(`${root}/billing/transactions`); const usage=useApi<unknown>(`${root}/billing/usage-records`);
-  const [quotaForm,setQuotaForm]=useState({cpu:0,memoryBytes:0,gpu:0,storageBytes:0,maxSingleApps:0,maxVolumes:0}); const [voucherCode,setVoucherCode]=useState(""); const [working,setWorking]=useState<string>();
-  useEffect(()=>{if(!quota.data)return;setQuotaForm({cpu:Number(quota.data.cpu??0),memoryBytes:Number(quota.data.memoryBytes??0),gpu:Number(quota.data.gpu??0),storageBytes:Number(quota.data.storageBytes??0),maxSingleApps:Number(quota.data.maxSingleApps??0),maxVolumes:Number(quota.data.maxVolumes??0)});},[quota.data]);
-  async function saveQuota(){setWorking("quota");try{await apiRequest(`${root}/quota`,{method:"PATCH",body:quotaForm});await quota.reload();toast.success("Quota saved.");}catch(c){toast.errorFrom(c,"Quota could not be saved.");}finally{setWorking(undefined);}}
-  async function redeemVoucher(){const code=voucherCode.trim().toUpperCase();if(!code)return;setWorking("voucher");try{await apiRequest(`${root}/billing/vouchers/redeem`,{method:"POST",body:{code}});setVoucherCode("");await Promise.all([billing.reload(),transactions.reload()]);toast.success("Voucher redeemed and credits added.");}catch(c){toast.errorFrom(c,"Voucher could not be redeemed.");}finally{setWorking(undefined);}}
-  const txRows=items<R>(transactions.data); const usageRows=items<R>(usage.data); const state=text(billing.data?.billingState,text(billing.data?.state,"Unknown"));
-  return <main><PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota, usage and account transactions."/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><BillingMetricCard icon={<BillingIcon/>} label="Balance" value={`${text(billing.data?.balanceCredits,text(billing.data?.balance,"0"))} credits`} detail={<>≈ {text(billing.data?.balancePln,"0")} PLN</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/><BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={text(quota.data?.cpu,"—")} detail="cores"/><BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={formatBytes(quota.data?.memoryBytes)} detail="memory"/><BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={formatBytes(quota.data?.storageBytes)} detail="persistent storage"/></div><div className="mt-6 grid gap-6 xl:grid-cols-[1fr_.8fr]"><Card className="p-5"><h2 className="font-semibold">Quota</h2><p className="mt-1 text-sm text-[#5B6678]">Resource limits applied to this tenant.</p><div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><Field label="CPU cores"><NumberInput min={0} step={0.1} value={quotaForm.cpu} onChange={e=>setQuotaForm({...quotaForm,cpu:Number(e.target.value)})}/></Field><Field label="Memory (bytes)"><NumberInput min={0} value={quotaForm.memoryBytes} onChange={e=>setQuotaForm({...quotaForm,memoryBytes:Number(e.target.value)})}/></Field><Field label="GPU"><NumberInput min={0} value={quotaForm.gpu} onChange={e=>setQuotaForm({...quotaForm,gpu:Number(e.target.value)})}/></Field><Field label="Storage (bytes)"><NumberInput min={0} value={quotaForm.storageBytes} onChange={e=>setQuotaForm({...quotaForm,storageBytes:Number(e.target.value)})}/></Field><Field label="Max applications"><NumberInput min={0} value={quotaForm.maxSingleApps} onChange={e=>setQuotaForm({...quotaForm,maxSingleApps:Number(e.target.value)})}/></Field><Field label="Max volumes"><NumberInput min={0} value={quotaForm.maxVolumes} onChange={e=>setQuotaForm({...quotaForm,maxVolumes:Number(e.target.value)})}/></Field></div><Button className="mt-5" variant="primary" disabled={working==="quota"} onClick={()=>void saveQuota()}>{working==="quota"?"Saving…":"Save quota"}</Button></Card><Card className="p-5"><h2 className="font-semibold">Redeem voucher</h2><p className="mt-1 text-sm text-[#5B6678]">Tenant balances can only be funded with a platform-issued voucher. Manual credit adjustments are restricted to Platform Admin.</p><div className="mt-5 space-y-4"><Field label="Voucher code" required hint="Enter the RPV-… code issued by the platform administrator."><TextInput autoComplete="off" value={voucherCode} onChange={e=>setVoucherCode(e.target.value)} placeholder="RPV-…" /></Field><Button variant="primary" disabled={working==="voucher"||!voucherCode.trim()} onClick={()=>void redeemVoucher()}>{working==="voucher"?"Redeeming…":"Redeem voucher"}</Button></div></Card></div><div className="mt-6 space-y-6"><Card className="overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Transactions</h2></div><DataTable embedded loading={transactions.loading} columns={[{key:"type",label:"Type"},{key:"amount",label:"Amount"},{key:"time",label:"Timestamp"}]} rows={txRows.slice(0,20).map(t=>({key:idOf(t)||`${text(t.type)}-${text(t.createdAt)}`,cells:{type:<strong>{text(t.type,"Transaction")}</strong>,amount:billingAmount(t,"amountCredits","amountPln"),time:formatDate(t.createdAt)}}))} empty={<EmptyState icon={<BillingIcon/>} title="No transactions" description="Billing transactions will appear here."/>}/></Card><Card className="overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Usage</h2><p className="mt-0.5 text-xs text-[#718096]">Billing cost and workload usage over time.</p></div><BillingUsageCharts rows={usageRows} loading={usage.loading} error={usage.error}/></Card></div></main>;
+  const billing=useApi<R>(`${root}/billing`);
+  const quota=useApi<R|undefined>(`${root}/quota`);
+  const transactions=useApi<unknown>(`${root}/billing/transactions`);
+  const [usageRange,setUsageRange]=useState<BillingUsageRange>("7d");
+  const usagePath=useMemo(()=>{
+    const params=new URLSearchParams({bucket:billingUsageBucket(usageRange)});
+    const from=billingUsageRangeFrom(usageRange);
+    if(from) params.set("from",from);
+    return `${root}/billing/usage-series?${params.toString()}`;
+  },[root,usageRange]);
+  const usage=useApi<unknown>(usagePath);
+  const [quotaForm,setQuotaForm]=useState({cpu:0,memoryBytes:0,gpu:0,storageBytes:0,maxSingleApps:0,maxVolumes:0});
+  const [voucherCode,setVoucherCode]=useState("");
+  const [working,setWorking]=useState<string>();
+
+  useEffect(()=>{
+    if(!quota.data)return;
+    setQuotaForm({
+      cpu:Number(quota.data.cpu??0),
+      memoryBytes:Number(quota.data.memoryBytes??0),
+      gpu:Number(quota.data.gpu??0),
+      storageBytes:Number(quota.data.storageBytes??0),
+      maxSingleApps:Number(quota.data.maxSingleApps??0),
+      maxVolumes:Number(quota.data.maxVolumes??0),
+    });
+  },[quota.data]);
+
+  async function saveQuota(){
+    setWorking("quota");
+    try{
+      await apiRequest(`${root}/quota`,{method:"PATCH",body:quotaForm});
+      await quota.reload();
+      toast.success("Quota saved.");
+    }catch(c){
+      toast.errorFrom(c,"Quota could not be saved.");
+    }finally{
+      setWorking(undefined);
+    }
+  }
+
+  async function redeemVoucher(){
+    const code=voucherCode.trim().toUpperCase();
+    if(!code)return;
+    setWorking("voucher");
+    try{
+      await apiRequest(`${root}/billing/vouchers/redeem`,{method:"POST",body:{code}});
+      setVoucherCode("");
+      await Promise.all([billing.reload(),transactions.reload()]);
+      toast.success("Voucher redeemed and credits added.");
+    }catch(c){
+      toast.errorFrom(c,"Voucher could not be redeemed.");
+    }finally{
+      setWorking(undefined);
+    }
+  }
+
+  const txRows=items<R>(transactions.data);
+  const usageRows=items<R>(usage.data);
+  const state=text(billing.data?.billingState,text(billing.data?.state,"Unknown"));
+
+  return <main>
+    <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota, usage and account transactions."/>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={`${text(billing.data?.balanceCredits,text(billing.data?.balance,"0"))} credits`} detail={<>≈ {text(billing.data?.balancePln,"0")} PLN</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
+      <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={text(quota.data?.cpu,"—")} detail="cores"/>
+      <BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={formatBytes(quota.data?.memoryBytes)} detail="memory"/>
+      <BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={formatBytes(quota.data?.storageBytes)} detail="persistent storage"/>
+    </div>
+
+    <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_.8fr]">
+      <Card className="p-5">
+        <h2 className="font-semibold">Quota</h2>
+        <p className="mt-1 text-sm text-[#5B6678]">Resource limits applied to this tenant.</p>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="CPU cores"><NumberInput min={0} step={0.1} value={quotaForm.cpu} onChange={e=>setQuotaForm({...quotaForm,cpu:Number(e.target.value)})}/></Field>
+          <Field label="Memory (bytes)"><NumberInput min={0} value={quotaForm.memoryBytes} onChange={e=>setQuotaForm({...quotaForm,memoryBytes:Number(e.target.value)})}/></Field>
+          <Field label="GPU"><NumberInput min={0} value={quotaForm.gpu} onChange={e=>setQuotaForm({...quotaForm,gpu:Number(e.target.value)})}/></Field>
+          <Field label="Storage (bytes)"><NumberInput min={0} value={quotaForm.storageBytes} onChange={e=>setQuotaForm({...quotaForm,storageBytes:Number(e.target.value)})}/></Field>
+          <Field label="Max applications"><NumberInput min={0} value={quotaForm.maxSingleApps} onChange={e=>setQuotaForm({...quotaForm,maxSingleApps:Number(e.target.value)})}/></Field>
+          <Field label="Max volumes"><NumberInput min={0} value={quotaForm.maxVolumes} onChange={e=>setQuotaForm({...quotaForm,maxVolumes:Number(e.target.value)})}/></Field>
+        </div>
+        <Button className="mt-5" variant="primary" disabled={working==="quota"} onClick={()=>void saveQuota()}>{working==="quota"?"Saving…":"Save quota"}</Button>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="font-semibold">Redeem voucher</h2>
+        <p className="mt-1 text-sm text-[#5B6678]">Tenant balances can only be funded with a platform-issued voucher. Manual credit adjustments are restricted to Platform Admin.</p>
+        <div className="mt-5 space-y-4">
+          <Field label="Voucher code" required hint="Enter the RPV-… code issued by the platform administrator.">
+            <TextInput autoComplete="off" value={voucherCode} onChange={e=>setVoucherCode(e.target.value)} placeholder="RPV-…" />
+          </Field>
+          <Button variant="primary" disabled={working==="voucher"||!voucherCode.trim()} onClick={()=>void redeemVoucher()}>{working==="voucher"?"Redeeming…":"Redeem voucher"}</Button>
+        </div>
+      </Card>
+    </div>
+
+    <div className="mt-6 space-y-6">
+      <Card className="overflow-hidden">
+        <div className="border-b border-[#E1E7F0] px-5 py-4">
+          <h2 className="font-semibold">Usage</h2>
+          <p className="mt-0.5 text-xs text-[#718096]">Billing cost and workload usage over time. Select a period and the series you want to compare.</p>
+        </div>
+        <BillingUsageCharts rows={usageRows} loading={usage.loading} error={usage.error} range={usageRange} onRangeChange={setUsageRange}/>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-[#E1E7F0] px-5 py-4">
+          <h2 className="font-semibold">Transactions</h2>
+        </div>
+        <DataTable
+          embedded
+          loading={transactions.loading}
+          columns={[{key:"type",label:"Type"},{key:"amount",label:"Amount"},{key:"time",label:"Timestamp"}]}
+          rows={txRows.slice(0,20).map(t=>({
+            key:idOf(t)||`${text(t.type)}-${text(t.createdAt)}`,
+            cells:{
+              type:<strong>{text(t.type,"Transaction")}</strong>,
+              amount:billingAmount(t,"amountCredits","amountPln"),
+              time:formatDate(t.createdAt),
+            },
+          }))}
+          empty={<EmptyState icon={<BillingIcon/>} title="No transactions" description="Billing transactions will appear here."/>}
+        />
+      </Card>
+    </div>
+  </main>;
 }

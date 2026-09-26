@@ -19,6 +19,7 @@ import {
   BillingHistoryQueryDto,
   RedeemVoucherDto,
   UsageHistoryQueryDto,
+  UsageSeriesQueryDto,
 } from "../billing/billing.dto";
 import { BillingReadService } from "../billing/billing-read.service";
 import { BillingService } from "../billing/billing.service";
@@ -88,6 +89,15 @@ export class TenantsController {
     @Query() query: UsageHistoryQueryDto,
   ) {
     return this.billingReadService.listUsageRecords(tenantId, query);
+  }
+
+  @RequirePermissions("billing.read")
+  @Get(":tenantId/billing/usage-series")
+  usageSeries(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Query() query: UsageSeriesQueryDto,
+  ) {
+    return this.billingReadService.usageSeries(tenantId, query);
   }
 
   @RequirePermissions("billing.read")

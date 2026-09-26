@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { BillingHistoryQueryDto, UsageHistoryQueryDto } from "./billing.dto";
+import { BillingHistoryQueryDto, UsageHistoryQueryDto, UsageSeriesQueryDto } from "./billing.dto";
 import { creditsToPln } from "./billing-math";
 
 type TransactionExtra = {
@@ -16,6 +16,15 @@ type UsageExtra = {
   chargedCredits: Prisma.Decimal;
   priceListVersionId: string | null;
   appGroupId: string | null;
+};
+
+type UsageSeriesRow = {
+  periodStart: Date;
+  chargedCredits: Prisma.Decimal;
+  theoreticalCostCredits: Prisma.Decimal;
+  billedReplicas: Prisma.Decimal;
+  desiredReplicas: Prisma.Decimal;
+  sampleCount: number;
 };
 
 @Injectable()
@@ -90,6 +99,61 @@ export class BillingReadService {
     return {
       items: items.map((item) => this.mapUsage(item, extras.get(item.id))),
       nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+    };
+  }
+
+  async usageSeries(tenantId: string, query: UsageSeriesQueryDto) {
+    const account = await this.account(tenantId);
+    const filters: Prisma.Sql[] = [
+      Prisma.sql`ur."billingAccountId" = ${account.id}::uuid`,
+    ];
+    if (query.from) filters.push(Prisma.sql`ur."periodStart" >= ${new Date(query.from)}`);
+    if (query.to) filters.push(Prisma.sql`ur."periodStart" <= ${new Date(query.to)}`);
+    if (query.resourceType) filters.push(Prisma.sql`ur."resourceType" = ${query.resourceType}`);
+    if (query.resourceId) filters.push(Prisma.sql`ur."resourceId" = ${query.resourceId}::uuid`);
+    if (query.appGroupId) filters.push(Prisma.sql`ur."appGroupId" = ${query.appGroupId}::uuid`);
+
+    const bucket = this.usageSeriesBucket(query.bucket);
+    const rows = await this.prisma.$queryRaw<UsageSeriesRow[]>(Prisma.sql`
+      WITH per_minute AS (
+        SELECT
+          date_trunc('minute', ur."periodStart") AS "minute",
+          SUM(ur."chargedCredits") AS "chargedCredits",
+          SUM(ur."cost") AS "theoreticalCostCredits",
+          SUM(COALESCE((ur."usage"->>'billedReplicas')::numeric, 0)) AS "billedReplicas",
+          SUM(COALESCE((ur."usage"->>'desiredReplicas')::numeric, 0)) AS "desiredReplicas",
+          COUNT(*)::int AS "sampleCount"
+        FROM "UsageRecord" ur
+        WHERE ${Prisma.join(filters, " AND ")}
+        GROUP BY 1
+      )
+      SELECT
+        date_bin(${bucket}, "minute", TIMESTAMP '2000-01-01') AS "periodStart",
+        SUM("chargedCredits") AS "chargedCredits",
+        SUM("theoreticalCostCredits") AS "theoreticalCostCredits",
+        AVG("billedReplicas") AS "billedReplicas",
+        AVG("desiredReplicas") AS "desiredReplicas",
+        SUM("sampleCount")::int AS "sampleCount"
+      FROM per_minute
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `);
+
+    return {
+      items: rows.map((row, index) => ({
+        id: `series-${index}-${row.periodStart.toISOString()}`,
+        periodStart: row.periodStart,
+        chargedCredits: row.chargedCredits.toString(),
+        chargedPln: creditsToPln(row.chargedCredits).toString(),
+        theoreticalCostCredits: row.theoreticalCostCredits.toString(),
+        theoreticalCostPln: creditsToPln(row.theoreticalCostCredits).toString(),
+        usage: {
+          billedReplicas: Number(row.billedReplicas),
+          desiredReplicas: Number(row.desiredReplicas),
+          sampleCount: row.sampleCount,
+        },
+      })),
+      bucket: query.bucket,
     };
   }
 
@@ -234,6 +298,20 @@ export class BillingReadService {
     if (!value || Array.isArray(value) || typeof value !== "object") return null;
     const item = value[key];
     return typeof item === "string" ? item : null;
+  }
+
+  private usageSeriesBucket(bucket: UsageSeriesQueryDto["bucket"]) {
+    switch (bucket) {
+      case "15m":
+        return Prisma.sql`INTERVAL '15 minutes'`;
+      case "12h":
+        return Prisma.sql`INTERVAL '12 hours'`;
+      case "1d":
+        return Prisma.sql`INTERVAL '1 day'`;
+      case "2h":
+      default:
+        return Prisma.sql`INTERVAL '2 hours'`;
+    }
   }
 
   private dateFilter(from?: string, to?: string) {
