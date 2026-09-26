@@ -17,6 +17,8 @@ function sourceFiles(root: string): string[] {
 }
 
 const allowedRawSqlFiles = new Set([
+  // Reviewed tenant usage time-series aggregate with bounded bucket choices.
+  "billing/billing-read.service.ts",
   // Atomic usage dedupe plus BillingAccount row locking.
   "billing/billing-usage.service.ts",
   // Price-list advisory lock, Voucher/BillingAccount FOR UPDATE.
