@@ -54,7 +54,10 @@ describe("ResourceBotDrawer", () => {
     }));
 
     render(<ResourceBotDrawer tenantId="tenant-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Open ResourceBot" }));
+    const launcher = screen.getByRole("button", { name: "Open ResourceBot" });
+    expect(launcher.className).toContain("lg:left-4");
+    expect(launcher.className).toContain("lg:right-auto");
+    fireEvent.click(launcher);
 
     expect(await screen.findByText("Ask about ResourcePortal")).toBeTruthy();
     const input = screen.getByLabelText("Ask ResourceBot");
