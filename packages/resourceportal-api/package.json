@@ -24,7 +24,10 @@
     "smoke:stage15-capacity": "ts-node --files scripts/smoke-stage15-capacity.ts",
     "smoke:stage16-operations": "ts-node --files scripts/smoke-stage16-operations.ts",
     "worker": "ts-node --files src/worker.runner.ts",
-    "migrate:penpot-runtime-secrets": "node dist/scripts/migrate-penpot-runtime-secrets.js"
+    "migrate:penpot-runtime-secrets": "node dist/scripts/migrate-penpot-runtime-secrets.js",
+    "prebuild": "npm run build --workspace @resource-portal/help",
+    "prelint": "npm run build --workspace @resource-portal/help",
+    "pretest": "npm run build --workspace @resource-portal/help"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
