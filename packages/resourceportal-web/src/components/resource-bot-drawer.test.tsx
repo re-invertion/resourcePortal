@@ -57,6 +57,7 @@ describe("ResourceBotDrawer", () => {
     const launcher = screen.getByRole("button", { name: "Open ResourceBot" });
     expect(launcher.className).toContain("lg:left-4");
     expect(launcher.className).toContain("lg:right-auto");
+    expect(launcher.className).toContain("lg:z-[60]");
     fireEvent.click(launcher);
 
     expect(await screen.findByText("Ask about ResourcePortal")).toBeTruthy();

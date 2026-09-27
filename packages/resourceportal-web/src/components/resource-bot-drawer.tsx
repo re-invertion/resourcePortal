@@ -122,7 +122,7 @@ export function ResourceBotDrawer({ tenantId }: { tenantId: string }) {
       aria-label="Open ResourceBot"
       title="ResourceBot"
       onClick={() => setOpen(true)}
-      className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full border border-[#BFD1EA] bg-[#1769E0] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(23,105,224,.28)] transition hover:bg-[#0F5FCF] lg:bottom-4 lg:left-4 lg:right-auto lg:w-[196px] lg:justify-start"
+      className="fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full border border-[#BFD1EA] bg-[#1769E0] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(23,105,224,.28)] transition hover:bg-[#0F5FCF] lg:bottom-4 lg:left-4 lg:right-auto lg:z-[60] lg:w-[196px] lg:justify-start"
     >
       <HelpIcon size={18} />
       <span className="hidden sm:inline">ResourceBot</span>
