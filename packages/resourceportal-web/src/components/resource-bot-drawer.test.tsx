@@ -55,12 +55,15 @@ describe("ResourceBotDrawer", () => {
 
     render(<ResourceBotDrawer tenantId="tenant-1" />);
     const launcher = screen.getByRole("button", { name: "Open ResourceBot" });
-    expect(launcher.className).toContain("lg:left-4");
-    expect(launcher.className).toContain("lg:right-auto");
-    expect(launcher.className).toContain("lg:z-[60]");
+    expect(launcher.className).toContain("right-5");
+    expect(launcher.className).toContain("z-[60]");
+    expect(launcher.className).not.toContain("lg:left-4");
+    expect(launcher.className).not.toContain("lg:right-auto");
     fireEvent.click(launcher);
 
-    expect(await screen.findByText("Ask about ResourcePortal")).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "ResourceBot" })).toBeTruthy();
+    expect(screen.getByText("How can I help?")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open full Help" })).toBeNull();
     const input = screen.getByLabelText("Ask ResourceBot");
     fireEvent.change(input, { target: { value: "Jak utworzyć aplikację?" } });
     fireEvent.click(screen.getByRole("button", { name: "Ask ResourceBot" }));
@@ -78,6 +81,17 @@ describe("ResourceBotDrawer", () => {
         history: [],
       });
     });
+  });
+
+  it("closes the polished dialog with Escape", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ available: true })));
+
+    render(<ResourceBotDrawer tenantId="tenant-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open ResourceBot" }));
+    expect(await screen.findByRole("dialog", { name: "ResourceBot" })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "ResourceBot" })).toBeNull();
   });
 
   it("disables the prompt when tenant billing is suspended", async () => {
