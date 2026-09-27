@@ -6,6 +6,7 @@ COPY scripts/postinstall-prisma.mjs ./scripts/postinstall-prisma.mjs
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
+COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/package.json
 COPY packages/resourceportal-web/package.json ./packages/resourceportal-web/package.json
 RUN npm ci --workspace @resource-portal/web --include-workspace-root=false
 
@@ -17,6 +18,7 @@ COPY packages/resourceportal-web/server.mjs ./server.mjs
 COPY packages/resourceportal-web/proxy-target.mjs ./proxy-target.mjs
 COPY packages/resourceportal-web/public ./public
 COPY packages/resourceportal-web/src ./src
+COPY packages/resourceportal-help /app/packages/resourceportal-help
 RUN npm run build
 
 FROM node:24-alpine AS production-dependencies
@@ -26,6 +28,7 @@ COPY package.json package-lock.json ./
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
+COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/package.json
 COPY packages/resourceportal-web/package.json ./packages/resourceportal-web/package.json
 RUN npm ci --omit=dev --ignore-scripts --workspace @resource-portal/web --include-workspace-root=false
 
@@ -42,6 +45,8 @@ COPY --from=build /app/packages/resourceportal-web/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-web/server.mjs ./server.mjs
 COPY --from=build /app/packages/resourceportal-web/proxy-target.mjs ./proxy-target.mjs
 COPY --from=build /app/packages/resourceportal-web/dist ./dist
+COPY --from=build /app/packages/resourceportal-help/package.json /app/packages/resourceportal-help/package.json
+COPY --from=build /app/packages/resourceportal-help/dist /app/packages/resourceportal-help/dist
 
 USER node
 EXPOSE 5173

@@ -6,6 +6,7 @@ COPY scripts/postinstall-prisma.mjs ./scripts/postinstall-prisma.mjs
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
+COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/package.json
 # Root postinstall generates the API Prisma Client, so the schema must exist
 # before npm ci runs in this dependency stage.
 COPY packages/resourceportal-api/prisma ./packages/resourceportal-api/prisma
@@ -18,6 +19,7 @@ COPY package.json package-lock.json ./
 COPY packages/resourceportal-api/package.json ./packages/resourceportal-api/package.json
 COPY packages/resourceportal-cli/package.json ./packages/resourceportal-cli/package.json
 COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/package.json
+COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/package.json
 RUN npm ci --omit=dev --ignore-scripts --workspace @resource-portal/api --include-workspace-root=false
 
 FROM node:24-alpine AS build
@@ -30,6 +32,7 @@ COPY packages/resourceportal-api/nest-cli.json packages/resourceportal-api/tscon
 COPY packages/resourceportal-api/prisma ./prisma
 COPY packages/resourceportal-api/scripts ./scripts
 COPY packages/resourceportal-api/src ./src
+COPY packages/resourceportal-help /app/packages/resourceportal-help
 
 RUN npm run prisma:generate
 RUN npm run build
@@ -62,6 +65,8 @@ COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist
 COPY --from=build /app/packages/resourceportal-api/prisma ./prisma
+COPY --from=build /app/packages/resourceportal-help/package.json /app/packages/resourceportal-help/package.json
+COPY --from=build /app/packages/resourceportal-help/dist /app/packages/resourceportal-help/dist
 
 USER node
 
