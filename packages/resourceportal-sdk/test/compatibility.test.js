@@ -72,6 +72,8 @@ test("classifies every API controller so new public surface cannot drift silentl
     "platform-infrastructure/platform-infrastructure.controller.ts",
     "platform-maintenance/platform-maintenance.controller.ts",
     "registries/registries.controller.ts",
+    "resource-bot/platform-resource-bot.controller.ts",
+    "resource-bot/tenant-resource-bot.controller.ts",
     "search/tenant-search.controller.ts",
     "service-identities/platform-service-identities.controller.ts",
     "service-identities/service-identities.controller.ts",
@@ -88,6 +90,8 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   const { client, calls } = recordingClient();
 
   await client.platformBilling.listPriceLists();
+  await client.platformResourceBot.get();
+  await client.resourceBot.status("tenant id");
   await client.platformDns.get();
   await client.platformNetworkEgress.get();
   await client.platformInfrastructure.getSwarmCluster();
@@ -109,6 +113,8 @@ test("exposes every post-Stage-8 public management resource family", async () =>
     calls.map(pathOf),
     [
       "/api/platform/billing/price-lists",
+      "/api/platform/resource-bot",
+      "/api/tenants/tenant%20id/resource-bot/status",
       "/api/platform/dns",
       "/api/platform/network-egress",
       "/api/platform/swarm-cluster",
@@ -132,6 +138,14 @@ test("exposes every post-Stage-8 public management resource family", async () =>
 test("uses canonical methods and bodies for representative mutations", async () => {
   const { client, calls } = recordingClient();
 
+  await client.platformResourceBot.update({
+    enabled: true,
+    generationModel: "gpt-5.6-luna",
+    embeddingModel: "text-embedding-3-small",
+  });
+  await client.platformResourceBot.validate();
+  await client.resourceBot.updateSettings("tenant id", false);
+  await client.resourceBot.ask("tenant id", { question: "How do domains work?" });
   await client.platformDns.update({ enabled: true });
   await client.platformDns.validate();
   await client.platformNetworkEgress.update(true);
@@ -154,6 +168,10 @@ test("uses canonical methods and bodies for representative mutations", async () 
   assert.deepEqual(
     calls.map((call) => [call.init.method ?? "GET", pathOf(call)]),
     [
+      ["PATCH", "/api/platform/resource-bot"],
+      ["POST", "/api/platform/resource-bot/validate"],
+      ["PATCH", "/api/tenants/tenant%20id/resource-bot/settings"],
+      ["POST", "/api/tenants/tenant%20id/resource-bot/messages"],
       ["PATCH", "/api/platform/dns"],
       ["POST", "/api/platform/dns/validate"],
       ["PATCH", "/api/platform/network-egress"],
@@ -170,18 +188,31 @@ test("uses canonical methods and bodies for representative mutations", async () 
       ["PATCH", "/api/tenants/tenant%20id/mcp-settings"],
     ],
   );
-  assert.equal(calls[0].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[2].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[4].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[5].init.body, JSON.stringify({ enabled: false }));
   assert.equal(
-    calls[7].init.body,
+    calls[0].init.body,
+    JSON.stringify({
+      enabled: true,
+      generationModel: "gpt-5.6-luna",
+      embeddingModel: "text-embedding-3-small",
+    }),
+  );
+  assert.equal(calls[2].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(
+    calls[3].init.body,
+    JSON.stringify({ question: "How do domains work?" }),
+  );
+  assert.equal(calls[4].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[6].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[8].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[9].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(
+    calls[11].init.body,
     JSON.stringify({ enabled: true, reason: "upgrade" }),
   );
-  assert.equal(calls[10].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
-  assert.equal(calls[11].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(calls[14].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(calls[15].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
   assert.equal(
-    calls[13].init.body,
+    calls[17].init.body,
     JSON.stringify({
       enabled: true,
       accessMode: "SelectedMembers",

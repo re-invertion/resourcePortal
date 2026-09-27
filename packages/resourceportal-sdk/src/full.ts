@@ -49,6 +49,41 @@ export type PlatformDnsUpdate = {
   apiToken?: string;
 };
 
+export type PlatformResourceBotState = {
+  provider: "OpenAI";
+  enabled: boolean;
+  configured: boolean;
+  available: boolean;
+  apiKeyConfigured: boolean;
+  generationModel: string;
+  embeddingModel: string;
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+export type ResourceBotUsage = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  embeddingInputTokens: number;
+  totalTokens: number;
+  chargedCredits: string;
+};
+
+export type ResourceBotAnswer = {
+  requestId: string;
+  answer: string;
+  supportedByHelp: boolean;
+  sources: Array<{
+    chunkId: string;
+    sectionId: string;
+    title: string;
+    href: string;
+  }>;
+  usage: ResourceBotUsage;
+};
+
 export type PlatformNetworkEgressState = {
   enabled: boolean;
   revision: number;
@@ -110,6 +145,58 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
       this.request("/platform/billing/refunds", { method: "POST", body }),
     correction: (body: unknown) =>
       this.request("/platform/billing/corrections", { method: "POST", body }),
+  };
+
+  readonly platformResourceBot = {
+    get: () => this.request<PlatformResourceBotState>("/platform/resource-bot"),
+    update: (body: {
+      enabled?: boolean;
+      provider?: "OpenAI";
+      generationModel?: string;
+      embeddingModel?: string;
+      apiKey?: string;
+    }) =>
+      this.request<PlatformResourceBotState>("/platform/resource-bot", {
+        method: "PATCH",
+        body,
+      }),
+    validate: () =>
+      this.request<PlatformResourceBotState>("/platform/resource-bot/validate", {
+        method: "POST",
+      }),
+    listPrices: () => this.request("/platform/resource-bot/prices"),
+    createPrice: (body: unknown) =>
+      this.request("/platform/resource-bot/prices", { method: "POST", body }),
+  };
+
+  readonly resourceBot = {
+    settings: (tenantId: string) =>
+      this.request<{ enabled: boolean; updatedAt: string | null }>(
+        `/tenants/${encode(tenantId)}/resource-bot/settings`,
+      ),
+    updateSettings: (tenantId: string, enabled: boolean) =>
+      this.request<{ enabled: boolean; updatedAt: string | null }>(
+        `/tenants/${encode(tenantId)}/resource-bot/settings`,
+        { method: "PATCH", body: { enabled } },
+      ),
+    status: (tenantId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/resource-bot/status`),
+    ask: (
+      tenantId: string,
+      body: {
+        question: string;
+        history?: Array<{ role: "user" | "assistant"; content: string }>;
+        requestId?: string;
+      },
+    ) =>
+      this.request<ResourceBotAnswer>(
+        `/tenants/${encode(tenantId)}/resource-bot/messages`,
+        { method: "POST", body },
+      ),
+    usage: (tenantId: string, limit = 50) =>
+      this.request(
+        `/tenants/${encode(tenantId)}/resource-bot/usage?limit=${encode(String(limit))}`,
+      ),
   };
 
   readonly platformDns = {
