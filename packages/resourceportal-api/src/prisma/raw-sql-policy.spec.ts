@@ -31,6 +31,8 @@ const allowedRawSqlFiles = new Set([
   "operations/deployment-operation-adapter.service.ts",
   // SKIP LOCKED claim/lease CAS and idempotent Operation state transitions.
   "operations/operations.repository.ts",
+  // BillingAccount FOR UPDATE protects ResourceBot reservation and settlement races.
+  "resource-bot/resource-bot-billing.service.ts",
   // Cross-replica atomic fixed-window upsert.
   "security/rate-limit.service.ts",
   // PostgreSQL sequence, advisory capacity lock, COALESCE reservation aggregate,

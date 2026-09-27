@@ -1,3 +1,4 @@
+import { HELP_SECTION_BY_ID, HELP_SECTIONS } from "@resource-portal/help";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIcon,
@@ -19,27 +20,7 @@ import {
 } from "../components/design-system";
 import { tenantHref } from "../router/router";
 
-type HelpSection = {
-  id: string;
-  label: string;
-};
-
-const sections: HelpSection[] = [
-  { id: "getting-started", label: "Getting started" },
-  { id: "mental-model", label: "How ResourcePortal is organized" },
-  { id: "create-application", label: "Create an application" },
-  { id: "app-group-yaml", label: "Import from YAML" },
-  { id: "registry", label: "Private image registries" },
-  { id: "volume", label: "Persistent storage" },
-  { id: "private-networking", label: "Private Networks & Gate" },
-  { id: "domain", label: "Domains & HTTP routing" },
-  { id: "tenant-access", label: "Invite tenant users" },
-  { id: "credentials", label: "Credentials & secrets" },
-  { id: "tenant-mcp", label: "Tenant MCP" },
-  { id: "deploy", label: "Deploy & restart" },
-  { id: "billing", label: "Billing & vouchers" },
-  { id: "troubleshooting", label: "Troubleshooting" },
-];
+const sections = HELP_SECTIONS.map(({ id, label }) => ({ id, label }));
 
 function TableOfContents() {
   const [active, setActive] = useState(sections[0].id);
@@ -139,8 +120,14 @@ function HelpArticle({
   description: string;
   children: ReactNode;
 }) {
+  const corpusSection = HELP_SECTION_BY_ID[id];
   return <article id={id} className="scroll-mt-24 border-b border-[#E1E7F0] py-9 first:pt-0 last:border-b-0 last:pb-0">
-    <SectionHeader icon={icon} eyebrow={eyebrow} title={title} description={description} />
+    <SectionHeader
+      icon={icon}
+      eyebrow={eyebrow}
+      title={corpusSection?.title ?? title}
+      description={corpusSection?.description ?? description}
+    />
     <div className="mt-6 pl-0 text-[13px] text-[#42526B] sm:pl-[52px]">{children}</div>
   </article>;
 }

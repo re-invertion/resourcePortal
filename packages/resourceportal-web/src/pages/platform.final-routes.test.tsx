@@ -21,6 +21,8 @@ function installApi() {
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/maintenance") return json({ enabled: false, reason: null });
     if (url === "/api/platform/dns") return json({ provider: "Cloudflare", enabled: false, available: false, configured: false, tokenConfigured: false, zoneId: null, zoneName: null, baseDomain: "resource-portal.pl", targetHostname: "resource-portal.pl", lastValidatedAt: null, lastError: null });
+    if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", enabled: true, available: false, configured: false, apiKeyConfigured: false, generationModel: "gpt-5.6-luna", embeddingModel: "text-embedding-3-small", lastValidatedAt: null, lastError: null });
+    if (url === "/api/platform/resource-bot/prices") return json({ items: [] });
     if (url === "/api/platform/network-egress") return json({ enabled: true, revision: 1, protectedCidrs: ["10.0.0.0/8"], updatedAt: null, enforcement: null, appGroups: [], rules: [] });
     return json({ error: { message: `Unexpected ${url}` } }, 404);
   });
@@ -40,6 +42,7 @@ describe("Platform Admin final routes", () => {
     ["infrastructure", "Infrastructure"],
     ["identity", "Identity & access"],
     ["billing", "Billing"],
+    ["resource-bot", "AI & ResourceBot"],
     ["dns", "DNS & Domains"],
     ["network-egress", "Network Egress"],
     ["security", "Security & operations"],

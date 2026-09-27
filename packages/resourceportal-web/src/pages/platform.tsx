@@ -1,6 +1,7 @@
 import { Callout, LinkButton, PageHeader } from "../components/design-system";
 import { PlatformDnsPage } from "./platform-dns";
 import { PlatformNetworkEgressPage } from "./platform-network-egress";
+import { PlatformResourceBotPage } from "./platform-resource-bot";
 import { PlatformCredentialsPage, PlatformIdentityProvidersPage } from "./platform-identity-pages";
 import {
   PlatformBillingPage,
@@ -20,6 +21,7 @@ export function PlatformPage({ section }: { section: string; resourceId?: string
   if (section === "identity-providers") return <PlatformIdentityProvidersPage />;
   if (section === "credentials") return <PlatformCredentialsPage />;
   if (section === "billing") return <PlatformBillingPage />;
+  if (section === "resource-bot") return <PlatformResourceBotPage />;
   if (section === "dns") return <PlatformDnsPage />;
   if (section === "network-egress") return <PlatformNetworkEgressPage />;
   if (section === "security" || section === "operations" || section === "audit") return <PlatformSecurityPage />;

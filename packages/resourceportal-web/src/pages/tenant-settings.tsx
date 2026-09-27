@@ -6,6 +6,7 @@ import {
   Card,
   Checkbox,
   Field,
+  HelpIcon,
   LockIcon,
   PageHeader,
   Select,
@@ -19,6 +20,7 @@ import { SectionNav } from "../components/ui";
 import { toast } from "../components/toast";
 
 type R = Record<string, unknown>;
+type ResourceBotSettings = { enabled: boolean; updatedAt?: string | null };
 type AccessMode = "AllMembers" | "SelectedMembers";
 type McpSettings = {
   enabled: boolean;
@@ -53,7 +55,9 @@ function memberEmail(member: R) {
 export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
   const settings = useApi<McpSettings>(`${root}/mcp-settings`);
+  const resourceBotSettings = useApi<ResourceBotSettings>(`${root}/resource-bot/settings`);
   const memberships = useApi<unknown>(`${root}/memberships`);
+  const [resourceBotEnabled, setResourceBotEnabled] = useState(true);
   const [enabled, setEnabled] = useState(false);
   const [accessMode, setAccessMode] = useState<AccessMode>("SelectedMembers");
   const [selected, setSelected] = useState<string[]>([]);
@@ -65,6 +69,11 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
     setAccessMode(settings.data.accessMode === "AllMembers" ? "AllMembers" : "SelectedMembers");
     setSelected(Array.isArray(settings.data.allowedMembershipIds) ? settings.data.allowedMembershipIds : []);
   }, [settings.data]);
+
+  useEffect(() => {
+    if (!resourceBotSettings.data) return;
+    setResourceBotEnabled(resourceBotSettings.data.enabled !== false);
+  }, [resourceBotSettings.data]);
 
   const memberRows = useMemo(
     () => items<R>(memberships.data).filter((member) => text(member.status, "Active") === "Active"),
@@ -78,6 +87,22 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
     setSelected((current) =>
       checked ? [...new Set([...current, membershipId])] : current.filter((id) => id !== membershipId),
     );
+  }
+
+  async function saveResourceBot() {
+    setWorking(true);
+    try {
+      await apiRequest(`${root}/resource-bot/settings`, {
+        method: "PATCH",
+        body: { enabled: resourceBotEnabled },
+      });
+      await resourceBotSettings.reload();
+      toast.success(resourceBotEnabled ? "ResourceBot enabled for this tenant." : "ResourceBot disabled for this tenant.");
+    } catch (cause) {
+      toast.errorFrom(cause, "ResourceBot settings could not be saved.");
+    } finally {
+      setWorking(false);
+    }
   }
 
   async function save() {
@@ -110,7 +135,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         title="Tenant settings"
         description="Tenant-wide features and integration settings controlled by tenant administrators."
       />
-      <div className="mb-5"><SectionNav label="Settings sections" items={[{ label: "MCP", href: "#mcp" }]} /></div>
+      <div className="mb-5"><SectionNav label="Settings sections" items={[{ label: "ResourceBot", href: "#resource-bot" }, { label: "MCP", href: "#mcp" }]} /></div>
       {settings.error ? (
         <div className="mb-4">
           <Callout tone="danger" title="Tenant settings unavailable">
@@ -118,6 +143,36 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           </Callout>
         </div>
       ) : null}
+
+      <Card id="resource-bot" className="mb-6 overflow-hidden">
+        <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><HelpIcon size={18} /></span>
+          <div>
+            <h2 className="font-semibold">ResourceBot</h2>
+            <p className="mt-1 text-sm text-[#5B6678]">Control the built-in Help-grounded AI assistant for this tenant.</p>
+          </div>
+        </div>
+        <div className="space-y-5 p-5">
+          {resourceBotSettings.error ? <Callout tone="danger" title="ResourceBot settings unavailable">
+            {resourceBotSettings.error instanceof Error ? resourceBotSettings.error.message : "The ResourceBot settings request failed."}
+          </Callout> : null}
+          <Toggle
+            checked={resourceBotEnabled}
+            disabled={resourceBotSettings.loading || working}
+            onChange={setResourceBotEnabled}
+            label="Enable ResourceBot for this tenant"
+            description="Enabled by default. Tenant members can ask questions grounded in ResourcePortal Help. Usage is metered against this tenant's billing account."
+          />
+          <Callout title="Help only">
+            ResourceBot does not receive live access to tenant resources, secrets, deployments or platform administration. It answers from ResourcePortal Help and links back to the relevant Help sections.
+          </Callout>
+          <div className="flex justify-end">
+            <Button variant="primary" disabled={working || resourceBotSettings.loading} onClick={() => void saveResourceBot()}>
+              {working ? "Saving…" : "Save ResourceBot settings"}
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       <Card id="mcp" className="overflow-hidden">
         <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">

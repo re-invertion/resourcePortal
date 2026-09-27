@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppRoute } from "../router/router";
 import { apiRequest } from "../api/client";
+import { ResourceBotDrawer } from "./resource-bot-drawer";
 import { RouteBreadcrumbs } from "./route-breadcrumbs";
 import { applicationHref, appGroupHref, platformHref, tenantHref } from "../router/router";
 import { ActivityIcon, BillingIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
@@ -35,6 +36,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Identity providers", href: platformHref("identity-providers"), icon: <UsersIcon />, active: ["identity", "identity-providers"].includes(route.section) },
     { label: "Credentials", href: platformHref("credentials"), icon: <KeyIcon />, active: route.section === "credentials" },
     { label: "Billing", href: platformHref("billing"), icon: <BillingIcon />, active: route.section === "billing" },
+    { label: "AI & ResourceBot", href: platformHref("resource-bot"), icon: <HelpIcon />, active: route.section === "resource-bot" },
     { label: "DNS & Domains", href: platformHref("dns"), icon: <GlobeIcon />, active: route.section === "dns" },
     { label: "Network Egress", href: platformHref("network-egress"), icon: <NetworkIcon />, active: route.section === "network-egress" },
     { label: "Security & Ops", href: platformHref("security"), icon: <ActivityIcon />, active: ["security", "operations", "audit"].includes(route.section) },
@@ -114,6 +116,7 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-identity", label: "Identity providers", description: "Platform authentication providers", href: platformHref("identity-providers"), category: "Navigation", keywords: "sso auth login" },
     { id: "platform-credentials", label: "Credentials", description: "Platform credentials", href: platformHref("credentials"), category: "Navigation", keywords: "keys secrets" },
     { id: "platform-billing", label: "Billing", description: "Vouchers, prices and credit adjustments", href: platformHref("billing"), category: "Navigation", keywords: "credits vouchers balance payments correction" },
+    { id: "platform-resource-bot", label: "AI & ResourceBot", description: "AI provider, models and ResourceBot platform controls", href: platformHref("resource-bot"), category: "Navigation", keywords: "ai openai resourcebot resource bot model embeddings" },
     { id: "platform-dns", label: "DNS & Domains", description: "Cloudflare managed ResourcePortal domains", href: platformHref("dns"), category: "Navigation", keywords: "cloudflare dns managed domain hostname" },
     { id: "platform-network-egress", label: "Network Egress", description: "Tenant private-network isolation and exceptions", href: platformHref("network-egress"), category: "Navigation", keywords: "network egress firewall private lan cidr isolation" },
     { id: "platform-security", label: "Security & Ops", description: "Security, operations and audit", href: platformHref("security"), category: "Navigation", keywords: "audit operations security" },
@@ -380,5 +383,6 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
 
       <div className={`mx-auto w-full min-w-0 px-4 py-5 sm:px-6 lg:px-7 ${route.kind === "tenant" && route.section === "networking" ? "max-w-[1540px]" : "max-w-[1120px]"}`}>{children}</div>
     </div>
+    {route.kind === "tenant" ? <ResourceBotDrawer tenantId={route.tenantId} /> : null}
   </div>;
 }

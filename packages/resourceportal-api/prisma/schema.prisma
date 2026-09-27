@@ -227,6 +227,9 @@ model Tenant {
   oauthApplications          OAuthApplication[]
   serviceIdentities          ServiceIdentity[]
   mcpSettings                TenantMcpSettings?
+  resourceBotSettings        TenantResourceBotSettings?
+  resourceBotUsageRecords    ResourceBotUsageRecord[]
+  resourceBotReservations    ResourceBotUsageReservation[]
   appGroups                  AppGroup[]
   volumes                    Volume[]
   domains                    Domain[]
@@ -312,6 +315,104 @@ model TenantMcpMemberAccess {
 
   @@id([tenantId, membershipId])
   @@index([membershipId])
+}
+
+model TenantResourceBotSettings {
+  tenantId   String   @id @db.Uuid
+  enabled    Boolean  @default(true)
+  updatedBy  String   @db.Uuid
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model PlatformResourceBotSettings {
+  id                     String   @id @db.Uuid
+  enabled                Boolean  @default(true)
+  provider               String   @default("OpenAI")
+  generationModel        String   @default("gpt-5.6-luna")
+  embeddingModel         String   @default("text-embedding-3-small")
+  apiKeyCiphertext       String?  @db.Text
+  lastValidatedAt        DateTime?
+  lastError              String?  @db.Text
+  updatedBy              String?  @db.Uuid
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model ResourceBotKnowledgeEmbedding {
+  id             String   @id @default(uuid()) @db.Uuid
+  corpusHash     String
+  embeddingModel String
+  chunkId        String
+  sectionId      String
+  title          String
+  anchor         String
+  text           String   @db.Text
+  vector         Bytes
+  createdAt      DateTime @default(now())
+
+  @@unique([corpusHash, embeddingModel, chunkId], map: "ResourceBotEmbedding_corpus_model_chunk_key")
+  @@index([corpusHash, embeddingModel], map: "ResourceBotEmbedding_corpus_model_idx")
+}
+
+model ResourceBotPriceVersion {
+  id                       String   @id @default(uuid()) @db.Uuid
+  provider                 String
+  model                    String
+  effectiveFrom            DateTime
+  inputCreditsPer1M        Decimal  @db.Decimal(24, 8)
+  cachedInputCreditsPer1M  Decimal  @db.Decimal(24, 8)
+  outputCreditsPer1M       Decimal  @db.Decimal(24, 8)
+  embeddingCreditsPer1M    Decimal  @db.Decimal(24, 8)
+  createdBy                String
+  createdAt                DateTime @default(now())
+  usageRecords             ResourceBotUsageRecord[]
+
+  @@unique([provider, model, effectiveFrom], map: "ResourceBotPrice_provider_model_effective_key")
+  @@index([provider, model, effectiveFrom(sort: Desc)], map: "ResourceBotPrice_provider_model_effective_idx")
+}
+
+model ResourceBotUsageReservation {
+  id               String         @id @default(uuid()) @db.Uuid
+  billingAccountId String         @db.Uuid
+  tenantId         String         @db.Uuid
+  requestId        String         @unique
+  reservedCredits  Decimal        @db.Decimal(24, 8)
+  expiresAt        DateTime
+  createdAt        DateTime       @default(now())
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([billingAccountId, expiresAt], map: "ResourceBotReservation_account_expiry_idx")
+  @@index([tenantId, createdAt], map: "ResourceBotReservation_tenant_created_idx")
+}
+
+model ResourceBotUsageRecord {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  billingAccountId       String                  @db.Uuid
+  tenantId               String                  @db.Uuid
+  userId                 String                  @db.Uuid
+  provider               String
+  model                  String
+  providerRequestId      String?
+  inputTokens            Int
+  cachedInputTokens      Int                     @default(0)
+  outputTokens           Int
+  embeddingInputTokens   Int                     @default(0)
+  totalTokens            Int
+  priceVersionId         String                  @db.Uuid
+  theoreticalCostCredits Decimal                 @db.Decimal(24, 8)
+  chargedCredits         Decimal                 @db.Decimal(24, 8)
+  status                 String
+  requestId              String                  @unique
+  createdAt              DateTime                @default(now())
+  billingAccount         BillingAccount          @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceVersion           ResourceBotPriceVersion @relation(fields: [priceVersionId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, createdAt(sort: Desc)], map: "ResourceBotUsage_tenant_created_idx")
+  @@index([billingAccountId, createdAt(sort: Desc)], map: "ResourceBotUsage_account_created_idx")
 }
 
 model TenantAuthPolicy {
@@ -462,6 +563,8 @@ model BillingAccount {
   tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transactions         BillingTransaction[]
   usageRecords         UsageRecord[]
+  resourceBotUsageRecords ResourceBotUsageRecord[]
+  resourceBotReservations ResourceBotUsageReservation[]
   redeemedVouchers     Voucher[]
 }
 

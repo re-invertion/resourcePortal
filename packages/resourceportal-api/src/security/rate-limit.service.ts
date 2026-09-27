@@ -19,8 +19,24 @@ export class RateLimitService {
   ) {}
 
   async consume(key: string, now = Date.now()) {
-    const windowMs = this.windowSeconds() * 1000;
-    const maxRequests = this.maxRequests();
+    return this.consumeWithPolicy(
+      key,
+      {
+        maxRequests: this.maxRequests(),
+        windowSeconds: this.windowSeconds(),
+      },
+      now,
+    );
+  }
+
+  async consumeWithPolicy(
+    key: string,
+    policy: { maxRequests: number; windowSeconds: number },
+    now = Date.now(),
+  ) {
+    const maxRequests = Math.max(1, Math.floor(policy.maxRequests));
+    const windowSeconds = Math.max(1, Math.floor(policy.windowSeconds));
+    const windowMs = windowSeconds * 1000;
     const windowStartedAt = new Date(now);
     const proposedResetAt = new Date(now + windowMs);
     const bucketKey = this.hashKey(key);

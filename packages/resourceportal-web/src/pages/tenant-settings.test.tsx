@@ -62,6 +62,42 @@ describe("TenantSettingsPage", () => {
     });
   });
 
+
+
+  it("keeps ResourceBot enabled by default and persists a tenant override", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/resource-bot/settings") && (init?.method ?? "GET") === "PATCH") {
+        return json({ enabled: false, updatedAt: "2026-09-27T11:00:00.000Z" });
+      }
+      if (url.endsWith("/resource-bot/settings")) return json({ enabled: true, updatedAt: null });
+      if (url.endsWith("/mcp-settings")) return json({ enabled: false, accessMode: "SelectedMembers", allowedMembershipIds: [] });
+      if (url.endsWith("/memberships")) return json([]);
+      return json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+
+    expect(await screen.findByRole("heading", { name: "ResourceBot" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "ResourceBot" }).getAttribute("href")).toBe("#resource-bot");
+    const toggles = screen.getAllByRole("checkbox");
+    const resourceBotToggle = toggles[0] as HTMLInputElement;
+    await waitFor(() => expect(resourceBotToggle.disabled).toBe(false));
+    expect(resourceBotToggle.checked).toBe(true);
+    fireEvent.click(resourceBotToggle);
+    await waitFor(() => expect(resourceBotToggle.checked).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Save ResourceBot settings" }));
+
+    await waitFor(() => {
+      const patch = calls.find((call) => call.url.endsWith("/resource-bot/settings") && call.init?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch?.init?.body))).toEqual({ enabled: false });
+    });
+  });
+
   it("shows concise technical OAuth status when platform setup is incomplete", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

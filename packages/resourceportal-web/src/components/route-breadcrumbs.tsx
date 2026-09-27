@@ -235,6 +235,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
 
   const labels: Record<string, string> = {
     billing: "Billing",
+    "resource-bot": "AI & ResourceBot",
     maintenance: "Maintenance",
     dns: "DNS & Domains",
     "network-egress": "Network Egress",

@@ -25,6 +25,7 @@ import { PlatformMaintenanceGuard } from "./platform-maintenance/platform-mainte
 import { PlatformMaintenanceModule } from "./platform-maintenance/platform-maintenance.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { RegistriesModule } from "./registries/registries.module";
+import { ResourceBotModule } from "./resource-bot/resource-bot.module";
 import { SecurityModule } from "./security/security.module";
 import { SearchModule } from "./search/search.module";
 import { ServiceIdentitiesModule } from "./service-identities/service-identities.module";
@@ -54,6 +55,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     ServiceIdentitiesModule,
     AppGroupsModule,
     RegistriesModule,
+    ResourceBotModule,
     ApiVolumesModule,
     DomainsModule,
     OperationsModule,

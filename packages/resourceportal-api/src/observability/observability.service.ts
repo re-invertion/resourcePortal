@@ -40,10 +40,16 @@ export class ObservabilityService {
   private readonly workerEvents = new Map<string, number>();
   private readonly deploymentOutcomes = new Map<string, number>();
   private readonly deploymentDurationBuckets = new Map<string, number[]>();
+  private readonly resourceBotRequests = new Map<string, number>();
+  private readonly resourceBotDurationBuckets = new Map<string, number[]>();
+  private readonly resourceBotDurationCounts = new Map<string, number>();
+  private readonly resourceBotTokenTotals = new Map<string, number>();
+  private resourceBotChargedCredits = 0;
   private readonly remoteLocations = new Map<string, RemoteLocationSnapshot>();
   private readonly storageBackends = new Map<string, StorageBackendSnapshot>();
   private readonly buckets = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
   private readonly deploymentBucketsSeconds = [1, 5, 10, 30, 60, 120, 300, 600, 1800];
+  private readonly resourceBotBucketsSeconds = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
 
   constructor(
     @Optional() private readonly prisma?: PrismaService,
@@ -78,6 +84,53 @@ export class ObservabilityService {
       if (durationSeconds <= this.deploymentBucketsSeconds[index]) existing[index] += 1;
     }
     this.deploymentDurationBuckets.set(labels, existing);
+  }
+
+  recordResourceBotRequest(outcome: "answered" | "abstained" | "error") {
+    this.resourceBotRequests.set(
+      outcome,
+      (this.resourceBotRequests.get(outcome) ?? 0) + 1,
+    );
+  }
+
+  recordResourceBotDuration(stage: "retrieval" | "provider", durationMs: number) {
+    const existing =
+      this.resourceBotDurationBuckets.get(stage) ??
+      this.resourceBotBucketsSeconds.map(() => 0);
+    const durationSeconds = Math.max(0, durationMs) / 1000;
+    for (let index = 0; index < this.resourceBotBucketsSeconds.length; index += 1) {
+      if (durationSeconds <= this.resourceBotBucketsSeconds[index]) existing[index] += 1;
+    }
+    this.resourceBotDurationBuckets.set(stage, existing);
+    this.resourceBotDurationCounts.set(
+      stage,
+      (this.resourceBotDurationCounts.get(stage) ?? 0) + 1,
+    );
+  }
+
+  recordResourceBotUsage(input: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    embeddingInputTokens: number;
+    chargedCredits: string;
+  }) {
+    const tokens = {
+      input: input.inputTokens,
+      cached_input: input.cachedInputTokens,
+      output: input.outputTokens,
+      embedding_input: input.embeddingInputTokens,
+    };
+    for (const [kind, value] of Object.entries(tokens)) {
+      this.resourceBotTokenTotals.set(
+        kind,
+        (this.resourceBotTokenTotals.get(kind) ?? 0) + Math.max(0, value),
+      );
+    }
+    const charged = Number.parseFloat(input.chargedCredits);
+    if (Number.isFinite(charged) && charged >= 0) {
+      this.resourceBotChargedCredits += charged;
+    }
   }
 
   recordRemoteLocationSnapshot(snapshot: RemoteLocationSnapshot) {
@@ -161,6 +214,48 @@ export class ObservabilityService {
         `resource_portal_deployment_duration_seconds_count{${labels}} ${total}`,
       );
     }
+
+    lines.push(
+      "# HELP resource_portal_resourcebot_requests_total Process-local ResourceBot request outcomes.",
+      "# TYPE resource_portal_resourcebot_requests_total counter",
+    );
+    for (const [outcome, count] of this.resourceBotRequests.entries()) {
+      lines.push(
+        `resource_portal_resourcebot_requests_total{outcome="${escapeLabel(outcome)}"} ${count}`,
+      );
+    }
+
+    lines.push(
+      "# HELP resource_portal_resourcebot_stage_duration_seconds ResourceBot retrieval and provider stage latency.",
+      "# TYPE resource_portal_resourcebot_stage_duration_seconds histogram",
+    );
+    for (const [stage, counts] of this.resourceBotDurationBuckets.entries()) {
+      for (let index = 0; index < this.resourceBotBucketsSeconds.length; index += 1) {
+        lines.push(
+          `resource_portal_resourcebot_stage_duration_seconds_bucket{stage="${escapeLabel(stage)}",le="${this.resourceBotBucketsSeconds[index]}"} ${counts[index]}`,
+        );
+      }
+      const observed = this.resourceBotDurationCounts.get(stage) ?? 0;
+      lines.push(
+        `resource_portal_resourcebot_stage_duration_seconds_bucket{stage="${escapeLabel(stage)}",le="+Inf"} ${observed}`,
+        `resource_portal_resourcebot_stage_duration_seconds_count{stage="${escapeLabel(stage)}"} ${observed}`,
+      );
+    }
+
+    lines.push(
+      "# HELP resource_portal_resourcebot_tokens_total Process-local ResourceBot provider token usage.",
+      "# TYPE resource_portal_resourcebot_tokens_total counter",
+    );
+    for (const [kind, total] of this.resourceBotTokenTotals.entries()) {
+      lines.push(
+        `resource_portal_resourcebot_tokens_total{token_kind="${escapeLabel(kind)}"} ${total}`,
+      );
+    }
+    lines.push(
+      "# HELP resource_portal_resourcebot_charged_credits_total Process-local tenant credits charged for ResourceBot usage.",
+      "# TYPE resource_portal_resourcebot_charged_credits_total counter",
+      `resource_portal_resourcebot_charged_credits_total ${this.resourceBotChargedCredits}`,
+    );
 
     if (this.prisma) {
       try {

@@ -94,6 +94,8 @@ const roles = [
       "registry.use",
       "billing.read",
       "billing.voucher.redeem",
+      "resourcebot.use",
+      "resourcebot.settings.manage",
       "domain.read",
       "domain.create",
       "domain.update",
@@ -167,6 +169,7 @@ const roles = [
       "domain.validate",
       "operation.read",
       "operation.retry",
+      "resourcebot.use",
     ],
   },
   {
@@ -177,6 +180,7 @@ const roles = [
       "billing.read",
       "billing.voucher.redeem",
       "billing.manage",
+      "resourcebot.use",
     ],
   },
   {
@@ -199,6 +203,7 @@ const roles = [
       "domain.read",
       "operation.read",
       "audit.read",
+      "resourcebot.use",
     ],
   },
 ];
