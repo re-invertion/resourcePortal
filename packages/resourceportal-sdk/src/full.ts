@@ -62,6 +62,35 @@ export type PlatformResourceBotState = {
   updatedAt: string;
 };
 
+export type PlatformEmailState = {
+  enabled: boolean;
+  configured: boolean;
+  host: string | null;
+  port: number;
+  mode: "STARTTLS" | "TLS" | "PLAIN";
+  username: string | null;
+  passwordConfigured: boolean;
+  fromEmail: string | null;
+  fromName: string | null;
+  replyTo: string | null;
+  lastValidatedAt: string | null;
+  lastTestSentAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+export type PlatformEmailUpdate = {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  mode?: "STARTTLS" | "TLS" | "PLAIN";
+  username?: string;
+  password?: string;
+  fromEmail?: string | null;
+  fromName?: string;
+  replyTo?: string | null;
+};
+
 export type ResourceBotUsage = {
   inputTokens: number;
   cachedInputTokens: number;
@@ -167,6 +196,24 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
     listPrices: () => this.request("/platform/resource-bot/prices"),
     createPrice: (body: unknown) =>
       this.request("/platform/resource-bot/prices", { method: "POST", body }),
+  };
+
+  readonly platformEmail = {
+    get: () => this.request<PlatformEmailState>("/platform/email"),
+    update: (body: PlatformEmailUpdate) =>
+      this.request<PlatformEmailState>("/platform/email", {
+        method: "PATCH",
+        body,
+      }),
+    validate: () =>
+      this.request<PlatformEmailState>("/platform/email/validate", {
+        method: "POST",
+      }),
+    test: (recipient: string) =>
+      this.request<PlatformEmailState & { testRecipient: string }>(
+        "/platform/email/test",
+        { method: "POST", body: { recipient } },
+      ),
   };
 
   readonly resourceBot = {

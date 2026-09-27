@@ -495,8 +495,8 @@ spec:
             <StepList>
               <span>Open <strong>Access management</strong> and choose <strong>Invite user</strong>.</span>
               <span>Enter the user's email address and select the role that should be granted after acceptance.</span>
-              <span>Choose <strong>Generate invitation link</strong> and copy the link shown by ResourcePortal.</span>
-              <span>Share the link with the intended user through an appropriate channel. ResourcePortal does not send invitation email yet.</span>
+              <span>Choose <strong>Create invitation</strong>. ResourcePortal sends the invitation by email when Platform Admin SMTP delivery is enabled and configured.</span>
+              <span>The invitation link is always shown as a fallback so it can still be copied and shared manually when SMTP is disabled or delivery fails.</span>
               <span>The user opens the link, signs in or creates an account through ResourcePortal OAuth, then accepts the invitation.</span>
             </StepList>
 

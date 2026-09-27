@@ -55,6 +55,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "auth/auth.controller.ts",
     "billing/platform-billing.controller.ts",
     "domains/domains.controller.ts",
+    "email/platform-email.controller.ts",
     "health/health.controller.ts",
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
@@ -91,6 +92,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
 
   await client.platformBilling.listPriceLists();
   await client.platformResourceBot.get();
+  await client.platformEmail.get();
   await client.resourceBot.status("tenant id");
   await client.platformDns.get();
   await client.platformNetworkEgress.get();
@@ -114,6 +116,7 @@ test("exposes every post-Stage-8 public management resource family", async () =>
     [
       "/api/platform/billing/price-lists",
       "/api/platform/resource-bot",
+      "/api/platform/email",
       "/api/tenants/tenant%20id/resource-bot/status",
       "/api/platform/dns",
       "/api/platform/network-egress",
@@ -144,6 +147,15 @@ test("uses canonical methods and bodies for representative mutations", async () 
     embeddingModel: "text-embedding-3-small",
   });
   await client.platformResourceBot.validate();
+  await client.platformEmail.update({
+    enabled: true,
+    host: "smtp.example.com",
+    port: 587,
+    mode: "STARTTLS",
+    fromEmail: "noreply@example.com",
+  });
+  await client.platformEmail.validate();
+  await client.platformEmail.test("admin@example.com");
   await client.resourceBot.updateSettings("tenant id", false);
   await client.resourceBot.ask("tenant id", { question: "How do domains work?" });
   await client.platformDns.update({ enabled: true });
@@ -170,6 +182,9 @@ test("uses canonical methods and bodies for representative mutations", async () 
     [
       ["PATCH", "/api/platform/resource-bot"],
       ["POST", "/api/platform/resource-bot/validate"],
+      ["PATCH", "/api/platform/email"],
+      ["POST", "/api/platform/email/validate"],
+      ["POST", "/api/platform/email/test"],
       ["PATCH", "/api/tenants/tenant%20id/resource-bot/settings"],
       ["POST", "/api/tenants/tenant%20id/resource-bot/messages"],
       ["PATCH", "/api/platform/dns"],
@@ -196,23 +211,34 @@ test("uses canonical methods and bodies for representative mutations", async () 
       embeddingModel: "text-embedding-3-small",
     }),
   );
-  assert.equal(calls[2].init.body, JSON.stringify({ enabled: false }));
   assert.equal(
-    calls[3].init.body,
+    calls[2].init.body,
+    JSON.stringify({
+      enabled: true,
+      host: "smtp.example.com",
+      port: 587,
+      mode: "STARTTLS",
+      fromEmail: "noreply@example.com",
+    }),
+  );
+  assert.equal(calls[4].init.body, JSON.stringify({ recipient: "admin@example.com" }));
+  assert.equal(calls[5].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(
+    calls[6].init.body,
     JSON.stringify({ question: "How do domains work?" }),
   );
-  assert.equal(calls[4].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[6].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[8].init.body, JSON.stringify({ enabled: true }));
-  assert.equal(calls[9].init.body, JSON.stringify({ enabled: false }));
+  assert.equal(calls[7].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[9].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[11].init.body, JSON.stringify({ enabled: true }));
+  assert.equal(calls[12].init.body, JSON.stringify({ enabled: false }));
   assert.equal(
-    calls[11].init.body,
+    calls[14].init.body,
     JSON.stringify({ enabled: true, reason: "upgrade" }),
   );
-  assert.equal(calls[14].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
-  assert.equal(calls[15].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(calls[17].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
+  assert.equal(calls[18].init.body, JSON.stringify({ yaml: "kind: AppGroup" }));
   assert.equal(
-    calls[17].init.body,
+    calls[20].init.body,
     JSON.stringify({
       enabled: true,
       accessMode: "SelectedMembers",

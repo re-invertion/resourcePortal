@@ -36,7 +36,7 @@ function fixture(expiresAt = new Date(Date.now() + 60_000)) {
       ]),
     },
   };
-  return { token, prisma, service: new TenantsService(prisma as never) };
+  return { token, prisma, service: new TenantsService(prisma as never, { sendTenantInvitation: vi.fn() } as never) };
 }
 
 describe("tenant invitation links", () => {

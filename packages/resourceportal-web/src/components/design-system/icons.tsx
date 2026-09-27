@@ -14,6 +14,7 @@ export const SettingsIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r
 export const HelpIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5.2 1c0 2-2.7 2.2-2.7 4M12 17.5h.01"/></Icon>;
 export const BotIcon = (p: Props) => <Icon {...p}><path d="M12 3v2"/><rect x="4.5" y="6" width="15" height="13" rx="4"/><path d="M8 11h.01M16 11h.01M8.5 15.5h7M4.5 12H2.8M21.2 12h-1.7"/></Icon>;
 export const BellIcon = (p: Props) => <Icon {...p}><path d="M18 9.5a6 6 0 0 0-12 0v2.25c0 1.55-.54 3.05-1.54 4.23L4 16.5h16l-.46-.52A6.45 6.45 0 0 1 18 11.75V9.5Z"/><path d="M10 19h4"/></Icon>;
+export const MailIcon = (p: Props) => <Icon {...p}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></Icon>;
 export const SearchIcon = (p: Props) => <Icon {...p}><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></Icon>;
 export const ChevronDownIcon = (p: Props) => <Icon {...p}><path d="m8 10 4 4 4-4"/></Icon>;
 export const ChevronRightIcon = (p: Props) => <Icon {...p}><path d="m9 6 6 6-6 6"/></Icon>;

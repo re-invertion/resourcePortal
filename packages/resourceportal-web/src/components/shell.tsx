@@ -41,6 +41,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Network Egress", href: platformHref("network-egress"), icon: <NetworkIcon />, active: route.section === "network-egress" },
     { label: "Security & Ops", href: platformHref("security"), icon: <ActivityIcon />, active: ["security", "operations", "audit"].includes(route.section) },
     { label: "Maintenance", href: platformHref("maintenance"), icon: <SettingsIcon />, active: route.section === "maintenance" },
+    { label: "Settings", href: platformHref("settings"), icon: <SettingsIcon />, active: route.section === "settings" },
   ];
 }
 
@@ -121,6 +122,7 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-network-egress", label: "Network Egress", description: "Tenant private-network isolation and exceptions", href: platformHref("network-egress"), category: "Navigation", keywords: "network egress firewall private lan cidr isolation" },
     { id: "platform-security", label: "Security & Ops", description: "Security, operations and audit", href: platformHref("security"), category: "Navigation", keywords: "audit operations security" },
     { id: "platform-maintenance", label: "Maintenance", description: "Platform maintenance controls", href: platformHref("maintenance"), category: "Navigation", keywords: "system maintenance" },
+    { id: "platform-settings", label: "Settings", description: "Platform-wide ResourcePortal settings and SMTP email delivery", href: platformHref("settings"), category: "Navigation", keywords: "settings smtp email mail server outbound" },
   ];
 }
 

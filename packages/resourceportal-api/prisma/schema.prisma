@@ -340,6 +340,25 @@ model PlatformResourceBotSettings {
   updatedAt              DateTime @updatedAt
 }
 
+model PlatformEmailSettings {
+  id                  String    @id @db.Uuid
+  enabled             Boolean   @default(false)
+  host                String?
+  port                Int       @default(587)
+  mode                String    @default("STARTTLS")
+  username            String?
+  passwordCiphertext  String?   @db.Text
+  fromEmail           String?
+  fromName            String?
+  replyTo             String?
+  lastValidatedAt     DateTime?
+  lastTestSentAt      DateTime?
+  lastError           String?   @db.Text
+  updatedBy           String?   @db.Uuid
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
 model ResourceBotKnowledgeEmbedding {
   id             String   @id @default(uuid()) @db.Uuid
   corpusHash     String

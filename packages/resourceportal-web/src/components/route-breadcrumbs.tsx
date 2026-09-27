@@ -237,6 +237,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
     billing: "Billing",
     "resource-bot": "AI & ResourceBot",
     maintenance: "Maintenance",
+    settings: "Settings",
     dns: "DNS & Domains",
     "network-egress": "Network Egress",
   };

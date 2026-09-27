@@ -20,6 +20,7 @@ function installApi() {
     if (url === "/api/platform/billing/price-lists") return json([]);
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/maintenance") return json({ enabled: false, reason: null });
+    if (url === "/api/platform/email") return json({ enabled: false, configured: false, host: null, port: 587, mode: "STARTTLS", username: null, passwordConfigured: false, fromEmail: null, fromName: "ResourcePortal", replyTo: null, lastValidatedAt: null, lastTestSentAt: null, lastError: null });
     if (url === "/api/platform/dns") return json({ provider: "Cloudflare", enabled: false, available: false, configured: false, tokenConfigured: false, zoneId: null, zoneName: null, baseDomain: "resource-portal.pl", targetHostname: "resource-portal.pl", lastValidatedAt: null, lastError: null });
     if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", enabled: true, available: false, configured: false, apiKeyConfigured: false, generationModel: "gpt-5.6-luna", embeddingModel: "text-embedding-3-small", lastValidatedAt: null, lastError: null });
     if (url === "/api/platform/resource-bot/prices") return json({ items: [] });
@@ -47,6 +48,7 @@ describe("Platform Admin final routes", () => {
     ["network-egress", "Network Egress"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
+    ["settings", "Settings"],
   ])("renders %s with the final page header", async (section, heading) => {
     installApi();
     render(<PlatformPage section={section} />);

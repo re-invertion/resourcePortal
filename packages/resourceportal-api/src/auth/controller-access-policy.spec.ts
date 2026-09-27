@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { AppGroupsController } from "../app-groups/app-groups.controller";
 import { AuditController } from "../audit/audit.controller";
 import { DomainsController } from "../domains/domains.controller";
+import { PlatformEmailController } from "../email/platform-email.controller";
 import { HealthController } from "../health/health.controller";
 import { IdentityProvidersController } from "../identity-providers/identity-providers.controller";
 import { PlatformIdentityProvidersController } from "../identity-providers/platform-identity-providers.controller";
@@ -47,6 +48,7 @@ const controllers = [
   ObservabilityController,
   ObservabilityDiagnosticsController,
   OAuthApplicationsController,
+  PlatformEmailController,
   PlatformIdentityProvidersController,
   PlatformInfrastructureController,
   PlatformOAuthApplicationsController,

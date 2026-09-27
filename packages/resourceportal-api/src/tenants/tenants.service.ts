@@ -9,6 +9,7 @@ import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { PlatformEmailService } from "../email/platform-email.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
 import { AssignTenantGroupRoleDto } from "./dto/assign-tenant-group-role.dto";
@@ -35,7 +36,10 @@ const TENANT_OWNER_ROLE_ID = "tenant-owner";
 
 @Injectable()
 export class TenantsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly email: PlatformEmailService,
+  ) {}
 
   listTenants(userId: string) {
     return this.prisma.tenant.findMany({
@@ -462,9 +466,17 @@ export class TenantsService {
         return created;
       });
 
+      const emailDelivery = await this.email.sendTenantInvitation({
+        recipient: invitation.email,
+        tenantName: tenant.name,
+        token,
+        expiresAt: invitation.expiresAt,
+      });
+
       return {
         ...mapTenantInvitation(invitation),
         token,
+        emailDelivery,
       };
     } catch (error) {
       if (
@@ -520,9 +532,17 @@ export class TenantsService {
       return updated;
     });
 
+    const emailDelivery = await this.email.sendTenantInvitation({
+      recipient: invitation.email,
+      tenantName: tenant.name,
+      token,
+      expiresAt: invitation.expiresAt,
+    });
+
     return {
       ...mapTenantInvitation(invitation),
       token,
+      emailDelivery,
     };
   }
 

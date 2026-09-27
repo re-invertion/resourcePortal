@@ -11,6 +11,7 @@ import { BillingModule } from "./billing/billing.module";
 import { BillingPreflightGuard } from "./billing/billing-preflight.guard";
 import { validateEnv } from "./config/env.validation";
 import { DomainsModule } from "./domains/domains.module";
+import { EmailModule } from "./email/email.module";
 import { HealthModule } from "./health/health.module";
 import { IdentityProvidersModule } from "./identity-providers/identity-providers.module";
 import { OAuthApplicationsModule } from "./oauth-applications/oauth-applications.module";
@@ -55,6 +56,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     ServiceIdentitiesModule,
     AppGroupsModule,
     RegistriesModule,
+    EmailModule,
     ResourceBotModule,
     ApiVolumesModule,
     DomainsModule,

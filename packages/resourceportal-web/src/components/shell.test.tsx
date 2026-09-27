@@ -132,7 +132,7 @@ describe("AppShell", () => {
     const route: Extract<AppRoute, { kind: "platform" }> = { kind: "platform", section: "security", segments: [] };
     render(<AppShell user={user} route={route} onLogout={vi.fn()}><p>Content</p></AppShell>);
     const nav = screen.getByRole("navigation", { name: "Workspace" });
-    for (const label of ["Overview", "Tenants", "Infrastructure", "Identity providers", "Credentials", "Billing", "Security & Ops", "Maintenance"]) {
+    for (const label of ["Overview", "Tenants", "Infrastructure", "Identity providers", "Credentials", "Billing", "Security & Ops", "Maintenance", "Settings"]) {
       expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
     }
     expect(within(nav).getByRole("link", { name: "Security & Ops" }).getAttribute("href")).toBe("/platform/security");
