@@ -10,22 +10,36 @@ const actor = {
   status: "Active" as const,
 };
 
-function fixture() {
+function fixture(options: { platformAdmin?: boolean } = {}) {
   const config = {
     get: vi.fn((key: string, fallback?: unknown) => {
       if (key === "PORT") return 3000;
       if (key === "AUTH_MODE") return "oidc";
       if (key === "ZITADEL_PROJECT_ID") return "project-id";
       if (key === "ZITADEL_ORGANIZATION_ID") return "org-id";
+      if (key === "PLATFORM_ADMIN_USER_IDS") {
+        return options.platformAdmin ? actor.id : "";
+      }
+      if (key === "OIDC_ISSUER_URL") return "https://auth.example.test";
       return fallback;
     }),
   };
   const settings = {
     recordToolCall: vi.fn().mockResolvedValue(undefined),
   };
+  const prisma = {
+    userIdentity: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+  };
   return {
-    service: new TenantMcpProtocolService(config as never, settings as never),
+    service: new TenantMcpProtocolService(
+      config as never,
+      settings as never,
+      prisma as never,
+    ),
     settings,
+    prisma,
   };
 }
 
@@ -254,6 +268,123 @@ describe("TenantMcpProtocolService", () => {
           method: "GET",
           path: "/app-groups",
           success: true,
+        }),
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("exposes platform bug reports only to platform administrators and forwards their OAuth token", async () => {
+    const { service, settings } = fixture({ platformAdmin: true });
+    const request = mcpRequest({
+      authorization: "Bearer platform-admin-token",
+      "x-request-id": "req-bugs",
+      "x-correlation-id": "corr-bugs",
+    });
+    const apiFetch = vi.fn(
+      (requestInfo: string | URL | Request, init?: RequestInit) => {
+        const apiRequest =
+          requestInfo instanceof Request
+            ? requestInfo
+            : new Request(requestInfo, init);
+        expect(apiRequest.url).toBe(
+          "http://127.0.0.1:3000/api/platform/bug-reports",
+        );
+        expect(apiRequest.headers.get("authorization")).toBe(
+          "Bearer platform-admin-token",
+        );
+        expect(apiRequest.headers.get("x-request-id")).toBe("req-bugs");
+        expect(apiRequest.headers.get("x-correlation-id")).toBe("corr-bugs");
+        return new Response(
+          JSON.stringify([
+            { id: "bug-p2", priority: "P2", description: "P2 report" },
+            { id: "bug-p1", priority: "P1", description: "P1 report" },
+          ]),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      },
+    );
+    vi.stubGlobal("fetch", apiFetch);
+
+    const connection = await connectClient({
+      service,
+      request,
+      authenticated: true,
+    });
+
+    try {
+      const tools = await connection.client.listTools();
+      expect(
+        tools.tools.some(
+          (tool) => tool.name === "resourceportal_list_bug_reports",
+        ),
+      ).toBe(true);
+
+      const result = await connection.client.callTool({
+        name: "resourceportal_list_bug_reports",
+        arguments: { priority: "P2" },
+      });
+
+      expect(result.structuredContent).toEqual({
+        status: 200,
+        ok: true,
+        data: [{ id: "bug-p2", priority: "P2", description: "P2 report" }],
+      });
+      expect(settings.recordToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          toolName: "resourceportal_list_bug_reports",
+          method: "GET",
+          path: "/platform/bug-reports",
+          statusCode: 200,
+          success: true,
+        }),
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("hides and rejects the platform bug report tool for non-platform administrators", async () => {
+    const { service, settings } = fixture();
+    const connection = await connectClient({
+      service,
+      request: mcpRequest({ authorization: "Bearer user-token" }),
+      authenticated: true,
+    });
+
+    try {
+      const tools = await connection.client.listTools();
+      expect(
+        tools.tools.some(
+          (tool) => tool.name === "resourceportal_list_bug_reports",
+        ),
+      ).toBe(false);
+
+      const result = await connection.client.callTool({
+        name: "resourceportal_list_bug_reports",
+        arguments: { priority: "P2" },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        status: 403,
+        ok: false,
+        data: {
+          message: "Platform administrator access is required",
+          error: "Forbidden",
+          statusCode: 403,
+        },
+      });
+      expect(settings.recordToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          toolName: "resourceportal_list_bug_reports",
+          success: false,
         }),
       );
     } finally {

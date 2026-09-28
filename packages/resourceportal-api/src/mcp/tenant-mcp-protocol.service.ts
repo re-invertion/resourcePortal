@@ -1,8 +1,13 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ListToolsResult,
+} from "@modelcontextprotocol/server";
 import { FastifyReply, FastifyRequest } from "fastify";
+import { isPlatformAdminUser } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
+import { PrismaService } from "../prisma/prisma.service";
 import { protectedResourceMetadataUrl } from "./mcp-oauth";
 import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
 
@@ -58,10 +63,12 @@ export class TenantMcpProtocolService {
   constructor(
     private readonly config: ConfigService,
     private readonly settings: TenantMcpSettingsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async createHttpHandler(context: McpCallContext) {
-    const { Server, createMcpHandler } = await import("@modelcontextprotocol/server");
+    const { Server, createMcpHandler } =
+      await import("@modelcontextprotocol/server");
 
     return createMcpHandler(
       () => {
@@ -75,9 +82,9 @@ export class TenantMcpProtocolService {
           },
         });
 
-        server.setRequestHandler("tools/list", () => {
+        server.setRequestHandler("tools/list", async () => {
           return {
-            tools: this.tools(context),
+            tools: await this.tools(context),
           } as unknown as ListToolsResult;
         });
 
@@ -186,6 +193,8 @@ export class TenantMcpProtocolService {
         return this.callFocusedTool(context, name, "GET", "/operations");
       case "resourceportal_list_audit_log":
         return this.callFocusedTool(context, name, "GET", "/audit-log");
+      case "resourceportal_list_bug_reports":
+        return this.callBugReports(context, name, args);
 
       case "resourceportal_tenant_endpoints":
         await this.recordToolCall(context, name, true);
@@ -197,7 +206,9 @@ export class TenantMcpProtocolService {
       default:
         return {
           isError: true,
-          content: [{ type: "text", text: `Unknown ResourcePortal tool: ${name}` }],
+          content: [
+            { type: "text", text: `Unknown ResourcePortal tool: ${name}` },
+          ],
         };
     }
   }
@@ -211,12 +222,58 @@ export class TenantMcpProtocolService {
     return this.executeTenantApiCall(context, toolName, method, path);
   }
 
+  private async callBugReports(
+    context: McpCallContext,
+    toolName: string,
+    args: Record<string, unknown>,
+  ) {
+    if (!(await isPlatformAdminUser(this.config, this.prisma, context.actor))) {
+      await this.recordToolCall(context, toolName, false);
+      return this.forbiddenToolResult(
+        "Platform administrator access is required",
+      );
+    }
+
+    const priority =
+      args.priority === undefined
+        ? undefined
+        : this.bugReportPriority(args.priority);
+    const response = await this.executePlatformApiCall(
+      context,
+      toolName,
+      "GET",
+      "/bug-reports",
+    );
+
+    const structured = response.structuredContent as
+      { status: number; ok: boolean; data: unknown } | undefined;
+    if (priority && structured && Array.isArray(structured.data)) {
+      const filtered = structured.data.filter(
+        (report: unknown) =>
+          typeof report === "object" &&
+          report !== null &&
+          "priority" in report &&
+          report.priority === priority,
+      );
+      return this.toolResult({
+        status: structured.status,
+        ok: structured.ok,
+        data: filtered,
+      });
+    }
+
+    return response;
+  }
+
   private async callCompatibilityTool(
     context: McpCallContext,
     toolName: string,
     args: Record<string, unknown>,
   ) {
-    const method = this.string(args.method ?? "GET", "method must be a string").toUpperCase();
+    const method = this.string(
+      args.method ?? "GET",
+      "method must be a string",
+    ).toUpperCase();
     if (!allowedMethods.has(method)) {
       throw new BadRequestException(
         "method must be GET, POST, PATCH, PUT, or DELETE",
@@ -232,13 +289,7 @@ export class TenantMcpProtocolService {
         );
       }
     }
-    return this.executeTenantApiCall(
-      context,
-      toolName,
-      method,
-      path,
-      body,
-    );
+    return this.executeTenantApiCall(context, toolName, method, path, body);
   }
 
   private async executeTenantApiCall(
@@ -280,6 +331,113 @@ export class TenantMcpProtocolService {
     }
   }
 
+  private async executePlatformApiCall(
+    context: McpCallContext,
+    toolName: string,
+    method: string,
+    path: string,
+  ) {
+    let statusCode: number | undefined;
+    const auditPath = `/platform${path}`;
+    try {
+      const response = await this.callPlatformApi(context, method, path);
+      statusCode = response.status;
+      await this.settings.recordToolCall({
+        tenantId: context.tenantId,
+        actor: context.actor!,
+        toolName,
+        method,
+        path: auditPath,
+        statusCode,
+        success: response.ok,
+        requestId: this.header(context.request, "x-request-id"),
+        correlationId: this.header(context.request, "x-correlation-id"),
+      });
+      return this.httpToolResult(response);
+    } catch (error) {
+      await this.settings.recordToolCall({
+        tenantId: context.tenantId,
+        actor: context.actor!,
+        toolName,
+        method,
+        path: auditPath,
+        statusCode,
+        success: false,
+        requestId: this.header(context.request, "x-request-id"),
+        correlationId: this.header(context.request, "x-correlation-id"),
+      });
+      throw error;
+    }
+  }
+
+  private async callPlatformApi(
+    context: McpCallContext,
+    method: string,
+    requestedPath: string,
+  ): Promise<TenantApiResult> {
+    const normalizedPath = requestedPath.startsWith("/")
+      ? requestedPath
+      : `/${requestedPath}`;
+    if (
+      normalizedPath.includes("://") ||
+      normalizedPath.startsWith("//") ||
+      normalizedPath.includes("..")
+    ) {
+      throw new BadRequestException(
+        "path must be relative to the platform API",
+      );
+    }
+
+    const port = this.config.get<number>("PORT", 3000);
+    const platformRoot = "/api/platform";
+    const target = new URL(
+      `${platformRoot}${normalizedPath}`,
+      `http://127.0.0.1:${port}`,
+    );
+    if (!target.pathname.startsWith(`${platformRoot}/`)) {
+      throw new BadRequestException("path escapes the platform API boundary");
+    }
+
+    const headers: Record<string, string> = {
+      accept: "application/json, text/plain;q=0.8",
+    };
+    const bearer = this.bearer(context.request.headers.authorization);
+    if (bearer) {
+      headers.authorization = `Bearer ${bearer}`;
+    } else {
+      const devUserId = this.header(context.request, "x-dev-user-id");
+      if (devUserId) headers["x-dev-user-id"] = devUserId;
+    }
+
+    const requestId = this.header(context.request, "x-request-id");
+    const correlationId = this.header(context.request, "x-correlation-id");
+    if (requestId) headers["x-request-id"] = requestId;
+    if (correlationId) headers["x-correlation-id"] = correlationId;
+
+    const response = await fetch(target, { method, headers });
+    const text = await response.text();
+    const boundedText =
+      Buffer.byteLength(text, "utf8") > maxToolResponseBytes
+        ? `${text.slice(0, maxToolResponseBytes)}\n...[response truncated at 1 MiB]`
+        : text;
+    let payload: unknown = boundedText;
+    if (boundedText) {
+      try {
+        payload = JSON.parse(boundedText);
+      } catch {
+        payload = boundedText;
+      }
+    } else {
+      payload = null;
+    }
+
+    return {
+      status: response.status,
+      ok: response.ok,
+      payload,
+    };
+  }
+
   private async recordToolCall(
     context: McpCallContext,
     toolName: string,
@@ -309,13 +467,8 @@ export class TenantMcpProtocolService {
         : requestedPath.startsWith("/")
           ? requestedPath
           : `/${requestedPath}`;
-    if (
-      normalizedPath.includes("://") ||
-      normalizedPath.startsWith("//")
-    ) {
-      throw new BadRequestException(
-        "path must be relative to this tenant API",
-      );
+    if (normalizedPath.includes("://") || normalizedPath.startsWith("//")) {
+      throw new BadRequestException("path must be relative to this tenant API");
     }
 
     const port = this.config.get<number>("PORT", 3000);
@@ -327,9 +480,7 @@ export class TenantMcpProtocolService {
       target.pathname !== tenantRoot &&
       !target.pathname.startsWith(`${tenantRoot}/`)
     ) {
-      throw new BadRequestException(
-        "path escapes the tenant API boundary",
-      );
+      throw new BadRequestException("path escapes the tenant API boundary");
     }
     if (
       target.pathname === `${tenantRoot}/mcp` ||
@@ -390,7 +541,7 @@ export class TenantMcpProtocolService {
     };
   }
 
-  private tools(context: McpCallContext): ToolDescriptor[] {
+  private async tools(context: McpCallContext): Promise<ToolDescriptor[]> {
     const securitySchemes = this.securitySchemes();
     const commonMeta = {
       securitySchemes,
@@ -575,6 +726,25 @@ export class TenantMcpProtocolService {
         "List Audit Log",
         "List tenant audit events visible to the connected user.",
       ),
+      ...(context.actor &&
+      context.hasInteractiveCredential &&
+      (await isPlatformAdminUser(this.config, this.prisma, context.actor))
+        ? [
+            readTool(
+              "resourceportal_list_bug_reports",
+              "List Bug Reports",
+              "List platform Bug Reports. This tool is available only to ResourcePortal platform administrators.",
+              this.objectSchema({
+                priority: {
+                  type: "string",
+                  enum: ["P0", "P1", "P2", "P3"],
+                  description:
+                    "Optional priority filter. Omit it to return all platform bug reports.",
+                },
+              }),
+            ),
+          ]
+        : []),
       {
         name: "resourceportal_tenant_endpoints",
         title: "ResourcePortal endpoint catalog",
@@ -630,8 +800,10 @@ export class TenantMcpProtocolService {
         },
         _meta: {
           ...commonMeta,
-          "openai/toolInvocation/invoking": "Calling ResourcePortal tenant API…",
-          "openai/toolInvocation/invoked": "ResourcePortal tenant API call finished",
+          "openai/toolInvocation/invoking":
+            "Calling ResourcePortal tenant API…",
+          "openai/toolInvocation/invoked":
+            "ResourcePortal tenant API call finished",
         },
       },
     ].map((tool) => ({
@@ -654,20 +826,14 @@ export class TenantMcpProtocolService {
 
   private oauthScopes() {
     const projectId = this.config.get<string>("ZITADEL_PROJECT_ID");
-    const organizationId = this.config.get<string>(
-      "ZITADEL_ORGANIZATION_ID",
-    );
+    const organizationId = this.config.get<string>("ZITADEL_ORGANIZATION_ID");
     return [
       "openid",
       "profile",
       "email",
       "offline_access",
-      ...(projectId
-        ? [`urn:zitadel:iam:org:project:id:${projectId}:aud`]
-        : []),
-      ...(organizationId
-        ? [`urn:zitadel:iam:org:id:${organizationId}`]
-        : []),
+      ...(projectId ? [`urn:zitadel:iam:org:project:id:${projectId}:aud`] : []),
+      ...(organizationId ? [`urn:zitadel:iam:org:id:${organizationId}`] : []),
     ];
   }
 
@@ -758,7 +924,11 @@ export class TenantMcpProtocolService {
           methods: ["POST"],
           purpose: "Restart an App Group",
         },
-        { path: "/volumes", methods: ["GET", "POST"], purpose: "Tenant volumes" },
+        {
+          path: "/volumes",
+          methods: ["GET", "POST"],
+          purpose: "Tenant volumes",
+        },
         {
           path: "/registries",
           methods: ["GET", "POST"],
@@ -776,8 +946,7 @@ export class TenantMcpProtocolService {
         { path: "/operations", methods: ["GET"], purpose: "Operations" },
         { path: "/audit-log", methods: ["GET"], purpose: "Audit log" },
       ],
-      rule:
-        "Every call uses the connected user's existing ResourcePortal tenant RBAC. A 403 means that user's ResourcePortal permissions do not allow the operation.",
+      rule: "Every call uses the connected user's existing ResourcePortal tenant RBAC. A 403 means that user's ResourcePortal permissions do not allow the operation.",
     };
   }
 
@@ -803,6 +972,27 @@ export class TenantMcpProtocolService {
       },
       ["status", "ok", "data"],
     );
+  }
+
+  private forbiddenToolResult(message: string): CallToolResult {
+    const structuredContent = {
+      status: 403,
+      ok: false,
+      data: { message, error: "Forbidden", statusCode: 403 },
+    };
+    return {
+      isError: true,
+      structuredContent,
+      content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+    };
+  }
+
+  private bugReportPriority(value: unknown) {
+    const priority = this.string(value, "priority must be P0, P1, P2, or P3");
+    if (!["P0", "P1", "P2", "P3"].includes(priority)) {
+      throw new BadRequestException("priority must be P0, P1, P2, or P3");
+    }
+    return priority;
   }
 
   private uuid(value: unknown, name: string) {
