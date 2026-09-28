@@ -621,7 +621,10 @@ it("creates a Gate and shows the one-time curl installer command", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Add Gate" }));
   const dialog = screen.getByRole("dialog", { name: "Add ResourcePortalGate" });
-  fireEvent.change(within(dialog).getByPlaceholderText("office-gateway"), {
+  const gateName = within(dialog).getByPlaceholderText("office-gateway");
+  expect(gateName.className).toContain("selection:bg-[#1769E0]");
+  expect(gateName.className).toContain("selection:text-white");
+  fireEvent.change(gateName, {
     target: { value: "branch" },
   });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create Gate" }));

@@ -286,6 +286,80 @@ async function configureResourcePortalBranding(pat: string) {
     undefined,
     "POST",
   );
+
+  await configureResourcePortalMessageTexts(pat);
+}
+
+type ResourcePortalMessageText = {
+  title: string;
+  preHeader: string;
+  subject: string;
+  greeting: string;
+  text: string;
+  buttonText: string;
+  footerText: string;
+};
+
+async function configureResourcePortalMessageTexts(pat: string) {
+  const texts: Record<string, { init: ResourcePortalMessageText; verifyEmail: ResourcePortalMessageText }> = {
+    en: {
+      init: {
+        title: "Welcome to Resource Portal",
+        preHeader: "Finish setting up your Resource Portal account",
+        subject: "Finish your Resource Portal registration",
+        greeting: "Welcome to Resource Portal",
+        text: "Your account is ready to be activated. Finish registration to securely access your Resource Portal workspaces.",
+        buttonText: "Finish registration",
+        footerText: "Resource Portal · Secure application and infrastructure management",
+      },
+      verifyEmail: {
+        title: "Verify your email",
+        preHeader: "Confirm your email address for Resource Portal",
+        subject: "Verify your Resource Portal email address",
+        greeting: "Resource Portal email verification",
+        text: "Confirm this email address to continue using your Resource Portal account securely.",
+        buttonText: "Verify email",
+        footerText: "Resource Portal · Secure application and infrastructure management",
+      },
+    },
+    pl: {
+      init: {
+        title: "Witaj w Resource Portal",
+        preHeader: "Dokończ konfigurację konta Resource Portal",
+        subject: "Dokończ rejestrację w Resource Portal",
+        greeting: "Witaj w Resource Portal",
+        text: "Twoje konto jest gotowe do aktywacji. Dokończ rejestrację, aby bezpiecznie uzyskać dostęp do swoich przestrzeni Resource Portal.",
+        buttonText: "Dokończ rejestrację",
+        footerText: "Resource Portal · Bezpieczne zarządzanie aplikacjami i infrastrukturą",
+      },
+      verifyEmail: {
+        title: "Potwierdź adres e-mail",
+        preHeader: "Potwierdź adres e-mail dla Resource Portal",
+        subject: "Potwierdź adres e-mail w Resource Portal",
+        greeting: "Weryfikacja e-mail Resource Portal",
+        text: "Potwierdź ten adres e-mail, aby bezpiecznie korzystać z konta Resource Portal.",
+        buttonText: "Potwierdź e-mail",
+        footerText: "Resource Portal · Bezpieczne zarządzanie aplikacjami i infrastrukturą",
+      },
+    },
+  };
+
+  for (const [language, message] of Object.entries(texts)) {
+    await zitadelApi(
+      pat,
+      `/admin/v1/text/message/init/${language}`,
+      message.init,
+      undefined,
+      "PUT",
+    );
+    await zitadelApi(
+      pat,
+      `/admin/v1/text/message/verifyemail/${language}`,
+      message.verifyEmail,
+      undefined,
+      "PUT",
+    );
+  }
 }
 
 async function configureProductionLoginVersion(pat: string) {

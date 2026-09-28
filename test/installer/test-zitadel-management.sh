@@ -56,6 +56,11 @@ contains "$bootstrap_source" '"/admin/v1/policies/label/_activate"' 'bootstrap a
 contains "$bootstrap_source" 'primaryColor: "#1769E0"' 'bootstrap uses ResourcePortal primary brand color'
 contains "$bootstrap_source" 'disableWatermark: true' 'bootstrap removes ZITADEL watermark for ResourcePortal branded login'
 contains "$bootstrap_source" 'themeMode: "THEME_MODE_AUTO"' 'bootstrap keeps automatic light/dark login theme'
+contains "$bootstrap_source" 'configureResourcePortalMessageTexts(pat)' 'production bootstrap reconciles ResourcePortal notification message branding'
+contains "$bootstrap_source" '/admin/v1/text/message/init/${language}' 'bootstrap brands registration initialization emails'
+contains "$bootstrap_source" '/admin/v1/text/message/verifyemail/${language}' 'bootstrap brands email verification messages'
+contains "$bootstrap_source" 'Dokończ rejestrację w Resource Portal' 'bootstrap provides Polish ResourcePortal registration copy'
+contains "$bootstrap_source" 'Finish your Resource Portal registration' 'bootstrap provides English ResourcePortal registration copy'
 dockerfile_source="$(cat "$repo_root/Dockerfile")"
 contains "$dockerfile_source" 'packages/resourceportal-web/public/brand ./brand' 'API runtime image packages ResourcePortal branding assets'
 contains "$bootstrap_source" 'responseTypes: app.oidcConfig.responseTypes' 'bootstrap preserves DCR response types during JWT conversion'

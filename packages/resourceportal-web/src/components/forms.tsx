@@ -7,6 +7,7 @@ import {
   descriptionFor,
   numericFieldKeys,
   requiredFieldKeys,
+  validationErrorsFor,
   type PreviewYupRuntime,
   type ReferenceOptions,
 } from "./form-contracts";
@@ -32,6 +33,7 @@ type PreviewFormikRuntime = {
     isSubmitting: boolean;
     handleSubmit: (event: FormEvent<HTMLFormElement>) => void;
     setFieldValue: (field: string, value: unknown, validate?: boolean) => void | Promise<unknown>;
+    setFieldTouched?: (field: string, touched?: boolean, validate?: boolean) => void | Promise<unknown>;
   };
 };
 
@@ -78,6 +80,8 @@ function labelFor(key: string) {
     clientId: "Client ID",
     clientSecret: "Client secret",
     metadataUrl: "Metadata URL",
+    displayName: "Name",
+    contactEmail: "Contact email",
   };
   if (friendly[key]) return friendly[key];
   const spaced = key
@@ -145,7 +149,8 @@ function shouldUseTextarea(key: string) {
 }
 
 function FieldHelp({ fieldKey, error }: { fieldKey: string; error?: string }) {
-  return <><small id={`${fieldKey}-help`}>{descriptionFor(fieldKey, labelFor(fieldKey))}</small>{error ? <p role="alert">{error}</p> : null}</>;
+  const optional = !requiredFieldKeys.has(fieldKey);
+  return <><small id={`${fieldKey}-help`}>{optional ? "Optional · " : ""}{descriptionFor(fieldKey, labelFor(fieldKey))}</small>{error ? <p role="alert">{error}</p> : null}</>;
 }
 
 function ArrayField({ label, fieldKey, value, onChange, disabled, references }: {
@@ -278,21 +283,34 @@ function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSub
       finally { helpers.setSubmitting(false); }
     },
   });
-  return <form className="rp-structured-form" onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); }} /><button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={formik.handleSubmit}><ObjectShapeFields values={formik.values} disabled={disabled || formik.isSubmitting} references={referenceOptions} errors={formik.errors} touched={formik.touched} onChange={(field, value) => { void formik.setFieldValue(field, value, true); void formik.setFieldTouched?.(field, true, false); }} /><button type="submit" disabled={disabled || formik.isSubmitting}>{formik.isSubmitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { initialValue: Payload }) {
   const initial = useMemo(() => cloneValue(initialValue), [initialValue]);
   const [values, setValues] = useState<Payload>(initial);
+  const [touched, setTouched] = useState<Record<string, unknown>>({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  useEffect(() => setValues(cloneValue(initial)), [initial]);
+  const errors = useMemo(() => validationErrorsFor(values, referenceOptions), [values, referenceOptions]);
+  const visibleTouched = useMemo(
+    () => submitAttempted ? Object.fromEntries(Object.keys(values).map((key) => [key, true])) : touched,
+    [submitAttempted, touched, values],
+  );
+  useEffect(() => {
+    setValues(cloneValue(initial));
+    setTouched({});
+    setSubmitAttempted(false);
+  }, [initial]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setSubmitAttempted(true);
+    if (Object.keys(errors).length > 0) return;
     try { setSubmitting(true); await onSubmit(cleanPayload(values)); }
     catch (cause) { toast.errorFrom(cause, payloadError(cause)); }
     finally { setSubmitting(false); }
   }
-  return <form className="rp-structured-form" onSubmit={submit}><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} /><button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
+  return <form className="rp-structured-form" onSubmit={submit} noValidate><ObjectShapeFields values={values} disabled={disabled || submitting} references={referenceOptions} errors={errors} touched={visibleTouched} onChange={(field, value) => { setTouched((current) => ({ ...current, [field]: true })); setValues((current) => ({ ...current, [field]: value })); }} /><button type="submit" disabled={disabled || submitting}>{submitting ? "Working…" : submitLabel}</button></form>;
 }
 
 function DynamicPayloadForm({ submitLabel, onSubmit, disabled = false }: JsonPayloadFormProps) {

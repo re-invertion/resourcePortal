@@ -20,6 +20,11 @@ function useRoute(initialPath?: string) { const pathname = initialPath ?? browse
 function routeAttributes(route: AppRoute) { const attributes: Record<string, string> = { "data-route-kind": route.kind }; if (route.kind === "tenant") { attributes["data-tenant-id"] = route.tenantId; attributes["data-route-section"] = route.section; } else if (route.kind === "platform") attributes["data-route-section"] = route.section; else if (route.kind === "public") attributes["data-route-page"] = route.page; return attributes; }
 function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "invitation") return "Loading invitation…"; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
 function tenantList(value: unknown): Tenant[] { const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : []; return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant); }
+export function tenantInternalName(displayName: string) {
+  const normalized = displayName.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-").slice(0, 63).replace(/-+$/g, "");
+  return slug || "tenant";
+}
 
 function AppLoading({ route, error }: { route: AppRoute; error?: unknown }) {
   return <main {...routeAttributes(route)} className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5"><Card className="w-full max-w-md p-6"><ResourcePortalLogo/><h1 className="mt-6 text-xl font-semibold">ResourcePortal</h1><p className="mt-2 text-sm text-[#5B6678]">{routeLoadingText(route)}</p>{error ? <div className="mt-4"><ErrorState error={error}/></div> : null}</Card></main>;
@@ -77,7 +82,7 @@ function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant
         {active.length ? <Button variant="primary" className="max-w-full shrink-0" onClick={() => setCreateOpen(true)}><PlusIcon size={16}/>Create tenant</Button> : null}
       </div>
 
-      {createOpen ? <div className="mt-6 min-w-0"><CreateResourceWorkspace title="Tenants" initialValue={{ name: "", displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { await apiRequest("/api/tenants", { method: "POST", body }); await reload(); setCreateOpen(false); }} /></div> : active.length ? <>
+      {createOpen ? <div className="mt-6 min-w-0"><CreateResourceWorkspace title="Tenants" initialValue={{ displayName: "", description: "", contactEmail: "" }} onCancel={() => setCreateOpen(false)} onCreate={async (body) => { const displayName = String(body.displayName ?? "").trim(); await apiRequest("/api/tenants", { method: "POST", body: { ...body, displayName, name: tenantInternalName(displayName) } }); await reload(); setCreateOpen(false); }} /></div> : active.length ? <>
         <label className="relative mt-7 block min-w-0">
           <span className="sr-only">Search tenants</span>
           <SearchIcon size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#718096]"/>

@@ -35,7 +35,7 @@ export const booleanFieldKeys = new Set([
 ]);
 
 export const requiredFieldKeys = new Set([
-  "name", "containerPort", "type", "protocol", "rootDomain", "email", "userId", "tenantId", "amountCredits",
+  "name", "displayName", "contactEmail", "containerPort", "type", "protocol", "rootDomain", "email", "userId", "tenantId", "amountCredits",
 ]);
 
 const enumChoices: Record<string, ReferenceOption[]> = {
@@ -74,6 +74,8 @@ const typeChoiceSets: ReferenceOption[][] = [
 
 const descriptions: Record<string, string> = {
   name: "Stable name used to identify this resource in Resource Portal.",
+  displayName: "Human-readable name shown throughout Resource Portal.",
+  contactEmail: "Required contact address for this tenant.",
   description: "Optional human-readable explanation of the resource and its purpose.",
   containerPort: "Port exposed by the application container. Valid range: 1–65535.",
   protocolMode: "Controls whether the HTTP endpoint accepts HTTP, HTTPS, both, or redirects HTTP to HTTPS.",
@@ -127,6 +129,65 @@ export function descriptionFor(key: string, label: string) {
 function call(chain: YupChain, method: keyof YupChain, ...args: unknown[]) {
   const fn = chain[method];
   return typeof fn === "function" ? (fn as (...values: unknown[]) => YupChain)(...args) : chain;
+}
+
+export function validationErrorFor(
+  key: string,
+  value: unknown,
+  references?: ReferenceOptions,
+): string | undefined {
+  const required = requiredFieldKeys.has(key);
+  const empty =
+    value == null ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0);
+
+  if (empty) {
+    const rawLabel = key === "displayName" ? "Name" : key === "contactEmail" ? "Contact email" : key.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+    const label = rawLabel.charAt(0).toUpperCase() + rawLabel.slice(1);
+    return required ? `${label} is required` : undefined;
+  }
+
+  const choices = choicesFor(key, value, references);
+  if (choices && typeof value === "string" && !choices.some((choice) => choice.value === value)) {
+    return "Choose one of the available options";
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "Enter a valid number";
+    if (key !== "cpu" && !Number.isInteger(value)) return "Enter a whole number";
+    if (key === "containerPort" && (value < 1 || value > 65535)) return "Port must be between 1 and 65535";
+    if (key !== "containerPort" && value < 0) return "Value cannot be negative";
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const max = key === "description" ? 1000 : key === "contactEmail" || key === "email" ? 320 : 255;
+    if (trimmed.length > max) return `Value must be at most ${max} characters`;
+    if ((key === "email" || key === "contactEmail") && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return "Enter a valid email address";
+    }
+    if ((key === "issuer" || key === "metadataUrl") && (() => { try { const url = new URL(trimmed); return url.protocol !== "http:" && url.protocol !== "https:"; } catch { return true; } })()) {
+      return "Enter a valid URL";
+    }
+    if (/Id$/.test(key) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)) {
+      return "Choose or enter a valid UUID";
+    }
+  }
+
+  if (Array.isArray(value) && value.length > 20) return "At most 20 entries are allowed";
+  return undefined;
+}
+
+export function validationErrorsFor(
+  values: Record<string, unknown>,
+  references?: ReferenceOptions,
+) {
+  return Object.fromEntries(
+    Object.entries(values)
+      .map(([key, value]) => [key, validationErrorFor(key, value, references)] as const)
+      .filter(([, error]) => Boolean(error)),
+  ) as Record<string, string>;
 }
 
 export function buildYupSchema(values: Record<string, unknown>, yup: PreviewYupRuntime, references: ReferenceOptions | undefined, fieldType: (key: string, value: unknown) => "text" | "number" | "boolean" | "list" | "object", labelFor: (key: string) => string) {

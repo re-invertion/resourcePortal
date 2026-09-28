@@ -77,9 +77,14 @@ describe("Web Console bootstrap", () => {
 
     await screen.findByRole("heading", { name: "Choose a tenant" });
     expect(screen.getByRole("heading", { name: "Create Tenant" })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "demo" } });
-    fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Demo tenant" } });
+    expect(screen.queryByLabelText("Display name")).toBeNull();
+    expect(screen.queryByText(/Stable name used to identify this resource/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo Tenant" } });
+    fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "not-an-email" } });
+    expect(screen.getByRole("alert").textContent).toContain("valid email");
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/Optional · Optional human-readable explanation/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
 
     expect(await screen.findByRole("heading", { name: "Review configuration" })).toBeTruthy();
@@ -89,9 +94,9 @@ describe("Web Console bootstrap", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
     const [, options] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(JSON.parse(String(options.body))).toEqual({
-      name: "demo",
-      displayName: "Demo tenant",
+      displayName: "Demo Tenant",
       contactEmail: "owner@example.test",
+      name: "demo-tenant",
     });
   });
 

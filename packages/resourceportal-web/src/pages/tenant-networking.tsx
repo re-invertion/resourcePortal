@@ -492,7 +492,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       >
         <form id="create-network-form" className="space-y-4" onSubmit={(event) => void createNetwork(event)}>
           <Field label="Name" required hint="Lowercase letters, numbers and hyphens.">
-            <TextInput value={networkForm.name} onChange={(event) => setNetworkForm({ ...networkForm, name: event.target.value })} placeholder="backend" />
+            <TextInput required aria-required="true" value={networkForm.name} onChange={(event) => setNetworkForm({ ...networkForm, name: event.target.value })} placeholder="backend" />
           </Field>
           <Field label="CIDR" hint="Optional private IPv4 CIDR (/16 through /28). Default pool: automatically allocated.">
             <TextInput value={networkForm.cidr} onChange={(event) => setNetworkForm({ ...networkForm, cidr: event.target.value })} placeholder="10.240.20.0/24" />
@@ -544,7 +544,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         ) : (
           <form id="create-gate-form" className="space-y-4" onSubmit={(event) => void createGate(event)}>
             <Field label="Name" required>
-              <TextInput value={gateForm.name} onChange={(event) => setGateForm({ ...gateForm, name: event.target.value })} placeholder="office-gateway" />
+              <TextInput required aria-required="true" value={gateForm.name} onChange={(event) => setGateForm({ ...gateForm, name: event.target.value })} placeholder="office-gateway" />
             </Field>
             <Field label="Description">
               <TextInput value={gateForm.description} onChange={(event) => setGateForm({ ...gateForm, description: event.target.value })} placeholder="Office LAN router" />
