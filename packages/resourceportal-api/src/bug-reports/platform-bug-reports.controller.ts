@@ -1,8 +1,19 @@
-import { Controller, Get, Param, ParseUUIDPipe, Patch, Body, StreamableFile, UseGuards, Res } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Body,
+  StreamableFile,
+  UseGuards,
+  Res,
+} from "@nestjs/common";
 import { FastifyReply } from "fastify";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { BugReportsService } from "./bug-reports.service";
 import { UpdateBugReportPriorityDto } from "./dto/update-bug-report-priority.dto";
+import { UpdateBugReportResolutionDto } from "./dto/update-bug-report-resolution.dto";
 
 @Controller("platform/bug-reports")
 @UseGuards(PlatformAdminGuard)
@@ -22,6 +33,14 @@ export class PlatformBugReportsController {
     return this.reports.setPriority(id, dto.priority);
   }
 
+  @Patch(":id/resolution")
+  updateResolution(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateBugReportResolutionDto,
+  ) {
+    return this.reports.setResolved(id, dto.resolved);
+  }
+
   @Get(":id/image")
   async image(
     @Param("id", new ParseUUIDPipe()) id: string,
@@ -29,7 +48,10 @@ export class PlatformBugReportsController {
   ) {
     const image = await this.reports.getImage(id);
     reply.header("content-type", image.mimeType);
-    reply.header("content-disposition", `inline; filename="${safeHeaderFileName(image.fileName)}"`);
+    reply.header(
+      "content-disposition",
+      `inline; filename="${safeHeaderFileName(image.fileName)}"`,
+    );
     reply.header("cache-control", "private, no-store");
     return new StreamableFile(image.data);
   }

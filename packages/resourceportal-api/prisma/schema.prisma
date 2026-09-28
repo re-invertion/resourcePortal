@@ -1407,10 +1407,12 @@ model BugReport {
   imageData     Bytes?
   imageMimeType String?           @db.VarChar(64)
   imageFileName String?           @db.VarChar(255)
+  resolvedAt    DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   reportedBy    User              @relation(fields: [reportedById], references: [id], onDelete: Restrict)
 
   @@index([priority, createdAt])
+  @@index([resolvedAt, createdAt])
   @@index([reportedById, createdAt])
 }
