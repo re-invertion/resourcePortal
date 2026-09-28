@@ -159,10 +159,6 @@ export function ResourceBotDrawer({ tenantId }: { tenantId: string }) {
             </span>
             <div className="min-w-0">
               <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-[#172033]">ResourceBot</h2>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-[#64748B]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#22A06B]" aria-hidden="true" />
-                Help-grounded assistant
-              </p>
             </div>
           </div>
           <button
@@ -175,15 +171,6 @@ export function ResourceBotDrawer({ tenantId }: { tenantId: string }) {
             <XIcon size={17}/>
           </button>
         </header>
-
-        <div className="border-b border-[#E5EAF1] bg-white px-5 py-3">
-          <div className="flex gap-2.5 rounded-xl border border-[#DCE8F7] bg-[#F7FAFE] px-3.5 py-3">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#1769E0]" aria-hidden="true" />
-            <p className="m-0 text-[11px] leading-[18px] text-[#5B6678]">
-              ResourceBot answers from ResourcePortal Help. It cannot inspect live tenant resources or perform operations.
-            </p>
-          </div>
-        </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-[#FBFCFE] px-4 py-5">
           {status.loading ? <div className="flex items-center gap-2 px-1 text-sm text-[#718096]">

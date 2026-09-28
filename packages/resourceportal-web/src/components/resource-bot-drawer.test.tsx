@@ -63,6 +63,8 @@ describe("ResourceBotDrawer", () => {
 
     expect(await screen.findByRole("dialog", { name: "ResourceBot" })).toBeTruthy();
     expect(screen.getByText("How can I help?")).toBeTruthy();
+    expect(screen.queryByText("Help-grounded assistant")).toBeNull();
+    expect(screen.queryByText("ResourceBot answers from ResourcePortal Help. It cannot inspect live tenant resources or perform operations.")).toBeNull();
     expect(screen.queryByRole("link", { name: "Open full Help" })).toBeNull();
     const input = screen.getByLabelText("Ask ResourceBot");
     fireEvent.change(input, { target: { value: "Jak utworzyć aplikację?" } });

@@ -97,6 +97,9 @@ async function main() {
   await waitForZitadel();
 
   const pat = readPat();
+  if (productionBootstrap) {
+    await configureResourcePortalBranding(pat);
+  }
   if (webOidcOnlyBootstrap) {
     await reconcileWebOidcApp(pat);
     console.log("ZITADEL Web OIDC reconciliation completed");
@@ -230,6 +233,59 @@ function readPat() {
   }
 
   return pat.trim();
+}
+
+async function configureResourcePortalBranding(pat: string) {
+  const brandingAssetFiles = resourcePortalBrandingAssetFiles();
+  await zitadelApi(
+    pat,
+    "/admin/v1/policies/label",
+    {
+      primaryColor: "#1769E0",
+      backgroundColor: "#F7F9FC",
+      warnColor: "#D92D20",
+      fontColor: "#172033",
+      primaryColorDark: "#5EA1FF",
+      backgroundColorDark: "#0E1A2B",
+      warnColorDark: "#F97066",
+      fontColorDark: "#F7FAFC",
+      disableWatermark: true,
+      themeMode: "THEME_MODE_AUTO",
+    },
+    undefined,
+    "PUT",
+  );
+
+  await Promise.all([
+    zitadelAssetApi(
+      pat,
+      "/assets/v1/instance/policy/label/logo",
+      brandingAssetFiles.logo,
+    ),
+    zitadelAssetApi(
+      pat,
+      "/assets/v1/instance/policy/label/logo/dark",
+      brandingAssetFiles.logoDark,
+    ),
+    zitadelAssetApi(
+      pat,
+      "/assets/v1/instance/policy/label/icon",
+      brandingAssetFiles.icon,
+    ),
+    zitadelAssetApi(
+      pat,
+      "/assets/v1/instance/policy/label/icon/dark",
+      brandingAssetFiles.iconDark,
+    ),
+  ]);
+
+  await zitadelApi(
+    pat,
+    "/admin/v1/policies/label/_activate",
+    {},
+    undefined,
+    "POST",
+  );
 }
 
 async function configureProductionLoginVersion(pat: string) {
@@ -596,6 +652,29 @@ async function zitadelApi<T>(
   return payload as T;
 }
 
+async function zitadelAssetApi(
+  pat: string,
+  path: string,
+  filePath: string,
+) {
+  const response = await fetch(`${issuerUrl}${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${pat}`,
+      "content-type": "image/png",
+      ...zitadelHostHeaders(),
+    },
+    body: readFileSync(filePath),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `ZITADEL asset API ${path} failed with ${response.status}: ${text}`,
+    );
+  }
+}
+
 function zitadelHostHeaders(): Record<string, string> {
   if (!bootstrapInstanceHost) {
     return {};
@@ -675,6 +754,56 @@ function readOptionalFile(path: string) {
   }
 
   return readFileSync(path, "utf8");
+}
+
+function resourcePortalBrandingAssetFiles() {
+  const candidates = (fileName: string, override?: string) => [
+    override,
+    `brand/${fileName}`,
+    `packages/resourceportal-web/public/brand/${fileName}`,
+    `../resourceportal-web/public/brand/${fileName}`,
+  ];
+  return {
+    logo: findFirstExistingFile(
+      candidates(
+        "resourceportal-wordmark-hq.png",
+        process.env.ZITADEL_BOOTSTRAP_BRANDING_LOGO_FILE,
+      ),
+    ),
+    logoDark: findFirstExistingFile(
+      candidates(
+        "resourceportal-wordmark-white-hq.png",
+        process.env.ZITADEL_BOOTSTRAP_BRANDING_LOGO_DARK_FILE,
+      ),
+    ),
+    icon: findFirstExistingFile(
+      candidates(
+        "resourceportal-icon-hq.png",
+        process.env.ZITADEL_BOOTSTRAP_BRANDING_ICON_FILE,
+      ),
+    ),
+    iconDark: findFirstExistingFile(
+      candidates(
+        "resourceportal-icon-hq.png",
+        process.env.ZITADEL_BOOTSTRAP_BRANDING_ICON_DARK_FILE,
+      ),
+    ),
+  };
+}
+
+function findFirstExistingFile(candidates: Array<string | undefined>) {
+  const path = candidates.find(
+    (candidate): candidate is string =>
+      Boolean(candidate?.trim()) && existsSync(candidate!),
+  );
+  if (!path) {
+    throw new Error(
+      `ResourcePortal ZITADEL branding asset is missing. Checked: ${candidates
+        .filter(Boolean)
+        .join(", ")}`,
+    );
+  }
+  return path;
 }
 
 function delay(ms: number) {

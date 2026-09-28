@@ -59,7 +59,10 @@ describe("AppShell", () => {
       return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
     }));
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
-    expect((await screen.findByLabelText("ResourcePortal version")).textContent).toBe("ResourcePortal v0.2.26");
+    const version = await screen.findByLabelText("ResourcePortal version");
+    expect(version.textContent).toBe("ResourcePortal v0.2.26");
+    expect(version.parentElement?.className).toContain("mt-auto");
+    expect(version.parentElement?.className).not.toContain("pb-14");
   });
 
 

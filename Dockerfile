@@ -65,6 +65,7 @@ COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist
 COPY --from=build /app/packages/resourceportal-api/prisma ./prisma
+COPY --chown=node:node packages/resourceportal-web/public/brand ./brand
 COPY --from=build /app/packages/resourceportal-help/package.json /app/packages/resourceportal-help/package.json
 COPY --from=build /app/packages/resourceportal-help/dist /app/packages/resourceportal-help/dist
 
