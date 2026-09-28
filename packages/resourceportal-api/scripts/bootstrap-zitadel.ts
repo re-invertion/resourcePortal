@@ -657,14 +657,19 @@ async function zitadelAssetApi(
   path: string,
   filePath: string,
 ) {
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([new Uint8Array(readFileSync(filePath))], { type: "image/png" }),
+    filePath.split("/").pop() ?? "resourceportal-brand.png",
+  );
   const response = await fetch(`${issuerUrl}${path}`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${pat}`,
-      "content-type": "image/png",
       ...zitadelHostHeaders(),
     },
-    body: readFileSync(filePath),
+    body: form,
   });
 
   if (!response.ok) {
