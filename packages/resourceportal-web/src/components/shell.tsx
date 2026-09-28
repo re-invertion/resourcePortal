@@ -383,7 +383,7 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
         </div>
       </header>
 
-      <div className={`mx-auto w-full min-w-0 px-4 py-5 sm:px-6 lg:px-7 ${route.kind === "tenant" && route.section === "networking" ? "max-w-[1540px]" : "max-w-[1120px]"}`}>{children}</div>
+      <div className={`mx-auto w-full min-w-0 px-4 pt-5 sm:px-6 lg:px-7 ${route.kind === "tenant" ? "pb-24" : "pb-5"} ${route.kind === "tenant" && route.section === "networking" ? "max-w-[1540px]" : "max-w-[1120px]"}`}>{children}</div>
     </div>
     {route.kind === "tenant" ? <ResourceBotDrawer tenantId={route.tenantId} /> : null}
   </div>;

@@ -51,6 +51,20 @@ describe("AppShell", () => {
     expect(screen.getByLabelText("ResourcePortal")).toBeTruthy();
   });
 
+  it("reserves bottom safe area so ResourceBot does not cover tenant actions", () => {
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p data-testid="content">Content</p></AppShell>);
+    const content = screen.getByTestId("content").parentElement;
+    expect(content?.className).toContain("pb-24");
+    expect(screen.getByRole("button", { name: "Open ResourceBot" }).className).toContain("right-5");
+  });
+
+  it("reserves bottom space so ResourceBot cannot cover tenant page actions", () => {
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    const content = screen.getByText("Content").parentElement;
+    expect(content?.className).toContain("pb-24");
+    expect(screen.getByRole("button", { name: "Open ResourceBot" }).className).toContain("right-5");
+  });
+
   it("shows the running ResourcePortal version below Help", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/health/live") {
