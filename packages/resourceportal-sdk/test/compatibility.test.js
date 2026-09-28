@@ -54,6 +54,8 @@ test("classifies every API controller so new public surface cannot drift silentl
     "audit/audit.controller.ts",
     "auth/auth.controller.ts",
     "billing/platform-billing.controller.ts",
+    "bug-reports/bug-reports.controller.ts",
+    "bug-reports/platform-bug-reports.controller.ts",
     "domains/domains.controller.ts",
     "email/platform-email.controller.ts",
     "health/health.controller.ts",
