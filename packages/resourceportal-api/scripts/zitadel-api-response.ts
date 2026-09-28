@@ -4,9 +4,10 @@ export function isZitadelNoChangesResponse(status: number, payload: unknown) {
   const failedPrecondition =
     record.code === 9 ||
     (typeof record.code === "string" && record.code.toLowerCase() === "failed_precondition");
+  if (!failedPrecondition || typeof record.message !== "string") return false;
+  const message = record.message.toLowerCase();
   return (
-    failedPrecondition &&
-    typeof record.message === "string" &&
-    record.message.toLowerCase().startsWith("no changes")
+    message.startsWith("no changes") ||
+    message.includes("has not been changed")
   );
 }

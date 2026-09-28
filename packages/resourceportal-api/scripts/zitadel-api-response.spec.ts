@@ -20,6 +20,16 @@ describe("ZITADEL idempotent responses", () => {
     ).toBe(true);
   });
 
+  it("accepts ZITADEL unchanged label-policy responses", () => {
+    expect(
+      isZitadelNoChangesResponse(400, {
+        code: 9,
+        message:
+          "Default Private Label Policy has not been changed (INSTANCE-28fHe)",
+      }),
+    ).toBe(true);
+  });
+
   it("does not swallow unrelated API failures", () => {
     expect(isZitadelNoChangesResponse(405, { code: 12, message: "Method Not Allowed" })).toBe(false);
     expect(isZitadelNoChangesResponse(400, { code: 9, message: "Different precondition" })).toBe(false);
