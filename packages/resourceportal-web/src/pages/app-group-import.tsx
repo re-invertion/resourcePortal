@@ -124,11 +124,6 @@ export function ImportAppGroupPage({ tenantId }: { tenantId: string }) {
       eyebrow="Applications"
       title="Import App Group from YAML"
       description="Select a ResourcePortal manifest, validate it against this tenant, then create the App Group and its configured resources."
-      breadcrumbs={<>
-        <a href={tenantHref(tenantId, "applications")} className="hover:underline">Applications</a>
-        <span className="mx-1.5">/</span>
-        Import YAML
-      </>}
       actions={<LinkButton href={`${tenantHref(tenantId, "help")}#app-group-yaml`} variant="ghost">YAML format help</LinkButton>}
     />
 

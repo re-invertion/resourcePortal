@@ -7,24 +7,16 @@ import {
   DetailList,
   Field,
   HelpIcon,
+  LinkButton,
   PageHeader,
   StatusBadge,
   TextInput,
   statusTone,
 } from "../components/design-system";
 import { toast } from "../components/toast";
+import { StoredSecretInput } from "../components/stored-secret-input";
 import { formatDate, text, useApi } from "../hooks/use-api";
-
-type ResourceBotPrice = {
-  id: string;
-  provider: string;
-  model: string;
-  effectiveFrom: string;
-  inputCreditsPer1M: string;
-  cachedInputCreditsPer1M: string;
-  outputCreditsPer1M: string;
-  embeddingCreditsPer1M: string;
-};
+import { platformHref } from "../router/router";
 
 type ResourceBotState = {
   provider?: string;
@@ -41,20 +33,10 @@ type ResourceBotState = {
 
 export function PlatformResourceBotPage() {
   const resourceBot = useApi<ResourceBotState>("/api/platform/resource-bot");
-  const prices = useApi<{ items: ResourceBotPrice[] }>("/api/platform/resource-bot/prices");
   const [enabled, setEnabled] = useState(true);
   const [generationModel, setGenerationModel] = useState("gpt-5.6-luna");
   const [embeddingModel, setEmbeddingModel] = useState("text-embedding-3-small");
   const [apiKey, setApiKey] = useState("");
-  const [priceInput, setPriceInput] = useState("");
-  const [priceCachedInput, setPriceCachedInput] = useState("");
-  const [priceOutput, setPriceOutput] = useState("");
-  const [priceEmbedding, setPriceEmbedding] = useState("");
-  const [priceEffectiveFrom, setPriceEffectiveFrom] = useState(() => {
-    const value = new Date(Date.now() + 60_000);
-    value.setUTCSeconds(0, 0);
-    return value.toISOString().slice(0, 16);
-  });
   const [working, setWorking] = useState(false);
 
   useEffect(() => {
@@ -93,33 +75,6 @@ export function PlatformResourceBotPage() {
     }
   }
 
-  async function createPrice(event: FormEvent) {
-    event.preventDefault();
-    setWorking(true);
-    try {
-      const effectiveFrom = new Date(priceEffectiveFrom);
-      effectiveFrom.setSeconds(0, 0);
-      await apiRequest("/api/platform/resource-bot/prices", {
-        method: "POST",
-        body: {
-          provider: "OpenAI",
-          model: generationModel.trim(),
-          effectiveFrom: effectiveFrom.toISOString(),
-          inputCreditsPer1M: priceInput.trim(),
-          cachedInputCreditsPer1M: priceCachedInput.trim(),
-          outputCreditsPer1M: priceOutput.trim(),
-          embeddingCreditsPer1M: priceEmbedding.trim(),
-        },
-      });
-      await prices.reload();
-      toast.success("A new ResourceBot price version was created.");
-    } catch (error) {
-      toast.errorFrom(error, "ResourceBot price could not be created.");
-    } finally {
-      setWorking(false);
-    }
-  }
-
   async function validate() {
     setWorking(true);
     try {
@@ -138,12 +93,6 @@ export function PlatformResourceBotPage() {
     : resourceBot.data?.enabled
       ? "Unavailable"
       : "Disabled";
-  const currentPrice = prices.data?.items.find(
-    (price) =>
-      price.provider === "OpenAI" &&
-      price.model === generationModel &&
-      new Date(price.effectiveFrom).getTime() <= Date.now(),
-  );
 
   return <main>
     <PageHeader
@@ -209,11 +158,12 @@ export function PlatformResourceBotPage() {
               ? "A key is already configured. Leave blank to keep it."
               : "Required before ResourceBot can become available."}
           >
-            <TextInput
-              type="password"
+            <StoredSecretInput
+              aria-label="OpenAI API key"
+              configured={resourceBot.data?.apiKeyConfigured === true}
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
-              placeholder={resourceBot.data?.apiKeyConfigured ? "Configured — enter only to rotate" : "OpenAI API key"}
+              placeholder="OpenAI API key"
               autoComplete="new-password"
             />
           </Field>
@@ -252,61 +202,15 @@ export function PlatformResourceBotPage() {
       </div>
     </div>
 
-    <Card className="mt-6 overflow-hidden">
-      <div className="border-b border-[#E1E7F0] px-5 py-4">
-        <h2 className="font-semibold text-[#172033]">Tenant AI pricing</h2>
-        <p className="mt-1 text-xs leading-5 text-[#718096]">
-          ResourceBot records provider token usage and converts it to tenant credits using an immutable, effective-dated tariff. One ResourcePortal credit remains the billing unit used by the existing tenant account.
-        </p>
-      </div>
-      <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]">
-        <div>
-          <h3 className="text-sm font-semibold text-[#172033]">Active tariff for {generationModel}</h3>
-          {currentPrice ? <div className="mt-4">
-            <DetailList columns={1} items={[
-              { label: "Input / 1M tokens", value: currentPrice.inputCreditsPer1M + " credits" },
-              { label: "Cached input / 1M", value: currentPrice.cachedInputCreditsPer1M + " credits" },
-              { label: "Output / 1M tokens", value: currentPrice.outputCreditsPer1M + " credits" },
-              { label: "Embedding / 1M tokens", value: currentPrice.embeddingCreditsPer1M + " credits" },
-              { label: "Effective from", value: formatDate(currentPrice.effectiveFrom) },
-            ]}/>
-          </div> : <Callout tone="warning" title="No active tariff">
-            ResourceBot cannot answer tenant requests with this generation model until an effective price version exists.
-          </Callout>}
-        </div>
-        <form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => void createPrice(event)}>
-          <Field label="Input credits / 1M" required>
-            <TextInput value={priceInput} onChange={(event) => setPriceInput(event.target.value)} inputMode="decimal" />
-          </Field>
-          <Field label="Cached input credits / 1M" required>
-            <TextInput value={priceCachedInput} onChange={(event) => setPriceCachedInput(event.target.value)} inputMode="decimal" />
-          </Field>
-          <Field label="Output credits / 1M" required>
-            <TextInput value={priceOutput} onChange={(event) => setPriceOutput(event.target.value)} inputMode="decimal" />
-          </Field>
-          <Field label="Embedding credits / 1M" required>
-            <TextInput value={priceEmbedding} onChange={(event) => setPriceEmbedding(event.target.value)} inputMode="decimal" />
-          </Field>
-          <Field label="Effective from" required>
-            <TextInput type="datetime-local" value={priceEffectiveFrom} onChange={(event) => setPriceEffectiveFrom(event.target.value)} />
-          </Field>
-          <div className="sm:col-span-2">
-            <Button
-              type="submit"
-              disabled={
-                working ||
-                !generationModel.trim() ||
-                !priceInput.trim() ||
-                !priceCachedInput.trim() ||
-                !priceOutput.trim() ||
-                !priceEmbedding.trim()
-              }
-            >
-              Create price version
-            </Button>
-          </div>
-        </form>
-      </div>
+    <Card className="mt-6 p-5">
+      <h2 className="font-semibold text-[#172033]">ResourceBot pricing</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-5 text-[#5B6678]">
+        Token rates are managed centrally with the other platform tariffs in Billing → Pricing.
+        Provider credentials and model selection remain on this page.
+      </p>
+      <LinkButton className="mt-4" href={platformHref("billing", "pricing")}>
+        Open Billing pricing
+      </LinkButton>
     </Card>
   </main>;
 }

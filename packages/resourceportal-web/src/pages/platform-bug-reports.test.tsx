@@ -28,6 +28,18 @@ describe("PlatformBugReportsPage", () => {
     render(<PlatformBugReportsPage />);
     expect(await screen.findByText("Application deploy button fails.")).toBeTruthy();
     expect(screen.getByRole("link", { name: /Open image/ }).getAttribute("href")).toContain("/image");
+
+    const allFilter = screen.getByRole("button", { name: /All reports.*1.*Total submitted/i });
+    const p2Filter = screen.getByRole("button", { name: /P2.*1.*Normal/i });
+    expect(allFilter.getAttribute("aria-pressed")).toBe("true");
+    expect(p2Filter.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(p2Filter);
+    expect(p2Filter.getAttribute("aria-pressed")).toBe("true");
+    expect(allFilter.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(allFilter.getAttribute("aria-pressed")).toBe("true");
+
     const select = screen.getByRole("combobox", { name: /Priority for bug report/ });
     fireEvent.change(select, { target: { value: "P0" } });
     await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/priority") && init?.method === "PATCH")).toBe(true));

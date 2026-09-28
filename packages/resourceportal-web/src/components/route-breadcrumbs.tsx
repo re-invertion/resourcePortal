@@ -231,6 +231,18 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
     return crumbs;
   }
 
+  if (section === "billing") {
+    const crumbs: Crumb[] = [root, { label: "Billing", href: platformHref("billing") }];
+    const view = segments[0];
+    if (view === "pricing" || view === "vouchers") {
+      crumbs.push({
+        label: view === "pricing" ? "Pricing" : "Vouchers",
+        href: platformHref("billing", view),
+      });
+    }
+    return crumbs;
+  }
+
   if (section === "security" || section === "operations" || section === "audit") {
     const crumbs: Crumb[] = [root, { label: "Security & Ops", href: platformHref("security") }];
     if (section !== "security") {

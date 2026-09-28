@@ -14,6 +14,7 @@ import {
   Toggle,
 } from "../components/design-system";
 import { toast } from "../components/toast";
+import { StoredSecretInput } from "../components/stored-secret-input";
 import { formatDate, text, useApi } from "../hooks/use-api";
 
 type EmailState = {
@@ -207,12 +208,12 @@ export function PlatformSettingsPage() {
               label="Password"
               hint={email.data?.passwordConfigured ? "A password is configured. Leave blank to keep it." : username ? "Required when SMTP authentication is used." : "Not required without authentication."}
             >
-              <TextInput
+              <StoredSecretInput
                 aria-label="SMTP password"
-                type="password"
+                configured={email.data?.passwordConfigured === true}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={email.data?.passwordConfigured ? "Configured — enter only to rotate" : ""}
+                placeholder=""
                 autoComplete="new-password"
               />
             </Field>

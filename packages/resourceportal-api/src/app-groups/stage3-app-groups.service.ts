@@ -117,6 +117,11 @@ export class Stage3AppGroupsService extends AppGroupsService {
         },
         singleApps: {
           orderBy: { createdAt: "asc" },
+          include: {
+            httpEndpoints: {
+              include: { domains: true },
+            },
+          },
         },
       },
     });
@@ -138,6 +143,11 @@ export class Stage3AppGroupsService extends AppGroupsService {
         },
         singleApps: {
           orderBy: { createdAt: "asc" },
+          include: {
+            httpEndpoints: {
+              include: { domains: true },
+            },
+          },
         },
         deployments: {
           orderBy: { version: "desc" },

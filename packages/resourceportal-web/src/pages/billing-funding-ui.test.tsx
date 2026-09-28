@@ -163,6 +163,85 @@ describe("billing funding UI", () => {
     });
   });
 });
+it("uses the tenant usage-series contract and identical chart controls in Platform Billing", async () => {
+  const tenantId = "44444444-4444-4444-8444-444444444444";
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+    if (url === "/api/platform/billing/price-lists") return json([]);
+    if (url === "/api/platform/billing/vouchers") return json([]);
+    if (url === "/api/platform/resource-bot/prices") return json({ items: [] });
+    if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", generationModel: "gpt-5.6-luna" });
+    if (url === `/api/tenants/${tenantId}/billing`) return json({ balanceCredits: "100", billingState: "Active" });
+    if (url === `/api/tenants/${tenantId}/quota`) return json({ cpu: 2, memoryBytes: 1024, storageBytes: 2048, gpu: 0 });
+    if (url === `/api/tenants/${tenantId}/billing/transactions?limit=20`) return json([]);
+    if (url.startsWith(`/api/tenants/${tenantId}/billing/usage-series?`)) {
+      return json({ items: [{
+        id: "usage-1",
+        periodStart: "2026-09-28T12:00:00.000Z",
+        chargedCredits: "1.25",
+        chargedPln: "0.0125",
+        theoreticalCostCredits: "1.5",
+        usage: { billedReplicas: 1, desiredReplicas: 2 },
+      }] });
+    }
+    return json({ error: { message: `Unexpected ${url}` } }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformBillingPage />);
+  fireEvent.change(await screen.findByLabelText("Tenant"), { target: { value: tenantId } });
+
+  expect(await screen.findByRole("heading", { name: "Usage" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "7d" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("button", { name: "Credits" }).getAttribute("aria-pressed")).toBe("true");
+
+  const usageUrl = String(fetchMock.mock.calls.find(([input]) =>
+    String(input).startsWith(`/api/tenants/${tenantId}/billing/usage-series?`),
+  )?.[0]);
+  const params = new URL(usageUrl, "http://resourceportal.test").searchParams;
+  expect(params.get("bucket")).toBe("2h");
+  expect(params.get("from")).toBeTruthy();
+});
+
+it("centralizes resource and AI tariff administration in Billing Pricing", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/tenants") return json([]);
+    if (url === "/api/platform/billing/vouchers") return json([]);
+    if (url === "/api/platform/billing/price-lists") return json([{
+      id: "price-1",
+      version: 3,
+      effectiveFrom: "2026-09-28T12:00:00.000Z",
+      cpuCreditsPerVcpuHour: "1",
+      memoryCreditsPerGbHour: "2",
+      storageCreditsPerGbHour: "3",
+      gpuCreditsPerGpuHour: "4",
+    }]);
+    if (url === "/api/platform/resource-bot/prices") return json({ items: [{
+      id: "ai-1",
+      provider: "OpenAI",
+      model: "gpt-5.6-luna",
+      effectiveFrom: "2026-09-28T12:00:00.000Z",
+      inputCreditsPer1M: "5",
+      cachedInputCreditsPer1M: "6",
+      outputCreditsPer1M: "7",
+      embeddingCreditsPer1M: "8",
+    }] });
+    if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", generationModel: "gpt-5.6-luna" });
+    return json({ error: { message: `Unexpected ${url}` } }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformBillingPage activeSection="pricing" />);
+
+  expect(await screen.findByRole("heading", { name: "Compute & storage pricing" })).toBeTruthy();
+  expect(screen.getByRole("columnheader", { name: "GPU / h" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "ResourceBot pricing" })).toBeTruthy();
+  expect(screen.getByRole("columnheader", { name: "Embedding / 1M" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Pricing" }).getAttribute("aria-current")).toBe("page");
+});
+
 it("shows persistent voucher codes and captures an optional expiration date when Platform Admin creates one", async () => {
   const created = {
     id: "voucher-2",
@@ -190,7 +269,7 @@ it("shows persistent voucher codes and captures an optional expiration date when
   });
   vi.stubGlobal("fetch", fetchMock);
 
-  render(<PlatformBillingPage />);
+  render(<PlatformBillingPage activeSection="vouchers" />);
 
   expect(await screen.findByText("RPV-PERSISTEDCODE1234567890")).toBeTruthy();
   expect(screen.getByRole("columnheader", { name: "Code" })).toBeTruthy();

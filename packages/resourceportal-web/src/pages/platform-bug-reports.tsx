@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
-import { BugIcon, Button, Callout, Card, EmptyState, PageHeader, Select, StatusBadge } from "../components/design-system";
+import { BugIcon, Button, Callout, Card, EmptyState, MetricFilterCard, PageHeader, Select, StatusBadge } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatDate, useApi } from "../hooks/use-api";
 
@@ -49,8 +49,9 @@ export function PlatformBugReportsPage() {
     <PageHeader eyebrow="Platform Admin" title="Bug reports" description="Review issues submitted from the ResourcePortal top bar and assign operational priority from P0 (critical) to P3 (low)." actions={<Button onClick={() => void reports.reload()} disabled={reports.loading}>Refresh</Button>} />
     {reports.error ? <Callout tone="danger" title="Bug reports unavailable">{reports.error instanceof Error ? reports.error.message : "The bug report API could not be loaded."}</Callout> : null}
 
-    <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {(["P0", "P1", "P2", "P3"] as Priority[]).map((priority) => <button type="button" key={priority} onClick={() => setFilter(filter === priority ? "all" : priority)} aria-pressed={filter === priority} className={`rounded-lg border bg-white p-4 text-left transition hover:border-[#A9B8CC] ${filter === priority ? "border-[#1769E0] ring-2 ring-[#1769E0]/10" : "border-[#D7E0EC]"}`}><div className="flex items-center justify-between"><StatusBadge tone={priorityMeta[priority].tone}>{priority} · {priorityMeta[priority].label}</StatusBadge><strong className="text-xl text-[#172033]">{counts[priority]}</strong></div></button>)}
+    <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="Bug report statistics and filters">
+      <MetricFilterCard label="All reports" value={(reports.data ?? []).length} detail="Total submitted" icon={<BugIcon size={17}/>} active={filter === "all"} onClick={() => setFilter("all")} />
+      {(["P0", "P1", "P2", "P3"] as Priority[]).map((priority) => <MetricFilterCard key={priority} label={priority} value={counts[priority]} detail={priorityMeta[priority].label} tone={priorityMeta[priority].tone} active={filter === priority} onClick={() => setFilter(priority)} />)}
     </div>
 
     <Card className="overflow-hidden">

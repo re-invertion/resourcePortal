@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildDiscardRestorePlan } from "./discard-restore";
 import { deriveAppGroupDriftStatus } from "./runtime-drift";
 import { mapAppGroup } from "./app-groups.view";
+import { Stage3AppGroupsService } from "./stage3-app-groups.service";
 
 describe("Stage 3 AppGroup completion", () => {
   it("derives tenant, billing and platform-maintenance runtime blockers", () => {
@@ -31,6 +32,60 @@ describe("Stage 3 AppGroup completion", () => {
         "PlatformMaintenance",
       ]),
     );
+  });
+
+  it("loads HTTP endpoint domains for Stage3 list and detail views so webUiUrl survives mapping", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const findFirst = vi.fn().mockResolvedValue({
+      id: "app-group-id",
+      tenantId: "tenant-id",
+      name: "group",
+      description: null,
+      status: "Ready",
+      runtimeState: "Stopped",
+      currentDeploymentVersion: null,
+      tenant: {
+        status: "Active",
+        billing: { balance: { lte: () => false } },
+      },
+      singleApps: [],
+      deployments: [],
+    });
+    const prisma = {
+      appGroup: { findMany, findFirst },
+    };
+    const config = {
+      get: vi.fn().mockReturnValue(undefined),
+    };
+    const service = new Stage3AppGroupsService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      config as never,
+    );
+
+    await service.listAppGroups("tenant-id");
+    await service.getAppGroup("tenant-id", "app-group-id");
+
+    const expectedSingleApps: unknown = expect.objectContaining({
+      orderBy: { createdAt: "asc" },
+      include: {
+        httpEndpoints: {
+          include: { domains: true },
+        },
+      },
+    });
+    const expectedInclude: unknown = expect.objectContaining({
+      singleApps: expectedSingleApps,
+    });
+    const expectedQuery: unknown = expect.objectContaining({
+      include: expectedInclude,
+    });
+
+    expect(findMany).toHaveBeenCalledWith(expectedQuery);
+    expect(findFirst).toHaveBeenCalledWith(expectedQuery);
   });
 
   it("marks matching runtime state as InSync", () => {
