@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AppRoute } from "../router/router";
 import { apiRequest } from "../api/client";
 import { ResourceBotDrawer } from "./resource-bot-drawer";
+import { BugReportDialog } from "./bug-report-dialog";
 import { RouteBreadcrumbs } from "./route-breadcrumbs";
 import { applicationHref, appGroupHref, platformHref, tenantHref } from "../router/router";
-import { ActivityIcon, BillingIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
+import { ActivityIcon, BillingIcon, BugIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
 
 type User = { id: string; email?: string; displayName?: string };
 type TenantSummary = { id: string; name?: string; displayName?: string; status?: string };
@@ -43,6 +44,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Network Egress", href: platformHref("network-egress"), icon: <NetworkIcon />, active: route.section === "network-egress" },
     { label: "Security & Ops", href: platformHref("security"), icon: <ActivityIcon />, active: ["security", "operations", "audit"].includes(route.section) },
     { label: "Maintenance", href: platformHref("maintenance"), icon: <SettingsIcon />, active: route.section === "maintenance" },
+    { label: "Bug reports", href: platformHref("bug-reports"), icon: <BugIcon />, active: route.section === "bug-reports" },
     { label: "Settings", href: platformHref("settings"), icon: <SettingsIcon />, active: route.section === "settings" },
   ];
 }
@@ -124,6 +126,7 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-network-egress", label: "Network Egress", description: "Tenant private-network isolation and exceptions", href: platformHref("network-egress"), category: "Navigation", keywords: "network egress firewall private lan cidr isolation" },
     { id: "platform-security", label: "Security & Ops", description: "Security, operations and audit", href: platformHref("security"), category: "Navigation", keywords: "audit operations security" },
     { id: "platform-maintenance", label: "Maintenance", description: "Platform maintenance controls", href: platformHref("maintenance"), category: "Navigation", keywords: "system maintenance" },
+    { id: "platform-bug-reports", label: "Bug reports", description: "Review user-submitted issues and assign priority", href: platformHref("bug-reports"), category: "Navigation", keywords: "bug issue report p0 p1 p2 p3 priority" },
     { id: "platform-settings", label: "Settings", description: "Platform-wide ResourcePortal settings and SMTP email delivery", href: platformHref("settings"), category: "Navigation", keywords: "settings smtp email mail server outbound" },
   ];
 }
@@ -305,6 +308,7 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
 export function AppShell({ user, route, tenants = [], showPlatformAdmin = false, onLogout, onTenantChange, children }: { user: User; route: Extract<AppRoute, { kind: "tenant" | "platform" }>; tenants?: TenantSummary[]; showPlatformAdmin?: boolean; onLogout: () => void; onTenantChange?: (tenantId: string) => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [releaseVersion, setReleaseVersion] = useState("");
+  const [bugReportOpen, setBugReportOpen] = useState(false);
   const items = route.kind === "tenant" ? tenantItems(route) : platformItems(route);
 
   useEffect(() => {
@@ -370,6 +374,7 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
 
           <div className="flex min-w-0 items-center justify-end gap-0.5 sm:gap-1 xl:col-start-3">
             <a href={helpHref} aria-label={helpLabel} title={helpLabel} className="hidden h-8 w-8 items-center justify-center rounded-md text-[#42526B] hover:bg-[#EEF3F9] sm:inline-flex"><HelpIcon /></a>
+            <button type="button" aria-label="Report a bug" title="Report a bug" onClick={() => setBugReportOpen(true)} className="hidden h-8 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-[#42526B] hover:bg-[#EEF3F9] sm:inline-flex"><BugIcon size={16}/><span className="hidden 2xl:inline">Bug</span></button>
             <details className="relative ml-0.5 sm:ml-1">
               <summary className="flex h-9 max-w-[160px] cursor-pointer list-none items-center gap-2 rounded-full bg-[#F4F7FB] px-1.5 text-[13px] font-medium text-[#172033] hover:bg-[#EEF3F9] sm:h-10 sm:px-2.5">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#1769E0] text-[11px] font-semibold text-white">{initials}</span>
@@ -388,5 +393,6 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
       <div className={`mx-auto w-full min-w-0 px-4 pt-5 sm:px-6 lg:px-7 ${route.kind === "tenant" ? "pb-24" : "pb-5"} ${route.kind === "tenant" && route.section === "networking" ? "max-w-[1540px]" : "max-w-[1120px]"}`}>{children}</div>
     </div>
     {route.kind === "tenant" ? <ResourceBotDrawer tenantId={route.tenantId} /> : null}
+    <BugReportDialog open={bugReportOpen} onClose={() => setBugReportOpen(false)} />
   </div>;
 }

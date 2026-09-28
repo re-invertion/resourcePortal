@@ -12,6 +12,7 @@ export const UsersIcon = (p: Props) => <Icon {...p}><circle cx="9" cy="8" r="3"/
 export const ActivityIcon = (p: Props) => <Icon {...p}><path d="M3 12h4l2-5 4 10 2-5h6"/></Icon>;
 export const SettingsIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4"/></Icon>;
 export const HelpIcon = (p: Props) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5.2 1c0 2-2.7 2.2-2.7 4M12 17.5h.01"/></Icon>;
+export const BugIcon = (p: Props) => <Icon {...p}><path d="M8.5 8.5h7v7a3.5 3.5 0 0 1-7 0z"/><path d="M12 5.5v3M7 11H4M20 11h-3M7 15H4M20 15h-3M8.5 7 6.5 5M15.5 7l2-2"/></Icon>;
 export const BotIcon = (p: Props) => <Icon {...p}><path d="M12 3v2"/><rect x="4.5" y="6" width="15" height="13" rx="4"/><path d="M8 11h.01M16 11h.01M8.5 15.5h7M4.5 12H2.8M21.2 12h-1.7"/></Icon>;
 export const BellIcon = (p: Props) => <Icon {...p}><path d="M18 9.5a6 6 0 0 0-12 0v2.25c0 1.55-.54 3.05-1.54 4.23L4 16.5h16l-.46-.52A6.45 6.45 0 0 1 18 11.75V9.5Z"/><path d="M10 19h4"/></Icon>;
 export const MailIcon = (p: Props) => <Icon {...p}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></Icon>;

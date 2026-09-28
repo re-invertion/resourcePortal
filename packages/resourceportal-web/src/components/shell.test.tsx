@@ -46,9 +46,28 @@ describe("AppShell", () => {
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
     expect(screen.getByRole("combobox", { name: "Search resources" })).toBeTruthy();
     expect(screen.getAllByLabelText("Help").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Report a bug" })).toBeTruthy();
     expect(screen.getAllByText("Patryk").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
     expect(screen.getByLabelText("ResourcePortal")).toBeTruthy();
+  });
+
+  it("submits a bug report from the topbar dialog", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/health/live") return new Response(JSON.stringify({ version: "0.2.46" }), { status: 200, headers: { "content-type": "application/json" } });
+      if (String(input) === "/api/bug-reports" && init?.method === "POST") return new Response(JSON.stringify({ id: "report-1", priority: "P2" }), { status: 201, headers: { "content-type": "application/json" } });
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    fireEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+    expect(screen.getByRole("dialog", { name: "Report a bug" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Bug description" }), { target: { value: "Deploy button returns an error." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/bug-reports", expect.objectContaining({ method: "POST" })));
+    const reportCall = fetchMock.mock.calls.find(([input]) => String(input) === "/api/bug-reports");
+    expect(String(reportCall?.[1]?.body)).toContain("Deploy button returns an error.");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a bug" })).toBeNull());
   });
 
   it("reserves bottom safe area so ResourceBot does not cover tenant actions", () => {
