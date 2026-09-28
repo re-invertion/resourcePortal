@@ -46,7 +46,8 @@ describe("PlatformSettingsPage SMTP", () => {
     expect(await screen.findByRole("heading", { name: "Settings", level: 1 })).toBeTruthy();
     const password = screen.getByLabelText("SMTP password") as HTMLInputElement;
     expect(password.value).toBe("");
-    expect(password.placeholder).toContain("Configured");
+    expect(password.placeholder).toBe("");
+    expect(screen.getByText("••••••••••••")).toBeTruthy();
     expect(screen.queryByDisplayValue(/secret|password/i)).toBeNull();
     await waitFor(() => expect((screen.getByLabelText("SMTP host") as HTMLInputElement).value).toBe("smtp.example.com"));
 

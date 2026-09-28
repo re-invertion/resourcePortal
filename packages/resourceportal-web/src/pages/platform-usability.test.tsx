@@ -99,7 +99,8 @@ describe("platform action feedback", () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/billing`)).toBe(true));
     expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/quota`)).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/billing/usage-records?limit=20`)).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith(`/api/tenants/${tenantId}/billing/usage-series?`))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/usage-records"))).toBe(false);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/quota"))).toBe(false);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/usage?"))).toBe(false);
   });

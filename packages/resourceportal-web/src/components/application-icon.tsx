@@ -21,15 +21,31 @@ function imageProject(image: string) {
   return slug(last.replace(/:[^:]+$/, ""));
 }
 
+const ICON_ALIASES: Record<string, string[]> = {
+  postgres: ["postgresql"],
+  mongo: ["mongodb"],
+  homeassistant: ["home-assistant"],
+  "home-assistant-core": ["home-assistant"],
+  jellyfinserver: ["jellyfin"],
+  "linuxserver-plex": ["plex"],
+};
+
+function aliasedCandidates(candidate: string) {
+  if (!candidate) return [];
+  return [...(ICON_ALIASES[candidate] ?? []), candidate];
+}
+
 export function applicationIconKey(app: AppLike) {
-  return imageProject(value(app.image)) || slug(value(app.name)) || "application";
+  const candidate = imageProject(value(app.image)) || slug(value(app.name)) || "application";
+  return ICON_ALIASES[candidate]?.[0] ?? candidate;
 }
 
 function selfHostedCandidates(app: AppLike) {
-  return Array.from(new Set([
+  const candidates = [
     imageProject(value(app.image)),
     slug(value(app.name)),
-  ].filter(Boolean)));
+  ].filter(Boolean);
+  return Array.from(new Set(candidates.flatMap(aliasedCandidates)));
 }
 
 function faviconUrl(webUiUrl: string) {

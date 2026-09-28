@@ -19,6 +19,7 @@ it("keeps the Cloudflare token write-only while allowing Platform Admin to enabl
     available: false,
     configured: true,
     tokenConfigured: true,
+    oauthClientSecretConfigured: true,
     zoneId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     zoneName: "resource-portal.pl",
     baseDomain: "resource-portal.pl",
@@ -47,7 +48,11 @@ it("keeps the Cloudflare token write-only while allowing Platform Admin to enabl
   const token = screen.getByLabelText(/Cloudflare API token/i) as HTMLInputElement;
   expect(token.type).toBe("password");
   expect(token.value).toBe("");
-  expect(token.placeholder).toMatch(/configured/i);
+  expect(token.placeholder).toBe("");
+  expect(screen.getAllByText("••••••••••••").length).toBe(2);
+  const oauthSecret = screen.getByLabelText(/OAuth Client secret/i) as HTMLInputElement;
+  expect(oauthSecret.value).toBe("");
+  expect(oauthSecret.placeholder).toBe("");
 
   fireEvent.click(screen.getByLabelText("Enable managed ResourcePortal domains"));
   fireEvent.click(screen.getByRole("button", { name: "Save configuration" }));

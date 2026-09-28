@@ -36,6 +36,38 @@ describe("ApplicationIcon", () => {
       "https://cdn.jsdelivr.net/gh/selfhst/icons/png/home-assistant.png",
     );
   });
+
+  it("maps common image aliases such as postgres to the canonical selfh.st icon", () => {
+    const { container } = render(
+      <ApplicationIcon app={{ name: "Database", image: "postgres:16" }} />,
+    );
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "https://cdn.jsdelivr.net/gh/selfhst/icons/png/postgresql.png",
+    );
+    expect(container.querySelector("[data-icon-key]")?.getAttribute("data-icon-key")).toBe(
+      "postgresql",
+    );
+  });
+
+  it("falls back to a custom application favicon after selfh.st candidates fail", () => {
+    const { container } = render(
+      <ApplicationIcon
+        app={{
+          name: "Sprawne Miasto",
+          image: "ghcr.io/example/sprawne-miasto:latest",
+          webUiUrl: "https://sprawne.example.test/app",
+        }}
+      />,
+    );
+
+    const selfHosted = container.querySelector("img");
+    expect(selfHosted?.getAttribute("src")).toContain("/sprawne-miasto.png");
+    fireEvent.error(selfHosted!);
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "https://sprawne.example.test/favicon.ico",
+    );
+  });
 });
 
 describe("AppGroupIcon", () => {
