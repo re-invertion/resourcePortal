@@ -176,6 +176,7 @@ model User {
   identities                 UserIdentity[]
   cloudflareOAuthStates      CloudflareOAuthState[]
   cloudflareOAuthConnections CloudflareOAuthConnection[]
+  bugReports                 BugReport[]
   createdAt                  DateTime                    @default(now())
   updatedAt                  DateTime                    @updatedAt
 }
@@ -1388,4 +1389,28 @@ model ApiRateLimitBucket {
   updatedAt       DateTime @updatedAt
 
   @@index([resetAt])
+}
+
+
+enum BugReportPriority {
+  P0
+  P1
+  P2
+  P3
+}
+
+model BugReport {
+  id            String            @id @default(uuid()) @db.Uuid
+  description   String            @db.Text
+  priority      BugReportPriority @default(P2)
+  reportedById  String            @db.Uuid
+  imageData     Bytes?
+  imageMimeType String?           @db.VarChar(64)
+  imageFileName String?           @db.VarChar(255)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  reportedBy    User              @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+
+  @@index([priority, createdAt])
+  @@index([reportedById, createdAt])
 }
