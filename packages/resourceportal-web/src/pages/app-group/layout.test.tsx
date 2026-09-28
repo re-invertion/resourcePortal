@@ -19,7 +19,7 @@ describe("AppGroupLayout Penpot metrics", () => {
     expect(mark?.className).toContain("w-[52px]");
   });
 });
-it("keeps the Penpot App Group navigation to the six primary sections", () => {
+it("keeps App Group navigation route-based and includes Settings", () => {
   render(
     <AppGroupLayout
       tenantId="t1"
@@ -32,8 +32,9 @@ it("keeps the Penpot App Group navigation to the six primary sections", () => {
   );
   const nav = document.querySelector('nav[aria-label="App Group sections"]');
   expect(nav).toBeTruthy();
-  expect(nav?.querySelectorAll("a")).toHaveLength(6);
-  expect(nav?.textContent).not.toContain("Settings");
+  expect(nav?.querySelectorAll("a")).toHaveLength(7);
+  expect(nav?.textContent).toContain("Settings");
+  expect(Array.from(nav?.querySelectorAll("a") ?? []).every((link) => !link.getAttribute("href")?.startsWith("#"))).toBe(true);
 });
 
 it("uses the Penpot pending changes banner copy", () => {

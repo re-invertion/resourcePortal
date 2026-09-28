@@ -1,6 +1,8 @@
 import {
   AppGroup,
   AppGroupDeployment,
+  Domain,
+  HttpEndpoint,
   Config,
   ConfigAttachment,
   DeploymentEvent,
@@ -11,8 +13,12 @@ import {
   VariableAttachment,
 } from "@prisma/client";
 
+type SingleAppWithRelations = SingleApp & {
+  httpEndpoints?: Array<HttpEndpoint & { domains?: Domain[] }>;
+};
+
 type AppGroupWithRelations = AppGroup & {
-  singleApps?: SingleApp[];
+  singleApps?: SingleAppWithRelations[];
   deployments?: AppGroupDeployment[];
   tenant?: {
     status: string;
@@ -47,16 +53,24 @@ export function mapAppGroup(
 }
 
 export function mapSingleApp(
-  singleApp: SingleApp,
+  singleApp: SingleAppWithRelations,
   inheritedRuntimeBlockers: string[] = [],
 ) {
   const runtimeBlockers = [
     ...inheritedRuntimeBlockers,
     ...singleAppRuntimeBlockers(singleApp),
   ];
+  const webDomain = singleApp.httpEndpoints
+    ?.flatMap((endpoint) => endpoint.domains ?? [])
+    .find((domain) => typeof domain.hostname === "string" && domain.hostname.length > 0);
+  const webUiUrl = webDomain
+    ? `${webDomain.tlsEnabled ? "https" : "http"}://${webDomain.hostname}`
+    : undefined;
+  const { httpEndpoints: _httpEndpoints, ...view } = singleApp;
+  void _httpEndpoints;
 
   return {
-    ...singleApp,
+    ...view,
     cpu: singleApp.cpu.toString(),
     memoryBytes: singleApp.memoryBytes.toString(),
     effectiveRuntimeState:
@@ -64,6 +78,7 @@ export function mapSingleApp(
     effectiveReplicas:
       runtimeBlockers.length > 0 ? 0 : singleApp.desiredReplicas,
     runtimeBlockers,
+    webUiUrl,
   };
 }
 

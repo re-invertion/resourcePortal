@@ -16,6 +16,7 @@ import {
   PlusIcon,
   ServerIcon,
   StatusBadge,
+  Tabs,
   TextInput,
   TrashIcon,
   statusTone,
@@ -29,6 +30,7 @@ import {
   type TopologyEdgeData,
 } from "./tenant-networking-graph";
 import { toast } from "../components/toast";
+import { tenantHref } from "../router/router";
 
 type Operation = {
   id: string;
@@ -379,6 +381,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           </>
         }
       />
+      <Tabs label="Networking sections" items={[
+        {label:"Networks & Gate",href:tenantHref(tenantId,"networking"),active:true},
+        {label:"Domains",href:tenantHref(tenantId,"domains")},
+      ]}/>
 
       {topology.error ? (
         <div className="mb-5">

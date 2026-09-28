@@ -63,18 +63,11 @@ describe("billing funding UI", () => {
     ).toBe(false);
   });
 
-  it("renders transaction and usage amounts from the real billing API fields", async () => {
+  it("renders usage amounts, range controls, and no tenant Transactions table", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/tenants/t1/billing") return json({ balanceCredits: "25", balancePln: "0.25", billingState: "Active" });
       if (url === "/api/tenants/t1/quota") return json({ cpu: 2, memoryBytes: 1024, gpu: 0, storageBytes: 2048, maxSingleApps: 5, maxVolumes: 5 });
-      if (url === "/api/tenants/t1/billing/transactions") return json({ items: [{
-        id: "tx-1",
-        type: "Correction",
-        amountCredits: "-25",
-        amountPln: "-0.25",
-        createdAt: "2026-09-19T11:13:55.182Z",
-      }] });
       if (url.startsWith("/api/tenants/t1/billing/usage-series?")) return json({ items: [{
         id: "usage-1",
         resourceType: "SingleApp",
@@ -95,8 +88,8 @@ describe("billing funding UI", () => {
 
     render(<TenantBilling tenantId="t1" />);
 
-    expect(await screen.findByText("-25 credits")).toBeTruthy();
-    expect(screen.getByText("-0.25 PLN")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Usage" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Transactions" })).toBeNull();
     expect(screen.getAllByText("0 credits").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/0 PLN/)).toBeTruthy();
     expect(screen.getAllByText("Theoretical").length).toBeGreaterThanOrEqual(2);
@@ -114,9 +107,7 @@ describe("billing funding UI", () => {
       expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/tenants/t1/billing/usage-series?")).length).toBeGreaterThanOrEqual(2);
     });
 
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
-    expect(headings.indexOf("Usage")).toBeLessThan(headings.indexOf("Transactions"));
-    expect(screen.queryByText("—")).toBeNull();
+    expect(screen.queryByText("Transactions")).toBeNull();
   });
 
   it("lets Platform Admin adjust tenant credits through the correction endpoint", async () => {

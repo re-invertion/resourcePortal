@@ -41,7 +41,7 @@ try {
     const appGroupId = appGroupIdFromUrl(page.url());
     assert(appGroupId, `App Group route did not expose an id: ${page.url()}`);
 
-    await createApplication(page, appGroupId, applicationName);
+    await createApplication(page, appGroupId, appGroupName, applicationName);
     await verifyApplicationDetailAndEdit(page, applicationName);
     await deleteAppGroupThroughFinalDialog(page, appGroupId, appGroupName);
 
@@ -196,7 +196,7 @@ async function createAppGroup(page, appGroupName) {
   await page.getByRole("navigation", { name: "App Group sections" }).waitFor();
 }
 
-async function createApplication(page, appGroupId, applicationName) {
+async function createApplication(page, appGroupId, appGroupName, applicationName) {
   const tabs = page.getByRole("navigation", { name: "App Group sections" });
   await tabs.getByRole("link", { name: "Apps", exact: true }).click();
   await page.waitForURL(
@@ -233,6 +233,13 @@ async function createApplication(page, appGroupId, applicationName) {
     ),
   );
   await page.getByRole("heading", { name: applicationName, level: 2 }).waitFor();
+  assert(
+    (await page.getByRole("navigation", { name: "App Group sections" }).count()) === 0,
+    "Application detail must not be rendered inside the App Group workspace",
+  );
+  const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+  await breadcrumb.getByRole("link", { name: appGroupName, exact: true }).waitFor();
+  await breadcrumb.getByRole("link", { name: applicationName, exact: true }).waitFor();
 }
 
 async function nextWizardStep(page, expectedHeading) {

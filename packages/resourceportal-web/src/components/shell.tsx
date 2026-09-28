@@ -14,17 +14,19 @@ type SearchItem = { id: string; label: string; description: string; href: string
 function tenantItems(route: Extract<AppRoute, { kind: "tenant" }>): NavItem[] {
   const tenant = route.tenantId;
   const appActive = route.section === "applications" || route.section === "app-groups";
-  const storageActive = ["storage-networking", "networking", "volumes", "registries", "domains"].includes(route.section);
+  const storageActive = ["storage-networking", "storage", "volumes", "registries"].includes(route.section);
+  const networkingActive = ["networking", "domains"].includes(route.section);
   const accessActive = ["access", "administration", "credentials", "identity-providers", "groups"].includes(route.section);
   const activityActive = ["activity", "operations", "audit"].includes(route.section);
   return [
     { label: "Overview", href: tenantHref(tenant, "overview"), icon: <HomeIcon />, active: route.section === "overview" },
     { label: "Applications", href: tenantHref(tenant, "applications"), icon: <GridIcon />, active: appActive },
-    { label: "Storage & Networking", href: tenantHref(tenant, "storage-networking"), icon: <NetworkIcon />, active: storageActive },
+    { label: "Storage", href: tenantHref(tenant, "storage"), icon: <NetworkIcon />, active: storageActive },
+    { label: "Networking", href: tenantHref(tenant, "networking"), icon: <GlobeIcon />, active: networkingActive },
     { label: "Billing", href: tenantHref(tenant, "billing"), icon: <BillingIcon />, active: route.section === "billing" },
     { label: "Access", href: tenantHref(tenant, "access"), icon: <UsersIcon />, active: accessActive },
-    { label: "Activity", href: tenantHref(tenant, "activity"), icon: <ActivityIcon />, active: activityActive },
-    { label: "Settings", href: tenantHref(tenant, "settings"), icon: <SettingsIcon />, active: route.section === "settings" },
+    { label: "Activity", href: tenantHref(tenant, "activity", "operations"), icon: <ActivityIcon />, active: activityActive },
+    { label: "Settings", href: tenantHref(tenant, "settings", "resource-bot"), icon: <SettingsIcon />, active: route.section === "settings" },
   ];
 }
 
@@ -91,8 +93,8 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
     item("overview", "Overview", "Tenant dashboard and resource summary", "overview", "dashboard home"),
     item("applications", "Applications", "App Groups and deployed applications", "applications", "apps containers workloads app groups"),
     { id: "nav-create-app-group", label: "Create App Group", description: "Create a new deployment workspace", href: tenantHref(tenantId, "applications", "new"), category: "Action", keywords: "new application group create" },
-    item("storage", "Storage & Networking", "Storage, private Networks, registries and domains", "storage-networking", "network"),
-    item("networking", "Networking", "Private Networks and ResourcePortalGate topology", "networking", "network vpn gate wireguard topology"),
+    item("storage", "Storage", "Persistent volumes and container registries", "storage", "volumes disks registries"),
+    item("networking", "Networking", "Private Networks, ResourcePortalGate, domains and routing", "networking", "network vpn gate wireguard topology domains"),
     item("volumes", "Volumes", "Persistent tenant storage", "volumes", "disk storage persistent"),
     item("registries", "Registries", "Container image registries", "registries", "docker image registry"),
     item("domains", "Domains", "Managed and custom domains", "domains", "dns hostname tls"),
@@ -101,10 +103,10 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
     item("credentials", "Credentials", "Tenant credentials", "credentials", "keys secrets"),
     item("identity", "Identity providers", "Tenant SSO and identity providers", "identity-providers", "sso login authentication"),
     item("groups", "Groups", "Tenant identity groups", "groups", "users membership"),
-    item("activity", "Activity", "Operations and audit activity", "activity", "events jobs"),
-    item("operations", "Operations", "Runtime and background operations", "operations", "jobs deploy runtime"),
-    item("audit", "Audit log", "Tenant audit history", "audit", "events history log"),
-    item("settings", "Settings", "Tenant-wide settings including MCP", "settings", "mcp model context protocol oauth integration admin"),
+    { id: "nav-activity", label: "Activity", description: "Operations and audit activity", href: tenantHref(tenantId, "activity", "operations"), category: "Navigation", keywords: "events jobs" },
+    { id: "nav-operations", label: "Operations", description: "Runtime and background operations", href: tenantHref(tenantId, "activity", "operations"), category: "Navigation", keywords: "jobs deploy runtime" },
+    { id: "nav-audit", label: "Audit log", description: "Tenant audit history", href: tenantHref(tenantId, "activity", "audit"), category: "Navigation", keywords: "events history log" },
+    { id: "nav-settings", label: "Settings", description: "Tenant-wide settings including MCP", href: tenantHref(tenantId, "settings", "resource-bot"), category: "Navigation", keywords: "mcp model context protocol oauth integration admin" },
     item("help", "Help", "How to create apps, add domains, storage, billing and troubleshoot", "help", "guide docs documentation create app application domain volume registry deploy restart voucher billing troubleshoot"),
   ];
 }
