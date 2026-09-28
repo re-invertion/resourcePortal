@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { TenantPage } from "./tenant";
 function json(value:unknown){return new Response(JSON.stringify(value),{status:200,headers:{"content-type":"application/json"}})}
-it.each([["storage-networking","Storage & Networking"],["access","Access"],["activity","Activity"],["billing","Billing"]])("renders final tenant section %s",async(section,heading)=>{
+it.each([["storage-networking","Storage"],["access","Access"],["activity","Operations"],["billing","Billing"]])("renders final tenant section %s",async(section,heading)=>{
  vi.stubGlobal("fetch",vi.fn(async()=>json([])));
  render(<TenantPage tenantId="t1" section={section} userId="u1"/>);
  expect(await screen.findByRole("heading",{name:heading})).toBeTruthy();
@@ -81,7 +81,7 @@ it("routes tenant settings to MCP administration", async () => {
   return json([]);
  });
  vi.stubGlobal("fetch",fetchMock);
- render(<TenantPage tenantId="t1" section="settings" userId="u1"/>);
+ render(<TenantPage tenantId="t1" section="settings" segments={["mcp"]} userId="u1"/>);
  expect(await screen.findByRole("heading",{name:"Tenant settings"})).toBeTruthy();
  expect(screen.getByText("Model Context Protocol (MCP)")).toBeTruthy();
 });

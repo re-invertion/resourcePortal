@@ -34,6 +34,7 @@ ZITADEL_POSTGRES_ADMIN_PASSWORD=codespaces-zitadel-postgres
 EOF_ENV
 
 npm ci
+npm run build --workspace @resource-portal/help
 set -a
 # shellcheck disable=SC1090
 source "$runtime_dir/runtime.env"

@@ -3,7 +3,7 @@ import { ApplicationsPage } from "./applications";
 import { CreateAppGroupPage } from "./app-group-create";
 import { ImportAppGroupPage } from "./app-group-import";
 import { AppGroupRoute } from "./app-group/route";
-import { TenantStorageNetworking, TenantAccess, TenantActivity, TenantBilling } from "./tenant-resources";
+import { TenantStoragePage, TenantAccess, TenantBilling } from "./tenant-resources";
 import { TenantVolumesPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
@@ -27,13 +27,19 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
     return <ApplicationsPage tenantId={tenantId} />;
   }
   if (section === "app-groups") return (segments.length || resourceId) ? <AppGroupRoute tenantId={tenantId} segments={segments.length ? segments : [resourceId!]} /> : <ApplicationsPage tenantId={tenantId} />;
-  if (section === "storage-networking") return <TenantStorageNetworking tenantId={tenantId} />;
+  if (section === "storage-networking" || section === "storage") return <TenantStoragePage tenantId={tenantId} />;
   if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} />;
   if (section === "access") return <TenantAccess tenantId={tenantId} />;
-  if (section === "activity") return <TenantActivity tenantId={tenantId} />;
+  if (section === "activity") {
+    const view = segments[0] === "audit" ? "audit" : "operations";
+    const operationId = view === "operations" ? segments[1] : undefined;
+    return view === "audit"
+      ? <TenantAuditPage tenantId={tenantId} />
+      : <TenantOperationsPage tenantId={tenantId} operationId={operationId} />;
+  }
   if (section === "billing") return <TenantBilling tenantId={tenantId} />;
   if (section === "help") return <TenantHelpPage tenantId={tenantId} />;
-  if (section === "settings") return <TenantSettingsPage tenantId={tenantId} />;
+  if (section === "settings") return <TenantSettingsPage tenantId={tenantId} section={segments[0]} />;
   if (section === "volumes") return <TenantVolumesPage tenantId={tenantId} />;
   if (section === "registries") return resourceId ? <TenantRegistryDetailPage tenantId={tenantId} registryId={resourceId} /> : <TenantRegistriesPage tenantId={tenantId} />;
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;

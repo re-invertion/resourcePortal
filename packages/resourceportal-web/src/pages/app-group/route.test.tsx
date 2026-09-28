@@ -22,6 +22,9 @@ describe("AppGroupRoute", () => {
   it("renders a routable Application Detail from deep App Group segments", async () => {
     render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1"]} />);
     expect(await screen.findByRole("heading", { name: "checkout" })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "App Group sections" })).toBeNull();
+    const hierarchy = screen.getByRole("navigation", { name: "Application hierarchy" });
+    expect(within(hierarchy).getAllByRole("link").map((link) => link.textContent)).toEqual(["Applications", "commerce"]);
     expect(screen.getByRole("link", { name: /edit application/i }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit");
     const navigation = screen.getByRole("navigation", { name: "Application sections" });
     expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");

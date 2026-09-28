@@ -12,11 +12,12 @@ import {
   Select,
   SettingsIcon,
   StatusText,
+  Tabs,
   Toggle,
   UsersIcon,
 } from "../components/design-system";
 import { idOf, items, text, useApi } from "../hooks/use-api";
-import { SectionNav } from "../components/ui";
+import { tenantHref } from "../router/router";
 import { toast } from "../components/toast";
 
 type R = Record<string, unknown>;
@@ -52,7 +53,8 @@ function memberEmail(member: R) {
   return text(member.email, text(user?.email, ""));
 }
 
-export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
+export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { tenantId: string; section?: string }) {
+  const activeSection = section === "mcp" ? "mcp" : "resource-bot";
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
   const settings = useApi<McpSettings>(`${root}/mcp-settings`);
   const resourceBotSettings = useApi<ResourceBotSettings>(`${root}/resource-bot/settings`);
@@ -135,7 +137,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         title="Tenant settings"
         description="Tenant-wide features and integration settings controlled by tenant administrators."
       />
-      <div className="mb-5"><SectionNav label="Settings sections" items={[{ label: "ResourceBot", href: "#resource-bot" }, { label: "MCP", href: "#mcp" }]} /></div>
+      <Tabs label="Settings sections" items={[{ label: "ResourceBot", href: tenantHref(tenantId, "settings", "resource-bot"), active: activeSection === "resource-bot" }, { label: "MCP", href: tenantHref(tenantId, "settings", "mcp"), active: activeSection === "mcp" }]} />
       {settings.error ? (
         <div className="mb-4">
           <Callout tone="danger" title="Tenant settings unavailable">
@@ -144,7 +146,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
         </div>
       ) : null}
 
-      <Card id="resource-bot" className="mb-6 overflow-hidden">
+      {activeSection === "resource-bot" ? <Card id="resource-bot" className="overflow-hidden">
         <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><HelpIcon size={18} /></span>
           <div>
@@ -172,8 +174,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
             </Button>
           </div>
         </div>
-      </Card>
-
+      </Card> : <>
       <Card id="mcp" className="overflow-hidden">
         <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><SettingsIcon size={18} /></span>
@@ -267,6 +268,7 @@ export function TenantSettingsPage({ tenantId }: { tenantId: string }) {
           {!oauth?.openAiReady ? <Callout tone="warning" title="OAuth setup incomplete">Dynamic Client Registration and PKCE S256 must be available before compatible MCP clients can complete OAuth authorization. Run the current ResourcePortal upgrade or platform repair.</Callout> : null}
         </div>
       </Card>
+      </>}
     </main>
   );
 }

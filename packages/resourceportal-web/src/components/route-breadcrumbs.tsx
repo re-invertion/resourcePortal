@@ -82,24 +82,24 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
     if (groupSection === "overview") return crumbs;
 
     if (groupSection === "apps") {
-      crumbs.push({ label: "Apps", href: appGroupHref(tenantId, groupId, "apps") });
       const appId = sub[1];
-      if (!appId) return crumbs;
+      if (!appId) {
+        crumbs.push({ label: "Apps", href: appGroupHref(tenantId, groupId, "apps") });
+        return crumbs;
+      }
       if (appId === "new") {
+        crumbs.push({ label: "Apps", href: appGroupHref(tenantId, groupId, "apps") });
         crumbs.push({ label: "Create application", href: appGroupHref(tenantId, groupId, "apps/new") });
         return crumbs;
       }
 
+      // Single Apps are first-class pages: Applications / App Group / Application.
       crumbs.push({
         label: labels.app || "Application",
         href: applicationHref(tenantId, groupId, appId),
       });
 
       if (sub[2] === "edit") {
-        crumbs.push({
-          label: "Edit",
-          href: applicationHref(tenantId, groupId, appId, "edit"),
-        });
         if (sub[3]) {
           crumbs.push({
             label: appEditLabel(sub[3]),
@@ -130,20 +130,22 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
     return crumbs;
   }
 
-  if (["storage-networking", "networking", "volumes", "registries", "domains"].includes(section)) {
+  if (["storage-networking", "storage", "networking", "volumes", "registries", "domains"].includes(section)) {
+    const storageSection = ["storage-networking", "storage", "volumes", "registries"].includes(section);
+    const parentSection = storageSection ? "storage" : "networking";
+    const parentLabel = storageSection ? "Storage" : "Networking";
     const crumbs: Crumb[] = [
       root,
-      { label: "Storage & Networking", href: tenantHref(tenantId, "storage-networking") },
+      { label: parentLabel, href: tenantHref(tenantId, parentSection) },
     ];
-    if (section === "storage-networking") return crumbs;
+    if (section === "storage-networking" || section === parentSection) return crumbs;
 
     const names: Record<string, string> = {
-      networking: "Networking",
       volumes: "Volumes",
       registries: "Registries",
       domains: "Domains",
     };
-    crumbs.push({ label: names[section], href: tenantHref(tenantId, section) });
+    crumbs.push({ label: names[section] ?? titleCase(section), href: tenantHref(tenantId, section) });
 
     if (route.resourceId && (section === "registries" || section === "domains")) {
       crumbs.push({
@@ -173,27 +175,31 @@ function tenantCrumbs(route: Extract<Route, { kind: "tenant" }>, labels: Labels)
   if (["activity", "operations", "audit"].includes(section)) {
     const crumbs: Crumb[] = [
       root,
-      { label: "Activity", href: tenantHref(tenantId, "activity") },
+      { label: "Activity", href: tenantResourceHref(tenantId, "activity", "operations") },
     ];
-    if (section === "activity") return crumbs;
-
-    if (section === "operations") {
-      crumbs.push({ label: "Operations", href: tenantHref(tenantId, "operations") });
-      if (route.resourceId) {
+    const nested = section === "activity" ? segments : [];
+    const activityView = section === "operations" ? "operations" : section === "audit" ? "audit" : (nested[0] || "operations");
+    if (activityView === "operations") {
+      crumbs.push({ label: "Operations", href: tenantResourceHref(tenantId, "activity", "operations") });
+      const operationId = section === "operations" ? route.resourceId : nested[1];
+      if (operationId) {
         crumbs.push({
           label: labels.operation || "Operation detail",
-          href: tenantHref(tenantId, "operations", route.resourceId),
+          href: tenantResourceHref(tenantId, "activity", "operations", operationId),
         });
       }
       return crumbs;
     }
-
-    crumbs.push({ label: "Audit log", href: tenantHref(tenantId, "audit") });
+    crumbs.push({ label: "Audit log", href: tenantResourceHref(tenantId, "activity", "audit") });
     return crumbs;
   }
 
   if (section === "billing") return [root, { label: "Billing", href: tenantHref(tenantId, "billing") }];
-  if (section === "settings") return [root, { label: "Settings", href: tenantHref(tenantId, "settings") }];
+  if (section === "settings") {
+    const crumbs = [root, { label: "Settings", href: tenantResourceHref(tenantId, "settings", "resource-bot") }];
+    if (segments[0]) crumbs.push({ label: segments[0] === "mcp" ? "MCP" : "ResourceBot", href: tenantResourceHref(tenantId, "settings", segments[0]) });
+    return crumbs;
+  }
   if (section === "help") return [root, { label: "Help", href: tenantHref(tenantId, "help") }];
 
   return [root, { label: titleCase(section), href: tenantResourceHref(tenantId, section, ...segments) }];
@@ -302,10 +308,12 @@ export function RouteBreadcrumbs({ route }: { route: Route }) {
         return;
       }
 
-      if (route.section === "operations" && route.resourceId) {
+      const nestedOperationId = route.section === "activity" && segments[0] === "operations" ? segments[1] : undefined;
+      const operationId = route.section === "operations" ? route.resourceId : nestedOperationId;
+      if (operationId) {
         try {
           const operation = await apiRequest<Record<string, unknown>>(
-            `/api/tenants/${encodeURIComponent(tenantId)}/operations/${encodeURIComponent(route.resourceId)}`,
+            `/api/tenants/${encodeURIComponent(tenantId)}/operations/${encodeURIComponent(operationId)}`,
           );
           const label = titleCase(stringValue(operation.type, stringValue(operation.operationType, "Operation detail")));
           if (!cancelled) setLabels({ operation: label });

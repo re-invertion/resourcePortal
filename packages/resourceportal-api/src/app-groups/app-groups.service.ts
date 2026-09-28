@@ -164,6 +164,7 @@ export class AppGroupsService {
       include: {
         singleApps: {
           orderBy: { createdAt: "asc" },
+          include: { httpEndpoints: { include: { domains: true } } },
         },
       },
     });
@@ -177,6 +178,7 @@ export class AppGroupsService {
       include: {
         singleApps: {
           orderBy: { createdAt: "asc" },
+          include: { httpEndpoints: { include: { domains: true } } },
         },
         deployments: {
           orderBy: { version: "desc" },
@@ -1341,6 +1343,7 @@ export class AppGroupsService {
     const singleApps = await this.prisma.singleApp.findMany({
       where: { appGroupId },
       orderBy: { createdAt: "asc" },
+      include: { httpEndpoints: { include: { domains: true } } },
     });
 
     return singleApps.map((singleApp) => mapSingleApp(singleApp));

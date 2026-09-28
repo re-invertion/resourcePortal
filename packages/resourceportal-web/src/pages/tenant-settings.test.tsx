@@ -39,11 +39,11 @@ describe("TenantSettingsPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" section="mcp" />);
 
     expect(await screen.findByRole("heading", { name: "Tenant settings" })).toBeTruthy();
     expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "MCP" }).getAttribute("href")).toBe("#mcp");
+    expect(screen.getByRole("link", { name: "MCP" }).getAttribute("href")).toBe("/tenants/22222222-2222-4222-8222-222222222222/settings/mcp");
     expect(await screen.findByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
     expect(screen.queryByText("https://auth.example.com")).toBeNull();
     fireEvent.click(screen.getByText("Enable MCP for this tenant"));
@@ -79,10 +79,10 @@ describe("TenantSettingsPage", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" section="resource-bot" />);
 
     expect(await screen.findByRole("heading", { name: "ResourceBot" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "ResourceBot" }).getAttribute("href")).toBe("#resource-bot");
+    expect(screen.getByRole("link", { name: "ResourceBot" }).getAttribute("href")).toBe("/tenants/22222222-2222-4222-8222-222222222222/settings/resource-bot");
     const toggles = screen.getAllByRole("checkbox");
     const resourceBotToggle = toggles[0] as HTMLInputElement;
     await waitFor(() => expect(resourceBotToggle.disabled).toBe(false));
@@ -104,7 +104,7 @@ describe("TenantSettingsPage", () => {
       if (url.endsWith("/mcp-settings")) return json({ enabled: true, accessMode: "AllMembers", allowedMembershipIds: [], oauth: { issuer: "https://auth.example.com", scopes: ["openid"], discoveryAvailable: true, dynamicClientRegistrationAvailable: false, pkceS256Available: false, openAiReady: false, transport: "Streamable HTTP", protocol: "MCP" } });
       return json([]);
     }));
-    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" section="mcp" />);
     expect((await screen.findAllByText("OAuth setup incomplete")).length).toBeGreaterThan(0);
     expect(screen.getByText(/Dynamic Client Registration and PKCE S256 must be available/i)).toBeTruthy();
     expect(screen.getByText("http://localhost:3000/api/tenants/22222222-2222-4222-8222-222222222222/mcp")).toBeTruthy();
@@ -132,7 +132,7 @@ describe("TenantSettingsPage", () => {
       });
       return json([]);
     }));
-    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" />);
+    render(<TenantSettingsPage tenantId="22222222-2222-4222-8222-222222222222" section="mcp" />);
     expect(await screen.findByText("OAuth ready")).toBeTruthy();
     expect(screen.getByText("Dynamic client registration / PKCE S256")).toBeTruthy();
     expect(screen.getByText("MCP 2026-07-28 with 2025-era compatibility")).toBeTruthy();

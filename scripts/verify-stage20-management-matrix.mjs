@@ -163,17 +163,19 @@ const expectedContracts = [
 const tenantRoutes = [
   ["overview", "Tenant Overview"],
   ["applications", "Applications"],
-  ["storage-networking", "Storage & Networking"],
+  ["storage", "Storage"],
+  ["networking", "Networking"],
   ["access", "Access"],
-  ["activity", "Activity"],
+  ["activity/operations", "Operations"],
+  ["activity/audit", "Audit log"],
   ["billing", "Billing"],
+  ["settings/resource-bot", "Tenant settings"],
+  ["settings/mcp", "Tenant settings"],
   ["volumes", "Volumes"],
   ["registries", "Registries"],
   ["domains", "Domains"],
   ["administration", "Access management"],
   ["credentials", "Machine credentials"],
-  ["audit", "Audit log"],
-  ["operations", "Operations"],
 ];
 
 const platformRoutes = [

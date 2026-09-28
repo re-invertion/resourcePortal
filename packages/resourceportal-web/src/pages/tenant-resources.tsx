@@ -1,19 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
-import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, NumberInput, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
+import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, NumberInput, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatBytes, formatDate, idOf, items, text, useApi } from "../hooks/use-api";
 import { tenantHref } from "../router/router";
 import { auditActionDetail, auditActionLabel, auditGroupedCount, auditTimestampValue, isGroupedBillingUsage } from "../lib/audit-display";
 
 type R = Record<string, unknown>;
-
-function billingAmount(row: R, creditKey: string, plnKey: string) {
-  const credits = text(row[creditKey], "0");
-  const pln = text(row[plnKey], "0");
-  return <div className="min-w-0"><strong className="block whitespace-nowrap text-[13px] text-[#172033]">{credits} credits</strong><span className="block whitespace-nowrap text-xs text-[#718096]">{pln} PLN</span></div>;
-}
 
 function BillingMetricCard({
   icon,
@@ -47,11 +41,38 @@ function ResourceSummary({ title, description, href, count, icon, loading, error
   return <a href={href} className="rounded-lg border border-[#D7E0EC] bg-white p-5 transition hover:border-[#AFC7E8] hover:shadow-[0_4px_16px_rgba(36,74,120,.06)]"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]">{icon}</span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><h2 className="font-semibold">{title}</h2><strong className="text-lg">{loading?"—":error?"!":count}</strong></div><p className="mt-1 text-sm leading-5 text-[#5B6678]">{description}</p></div></div></a>;
 }
 
-export function TenantStorageNetworking({tenantId}:{tenantId:string}) {
-  const root=`/api/tenants/${encodeURIComponent(tenantId)}`; const volumes=useApi<unknown>(`${root}/volumes`); const registries=useApi<unknown>(`${root}/registries`); const domains=useApi<unknown>(`${root}/domains`); const networks=useApi<unknown>(`${root}/networking/networks`);
-  const volumeRows=items<R>(volumes.data); const registryRows=items<R>(registries.data); const domainRows=items<R>(domains.data); const networkRows=items<R>(networks.data);
-  return <main><PageHeader eyebrow="Tenant resources" title="Storage & Networking" description="Volumes, private Networks, ResourcePortalGate, registries, domains and HTTP routing for this tenant."/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><ResourceSummary title="Networks" description="Private multi-App-Group connectivity and routed VPN access." href={tenantHref(tenantId,"networking")} count={networkRows.length} icon={<NetworkIcon/>} loading={networks.loading} error={networks.error}/><ResourceSummary title="Volumes" description="Persistent storage allocated to application workloads." href={tenantHref(tenantId,"volumes")} count={volumeRows.length} icon={<VolumeIcon/>} loading={volumes.loading} error={volumes.error}/><ResourceSummary title="Registries" description="Private and public container image sources." href={tenantHref(tenantId,"registries")} count={registryRows.length} icon={<RegistryIcon/>} loading={registries.loading} error={registries.error}/><ResourceSummary title="Domains" description="Managed hostnames, TLS and HTTP routing." href={tenantHref(tenantId,"domains")} count={domainRows.length} icon={<GlobeIcon/>} loading={domains.loading} error={domains.error}/></div><div className="mt-6 grid gap-6 xl:grid-cols-2"><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Volumes</h2><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"volumes")}>Manage</LinkButton></div><DataTable embedded loading={volumes.loading} columns={[{key:"name",label:"Volume"},{key:"size",label:"Size"},{key:"usage",label:"Used"}]} rows={volumeRows.slice(0,6).map(v=>({key:idOf(v),cells:{name:<strong>{text(v.name)}</strong>,size:formatBytes(v.sizeBytes),usage:formatBytes(v.usedSizeBytes)}}))} empty={<EmptyState icon={<VolumeIcon/>} title="No volumes" description="Create a persistent volume when an application needs durable storage."/>}/></Card><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Domains & registries</h2><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"domains")}>Routing</LinkButton></div><div className="divide-y divide-[#E1E7F0]">{domainRows.slice(0,4).map(d=><div key={idOf(d)} className="flex items-center justify-between gap-3 px-5 py-3"><div className="min-w-0"><strong className="block truncate text-[13px]">{text(d.hostname,text(d.fqdn,text(d.prefix,"Domain")))}</strong><span className="text-xs text-[#718096]">{text(d.type,"Managed")}</span></div><StatusText tone={statusTone(d.status??d.verificationStatus)}>{text(d.status,text(d.verificationStatus,"Configured"))}</StatusText></div>)}{!domainRows.length&&!domains.loading?<div className="p-5"><EmptyState icon={<GlobeIcon/>} title="No domains" description="Add a domain to route HTTP traffic to applications."/></div>:null}<div className="flex flex-wrap gap-2 px-5 py-4"><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"registries")}>{registryRows.length} registries</LinkButton><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"domains")}>{domainRows.length} domains</LinkButton></div></div></Card></div></main>;
+export function TenantStoragePage({tenantId}:{tenantId:string}) {
+  const root=`/api/tenants/${encodeURIComponent(tenantId)}`;
+  const volumes=useApi<unknown>(`${root}/volumes`);
+  const registries=useApi<unknown>(`${root}/registries`);
+  const volumeRows=items<R>(volumes.data);
+  const registryRows=items<R>(registries.data);
+  return <main>
+    <PageHeader eyebrow="Tenant resources" title="Storage" description="Persistent volumes and container image registries for this tenant."/>
+    <Tabs label="Storage sections" items={[
+      {label:"Overview",href:tenantHref(tenantId,"storage"),active:true},
+      {label:"Volumes",href:tenantHref(tenantId,"volumes")},
+      {label:"Registries",href:tenantHref(tenantId,"registries")},
+    ]}/>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <ResourceSummary title="Volumes" description="Persistent storage allocated to application workloads." href={tenantHref(tenantId,"volumes")} count={volumeRows.length} icon={<VolumeIcon/>} loading={volumes.loading} error={volumes.error}/>
+      <ResourceSummary title="Registries" description="Private and public container image sources." href={tenantHref(tenantId,"registries")} count={registryRows.length} icon={<RegistryIcon/>} loading={registries.loading} error={registries.error}/>
+    </div>
+    <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><div><h2 className="font-semibold">Volumes</h2><p className="mt-0.5 text-xs text-[#718096]">Durable data attached to applications.</p></div><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"volumes")}>Manage</LinkButton></div>
+        <DataTable embedded loading={volumes.loading} columns={[{key:"name",label:"Volume"},{key:"size",label:"Size"},{key:"usage",label:"Used"}]} rows={volumeRows.slice(0,6).map(v=>({key:idOf(v),cells:{name:<strong>{text(v.name)}</strong>,size:formatBytes(v.sizeBytes),usage:formatBytes(v.usedSizeBytes)}}))} empty={<EmptyState icon={<VolumeIcon/>} title="No volumes" description="Create a persistent volume when an application needs durable storage."/>}/>
+      </Card>
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><div><h2 className="font-semibold">Registries</h2><p className="mt-0.5 text-xs text-[#718096]">Image sources available to tenant applications.</p></div><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"registries")}>Manage</LinkButton></div>
+        <DataTable embedded loading={registries.loading} columns={[{key:"name",label:"Registry"},{key:"host",label:"Host"},{key:"status",label:"Status"}]} rows={registryRows.slice(0,6).map(r=>({key:idOf(r),cells:{name:<strong>{text(r.name,"Registry")}</strong>,host:text(r.host,text(r.server,"—")),status:<StatusText tone={statusTone(r.status)}>{text(r.status,"Configured")}</StatusText>}}))} empty={<EmptyState icon={<RegistryIcon/>} title="No registries" description="Add a registry when an application image is not pulled from the default public source."/>}/>
+      </Card>
+    </div>
+  </main>;
 }
+
+// Compatibility for old imports while /storage-networking redirects to the Storage view.
+export const TenantStorageNetworking = TenantStoragePage;
 
 export function TenantAccess({tenantId}:{tenantId:string}) {
   const root=`/api/tenants/${encodeURIComponent(tenantId)}`; const memberships=useApi<unknown>(`${root}/memberships`); const invitations=useApi<unknown>(`${root}/invitations`); const roles=useApi<unknown>(`${root}/roles`); const groups=useApi<unknown>(`${root}/groups`); const idps=useApi<unknown>(`${root}/identity-providers`); const oauth=useApi<unknown>(`${root}/oauth-applications`); const identities=useApi<unknown>(`${root}/service-identities`);
@@ -68,7 +89,6 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
   const root=`/api/tenants/${encodeURIComponent(tenantId)}`;
   const billing=useApi<R>(`${root}/billing`);
   const quota=useApi<R|undefined>(`${root}/quota`);
-  const transactions=useApi<unknown>(`${root}/billing/transactions`);
   const [usageRange,setUsageRange]=useState<BillingUsageRange>("7d");
   const usagePath=useMemo(()=>{
     const params=new URLSearchParams({bucket:billingUsageBucket(usageRange)});
@@ -113,7 +133,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
     try{
       await apiRequest(`${root}/billing/vouchers/redeem`,{method:"POST",body:{code}});
       setVoucherCode("");
-      await Promise.all([billing.reload(),transactions.reload()]);
+      await billing.reload();
       toast.success("Voucher redeemed and credits added.");
     }catch(c){
       toast.errorFrom(c,"Voucher could not be redeemed.");
@@ -122,12 +142,11 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
     }
   }
 
-  const txRows=items<R>(transactions.data);
   const usageRows=items<R>(usage.data);
   const state=text(billing.data?.billingState,text(billing.data?.state,"Unknown"));
 
   return <main>
-    <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota, usage and account transactions."/>
+    <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota and usage over time."/>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={`${text(billing.data?.balanceCredits,text(billing.data?.balance,"0"))} credits`} detail={<>≈ {text(billing.data?.balancePln,"0")} PLN</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
       <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={text(quota.data?.cpu,"—")} detail="cores"/>
@@ -171,25 +190,6 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
         <BillingUsageCharts rows={usageRows} loading={usage.loading} error={usage.error} range={usageRange} onRangeChange={setUsageRange}/>
       </Card>
 
-      <Card className="overflow-hidden">
-        <div className="border-b border-[#E1E7F0] px-5 py-4">
-          <h2 className="font-semibold">Transactions</h2>
-        </div>
-        <DataTable
-          embedded
-          loading={transactions.loading}
-          columns={[{key:"type",label:"Type"},{key:"amount",label:"Amount"},{key:"time",label:"Timestamp"}]}
-          rows={txRows.slice(0,20).map(t=>({
-            key:idOf(t)||`${text(t.type)}-${text(t.createdAt)}`,
-            cells:{
-              type:<strong>{text(t.type,"Transaction")}</strong>,
-              amount:billingAmount(t,"amountCredits","amountPln"),
-              time:formatDate(t.createdAt),
-            },
-          }))}
-          empty={<EmptyState icon={<BillingIcon/>} title="No transactions" description="Billing transactions will appear here."/>}
-        />
-      </Card>
     </div>
   </main>;
 }

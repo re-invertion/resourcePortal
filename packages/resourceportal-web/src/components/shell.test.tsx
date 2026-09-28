@@ -13,7 +13,7 @@ describe("AppShell", () => {
   it("matches the final Penpot tenant navigation hierarchy", () => {
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
     const nav = screen.getByRole("navigation", { name: "Workspace" });
-    for (const label of ["Overview", "Applications", "Storage & Networking", "Billing", "Access", "Activity"]) expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
+    for (const label of ["Overview", "Applications", "Storage", "Networking", "Billing", "Access", "Activity", "Settings"]) expect(within(nav).getByRole("link", { name: label })).toBeTruthy();
     expect(within(nav).getByRole("link", { name: "Applications" }).getAttribute("href")).toBe("/tenants/tenant-1/applications");
     expect(within(nav).getByRole("link", { name: "Applications" }).getAttribute("aria-current")).toBe("page");
   });
@@ -167,10 +167,10 @@ describe("AppShell", () => {
 
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     const links = within(breadcrumb).getAllByRole("link");
-    expect(links.map((link) => link.textContent)).toEqual(["Tenant", "Storage & Networking", "Volumes"]);
+    expect(links.map((link) => link.textContent)).toEqual(["Tenant", "Storage", "Volumes"]);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/tenants/tenant-1/overview",
-      "/tenants/tenant-1/storage-networking",
+      "/tenants/tenant-1/storage",
       "/tenants/tenant-1/volumes",
     ]);
     expect(links.at(-1)?.getAttribute("aria-current")).toBe("page");
@@ -202,9 +202,7 @@ describe("AppShell", () => {
       "Tenant",
       "Applications",
       "demo-stack",
-      "Apps",
       "web",
-      "Edit",
       "Networking",
     ]);
     expect(within(breadcrumb).getByRole("link", { name: "Applications" }).getAttribute("href")).toBe("/tenants/tenant-1/applications");
