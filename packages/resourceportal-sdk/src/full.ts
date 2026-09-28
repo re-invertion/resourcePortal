@@ -76,6 +76,12 @@ export type PlatformEmailState = {
   lastValidatedAt: string | null;
   lastTestSentAt: string | null;
   lastError: string | null;
+  zitadelSync: {
+    status: "Synced" | "Disabled" | "Pending" | "NotConfigured" | "Error";
+    providerId: string | null;
+    lastSyncedAt: string | null;
+    error: string | null;
+  };
   updatedAt: string;
 };
 

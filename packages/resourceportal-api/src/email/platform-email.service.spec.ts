@@ -21,6 +21,9 @@ function baseState(overrides: Record<string, unknown> = {}) {
     lastValidatedAt: null,
     lastTestSentAt: null,
     lastError: null,
+    zitadelProviderId: null,
+    lastZitadelSyncAt: null,
+    lastZitadelSyncError: null,
     updatedBy: null,
     createdAt: new Date("2026-09-27T16:00:00.000Z"),
     updatedAt: new Date("2026-09-27T16:00:00.000Z"),
@@ -29,13 +32,15 @@ function baseState(overrides: Record<string, unknown> = {}) {
 }
 
 function serviceFor(state: ReturnType<typeof baseState>) {
-  const update = vi.fn(({ data }: { data: Record<string, unknown> }) =>
-    Promise.resolve({
-      ...state,
+  let persisted = { ...state };
+  const update = vi.fn(({ data }: { data: Record<string, unknown> }) => {
+    persisted = {
+      ...persisted,
       ...data,
       updatedAt: new Date("2026-09-27T16:30:00.000Z"),
-    }),
-  );
+    };
+    return Promise.resolve({ ...persisted });
+  });
   const auditCreate = vi.fn().mockResolvedValue({});
   const tx = {
     platformEmailSettings: { update },
@@ -43,7 +48,7 @@ function serviceFor(state: ReturnType<typeof baseState>) {
   };
   const prisma = {
     platformEmailSettings: {
-      upsert: vi.fn().mockResolvedValue(state),
+      upsert: vi.fn(() => Promise.resolve({ ...persisted })),
       update,
     },
     auditLogEntry: { create: auditCreate },
@@ -60,10 +65,19 @@ function serviceFor(state: ReturnType<typeof baseState>) {
       key === "PUBLIC_API_URL" ? "https://resource-portal.example" : fallback,
     ),
   };
+  const zitadelEmail = {
+    reconcile: vi.fn().mockResolvedValue({ providerId: "zitadel-smtp-1" }),
+  };
   return {
     prisma,
     encryption,
-    service: new PlatformEmailService(prisma as never, encryption as never, config as never),
+    zitadelEmail,
+    service: new PlatformEmailService(
+      prisma as never,
+      encryption as never,
+      config as never,
+      zitadelEmail as never,
+    ),
   };
 }
 
@@ -156,5 +170,60 @@ describe("PlatformEmailService", () => {
     expect(message.to).toBe("alice@example.com");
     expect(message.subject).toBe("Invitation to Acme on ResourcePortal");
     expect(message.text).toContain("https://resource-portal.example/invitations/opaque-token");
+  });
+
+  it("synchronizes saved SMTP settings to ZITADEL without exposing the password", async () => {
+    const state = baseState();
+    const { service, zitadelEmail } = serviceFor(state);
+
+    const result = await service.updatePlatformState({
+      enabled: true,
+      host: "smtp.example.com",
+      port: 587,
+      mode: "STARTTLS",
+      username: "resourceportal",
+      password: "secret",
+      fromEmail: "noreply@example.com",
+      fromName: "ResourcePortal",
+      replyTo: "support@example.com",
+    }, actor);
+
+    expect(zitadelEmail.reconcile).toHaveBeenCalledWith({
+      enabled: true,
+      host: "smtp.example.com",
+      port: 587,
+      mode: "STARTTLS",
+      username: "resourceportal",
+      password: "secret",
+      fromEmail: "noreply@example.com",
+      fromName: "ResourcePortal",
+      replyTo: "support@example.com",
+    });
+    expect(result.zitadelSync.status).toBe("Synced");
+    expect(result.zitadelSync.providerId).toBe("zitadel-smtp-1");
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("keeps the saved SMTP settings and reports a separate ZITADEL sync error", async () => {
+    const state = baseState();
+    const { service, zitadelEmail } = serviceFor(state);
+    zitadelEmail.reconcile.mockRejectedValueOnce(
+      new Error("ZITADEL SMTP synchronization failed with HTTP 503"),
+    );
+
+    const result = await service.updatePlatformState({
+      enabled: false,
+      host: "smtp.example.com",
+      port: 587,
+      mode: "STARTTLS",
+      fromEmail: "noreply@example.com",
+      fromName: "ResourcePortal",
+    }, actor);
+
+    expect(result.enabled).toBe(false);
+    expect(result.zitadelSync.status).toBe("Error");
+    expect(result.zitadelSync.error).toBe(
+      "ZITADEL SMTP synchronization failed with HTTP 503",
+    );
   });
 });

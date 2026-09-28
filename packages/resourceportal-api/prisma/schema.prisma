@@ -351,10 +351,13 @@ model PlatformEmailSettings {
   fromEmail           String?
   fromName            String?
   replyTo             String?
-  lastValidatedAt     DateTime?
-  lastTestSentAt      DateTime?
-  lastError           String?   @db.Text
-  updatedBy           String?   @db.Uuid
+  lastValidatedAt      DateTime?
+  lastTestSentAt       DateTime?
+  lastError            String?   @db.Text
+  zitadelProviderId    String?
+  lastZitadelSyncAt    DateTime?
+  lastZitadelSyncError String?   @db.Text
+  updatedBy            String?   @db.Uuid
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 }

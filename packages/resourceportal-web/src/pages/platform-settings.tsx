@@ -30,6 +30,12 @@ type EmailState = {
   lastValidatedAt?: string | null;
   lastTestSentAt?: string | null;
   lastError?: string | null;
+  zitadelSync?: {
+    status?: "Synced" | "Disabled" | "Pending" | "NotConfigured" | "Error";
+    providerId?: string | null;
+    lastSyncedAt?: string | null;
+    error?: string | null;
+  };
   updatedAt?: string | null;
 };
 
@@ -66,7 +72,7 @@ export function PlatformSettingsPage() {
     event.preventDefault();
     setWorking("save");
     try {
-      await apiRequest("/api/platform/email", {
+      const saved = await apiRequest<EmailState>("/api/platform/email", {
         method: "PATCH",
         body: {
           enabled,
@@ -82,7 +88,14 @@ export function PlatformSettingsPage() {
       });
       await email.reload();
       setPassword("");
-      toast.success("SMTP configuration saved.");
+      if (saved.zitadelSync?.status === "Error") {
+        toast.warning(
+          "SMTP configuration saved, but ZITADEL synchronization needs attention.",
+          saved.zitadelSync.error ?? undefined,
+        );
+      } else {
+        toast.success("SMTP configuration saved and synchronized with ZITADEL.");
+      }
     } catch (error) {
       toast.errorFrom(error, "SMTP configuration could not be saved.");
     } finally {
@@ -121,13 +134,16 @@ export function PlatformSettingsPage() {
     }
   }
 
+  const hasSyncError = email.data?.zitadelSync?.status === "Error";
   const status = email.data?.enabled
     ? email.data.configured
-      ? email.data.lastError
+      ? email.data.lastError || hasSyncError
         ? "Needs attention"
         : "Enabled"
       : "Incomplete"
-    : "Disabled";
+    : hasSyncError
+      ? "Needs attention"
+      : "Disabled";
   const tone = status === "Enabled" ? "success" : status === "Needs attention" || status === "Incomplete" ? "warning" : "neutral";
 
   return <main>
@@ -148,7 +164,7 @@ export function PlatformSettingsPage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><MailIcon size={19}/></span>
             <div>
               <h2 className="font-semibold text-[#172033]">SMTP server</h2>
-              <p className="mt-0.5 text-xs text-[#718096]">Used for ResourcePortal-generated email such as tenant invitations.</p>
+              <p className="mt-0.5 text-xs text-[#718096]">Used by ResourcePortal and synchronized to ZITADEL for identity email such as verification and password reset messages.</p>
             </div>
           </div>
         </div>
@@ -236,8 +252,10 @@ export function PlatformSettingsPage() {
             <div><dt className="text-xs text-[#718096]">Password</dt><dd className="mt-1 font-medium text-[#172033]">{email.data?.passwordConfigured ? "Configured" : "Not configured"}</dd></div>
             <div><dt className="text-xs text-[#718096]">Last connection test</dt><dd className="mt-1 font-medium text-[#172033]">{email.data?.lastValidatedAt ? formatDate(email.data.lastValidatedAt) : "Never"}</dd></div>
             <div><dt className="text-xs text-[#718096]">Last test email</dt><dd className="mt-1 font-medium text-[#172033]">{email.data?.lastTestSentAt ? formatDate(email.data.lastTestSentAt) : "Never"}</dd></div>
+            <div><dt className="text-xs text-[#718096]">ZITADEL synchronization</dt><dd className="mt-1 font-medium text-[#172033]">{email.data?.zitadelSync?.status ?? "Unknown"}{email.data?.zitadelSync?.lastSyncedAt ? ` · ${formatDate(email.data.zitadelSync.lastSyncedAt)}` : ""}</dd></div>
           </dl>
           {email.data?.lastError ? <div className="mt-5"><Callout tone="warning" title="Last SMTP error">{email.data.lastError}</Callout></div> : null}
+          {email.data?.zitadelSync?.error ? <div className="mt-5"><Callout tone="warning" title="ZITADEL SMTP synchronization">{email.data.zitadelSync.error}</Callout></div> : null}
         </Card>
 
         <Card className="p-5">

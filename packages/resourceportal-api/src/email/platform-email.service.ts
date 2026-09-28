@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, Injectable } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Injectable, type OnApplicationBootstrap } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, type PlatformEmailSettings } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import type { SendTestEmailDto } from "./dto/send-test-email.dto";
 import type { UpdatePlatformEmailDto } from "./dto/update-platform-email.dto";
+import { ZitadelEmailProviderService } from "./zitadel-email-provider.service";
 
 export const PLATFORM_EMAIL_SETTINGS_ID = "3cbd2e90-5478-46b4-a828-1d1fa7cddc07";
 
@@ -20,12 +21,26 @@ type DeliveryResult = {
 };
 
 @Injectable()
-export class PlatformEmailService {
+export class PlatformEmailService implements OnApplicationBootstrap {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly config: ConfigService,
+    private readonly zitadelEmail: ZitadelEmailProviderService,
   ) {}
+
+  async onApplicationBootstrap() {
+    const state = await this.getState();
+    if (!state.enabled) {
+      if (state.zitadelProviderId || state.lastZitadelSyncError) {
+        await this.reconcileZitadel(state);
+      }
+      return;
+    }
+    if (!this.isConfigured(state)) return;
+    if (state.lastZitadelSyncAt && !state.lastZitadelSyncError) return;
+    await this.reconcileZitadel(state);
+  }
 
   async getPlatformState() {
     return this.toView(await this.getState());
@@ -78,6 +93,8 @@ export class PlatformEmailService {
           replyTo,
           lastValidatedAt: this.configurationChanged(dto) ? null : undefined,
           lastError: this.configurationChanged(dto) ? null : undefined,
+          lastZitadelSyncAt: null,
+          lastZitadelSyncError: null,
           updatedBy: actor.id,
         },
       });
@@ -109,7 +126,7 @@ export class PlatformEmailService {
       return state;
     });
 
-    return this.toView(updated);
+    return this.toView(await this.reconcileZitadel(updated));
   }
 
   async validateConnection(actor: AuthenticatedUser) {
@@ -215,6 +232,38 @@ export class PlatformEmailService {
     }
   }
 
+  private async reconcileZitadel(state: PlatformEmailSettings) {
+    try {
+      const result = await this.zitadelEmail.reconcile({
+        enabled: state.enabled,
+        host: state.host,
+        port: state.port,
+        mode: state.mode as SmtpMode,
+        username: state.username,
+        password: state.passwordCiphertext
+          ? this.encryption.decrypt(state.passwordCiphertext)
+          : undefined,
+        fromEmail: state.fromEmail,
+        fromName: state.fromName,
+        replyTo: state.replyTo,
+      });
+      return await this.prisma.platformEmailSettings.update({
+        where: { id: PLATFORM_EMAIL_SETTINGS_ID },
+        data: {
+          zitadelProviderId: result.providerId,
+          lastZitadelSyncAt: new Date(),
+          lastZitadelSyncError: null,
+        },
+      });
+    } catch (error) {
+      const message = safeZitadelSyncError(error);
+      return await this.prisma.platformEmailSettings.update({
+        where: { id: PLATFORM_EMAIL_SETTINGS_ID },
+        data: { lastZitadelSyncError: message },
+      });
+    }
+  }
+
   private async getState() {
     return this.prisma.platformEmailSettings.upsert({
       where: { id: PLATFORM_EMAIL_SETTINGS_ID },
@@ -305,6 +354,20 @@ export class PlatformEmailService {
       lastValidatedAt: state.lastValidatedAt,
       lastTestSentAt: state.lastTestSentAt,
       lastError: state.lastError,
+      zitadelSync: {
+        status: state.lastZitadelSyncError
+          ? "Error"
+          : state.lastZitadelSyncAt
+            ? state.enabled
+              ? "Synced"
+              : "Disabled"
+            : state.enabled
+              ? "Pending"
+              : "NotConfigured",
+        providerId: state.zitadelProviderId,
+        lastSyncedAt: state.lastZitadelSyncAt,
+        error: state.lastZitadelSyncError,
+      },
       updatedAt: state.updatedAt,
     };
   }
@@ -345,6 +408,17 @@ function safeSmtpError(error: unknown, fallback: string) {
     return "SMTP TLS validation failed";
   }
   return fallback;
+}
+
+function safeZitadelSyncError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("ZITADEL SMTP synchronization failed")) {
+    return message;
+  }
+  if (message.includes("ZITADEL_MANAGEMENT")) {
+    return "ZITADEL SMTP synchronization failed: management API is not configured";
+  }
+  return "ZITADEL SMTP synchronization failed";
 }
 
 function escapeHtml(value: string) {
