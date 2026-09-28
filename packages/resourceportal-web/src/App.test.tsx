@@ -84,7 +84,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.getByRole("alert").textContent).toContain("valid email");
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText(/Optional · Optional human-readable explanation/)).toBeTruthy();
+    expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
 
     expect(await screen.findByRole("heading", { name: "Review configuration" })).toBeTruthy();

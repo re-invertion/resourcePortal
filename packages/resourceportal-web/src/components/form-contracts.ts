@@ -76,7 +76,7 @@ const descriptions: Record<string, string> = {
   name: "Stable name used to identify this resource in Resource Portal.",
   displayName: "Human-readable name shown throughout Resource Portal.",
   contactEmail: "Required contact address for this tenant.",
-  description: "Optional human-readable explanation of the resource and its purpose.",
+  description: "Human-readable explanation of the resource and its purpose.",
   containerPort: "Port exposed by the application container. Valid range: 1–65535.",
   protocolMode: "Controls whether the HTTP endpoint accepts HTTP, HTTPS, both, or redirects HTTP to HTTPS.",
   protocol: "Identity federation protocol used by this identity provider.",

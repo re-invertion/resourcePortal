@@ -86,7 +86,7 @@ describe("functional Stage 20 forms", () => {
     const submit = vi.fn();
     render(<JsonPayloadForm submitLabel="Create" initialValue={{ name: "", contactEmail: "", description: "" }} onSubmit={submit} />);
 
-    expect(screen.getByText(/Optional · Optional human-readable explanation/i)).toBeTruthy();
+    expect(screen.getByText(/Optional · Human-readable explanation/i)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "broken-address" } });
     expect(screen.getByRole("alert").textContent).toContain("valid email");
 
