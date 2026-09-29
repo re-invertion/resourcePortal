@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Query,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -16,13 +17,30 @@ import {
   PlatformCorrectionDto,
   PlatformPaymentDto,
   PlatformRefundDto,
+  PlatformUsageSeriesQueryDto,
+  UsageSeriesQueryDto,
 } from "./billing.dto";
 import { BillingService } from "./billing.service";
+import { BillingReadService } from "./billing-read.service";
 
 @Controller("platform/billing")
 @UseGuards(PlatformAdminGuard)
 export class PlatformBillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly billingRead: BillingReadService,
+  ) {}
+
+  @Get("usage-series")
+  usageSeries(@Query() query: PlatformUsageSeriesQueryDto) {
+    const { tenantId, from, to, bucket } = query;
+    const usageQuery = Object.assign(new UsageSeriesQueryDto(), {
+      from,
+      to,
+      bucket,
+    });
+    return this.billingRead.usageSeries(tenantId, usageQuery);
+  }
 
   @Get("price-lists")
   listPriceLists() {

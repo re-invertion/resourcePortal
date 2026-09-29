@@ -58,7 +58,7 @@ describe("Stage 2 Permission model", () => {
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]),
     } as unknown as Reflector;
-    const guard = new TenantContextGuard(reflector, prisma, { get: vi.fn().mockReturnValue("") } as never);
+    const guard = new TenantContextGuard(reflector, prisma);
 
     await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
 
@@ -102,7 +102,7 @@ describe("Stage 2 Permission model", () => {
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]),
     } as unknown as Reflector;
-    const guard = new TenantContextGuard(reflector, prisma, { get: vi.fn().mockReturnValue("") } as never);
+    const guard = new TenantContextGuard(reflector, prisma);
 
     await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
 
@@ -117,31 +117,29 @@ describe("Stage 2 Permission model", () => {
     });
   });
 
-  it("gives platform administrators wildcard tenant access without membership", async () => {
+  it("does not let a platform administrator bypass tenant membership", async () => {
     const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
     const userId = "2694b58e-578d-4360-a3e1-eb907320b873";
     const request = { params: { tenantId }, user: { id: userId } };
-    const membershipLookup = vi.fn();
+    const membershipLookup = vi.fn().mockResolvedValue(null);
     const prisma = {
       tenantMembership: { findUnique: membershipLookup },
     } as unknown as PrismaService;
     const reflector = {
       getAllAndOverride: vi.fn().mockReturnValue(["billing.read"]),
     } as unknown as Reflector;
-    const config = {
-      get: vi.fn((key: string) => key === "PLATFORM_ADMIN_USER_IDS" ? userId : ""),
-    };
-    const guard = new TenantContextGuard(reflector, prisma, config as never);
+    const guard = new TenantContextGuard(reflector, prisma);
 
-    await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
+    await expect(guard.canActivate(contextFor(request))).rejects.toThrow(
+      "Active tenant membership is required",
+    );
 
-    expect(membershipLookup).not.toHaveBeenCalled();
-    expect(request).toMatchObject({
-      tenantContext: {
-        tenantId,
-        permissions: ["*"],
-      },
-    });
+    expect(membershipLookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId_tenantId: { userId, tenantId } },
+      }),
+    );
+    expect(request).not.toHaveProperty("tenantContext");
   });
 
 });

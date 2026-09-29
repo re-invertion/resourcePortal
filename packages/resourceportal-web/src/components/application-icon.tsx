@@ -23,6 +23,7 @@ function imageProject(image: string) {
 
 const ICON_ALIASES: Record<string, string[]> = {
   postgres: ["postgresql"],
+  penpotapp: ["penpot"],
   mongo: ["mongodb"],
   homeassistant: ["home-assistant"],
   "home-assistant-core": ["home-assistant"],
@@ -35,17 +36,41 @@ function aliasedCandidates(candidate: string) {
   return [...(ICON_ALIASES[candidate] ?? []), candidate];
 }
 
+const GENERIC_SERVICE_NAMES = new Set([
+  "api",
+  "backend",
+  "exporter",
+  "frontend",
+  "server",
+  "web",
+  "worker",
+]);
+
+function serviceFamily(name: string) {
+  const parts = slug(name).split("-").filter(Boolean);
+  if (parts.length < 2 || !GENERIC_SERVICE_NAMES.has(parts.at(-1) ?? "")) return "";
+  return parts.slice(0, -1).join("-");
+}
+
+
 export function applicationIconKey(app: AppLike) {
-  const candidate = imageProject(value(app.image)) || slug(value(app.name)) || "application";
+  const imageCandidate = imageProject(value(app.image));
+  const nameCandidate = slug(value(app.name));
+  const familyCandidate = serviceFamily(nameCandidate);
+  const candidate = GENERIC_SERVICE_NAMES.has(imageCandidate)
+    ? familyCandidate || nameCandidate || imageCandidate
+    : imageCandidate || familyCandidate || nameCandidate || "application";
   return ICON_ALIASES[candidate]?.[0] ?? candidate;
 }
 
 function selfHostedCandidates(app: AppLike) {
-  const candidates = [
-    imageProject(value(app.image)),
-    slug(value(app.name)),
-  ].filter(Boolean);
-  return Array.from(new Set(candidates.flatMap(aliasedCandidates)));
+  const imageCandidate = imageProject(value(app.image));
+  const nameCandidate = slug(value(app.name));
+  const familyCandidate = serviceFamily(nameCandidate);
+  const candidates = GENERIC_SERVICE_NAMES.has(imageCandidate)
+    ? [familyCandidate, nameCandidate, imageCandidate]
+    : [imageCandidate, familyCandidate, nameCandidate];
+  return Array.from(new Set(candidates.filter(Boolean).flatMap(aliasedCandidates)));
 }
 
 function faviconUrl(webUiUrl: string) {

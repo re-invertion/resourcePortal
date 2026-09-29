@@ -212,6 +212,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
 
   if (section === "overview") return [root, { label: "Overview", href: platformHref("overview") }];
   if (section === "tenants") return [root, { label: "Tenants", href: platformHref("tenants") }];
+  if (section === "users") return [root, { label: "Users", href: platformHref("users") }];
 
   if (section === "infrastructure" || section === "storage-backends") {
     const crumbs: Crumb[] = [root, { label: "Infrastructure", href: platformHref("infrastructure") }];

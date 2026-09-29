@@ -11,6 +11,8 @@ function installApi() {
     const url = String(input);
     if (url === "/api/health") return json({ status: "ok", service: "resource-portal-api", dependencies: { postgres: "ok" } });
     if (url === "/api/tenants") return json([]);
+    if (url === "/api/platform/tenants") return json([]);
+    if (url === "/api/platform/users") return json([]);
     if (url === "/api/platform/swarm-cluster") return json({ health: "Healthy", nodeCount: 3, managerCount: 1, lastSyncedAt: "2026-09-13T18:00:00.000Z" });
     if (url === "/api/platform/remote-locations") return json([]);
     if (url === "/api/platform/storage-backends") return json([]);
@@ -40,6 +42,7 @@ describe("Platform Admin final routes", () => {
   it.each([
     ["overview", "Platform overview"],
     ["tenants", "Tenants"],
+    ["users", "Users"],
     ["infrastructure", "Infrastructure"],
     ["identity", "Identity & access"],
     ["billing", "Billing"],
@@ -97,4 +100,57 @@ it("matches the Penpot Platform overview hierarchy with truthful platform data",
   expect(screen.getByRole("heading", { name: "Platform health" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Administration" })).toBeTruthy();
   expect(screen.queryByRole("heading", { name: "Needs attention" })).toBeNull();
+});
+
+it("keeps Platform Admin tenant inventory read-only and isolated from tenant workspaces", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/platform/tenants") {
+      return json([{
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "commerce",
+        displayName: "Commerce",
+        status: "Active",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-29T00:00:00.000Z",
+      }]);
+    }
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformPage section="tenants" />);
+
+  expect(await screen.findByText("Commerce")).toBeTruthy();
+  expect(screen.getByText("Tenant isolation is enforced")).toBeTruthy();
+  expect(screen.queryByRole("link", { name: /open|billing|activity/i })).toBeNull();
+  expect(
+    [...document.querySelectorAll("a")].some((anchor) =>
+      anchor.getAttribute("href")?.startsWith("/tenants/"),
+    ),
+  ).toBe(false);
+});
+
+it("shows the global ResourcePortal user directory in Platform Admin", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/platform/users") {
+      return json([{
+        id: "22222222-2222-4222-8222-222222222222",
+        email: "owner@example.test",
+        displayName: "Owner User",
+        status: "Active",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-29T00:00:00.000Z",
+      }]);
+    }
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformPage section="users" />);
+
+  expect(await screen.findByRole("heading", { name: "Users", level: 1 })).toBeTruthy();
+  expect(screen.getByText("Owner User")).toBeTruthy();
+  expect(screen.getByText("owner@example.test")).toBeTruthy();
 });

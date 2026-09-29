@@ -13,11 +13,13 @@ import {
   PlatformOverviewPage,
   PlatformSecurityPage,
   PlatformTenantsPage,
+  PlatformUsersPage,
 } from "./platform-final-pages";
 
 export function PlatformPage({ section, segments }: { section: string; resourceId?: string; segments?: string[] }) {
   if (section === "overview") return <PlatformOverviewPage />;
   if (section === "tenants") return <PlatformTenantsPage />;
+  if (section === "users") return <PlatformUsersPage />;
   if (section === "infrastructure" || section === "storage-backends") return <PlatformInfrastructurePage />;
   if (section === "identity") return <PlatformIdentityPage />;
   if (section === "identity-providers") return <PlatformIdentityProvidersPage />;

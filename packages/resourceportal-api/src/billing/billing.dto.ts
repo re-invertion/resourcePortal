@@ -148,3 +148,20 @@ export class UsageSeriesQueryDto extends UsageHistoryQueryDto {
   @IsIn(["15m", "2h", "12h", "1d"])
   bucket: "15m" | "2h" | "12h" | "1d" = "2h";
 }
+
+export class PlatformUsageSeriesQueryDto {
+  @IsUUID()
+  tenantId!: string;
+
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @IsOptional()
+  @IsIn(["15m", "2h", "12h", "1d"])
+  bucket: "15m" | "2h" | "12h" | "1d" = "2h";
+}
