@@ -351,7 +351,7 @@ export function PlatformBillingPage({
               error={vouchers.error}
             />
             <MetricCard
-              label="Accessible tenants"
+              label="Tenants"
               value={String(tenantRows.length)}
               icon={<UsersIcon />}
               loading={tenants.loading}
@@ -474,13 +474,17 @@ export function PlatformBillingPage({
       ) : null}
 
       {activeSection === "pricing" ? (
-        <div className="space-y-6">
-          <Card className="overflow-hidden">
-            <SectionTitle
-              eyebrow="Resources"
-              title="Compute & storage pricing"
-              description="Immutable, effective-dated tenant rates for CPU, memory, storage and GPU."
-            />
+        <Card className="overflow-hidden">
+          <SectionTitle
+            eyebrow="Pricing"
+            title="Platform pricing"
+            description="One shared pricing workspace for compute, storage, GPU and AI token rates."
+          />
+          <section aria-labelledby="compute-storage-pricing-heading">
+            <div className="px-5 py-4">
+              <h3 id="compute-storage-pricing-heading" className="text-sm font-semibold text-[#172033]">Compute & storage</h3>
+              <p className="mt-1 text-xs text-[#718096]">Immutable, effective-dated tenant rates for CPU, memory, storage and GPU.</p>
+            </div>
             <DataTable
               embedded
               className="rounded-none border-0"
@@ -571,14 +575,13 @@ export function PlatformBillingPage({
                 </Button>
               </div>
             </form>
-          </Card>
+          </section>
 
-          <Card className="overflow-hidden">
-            <SectionTitle
-              eyebrow="AI"
-              title="ResourceBot pricing"
-              description="All ResourceBot token rates are administered here rather than on the provider settings page."
-            />
+          <section className="border-t border-[#E1E7F0]" aria-labelledby="ai-pricing-heading">
+            <div className="px-5 py-4">
+              <h3 id="ai-pricing-heading" className="text-sm font-semibold text-[#172033]">AI & ResourceBot</h3>
+              <p className="mt-1 text-xs text-[#718096]">ResourceBot token rates are managed alongside compute and storage in this shared pricing workspace.</p>
+            </div>
             {aiPrices.error ? (
               <div className="p-5">
                 <Callout tone="danger" title="AI pricing unavailable">
@@ -689,8 +692,8 @@ export function PlatformBillingPage({
                 </Button>
               </div>
             </form>
-          </Card>
-        </div>
+          </section>
+        </Card>
       ) : null}
 
       {activeSection === "vouchers" ? (

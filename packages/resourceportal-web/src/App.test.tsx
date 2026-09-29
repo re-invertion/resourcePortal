@@ -45,7 +45,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.queryByText("R")).toBeNull();
     expect(screen.getByRole("button", { name: /create tenant/i })).toBeTruthy();
     expect(screen.getByRole("searchbox", { name: /search tenants/i })).toBeTruthy();
-    expect(screen.getByText("Your tenants")).toBeTruthy();
+    expect(screen.getByText("Tenants")).toBeTruthy();
     expect(screen.getByText(/signed in as/i)).toBeTruthy();
     expect(screen.getByText("u@example.test")).toBeTruthy();
     expect(screen.getByRole("link", { name: /one/ }).getAttribute("href")).toContain("/tenants/t1/overview");

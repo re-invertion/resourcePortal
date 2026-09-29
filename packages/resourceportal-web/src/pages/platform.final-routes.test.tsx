@@ -64,7 +64,7 @@ describe("Platform Admin final routes", () => {
   it("routes Billing subpages through the standard tabs", async () => {
     installApi();
     const { rerender } = render(<PlatformPage section="billing" segments={["pricing"]} />);
-    expect(await screen.findByRole("heading", { name: "Compute & storage pricing" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Platform pricing" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Pricing" }).getAttribute("aria-current")).toBe("page");
 
     rerender(<PlatformPage section="billing" segments={["vouchers"]} />);

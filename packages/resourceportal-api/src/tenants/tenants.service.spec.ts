@@ -118,3 +118,32 @@ describe("TenantsService invitation email delivery", () => {
     expect(typeof result.token).toBe("string");
   });
 });
+
+
+describe("TenantsService.listTenants", () => {
+  it("keeps regular users membership-scoped but lets platform-admin callers request all tenants", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = new TenantsService(
+      { tenant: { findMany } } as never,
+      { sendTenantInvitation: vi.fn() } as never,
+    );
+
+    await service.listTenants("user-1");
+    expect(findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          memberships: {
+            some: { userId: "user-1", status: "Active" },
+          },
+        },
+      }),
+    );
+
+    await service.listTenants("user-1", true);
+    expect(findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: undefined }),
+    );
+  });
+});
