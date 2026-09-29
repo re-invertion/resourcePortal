@@ -90,7 +90,7 @@ function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant
         </label>
 
         <div className="mt-7 min-w-0">
-          <h2 className="text-sm font-semibold text-[#42526B]">Your tenants</h2>
+          <h2 className="text-sm font-semibold text-[#42526B]">Tenants</h2>
           <div className="mt-3 min-w-0 overflow-hidden rounded-lg border border-[#D7E0EC] bg-white">
             {filtered.length ? filtered.map((tenant) => {
               const name = tenant.displayName ?? tenant.name ?? tenant.id;
