@@ -235,9 +235,10 @@ it("centralizes resource and AI tariff administration in Billing Pricing", async
 
   render(<PlatformBillingPage activeSection="pricing" />);
 
-  expect(await screen.findByRole("heading", { name: "Compute & storage pricing" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Platform pricing" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Compute & storage" })).toBeTruthy();
   expect(screen.getByRole("columnheader", { name: "GPU / h" })).toBeTruthy();
-  expect(screen.getByRole("heading", { name: "ResourceBot pricing" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "AI & ResourceBot" })).toBeTruthy();
   expect(screen.getByRole("columnheader", { name: "Embedding / 1M" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "Pricing" }).getAttribute("aria-current")).toBe("page");
 });
