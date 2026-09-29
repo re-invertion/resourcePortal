@@ -35,6 +35,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
   return [
     { label: "Overview", href: platformHref("overview"), icon: <HomeIcon />, active: route.section === "overview" },
     { label: "Tenants", href: platformHref("tenants"), icon: <UsersIcon />, active: route.section === "tenants" },
+    { label: "Users", href: platformHref("users"), icon: <UsersIcon />, active: route.section === "users" },
     { label: "Infrastructure", href: "/platform/infrastructure/storage-backends", icon: <NetworkIcon />, active: ["infrastructure", "storage-backends"].includes(route.section) },
     { label: "Identity providers", href: platformHref("identity-providers"), icon: <UsersIcon />, active: ["identity", "identity-providers"].includes(route.section) },
     { label: "Credentials", href: platformHref("credentials"), icon: <KeyIcon />, active: route.section === "credentials" },
@@ -116,7 +117,8 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
 function platformSearchNavigation(): SearchItem[] {
   return [
     { id: "platform-overview", label: "Platform Overview", description: "Platform administration dashboard", href: platformHref("overview"), category: "Navigation", keywords: "dashboard home" },
-    { id: "platform-tenants", label: "Tenants", description: "Manage tenant workspaces", href: platformHref("tenants"), category: "Navigation", keywords: "organizations workspaces" },
+    { id: "platform-tenants", label: "Tenants", description: "View tenant inventory", href: platformHref("tenants"), category: "Navigation", keywords: "organizations workspaces" },
+    { id: "platform-users", label: "Users", description: "View ResourcePortal users", href: platformHref("users"), category: "Navigation", keywords: "accounts people directory" },
     { id: "platform-storage", label: "Storage backends", description: "Platform storage infrastructure", href: "/platform/infrastructure/storage-backends", category: "Navigation", keywords: "infrastructure storage" },
     { id: "platform-identity", label: "Identity providers", description: "Platform authentication providers", href: platformHref("identity-providers"), category: "Navigation", keywords: "sso auth login" },
     { id: "platform-credentials", label: "Credentials", description: "Platform credentials", href: platformHref("credentials"), category: "Navigation", keywords: "keys secrets" },

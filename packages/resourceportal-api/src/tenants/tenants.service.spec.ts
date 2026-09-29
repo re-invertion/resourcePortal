@@ -120,8 +120,8 @@ describe("TenantsService invitation email delivery", () => {
 });
 
 
-describe("TenantsService.listTenants", () => {
-  it("keeps regular users membership-scoped but lets platform-admin callers request all tenants", async () => {
+describe("TenantsService tenant inventories", () => {
+  it("keeps the regular tenant list membership-scoped", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const service = new TenantsService(
       { tenant: { findMany } } as never,
@@ -129,8 +129,7 @@ describe("TenantsService.listTenants", () => {
     );
 
     await service.listTenants("user-1");
-    expect(findMany).toHaveBeenNthCalledWith(
-      1,
+    expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           memberships: {
@@ -139,11 +138,26 @@ describe("TenantsService.listTenants", () => {
         },
       }),
     );
+  });
 
-    await service.listTenants("user-1", true);
-    expect(findMany).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ where: undefined }),
+  it("returns a sanitized global tenant inventory for Platform Admin", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = new TenantsService(
+      { tenant: { findMany } } as never,
+      { sendTenantInvitation: vi.fn() } as never,
     );
+
+    await service.listPlatformTenants();
+    expect(findMany).toHaveBeenCalledWith({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        displayName: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   });
 });

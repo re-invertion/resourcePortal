@@ -58,6 +58,8 @@ it("matches the Penpot application edit details hierarchy", async () => {
   expect(within(navigation).getByRole("link", { name: "Runtime" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/compute");
   expect(within(navigation).getByRole("link", { name: "Configuration" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/configuration");
   expect(screen.getByTestId("application-edit-details-grid").className).toContain("md:grid-cols-2");
+  expect(screen.getByLabelText("Description")).toBeTruthy();
+  expect(screen.getByText(/update the application name, description, container image and registry settings/i)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Save changes" })).toBeTruthy();
   expect(screen.getByText(/saving creates pending App Group changes/i)).toBeTruthy();
 });

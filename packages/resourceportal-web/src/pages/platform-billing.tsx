@@ -12,11 +12,9 @@ import {
   Callout,
   Card,
   DataTable,
-  DetailList,
   Dialog,
   EmptyState,
   Field,
-  LinkButton,
   MetricCard,
   NumberInput,
   PageHeader,
@@ -28,7 +26,7 @@ import {
   statusTone,
 } from "../components/design-system";
 import { formatDate, idOf, items, text, useApi } from "../hooks/use-api";
-import { platformHref, tenantHref } from "../router/router";
+import { platformHref } from "../router/router";
 import { toast } from "../components/toast";
 
 type Row = Record<string, unknown>;
@@ -117,7 +115,7 @@ export function PlatformBillingPage({
 }: {
   activeSection?: BillingSection;
 }) {
-  const tenants = useApi<unknown>("/api/tenants", []);
+  const tenants = useApi<unknown>("/api/platform/tenants", []);
   const prices = useApi<unknown>("/api/platform/billing/price-lists", []);
   const vouchers = useApi<unknown>("/api/platform/billing/vouchers", []);
   const aiPrices = useApi<{ items: ResourceBotPrice[] }>("/api/platform/resource-bot/prices");
@@ -134,12 +132,6 @@ export function PlatformBillingPage({
   const [credits, setCredits] = useState("100");
   const [voucherExpiresAt, setVoucherExpiresAt] = useState("");
   const [createdVoucher, setCreatedVoucher] = useState<Row>();
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustment, setAdjustment] = useState({
-    amountCredits: "",
-    reason: "",
-    reference: "",
-  });
   const [resourcePrice, setResourcePrice] = useState({
     cpu: "",
     memory: "",
@@ -168,21 +160,16 @@ export function PlatformBillingPage({
     }));
   }, [resourceBot.data]);
 
-  const selectedTenant = tenantRows.find((row) => idOf(row) === tenantId);
-  const tenantRoot = tenantId ? `/api/tenants/${encodeURIComponent(tenantId)}` : undefined;
-  const billing = useApi<Row>(tenantRoot ? `${tenantRoot}/billing` : undefined);
-  const quota = useApi<Row>(tenantRoot ? `${tenantRoot}/quota` : undefined);
-  const transactions = useApi<unknown>(
-    tenantRoot ? `${tenantRoot}/billing/transactions?limit=20` : undefined,
-    [],
-  );
   const usagePath = useMemo(() => {
-    if (!tenantRoot) return undefined;
-    const params = new URLSearchParams({ bucket: billingUsageBucket(usageRange) });
+    if (!tenantId) return undefined;
+    const params = new URLSearchParams({
+      tenantId,
+      bucket: billingUsageBucket(usageRange),
+    });
     const from = billingUsageRangeFrom(usageRange);
     if (from) params.set("from", from);
-    return `${tenantRoot}/billing/usage-series?${params.toString()}`;
-  }, [tenantRoot, usageRange]);
+    return `/api/platform/billing/usage-series?${params.toString()}`;
+  }, [tenantId, usageRange]);
   const usage = useApi<unknown>(usagePath, []);
 
   async function createVoucher(event: FormEvent) {
@@ -214,31 +201,6 @@ export function PlatformBillingPage({
       toast.success("Voucher code copied.");
     } catch {
       toast.warning("Copy failed. Select the voucher code manually.");
-    }
-  }
-
-  async function adjustCredits(event: FormEvent) {
-    event.preventDefault();
-    if (!tenantId || !adjustment.amountCredits.trim() || !adjustment.reason.trim()) return;
-    setWorking("adjust");
-    try {
-      await apiRequest("/api/platform/billing/corrections", {
-        method: "POST",
-        body: {
-          tenantId,
-          amountCredits: adjustment.amountCredits.trim(),
-          reason: adjustment.reason.trim(),
-          reference: adjustment.reference.trim() || undefined,
-        },
-      });
-      await Promise.all([billing.reload(), transactions.reload()]);
-      setAdjustOpen(false);
-      setAdjustment({ amountCredits: "", reason: "", reference: "" });
-      toast.success("Tenant credits adjusted.");
-    } catch (error) {
-      toast.error(`Credit adjustment failed: ${readableError(error)}`);
-    } finally {
-      setWorking(undefined);
     }
   }
 
@@ -328,7 +290,7 @@ export function PlatformBillingPage({
       <PageHeader
         eyebrow="Platform Admin"
         title="Billing"
-        description="Tenant balances, usage, resource pricing, AI pricing and vouchers."
+        description="Platform usage visibility, resource pricing, AI pricing and vouchers."
         actions={headerAction}
       />
       <BillingTabs active={activeSection} />
@@ -336,34 +298,16 @@ export function PlatformBillingPage({
       {activeSection === "overview" ? (
         <>
           <section className="grid gap-4 sm:grid-cols-3">
-            <MetricCard
-              label="Price lists"
-              value={String(priceRows.length)}
-              icon={<BillingIcon />}
-              loading={prices.loading}
-              error={prices.error}
-            />
-            <MetricCard
-              label="Vouchers"
-              value={String(voucherRows.length)}
-              icon={<BillingIcon />}
-              loading={vouchers.loading}
-              error={vouchers.error}
-            />
-            <MetricCard
-              label="Tenants"
-              value={String(tenantRows.length)}
-              icon={<UsersIcon />}
-              loading={tenants.loading}
-              error={tenants.error}
-            />
+            <MetricCard label="Price lists" value={String(priceRows.length)} icon={<BillingIcon />} loading={prices.loading} error={prices.error} />
+            <MetricCard label="Vouchers" value={String(voucherRows.length)} icon={<BillingIcon />} loading={vouchers.loading} error={vouchers.error} />
+            <MetricCard label="Tenants" value={String(tenantRows.length)} icon={<UsersIcon />} loading={tenants.loading} error={tenants.error} />
           </section>
 
           <Card className="mt-6 overflow-hidden">
             <SectionTitle
-              eyebrow="Tenant billing"
-              title="Inspect a tenant"
-              description="Select a tenant to inspect account state, quota and the same usage chart exposed to Tenant Admin."
+              eyebrow="Tenant isolation"
+              title="Usage by tenant"
+              description="Platform Admin can inspect aggregate usage charts only. Tenant billing state, quota, transactions, applications and activity remain tenant-private."
             />
             <div className="p-5">
               <Field label="Tenant">
@@ -376,91 +320,8 @@ export function PlatformBillingPage({
                   ))}
                 </Select>
               </Field>
-
-              {tenantId ? (
-                <>
-                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                    <div className="min-w-0 rounded-lg border border-[#E1E7F0] bg-[#F8FAFD] p-4">
-                      <h3 className="text-sm font-semibold">Account</h3>
-                      {billing.loading ? (
-                        <p className="mt-3 text-sm text-[#718096]">Loading billing state…</p>
-                      ) : billing.error ? (
-                        <p className="mt-3 text-sm text-[#C42B1C]">{readableError(billing.error)}</p>
-                      ) : (
-                        <div className="mt-3">
-                          <DetailList
-                            items={[
-                              {
-                                label: "State",
-                                value: text(
-                                  valueOf(billing.data, "billingState", "state"),
-                                  "Unknown",
-                                ),
-                              },
-                              {
-                                label: "Balance",
-                                value: `${numberText(
-                                  valueOf(billing.data, "balanceCredits", "balance"),
-                                  "0",
-                                )} credits`,
-                              },
-                              {
-                                label: "PLN",
-                                value: numberText(valueOf(billing.data, "balancePln"), "0"),
-                              },
-                            ]}
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="min-w-0 rounded-lg border border-[#E1E7F0] bg-[#F8FAFD] p-4">
-                      <h3 className="text-sm font-semibold">Quota</h3>
-                      {quota.loading ? (
-                        <p className="mt-3 text-sm text-[#718096]">Loading quota…</p>
-                      ) : quota.error ? (
-                        <p className="mt-3 text-sm text-[#C42B1C]">{readableError(quota.error)}</p>
-                      ) : (
-                        <div className="mt-3">
-                          <DetailList
-                            items={[
-                              { label: "CPU", value: numberText(quota.data?.cpu) },
-                              { label: "Memory bytes", value: numberText(quota.data?.memoryBytes) },
-                              { label: "Storage bytes", value: numberText(quota.data?.storageBytes) },
-                              { label: "GPU", value: numberText(quota.data?.gpu) },
-                            ]}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {selectedTenant ? (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <LinkButton href={tenantHref(tenantId, "billing")}>
-                        Open {text(valueOf(selectedTenant, "displayName", "name"), "tenant")} billing
-                      </LinkButton>
-                      <Button onClick={() => setAdjustOpen(true)}>Adjust credits</Button>
-                    </div>
-                  ) : null}
-                </>
-              ) : (
-                <div className="mt-5">
-                  <EmptyState
-                    title="Select a tenant"
-                    description="Billing state, quota and usage remain tenant-scoped."
-                  />
-                </div>
-              )}
             </div>
-          </Card>
-
-          {tenantId ? (
-            <Card className="mt-6 overflow-hidden">
-              <SectionTitle
-                title="Usage"
-                description="Same usage-series endpoint, ranges, metric groups and chart controls as Tenant Billing."
-              />
+            {tenantId ? (
               <BillingUsageCharts
                 rows={items<Row>(usage.data)}
                 loading={usage.loading}
@@ -468,11 +329,14 @@ export function PlatformBillingPage({
                 range={usageRange}
                 onRangeChange={setUsageRange}
               />
-            </Card>
-          ) : null}
+            ) : (
+              <div className="px-5 pb-5">
+                <EmptyState title="Select a tenant" description="Only aggregate usage charts are exposed to Platform Admin." />
+              </div>
+            )}
+          </Card>
         </>
       ) : null}
-
       {activeSection === "pricing" ? (
         <Card className="overflow-hidden">
           <SectionTitle
@@ -845,65 +709,6 @@ export function PlatformBillingPage({
         )}
       </Dialog>
 
-      <Dialog
-        open={adjustOpen}
-        onClose={() => setAdjustOpen(false)}
-        title="Adjust tenant credits"
-        description="Platform Admin only. Positive values add credits; negative values remove credits. Every adjustment is written to the billing ledger and audit log."
-        actions={
-          <>
-            <Button onClick={() => setAdjustOpen(false)}>Cancel</Button>
-            <Button
-              variant="primary"
-              type="submit"
-              form="credit-adjustment-form"
-              disabled={
-                !tenantId ||
-                !adjustment.amountCredits.trim() ||
-                !adjustment.reason.trim() ||
-                working === "adjust"
-              }
-            >
-              Apply adjustment
-            </Button>
-          </>
-        }
-      >
-        <form
-          id="credit-adjustment-form"
-          className="space-y-4"
-          onSubmit={(event) => void adjustCredits(event)}
-        >
-          <Field label="Credit adjustment" required hint="Examples: 100 adds credits, -25 removes credits.">
-            <TextInput
-              inputMode="decimal"
-              value={adjustment.amountCredits}
-              onChange={(event) =>
-                setAdjustment({ ...adjustment, amountCredits: event.target.value })
-              }
-              placeholder="100 or -25"
-            />
-          </Field>
-          <Field label="Reason" required>
-            <TextInput
-              value={adjustment.reason}
-              onChange={(event) =>
-                setAdjustment({ ...adjustment, reason: event.target.value })
-              }
-              placeholder="Administrative balance correction"
-            />
-          </Field>
-          <Field label="Reference">
-            <TextInput
-              value={adjustment.reference}
-              onChange={(event) =>
-                setAdjustment({ ...adjustment, reference: event.target.value })
-              }
-              placeholder="Optional ticket or invoice reference"
-            />
-          </Field>
-        </form>
-      </Dialog>
     </main>
   );
 }

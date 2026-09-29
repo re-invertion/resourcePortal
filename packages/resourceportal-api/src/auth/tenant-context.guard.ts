@@ -5,20 +5,17 @@ import {
   Injectable,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { ConfigService } from "@nestjs/config";
 import { MembershipStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
 import { isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { REQUIRED_PERMISSIONS_KEY } from "./auth.constants";
-import { isPlatformAdminUser } from "./platform-admin.guard";
 
 @Injectable()
 export class TenantContextGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -42,14 +39,6 @@ export class TenantContextGuard implements CanActivate {
 
     if (!request.user) {
       throw new ForbiddenException("Authenticated user is required");
-    }
-
-    if (await isPlatformAdminUser(this.config, this.prisma, request.user)) {
-      request.tenantContext = {
-        tenantId,
-        permissions: ["*"],
-      };
-      return true;
     }
 
     const membership = await this.prisma.tenantMembership.findUnique({

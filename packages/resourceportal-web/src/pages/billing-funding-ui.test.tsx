@@ -110,72 +110,41 @@ describe("billing funding UI", () => {
     expect(screen.queryByText("Transactions")).toBeNull();
   });
 
-  it("lets Platform Admin adjust tenant credits through the correction endpoint", async () => {
+  it("does not expose tenant-scoped billing details or adjustment controls to Platform Admin", async () => {
     const tenantId = "44444444-4444-4444-8444-444444444444";
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+      if (url === "/api/platform/tenants") return json([{ id: tenantId, name: "Commerce", displayName: "Commerce" }]);
       if (url === "/api/platform/billing/price-lists") return json([]);
       if (url === "/api/platform/billing/vouchers") return json([]);
-      if (url === `/api/tenants/${tenantId}/billing`) return json({ balanceCredits: "100", billingState: "Active" });
-      if (url === `/api/tenants/${tenantId}/quota`) return json({});
-      if (url === `/api/tenants/${tenantId}/billing/transactions?limit=20`) return json([]);
-      if (url === `/api/tenants/${tenantId}/billing/usage-records?limit=20`) return json([]);
-      if (url === "/api/platform/billing/corrections" && method === "POST") {
-        return json({ billing: { balanceCredits: "150" } });
-      }
-      return json({ error: { message: `Unexpected ${method} ${url}` } }, 404);
+      if (url === "/api/platform/resource-bot/prices") return json({ items: [] });
+      if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", generationModel: "gpt-5.6-luna" });
+      if (url.startsWith("/api/platform/billing/usage-series?")) return json({ items: [] });
+      return json({ error: { message: `Unexpected ${url}` } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<PlatformBillingPage />);
+    fireEvent.change(await screen.findByLabelText("Tenant"), { target: { value: tenantId } });
 
-    await screen.findByRole("heading", { name: "Billing", level: 1 });
-    fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: tenantId } });
-    await screen.findByRole("button", { name: "Adjust credits" });
-    fireEvent.click(screen.getByRole("button", { name: "Adjust credits" }));
-
-    fireEvent.change(screen.getByPlaceholderText("100 or -25"), {
-      target: { value: "50" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Administrative balance correction"), {
-      target: { value: "Support-approved correction" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Optional ticket or invoice reference"), {
-      target: { value: "TICKET-123" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Apply adjustment" }));
-
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        ([input, init]) =>
-          String(input) === "/api/platform/billing/corrections" &&
-          init?.method === "POST",
-      );
-      expect(call).toBeTruthy();
-      expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-        tenantId,
-        amountCredits: "50",
-        reason: "Support-approved correction",
-        reference: "TICKET-123",
-      });
-    });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/platform/billing/usage-series?"))).toBe(true));
+    expect(screen.queryByText("Account")).toBeNull();
+    expect(screen.queryByText("Quota")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Adjust credits" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /open .* billing/i })).toBeNull();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith(`/api/tenants/${tenantId}/`))).toBe(false);
   });
 });
-it("uses the tenant usage-series contract and identical chart controls in Platform Billing", async () => {
+it("uses the platform usage-series contract and identical chart controls in Platform Billing", async () => {
   const tenantId = "44444444-4444-4444-8444-444444444444";
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+    if (url === "/api/platform/tenants") return json([{ id: tenantId, name: "Commerce" }]);
     if (url === "/api/platform/billing/price-lists") return json([]);
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/resource-bot/prices") return json({ items: [] });
     if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", generationModel: "gpt-5.6-luna" });
-    if (url === `/api/tenants/${tenantId}/billing`) return json({ balanceCredits: "100", billingState: "Active" });
-    if (url === `/api/tenants/${tenantId}/quota`) return json({ cpu: 2, memoryBytes: 1024, storageBytes: 2048, gpu: 0 });
-    if (url === `/api/tenants/${tenantId}/billing/transactions?limit=20`) return json([]);
-    if (url.startsWith(`/api/tenants/${tenantId}/billing/usage-series?`)) {
+    if (url.startsWith("/api/platform/billing/usage-series?")) {
       return json({ items: [{
         id: "usage-1",
         periodStart: "2026-09-28T12:00:00.000Z",
@@ -192,14 +161,15 @@ it("uses the tenant usage-series contract and identical chart controls in Platfo
   render(<PlatformBillingPage />);
   fireEvent.change(await screen.findByLabelText("Tenant"), { target: { value: tenantId } });
 
-  expect(await screen.findByRole("heading", { name: "Usage" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Usage by tenant" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "7d" }).getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByRole("button", { name: "Credits" }).getAttribute("aria-pressed")).toBe("true");
 
   const usageUrl = String(fetchMock.mock.calls.find(([input]) =>
-    String(input).startsWith(`/api/tenants/${tenantId}/billing/usage-series?`),
+    String(input).startsWith("/api/platform/billing/usage-series?"),
   )?.[0]);
   const params = new URL(usageUrl, "http://resourceportal.test").searchParams;
+  expect(params.get("tenantId")).toBe(tenantId);
   expect(params.get("bucket")).toBe("2h");
   expect(params.get("from")).toBeTruthy();
 });
@@ -207,7 +177,7 @@ it("uses the tenant usage-series contract and identical chart controls in Platfo
 it("centralizes resource and AI tariff administration in Billing Pricing", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/tenants") return json([]);
+    if (url === "/api/platform/tenants") return json([]);
     if (url === "/api/platform/billing/vouchers") return json([]);
     if (url === "/api/platform/billing/price-lists") return json([{
       id: "price-1",
@@ -254,7 +224,7 @@ it("shows persistent voucher codes and captures an optional expiration date when
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    if (url === "/api/tenants") return json([]);
+    if (url === "/api/platform/tenants") return json([]);
     if (url === "/api/platform/billing/price-lists") return json([]);
     if (url === "/api/platform/billing/vouchers" && method === "GET") {
       return json([{

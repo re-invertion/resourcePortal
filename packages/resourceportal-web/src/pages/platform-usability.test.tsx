@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PlatformPage } from "./platform";
 import { ToastViewport } from "../components/toast";
@@ -64,31 +64,26 @@ describe("platform action feedback", () => {
 
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Maintenance state saved"));
   });
-  it("uses the tenant audit-log endpoint for Platform Security diagnostics", async () => {
-    const tenantId = "55555555-5555-4555-8555-555555555555";
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
-      return json([]);
-    });
+  it("does not read tenant operations or audit data from Platform Security", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => json([]));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<PlatformPage section="security" />);
-    await screen.findByRole("heading", { name: "Security & operations", level: 1 });
-    fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: tenantId } });
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/operations`)).toBe(true));
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/audit-log?limit=50`)).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes(`/${tenantId}/audit?`))).toBe(false);
+    expect(await screen.findByRole("heading", { name: "Security & operations", level: 1 })).toBeTruthy();
+    expect(screen.getByText("Tenant security data is private")).toBeTruthy();
+    expect(screen.getByText("Tenant data remains tenant-scoped")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/tenants/"))).toBe(false);
   });
 
-  it("uses the real tenant billing and usage endpoints in Platform Billing", async () => {
+  it("uses only the platform aggregate usage endpoint in Platform Billing", async () => {
     const tenantId = "44444444-4444-4444-8444-444444444444";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+      if (url === "/api/platform/tenants") return json([{ id: tenantId, name: "Commerce" }]);
       if (url === "/api/platform/billing/price-lists") return json([]);
       if (url === "/api/platform/billing/vouchers") return json([]);
+      if (url.startsWith("/api/platform/billing/usage-series?")) return json({ items: [] });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -97,25 +92,26 @@ describe("platform action feedback", () => {
     await screen.findByRole("heading", { name: "Billing", level: 1 });
     fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: tenantId } });
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/billing`)).toBe(true));
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === `/api/tenants/${tenantId}/quota`)).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith(`/api/tenants/${tenantId}/billing/usage-series?`))).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/usage-records"))).toBe(false);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/quota"))).toBe(false);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/billing/usage?"))).toBe(false);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/platform/billing/usage-series?"),
+      )).toBe(true),
+    );
+    const usageUrl = String(fetchMock.mock.calls.find(([input]) =>
+      String(input).startsWith("/api/platform/billing/usage-series?"),
+    )?.[0]);
+    expect(new URL(usageUrl, "http://resourceportal.test").searchParams.get("tenantId")).toBe(tenantId);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith(`/api/tenants/${tenantId}/`))).toBe(false);
   });
 
-  it("keeps focus in Adjust tenant credits while controlled fields rerender", async () => {
+  it("does not expose tenant credit adjustment controls in Platform Billing", async () => {
     const tenantId = "44444444-4444-4444-8444-444444444444";
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/tenants") return json([{ id: tenantId, name: "Commerce" }]);
+      if (url === "/api/platform/tenants") return json([{ id: tenantId, name: "Commerce" }]);
       if (url === "/api/platform/billing/price-lists") return json([]);
       if (url === "/api/platform/billing/vouchers") return json([]);
-      if (url === `/api/tenants/${tenantId}/billing`) return json({ balanceCredits: "100" });
-      if (url === `/api/tenants/${tenantId}/quota`) return json({});
-      if (url.includes(`/api/tenants/${tenantId}/billing/transactions`)) return json([]);
-      if (url.includes(`/api/tenants/${tenantId}/billing/usage-records`)) return json([]);
+      if (url.startsWith("/api/platform/billing/usage-series?")) return json({ items: [] });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -123,23 +119,10 @@ describe("platform action feedback", () => {
     render(<PlatformPage section="billing" />);
     await screen.findByRole("heading", { name: "Billing", level: 1 });
     fireEvent.change(screen.getByLabelText("Tenant"), { target: { value: tenantId } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Adjust credits" })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Adjust credits" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "Adjust tenant credits" });
-    const amount = within(dialog).getByLabelText(/Credit adjustment/i);
-    const reason = within(dialog).getByLabelText(/Reason/i);
-
-    await waitFor(() => expect(document.activeElement).toBe(amount));
-    fireEvent.change(amount, { target: { value: "1" } });
-    expect(document.activeElement).toBe(amount);
-    fireEvent.change(amount, { target: { value: "10" } });
-    expect(document.activeElement).toBe(amount);
-
-    reason.focus();
-    fireEvent.change(reason, { target: { value: "Administrative correction" } });
-    expect(document.activeElement).toBe(reason);
-    expect(document.activeElement).not.toBe(within(dialog).getByRole("button", { name: "Close dialog" }));
+    await screen.findByRole("heading", { name: "Usage by tenant" });
+    expect(screen.queryByRole("button", { name: "Adjust credits" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Adjust tenant credits" })).toBeNull();
   });
 
   it("shows only API-backed platform identity-provider actions", async () => {

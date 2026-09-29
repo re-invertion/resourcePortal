@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { apiRequest } from "../api/client";
 import {
-  ActivityIcon,
   Button,
   Callout,
   Card,
@@ -12,7 +11,6 @@ import {
   Field,
   GridIcon,
   KeyIcon,
-  LinkButton,
   LockIcon,
   MetricCard,
   NetworkIcon,
@@ -27,8 +25,6 @@ import {
   statusTone,
 } from "../components/design-system";
 import { asRecord, formatBytes, formatDate, idOf, items, numberOf, text, useApi } from "../hooks/use-api";
-import { tenantHref } from "../router/router";
-import { auditActionLabel, auditGroupedCount, auditTimestampValue, isGroupedBillingUsage } from "../lib/audit-display";
 import { toast } from "../components/toast";
 
 type Row = Record<string, unknown>;
@@ -51,7 +47,7 @@ function ErrorCard({ label, error, retry }: { label: string; error: unknown; ret
 
 export function PlatformOverviewPage() {
   const health = useApi<Row>("/api/health");
-  const tenants = useApi<unknown>("/api/tenants", []);
+  const tenants = useApi<unknown>("/api/platform/tenants", []);
   const swarm = useApi<Row>("/api/platform/swarm-cluster");
   const backends = useApi<unknown>("/api/platform/storage-backends", []);
   const idps = useApi<unknown>("/api/platform/identity-providers", []);
@@ -78,9 +74,9 @@ export function PlatformOverviewPage() {
   ] as const;
 
   return <main>
-    <PageHeader eyebrow="Platform" title="Platform overview" description="System-wide health and administration across ResourcePortal infrastructure and accessible tenants." />
+    <PageHeader eyebrow="Platform" title="Platform overview" description="System-wide health and administration across ResourcePortal infrastructure." />
     <section aria-label="Platform summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <MetricCard label="Tenants" value={String(tenantRows.length)} icon={<UsersIcon />} loading={tenants.loading} error={tenants.error} detail="Accessible to this administrator" />
+      <MetricCard label="Tenants" value={String(tenantRows.length)} icon={<UsersIcon />} loading={tenants.loading} error={tenants.error} detail="Platform inventory" />
       <MetricCard label="Swarm nodes" value={String(nodeCount)} icon={<ServerIcon />} loading={swarm.loading} error={swarm.error} tone={statusTone(swarmState)} detail={swarmState} />
       <MetricCard label="Storage backends" value={String(backendRows.length)} icon={<NetworkIcon />} loading={backends.loading} error={backends.error} tone={unhealthyBackends.length ? "warning" : "success"} detail={unhealthyBackends.length ? `${unhealthyBackends.length} need attention` : "No known storage alerts"} />
       <MetricCard label="Identity providers" value={String(idpRows.length)} icon={<KeyIcon />} loading={idps.loading} error={idps.error} detail={`${idpRows.filter((row) => bool(row.enabled)).length} enabled`} />
@@ -106,17 +102,27 @@ export function PlatformOverviewPage() {
 }
 
 export function PlatformTenantsPage() {
-  const tenants = useApi<unknown>("/api/tenants", []);
+  const tenants = useApi<unknown>("/api/platform/tenants", []);
   const rows = items<Row>(tenants.data);
   return <main>
-    <PageHeader eyebrow="Platform Admin" title="Tenants" description="Tenant workspaces visible to the signed-in administrator, with direct access to billing, activity and administration." />
-    <Callout title="Platform-global tenant inventory is not exposed by the API">This view contains tenants returned by the current `/tenants` endpoint. It does not pretend to be a global super-admin tenant list.</Callout>
+    <PageHeader eyebrow="Platform Admin" title="Tenants" description="Platform inventory only. Tenant contents remain isolated and require an explicit tenant membership." />
+    <Callout tone="info" title="Tenant isolation is enforced">Platform Admin can see tenant identity and lifecycle state here, but this page intentionally provides no direct tenant workspace, billing, activity or administration links.</Callout>
     <section className="mt-6" aria-label="Tenant list">
-      {tenants.error ? <ErrorCard label="Tenants" error={tenants.error} retry={tenants.reload} /> : <DataTable loading={tenants.loading} columns={[{ key: "tenant", label: "Tenant" },{ key: "role", label: "Role" },{ key: "billing", label: "Billing" },{ key: "quota", label: "Quota" },{ key: "actions", label: "Actions" }]} rows={rows.map((row) => { const id = idOf(row); const name = text(valueOf(row, "displayName", "name"), "Unnamed tenant"); return { key: id || name, cells: { tenant: <div><strong className="block text-[#172033]">{name}</strong><span className="text-xs text-[#718096]">{text(row.slug, "No slug")}</span></div>, role: titleCase(row.role), billing: <StatusBadge tone={statusTone(valueOf(row, "billingState", "billingStatus", "status"))}>{titleCase(valueOf(row, "billingState", "billingStatus", "status"))}</StatusBadge>, quota: text(valueOf(row, "quota", "quotaState"), "Managed in tenant"), actions: id ? <div className="flex flex-wrap gap-2"><LinkButton className="h-8 px-3 text-xs" href={tenantHref(id, "overview")}>Open</LinkButton><LinkButton className="h-8 px-3 text-xs" href={tenantHref(id, "billing")}>Billing</LinkButton><LinkButton className="h-8 px-3 text-xs" href={tenantHref(id, "activity")}>Activity</LinkButton></div> : "—" } }; })} empty={<EmptyState icon={<UsersIcon />} title="No accessible tenants" description="The current account has no tenant memberships returned by the API." />} footer={`${rows.length} tenant${rows.length === 1 ? "" : "s"} visible`} />}
+      {tenants.error ? <ErrorCard label="Tenants" error={tenants.error} retry={tenants.reload} /> : <DataTable loading={tenants.loading} columns={[{ key: "tenant", label: "Tenant" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={rows.map((row) => { const id = idOf(row); const name = text(valueOf(row, "displayName", "name"), "Unnamed tenant"); return { key: id || name, cells: { tenant: <div><strong className="block text-[#172033]">{name}</strong><span className="text-xs text-[#718096]">{text(row.name, id || "Tenant")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }; })} empty={<EmptyState icon={<UsersIcon />} title="No tenants" description="No tenant workspaces are registered." />} footer={`${rows.length} tenant${rows.length === 1 ? "" : "s"} in platform inventory`} />}
     </section>
   </main>;
 }
 
+export function PlatformUsersPage() {
+  const users = useApi<unknown>("/api/platform/users", []);
+  const rows = items<Row>(users.data);
+  return <main>
+    <PageHeader eyebrow="Platform Admin" title="Users" description="Global ResourcePortal user directory. This does not grant access to any user tenant workspace." />
+    <section className="mt-6" aria-label="Platform users">
+      {users.error ? <ErrorCard label="Users" error={users.error} retry={users.reload} /> : <DataTable loading={users.loading} columns={[{ key: "user", label: "User" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={rows.map((row) => ({ key: idOf(row) || text(row.email), cells: { user: <div><strong className="block text-[#172033]">{text(row.displayName, "Unnamed user")}</strong><span className="text-xs text-[#718096]">{text(row.email, "No email")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }))} empty={<EmptyState icon={<UsersIcon />} title="No users" description="No ResourcePortal users are registered." />} footer={`${rows.length} user${rows.length === 1 ? "" : "s"} registered`} />}
+    </section>
+  </main>;
+}
 export function PlatformInfrastructurePage() {
   const swarm = useApi<Row>("/api/platform/swarm-cluster");
   const remotes = useApi<unknown>("/api/platform/remote-locations", []);
@@ -170,16 +176,29 @@ export function PlatformIdentityPage() {
 export { PlatformBillingPage } from "./platform-billing";
 
 export function PlatformSecurityPage() {
-  const tenants = useApi<unknown>("/api/tenants", []); const tenantRows = items<Row>(tenants.data); const [tenantId, setTenantId] = useState("");
-  const operations = useApi<unknown>(tenantId ? `/api/tenants/${encodeURIComponent(tenantId)}/operations` : undefined, []); const audit = useApi<unknown>(tenantId ? `/api/tenants/${encodeURIComponent(tenantId)}/audit-log?limit=50` : undefined, []);
-  const operationRows = items<Row>(operations.data); const auditRows = items<Row>(audit.data);
-  async function retry(row: Row) { const id = idOf(row); if (!id || !tenantId) return; try { await apiRequest(`/api/tenants/${encodeURIComponent(tenantId)}/operations/${encodeURIComponent(id)}/retry`, { method: "POST" }); await operations.reload(); toast.success("Operation retry requested."); } catch (error) { toast.error(`Retry failed: ${readableError(error)}`); } }
   return <main>
-    <PageHeader eyebrow="Platform Admin" title="Security & operations" description="Tenant-scoped operations and audit diagnostics. The backend does not expose a platform-global event feed." />
-    <Callout title="Choose a tenant to inspect real audit and operation data">Global audit, security-event and operation endpoints are not available. This page intentionally uses tenant APIs instead of synthesizing a platform-wide feed.</Callout>
-    <div className="mt-6"></div>
-    <Card className="mt-6 overflow-hidden"><SectionTitle eyebrow="Scope" title="Tenant diagnostics" /><div className="p-5"><Field label="Tenant"><Select value={tenantId} onChange={(e) => setTenantId(e.target.value)}><option value="">Select tenant</option>{tenantRows.map((row) => <option key={idOf(row)} value={idOf(row)}>{text(valueOf(row, "displayName", "name"), "Unnamed tenant")}</option>)}</Select></Field></div></Card>
-    {tenantId ? <div className="mt-6 grid gap-6 xl:grid-cols-2"><Card className="overflow-hidden"><SectionTitle eyebrow="Runtime" title="Operations" action={<LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId, "operations")}>Open full view</LinkButton>} />{operations.error ? <div className="p-5"><ErrorCard label="Operations" error={operations.error} retry={operations.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={operations.loading} columns={[{ key: "operation", label: "Operation" },{ key: "status", label: "Status" },{ key: "updated", label: "Updated" },{ key: "actions", label: "Actions" }]} rows={operationRows.slice(0,20).map((row) => { const state = text(row.status, "Unknown"); return { key: idOf(row) || text(row.type), cells: { operation: titleCase(valueOf(row, "type", "operationType", "name")), status: <StatusBadge tone={statusTone(state)}>{state}</StatusBadge>, updated: formatDate(valueOf(row, "updatedAt", "createdAt")), actions: state.toLowerCase().includes("fail") ? <Button size="sm" onClick={() => void retry(row)}>Retry</Button> : "—" } }; })} empty={<EmptyState icon={<ActivityIcon />} title="No operations" />} />}</Card><Card className="overflow-hidden"><SectionTitle eyebrow="Security" title="Audit events" action={<LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId, "audit")}>Open full view</LinkButton>} />{audit.error ? <div className="p-5"><ErrorCard label="Audit log" error={audit.error} retry={audit.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={audit.loading} columns={[{ key: "action", label: "Action" },{ key: "actor", label: "Actor" },{ key: "result", label: "Result" },{ key: "time", label: "Time" }]} rows={auditRows.slice(0,20).map((row, index) => ({ key: idOf(row) || `${text(row.action)}-${index}`, cells: { action: <div><strong>{isGroupedBillingUsage(row)?"Billing usage":titleCase(auditActionLabel(row))}</strong>{isGroupedBillingUsage(row)?<span className="mt-0.5 block text-xs font-normal text-[#718096]">{auditGroupedCount(row)} recurring usage events grouped</span>:null}</div>, actor: text(valueOf(row, "actorName", "actor"), "System"), result: <StatusBadge tone={statusTone(row.result)}>{titleCase(row.result)}</StatusBadge>, time: formatDate(auditTimestampValue(row)) } }))} empty={<EmptyState icon={<LockIcon />} title="No audit events" />} />}</Card></div> : <div className="mt-6"><EmptyState icon={<ActivityIcon />} title="Select a tenant to begin" description="Operations and audit are scoped to a tenant by the backend." /></div>}
+    <PageHeader
+      eyebrow="Platform Admin"
+      title="Security & operations"
+      description="Platform-level security controls only. Tenant operations and audit data remain isolated inside each tenant."
+    />
+    <Callout tone="info" title="Tenant security data is private">
+      Platform Admin does not receive tenant operations, audit events, application activity or retry controls. Access to those records requires an explicit membership in that tenant.
+    </Callout>
+    <Card className="mt-6 overflow-hidden">
+      <SectionTitle
+        eyebrow="Isolation"
+        title="No platform-wide tenant event feed"
+        description="ResourcePortal intentionally avoids aggregating tenant audit and operation records into Platform Admin. Usage charts are the only tenant-level aggregate exposed globally."
+      />
+      <div className="p-5">
+        <EmptyState
+          icon={<LockIcon />}
+          title="Tenant data remains tenant-scoped"
+          description="Open the tenant from a normal tenant membership when you are explicitly authorized to inspect its operations or audit trail."
+        />
+      </div>
+    </Card>
   </main>;
 }
 

@@ -49,6 +49,19 @@ describe("ApplicationIcon", () => {
     );
   });
 
+  it.each([
+    ["penpot-backend", "ghcr.io/penpotapp/backend:latest"],
+    ["penpot-exporter", "ghcr.io/penpotapp/exporter:latest"],
+  ])("resolves generic service image names back to the %s application family", (name, image) => {
+    const { container } = render(<ApplicationIcon app={{ name, image }} />);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "https://cdn.jsdelivr.net/gh/selfhst/icons/png/penpot.png",
+    );
+    expect(container.querySelector("[data-icon-key]")?.getAttribute("data-icon-key")).toBe(
+      "penpot",
+    );
+  });
+
   it("falls back to a custom application favicon after selfh.st candidates fail", () => {
     const { container } = render(
       <ApplicationIcon
