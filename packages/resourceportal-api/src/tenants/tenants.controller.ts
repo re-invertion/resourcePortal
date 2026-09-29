@@ -10,8 +10,10 @@ import {
   Query,
   UnauthorizedException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Authenticated } from "../auth/authenticated.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
+import { isPlatformAdminUser } from "../auth/platform-admin.guard";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { Public } from "../auth/public.decorator";
 import { AuthenticatedUser } from "../auth/types";
@@ -23,6 +25,7 @@ import {
 } from "../billing/billing.dto";
 import { BillingReadService } from "../billing/billing-read.service";
 import { BillingService } from "../billing/billing.service";
+import { PrismaService } from "../prisma/prisma.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
 import { AssignTenantGroupRoleDto } from "./dto/assign-tenant-group-role.dto";
@@ -42,11 +45,14 @@ export class TenantsController {
     private readonly tenantsService: TenantsService,
     private readonly billingService: BillingService,
     private readonly billingReadService: BillingReadService,
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get()
-  listTenants(@CurrentUser() user: AuthenticatedUser) {
-    return this.tenantsService.listTenants(user.id);
+  async listTenants(@CurrentUser() user: AuthenticatedUser) {
+    const includeAll = await isPlatformAdminUser(this.config, this.prisma, user);
+    return this.tenantsService.listTenants(user.id, includeAll);
   }
 
   @RequirePermissions("tenant.read")
