@@ -131,6 +131,10 @@ services:
 
   zitadel:
     image: __ZITADEL_IMAGE__
+    environment:
+      # ZITADEL otherwise hard-codes "ZITADEL" as the TOTP issuer shown by
+      # authenticator applications. Keep the identity surface branded as RP.
+      ZITADEL_SYSTEMDEFAULTS_MULTIFACTORS_OTP_ISSUER: "Resource Portal"
     command:
       - start-from-init
       - --config

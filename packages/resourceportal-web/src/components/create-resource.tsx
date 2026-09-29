@@ -32,7 +32,7 @@ const configuredResources: Record<string, Omit<ResourceCreationMeta, "resourceNa
   serviceidentities: { resourceName: "Service identity", description: "Create a non-human tenant identity for automation, integrations and service-to-service access.", outcomes: ["A service identity is created for this tenant.", "Its assigned roles control API permissions.", "One-time credentials are shown only when the backend returns them."], icon: "identity" },
 };
 
-const friendlyFieldLabels: Record<string, string> = { sizeGiB: "Size (GiB)", memoryMiB: "Memory (MiB)", cpu: "CPU", containerPort: "Container port", contactEmail: "Contact email", displayName: "Display name", registryId: "Registry", customRootDomainId: "Custom root domain", roleIds: "Roles", clientId: "Client ID", clientSecret: "Client secret", metadataUrl: "Metadata URL" };
+const friendlyFieldLabels: Record<string, string> = { sizeGiB: "Size (GiB)", memoryMiB: "Memory (MiB)", cpu: "CPU", containerPort: "Container port", contactEmail: "Contact email", displayName: "Name", registryId: "Registry", customRootDomainId: "Custom root domain", roleIds: "Roles", clientId: "Client ID", clientSecret: "Client secret", metadataUrl: "Metadata URL" };
 
 const ui = {
   workspace: "rp-create-workspace my-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm",

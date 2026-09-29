@@ -62,6 +62,7 @@ contains "$ingress" 'replicas: 0 # RP_API_REPLICAS' 'ingress state still gates A
 contains "$ingress" 'replicas: 0 # RP_WEB_REPLICAS' 'ingress state still gates Web'
 contains "$ingress" 'replicas: 1 # RP_ZITADEL_REPLICAS' 'ingress state keeps ZITADEL available'
 contains "$ingress" 'traefik.swarm.network=resourceportal-control-plane_rp-ingress' 'ZITADEL pins Traefik to ingress network'
+contains "$final" 'ZITADEL_SYSTEMDEFAULTS_MULTIFACTORS_OTP_ISSUER: "Resource Portal"' 'ZITADEL TOTP enrollment is branded as Resource Portal'
 contains "$final" 'RESOURCEPORTAL_GATE_ENDPOINT_HOST: gate.rp.example.com' 'API receives explicit public ResourcePortalGate endpoint host'
 
 # Resume can reach ingress with bootstrap already checkpointed. Ingress must

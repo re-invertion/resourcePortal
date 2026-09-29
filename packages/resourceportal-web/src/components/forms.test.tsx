@@ -82,6 +82,22 @@ describe("functional Stage 20 forms", () => {
     expect(screen.getByText(/Port exposed by the application container/i)).toBeTruthy();
   });
 
+  it("live-validates the production fallback and identifies optional fields", () => {
+    const submit = vi.fn();
+    render(<JsonPayloadForm submitLabel="Create" initialValue={{ name: "", contactEmail: "", description: "" }} onSubmit={submit} />);
+
+    expect(screen.getByText(/Optional · Human-readable explanation/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "broken-address" } });
+    expect(screen.getByRole("alert").textContent).toContain("valid email");
+
+    fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(screen.getByRole("alert").textContent).toContain("Name is required");
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("renders reference choices as selects instead of free text UUID inputs", () => {
     render(
       <JsonPayloadForm
