@@ -41,16 +41,18 @@ export class TenantsService {
     private readonly email: PlatformEmailService,
   ) {}
 
-  listTenants(userId: string) {
+  listTenants(userId: string, includeAll = false) {
     return this.prisma.tenant.findMany({
-      where: {
-        memberships: {
-          some: {
-            userId,
-            status: "Active",
+      where: includeAll
+        ? undefined
+        : {
+            memberships: {
+              some: {
+                userId,
+                status: "Active",
+              },
+            },
           },
-        },
-      },
       orderBy: { createdAt: "desc" },
       include: {
         billing: true,
