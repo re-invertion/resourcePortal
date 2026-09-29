@@ -160,6 +160,8 @@ export class ResourcePortalApiError extends BaseResourcePortalApiError {
 
 export class ResourcePortalClient extends BaseResourcePortalClient {
   readonly platformBilling = {
+    usageSeries: (tenantId: string, query: { from?: string; to?: string; bucket?: "15m" | "2h" | "12h" | "1d" } = {}) =>
+      this.request("/platform/billing/usage-series", { query: { tenantId, ...query } }),
     listPriceLists: () => this.request("/platform/billing/price-lists"),
     getPriceList: (priceListId: string) =>
       this.request(`/platform/billing/price-lists/${encode(priceListId)}`),
@@ -180,6 +182,14 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
       this.request("/platform/billing/refunds", { method: "POST", body }),
     correction: (body: unknown) =>
       this.request("/platform/billing/corrections", { method: "POST", body }),
+  };
+
+  readonly platformTenants = {
+    list: () => this.request("/platform/tenants"),
+  };
+
+  readonly platformUsers = {
+    list: () => this.request("/platform/users"),
   };
 
   readonly platformResourceBot = {

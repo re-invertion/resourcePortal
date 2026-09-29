@@ -81,7 +81,9 @@ test("classifies every API controller so new public surface cannot drift silentl
     "service-identities/platform-service-identities.controller.ts",
     "service-identities/service-identities.controller.ts",
     "storage-backends/storage-backends.controller.ts",
+    "tenants/platform-tenants.controller.ts",
     "tenants/tenants.controller.ts",
+    "users/platform-users.controller.ts",
     "users/users.controller.ts",
     "volumes/volumes.controller.ts",
   ].sort();
@@ -93,6 +95,9 @@ test("exposes every post-Stage-8 public management resource family", async () =>
   const { client, calls } = recordingClient();
 
   await client.platformBilling.listPriceLists();
+  await client.platformBilling.usageSeries("tenant id", { bucket: "2h" });
+  await client.platformTenants.list();
+  await client.platformUsers.list();
   await client.platformResourceBot.get();
   await client.platformEmail.get();
   await client.resourceBot.status("tenant id");
@@ -117,6 +122,9 @@ test("exposes every post-Stage-8 public management resource family", async () =>
     calls.map(pathOf),
     [
       "/api/platform/billing/price-lists",
+      "/api/platform/billing/usage-series",
+      "/api/platform/tenants",
+      "/api/platform/users",
       "/api/platform/resource-bot",
       "/api/platform/email",
       "/api/tenants/tenant%20id/resource-bot/status",
