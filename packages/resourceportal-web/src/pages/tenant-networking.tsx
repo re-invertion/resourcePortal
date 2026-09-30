@@ -792,7 +792,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
               </div>
             </>
           ) : (
-            <Callout>
+            <Callout title="Manual static routes">
               The LAN router must have a static route for each attached RP Network CIDR via this Gate&apos;s LAN address.
             </Callout>
           )}
