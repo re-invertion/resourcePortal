@@ -463,4 +463,171 @@ describe("NetworkingService control plane", () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it("stores eBGP configuration and derives advertised prefixes only from Gate attachments", async () => {
+    const { service, prisma, tx } = fixture();
+    const gate = {
+      id: "88888888-8888-4888-8888-888888888888",
+      tenantId: "11111111-1111-4111-8111-111111111111",
+      name: "office",
+      revokedAt: null,
+      lanAddresses: ["192.168.50.2"],
+      lanCidrs: ["192.168.50.0/24"],
+      configRevision: 3,
+    };
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
+    tx.resourcePortalGate.update.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        ...gate,
+        ...data,
+        routeAdvertisementMode: "BGP",
+        bgpLocalAsn: BigInt(65050),
+        bgpRouterAddress: "192.168.50.1",
+        bgpRouterAsn: BigInt(65001),
+        bgpSourceAddress: "192.168.50.2",
+        bgpHoldTimeSeconds: 90,
+        networks: [
+          { network: { id: "network-1", name: "backend", cidr: "10.240.10.0/24" } },
+          { network: { id: "network-2", name: "db", cidr: "10.240.20.0/24" } },
+        ],
+      }),
+    );
+
+    const result = await service.updateGateRouting(
+      "11111111-1111-4111-8111-111111111111",
+      gate.id,
+      {
+        mode: "BGP",
+        localAsn: 65050,
+        routerAddress: "192.168.50.1",
+        routerAsn: 65001,
+        sourceAddress: "192.168.50.2",
+        holdTimeSeconds: 90,
+      },
+      actor,
+    );
+
+    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: gate.id },
+        data: expect.objectContaining({
+          routeAdvertisementMode: "BGP",
+          bgpLocalAsn: BigInt(65050),
+          bgpRouterAddress: "192.168.50.1",
+          bgpRouterAsn: BigInt(65001),
+          bgpSourceAddress: "192.168.50.2",
+          configRevision: { increment: 1 },
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      routeAdvertisementMode: "BGP",
+      bgpLocalAsn: 65050,
+      bgpRouterAsn: 65001,
+      advertisedCidrs: ["10.240.10.0/24", "10.240.20.0/24"],
+    });
+    expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "gate.routing.update",
+        resourceType: "ResourcePortalGate",
+        resourceId: gate.id,
+      }),
+    });
+  });
+
+  it("requires enrolled LAN addressing before BGP can be enabled", async () => {
+    const { service, prisma } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
+      id: "88888888-8888-4888-8888-888888888888",
+      name: "office",
+      revokedAt: null,
+      lanAddresses: [],
+      lanCidrs: [],
+    });
+
+    await expect(
+      service.updateGateRouting(
+        "11111111-1111-4111-8111-111111111111",
+        "88888888-8888-4888-8888-888888888888",
+        {
+          mode: "BGP",
+          localAsn: 65050,
+          routerAddress: "192.168.50.1",
+          routerAsn: 65001,
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      message:
+        "ResourcePortalGate must report its LAN addressing before BGP can be enabled",
+    });
+  });
+
+  it("rejects BGP peers outside LAN CIDRs reported by the Gate", async () => {
+    const { service, prisma } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
+      id: "88888888-8888-4888-8888-888888888888",
+      name: "office",
+      revokedAt: null,
+      lanAddresses: ["192.168.50.2"],
+      lanCidrs: ["192.168.50.0/24"],
+    });
+
+    await expect(
+      service.updateGateRouting(
+        "11111111-1111-4111-8111-111111111111",
+        "88888888-8888-4888-8888-888888888888",
+        {
+          mode: "BGP",
+          localAsn: 65050,
+          routerAddress: "192.168.60.1",
+          routerAsn: 65001,
+        },
+        actor,
+      ),
+    ).rejects.toMatchObject({
+      message: "BGP router address must belong to a LAN CIDR reported by this Gate",
+    });
+  });
+
+  it("returns export-only BGP desired state to the Gate agent", async () => {
+    const { service, prisma } = fixture();
+    const token = "agent-secret";
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue({
+      id: "88888888-8888-4888-8888-888888888888",
+      agentTokenHash: createHash("sha256").update(token).digest("hex"),
+      revokedAt: null,
+    });
+    (prisma.resourcePortalGate.findUniqueOrThrow as any).mockResolvedValue({
+      id: "88888888-8888-4888-8888-888888888888",
+      serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      serverListenPort: 52000,
+      clientTunnelAddress: "100.96.0.2/30",
+      configRevision: 7,
+      revokedAt: null,
+      routeAdvertisementMode: "BGP",
+      bgpLocalAsn: BigInt(65050),
+      bgpRouterAddress: "192.168.50.1",
+      bgpRouterAsn: BigInt(65001),
+      bgpSourceAddress: "192.168.50.2",
+      bgpHoldTimeSeconds: 90,
+      networks: [
+        { network: { id: "network-1", name: "backend", cidr: "10.240.20.0/24" } },
+        { network: { id: "network-2", name: "api", cidr: "10.240.10.0/24" } },
+      ],
+    });
+
+    const result = await service.gateAgentConfig(`Bearer ${token}`);
+
+    expect(result.routeAdvertisement).toEqual({
+      mode: "BGP",
+      localAsn: 65050,
+      routerAddress: "192.168.50.1",
+      routerAsn: 65001,
+      sourceAddress: "192.168.50.2",
+      holdTimeSeconds: 90,
+      advertisedCidrs: ["10.240.10.0/24", "10.240.20.0/24"],
+    });
+    expect(result).not.toHaveProperty("learnedRoutes");
+  });
+
 });

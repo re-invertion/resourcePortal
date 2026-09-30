@@ -14,6 +14,7 @@ import {
   NetworkIcon,
   PageHeader,
   PlusIcon,
+  Select,
   ServerIcon,
   StatusBadge,
   Tabs,
@@ -82,6 +83,16 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const [networkForm, setNetworkForm] = useState({ name: "", description: "", cidr: "" });
   const [gateForm, setGateForm] = useState({ name: "", description: "" });
   const [enrollment, setEnrollment] = useState<EnrollmentResponse>();
+  const [routingGate, setRoutingGate] = useState<GateResource>();
+  const [routingOpen, setRoutingOpen] = useState(false);
+  const [routingForm, setRoutingForm] = useState({
+    mode: "Manual" as "Manual" | "BGP",
+    localAsn: "",
+    routerAddress: "",
+    routerAsn: "",
+    sourceAddress: "",
+    holdTimeSeconds: "90",
+  });
 
 
   async function submitConnection(connection: Connection) {
@@ -242,6 +253,57 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     }
   }
 
+  function editGateRouting(gate: GateResource) {
+    setRoutingGate(gate);
+    setRoutingForm({
+      mode: gate.routeAdvertisementMode === "BGP" ? "BGP" : "Manual",
+      localAsn: gate.bgpLocalAsn ? String(gate.bgpLocalAsn) : "",
+      routerAddress: gate.bgpRouterAddress ?? "",
+      routerAsn: gate.bgpRouterAsn ? String(gate.bgpRouterAsn) : "",
+      sourceAddress: gate.bgpSourceAddress ?? gate.lanAddresses?.[0] ?? "",
+      holdTimeSeconds: String(gate.bgpHoldTimeSeconds ?? 90),
+    });
+    setRoutingOpen(true);
+  }
+
+  async function saveGateRouting(event: FormEvent) {
+    event.preventDefault();
+    if (!routingGate) return;
+    setWorking(true);
+    try {
+      const body =
+        routingForm.mode === "BGP"
+          ? {
+              mode: "BGP",
+              localAsn: Number(routingForm.localAsn),
+              routerAddress: routingForm.routerAddress.trim(),
+              routerAsn: Number(routingForm.routerAsn),
+              sourceAddress: routingForm.sourceAddress.trim() || undefined,
+              holdTimeSeconds: Number(routingForm.holdTimeSeconds || "90"),
+            }
+          : { mode: "Manual" };
+      await apiRequest(
+        `${root}/gates/${encodeURIComponent(routingGate.id)}/routing`,
+        {
+          method: "PATCH",
+          body,
+        },
+      );
+      setRoutingOpen(false);
+      setRoutingGate(undefined);
+      await topology.reload();
+      toast.success(
+        routingForm.mode === "BGP"
+          ? "BGP route advertisement enabled."
+          : "Gate routing changed to manual static routes.",
+      );
+    } catch (error) {
+      toast.errorFrom(error, "Unable to update Gate routing.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function deleteNetwork(network: NetworkResource) {
     setWorking(true);
     try {
@@ -313,10 +375,23 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         </div>
       ),
       status: <StatusBadge tone={statusTone(gate.status)}>{gate.status}</StatusBadge>,
+      routing: gate.routeAdvertisementMode === "BGP" ? (
+        <div>
+          <strong className="block text-[12px] text-[#137A4A]">BGP</strong>
+          <span className="text-[11px] text-[#718096]">
+            AS{gate.bgpLocalAsn ?? "?"} → AS{gate.bgpRouterAsn ?? "?"}
+          </span>
+        </div>
+      ) : (
+        <span className="text-xs text-[#718096]">Manual</span>
+      ),
       networks: gate.networks?.length ?? 0,
       lastSeen: formatDate(gate.lastSeenAt),
       actions: (
         <div className="flex flex-wrap gap-1">
+          <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateRouting(gate)}>
+            Routing
+          </Button>
           <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => void rotateEnrollment(gate)}>
             Re-enroll
           </Button>
@@ -347,18 +422,32 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             <code className="text-[11px] text-[#718096]">{link.network.cidr}</code>
           </div>
         ),
-        nextHop: gate.lanAddresses?.[0] ? (
-          <code className="text-xs">{gate.lanAddresses[0]}</code>
-        ) : (
-          <span className="text-xs text-[#9A6700]">Awaiting LAN address</span>
-        ),
-        route: gate.lanAddresses?.[0] ? (
-          <code className="break-all text-[11px]">
-            {link.network.cidr} via {gate.lanAddresses[0]}
-          </code>
-        ) : (
-          "—"
-        ),
+        method:
+          gate.routeAdvertisementMode === "BGP" ? (
+            <StatusBadge tone="success">BGP</StatusBadge>
+          ) : (
+            <StatusBadge tone="neutral">Manual</StatusBadge>
+          ),
+        nextHop:
+          gate.routeAdvertisementMode === "BGP" ? (
+            <code className="text-xs">{gate.bgpRouterAddress || "BGP peer not configured"}</code>
+          ) : gate.lanAddresses?.[0] ? (
+            <code className="text-xs">{gate.lanAddresses[0]}</code>
+          ) : (
+            <span className="text-xs text-[#9A6700]">Awaiting LAN address</span>
+          ),
+        route:
+          gate.routeAdvertisementMode === "BGP" ? (
+            <code className="break-all text-[11px]">
+              advertise {link.network.cidr} to {gate.bgpRouterAddress || "peer"} (AS{gate.bgpRouterAsn ?? "?"})
+            </code>
+          ) : gate.lanAddresses?.[0] ? (
+            <code className="break-all text-[11px]">
+              {link.network.cidr} via {gate.lanAddresses[0]}
+            </code>
+          ) : (
+            "—"
+          ),
       },
     })),
   );
@@ -445,6 +534,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             columns={[
               { key: "gate", label: "Gate" },
               { key: "status", label: "Status" },
+              { key: "routing", label: "Routing" },
               { key: "networks", label: "Networks" },
               { key: "lastSeen", label: "Last seen" },
               { key: "actions", label: "" },
@@ -457,9 +547,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
       <Card className="mt-6 overflow-hidden">
         <div className="border-b border-[#E1E7F0] px-5 py-4">
-          <h2 className="font-semibold text-[#172033]">LAN route plan</h2>
+          <h2 className="font-semibold text-[#172033]">LAN route advertisement</h2>
           <p className="mt-1 text-xs text-[#718096]">
-            If the Gate host is not the LAN default gateway, configure these static routes on your LAN router. ResourcePortal does not use proxy ARP or extend layer 2.
+            Manual Gates require static routes on the LAN router. BGP Gates advertise attached RP Network CIDRs automatically and never import LAN routes into ResourcePortal.
           </p>
         </div>
         <DataTable
@@ -468,8 +558,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           columns={[
             { key: "gate", label: "Gate" },
             { key: "network", label: "RP Network" },
-            { key: "nextHop", label: "LAN next-hop" },
-            { key: "route", label: "Static route" },
+            { key: "method", label: "Method" },
+            { key: "nextHop", label: "Router / next-hop" },
+            { key: "route", label: "Route" },
           ]}
           rows={routeRows}
           empty={<EmptyState icon={<NetworkIcon />} title="No exported routes" description="Connect a ResourcePortalGate node to a Network node." />}
@@ -551,6 +642,161 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             </Field>
           </form>
         )}
+      </Dialog>
+
+      <Dialog
+        open={routingOpen}
+        onClose={() => {
+          if (!working) {
+            setRoutingOpen(false);
+            setRoutingGate(undefined);
+          }
+        }}
+        title={routingGate ? `Route advertisement · ${routingGate.name}` : "Route advertisement"}
+        description="Choose how the LAN router learns routes to Networks attached to this ResourcePortalGate."
+        actions={
+          <>
+            <Button
+              disabled={working}
+              onClick={() => {
+                setRoutingOpen(false);
+                setRoutingGate(undefined);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              form="gate-routing-form"
+              disabled={
+                working ||
+                !routingGate ||
+                (routingForm.mode === "BGP" &&
+                  (!routingForm.localAsn ||
+                    !routingForm.routerAddress.trim() ||
+                    !routingForm.routerAsn ||
+                    !routingForm.holdTimeSeconds))
+              }
+            >
+              {working ? "Saving…" : "Save routing"}
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="gate-routing-form"
+          className="space-y-4"
+          onSubmit={(event) => void saveGateRouting(event)}
+        >
+          <Field label="Route advertisement" required>
+            <Select
+              value={routingForm.mode}
+              onChange={(event) =>
+                setRoutingForm({
+                  ...routingForm,
+                  mode: event.target.value as "Manual" | "BGP",
+                })
+              }
+            >
+              <option value="Manual">Manual static routes</option>
+              <option value="BGP">BGP (automatic)</option>
+            </Select>
+          </Field>
+
+          {routingForm.mode === "BGP" ? (
+            <>
+              <Callout title="Export-only eBGP">
+                ResourcePortal advertises only CIDRs from this Gate&apos;s active Network attachments.
+                Routes received from the LAN router are denied and are never imported into ResourcePortal.
+              </Callout>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Gate ASN" required hint="Private ASN is recommended, for example 65050.">
+                  <TextInput
+                    type="number"
+                    min={1}
+                    max={4294967295}
+                    required
+                    value={routingForm.localAsn}
+                    onChange={(event) =>
+                      setRoutingForm({ ...routingForm, localAsn: event.target.value })
+                    }
+                    placeholder="65050"
+                  />
+                </Field>
+                <Field label="Router ASN" required>
+                  <TextInput
+                    type="number"
+                    min={1}
+                    max={4294967295}
+                    required
+                    value={routingForm.routerAsn}
+                    onChange={(event) =>
+                      setRoutingForm({ ...routingForm, routerAsn: event.target.value })
+                    }
+                    placeholder="65001"
+                  />
+                </Field>
+                <Field label="Router IP" required hint="Must be inside a LAN CIDR reported by this Gate.">
+                  <TextInput
+                    required
+                    value={routingForm.routerAddress}
+                    onChange={(event) =>
+                      setRoutingForm({ ...routingForm, routerAddress: event.target.value })
+                    }
+                    placeholder="192.168.1.1"
+                  />
+                </Field>
+                <Field label="Source IP" hint="Optional. Must be a LAN address reported by this Gate.">
+                  <TextInput
+                    value={routingForm.sourceAddress}
+                    onChange={(event) =>
+                      setRoutingForm({ ...routingForm, sourceAddress: event.target.value })
+                    }
+                    placeholder={routingGate?.lanAddresses?.[0] || "192.168.1.50"}
+                  />
+                </Field>
+                <Field label="Hold time" required hint="BGP hold timer in seconds.">
+                  <TextInput
+                    type="number"
+                    min={9}
+                    max={65535}
+                    required
+                    value={routingForm.holdTimeSeconds}
+                    onChange={(event) =>
+                      setRoutingForm({ ...routingForm, holdTimeSeconds: event.target.value })
+                    }
+                  />
+                </Field>
+              </div>
+              <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[.04em] text-[#526070]">
+                  Advertised prefixes
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(routingGate?.networks ?? []).length ? (
+                    routingGate?.networks.map((link) => (
+                      <code
+                        key={link.network.id}
+                        className="rounded bg-white px-2 py-1 text-xs text-[#172033] ring-1 ring-[#D7E0EC]"
+                      >
+                        {link.network.cidr}
+                      </code>
+                    ))
+                  ) : (
+                    <span className="text-xs text-[#718096]">
+                      None. Attach this Gate to a Network to advertise a prefix.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <Callout title="Manual static routes">
+              The LAN router must have a static route for each attached RP Network CIDR via this Gate&apos;s LAN address.
+            </Callout>
+          )}
+        </form>
       </Dialog>
     </main>
   );

@@ -9,6 +9,8 @@ describe("ResourcePortalGate installer", () => {
     expect(script).toContain('ENROLLMENT_TOKEN="${2:-}"');
     expect(script).not.toContain('\\${2:-}');
     expect(script).toContain("wireguard-tools");
+    expect(script).toContain("Installing FRR for BGP route advertisement");
+    expect(script).toContain("apt-get install -y frr");
     expect(script).toContain("systemctl enable --now resourceportal-gate.service");
     expect(script).toContain("/networking/gates/enroll");
     expect(script).toContain("/networking/gates/agent/heartbeat");
@@ -25,6 +27,15 @@ describe("ResourcePortalGate installer", () => {
     expect(script).toContain(
       'WireGuard handshake stale for ${age}s; rebuilding tunnel',
     );
+    expect(script).toContain("! BEGIN RESOURCEPORTAL-GATE");
+    expect(script).toContain("ip prefix-list RP-GATE-EXPORT seq 65535 deny any");
+    expect(script).toContain("ip prefix-list RP-GATE-IMPORT seq 5 deny any");
+    expect(script).toContain("for daemon in zebra bgpd");
+    expect(script).toContain("vtysh -b");
+    expect(script).toContain("neighbor %s prefix-list RP-GATE-IMPORT in");
+    expect(script).toContain("neighbor %s prefix-list RP-GATE-EXPORT out");
+    expect(script).toContain("Refusing BGP reconcile because /etc/frr/frr.conf contains an unmanaged router bgp stanza");
+    expect(script).not.toMatch(/redistribute\s+(connected|kernel|static|ospf)/);
     expect(script).not.toContain("__RP_SHELL_EXPAND__");
 
     const syntax = spawnSync("bash", ["-n"], {

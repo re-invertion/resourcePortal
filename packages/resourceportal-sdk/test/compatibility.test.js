@@ -258,6 +258,36 @@ test("uses canonical methods and bodies for representative mutations", async () 
 });
 
 
+test("configures export-only BGP routing for ResourcePortalGate", async () => {
+  const { client, calls } = recordingClient();
+
+  await client.networking.updateGateRouting("tenant id", "gate id", {
+    mode: "BGP",
+    localAsn: 65050,
+    routerAddress: "192.168.50.1",
+    routerAsn: 65001,
+    sourceAddress: "192.168.50.2",
+    holdTimeSeconds: 90,
+  });
+
+  assert.equal(calls[0].init.method, "PATCH");
+  assert.equal(
+    pathOf(calls[0]),
+    "/api/tenants/tenant%20id/networking/gates/gate%20id/routing",
+  );
+  assert.equal(
+    calls[0].init.body,
+    JSON.stringify({
+      mode: "BGP",
+      localAsn: 65050,
+      routerAddress: "192.168.50.1",
+      routerAsn: 65001,
+      sourceAddress: "192.168.50.2",
+      holdTimeSeconds: 90,
+    }),
+  );
+});
+
 test("uses revisions and idempotency keys for Network topology mutations", async () => {
   const { client, calls } = recordingClient();
 

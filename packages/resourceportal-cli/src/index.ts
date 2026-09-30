@@ -276,6 +276,35 @@ const commands: Command[] = [
   command("gate", "enrollment", "<tenantId> <gateId>", "Rotate ResourcePortalGate enrollment token.", (p, c) =>
     c.networking.rotateGateEnrollment(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
   ),
+  command("gate", "routing", "<tenantId> <gateId> --mode Manual|BGP [--local-asn N --router-address IP --router-asn N --source-address IP --hold-time-seconds N]", "Configure manual or export-only eBGP route advertisement.", (p, c) => {
+    const mode = String(flag(p.flags, "mode"));
+    if (mode === "Manual") {
+      return c.networking.updateGateRouting(
+        arg(p, 0, "tenantId"),
+        arg(p, 1, "gateId"),
+        { mode: "Manual" },
+      );
+    }
+    if (mode !== "BGP") {
+      throw new Error("--mode must be Manual or BGP");
+    }
+    return c.networking.updateGateRouting(
+      arg(p, 0, "tenantId"),
+      arg(p, 1, "gateId"),
+      {
+        mode: "BGP",
+        localAsn: Number(flag(p.flags, "localAsn")),
+        routerAddress: String(flag(p.flags, "routerAddress")),
+        routerAsn: Number(flag(p.flags, "routerAsn")),
+        ...(p.flags.sourceAddress === undefined
+          ? {}
+          : { sourceAddress: String(p.flags.sourceAddress) }),
+        ...(p.flags.holdTimeSeconds === undefined
+          ? {}
+          : { holdTimeSeconds: Number(p.flags.holdTimeSeconds) }),
+      },
+    );
+  }),
   command("gate", "attach-network", "<tenantId> <gateId> <networkId> --expected-revision N", "Route a tenant Network through ResourcePortalGate.", (p, c) =>
     c.networking.attachGateNetwork(
       arg(p, 0, "tenantId"),

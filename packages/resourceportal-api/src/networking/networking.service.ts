@@ -18,6 +18,7 @@ import type { CreateGateDto } from "./dto/create-gate.dto";
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import type { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
 import {
   DEFAULT_GATE_TUNNEL_POOL,
@@ -718,6 +719,107 @@ export class NetworkingService {
     };
   }
 
+  async updateGateRouting(
+    tenantId: string,
+    gateId: string,
+    dto: UpdateGateRoutingDto,
+    actor: AuthenticatedUser,
+  ) {
+    const gate = await this.gateOrThrow(tenantId, gateId);
+    if (gate.revokedAt) throw new ConflictException("ResourcePortalGate is revoked");
+
+    if (dto.mode === "BGP") {
+      if (gate.lanAddresses.length === 0 || gate.lanCidrs.length === 0) {
+        throw new BadRequestException(
+          "ResourcePortalGate must report its LAN addressing before BGP can be enabled",
+        );
+      }
+      if (!dto.localAsn || !dto.routerAddress || !dto.routerAsn) {
+        throw new BadRequestException(
+          "BGP mode requires localAsn, routerAddress and routerAsn",
+        );
+      }
+      if (dto.localAsn === dto.routerAsn) {
+        throw new BadRequestException(
+          "ResourcePortalGate BGP requires different local and router ASNs",
+        );
+      }
+      if (
+        gate.lanCidrs.length > 0 &&
+        !gate.lanCidrs.some((cidr) => {
+          const parsed = parseIpv4Cidr(cidr);
+          return parsed ? containsIpv4(parsed, dto.routerAddress!) : false;
+        })
+      ) {
+        throw new BadRequestException(
+          "BGP router address must belong to a LAN CIDR reported by this Gate",
+        );
+      }
+      if (
+        dto.sourceAddress &&
+        gate.lanAddresses.length > 0 &&
+        !gate.lanAddresses.includes(dto.sourceAddress)
+      ) {
+        throw new BadRequestException(
+          "BGP source address must be one of the LAN addresses reported by this Gate",
+        );
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const value = await tx.resourcePortalGate.update({
+        where: { id: gateId },
+        data:
+          dto.mode === "BGP"
+            ? {
+                routeAdvertisementMode: "BGP",
+                bgpLocalAsn: BigInt(dto.localAsn!),
+                bgpRouterAddress: dto.routerAddress!,
+                bgpRouterAsn: BigInt(dto.routerAsn!),
+                bgpSourceAddress: dto.sourceAddress ?? null,
+                bgpHoldTimeSeconds: dto.holdTimeSeconds ?? 90,
+                configRevision: { increment: 1 },
+                updatedBy: actor.id,
+              }
+            : {
+                routeAdvertisementMode: "Manual",
+                bgpLocalAsn: null,
+                bgpRouterAddress: null,
+                bgpRouterAsn: null,
+                bgpSourceAddress: null,
+                bgpHoldTimeSeconds: 90,
+                configRevision: { increment: 1 },
+                updatedBy: actor.id,
+              },
+        include: {
+          networks: {
+            where: { enabled: true },
+            include: { network: true },
+          },
+        },
+      });
+      await this.audit(tx, tenantId, actor, {
+        action: "gate.routing.update",
+        resourceType: "ResourcePortalGate",
+        resourceId: gate.id,
+        resourceName: gate.name,
+        changes:
+          dto.mode === "BGP"
+            ? {
+                mode: "BGP",
+                localAsn: dto.localAsn,
+                routerAddress: dto.routerAddress,
+                routerAsn: dto.routerAsn,
+                sourceAddress: dto.sourceAddress ?? null,
+                holdTimeSeconds: dto.holdTimeSeconds ?? 90,
+              }
+            : { mode: "Manual" },
+      });
+      return value;
+    });
+    return this.publicGate(updated);
+  }
+
   async attachGateNetwork(
     tenantId: string,
     gateId: string,
@@ -957,6 +1059,12 @@ export class NetworkingService {
     clientTunnelAddress: string | null;
     configRevision: number;
     revokedAt: Date | null;
+    routeAdvertisementMode: string;
+    bgpLocalAsn: bigint | null;
+    bgpRouterAddress: string | null;
+    bgpRouterAsn: bigint | null;
+    bgpSourceAddress: string | null;
+    bgpHoldTimeSeconds: number;
     networks: Array<{ network: { id: string; name: string; cidr: string } }>;
   }) {
     if (
@@ -977,6 +1085,26 @@ export class NetworkingService {
         name: link.network.name,
         cidr: link.network.cidr,
       })),
+      routeAdvertisement:
+        gate.routeAdvertisementMode === "BGP" &&
+        gate.bgpLocalAsn &&
+        gate.bgpRouterAddress &&
+        gate.bgpRouterAsn
+          ? {
+              mode: "BGP" as const,
+              localAsn: Number(gate.bgpLocalAsn),
+              routerAddress: gate.bgpRouterAddress,
+              routerAsn: Number(gate.bgpRouterAsn),
+              sourceAddress: gate.bgpSourceAddress,
+              holdTimeSeconds: gate.bgpHoldTimeSeconds,
+              advertisedCidrs: gate.networks
+                .map((link) => link.network.cidr)
+                .sort(),
+            }
+          : {
+              mode: "Manual" as const,
+              advertisedCidrs: [] as string[],
+            },
       configRevision: gate.configRevision,
       revoked: Boolean(gate.revokedAt),
       persistentKeepaliveSeconds: 25,
@@ -1282,6 +1410,25 @@ export class NetworkingService {
     delete safe.serverPrivateKeyCiphertext;
     delete safe.agentTokenHash;
     delete safe.enrollments;
+    if (typeof safe.bgpLocalAsn === "bigint") {
+      safe.bgpLocalAsn = Number(safe.bgpLocalAsn);
+    }
+    if (typeof safe.bgpRouterAsn === "bigint") {
+      safe.bgpRouterAsn = Number(safe.bgpRouterAsn);
+    }
+    const links = Array.isArray(gate.networks) ? gate.networks : [];
+    safe.advertisedCidrs =
+      safe.routeAdvertisementMode === "BGP"
+        ? links
+            .flatMap((link) => {
+              if (!link || typeof link !== "object") return [];
+              const network = (link as { network?: unknown }).network;
+              if (!network || typeof network !== "object") return [];
+              const cidr = (network as { cidr?: unknown }).cidr;
+              return typeof cidr === "string" ? [cidr] : [];
+            })
+            .sort()
+        : [];
     return safe;
   }
 

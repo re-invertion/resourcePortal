@@ -38,6 +38,13 @@ export type ResourcePortalGate = {
   lanAddresses: string[];
   lanCidrs: string[];
   agentVersion?: string | null;
+  routeAdvertisementMode?: "Manual" | "BGP";
+  bgpLocalAsn?: number | null;
+  bgpRouterAddress?: string | null;
+  bgpRouterAsn?: number | null;
+  bgpSourceAddress?: string | null;
+  bgpHoldTimeSeconds?: number;
+  advertisedCidrs?: string[];
   lastSeenAt?: string | null;
   lastError?: string | null;
   revokedAt?: string | null;
@@ -436,6 +443,24 @@ export class ResourcePortalClient {
       this.request(
         `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/enrollment`,
         { method: "POST" },
+      ),
+    updateGateRouting: (
+      tenantId: string,
+      gateId: string,
+      body:
+        | { mode: "Manual" }
+        | {
+            mode: "BGP";
+            localAsn: number;
+            routerAddress: string;
+            routerAsn: number;
+            sourceAddress?: string;
+            holdTimeSeconds?: number;
+          },
+    ) =>
+      this.request<ResourcePortalGate>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/routing`,
+        { method: "PATCH", body },
       ),
     attachGateNetwork: (
       tenantId: string,
