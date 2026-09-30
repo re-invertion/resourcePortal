@@ -92,7 +92,7 @@ it("configures export-only BGP route advertisement using Gate-attached prefixes"
   render(<TenantNetworkingPage tenantId="tenant-1" />);
 
   await waitFor(() => {
-    expect(screen.getByText("office")).toBeTruthy();
+    expect(screen.getAllByText("office").length).toBeGreaterThan(0);
   });
 
   fireEvent.click(screen.getByRole("button", { name: "Routing" }));
