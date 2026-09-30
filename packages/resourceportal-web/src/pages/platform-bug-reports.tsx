@@ -5,11 +5,14 @@ import {
   Button,
   Callout,
   Card,
+  Dialog,
   EmptyState,
+  Field,
   MetricFilterCard,
   PageHeader,
   Select,
   StatusBadge,
+  Textarea,
 } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatDate, useApi } from "../hooks/use-api";
@@ -23,6 +26,8 @@ type BugReport = {
   priority: Priority;
   resolved: boolean;
   resolvedAt: string | null;
+  resolutionNote: string | null;
+  url: string | null;
   reporter: { id: string; email: string; displayName: string };
   hasImage: boolean;
   imageUrl: string | null;
@@ -53,6 +58,8 @@ export function PlatformBugReportsPage() {
   const [resolutionFilter, setResolutionFilter] =
     useState<ResolutionFilter>("all");
   const [working, setWorking] = useState<string>();
+  const [resolutionTarget, setResolutionTarget] = useState<BugReport>();
+  const [resolutionNote, setResolutionNote] = useState("");
 
   const visible = useMemo(
     () =>
@@ -105,15 +112,21 @@ export function PlatformBugReportsPage() {
     }
   }
 
-  async function setResolved(report: BugReport, resolved: boolean) {
+  async function setResolved(
+    report: BugReport,
+    resolved: boolean,
+    note?: string,
+  ) {
     if (resolved === report.resolved) return;
     setWorking(report.id);
     try {
       await apiRequest(
         `/api/platform/bug-reports/${encodeURIComponent(report.id)}/resolution`,
-        { method: "PATCH", body: { resolved } },
+        { method: "PATCH", body: { resolved, resolutionNote: resolved ? note?.trim() : undefined } },
       );
       await reports.reload();
+      setResolutionTarget(undefined);
+      setResolutionNote("");
       toast.success(
         resolved ? "Bug report marked as resolved." : "Bug report reopened.",
       );
@@ -270,6 +283,16 @@ export function PlatformBugReportsPage() {
                       {report.reporter.email ? (
                         <span>{report.reporter.email}</span>
                       ) : null}
+                      {report.url ? (
+                        <a
+                          href={report.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="max-w-full truncate font-semibold text-[#0F56A7] hover:underline"
+                        >
+                          Open reported URL
+                        </a>
+                      ) : null}
                       {report.hasImage && report.imageUrl ? (
                         <a
                           href={report.imageUrl}
@@ -285,6 +308,12 @@ export function PlatformBugReportsPage() {
                         </a>
                       ) : null}
                     </div>
+                    {report.resolved && report.resolutionNote ? (
+                      <div className="mt-4 rounded-lg border border-[#CDE7D3] bg-[#F3FBF5] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-[.04em] text-[#287A3E]">Resolution</p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-[#355B40]">{report.resolutionNote}</p>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="min-w-0 space-y-3">
@@ -319,7 +348,10 @@ export function PlatformBugReportsPage() {
                       className="w-full"
                       variant={report.resolved ? "secondary" : "primary"}
                       disabled={working === report.id}
-                      onClick={() => void setResolved(report, !report.resolved)}
+                      onClick={() => {
+                        if (report.resolved) void setResolved(report, false);
+                        else { setResolutionTarget(report); setResolutionNote(""); }
+                      }}
                     >
                       {working === report.id
                         ? "Saving…"
@@ -342,6 +374,32 @@ export function PlatformBugReportsPage() {
           </div>
         )}
       </Card>
+      <Dialog
+        open={Boolean(resolutionTarget)}
+        onClose={() => { if (!working) { setResolutionTarget(undefined); setResolutionNote(""); } }}
+        title="Resolve bug report"
+        description="Describe what was changed so the resolution remains useful in the bug history."
+        actions={<>
+          <Button variant="secondary" disabled={Boolean(working)} onClick={() => { setResolutionTarget(undefined); setResolutionNote(""); }}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={!resolutionTarget || Boolean(working) || !resolutionNote.trim()}
+            onClick={() => resolutionTarget ? void setResolved(resolutionTarget, true, resolutionNote) : undefined}
+          >
+            {working ? "Saving…" : "Mark as resolved"}
+          </Button>
+        </>}
+      >
+        <Field label="Resolution description" required hint="Summarize the implementation, fix or operational action that resolved this report.">
+          <Textarea
+            aria-label="Resolution description"
+            rows={6}
+            maxLength={4000}
+            value={resolutionNote}
+            onChange={(event) => setResolutionNote(event.target.value)}
+          />
+        </Field>
+      </Dialog>
     </main>
   );
 }

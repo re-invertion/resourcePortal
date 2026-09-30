@@ -28,6 +28,7 @@ export class BugReportsService {
         imageData: image?.data,
         imageMimeType: image?.mimeType,
         imageFileName: image?.fileName,
+        url: dto.url?.trim() || null,
       },
       select: { id: true, priority: true, createdAt: true },
     });
@@ -53,6 +54,8 @@ export class BugReportsService {
       hasImage: Boolean(report.imageData),
       imageMimeType: report.imageMimeType,
       imageFileName: report.imageFileName,
+      url: report.url,
+      resolutionNote: report.resolutionNote,
       imageUrl: report.imageData
         ? `/api/platform/bug-reports/${report.id}/image`
         : null,
@@ -86,6 +89,8 @@ export class BugReportsService {
       hasImage: Boolean(report.imageData),
       imageMimeType: report.imageMimeType,
       imageFileName: report.imageFileName,
+      url: report.url,
+      resolutionNote: report.resolutionNote,
       imageUrl: report.imageData
         ? `/api/platform/bug-reports/${report.id}/image`
         : null,
@@ -94,7 +99,7 @@ export class BugReportsService {
     };
   }
 
-  async setResolved(id: string, resolved: boolean) {
+  async setResolved(id: string, resolved: boolean, resolutionNote?: string) {
     const exists = await this.prisma.bugReport.findUnique({
       where: { id },
       select: { id: true },
@@ -103,7 +108,10 @@ export class BugReportsService {
 
     const report = await this.prisma.bugReport.update({
       where: { id },
-      data: { resolvedAt: resolved ? new Date() : null },
+      data: {
+        resolvedAt: resolved ? new Date() : null,
+        resolutionNote: resolved ? resolutionNote?.trim() || null : null,
+      },
       include: {
         reportedBy: { select: { id: true, email: true, displayName: true } },
       },
@@ -119,6 +127,8 @@ export class BugReportsService {
       hasImage: Boolean(report.imageData),
       imageMimeType: report.imageMimeType,
       imageFileName: report.imageFileName,
+      url: report.url,
+      resolutionNote: report.resolutionNote,
       imageUrl: report.imageData
         ? `/api/platform/bug-reports/${report.id}/image`
         : null,

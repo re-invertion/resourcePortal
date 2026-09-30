@@ -15,6 +15,7 @@ import {
   MetricCard,
   NetworkIcon,
   PageHeader,
+  SearchField,
   Select,
   ServerIcon,
   SettingsIcon,
@@ -104,25 +105,70 @@ export function PlatformOverviewPage() {
 export function PlatformTenantsPage() {
   const tenants = useApi<unknown>("/api/platform/tenants", []);
   const rows = items<Row>(tenants.data);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("updated-desc");
+  const statuses = useMemo(() => Array.from(new Set(rows.map((row) => text(row.status, "Unknown")))).sort(), [rows]);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = rows.filter((row) => {
+      const haystack = [row.displayName, row.name, row.id, row.status].map((value) => text(value, "").toLowerCase()).join(" ");
+      return (!needle || haystack.includes(needle)) && (status === "all" || text(row.status, "Unknown") === status);
+    });
+    return [...filtered].sort((a, b) => {
+      if (sort === "name-asc") return text(valueOf(a, "displayName", "name")).localeCompare(text(valueOf(b, "displayName", "name")));
+      const aTime = Date.parse(text(sort === "created-desc" ? a.createdAt : a.updatedAt, "")) || 0;
+      const bTime = Date.parse(text(sort === "created-desc" ? b.createdAt : b.updatedAt, "")) || 0;
+      return bTime - aTime;
+    });
+  }, [rows, query, status, sort]);
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Tenants" description="Platform inventory only. Tenant contents remain isolated and require an explicit tenant membership." />
     <Callout tone="info" title="Tenant isolation is enforced">Platform Admin can see tenant identity and lifecycle state here, but this page intentionally provides no direct tenant workspace, billing, activity or administration links.</Callout>
-    <section className="mt-6" aria-label="Tenant list">
-      {tenants.error ? <ErrorCard label="Tenants" error={tenants.error} retry={tenants.reload} /> : <DataTable loading={tenants.loading} columns={[{ key: "tenant", label: "Tenant" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={rows.map((row) => { const id = idOf(row); const name = text(valueOf(row, "displayName", "name"), "Unnamed tenant"); return { key: id || name, cells: { tenant: <div><strong className="block text-[#172033]">{name}</strong><span className="text-xs text-[#718096]">{text(row.name, id || "Tenant")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }; })} empty={<EmptyState icon={<UsersIcon />} title="No tenants" description="No tenant workspaces are registered." />} footer={`${rows.length} tenant${rows.length === 1 ? "" : "s"} in platform inventory`} />}
-    </section>
+    <Card className="mt-6 overflow-hidden">
+      <div className="grid gap-3 border-b border-[#E1E7F0] p-4 md:grid-cols-[minmax(0,1fr)_180px_210px]">
+        <SearchField value={query} onChange={setQuery} placeholder="Search tenants by name, ID or status" ariaLabel="Search tenants" />
+        <Select aria-label="Filter tenants by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{statuses.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</Select>
+        <Select aria-label="Sort tenants" value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated-desc">Recently updated</option><option value="created-desc">Recently created</option><option value="name-asc">Name A–Z</option></Select>
+      </div>
+      {tenants.error ? <div className="p-5"><ErrorCard label="Tenants" error={tenants.error} retry={tenants.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={tenants.loading} columns={[{ key: "tenant", label: "Tenant" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={visible.map((row) => { const id = idOf(row); const name = text(valueOf(row, "displayName", "name"), "Unnamed tenant"); return { key: id || name, cells: { tenant: <div><strong className="block text-[#172033]">{name}</strong><span className="text-xs text-[#718096]">{text(row.name, id || "Tenant")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }; })} empty={<EmptyState icon={<UsersIcon />} title={rows.length ? "No tenants match the filters" : "No tenants"} description={rows.length ? "Change the search, status or sort controls to inspect other tenants." : "No tenant workspaces are registered."} />} footer={`${visible.length} of ${rows.length} tenant${rows.length === 1 ? "" : "s"}`} />}
+    </Card>
   </main>;
 }
 
 export function PlatformUsersPage() {
   const users = useApi<unknown>("/api/platform/users", []);
   const rows = items<Row>(users.data);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("updated-desc");
+  const statuses = useMemo(() => Array.from(new Set(rows.map((row) => text(row.status, "Unknown")))).sort(), [rows]);
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const filtered = rows.filter((row) => {
+      const haystack = [row.displayName, row.email, row.id, row.status].map((value) => text(value, "").toLowerCase()).join(" ");
+      return (!needle || haystack.includes(needle)) && (status === "all" || text(row.status, "Unknown") === status);
+    });
+    return [...filtered].sort((a, b) => {
+      if (sort === "name-asc") return text(valueOf(a, "displayName", "email")).localeCompare(text(valueOf(b, "displayName", "email")));
+      const aTime = Date.parse(text(sort === "created-desc" ? a.createdAt : a.updatedAt, "")) || 0;
+      const bTime = Date.parse(text(sort === "created-desc" ? b.createdAt : b.updatedAt, "")) || 0;
+      return bTime - aTime;
+    });
+  }, [rows, query, status, sort]);
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Users" description="Global ResourcePortal user directory. This does not grant access to any user tenant workspace." />
-    <section className="mt-6" aria-label="Platform users">
-      {users.error ? <ErrorCard label="Users" error={users.error} retry={users.reload} /> : <DataTable loading={users.loading} columns={[{ key: "user", label: "User" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={rows.map((row) => ({ key: idOf(row) || text(row.email), cells: { user: <div><strong className="block text-[#172033]">{text(row.displayName, "Unnamed user")}</strong><span className="text-xs text-[#718096]">{text(row.email, "No email")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }))} empty={<EmptyState icon={<UsersIcon />} title="No users" description="No ResourcePortal users are registered." />} footer={`${rows.length} user${rows.length === 1 ? "" : "s"} registered`} />}
-    </section>
+    <Card className="mt-6 overflow-hidden">
+      <div className="grid gap-3 border-b border-[#E1E7F0] p-4 md:grid-cols-[minmax(0,1fr)_180px_210px]">
+        <SearchField value={query} onChange={setQuery} placeholder="Search users by name, email, ID or status" ariaLabel="Search users" />
+        <Select aria-label="Filter users by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{statuses.map((value) => <option key={value} value={value}>{titleCase(value)}</option>)}</Select>
+        <Select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)}><option value="updated-desc">Recently updated</option><option value="created-desc">Recently created</option><option value="name-asc">Name A–Z</option></Select>
+      </div>
+      {users.error ? <div className="p-5"><ErrorCard label="Users" error={users.error} retry={users.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={users.loading} columns={[{ key: "user", label: "User" },{ key: "status", label: "Status" },{ key: "created", label: "Created" },{ key: "updated", label: "Updated" }]} rows={visible.map((row) => ({ key: idOf(row) || text(row.email), cells: { user: <div><strong className="block text-[#172033]">{text(row.displayName, "Unnamed user")}</strong><span className="text-xs text-[#718096]">{text(row.email, "No email")}</span></div>, status: <StatusBadge tone={statusTone(row.status)}>{titleCase(row.status)}</StatusBadge>, created: formatDate(row.createdAt), updated: formatDate(row.updatedAt) } }))} empty={<EmptyState icon={<UsersIcon />} title={rows.length ? "No users match the filters" : "No users"} description={rows.length ? "Change the search, status or sort controls to inspect other users." : "No ResourcePortal users are registered."} />} footer={`${visible.length} of ${rows.length} user${rows.length === 1 ? "" : "s"}`} />}
+    </Card>
   </main>;
 }
+
 export function PlatformInfrastructurePage() {
   const swarm = useApi<Row>("/api/platform/swarm-cluster");
   const remotes = useApi<unknown>("/api/platform/remote-locations", []);

@@ -1,6 +1,34 @@
 import { Tabs } from "./design-system";
 import { tenantHref } from "../router/router";
 
+
+
+export function StorageTabs({
+  tenantId,
+  active,
+}: {
+  tenantId: string;
+  active: "volumes" | "registries";
+}) {
+  return (
+    <Tabs
+      label="Storage sections"
+      items={[
+        {
+          label: "Volumes",
+          href: tenantHref(tenantId, "volumes"),
+          active: active === "volumes",
+        },
+        {
+          label: "Registries",
+          href: tenantHref(tenantId, "registries"),
+          active: active === "registries",
+        },
+      ]}
+    />
+  );
+}
+
 export function NetworkingTabs({
   tenantId,
   active,

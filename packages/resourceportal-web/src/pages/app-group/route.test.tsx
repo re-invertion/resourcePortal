@@ -23,15 +23,23 @@ describe("AppGroupRoute", () => {
     render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1"]} />);
     expect(await screen.findByRole("heading", { name: "checkout" })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "App Group sections" })).toBeNull();
-    const hierarchy = screen.getByRole("navigation", { name: "Application hierarchy" });
-    expect(within(hierarchy).getAllByRole("link").map((link) => link.textContent)).toEqual(["Applications", "commerce"]);
+    expect(screen.queryByRole("navigation", { name: "Application hierarchy" })).toBeNull();
     expect(screen.getByRole("link", { name: /edit application/i }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit");
     const navigation = screen.getByRole("navigation", { name: "Application sections" });
     expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
     expect(within(navigation).getByRole("link", { name: "Health" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/health");
   });
 
-  it("renders the five-step create application wizard on apps/new", async () => {
+
+it("routes legacy App Group networking URLs to the application list", async () => {
+  render(<AppGroupRoute tenantId="t1" segments={["ag1", "networking"]} />);
+  expect(await screen.findByRole("heading", { name: "Apps" })).toBeTruthy();
+  const navigation = screen.getByRole("navigation", { name: "App Group sections" });
+  expect(within(navigation).queryByRole("link", { name: "Networking" })).toBeNull();
+  expect(within(navigation).getByRole("link", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+});
+
+it("renders the five-step create application wizard on apps/new", async () => {
     render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "new"]} />);
     expect(await screen.findByRole("heading", { name: /create application/i })).toBeTruthy();
     const steps = screen.getByRole("list", { name: "Creation steps" });

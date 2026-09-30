@@ -160,6 +160,32 @@ export function PlatformBillingPage({
     }));
   }, [resourceBot.data]);
 
+  useEffect(() => {
+    const current = items<Row>(prices.data)[0];
+    if (!current) return;
+    setResourcePrice((value) => ({
+      ...value,
+      cpu: numberText(current.cpuCreditsPerVcpuHour, value.cpu),
+      memory: numberText(current.memoryCreditsPerGbHour, value.memory),
+      storage: numberText(current.storageCreditsPerGbHour, value.storage),
+      gpu: numberText(current.gpuCreditsPerGpuHour, value.gpu),
+    }));
+  }, [prices.data]);
+
+  useEffect(() => {
+    const current = aiPrices.data?.items?.[0];
+    if (!current) return;
+    setAiPrice((value) => ({
+      ...value,
+      provider: current.provider || value.provider,
+      model: current.model || value.model,
+      input: current.inputCreditsPer1M,
+      cachedInput: current.cachedInputCreditsPer1M,
+      output: current.outputCreditsPer1M,
+      embedding: current.embeddingCreditsPer1M,
+    }));
+  }, [aiPrices.data]);
+
   const usagePath = useMemo(() => {
     if (!tenantId) return undefined;
     const params = new URLSearchParams({
@@ -204,68 +230,45 @@ export function PlatformBillingPage({
     }
   }
 
-  async function createResourcePrice(event: FormEvent) {
+  async function createCombinedPricing(event: FormEvent) {
     event.preventDefault();
-    setWorking("resource-price");
+    setWorking("pricing");
     try {
       const effectiveFrom = new Date(resourcePrice.effectiveFrom);
       effectiveFrom.setSeconds(0, 0);
-      await apiRequest("/api/platform/billing/price-lists", {
-        method: "POST",
-        body: {
-          effectiveFrom: effectiveFrom.toISOString(),
-          cpuCreditsPerVcpuHour: resourcePrice.cpu.trim(),
-          memoryCreditsPerGbHour: resourcePrice.memory.trim(),
-          storageCreditsPerGbHour: resourcePrice.storage.trim(),
-          gpuCreditsPerGpuHour: resourcePrice.gpu.trim(),
-        },
-      });
-      await prices.reload();
-      setResourcePrice({
-        cpu: "",
-        memory: "",
-        storage: "",
-        gpu: "",
-        effectiveFrom: defaultEffectiveFrom(),
-      });
-      toast.success("Resource price version created.");
-    } catch (error) {
-      toast.error(`Resource price could not be created: ${readableError(error)}`);
-    } finally {
-      setWorking(undefined);
-    }
-  }
-
-  async function createAiPrice(event: FormEvent) {
-    event.preventDefault();
-    setWorking("ai-price");
-    try {
-      const effectiveFrom = new Date(aiPrice.effectiveFrom);
-      effectiveFrom.setSeconds(0, 0);
-      await apiRequest("/api/platform/resource-bot/prices", {
-        method: "POST",
-        body: {
-          provider: aiPrice.provider.trim(),
-          model: aiPrice.model.trim(),
-          effectiveFrom: effectiveFrom.toISOString(),
-          inputCreditsPer1M: aiPrice.input.trim(),
-          cachedInputCreditsPer1M: aiPrice.cachedInput.trim(),
-          outputCreditsPer1M: aiPrice.output.trim(),
-          embeddingCreditsPer1M: aiPrice.embedding.trim(),
-        },
-      });
-      await aiPrices.reload();
-      setAiPrice((current) => ({
+      const effectiveFromIso = effectiveFrom.toISOString();
+      await Promise.all([
+        apiRequest("/api/platform/billing/price-lists", {
+          method: "POST",
+          body: {
+            effectiveFrom: effectiveFromIso,
+            cpuCreditsPerVcpuHour: resourcePrice.cpu.trim(),
+            memoryCreditsPerGbHour: resourcePrice.memory.trim(),
+            storageCreditsPerGbHour: resourcePrice.storage.trim(),
+            gpuCreditsPerGpuHour: resourcePrice.gpu.trim(),
+          },
+        }),
+        apiRequest("/api/platform/resource-bot/prices", {
+          method: "POST",
+          body: {
+            provider: aiPrice.provider.trim(),
+            model: aiPrice.model.trim(),
+            effectiveFrom: effectiveFromIso,
+            inputCreditsPer1M: aiPrice.input.trim(),
+            cachedInputCreditsPer1M: aiPrice.cachedInput.trim(),
+            outputCreditsPer1M: aiPrice.output.trim(),
+            embeddingCreditsPer1M: aiPrice.embedding.trim(),
+          },
+        }),
+      ]);
+      await Promise.all([prices.reload(), aiPrices.reload()]);
+      setResourcePrice((current) => ({
         ...current,
-        input: "",
-        cachedInput: "",
-        output: "",
-        embedding: "",
         effectiveFrom: defaultEffectiveFrom(),
       }));
-      toast.success("AI price version created.");
+      toast.success("Platform pricing version created for resources and AI.");
     } catch (error) {
-      toast.error(`AI price could not be created: ${readableError(error)}`);
+      toast.error(`Platform pricing could not be created: ${readableError(error)}`);
     } finally {
       setWorking(undefined);
     }
@@ -344,219 +347,136 @@ export function PlatformBillingPage({
             title="Platform pricing"
             description="One shared pricing workspace for compute, storage, GPU and AI token rates."
           />
-          <section aria-labelledby="compute-storage-pricing-heading">
-            <div className="px-5 py-4">
-              <h3 id="compute-storage-pricing-heading" className="text-sm font-semibold text-[#172033]">Compute & storage</h3>
-              <p className="mt-1 text-xs text-[#718096]">Immutable, effective-dated tenant rates for CPU, memory, storage and GPU.</p>
-            </div>
-            <DataTable
-              embedded
-              className="rounded-none border-0"
-              loading={prices.loading}
-              columns={[
-                { key: "version", label: "Version" },
-                { key: "effective", label: "Effective" },
-                { key: "cpu", label: "CPU / vCPU h" },
-                { key: "memory", label: "Memory / GB h" },
-                { key: "storage", label: "Storage / GB h" },
-                { key: "gpu", label: "GPU / h" },
-              ]}
-              rows={priceRows.map((row, index) => ({
-                key: idOf(row) || String(index),
-                cells: {
-                  version: row.version !== undefined ? `v${String(row.version)}` : "—",
-                  effective: formatDate(row.effectiveFrom),
-                  cpu: numberText(row.cpuCreditsPerVcpuHour),
-                  memory: numberText(row.memoryCreditsPerGbHour),
-                  storage: numberText(row.storageCreditsPerGbHour),
-                  gpu: numberText(row.gpuCreditsPerGpuHour),
-                },
-              }))}
-              empty={<EmptyState title="No resource price lists" />}
-            />
-            <form
-              className="grid gap-4 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5 sm:grid-cols-2 xl:grid-cols-5"
-              onSubmit={(event) => void createResourcePrice(event)}
-            >
-              <Field label="CPU credits / vCPU h" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={resourcePrice.cpu}
-                  onChange={(event) =>
-                    setResourcePrice({ ...resourcePrice, cpu: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Memory credits / GB h" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={resourcePrice.memory}
-                  onChange={(event) =>
-                    setResourcePrice({ ...resourcePrice, memory: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Storage credits / GB h" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={resourcePrice.storage}
-                  onChange={(event) =>
-                    setResourcePrice({ ...resourcePrice, storage: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="GPU credits / GPU h" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={resourcePrice.gpu}
-                  onChange={(event) =>
-                    setResourcePrice({ ...resourcePrice, gpu: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Effective from" required>
-                <TextInput
-                  type="datetime-local"
-                  value={resourcePrice.effectiveFrom}
-                  onChange={(event) =>
-                    setResourcePrice({ ...resourcePrice, effectiveFrom: event.target.value })
-                  }
-                />
-              </Field>
-              <div className="sm:col-span-2 xl:col-span-5">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  disabled={
-                    working === "resource-price" ||
-                    !resourcePrice.cpu.trim() ||
-                    !resourcePrice.memory.trim() ||
-                    !resourcePrice.storage.trim() ||
-                    !resourcePrice.gpu.trim()
-                  }
-                >
-                  {working === "resource-price" ? "Creating…" : "Create resource price version"}
-                </Button>
+          <form onSubmit={(event) => void createCombinedPricing(event)}>
+            <section aria-labelledby="compute-storage-pricing-heading">
+              <div className="px-5 py-4">
+                <h3 id="compute-storage-pricing-heading" className="text-sm font-semibold text-[#172033]">Compute & storage</h3>
+                <p className="mt-1 text-xs text-[#718096]">Immutable, effective-dated tenant rates for CPU, memory, storage and GPU.</p>
               </div>
-            </form>
-          </section>
-
-          <section className="border-t border-[#E1E7F0]" aria-labelledby="ai-pricing-heading">
-            <div className="px-5 py-4">
-              <h3 id="ai-pricing-heading" className="text-sm font-semibold text-[#172033]">AI & ResourceBot</h3>
-              <p className="mt-1 text-xs text-[#718096]">ResourceBot token rates are managed alongside compute and storage in this shared pricing workspace.</p>
-            </div>
-            {aiPrices.error ? (
-              <div className="p-5">
-                <Callout tone="danger" title="AI pricing unavailable">
-                  {readableError(aiPrices.error)}
-                </Callout>
-              </div>
-            ) : (
               <DataTable
                 embedded
                 className="rounded-none border-0"
-                loading={aiPrices.loading}
+                loading={prices.loading}
                 columns={[
-                  { key: "model", label: "Provider / model" },
+                  { key: "version", label: "Version" },
                   { key: "effective", label: "Effective" },
-                  { key: "input", label: "Input / 1M" },
-                  { key: "cached", label: "Cached / 1M" },
-                  { key: "output", label: "Output / 1M" },
-                  { key: "embedding", label: "Embedding / 1M" },
+                  { key: "cpu", label: "CPU / vCPU h" },
+                  { key: "memory", label: "Memory / GB h" },
+                  { key: "storage", label: "Storage / GB h" },
+                  { key: "gpu", label: "GPU / h" },
                 ]}
-                rows={aiPriceRows.map((row) => ({
-                  key: row.id,
+                rows={priceRows.map((row, index) => ({
+                  key: idOf(row) || String(index),
                   cells: {
-                    model: `${row.provider} / ${row.model}`,
+                    version: row.version !== undefined ? `v${String(row.version)}` : "—",
                     effective: formatDate(row.effectiveFrom),
-                    input: row.inputCreditsPer1M,
-                    cached: row.cachedInputCreditsPer1M,
-                    output: row.outputCreditsPer1M,
-                    embedding: row.embeddingCreditsPer1M,
+                    cpu: numberText(row.cpuCreditsPerVcpuHour),
+                    memory: numberText(row.memoryCreditsPerGbHour),
+                    storage: numberText(row.storageCreditsPerGbHour),
+                    gpu: numberText(row.gpuCreditsPerGpuHour),
                   },
                 }))}
-                empty={<EmptyState title="No AI price versions" />}
+                empty={<EmptyState title="No resource price lists" />}
               />
-            )}
-            <form
-              className="grid gap-4 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5 sm:grid-cols-2 xl:grid-cols-4"
-              onSubmit={(event) => void createAiPrice(event)}
-            >
-              <Field label="Provider" required>
-                <TextInput
-                  value={aiPrice.provider}
-                  onChange={(event) =>
-                    setAiPrice({ ...aiPrice, provider: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Model" required>
-                <TextInput
-                  value={aiPrice.model}
-                  onChange={(event) => setAiPrice({ ...aiPrice, model: event.target.value })}
-                />
-              </Field>
-              <Field label="Input credits / 1M" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={aiPrice.input}
-                  onChange={(event) => setAiPrice({ ...aiPrice, input: event.target.value })}
-                />
-              </Field>
-              <Field label="Cached input credits / 1M" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={aiPrice.cachedInput}
-                  onChange={(event) =>
-                    setAiPrice({ ...aiPrice, cachedInput: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Output credits / 1M" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={aiPrice.output}
-                  onChange={(event) => setAiPrice({ ...aiPrice, output: event.target.value })}
-                />
-              </Field>
-              <Field label="Embedding credits / 1M" required>
-                <TextInput
-                  inputMode="decimal"
-                  value={aiPrice.embedding}
-                  onChange={(event) =>
-                    setAiPrice({ ...aiPrice, embedding: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Effective from" required>
-                <TextInput
-                  type="datetime-local"
-                  value={aiPrice.effectiveFrom}
-                  onChange={(event) =>
-                    setAiPrice({ ...aiPrice, effectiveFrom: event.target.value })
-                  }
-                />
-              </Field>
-              <div className="flex items-end">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  disabled={
-                    working === "ai-price" ||
-                    !aiPrice.provider.trim() ||
-                    !aiPrice.model.trim() ||
-                    !aiPrice.input.trim() ||
-                    !aiPrice.cachedInput.trim() ||
-                    !aiPrice.output.trim() ||
-                    !aiPrice.embedding.trim()
-                  }
-                >
-                  {working === "ai-price" ? "Creating…" : "Create AI price version"}
-                </Button>
+              <div className="grid gap-4 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5 sm:grid-cols-2 xl:grid-cols-5">
+                <Field label="CPU credits / vCPU h" required>
+                  <TextInput aria-label="CPU credits / vCPU h" inputMode="decimal" value={resourcePrice.cpu} onChange={(event) => setResourcePrice({ ...resourcePrice, cpu: event.target.value })} />
+                </Field>
+                <Field label="Memory credits / GB h" required>
+                  <TextInput aria-label="Memory credits / GB h" inputMode="decimal" value={resourcePrice.memory} onChange={(event) => setResourcePrice({ ...resourcePrice, memory: event.target.value })} />
+                </Field>
+                <Field label="Storage credits / GB h" required>
+                  <TextInput aria-label="Storage credits / GB h" inputMode="decimal" value={resourcePrice.storage} onChange={(event) => setResourcePrice({ ...resourcePrice, storage: event.target.value })} />
+                </Field>
+                <Field label="GPU credits / GPU h" required>
+                  <TextInput aria-label="GPU credits / GPU h" inputMode="decimal" value={resourcePrice.gpu} onChange={(event) => setResourcePrice({ ...resourcePrice, gpu: event.target.value })} />
+                </Field>
+                <Field label="Effective from" required>
+                  <TextInput aria-label="Effective from" type="datetime-local" value={resourcePrice.effectiveFrom} onChange={(event) => setResourcePrice({ ...resourcePrice, effectiveFrom: event.target.value })} />
+                </Field>
               </div>
-            </form>
-          </section>
+            </section>
+
+            <section className="border-t border-[#E1E7F0]" aria-labelledby="ai-pricing-heading">
+              <div className="px-5 py-4">
+                <h3 id="ai-pricing-heading" className="text-sm font-semibold text-[#172033]">AI & ResourceBot</h3>
+                <p className="mt-1 text-xs text-[#718096]">ResourceBot token rates are saved together with compute and storage using the same effective time. Current values are prefilled for editing.</p>
+              </div>
+              {aiPrices.error ? (
+                <div className="p-5">
+                  <Callout tone="danger" title="AI pricing unavailable">{readableError(aiPrices.error)}</Callout>
+                </div>
+              ) : (
+                <DataTable
+                  embedded
+                  className="rounded-none border-0"
+                  loading={aiPrices.loading}
+                  columns={[
+                    { key: "model", label: "Provider / model" },
+                    { key: "effective", label: "Effective" },
+                    { key: "input", label: "Input / 1M" },
+                    { key: "cached", label: "Cached / 1M" },
+                    { key: "output", label: "Output / 1M" },
+                    { key: "embedding", label: "Embedding / 1M" },
+                  ]}
+                  rows={aiPriceRows.map((row) => ({
+                    key: row.id,
+                    cells: {
+                      model: `${row.provider} / ${row.model}`,
+                      effective: formatDate(row.effectiveFrom),
+                      input: row.inputCreditsPer1M,
+                      cached: row.cachedInputCreditsPer1M,
+                      output: row.outputCreditsPer1M,
+                      embedding: row.embeddingCreditsPer1M,
+                    },
+                  }))}
+                  empty={<EmptyState title="No AI price versions" />}
+                />
+              )}
+              <div className="grid gap-4 border-t border-[#E1E7F0] bg-[#F8FAFD] p-5 sm:grid-cols-2 xl:grid-cols-4">
+                <Field label="Provider" required>
+                  <TextInput aria-label="Provider" value={aiPrice.provider} onChange={(event) => setAiPrice({ ...aiPrice, provider: event.target.value })} />
+                </Field>
+                <Field label="Model" required>
+                  <TextInput aria-label="Model" value={aiPrice.model} onChange={(event) => setAiPrice({ ...aiPrice, model: event.target.value })} />
+                </Field>
+                <Field label="Input credits / 1M" required>
+                  <TextInput aria-label="Input credits / 1M" inputMode="decimal" value={aiPrice.input} onChange={(event) => setAiPrice({ ...aiPrice, input: event.target.value })} />
+                </Field>
+                <Field label="Cached input credits / 1M" required>
+                  <TextInput aria-label="Cached input credits / 1M" inputMode="decimal" value={aiPrice.cachedInput} onChange={(event) => setAiPrice({ ...aiPrice, cachedInput: event.target.value })} />
+                </Field>
+                <Field label="Output credits / 1M" required>
+                  <TextInput aria-label="Output credits / 1M" inputMode="decimal" value={aiPrice.output} onChange={(event) => setAiPrice({ ...aiPrice, output: event.target.value })} />
+                </Field>
+                <Field label="Embedding credits / 1M" required>
+                  <TextInput aria-label="Embedding credits / 1M" inputMode="decimal" value={aiPrice.embedding} onChange={(event) => setAiPrice({ ...aiPrice, embedding: event.target.value })} />
+                </Field>
+              </div>
+            </section>
+
+            <div className="flex justify-end border-t border-[#E1E7F0] bg-white p-5">
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={
+                  working === "pricing" ||
+                  !resourcePrice.cpu.trim() ||
+                  !resourcePrice.memory.trim() ||
+                  !resourcePrice.storage.trim() ||
+                  !resourcePrice.gpu.trim() ||
+                  !aiPrice.provider.trim() ||
+                  !aiPrice.model.trim() ||
+                  !aiPrice.input.trim() ||
+                  !aiPrice.cachedInput.trim() ||
+                  !aiPrice.output.trim() ||
+                  !aiPrice.embedding.trim()
+                }
+              >
+                {working === "pricing" ? "Creating…" : "Create resource + AI pricing version"}
+              </Button>
+            </div>
+          </form>
         </Card>
       ) : null}
 

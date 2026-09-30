@@ -1,0 +1,3 @@
+ALTER TABLE "BugReport"
+ADD COLUMN "url" VARCHAR(2048),
+ADD COLUMN "resolutionNote" TEXT;
