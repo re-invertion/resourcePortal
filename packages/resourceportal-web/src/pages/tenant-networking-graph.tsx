@@ -123,6 +123,13 @@ export type GateResource = {
   lanAddresses: string[];
   lanCidrs: string[];
   agentVersion?: string | null;
+  routeAdvertisementMode?: "Manual" | "BGP";
+  bgpLocalAsn?: number | null;
+  bgpRouterAddress?: string | null;
+  bgpRouterAsn?: number | null;
+  bgpSourceAddress?: string | null;
+  bgpHoldTimeSeconds?: number;
+  advertisedCidrs?: string[];
   lastSeenAt?: string | null;
   lastError?: string | null;
   revokedAt?: string | null;
@@ -1042,6 +1049,16 @@ function GraphInspector({
         <DetailRow label="LAN CIDRs">{gate?.lanCidrs?.join(", ") || "Not reported"}</DetailRow>
         <DetailRow label="Tunnel">{gate?.clientTunnelAddress || "—"}</DetailRow>
         <DetailRow label="Networks">{gate?.networks.length ?? 0}</DetailRow>
+        <DetailRow label="Route advertisement">
+          {gate?.routeAdvertisementMode === "BGP"
+            ? `BGP AS${gate.bgpLocalAsn ?? "?"} → AS${gate.bgpRouterAsn ?? "?"} (${gate.bgpRouterAddress ?? "peer pending"})`
+            : "Manual static routes"}
+        </DetailRow>
+        {gate?.routeAdvertisementMode === "BGP" ? (
+          <DetailRow label="Advertised CIDRs">
+            {gate.advertisedCidrs?.join(", ") || "None"}
+          </DetailRow>
+        ) : null}
         <DetailRow label="Last seen">{formatDate(data.lastSeenAt)}</DetailRow>
         <DetailRow label="Agent">{gate?.agentVersion || "—"}</DetailRow>
         {data.lastError ? <DetailRow label="Last error">{data.lastError}</DetailRow> : null}

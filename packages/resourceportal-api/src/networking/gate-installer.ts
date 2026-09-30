@@ -5,7 +5,7 @@ set -euo pipefail
 API_URL=""
 ENROLLMENT_TOKEN=""
 INTERVAL="30"
-AGENT_VERSION="gate-shell-v1"
+AGENT_VERSION="gate-shell-v2"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
@@ -119,7 +119,11 @@ WG_INTERFACE="rp-gate"
 FIREWALL_CHAIN="RP-GATE-LAN"
 TUNNEL_UP_FILE="/run/resourceportal-gate-last-up"
 HANDSHAKE_STALE_SECONDS="90"
-AGENT_VERSION="gate-shell-v1"
+AGENT_VERSION="gate-shell-v2"
+FRR_CONFIG="/etc/frr/frr.conf"
+FRR_DAEMONS="/etc/frr/daemons"
+FRR_BEGIN="! BEGIN RESOURCEPORTAL-GATE"
+FRR_END="! END RESOURCEPORTAL-GATE"
 
 log() { printf '[ResourcePortalGate] %s\n' "$*"; }
 
@@ -238,6 +242,198 @@ EOF
   fi
 }
 
+strip_managed_frr_config() {
+  local input="$1"
+  local output="$2"
+  if [ ! -f "$input" ]; then
+    : > "$output"
+    return
+  fi
+  awk -v begin="$FRR_BEGIN" -v end="$FRR_END" '
+    $0 == begin { managed=1; next }
+    $0 == end { managed=0; next }
+    !managed { print }
+  ' "$input" > "$output"
+}
+
+has_unmanaged_bgp() {
+  local stripped
+  stripped="$(mktemp)"
+  strip_managed_frr_config "$FRR_CONFIG" "$stripped"
+  if grep -Eq '^[[:space:]]*router bgp[[:space:]]+[0-9]+' "$stripped"; then
+    rm -f "$stripped"
+    return 0
+  fi
+  rm -f "$stripped"
+  return 1
+}
+
+ensure_frr_installed() {
+  if command -v vtysh >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Installing FRR for BGP route advertisement"
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y && apt-get install -y frr
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y frr
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y frr
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache frr
+  else
+    log "BGP reconcile failed: FRR is not installed and no supported package manager is available"
+    return 1
+  fi
+
+  if ! command -v vtysh >/dev/null 2>&1; then
+    log "BGP reconcile failed: FRR installation did not provide vtysh"
+    return 1
+  fi
+}
+
+prepare_frr_service() {
+  ensure_frr_installed || return 1
+  install -d -m 0755 /etc/frr
+  if [ -f "$FRR_DAEMONS" ]; then
+    local daemon
+    for daemon in zebra bgpd; do
+      if grep -q "^$daemon=" "$FRR_DAEMONS"; then
+        sed -i "s/^$daemon=.*/$daemon=yes/" "$FRR_DAEMONS"
+      else
+        printf '\n%s=yes\n' "$daemon" >> "$FRR_DAEMONS"
+      fi
+    done
+  fi
+  systemctl enable --now frr.service >/dev/null 2>&1 \
+    || systemctl enable --now frr >/dev/null 2>&1
+}
+
+install_frr_config() {
+  local source="$1"
+  chmod 0640 "$source"
+  if id -u frr >/dev/null 2>&1; then
+    chown frr:frr "$source" 2>/dev/null || true
+  fi
+  mv "$source" "$FRR_CONFIG"
+  if ! systemctl restart frr.service >/dev/null 2>&1 \
+    && ! systemctl restart frr >/dev/null 2>&1; then
+    return 1
+  fi
+  vtysh -b >/dev/null 2>&1
+}
+
+disable_bgp() {
+  local stripped
+  stripped="$(mktemp)"
+  strip_managed_frr_config "$FRR_CONFIG" "$stripped"
+  if [ ! -f "$FRR_CONFIG" ]; then
+    rm -f "$stripped"
+    return
+  fi
+  if cmp -s "$stripped" "$FRR_CONFIG"; then
+    rm -f "$stripped"
+    return
+  fi
+  chmod 0640 "$stripped"
+  if id -u frr >/dev/null 2>&1; then
+    chown frr:frr "$stripped" 2>/dev/null || true
+  fi
+  mv "$stripped" "$FRR_CONFIG"
+  systemctl restart frr.service >/dev/null 2>&1 \
+    || systemctl restart frr >/dev/null 2>&1 \
+    || true
+  vtysh -b >/dev/null 2>&1 || true
+  log "Disabled ResourcePortalGate BGP advertisements"
+}
+
+sync_bgp() {
+  local config="$1"
+  local lan_addresses="$2"
+  local mode
+  mode="$(printf '%s' "$config" | jq -r '.routeAdvertisement.mode // "Manual"')"
+
+  if [ "$mode" != "BGP" ]; then
+    disable_bgp
+    return
+  fi
+
+  if has_unmanaged_bgp; then
+    log "Refusing BGP reconcile because /etc/frr/frr.conf contains an unmanaged router bgp stanza"
+    disable_bgp
+    return
+  fi
+
+  local local_asn router_address router_asn source_address hold_time keepalive advertised
+  local_asn="$(printf '%s' "$config" | jq -er '.routeAdvertisement.localAsn')"
+  router_address="$(printf '%s' "$config" | jq -er '.routeAdvertisement.routerAddress')"
+  router_asn="$(printf '%s' "$config" | jq -er '.routeAdvertisement.routerAsn')"
+  source_address="$(printf '%s' "$config" | jq -r '.routeAdvertisement.sourceAddress // empty')"
+  hold_time="$(printf '%s' "$config" | jq -r '.routeAdvertisement.holdTimeSeconds // 90')"
+  advertised="$(printf '%s' "$config" | jq -c '.routeAdvertisement.advertisedCidrs // []')"
+
+  if [ -z "$source_address" ]; then
+    source_address="$(printf '%s' "$lan_addresses" | jq -r '.[0] // empty')"
+  fi
+  if [ -z "$source_address" ]; then
+    log "BGP reconcile skipped: no LAN source/router-id address is available"
+    disable_bgp
+    return
+  fi
+
+  keepalive=$((hold_time / 3))
+  if [ "$keepalive" -lt 1 ]; then keepalive=1; fi
+
+  local stripped next seq cidr
+  stripped="$(mktemp)"
+  next="$(mktemp)"
+  strip_managed_frr_config "$FRR_CONFIG" "$stripped"
+  cat "$stripped" > "$next"
+  rm -f "$stripped"
+  printf '%s\n' "$FRR_BEGIN" >> "$next"
+
+  seq=10
+  while IFS= read -r cidr; do
+    [ -n "$cidr" ] || continue
+    printf 'ip prefix-list RP-GATE-EXPORT seq %s permit %s\n' "$seq" "$cidr" >> "$next"
+    seq=$((seq + 10))
+  done < <(printf '%s' "$advertised" | jq -r '.[]')
+  printf 'ip prefix-list RP-GATE-EXPORT seq 65535 deny any\n' >> "$next"
+  printf 'ip prefix-list RP-GATE-IMPORT seq 5 deny any\n' >> "$next"
+  printf 'router bgp %s\n' "$local_asn" >> "$next"
+  printf ' bgp router-id %s\n' "$source_address" >> "$next"
+  printf ' neighbor %s remote-as %s\n' "$router_address" "$router_asn" >> "$next"
+  printf ' neighbor %s timers %s %s\n' "$router_address" "$keepalive" "$hold_time" >> "$next"
+  printf ' neighbor %s update-source %s\n' "$router_address" "$source_address" >> "$next"
+  printf ' address-family ipv4 unicast\n' >> "$next"
+  printf '  neighbor %s activate\n' "$router_address" >> "$next"
+  printf '  neighbor %s prefix-list RP-GATE-IMPORT in\n' "$router_address" >> "$next"
+  printf '  neighbor %s prefix-list RP-GATE-EXPORT out\n' "$router_address" >> "$next"
+  while IFS= read -r cidr; do
+    [ -n "$cidr" ] || continue
+    printf '  network %s\n' "$cidr" >> "$next"
+  done < <(printf '%s' "$advertised" | jq -r '.[]')
+  printf ' exit-address-family\n' >> "$next"
+  printf '%s\n' "$FRR_END" >> "$next"
+
+  if [ -f "$FRR_CONFIG" ] && cmp -s "$next" "$FRR_CONFIG"; then
+    rm -f "$next"
+    return
+  fi
+
+  if ! prepare_frr_service; then
+    rm -f "$next"
+    return
+  fi
+  if ! install_frr_config "$next"; then
+    log "BGP reconcile failed: FRR service could not be restarted"
+    return
+  fi
+  log "Applied export-only BGP advertisements for $(printf '%s' "$advertised" | jq 'length') RP Network CIDRs"
+}
+
 while true; do
   API_URL="$(jq -r '.apiUrl' "$STATE_FILE")"
   AGENT_TOKEN="$(jq -r '.agentToken' "$STATE_FILE")"
@@ -260,8 +456,9 @@ while true; do
     "$API_URL/networking/gates/agent/heartbeat" || printf '000')"
 
   if [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
-    log "Gate token was revoked or rejected; tunnel disabled"
+    log "Gate token was revoked or rejected; tunnel and BGP advertisements disabled"
     down_tunnel
+    disable_bgp
     rm -f "$RESPONSE_FILE"
     sleep "$INTERVAL"
     continue
@@ -284,6 +481,7 @@ while true; do
     write_wireguard_config "$CONFIG"
     sync_firewall "$LAN_CIDRS" "$ALLOWED_IPS"
   fi
+  sync_bgp "$CONFIG" "$LAN_ADDRESSES"
 
   sleep "$INTERVAL"
 done

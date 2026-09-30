@@ -1041,6 +1041,12 @@ model ResourcePortalGate {
   lanAddresses               String[]                       @default([])
   lanCidrs                   String[]                       @default([])
   agentVersion               String?
+  routeAdvertisementMode     String                         @default("Manual")
+  bgpLocalAsn                BigInt?
+  bgpRouterAddress           String?
+  bgpRouterAsn               BigInt?
+  bgpSourceAddress           String?
+  bgpHoldTimeSeconds         Int                            @default(90)
   lastSeenAt                 DateTime?
   lastError                  String?
   revokedAt                  DateTime?

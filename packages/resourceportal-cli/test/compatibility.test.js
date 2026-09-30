@@ -165,6 +165,43 @@ test("gate create uses the tenant networking API", async () => {
   });
 });
 
+test("gate routing configures export-only BGP", async () => {
+  const tenantId = "00000000-0000-4000-8000-000000000001";
+  const gateId = "00000000-0000-4000-8000-000000000002";
+  const request = await captureJsonRequest([
+    "gate",
+    "routing",
+    tenantId,
+    gateId,
+    "--mode",
+    "BGP",
+    "--local-asn",
+    "65050",
+    "--router-address",
+    "192.168.50.1",
+    "--router-asn",
+    "65001",
+    "--source-address",
+    "192.168.50.2",
+    "--hold-time-seconds",
+    "90",
+  ]);
+
+  assert.equal(request.method, "PATCH");
+  assert.equal(
+    request.url,
+    `/api/tenants/${tenantId}/networking/gates/${gateId}/routing`,
+  );
+  assert.deepEqual(request.body, {
+    mode: "BGP",
+    localAsn: 65050,
+    routerAddress: "192.168.50.1",
+    routerAsn: 65001,
+    sourceAddress: "192.168.50.2",
+    holdTimeSeconds: 90,
+  });
+});
+
 test("gate delete uses permanent ResourcePortalGate deletion endpoint", async () => {
   const tenantId = "00000000-0000-4000-8000-000000000001";
   const gateId = "00000000-0000-4000-8000-000000000002";

@@ -25,6 +25,7 @@ import { CreateGateDto } from "./dto/create-gate.dto";
 import { CreateNetworkDto } from "./dto/create-network.dto";
 import { GateEnrollDto } from "./dto/gate-enroll.dto";
 import { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import { UpdateNetworkDto } from "./dto/update-network.dto";
 import { resourcePortalGateInstallerScript } from "./gate-installer";
 import { NetworkingService } from "./networking.service";
@@ -170,6 +171,17 @@ export class NetworkingController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.networking.createGateEnrollment(tenantId, gateId, actor);
+  }
+
+  @RequirePermissions("gate.manage")
+  @Patch("gates/:gateId/routing")
+  updateGateRouting(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("gateId", ParseUUIDPipe) gateId: string,
+    @Body() dto: UpdateGateRoutingDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.updateGateRouting(tenantId, gateId, dto, actor);
   }
 
   @RequirePermissions("gate.manage")
