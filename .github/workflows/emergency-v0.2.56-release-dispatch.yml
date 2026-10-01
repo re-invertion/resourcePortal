@@ -1,0 +1,37 @@
+name: Emergency v0.2.56 Release Dispatch
+
+on:
+  push:
+    branches:
+      - fix/v0.2.56-critical-storage-quota
+    paths:
+      - .github/workflows/emergency-v0.2.56-release-dispatch.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create immutable release tag at merged hotfix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TARGET_SHA: 5152bff987b25f9120f90948c926b60d61db1442
+          TAG: v0.2.56
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$existing" ]]; then
+            test "$existing" = "$TARGET_SHA"
+          else
+            gh api --method POST "repos/$REPO/git/refs"               -f ref="refs/tags/$TAG"               -f sha="$TARGET_SHA"
+          fi
+
+      - name: Dispatch installer-gated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref v0.2.56 -f version=0.2.56
