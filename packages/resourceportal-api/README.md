@@ -146,7 +146,7 @@ ResourcePortal v0.2.2 adds platform-managed private-network egress isolation for
 
 The guard blocks tenant task egress to RFC1918, carrier-grade NAT, loopback, link-local and IPv6 unique-local/link-local ranges while leaving ordinary Internet egress available. Traffic inside an App Group overlay and inbound Traefik traffic are not routed through this policy. The guard also covers access from tenant containers to the Swarm node itself.
 
-Platform Administrators manage the global policy through `GET/PATCH /api/platform/network-egress`. The policy has no per-App-Group bypasses: when enabled, every tenant workload is subject to the protected private-address ranges outside ResourcePortal-managed Networks.
+Platform Administrators can inspect the global policy through `GET /api/platform/network-egress`; the compatibility PATCH endpoint only permits re-applying the enabled state. The protection is mandatory and has no per-App-Group bypasses: every tenant workload is subject to the protected private-address ranges outside ResourcePortal-managed Networks.
 
 The database is the source of truth. The worker reconciles a versioned policy snapshot into the global guard service without redeploying tenant applications. ResourcePortal workloads carry explicit App Group identity labels so the guard can identify tenant tasks. A fresh guard without a valid policy snapshot fails closed to the default protected ranges; during a normal control-plane rolling update an existing applied firewall state is preserved until the worker reattaches the authoritative snapshot.
 
