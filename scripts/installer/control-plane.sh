@@ -41,8 +41,19 @@ rp_escape_sed_replacement() {
   printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
 }
 
+rp_storage_worker_device() {
+  local storage_base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" source
+  source="$(findmnt -nro SOURCE -M "$storage_base" 2>/dev/null || true)"
+  source="${source%%[*}"
+  if [[ "$source" == /dev/* ]]; then
+    printf '%s\n' "$source"
+    return 0
+  fi
+  printf '%s\n' "${RP_CFG_STORAGE_DEVICE:?RP_CFG_STORAGE_DEVICE is required}"
+}
+
 rp_render_stack() {
-  local state="$1" repo_root template storage_base platform_admin_ids output acme_resolver acme_environment acme_storage oidc_extra_ca_b64 legacy_domain legacy_zitadel_domain legacy_domain_regex legacy_zitadel_domain_regex
+  local state="$1" repo_root template storage_base storage_worker_device platform_admin_ids output acme_resolver acme_environment acme_storage oidc_extra_ca_b64 legacy_domain legacy_zitadel_domain legacy_domain_regex legacy_zitadel_domain_regex
   case "$state" in bootstrap|ingress|final) ;; *) return 1 ;; esac
   # Rendering is also used by preview/ACME tests. Actual final deploy/persist paths
   # validate ZITADEL management state explicitly before consuming this output.
@@ -51,6 +62,7 @@ rp_render_stack() {
   template="$repo_root/config/production/stack.yml.tpl"
   [[ -r "$template" ]] || return 1
   storage_base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}"
+  storage_worker_device="$(rp_storage_worker_device)" || return 1
   platform_admin_ids="${RP_CFG_PLATFORM_ADMIN_IDS:-}"
   output="$(cat "$template")"
   acme_resolver="$(rp_acme_resolver_for_state "$state")" || return 1
@@ -105,7 +117,7 @@ rp_render_stack() {
     "COOKIE_SWARM_REF|$RP_CFG_COOKIE_SWARM_REF"
     "WORKER_SWARM_REF|$RP_CFG_WORKER_SWARM_REF"
     "STORAGE_BASE_PATH|$storage_base"
-    "STORAGE_DEVICE|$RP_CFG_STORAGE_DEVICE"
+    "STORAGE_QUOTA_DEVICE|$storage_worker_device"
     "SWARM_ADVERTISE_ADDR|$RP_CFG_SWARM_ADVERTISE_ADDR"
     "STORAGE_SERVER_ADDRESS|$RP_CFG_STORAGE_SERVER_ADDRESS"
     "RELEASE_VERSION|${RP_CFG_RELEASE_VERSION:-unknown}"

@@ -283,7 +283,7 @@ services:
       - rp_encryption_key
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - __STORAGE_DEVICE__:__STORAGE_DEVICE__
+      - __STORAGE_QUOTA_DEVICE__:__STORAGE_QUOTA_DEVICE__
       - __STORAGE_BASE_PATH__:__STORAGE_BASE_PATH__
       - /mnt/resourceportal/volumes:/mnt/resourceportal/volumes
       - /mnt/resourceportal/secrets:/mnt/resourceportal/secrets:ro

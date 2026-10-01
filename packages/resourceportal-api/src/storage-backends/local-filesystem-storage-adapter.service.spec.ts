@@ -41,6 +41,7 @@ function adapterFor(input?: {
   options?: string;
   projectIdReadback?: number;
   quotaHardKiB?: number;
+  xfsQuotaStderr?: string;
 }) {
   const config = {
     get: vi.fn((key: string, defaultValue: unknown) => {
@@ -76,16 +77,35 @@ function adapterFor(input?: {
           stderr: "",
         });
       }
-      if (program === "xfs_quota" && args.at(-1)?.startsWith("limit -p")) {
-        const match = args.at(-1)?.match(/bhard=(\d+)k/);
+      const xfsCommand =
+        program === "xfs_quota" && args.includes("-c")
+          ? args[args.indexOf("-c") + 1]
+          : undefined;
+      if (xfsCommand?.startsWith("limit -p")) {
+        const match = xfsCommand.match(/bhard=(\d+)k/);
         if (match && input?.quotaHardKiB === undefined) currentHardKiB = Number(match[1]);
-        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: "",
+          stderr: input?.xfsQuotaStderr ?? "",
+        });
       }
-      if (program === "xfs_quota" && args.at(-1)?.startsWith("report ")) {
+      if (xfsCommand?.startsWith("report ")) {
         const hard = currentHardKiB ?? 4;
-        return Promise.resolve({ exitCode: 0, stdout: `#12001 0 ${hard} ${hard} 00 [--------]\n`, stderr: "" });
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: "#12001 0 " + hard + " " + hard + " 00 [--------]\n",
+          stderr: input?.xfsQuotaStderr ?? "",
+        });
       }
-      if (["xfs_quota", "setquota", "chattr"].includes(program)) {
+      if (program === "xfs_quota") {
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: "",
+          stderr: input?.xfsQuotaStderr ?? "",
+        });
+      }
+      if (["setquota", "chattr"].includes(program)) {
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       }
       if (program === "setquota") {
@@ -213,20 +233,42 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       "limit -p bhard=4k bsoft=4k 12001",
+      "/srv/resource-portal/storage",
     ]);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       `project -s -p ${localPath} 12001`,
+      "/srv/resource-portal/storage",
     ]);
     expect(runner.run).toHaveBeenCalledWith("lsattr", ["-pd", localPath]);
+  });
+
+  it("fails closed when xfs_quota reports stderr with exit code zero", async () => {
+    const { adapter } = adapterFor({
+      xfsQuotaStderr:
+        "xfs_quota: cannot setup path for mount /srv/resource-portal/storage: No such device or address",
+    });
+    const localPath = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
+
+    await expect(
+      adapter.provisionVolume(backend, {
+        tenantId: "tenant-a",
+        volumeId: "volume-a",
+        sizeBytes: 4096n,
+        projectId: 12001,
+      }),
+    ).rejects.toThrow("Storage project quota update failed");
+
+    expect(mockedRm).toHaveBeenCalledWith(localPath, {
+      recursive: true,
+      force: true,
+    });
   });
 
   it("uses ext4 project hierarchy plus setquota and rounds limits up to KiB", async () => {
@@ -307,9 +349,9 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       "limit -p bhard=16k bsoft=16k 12001",
+      "/srv/resource-portal/storage",
     ]);
   });
 

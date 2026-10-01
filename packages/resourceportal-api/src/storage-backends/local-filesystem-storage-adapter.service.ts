@@ -285,17 +285,22 @@ export class LocalFilesystemStorageAdapterService {
     return BigInt(raw);
   }
 
-  private runXfsQuota(command: string) {
+  private async runXfsQuota(command: string) {
     const cli = this.config.get<string>("STORAGE_XFS_QUOTA_CLI", "xfs_quota");
-    return this.commands.run(cli, [
+    const result = await this.commands.run(cli, [
       "-P/dev/null",
       "-D/dev/null",
       "-x",
       "-f",
-      this.mountRoot(),
       "-c",
       command,
+      this.mountRoot(),
     ]);
+
+    if (result.exitCode === 0 && result.stderr.trim().length > 0) {
+      return { ...result, exitCode: 1 };
+    }
+    return result;
   }
 
   private parseProjectId(output: string) {
