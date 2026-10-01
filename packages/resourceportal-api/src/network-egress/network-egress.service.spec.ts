@@ -56,7 +56,7 @@ function fixture() {
     $transaction: transaction,
   } as unknown as PrismaService;
 
-  return { service: new NetworkEgressService(prisma), transaction, tx };
+  return { service: new NetworkEgressService(prisma), prisma, transaction, tx };
 }
 
 describe("NetworkEgressService", () => {
