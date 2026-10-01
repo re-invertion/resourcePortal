@@ -292,9 +292,9 @@ export class LocalFilesystemStorageAdapterService {
       "-D/dev/null",
       "-x",
       "-f",
-      this.mountRoot(),
       "-c",
       command,
+      this.mountRoot(),
     ]);
   }
 

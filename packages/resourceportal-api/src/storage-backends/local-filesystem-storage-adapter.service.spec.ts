@@ -76,12 +76,14 @@ function adapterFor(input?: {
           stderr: "",
         });
       }
-      if (program === "xfs_quota" && args.at(-1)?.startsWith("limit -p")) {
-        const match = args.at(-1)?.match(/bhard=(\d+)k/);
+      const xfsCommandIndex = args.indexOf("-c");
+      const xfsCommand = xfsCommandIndex >= 0 ? args[xfsCommandIndex + 1] : undefined;
+      if (program === "xfs_quota" && xfsCommand?.startsWith("limit -p")) {
+        const match = xfsCommand.match(/bhard=(\d+)k/);
         if (match && input?.quotaHardKiB === undefined) currentHardKiB = Number(match[1]);
         return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       }
-      if (program === "xfs_quota" && args.at(-1)?.startsWith("report ")) {
+      if (program === "xfs_quota" && xfsCommand?.startsWith("report ")) {
         const hard = currentHardKiB ?? 4;
         return Promise.resolve({ exitCode: 0, stdout: `#12001 0 ${hard} ${hard} 00 [--------]\n`, stderr: "" });
       }
@@ -213,18 +215,18 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       "limit -p bhard=4k bsoft=4k 12001",
+      "/srv/resource-portal/storage",
     ]);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       `project -s -p ${localPath} 12001`,
+      "/srv/resource-portal/storage",
     ]);
     expect(runner.run).toHaveBeenCalledWith("lsattr", ["-pd", localPath]);
   });
@@ -307,9 +309,9 @@ describe("LocalFilesystemStorageAdapterService", () => {
       "-D/dev/null",
       "-x",
       "-f",
-      "/srv/resource-portal/storage",
       "-c",
       "limit -p bhard=16k bsoft=16k 12001",
+      "/srv/resource-portal/storage",
     ]);
   });
 
