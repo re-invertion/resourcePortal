@@ -41,7 +41,10 @@ export RP_CFG_RELEASE_VERSION='0.2.0'
 rp_config_apply_defaults
 [[ "$RP_CFG_MANAGED_DOMAIN_BASE" == resource-portal.pl ]] && pass 'managed domain defaults to portal domain' || fail 'managed domain defaults to portal domain'
 
-final="$(rp_render_stack final)"
+final="$(
+  findmnt() { return 1; }
+  rp_render_stack final
+)"
 contains "$final" 'MANAGED_DOMAIN_BASE: resource-portal.pl' 'API receives managed domain base'
 contains "$final" 'TRAEFIK_CERT_RESOLVER: letsencrypt' 'worker receives production resolver'
 not_contains "$final" 'TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress' 'worker no longer depends on shared tenant ingress overlay'
