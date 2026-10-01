@@ -408,21 +408,29 @@ describe("LocalFilesystemStorageAdapterService", () => {
   it("accepts an absent quota report entry after project quota cleanup", async () => {
     const { adapter, runner } = adapterFor();
 
-    runner.run.mockImplementation(async (program: string, args: string[]) => {
+    runner.run.mockImplementation((program: string, args: string[]) => {
       if (program === "findmnt" && args.includes("FSTYPE")) {
-        return { exitCode: 0, stdout: "xfs\n", stderr: "" };
+        return Promise.resolve({ exitCode: 0, stdout: "xfs\n", stderr: "" });
       }
       if (program === "findmnt" && args.includes("OPTIONS")) {
-        return { exitCode: 0, stdout: "rw,relatime,prjquota\n", stderr: "" };
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: "rw,relatime,prjquota\n",
+          stderr: "",
+        });
       }
       if (program === "xfs_quota" && args.includes("-c")) {
         const command = args[args.indexOf("-c") + 1];
         if (command === "report -p -n -b") {
-          return { exitCode: 0, stdout: "", stderr: "" };
+          return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
         }
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       }
-      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+      return Promise.resolve({
+        exitCode: 1,
+        stdout: "",
+        stderr: "unexpected command",
+      });
     });
 
     await expect(
