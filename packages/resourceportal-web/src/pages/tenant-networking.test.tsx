@@ -591,6 +591,27 @@ it("deletes a VPN Gate from the graph inspector after confirmation", async () =>
   });
 });
 
+it("explains how to connect an app and Gate when the tenant has no Network", async () => {
+  const noNetworkTopology = {
+    ...topology,
+    networks: [],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(json(noNetworkTopology))),
+  );
+
+  render(<TenantNetworkingPage tenantId="tenant-1" />);
+
+  expect(
+    await screen.findByText("Create a Network before connecting an app and Gate"),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/Applications and ResourcePortalGate instances meet through a tenant Network/i),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Create Network" })).toBeTruthy();
+});
+
 it("keeps invalid Gate names in the form instead of raising a global validation toast", async () => {
   const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     if (String(input).endsWith("/networking/topology")) return Promise.resolve(json(topology));
