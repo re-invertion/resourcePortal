@@ -5,6 +5,7 @@ import {
   decodeEgressPolicy,
   encodeEgressPolicy,
   firewallRulesForWorkloads,
+  shouldPreserveExistingFirewallState,
   tenantWorkloads,
 } from "./egress-guard.logic";
 
@@ -82,6 +83,44 @@ describe("egress guard logic", () => {
         ipv6: undefined,
       },
     ]);
+  });
+
+  it("preserves only a fully linked mandatory firewall state", () => {
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: true,
+        hostJump: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: false,
+        hostJump: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: true,
+        hostJump: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: false,
+        hostChain: false,
+        forwardJump: false,
+        hostJump: false,
+      }),
+    ).toBe(false);
   });
 
   it("rejects every protected private IPv4 range for every tenant workload", () => {
