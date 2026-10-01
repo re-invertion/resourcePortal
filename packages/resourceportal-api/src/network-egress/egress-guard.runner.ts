@@ -4,6 +4,7 @@ import {
   decodeEgressPolicy,
   egressPolicyDigest,
   firewallRulesForWorkloads,
+  shouldPreserveExistingFirewallState,
   tenantWorkloads,
   type DockerContainerInspect,
   type DockerGatewayNetworkInspect,
@@ -130,10 +131,15 @@ async function hasExistingPolicyState() {
     jumpExists("iptables", "DOCKER-USER", FORWARD_CHAIN),
     jumpExists("iptables", "INPUT", HOST_CHAIN),
   ]);
-  // Both jumps present means the last known policy was enabled. Both absent
-  // means Platform Admin deliberately disabled enforcement. A partial state is
-  // treated as invalid and rebuilt from the fail-closed default.
-  return forwardChain && hostChain && forwardJump === hostJump;
+  // Only a fully linked firewall is safe to preserve. Legacy states with the
+  // RP chains present but both jumps removed represented disabled enforcement
+  // and must be rebuilt from the mandatory fail-closed default.
+  return shouldPreserveExistingFirewallState({
+    forwardChain,
+    hostChain,
+    forwardJump,
+    hostJump,
+  });
 }
 
 async function jumpExists(binary: string, parent: string, child: string) {
