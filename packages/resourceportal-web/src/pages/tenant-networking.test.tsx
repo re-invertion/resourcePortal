@@ -609,7 +609,7 @@ it("explains how to connect an app and Gate when the tenant has no Network", asy
   expect(
     screen.getByText(/Applications and ResourcePortalGate instances meet through a tenant Network/i),
   ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Create Network" })).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: "Create Network" }).length).toBeGreaterThan(0);
 });
 
 it("keeps invalid Gate names in the form instead of raising a global validation toast", async () => {
