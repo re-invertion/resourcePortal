@@ -20,8 +20,8 @@ function fixture() {
     platformEgressPolicy: {
       upsert: vi.fn().mockResolvedValue({
         id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: false,
-        revision: 2,
+        enabled: true,
+        revision: 4,
         updatedAt: new Date("2026-09-25T12:00:00.000Z"),
       }),
     },
@@ -37,6 +37,7 @@ function fixture() {
         revision: 3,
         updatedAt: new Date("2026-09-25T12:00:00.000Z"),
       }),
+      update: vi.fn(),
     },
     workerReconciliationState: {
       findFirst: vi.fn().mockResolvedValue({
@@ -58,25 +59,34 @@ function fixture() {
 }
 
 describe("NetworkEgressService", () => {
-  it("increments the desired revision when Platform Admin changes enforcement", async () => {
+  it("rejects attempts to disable mandatory private-network isolation", async () => {
+    const { service, prisma } = fixture();
+
+    await expect(service.updatePolicy({ enabled: false }, actor)).rejects.toThrow(
+      "mandatory and cannot be disabled",
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the compatibility PATCH endpoint for explicitly enabling/reapplying protection", async () => {
     const { service, tx } = fixture();
 
-    const result = await service.updatePolicy({ enabled: false }, actor);
+    const result = await service.updatePolicy({ enabled: true }, actor);
 
     expect(tx.platformEgressPolicy.upsert).toHaveBeenCalledWith({
       where: { id: PLATFORM_EGRESS_POLICY_ID },
       create: {
         id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: false,
+        enabled: true,
         updatedBy: actor.id,
       },
       update: {
-        enabled: false,
+        enabled: true,
         revision: { increment: 1 },
         updatedBy: actor.id,
       },
     });
-    expect(result).toMatchObject({ enabled: false, revision: 2 });
+    expect(result).toMatchObject({ enabled: true, revision: 4 });
     expect(tx.auditLogEntry.create).toHaveBeenCalled();
   });
 
