@@ -355,6 +355,85 @@ describe("LocalFilesystemStorageAdapterService", () => {
     ]);
   });
 
+  it("clears the XFS project quota when deleting a Volume", async () => {
+    const { adapter, runner } = adapterFor();
+    const storagePath =
+      "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
+
+    await expect(
+      adapter.deleteVolume(backend, storagePath, 12001),
+    ).resolves.toBeUndefined();
+
+    expect(mockedRm).toHaveBeenCalledWith(storagePath, {
+      recursive: true,
+      force: true,
+    });
+    expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
+      "-P/dev/null",
+      "-D/dev/null",
+      "-x",
+      "-f",
+      "-c",
+      "limit -p bhard=0k bsoft=0k 12001",
+      "/srv/resource-portal/storage",
+    ]);
+    expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
+      "-P/dev/null",
+      "-D/dev/null",
+      "-x",
+      "-f",
+      "-c",
+      "report -p -n -b",
+      "/srv/resource-portal/storage",
+    ]);
+  });
+
+  it("fails deletion when the XFS project quota cannot be cleared", async () => {
+    const { adapter } = adapterFor({
+      xfsQuotaStderr: "cannot update project quota",
+    });
+    const storagePath =
+      "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
+
+    await expect(
+      adapter.deleteVolume(backend, storagePath, 12001),
+    ).rejects.toThrow("Storage project quota update failed");
+
+    expect(mockedRm).toHaveBeenCalledWith(storagePath, {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("accepts an absent quota report entry after project quota cleanup", async () => {
+    const { adapter, runner } = adapterFor();
+
+    runner.run.mockImplementation(async (program: string, args: string[]) => {
+      if (program === "findmnt" && args.includes("FSTYPE")) {
+        return { exitCode: 0, stdout: "xfs\n", stderr: "" };
+      }
+      if (program === "findmnt" && args.includes("OPTIONS")) {
+        return { exitCode: 0, stdout: "rw,relatime,prjquota\n", stderr: "" };
+      }
+      if (program === "xfs_quota" && args.includes("-c")) {
+        const command = args[args.indexOf("-c") + 1];
+        if (command === "report -p -n -b") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "unexpected command" };
+    });
+
+    await expect(
+      adapter.deleteVolume(
+        backend,
+        "/srv/resource-portal/storage/volumes/tenant-a/volume-a",
+        12001,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("measures used bytes recursively without following symlinks", async () => {
     const { adapter } = adapterFor();
     const root = "/srv/resource-portal/storage/volumes/tenant-a/volume-a";
