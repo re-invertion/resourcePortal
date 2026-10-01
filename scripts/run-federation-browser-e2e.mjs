@@ -52,15 +52,25 @@ async function verifyZitadelSelfRegistrationResend() {
     await page.goto(`${apiOrigin}/api/auth/register`, { waitUntil: "domcontentloaded" });
 
     if ((await page.locator("#register-button").count()) === 0) {
-      const registerButton = page.locator('button[name="register"][value="true"]');
-      assert(
-        (await registerButton.count()) > 0,
-        `ZITADEL self-registration action is unavailable at ${page.url()}`,
+      const directRegisterButton = page.locator('button[name="register"][value="true"]');
+      const usernamePasswordButton = page.locator(
+        'button[name="usernamepassword"][value="true"]',
       );
-      await Promise.all([
-        page.waitForLoadState("domcontentloaded"),
-        registerButton.click(),
-      ]);
+      if ((await directRegisterButton.count()) > 0) {
+        await Promise.all([
+          page.waitForLoadState("domcontentloaded"),
+          directRegisterButton.click(),
+        ]);
+      } else if ((await usernamePasswordButton.count()) > 0) {
+        await Promise.all([
+          page.waitForLoadState("domcontentloaded"),
+          usernamePasswordButton.click(),
+        ]);
+      } else {
+        throw new Error(
+          `ZITADEL self-registration action is unavailable at ${page.url()}`,
+        );
+      }
     }
 
     await page.locator("#firstname").fill("Resource");
