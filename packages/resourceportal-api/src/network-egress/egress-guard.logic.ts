@@ -57,6 +57,20 @@ export function egressPolicyDigest(policy: NetworkEgressPolicySnapshot) {
   return createHash("sha256").update(JSON.stringify(policy)).digest("hex");
 }
 
+export function shouldPreserveExistingFirewallState(state: {
+  forwardChain: boolean;
+  hostChain: boolean;
+  forwardJump: boolean;
+  hostJump: boolean;
+}) {
+  return (
+    state.forwardChain &&
+    state.hostChain &&
+    state.forwardJump &&
+    state.hostJump
+  );
+}
+
 export function tenantWorkloads(
   containers: DockerContainerInspect[],
   gateway: DockerGatewayNetworkInspect,
