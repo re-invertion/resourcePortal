@@ -29,6 +29,11 @@ function fixture() {
       create: vi.fn().mockResolvedValue({}),
     },
   };
+  const transaction = vi
+    .fn()
+    .mockImplementation(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
   const prisma = {
     platformEgressPolicy: {
       upsert: vi.fn().mockResolvedValue({
@@ -48,24 +53,20 @@ function fixture() {
         lastError: null,
       }),
     },
-    $transaction: vi
-      .fn()
-      .mockImplementation(
-        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-      ),
+    $transaction: transaction,
   } as unknown as PrismaService;
 
-  return { service: new NetworkEgressService(prisma), prisma, tx };
+  return { service: new NetworkEgressService(prisma), transaction, tx };
 }
 
 describe("NetworkEgressService", () => {
   it("rejects attempts to disable mandatory private-network isolation", async () => {
-    const { service, prisma } = fixture();
+    const { service, transaction } = fixture();
 
     await expect(service.updatePolicy({ enabled: false }, actor)).rejects.toThrow(
       "mandatory and cannot be disabled",
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("keeps the compatibility PATCH endpoint for explicitly enabling/reapplying protection", async () => {
