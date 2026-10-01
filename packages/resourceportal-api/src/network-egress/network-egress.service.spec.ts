@@ -34,15 +34,17 @@ function fixture() {
     .mockImplementation(
       (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
     );
+  const policyUpsert = vi.fn().mockResolvedValue({
+    id: PLATFORM_EGRESS_POLICY_ID,
+    enabled: true,
+    revision: 3,
+    updatedAt: new Date("2026-09-25T12:00:00.000Z"),
+  });
+  const policyUpdate = vi.fn();
   const prisma = {
     platformEgressPolicy: {
-      upsert: vi.fn().mockResolvedValue({
-        id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: true,
-        revision: 3,
-        updatedAt: new Date("2026-09-25T12:00:00.000Z"),
-      }),
-      update: vi.fn(),
+      upsert: policyUpsert,
+      update: policyUpdate,
     },
     workerReconciliationState: {
       findFirst: vi.fn().mockResolvedValue({
@@ -56,7 +58,13 @@ function fixture() {
     $transaction: transaction,
   } as unknown as PrismaService;
 
-  return { service: new NetworkEgressService(prisma), prisma, transaction, tx };
+  return {
+    service: new NetworkEgressService(prisma),
+    transaction,
+    tx,
+    policyUpsert,
+    policyUpdate,
+  };
 }
 
 describe("NetworkEgressService", () => {
@@ -92,15 +100,15 @@ describe("NetworkEgressService", () => {
   });
 
   it("self-heals a legacy disabled policy before exposing a worker snapshot", async () => {
-    const { service, prisma } = fixture();
-    vi.mocked(prisma.platformEgressPolicy.upsert).mockResolvedValueOnce({
+    const { service, policyUpsert, policyUpdate } = fixture();
+    policyUpsert.mockResolvedValueOnce({
       id: PLATFORM_EGRESS_POLICY_ID,
       enabled: false,
       revision: 8,
       updatedAt: new Date("2026-10-01T00:00:00.000Z"),
       updatedBy: null,
     });
-    vi.mocked(prisma.platformEgressPolicy.update).mockResolvedValueOnce({
+    policyUpdate.mockResolvedValueOnce({
       id: PLATFORM_EGRESS_POLICY_ID,
       enabled: true,
       revision: 9,
@@ -112,7 +120,7 @@ describe("NetworkEgressService", () => {
       enabled: true,
       revision: 9,
     });
-    expect(prisma.platformEgressPolicy.update).toHaveBeenCalledWith({
+    expect(policyUpdate).toHaveBeenCalledWith({
       where: { id: PLATFORM_EGRESS_POLICY_ID },
       data: {
         enabled: true,
