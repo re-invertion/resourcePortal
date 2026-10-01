@@ -97,11 +97,18 @@ export class LocalFilesystemStorageAdapterService {
   async deleteVolume(
     backend: LocalFilesystemBackendDescriptor,
     storagePath: string,
+    projectId: number,
   ) {
+    this.assertPrivilegedMutation();
+    this.assertProjectId(projectId);
+    const filesystem = await this.validateMount();
+
     await rm(this.localPath(backend, storagePath), {
       recursive: true,
       force: true,
     });
+    await this.applyProjectLimit(filesystem, projectId, 0n);
+    await this.verifyProjectLimitCleared(filesystem, projectId);
   }
 
   async measureUsedSize(
@@ -269,6 +276,32 @@ export class LocalFilesystemStorageAdapterService {
     if (result.exitCode !== 0 || hardKiB !== expectedKiB) {
       throw new InternalServerErrorException(
         `Storage project quota verification failed: expected ${expectedKiB.toString()} KiB, got ${hardKiB?.toString() ?? "unavailable"} KiB`,
+      );
+    }
+  }
+
+  private async verifyProjectLimitCleared(
+    filesystem: LocalStorageFilesystem,
+    projectId: number,
+  ) {
+    let result;
+    if (filesystem === "xfs") {
+      result = await this.runXfsQuota("report -p -n -b");
+    } else {
+      const quota = this.config.get<string>("STORAGE_QUOTA_CLI", "quota");
+      result = await this.commands.run(quota, [
+        "-P",
+        "-w",
+        "-v",
+        projectId.toString(),
+        this.mountRoot(),
+      ]);
+    }
+
+    const hardKiB = this.parseQuotaHardKiB(result.stdout, projectId);
+    if (result.exitCode !== 0 || (hardKiB !== null && hardKiB !== 0n)) {
+      throw new InternalServerErrorException(
+        `Storage project quota cleanup verification failed: expected 0 KiB, got ${hardKiB?.toString() ?? "unavailable"} KiB`,
       );
     }
   }
