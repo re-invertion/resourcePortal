@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
@@ -47,6 +47,11 @@ export class NetworkEgressService {
     dto: UpdateNetworkEgressPolicyDto,
     actor: AuthenticatedUser,
   ) {
+    if (!dto.enabled) {
+      throw new BadRequestException(
+        "Private-network egress protection is mandatory and cannot be disabled",
+      );
+    }
     const updated = await this.prisma.$transaction(async (tx) => {
       const policy = await tx.platformEgressPolicy.upsert({
         where: { id: PLATFORM_EGRESS_POLICY_ID },
@@ -89,8 +94,8 @@ export class NetworkEgressService {
     };
   }
 
-  private getPolicy() {
-    return this.prisma.platformEgressPolicy.upsert({
+  private async getPolicy() {
+    const policy = await this.prisma.platformEgressPolicy.upsert({
       where: { id: PLATFORM_EGRESS_POLICY_ID },
       create: {
         id: PLATFORM_EGRESS_POLICY_ID,
@@ -98,6 +103,18 @@ export class NetworkEgressService {
         revision: 1,
       },
       update: {},
+    });
+    if (policy.enabled) return policy;
+
+    // v0.2.57 makes private/datacenter isolation mandatory. Heal any legacy
+    // disabled row before returning a policy snapshot so a stale database
+    // value cannot remove the host firewall guard.
+    return this.prisma.platformEgressPolicy.update({
+      where: { id: PLATFORM_EGRESS_POLICY_ID },
+      data: {
+        enabled: true,
+        revision: { increment: 1 },
+      },
     });
   }
 

@@ -20,8 +20,8 @@ function fixture() {
     platformEgressPolicy: {
       upsert: vi.fn().mockResolvedValue({
         id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: false,
-        revision: 2,
+        enabled: true,
+        revision: 4,
         updatedAt: new Date("2026-09-25T12:00:00.000Z"),
       }),
     },
@@ -29,14 +29,22 @@ function fixture() {
       create: vi.fn().mockResolvedValue({}),
     },
   };
+  const transaction = vi
+    .fn()
+    .mockImplementation(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    );
+  const policyUpsert = vi.fn().mockResolvedValue({
+    id: PLATFORM_EGRESS_POLICY_ID,
+    enabled: true,
+    revision: 3,
+    updatedAt: new Date("2026-09-25T12:00:00.000Z"),
+  });
+  const policyUpdate = vi.fn();
   const prisma = {
     platformEgressPolicy: {
-      upsert: vi.fn().mockResolvedValue({
-        id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: true,
-        revision: 3,
-        updatedAt: new Date("2026-09-25T12:00:00.000Z"),
-      }),
+      upsert: policyUpsert,
+      update: policyUpdate,
     },
     workerReconciliationState: {
       findFirst: vi.fn().mockResolvedValue({
@@ -47,37 +55,78 @@ function fixture() {
         lastError: null,
       }),
     },
-    $transaction: vi
-      .fn()
-      .mockImplementation(
-        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-      ),
+    $transaction: transaction,
   } as unknown as PrismaService;
 
-  return { service: new NetworkEgressService(prisma), prisma, tx };
+  return {
+    service: new NetworkEgressService(prisma),
+    transaction,
+    tx,
+    policyUpsert,
+    policyUpdate,
+  };
 }
 
 describe("NetworkEgressService", () => {
-  it("increments the desired revision when Platform Admin changes enforcement", async () => {
+  it("rejects attempts to disable mandatory private-network isolation", async () => {
+    const { service, transaction } = fixture();
+
+    await expect(service.updatePolicy({ enabled: false }, actor)).rejects.toThrow(
+      "mandatory and cannot be disabled",
+    );
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the compatibility PATCH endpoint for explicitly enabling/reapplying protection", async () => {
     const { service, tx } = fixture();
 
-    const result = await service.updatePolicy({ enabled: false }, actor);
+    const result = await service.updatePolicy({ enabled: true }, actor);
 
     expect(tx.platformEgressPolicy.upsert).toHaveBeenCalledWith({
       where: { id: PLATFORM_EGRESS_POLICY_ID },
       create: {
         id: PLATFORM_EGRESS_POLICY_ID,
-        enabled: false,
+        enabled: true,
         updatedBy: actor.id,
       },
       update: {
-        enabled: false,
+        enabled: true,
         revision: { increment: 1 },
         updatedBy: actor.id,
       },
     });
-    expect(result).toMatchObject({ enabled: false, revision: 2 });
+    expect(result).toMatchObject({ enabled: true, revision: 4 });
     expect(tx.auditLogEntry.create).toHaveBeenCalled();
+  });
+
+  it("self-heals a legacy disabled policy before exposing a worker snapshot", async () => {
+    const { service, policyUpsert, policyUpdate } = fixture();
+    policyUpsert.mockResolvedValueOnce({
+      id: PLATFORM_EGRESS_POLICY_ID,
+      enabled: false,
+      revision: 8,
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      updatedBy: null,
+    });
+    policyUpdate.mockResolvedValueOnce({
+      id: PLATFORM_EGRESS_POLICY_ID,
+      enabled: true,
+      revision: 9,
+      updatedAt: new Date("2026-10-01T00:00:01.000Z"),
+      updatedBy: null,
+    });
+
+    await expect(service.policySnapshot()).resolves.toMatchObject({
+      enabled: true,
+      revision: 9,
+    });
+    expect(policyUpdate).toHaveBeenCalledWith({
+      where: { id: PLATFORM_EGRESS_POLICY_ID },
+      data: {
+        enabled: true,
+        revision: { increment: 1 },
+      },
+    });
   });
 
   it("produces a version 2 fail-closed worker snapshot without per-App-Group exceptions", async () => {

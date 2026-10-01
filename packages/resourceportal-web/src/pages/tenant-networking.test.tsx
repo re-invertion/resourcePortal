@@ -591,6 +591,54 @@ it("deletes a VPN Gate from the graph inspector after confirmation", async () =>
   });
 });
 
+it("explains how to connect an app and Gate when the tenant has no Network", async () => {
+  const noNetworkTopology = {
+    ...topology,
+    networks: [],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(json(noNetworkTopology))),
+  );
+
+  render(<TenantNetworkingPage tenantId="tenant-1" />);
+
+  expect(
+    await screen.findByText("Create a Network before connecting an app and Gate"),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/Applications and ResourcePortalGate instances meet through a tenant Network/i),
+  ).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: "Create Network" }).length).toBeGreaterThan(0);
+});
+
+it("keeps invalid Gate names in the form instead of raising a global validation toast", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+    if (String(input).endsWith("/networking/topology")) return Promise.resolve(json(topology));
+    return Promise.resolve(json({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<><TenantNetworkingPage tenantId="tenant-1" /><ToastViewport /></>);
+  await waitFor(() => expect(screen.getAllByText("backend").length).toBeGreaterThan(0));
+
+  fireEvent.click(screen.getByRole("button", { name: "Add Gate" }));
+  const dialog = screen.getByRole("dialog", { name: "Add ResourcePortalGate" });
+  fireEvent.change(within(dialog).getByPlaceholderText("office-gateway"), {
+    target: { value: "Office Gateway" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create Gate" }));
+
+  expect(await within(dialog).findByText(/lowercase letters/i)).toBeTruthy();
+  expect(
+    fetchMock.mock.calls.some(
+      ([input, init]) =>
+        String(input).endsWith("/networking/gates") && init?.method === "POST",
+    ),
+  ).toBe(false);
+  expect(screen.queryByText("Unable to create ResourcePortalGate.")).toBeNull();
+});
+
 it("creates a Gate and shows the one-time curl installer command", async () => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -637,4 +685,9 @@ it("creates a Gate and shows the one-time curl installer command", async () => {
   );
   expect(installDialog.textContent).toContain("one-time-enrollment-token");
   expect(installDialog.textContent).toContain("sudo bash");
+  const commandCode = within(installDialog).getByText((text, element) =>
+    element?.tagName === "CODE" && text.includes("one-time-enrollment-token"),
+  );
+  expect(commandCode.closest("pre")).toBeTruthy();
+  expect(commandCode.closest("pre")?.className).toContain("text-white");
 });

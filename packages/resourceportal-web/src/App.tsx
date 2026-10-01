@@ -10,6 +10,7 @@ import { PlatformPage } from "./pages/platform";
 import { InvitationPage } from "./pages/invitation";
 import { TenantPage } from "./pages/tenant";
 import { AppRoute, parseRoute, tenantHref } from "./router/router";
+import { providerLogoutTarget } from "./auth/provider-logout";
 
 type User = { id: string; email?: string; displayName?: string; status?: string };
 type Tenant = { id: string; name?: string; displayName?: string; status?: string };
@@ -20,6 +21,7 @@ function useRoute(initialPath?: string) { const pathname = initialPath ?? browse
 function routeAttributes(route: AppRoute) { const attributes: Record<string, string> = { "data-route-kind": route.kind }; if (route.kind === "tenant") { attributes["data-tenant-id"] = route.tenantId; attributes["data-route-section"] = route.section; } else if (route.kind === "platform") attributes["data-route-section"] = route.section; else if (route.kind === "public") attributes["data-route-page"] = route.page; return attributes; }
 function routeLoadingText(route: AppRoute) { if (route.kind === "tenant") return `Loading tenant route: ${route.section}…`; if (route.kind === "platform") return `Loading platform route: ${route.section}…`; if (route.kind === "invitation") return "Loading invitation…"; if (route.kind === "tenants") return "Loading tenants…"; if (route.kind === "not-found") return "Loading route…"; return "Loading session…"; }
 function tenantList(value: unknown): Tenant[] { const list = Array.isArray(value) ? value : value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items) ? (value as Record<string, unknown>).items as unknown[] : []; return list.filter((item): item is Tenant => !!item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string").map((item) => item as Tenant); }
+function signOutBrowser() { void providerLogoutTarget().then((target) => window.location.assign(target)); }
 export function tenantInternalName(displayName: string) {
   const normalized = displayName.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/-{2,}/g, "-").slice(0, 63).replace(/-+$/g, "");
@@ -47,7 +49,7 @@ export function App({ initialPath }: AppProps = {}) {
   if (!tenants) return <AppLoading route={route} error={error}/>;
   if (route.kind === "not-found") return <main className="min-h-screen bg-[#F4F7FB] p-6" {...routeAttributes(route)}><div className="mx-auto max-w-2xl"><ResourcePortalLogo/><h1 className="sr-only">Page not found</h1><Card className="mt-8 p-6"><EmptyState title="Page not found" description="The requested ResourcePortal page does not exist." action={<a className="text-sm font-semibold text-[#0F56A7] hover:underline" href="/tenants">Choose tenant</a>}/></Card></div></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector user={user} tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} tenants={tenants} showPlatformAdmin={platformAdmin} onLogout={() => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} />}</AppShell>;
+  return <AppShell user={user} route={route} tenants={tenants} showPlatformAdmin={platformAdmin} onLogout={signOutBrowser}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} />}</AppShell>;
 }
 
 function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant[]; reload: () => Promise<void> }) {
@@ -59,7 +61,7 @@ function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant
     if (!needle) return active;
     return active.filter((tenant) => (tenant.displayName ?? tenant.name ?? tenant.id).toLowerCase().includes(needle));
   }, [active, query]);
-  const signOut = () => { void apiRequest("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); };
+  const signOut = signOutBrowser;
 
   return <AuthWorkspaceLayout
     title="One place for every workspace."

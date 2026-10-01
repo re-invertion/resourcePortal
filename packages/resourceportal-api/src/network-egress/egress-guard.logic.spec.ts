@@ -5,6 +5,7 @@ import {
   decodeEgressPolicy,
   encodeEgressPolicy,
   firewallRulesForWorkloads,
+  shouldPreserveExistingFirewallState,
   tenantWorkloads,
 } from "./egress-guard.logic";
 
@@ -21,12 +22,24 @@ describe("egress guard logic", () => {
     expect(decodeEgressPolicy(old)).toEqual(DEFAULT_EGRESS_POLICY);
   });
 
-  it("round-trips a valid policy snapshot", () => {
+  it("round-trips a valid enabled policy snapshot", () => {
     const policy = {
       ...DEFAULT_EGRESS_POLICY,
       revision: 7,
     };
     expect(decodeEgressPolicy(encodeEgressPolicy(policy))).toEqual(policy);
+  });
+
+  it("normalizes legacy disabled snapshots to mandatory fail-closed enforcement", () => {
+    const legacyDisabled = {
+      ...DEFAULT_EGRESS_POLICY,
+      revision: 8,
+      enabled: false,
+    };
+    expect(decodeEgressPolicy(encodeEgressPolicy(legacyDisabled))).toEqual({
+      ...legacyDisabled,
+      enabled: true,
+    });
   });
 
   it("identifies explicitly labelled and stack-labelled ResourcePortal App Group tasks", () => {
@@ -72,6 +85,44 @@ describe("egress guard logic", () => {
     ]);
   });
 
+  it("preserves only a fully linked mandatory firewall state", () => {
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: true,
+        hostJump: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: false,
+        hostJump: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: true,
+        hostChain: true,
+        forwardJump: true,
+        hostJump: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPreserveExistingFirewallState({
+        forwardChain: false,
+        hostChain: false,
+        forwardJump: false,
+        hostJump: false,
+      }),
+    ).toBe(false);
+  });
+
   it("rejects every protected private IPv4 range for every tenant workload", () => {
     const rules = firewallRulesForWorkloads(
       DEFAULT_EGRESS_POLICY,
@@ -91,13 +142,13 @@ describe("egress guard logic", () => {
     expect(rules.every((rule) => rule.at(-1) === "REJECT")).toBe(true);
   });
 
-  it("emits no firewall rules when Platform Admin disables enforcement", () => {
-    expect(
-      firewallRulesForWorkloads(
-        { ...DEFAULT_EGRESS_POLICY, enabled: false },
-        [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18" }],
-        4,
-      ),
-    ).toEqual([]);
+  it("still emits deny rules when handed a legacy disabled policy object", () => {
+    const rules = firewallRulesForWorkloads(
+      { ...DEFAULT_EGRESS_POLICY, enabled: false },
+      [{ containerId: "c1", appGroupId: appGroupA, ipv4: "172.19.0.18" }],
+      4,
+    );
+    expect(rules).toHaveLength(DEFAULT_EGRESS_POLICY.blockedIpv4Cidrs.length);
+    expect(rules.every((rule) => rule.at(-1) === "REJECT")).toBe(true);
   });
 });

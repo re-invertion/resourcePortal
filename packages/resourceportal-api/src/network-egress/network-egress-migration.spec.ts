@@ -18,6 +18,14 @@ const cleanupMigration = readFileSync(
   "utf8",
 );
 
+const mandatoryMigration = readFileSync(
+  resolve(
+    __dirname,
+    "../../prisma/migrations/20261001193000_mandatory_network_egress/migration.sql",
+  ),
+  "utf8",
+);
+
 describe("network egress migrations", () => {
   it("keeps the global private-network protection policy enabled by default", () => {
     expect(baseMigration).toContain('CREATE TABLE "PlatformEgressPolicy"');
@@ -35,6 +43,18 @@ describe("network egress migrations", () => {
     );
     expect(cleanupMigration).toContain(
       'IF EXISTS (SELECT 1 FROM "PlatformEgressAllowRule" LIMIT 1)',
+    );
+  });
+
+  it("makes egress protection mandatory at the database boundary", () => {
+    expect(mandatoryMigration).toContain(
+      'UPDATE "PlatformEgressPolicy"',
+    );
+    expect(mandatoryMigration).toContain(
+      'WHERE "enabled" = false',
+    );
+    expect(mandatoryMigration).toContain(
+      'CHECK ("enabled" = true)',
     );
   });
 

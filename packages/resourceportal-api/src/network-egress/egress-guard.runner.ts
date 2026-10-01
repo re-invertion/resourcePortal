@@ -4,6 +4,7 @@ import {
   decodeEgressPolicy,
   egressPolicyDigest,
   firewallRulesForWorkloads,
+  shouldPreserveExistingFirewallState,
   tenantWorkloads,
   type DockerContainerInspect,
   type DockerGatewayNetworkInspect,
@@ -87,14 +88,14 @@ async function reconcile() {
       .join(",")}`;
   if (digest === lastDigest) return;
 
-  await applyFamily("iptables", policy.enabled, ipv4Rules);
+  await applyFamily("iptables", ipv4Rules);
   if (await commandExists("ip6tables")) {
     const ipv6ForwardingAvailable = await chainExists(
       "ip6tables",
       "DOCKER-USER",
     );
     if (ipv6ForwardingAvailable) {
-      await applyFamily("ip6tables", policy.enabled, ipv6Rules);
+      await applyFamily("ip6tables", ipv6Rules);
     } else if (ipv6Rules.length > 0) {
       throw new Error(
         "Tenant IPv6 workload detected but Docker IPv6 DOCKER-USER chain is unavailable",
@@ -109,20 +110,10 @@ async function reconcile() {
 
 async function applyFamily(
   binary: "iptables" | "ip6tables",
-  enabled: boolean,
   rules: string[][],
 ) {
   await ensureChain(binary, FORWARD_CHAIN);
   await ensureChain(binary, HOST_CHAIN);
-
-  if (!enabled) {
-    await removeAllJumps(binary, "DOCKER-USER", FORWARD_CHAIN);
-    await removeAllJumps(binary, "INPUT", HOST_CHAIN);
-    await run(binary, ["-w", "5", "-F", FORWARD_CHAIN]);
-    await run(binary, ["-w", "5", "-F", HOST_CHAIN]);
-    return;
-  }
-
   await ensureJump(binary, "DOCKER-USER", FORWARD_CHAIN);
   await ensureJump(binary, "INPUT", HOST_CHAIN);
   await run(binary, ["-w", "5", "-F", FORWARD_CHAIN]);
@@ -140,10 +131,15 @@ async function hasExistingPolicyState() {
     jumpExists("iptables", "DOCKER-USER", FORWARD_CHAIN),
     jumpExists("iptables", "INPUT", HOST_CHAIN),
   ]);
-  // Both jumps present means the last known policy was enabled. Both absent
-  // means Platform Admin deliberately disabled enforcement. A partial state is
-  // treated as invalid and rebuilt from the fail-closed default.
-  return forwardChain && hostChain && forwardJump === hostJump;
+  // Only a fully linked firewall is safe to preserve. Legacy states with the
+  // RP chains present but both jumps removed represented disabled enforcement
+  // and must be rebuilt from the mandatory fail-closed default.
+  return shouldPreserveExistingFirewallState({
+    forwardChain,
+    hostChain,
+    forwardJump,
+    hostJump,
+  });
 }
 
 async function jumpExists(binary: string, parent: string, child: string) {
@@ -226,18 +222,6 @@ async function ensureJump(binary: string, parent: string, child: string) {
   );
   if (exists.exitCode === 0) return;
   await run(binary, ["-w", "5", "-I", parent, "1", "-j", child]);
-}
-
-async function removeAllJumps(binary: string, parent: string, child: string) {
-  while (true) {
-    const exists = await run(
-      binary,
-      ["-w", "5", "-C", parent, "-j", child],
-      true,
-    );
-    if (exists.exitCode !== 0) return;
-    await run(binary, ["-w", "5", "-D", parent, "-j", child]);
-  }
 }
 
 async function containerIds() {

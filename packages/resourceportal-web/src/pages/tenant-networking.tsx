@@ -33,6 +33,12 @@ import {
 import { toast } from "../components/toast";
 import { NetworkingTabs } from "../components/tenant-section-tabs";
 import { tenantHref } from "../router/router";
+import {
+  hasFormErrors,
+  validateGateForm,
+  validateNetworkForm,
+  validateRoutingForm,
+} from "./networking-form-validation";
 
 type Operation = {
   id: string;
@@ -81,7 +87,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const [networkOpen, setNetworkOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [networkForm, setNetworkForm] = useState({ name: "", description: "", cidr: "" });
+  const [networkErrors, setNetworkErrors] = useState<Record<string, string | undefined>>({});
   const [gateForm, setGateForm] = useState({ name: "", description: "" });
+  const [gateErrors, setGateErrors] = useState<Record<string, string | undefined>>({});
+  const [connectionGuidance, setConnectionGuidance] = useState<string>();
   const [enrollment, setEnrollment] = useState<EnrollmentResponse>();
   const [routingGate, setRoutingGate] = useState<GateResource>();
   const [routingOpen, setRoutingOpen] = useState(false);
@@ -93,23 +102,34 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     sourceAddress: "",
     holdTimeSeconds: "90",
   });
+  const [routingErrors, setRoutingErrors] = useState<Record<string, string | undefined>>({});
 
 
   async function submitConnection(connection: Connection) {
-    const sourceId = connection.source;
-    const targetId = connection.target;
+    let sourceId = connection.source;
+    let targetId = connection.target;
+    if (
+      sourceId?.startsWith("network:") &&
+      targetId &&
+      (targetId.startsWith("app:") || targetId.startsWith("gate:"))
+    ) {
+      [sourceId, targetId] = [targetId, sourceId];
+    }
     if (!sourceId || !targetId?.startsWith("network:")) {
-      toast.error("Connect an Application or ResourcePortalGate node to a Network node.");
+      setConnectionGuidance(
+        "Applications and ResourcePortalGate instances do not connect directly. Create or choose a Network, then connect both nodes to that same Network.",
+      );
       return;
     }
 
     const networkId = targetId.slice("network:".length);
     const network = topology.data?.networks.find((item) => item.id === networkId);
     if (!network) {
-      toast.error("The selected Network is no longer available.");
+      setConnectionGuidance("The selected Network is no longer available. Reload the topology and try again.");
       return;
     }
 
+    setConnectionGuidance(undefined);
     setWorking(true);
     try {
       let operation: Operation;
@@ -194,6 +214,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
   async function createNetwork(event: FormEvent) {
     event.preventDefault();
+    const errors = validateNetworkForm(networkForm);
+    setNetworkErrors(errors);
+    if (hasFormErrors(errors)) return;
     setWorking(true);
     try {
       await apiRequest(`${root}/networks`, {
@@ -205,6 +228,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         },
       });
       setNetworkForm({ name: "", description: "", cidr: "" });
+      setNetworkErrors({});
       setNetworkOpen(false);
       await topology.reload();
       toast.success("Network created.");
@@ -217,6 +241,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
   async function createGate(event: FormEvent) {
     event.preventDefault();
+    const errors = validateGateForm(gateForm);
+    setGateErrors(errors);
+    if (hasFormErrors(errors)) return;
     setWorking(true);
     try {
       const response = await apiRequest<EnrollmentResponse>(`${root}/gates`, {
@@ -228,6 +255,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       });
       setEnrollment(response);
       setGateForm({ name: "", description: "" });
+      setGateErrors({});
       await topology.reload();
     } catch (error) {
       toast.errorFrom(error, "Unable to create ResourcePortalGate.");
@@ -263,12 +291,16 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       sourceAddress: gate.bgpSourceAddress ?? gate.lanAddresses?.[0] ?? "",
       holdTimeSeconds: String(gate.bgpHoldTimeSeconds ?? 90),
     });
+    setRoutingErrors({});
     setRoutingOpen(true);
   }
 
   async function saveGateRouting(event: FormEvent) {
     event.preventDefault();
     if (!routingGate) return;
+    const errors = validateRoutingForm(routingForm);
+    setRoutingErrors(errors);
+    if (hasFormErrors(errors)) return;
     setWorking(true);
     try {
       const body =
@@ -482,8 +514,22 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       ) : null}
 
       <Callout title="How to connect">
-        Drag from an Application or ResourcePortalGate handle into a Network. Click any node or connection to inspect its real state. Application connections update desired state and require Deploy changes in that App Group; Gate routes reconcile automatically.
+        Applications and ResourcePortalGate instances meet through a tenant Network; they are never linked directly. Connect both nodes to the same Network. Application connections update desired state and require Deploy changes in that App Group; Gate routes reconcile automatically.
       </Callout>
+
+      {topology.data && topology.data.networks.length === 0 ? (
+        <div className="mt-4">
+          <Callout tone="warning" title="Create a Network before connecting an app and Gate">
+            This tenant has no Network yet. Create one first (the CIDR can be allocated automatically), then connect the Application and ResourcePortalGate to that same Network.
+            <div className="mt-3"><Button size="sm" onClick={() => setNetworkOpen(true)}>Create Network</Button></div>
+          </Callout>
+        </div>
+      ) : null}
+      {connectionGuidance ? (
+        <div className="mt-4">
+          <Callout tone="warning" title="Connection needs a Network">{connectionGuidance}</Callout>
+        </div>
+      ) : null}
 
       <Card className="mt-5 overflow-hidden">
         {topology.data ? (
@@ -582,14 +628,14 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         }
       >
         <form id="create-network-form" className="space-y-4" onSubmit={(event) => void createNetwork(event)}>
-          <Field label="Name" required hint="Lowercase letters, numbers and hyphens.">
-            <TextInput required aria-required="true" value={networkForm.name} onChange={(event) => setNetworkForm({ ...networkForm, name: event.target.value })} placeholder="backend" />
+          <Field label="Name" required hint="Lowercase letters, numbers and hyphens." error={networkErrors.name}>
+            <TextInput required aria-required="true" value={networkForm.name} onChange={(event) => { setNetworkForm({ ...networkForm, name: event.target.value }); setNetworkErrors((current) => ({ ...current, name: undefined })); }} placeholder="backend" />
           </Field>
-          <Field label="CIDR" hint="Optional private IPv4 CIDR (/16 through /28). Default pool: automatically allocated.">
-            <TextInput value={networkForm.cidr} onChange={(event) => setNetworkForm({ ...networkForm, cidr: event.target.value })} placeholder="10.240.20.0/24" />
+          <Field label="CIDR" hint="Optional private IPv4 CIDR (/16 through /28). Default pool: automatically allocated." error={networkErrors.cidr}>
+            <TextInput value={networkForm.cidr} onChange={(event) => { setNetworkForm({ ...networkForm, cidr: event.target.value }); setNetworkErrors((current) => ({ ...current, cidr: undefined })); }} placeholder="10.240.20.0/24" />
           </Field>
-          <Field label="Description">
-            <TextInput value={networkForm.description} onChange={(event) => setNetworkForm({ ...networkForm, description: event.target.value })} placeholder="Shared backend connectivity" />
+          <Field label="Description" error={networkErrors.description}>
+            <TextInput value={networkForm.description} onChange={(event) => { setNetworkForm({ ...networkForm, description: event.target.value }); setNetworkErrors((current) => ({ ...current, description: undefined })); }} placeholder="Shared backend connectivity" />
           </Field>
         </form>
       </Dialog>
@@ -619,7 +665,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             </Callout>
             <div className="rounded-lg border border-[#D7E0EC] bg-[#0F1724] p-4 text-white">
               <div className="flex items-start justify-between gap-3">
-                <code className="min-w-0 flex-1 select-all break-all text-xs leading-5">{command}</code>
+                <pre className="m-0 min-w-0 flex-1 select-all whitespace-pre-wrap break-all bg-transparent p-0 text-xs leading-5 text-white"><code>{command}</code></pre>
                 <Button
                   size="sm"
                   onClick={() => void navigator.clipboard.writeText(command)}
@@ -634,11 +680,11 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           </div>
         ) : (
           <form id="create-gate-form" className="space-y-4" onSubmit={(event) => void createGate(event)}>
-            <Field label="Name" required>
-              <TextInput required aria-required="true" value={gateForm.name} onChange={(event) => setGateForm({ ...gateForm, name: event.target.value })} placeholder="office-gateway" />
+            <Field label="Name" required error={gateErrors.name}>
+              <TextInput required aria-required="true" value={gateForm.name} onChange={(event) => { setGateForm({ ...gateForm, name: event.target.value }); setGateErrors((current) => ({ ...current, name: undefined })); }} placeholder="office-gateway" />
             </Field>
-            <Field label="Description">
-              <TextInput value={gateForm.description} onChange={(event) => setGateForm({ ...gateForm, description: event.target.value })} placeholder="Office LAN router" />
+            <Field label="Description" error={gateErrors.description}>
+              <TextInput value={gateForm.description} onChange={(event) => { setGateForm({ ...gateForm, description: event.target.value }); setGateErrors((current) => ({ ...current, description: undefined })); }} placeholder="Office LAN router" />
             </Field>
           </form>
         )}
@@ -711,61 +757,66 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
                 Routes received from the LAN router are denied and are never imported into ResourcePortal.
               </Callout>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Gate ASN" required hint="Private ASN is recommended, for example 65050.">
+                <Field label="Gate ASN" required hint="Private ASN is recommended, for example 65050." error={routingErrors.localAsn}>
                   <TextInput
                     type="number"
                     min={1}
                     max={4294967295}
                     required
                     value={routingForm.localAsn}
-                    onChange={(event) =>
-                      setRoutingForm({ ...routingForm, localAsn: event.target.value })
-                    }
+                    onChange={(event) => {
+                      setRoutingForm({ ...routingForm, localAsn: event.target.value });
+                      setRoutingErrors((current) => ({ ...current, localAsn: undefined, routerAsn: undefined }));
+                    }}
                     placeholder="65050"
                   />
                 </Field>
-                <Field label="Router ASN" required>
+                <Field label="Router ASN" required error={routingErrors.routerAsn}>
                   <TextInput
                     type="number"
                     min={1}
                     max={4294967295}
                     required
                     value={routingForm.routerAsn}
-                    onChange={(event) =>
-                      setRoutingForm({ ...routingForm, routerAsn: event.target.value })
-                    }
+                    onChange={(event) => {
+                      setRoutingForm({ ...routingForm, routerAsn: event.target.value });
+                      setRoutingErrors((current) => ({ ...current, routerAsn: undefined }));
+                    }}
                     placeholder="65001"
                   />
                 </Field>
-                <Field label="Router IP" required hint="Must be inside a LAN CIDR reported by this Gate.">
+                <Field label="Router IP" required hint="Must be inside a LAN CIDR reported by this Gate." error={routingErrors.routerAddress}>
                   <TextInput
                     required
                     value={routingForm.routerAddress}
-                    onChange={(event) =>
-                      setRoutingForm({ ...routingForm, routerAddress: event.target.value })
-                    }
+                    onChange={(event) => {
+                      setRoutingForm({ ...routingForm, routerAddress: event.target.value });
+                      setRoutingErrors((current) => ({ ...current, routerAddress: undefined }));
+                    }}
                     placeholder="192.168.1.1"
                   />
                 </Field>
-                <Field label="Source IP" hint="Optional. Must be a LAN address reported by this Gate.">
+                <Field label="Source IP" hint="Optional. Must be a LAN address reported by this Gate." error={routingErrors.sourceAddress}>
                   <TextInput
                     value={routingForm.sourceAddress}
-                    onChange={(event) =>
-                      setRoutingForm({ ...routingForm, sourceAddress: event.target.value })
-                    }
+                    onChange={(event) => {
+                      setRoutingForm({ ...routingForm, sourceAddress: event.target.value });
+                      setRoutingErrors((current) => ({ ...current, sourceAddress: undefined }));
+                    }}
                     placeholder={routingGate?.lanAddresses?.[0] || "192.168.1.50"}
                   />
                 </Field>
-                <Field label="Hold time" required hint="BGP hold timer in seconds.">
+                <Field label="Hold time" required hint="BGP hold timer in seconds." error={routingErrors.holdTimeSeconds}>
                   <TextInput
                     type="number"
                     min={9}
                     max={65535}
                     required
                     value={routingForm.holdTimeSeconds}
-                    onChange={(event) =>
-                      setRoutingForm({ ...routingForm, holdTimeSeconds: event.target.value })
-                    }
+                    onChange={(event) => {
+                      setRoutingForm({ ...routingForm, holdTimeSeconds: event.target.value });
+                      setRoutingErrors((current) => ({ ...current, holdTimeSeconds: undefined }));
+                    }}
                   />
                 </Field>
               </div>

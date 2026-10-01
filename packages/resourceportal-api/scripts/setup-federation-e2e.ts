@@ -137,6 +137,8 @@ async function main() {
   await configureKeycloakSamlClient(samlProvider.zitadelIdentityProviderId);
   await prepareSamlLinkedUser(samlProvider.zitadelIdentityProviderId);
 
+  await setSelfRegistrationAllowed(true);
+
   const platformProvider = await apiRequest<ProviderResponse>(
     "POST",
     "/platform/identity-providers",
@@ -385,6 +387,20 @@ async function assertExternalIdpAllowed(expected: boolean) {
   throw new Error(
     `Expected ZITADEL login-policy event state allowExternalIdp=${expected}, got found=${lastState.found}, allowExternalIdp=${lastState.allowExternalIdp}, lastEventType=${lastState.lastEventType}`,
   );
+}
+
+async function setSelfRegistrationAllowed(value: boolean) {
+  const current = await getLoginPolicy();
+  assert(current.policy, "ZITADEL login policy is missing");
+
+  const body: Record<string, unknown> = {};
+  for (const field of writableLoginPolicyFields) {
+    const fieldValue = current.policy[field];
+    if (fieldValue !== undefined) body[field] = fieldValue;
+  }
+  body.allowRegister = value;
+
+  await zitadelRequest("PUT", "/management/v1/policies/login", body);
 }
 
 async function setExternalIdpAllowed(value: boolean) {

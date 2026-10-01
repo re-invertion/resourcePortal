@@ -8,10 +8,14 @@ const state = JSON.parse(readFileSync(statePath, "utf8"));
 const apiOrigin = process.env.FEDERATION_E2E_RP_ORIGIN ?? "http://localhost:3000";
 const keycloakOrigin = process.env.FEDERATION_E2E_KEYCLOAK_ORIGIN ?? "http://localhost:8180";
 const zitadelOrigin = process.env.FEDERATION_E2E_ZITADEL_ORIGIN ?? "http://localhost:8080";
+const zitadelManagementToken = process.env.ZITADEL_MANAGEMENT_TOKEN ?? "";
+const zitadelOrganizationId = process.env.ZITADEL_ORGANIZATION_ID ?? "";
 const prisma = new PrismaClient();
 const browser = await chromium.launch({ headless: true });
 
 try {
+  await verifyZitadelSelfRegistrationResend();
+
   await loginThroughTenantProvider({
     protocol: "OIDC",
     providerId: state.oidcProviderId,
@@ -32,6 +36,147 @@ try {
 } finally {
   await browser.close();
   await prisma.$disconnect();
+}
+
+async function verifyZitadelSelfRegistrationResend() {
+  assert(zitadelManagementToken, "ZITADEL management token is required for resend verification");
+  assert(zitadelOrganizationId, "ZITADEL organization ID is required for resend verification");
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const marker = Date.now();
+  const email = `rp-resend-${marker}@example.test`;
+  const password = "ResourcePass123!";
+
+  try {
+    await page.goto(`${apiOrigin}/api/auth/register`, { waitUntil: "domcontentloaded" });
+
+    if ((await page.locator("#register-button").count()) === 0) {
+      const directRegisterButton = page.locator('button[name="register"][value="true"]');
+      const usernamePasswordButton = page.locator(
+        'button[name="usernamepassword"][value="true"]',
+      );
+      if ((await directRegisterButton.count()) > 0) {
+        await Promise.all([
+          page.waitForLoadState("domcontentloaded"),
+          directRegisterButton.click(),
+        ]);
+      } else if ((await usernamePasswordButton.count()) > 0) {
+        await Promise.all([
+          page.waitForLoadState("domcontentloaded"),
+          usernamePasswordButton.click(),
+        ]);
+      } else {
+        throw new Error(
+          `ZITADEL self-registration action is unavailable at ${page.url()}`,
+        );
+      }
+    }
+
+    await page.locator("#firstname").fill("Resource");
+    await page.locator("#lastname").fill("Portal");
+    await page.locator("#email").fill(email);
+
+    const username = page.locator("#username");
+    if ((await username.count()) > 0 && (await username.isVisible().catch(() => false))) {
+      await username.fill(`rp-resend-${marker}`);
+    }
+
+    await page.locator("#register-password").fill(password);
+    await page.locator("#register-password-confirmation").fill(password);
+
+    for (const selector of [
+      "#register-term-confirmation",
+      "#register-term-confirmation-privacy",
+    ]) {
+      const checkbox = page.locator(selector);
+      if ((await checkbox.count()) > 0 && (await checkbox.isVisible().catch(() => false))) {
+        await checkbox.check();
+      }
+    }
+
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded"),
+      page.locator("#register-button").click(),
+    ]);
+
+    const resend = page.locator('button[name="resend"][value="true"]');
+    await resend.waitFor({ state: "visible" });
+
+    const userId = await page.locator('input[name="userID"]').inputValue();
+    assert(userId, "ZITADEL activation page did not expose the pending user ID");
+
+    const before = await initializationCodeCount(userId);
+    assert(
+      before >= 1,
+      `ZITADEL self-registration did not create an initial activation code for ${userId}`,
+    );
+
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/ui/login/user/init"),
+    );
+
+    await resend.click();
+    const response = await responsePromise;
+    assert(
+      response.ok(),
+      `ZITADEL resend POST failed with HTTP ${response.status()}`,
+    );
+
+    const after = await waitForInitializationCodeCount(userId, before + 1);
+    assert(
+      after >= before + 1,
+      `ZITADEL resend did not append a fresh initialization code event (before=${before}, after=${after})`,
+    );
+
+    console.log(
+      `ZITADEL Login V1 activation resend OK: initialization codes ${before} -> ${after}`,
+    );
+  } catch (error) {
+    const snapshot = await page.content().catch(() => "<page unavailable>");
+    console.error(`ZITADEL self-registration resend failed at ${page.url()}`);
+    console.error(snapshot.slice(0, 8_000));
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
+async function initializationCodeCount(userId) {
+  const response = await fetch(`${zitadelOrigin}/admin/v1/events/_search`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${zitadelManagementToken}`,
+      "content-type": "application/json",
+      "x-zitadel-orgid": zitadelOrganizationId,
+    },
+    body: JSON.stringify({
+      asc: true,
+      limit: 100,
+      aggregateId: userId,
+      aggregateTypes: ["user"],
+      eventTypes: ["user.human.initialization.code.added"],
+    }),
+  });
+  const text = await response.text();
+  assert(
+    response.ok,
+    `ZITADEL event search failed with HTTP ${response.status}: ${text}`,
+  );
+  const payload = text ? JSON.parse(text) : {};
+  return Array.isArray(payload.events) ? payload.events.length : 0;
+}
+
+async function waitForInitializationCodeCount(userId, expected) {
+  let count = 0;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    count = await initializationCodeCount(userId);
+    if (count >= expected) return count;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return count;
 }
 
 async function loginThroughTenantProvider({

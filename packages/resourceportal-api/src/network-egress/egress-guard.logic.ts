@@ -40,7 +40,10 @@ export function decodeEgressPolicy(
   try {
     const value = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
     if (!isPolicy(value)) return DEFAULT_EGRESS_POLICY;
-    return value;
+    // Legacy snapshots could explicitly disable protection. v0.2.57 treats
+    // the guard as mandatory, so even a stale valid snapshot is normalized
+    // fail-closed before firewall rules are derived.
+    return { ...value, enabled: true };
   } catch {
     return DEFAULT_EGRESS_POLICY;
   }
@@ -52,6 +55,20 @@ export function encodeEgressPolicy(policy: NetworkEgressPolicySnapshot) {
 
 export function egressPolicyDigest(policy: NetworkEgressPolicySnapshot) {
   return createHash("sha256").update(JSON.stringify(policy)).digest("hex");
+}
+
+export function shouldPreserveExistingFirewallState(state: {
+  forwardChain: boolean;
+  hostChain: boolean;
+  forwardJump: boolean;
+  hostJump: boolean;
+}) {
+  return (
+    state.forwardChain &&
+    state.hostChain &&
+    state.forwardJump &&
+    state.hostJump
+  );
 }
 
 export function tenantWorkloads(
@@ -93,7 +110,6 @@ export function firewallRulesForWorkloads(
   workloads: TenantWorkload[],
   family: 4 | 6,
 ) {
-  if (!policy.enabled) return [] as string[][];
   const blocked = family === 4 ? policy.blockedIpv4Cidrs : policy.blockedIpv6Cidrs;
   const commands: string[][] = [];
   for (const workload of workloads) {
