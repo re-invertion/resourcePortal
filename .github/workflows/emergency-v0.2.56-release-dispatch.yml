@@ -24,11 +24,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          existing="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$existing" ]]; then
+          api="https://api.github.com/repos/$REPO"
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          code="$(curl -sS -o /tmp/ref.json -w '%{http_code}' "${auth[@]}" "$api/git/ref/tags/$TAG")"
+          if [[ "$code" == 200 ]]; then
+            existing="$(jq -r '.object.sha' /tmp/ref.json)"
+            echo "existing tag points to $existing"
             test "$existing" = "$TARGET_SHA"
+          elif [[ "$code" == 404 ]]; then
+            create_code="$(curl -sS -o /tmp/create.json -w '%{http_code}' -X POST "${auth[@]}"               "$api/git/refs"               -d "$(jq -nc --arg ref "refs/tags/$TAG" --arg sha "$TARGET_SHA" '{ref:$ref,sha:$sha}')")"
+            cat /tmp/create.json
+            test "$create_code" = 201
           else
-            gh api --method POST "repos/$REPO/git/refs"               -f ref="refs/tags/$TAG"               -f sha="$TARGET_SHA"
+            cat /tmp/ref.json
+            exit 1
           fi
 
       - name: Dispatch installer-gated release
