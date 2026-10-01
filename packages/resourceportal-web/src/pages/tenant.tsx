@@ -3,7 +3,7 @@ import { ApplicationsPage } from "./applications";
 import { CreateAppGroupPage } from "./app-group-create";
 import { ImportAppGroupPage } from "./app-group-import";
 import { AppGroupRoute } from "./app-group/route";
-import { TenantStoragePage, TenantAccess, TenantBilling } from "./tenant-resources";
+import { TenantAccess, TenantBilling } from "./tenant-resources";
 import { TenantVolumesPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
@@ -27,7 +27,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
     return <ApplicationsPage tenantId={tenantId} />;
   }
   if (section === "app-groups") return (segments.length || resourceId) ? <AppGroupRoute tenantId={tenantId} segments={segments.length ? segments : [resourceId!]} /> : <ApplicationsPage tenantId={tenantId} />;
-  if (section === "storage-networking" || section === "storage") return <TenantStoragePage tenantId={tenantId} />;
+  if (section === "storage-networking" || section === "storage") return <TenantVolumesPage tenantId={tenantId} />;
   if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} />;
   if (section === "access") return <TenantAccess tenantId={tenantId} />;
   if (section === "activity") {

@@ -25,4 +25,9 @@ export class CreateBugReportDto {
   @IsString()
   @MaxLength(255)
   imageFileName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  url?: string;
 }

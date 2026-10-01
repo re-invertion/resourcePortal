@@ -8,7 +8,6 @@ import { AppGroupConfig } from "./config";
 import { CreateApplicationWizard } from "./create-app-wizard";
 import { AppGroupDeployments } from "./deployments";
 import { AppGroupLayout } from "./layout";
-import { AppGroupNetworking } from "./networking";
 import { AppGroupOverview } from "./overview";
 import { AppGroupSettings } from "./settings";
 
@@ -28,7 +27,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
   const appGroupName = typeof group.data.name === "string" && group.data.name ? group.data.name : "App Group";
 
   // A Single App is a first-class page. Do not render it underneath the App Group
-  // header/navigation; preserve the hierarchy only through breadcrumbs.
+  // header/navigation; the shell owns the single canonical breadcrumb trail.
   if (section === "apps" && sub[1] && sub[1] !== "new") {
     const appId = sub[1];
     if (sub[2] === "edit") {
@@ -46,7 +45,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
   else if (section === "apps" && sub[1] === "new") content = <CreateApplicationWizard tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} />;
   else if (section === "apps") content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "config") content = <AppGroupConfig tenantId={tenantId} appGroupId={appGroupId} />;
-  else if (section === "networking") content = <AppGroupNetworking tenantId={tenantId} appGroupId={appGroupId} />;
+  else if (section === "networking") { activeSection = "apps"; content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />; }
   else if (section === "deployments") content = <AppGroupDeployments tenantId={tenantId} appGroupId={appGroupId} onReload={group.reload} />;
   else if (section === "activity") content = <AppGroupActivity tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "settings" || section === "advanced") {

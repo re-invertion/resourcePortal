@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { apiRequest } from "../../api/client";
-import { applicationHref, appGroupHref, tenantHref } from "../../router/router";
+import { applicationHref, appGroupHref } from "../../router/router";
 import { ActivityIcon, Button, Card, Callout, DetailList, EditIcon, ExternalIcon, KeyIcon, LinkButton, NetworkIcon, PlayIcon, RestartIcon, ServerIcon, StatusBadge, StatusText, StopIcon, VolumeIcon, statusTone } from "../../components/design-system";
 import { ApplicationIcon } from "../../components/application-icon";
 import { formatBytes, items, text, useApi } from "../../hooks/use-api";
@@ -40,7 +40,6 @@ export function ApplicationDetail({ tenantId, appGroupId, appGroupName = "App Gr
   const running = effective.toLowerCase() === "running";
 
   return <section className="space-y-5">
-    <nav aria-label="Application hierarchy" className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium text-[#66758A]"><a className="hover:text-[#0F56A7]" href={tenantHref(tenantId,"applications")}>Applications</a><span>/</span><a className="hover:text-[#0F56A7]" href={appGroupHref(tenantId,appGroupId)}>{appGroupName}</a><span>/</span><span className="text-[#344054]">{text(app.name,"Application")}</span></nav>
     <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
       <div className="flex min-w-0 gap-3"><ApplicationIcon app={app} className="h-11 w-11 rounded-xl"/><div className="min-w-0"><p className="text-[12px] font-semibold uppercase tracking-[.03em] text-[#1769E0]">Application</p><h2 className="truncate text-2xl font-semibold">{text(app.name,"Application")}</h2><p className="mt-1 max-w-2xl text-sm text-[#5B6678]">{text(app.description,text(app.image,"Container workload"))}</p><div className="mt-3 flex flex-wrap gap-2"><StatusBadge tone={statusTone(effective)}>{effective}</StatusBadge><StatusBadge tone={statusTone(health)}>{health}</StatusBadge>{app.pendingDeletion===true?<StatusBadge tone="danger">Pending deletion</StatusBadge>:null}</div></div></div>
       <div className="flex flex-wrap gap-2">{running?<Button aria-label="Stop application" disabled={Boolean(working)} onClick={()=>void runtimeAction("stop")}><StopIcon size={16}/>{working==="stop"?"Stopping…":"Stop"}</Button>:<Button aria-label="Start application" disabled={Boolean(working)} onClick={()=>void runtimeAction("start")}><PlayIcon size={16}/>{working==="start"?"Starting…":"Start"}</Button>}<Button aria-label="Restart application" disabled={Boolean(working)} onClick={()=>void runtimeAction("restart")}><RestartIcon size={16}/>{working==="restart"?"Restarting…":"Restart"}</Button><LinkButton href={applicationHref(tenantId,appGroupId,appId,"edit")}><EditIcon size={16}/>Edit application</LinkButton></div>

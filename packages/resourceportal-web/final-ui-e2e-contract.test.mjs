@@ -107,7 +107,7 @@ describe("v0.1.9 final UI E2E contract", () => {
     for (const expected of [
       '["overview", "Tenant Overview"]',
       '["applications", "Applications"]',
-      '["storage", "Storage"]',
+      '["storage", "Volumes"]',
       '["networking", "Networking"]',
       '["access", "Access"]',
       '["activity/operations", "Operations"]',

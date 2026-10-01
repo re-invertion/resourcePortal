@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformPage } from "./platform";
 
@@ -153,4 +153,43 @@ it("shows the global ResourcePortal user directory in Platform Admin", async () 
   expect(await screen.findByRole("heading", { name: "Users", level: 1 })).toBeTruthy();
   expect(screen.getByText("Owner User")).toBeTruthy();
   expect(screen.getByText("owner@example.test")).toBeTruthy();
+});
+
+
+it("filters and searches Platform Admin tenant inventory", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/platform/tenants") return json([
+      { id: "t1", name: "commerce", displayName: "Commerce", status: "Active", createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-29T00:00:00.000Z" },
+      { id: "t2", name: "sandbox", displayName: "Sandbox", status: "Suspended", createdAt: "2026-09-02T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" },
+    ]);
+    return json([]);
+  }));
+  render(<PlatformPage section="tenants" />);
+  expect(await screen.findByText("Commerce")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search tenants"), { target: { value: "sandbox" } });
+  expect(screen.queryByText("Commerce")).toBeNull();
+  expect(screen.getByText("Sandbox")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search tenants"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Filter tenants by status"), { target: { value: "Suspended" } });
+  expect(screen.queryByText("Commerce")).toBeNull();
+  expect(screen.getByText("Sandbox")).toBeTruthy();
+});
+
+it("filters and searches the Platform Admin user directory", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/platform/users") return json([
+      { id: "u1", email: "owner@example.test", displayName: "Owner User", status: "Active", createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-29T00:00:00.000Z" },
+      { id: "u2", email: "blocked@example.test", displayName: "Blocked User", status: "Suspended", createdAt: "2026-09-02T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z" },
+    ]);
+    return json([]);
+  }));
+  render(<PlatformPage section="users" />);
+  expect(await screen.findByText("Owner User")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search users"), { target: { value: "blocked@example.test" } });
+  expect(screen.queryByText("Owner User")).toBeNull();
+  expect(screen.getByText("Blocked User")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search users"), { target: { value: "" } });
+  fireEvent.change(screen.getByLabelText("Filter users by status"), { target: { value: "Active" } });
+  expect(screen.getByText("Owner User")).toBeTruthy();
+  expect(screen.queryByText("Blocked User")).toBeNull();
 });

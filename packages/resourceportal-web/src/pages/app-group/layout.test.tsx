@@ -32,8 +32,9 @@ it("keeps App Group navigation route-based and includes Settings", () => {
   );
   const nav = document.querySelector('nav[aria-label="App Group sections"]');
   expect(nav).toBeTruthy();
-  expect(nav?.querySelectorAll("a")).toHaveLength(7);
+  expect(nav?.querySelectorAll("a")).toHaveLength(6);
   expect(nav?.textContent).toContain("Settings");
+  expect(nav?.textContent).not.toContain("Networking");
   expect(Array.from(nav?.querySelectorAll("a") ?? []).every((link) => !link.getAttribute("href")?.startsWith("#"))).toBe(true);
 });
 

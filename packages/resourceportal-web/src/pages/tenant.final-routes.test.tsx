@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { TenantPage } from "./tenant";
 function json(value:unknown){return new Response(JSON.stringify(value),{status:200,headers:{"content-type":"application/json"}})}
-it.each([["storage-networking","Storage"],["access","Access"],["activity","Operations"],["billing","Billing"]])("renders final tenant section %s",async(section,heading)=>{
+it.each([["storage-networking","Volumes"],["access","Access"],["activity","Operations"],["billing","Billing"]])("renders final tenant section %s",async(section,heading)=>{
  vi.stubGlobal("fetch",vi.fn(async()=>json([])));
  render(<TenantPage tenantId="t1" section={section} userId="u1"/>);
  expect(await screen.findByRole("heading",{name:heading})).toBeTruthy();
@@ -13,6 +13,17 @@ it.each([["volumes","Create volume"],["registries","Add registry"],["domains","A
  vi.stubGlobal("fetch",vi.fn(async()=>json([])));
  render(<TenantPage tenantId="t1" section={section} userId="u1"/>);
  expect(await screen.findByRole("button",{name:action})).toBeTruthy();
+});
+
+
+it("keeps only Volumes and Registries in persistent Storage navigation", async () => {
+ vi.stubGlobal("fetch",vi.fn(async()=>json([])));
+ render(<TenantPage tenantId="t1" section="volumes" userId="u1"/>);
+ const nav=screen.getByRole("navigation",{name:"Storage sections"});
+ expect(nav.querySelectorAll("a")).toHaveLength(2);
+ expect(screen.getByRole("link",{name:"Volumes"}).getAttribute("aria-current")).toBe("page");
+ expect(screen.getByRole("link",{name:"Registries"}).getAttribute("href")).toBe("/tenants/t1/registries");
+ expect(screen.queryByRole("link",{name:"Overview"})).toBeNull();
 });
 
 it("renders registry detail from the real registry detail endpoint", async () => {

@@ -32,17 +32,18 @@ describe("BugReportsService", () => {
     });
     const service = new BugReportsService(prisma as never);
     await service.create(
-      { description: "  Deployment fails after clicking deploy.  " },
+      { description: "  Deployment fails after clicking deploy.  ", url: " https://resource-portal.test/apps " },
       actor,
     );
     expect(prisma.bugReport.create).toHaveBeenCalledOnce();
     const [createArgs] = prisma.bugReport.create.mock.calls[0] as unknown as [
-      { data: { description: string; reportedById: string } },
+      { data: { description: string; reportedById: string; url?: string | null } },
     ];
     expect(createArgs.data.description).toBe(
       "Deployment fails after clicking deploy.",
     );
     expect(createArgs.data.reportedById).toBe(actor.id);
+    expect(createArgs.data.url).toBe("https://resource-portal.test/apps");
   });
 
   it("accepts a valid PNG attachment and rejects spoofed image content", async () => {
@@ -97,6 +98,8 @@ describe("BugReportsService", () => {
         imageData: Buffer.from("image"),
         imageMimeType: "image/png",
         imageFileName: "shot.png",
+        url: "https://resource-portal.test/apps",
+        resolutionNote: "Moved networking to the Single App editor.",
         resolvedAt: new Date("2026-09-28T13:00:00Z"),
         createdAt: new Date("2026-09-28T12:00:00Z"),
         updatedAt: new Date("2026-09-28T12:00:00Z"),
@@ -111,6 +114,8 @@ describe("BugReportsService", () => {
       hasImage: true,
       imageUrl:
         "/api/platform/bug-reports/22222222-2222-4222-8222-222222222222/image",
+      url: "https://resource-portal.test/apps",
+      resolutionNote: "Moved networking to the Single App editor.",
     });
   });
 
@@ -133,6 +138,8 @@ describe("BugReportsService", () => {
         imageData: null,
         imageMimeType: null,
         imageFileName: null,
+        url: null,
+        resolutionNote: "Implemented the fix.",
         createdAt: new Date("2026-09-28T12:00:00Z"),
         updatedAt: new Date("2026-09-28T19:30:00Z"),
       })
@@ -149,6 +156,8 @@ describe("BugReportsService", () => {
         imageData: null,
         imageMimeType: null,
         imageFileName: null,
+        url: null,
+        resolutionNote: null,
         createdAt: new Date("2026-09-28T12:00:00Z"),
         updatedAt: new Date("2026-09-28T19:31:00Z"),
       });
@@ -157,13 +166,15 @@ describe("BugReportsService", () => {
     const resolved = await service.setResolved(
       "44444444-4444-4444-8444-444444444444",
       true,
+      "  Implemented the fix.  ",
     );
     expect(resolved.resolved).toBe(true);
     const resolvedUpdate = prisma.bugReport.update.mock
       .calls[0]?.[0] as unknown as {
-      data: { resolvedAt: Date | null };
+      data: { resolvedAt: Date | null; resolutionNote: string | null };
     };
     expect(resolvedUpdate.data.resolvedAt).toBeInstanceOf(Date);
+    expect(resolvedUpdate.data.resolutionNote).toBe("Implemented the fix.");
 
     const reopened = await service.setResolved(
       "44444444-4444-4444-8444-444444444444",
@@ -172,9 +183,10 @@ describe("BugReportsService", () => {
     expect(reopened.resolved).toBe(false);
     const reopenedUpdate = prisma.bugReport.update.mock
       .calls[1]?.[0] as unknown as {
-      data: { resolvedAt: Date | null };
+      data: { resolvedAt: Date | null; resolutionNote: string | null };
     };
     expect(reopenedUpdate.data.resolvedAt).toBeNull();
+    expect(reopenedUpdate.data.resolutionNote).toBeNull();
   });
 
   it("returns 404 when updating a missing report", async () => {

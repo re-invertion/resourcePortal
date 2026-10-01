@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformBugReportsPage } from "./platform-bug-reports";
 
@@ -15,6 +15,8 @@ const baseReport = {
   priority: "P2",
   resolved: false,
   resolvedAt: null as string | null,
+  resolutionNote: null as string | null,
+  url: "https://resource-portal.test/tenants/t1/applications",
   reporter: { id: "u1", email: "user@example.test", displayName: "User" },
   hasImage: true,
   imageUrl:
@@ -101,11 +103,12 @@ describe("PlatformBugReportsPage", () => {
           return json([current]);
         }
         if (url.endsWith("/resolution") && init?.method === "PATCH") {
-          const body = JSON.parse(String(init.body)) as { resolved: boolean };
+          const body = JSON.parse(String(init.body)) as { resolved: boolean; resolutionNote?: string };
           current = {
             ...current,
             resolved: body.resolved,
             resolvedAt: body.resolved ? "2026-09-28T19:30:00.000Z" : null,
+            resolutionNote: body.resolved ? body.resolutionNote ?? null : null,
           };
           return json(current);
         }
@@ -124,6 +127,10 @@ describe("PlatformBugReportsPage", () => {
     ).toBe("false");
 
     fireEvent.click(screen.getByRole("button", { name: "Mark as resolved" }));
+    const resolveDialog = screen.getByRole("dialog", { name: "Resolve bug report" });
+    const resolution = within(resolveDialog).getByLabelText("Resolution description");
+    fireEvent.change(resolution, { target: { value: "Moved endpoint management to Single App networking." } });
+    fireEvent.click(within(resolveDialog).getByRole("button", { name: "Mark as resolved" }));
 
     await waitFor(() =>
       expect(
@@ -131,11 +138,14 @@ describe("PlatformBugReportsPage", () => {
           ([input, init]) =>
             String(input).endsWith("/resolution") &&
             init?.method === "PATCH" &&
-            String(init.body).includes('"resolved":true'),
+            String(init.body).includes('"resolved":true') &&
+            String(init.body).includes("Moved endpoint management"),
         ),
       ).toBe(true),
     );
     expect(await screen.findByText("Resolved")).toBeTruthy();
+    expect(screen.getByText("Moved endpoint management to Single App networking.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open reported URL" }).getAttribute("href")).toBe("https://resource-portal.test/tenants/t1/applications");
     expect(screen.getByRole("button", { name: "Reopen" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Open · 0/i }));

@@ -38,7 +38,7 @@ export class PlatformBugReportsController {
     @Param("id", new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateBugReportResolutionDto,
   ) {
-    return this.reports.setResolved(id, dto.resolved);
+    return this.reports.setResolved(id, dto.resolved, dto.resolutionNote);
   }
 
   @Get(":id/image")

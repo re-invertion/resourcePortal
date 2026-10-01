@@ -174,12 +174,13 @@ it("uses the platform usage-series contract and identical chart controls in Plat
   expect(params.get("from")).toBeTruthy();
 });
 
-it("centralizes resource and AI tariff administration in Billing Pricing", async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+it("centralizes, prefills and saves resource and AI tariff administration together", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const method = init?.method ?? "GET";
     if (url === "/api/platform/tenants") return json([]);
     if (url === "/api/platform/billing/vouchers") return json([]);
-    if (url === "/api/platform/billing/price-lists") return json([{
+    if (url === "/api/platform/billing/price-lists" && method === "GET") return json([{
       id: "price-1",
       version: 3,
       effectiveFrom: "2026-09-28T12:00:00.000Z",
@@ -188,7 +189,7 @@ it("centralizes resource and AI tariff administration in Billing Pricing", async
       storageCreditsPerGbHour: "3",
       gpuCreditsPerGpuHour: "4",
     }]);
-    if (url === "/api/platform/resource-bot/prices") return json({ items: [{
+    if (url === "/api/platform/resource-bot/prices" && method === "GET") return json({ items: [{
       id: "ai-1",
       provider: "OpenAI",
       model: "gpt-5.6-luna",
@@ -198,8 +199,9 @@ it("centralizes resource and AI tariff administration in Billing Pricing", async
       outputCreditsPer1M: "7",
       embeddingCreditsPer1M: "8",
     }] });
+    if ((url === "/api/platform/billing/price-lists" || url === "/api/platform/resource-bot/prices") && method === "POST") return json({ id: "new" });
     if (url === "/api/platform/resource-bot") return json({ provider: "OpenAI", generationModel: "gpt-5.6-luna" });
-    return json({ error: { message: `Unexpected ${url}` } }, 404);
+    return json({ error: { message: `Unexpected ${method} ${url}` } }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
 
@@ -207,10 +209,29 @@ it("centralizes resource and AI tariff administration in Billing Pricing", async
 
   expect(await screen.findByRole("heading", { name: "Platform pricing" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Compute & storage" })).toBeTruthy();
-  expect(screen.getByRole("columnheader", { name: "GPU / h" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "AI & ResourceBot" })).toBeTruthy();
-  expect(screen.getByRole("columnheader", { name: "Embedding / 1M" })).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Pricing" }).getAttribute("aria-current")).toBe("page");
+  await waitFor(() => expect((screen.getByLabelText("CPU credits / vCPU h") as HTMLInputElement).value).toBe("1"));
+  expect((screen.getByLabelText("Storage credits / GB h") as HTMLInputElement).value).toBe("3");
+  expect((screen.getByLabelText("Input credits / 1M") as HTMLInputElement).value).toBe("5");
+  expect((screen.getByLabelText("Embedding credits / 1M") as HTMLInputElement).value).toBe("8");
+
+  fireEvent.change(screen.getByLabelText("CPU credits / vCPU h"), { target: { value: "1.5" } });
+  fireEvent.change(screen.getByLabelText("Input credits / 1M"), { target: { value: "5.5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create resource + AI pricing version" }));
+
+  await waitFor(() => {
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(2);
+    const resource = posts.find(([input]) => String(input) === "/api/platform/billing/price-lists");
+    const ai = posts.find(([input]) => String(input) === "/api/platform/resource-bot/prices");
+    expect(resource).toBeTruthy();
+    expect(ai).toBeTruthy();
+    const resourceBody = JSON.parse(String(resource?.[1]?.body));
+    const aiBody = JSON.parse(String(ai?.[1]?.body));
+    expect(resourceBody.cpuCreditsPerVcpuHour).toBe("1.5");
+    expect(aiBody.inputCreditsPer1M).toBe("5.5");
+    expect(resourceBody.effectiveFrom).toBe(aiBody.effectiveFrom);
+  });
 });
 
 it("shows persistent voucher codes and captures an optional expiration date when Platform Admin creates one", async () => {
