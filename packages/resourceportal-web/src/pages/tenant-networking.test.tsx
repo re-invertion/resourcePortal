@@ -592,7 +592,7 @@ it("deletes a VPN Gate from the graph inspector after confirmation", async () =>
 });
 
 it("keeps invalid Gate names in the form instead of raising a global validation toast", async () => {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     if (String(input).endsWith("/networking/topology")) return Promise.resolve(json(topology));
     return Promise.resolve(json({}));
   });
