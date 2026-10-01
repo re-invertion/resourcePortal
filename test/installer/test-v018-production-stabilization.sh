@@ -41,7 +41,10 @@ export RP_CFG_RELEASE_VERSION='0.2.0'
 rp_config_apply_defaults
 [[ "$RP_CFG_MANAGED_DOMAIN_BASE" == resource-portal.pl ]] && pass 'managed domain defaults to portal domain' || fail 'managed domain defaults to portal domain'
 
-final="$(rp_render_stack final)"
+final="$(
+  findmnt() { return 1; }
+  rp_render_stack final
+)"
 contains "$final" 'MANAGED_DOMAIN_BASE: resource-portal.pl' 'API receives managed domain base'
 contains "$final" 'TRAEFIK_CERT_RESOLVER: letsencrypt' 'worker receives production resolver'
 not_contains "$final" 'TRAEFIK_SWARM_NETWORK: resourceportal-control-plane_rp-ingress' 'worker no longer depends on shared tenant ingress overlay'
@@ -52,7 +55,21 @@ api_block="$(awk '/^  api:/{flag=1} /^  worker:/{if(flag){exit}} flag' <<<"$fina
 contains "$worker_block" 'user: "0"' 'unified worker runs as root for privileged infrastructure operations'
 contains "$worker_block" '/var/run/docker.sock:/var/run/docker.sock' 'unified worker owns Docker socket access'
 contains "$worker_block" 'SYS_ADMIN' 'unified worker has quota capability'
-contains "$worker_block" '/dev/sdb:/dev/sdb' 'unified worker receives storage block device'
+contains "$worker_block" '/dev/sdb:/dev/sdb' 'unified worker falls back to configured storage device when mount source is unavailable'
+
+partition_backed_final="$(
+  findmnt() {
+    if [[ "$*" == '-nro SOURCE -M /srv/resource-portal/storage' ]]; then
+      printf '/dev/sdb1\n'
+      return 0
+    fi
+    return 1
+  }
+  rp_render_stack final
+)"
+partition_worker_block="$(awk '/^  worker:/{flag=1} /^  dr-reconciliation:/{if(flag){exit}} flag' <<<"$partition_backed_final")"
+contains "$partition_worker_block" '/dev/sdb1:/dev/sdb1' 'unified worker receives the mounted storage partition used by XFS quotas'
+not_contains "$partition_worker_block" '/dev/sdb:/dev/sdb' 'partition-backed storage does not expose only the parent disk to the worker'
 contains "$worker_block" 'dist/src/worker.runner.js' 'unified worker uses v0.2 runner'
 not_contains "$final" $'\n  deployment-worker:' 'production stack has no deployment-worker service'
 not_contains "$final" $'\n  operation-worker:' 'production stack has no operation-worker service'
