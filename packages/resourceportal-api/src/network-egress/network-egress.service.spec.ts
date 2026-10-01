@@ -91,6 +91,36 @@ describe("NetworkEgressService", () => {
     expect(tx.auditLogEntry.create).toHaveBeenCalled();
   });
 
+  it("self-heals a legacy disabled policy before exposing a worker snapshot", async () => {
+    const { service, prisma } = fixture();
+    vi.mocked(prisma.platformEgressPolicy.upsert).mockResolvedValueOnce({
+      id: PLATFORM_EGRESS_POLICY_ID,
+      enabled: false,
+      revision: 8,
+      updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+      updatedBy: null,
+    });
+    vi.mocked(prisma.platformEgressPolicy.update).mockResolvedValueOnce({
+      id: PLATFORM_EGRESS_POLICY_ID,
+      enabled: true,
+      revision: 9,
+      updatedAt: new Date("2026-10-01T00:00:01.000Z"),
+      updatedBy: null,
+    });
+
+    await expect(service.policySnapshot()).resolves.toMatchObject({
+      enabled: true,
+      revision: 9,
+    });
+    expect(prisma.platformEgressPolicy.update).toHaveBeenCalledWith({
+      where: { id: PLATFORM_EGRESS_POLICY_ID },
+      data: {
+        enabled: true,
+        revision: { increment: 1 },
+      },
+    });
+  });
+
   it("produces a version 2 fail-closed worker snapshot without per-App-Group exceptions", async () => {
     const { service } = fixture();
 
