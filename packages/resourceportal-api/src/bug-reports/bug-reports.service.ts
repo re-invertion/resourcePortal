@@ -50,7 +50,7 @@ export class BugReportsService {
     try {
       const configuration = await this.resourceBot.getRuntimeConfiguration();
       const classified = await this.openAi.classifyBugReport(configuration, description);
-      return classified.priority as BugReportPriority;
+      return classified.priority;
     } catch {
       return BugReportPriority.P2;
     }

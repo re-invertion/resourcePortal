@@ -78,11 +78,8 @@ describe("BugReportsService", () => {
       expect.objectContaining({ generationModel: "gpt-test" }),
       "All tenants return 503",
     );
-    expect(prisma.bugReport.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ priority: BugReportPriority.P0 }),
-      }),
-    );
+    const createInput = prisma.bugReport.create.mock.calls[0]?.[0];
+    expect(createInput?.data.priority).toBe(BugReportPriority.P0);
   });
 
   it("accepts a valid PNG attachment and rejects spoofed image content", async () => {
