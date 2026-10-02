@@ -35,7 +35,7 @@ describe("CreateApplicationWizard", () => {
 
   function enterBasics() {
     fireEvent.change(screen.getByPlaceholderText("web-api"), { target: { value: "web-api" } });
-    fireEvent.change(screen.getByLabelText("Container image"), { target: { value: "ghcr.io/acme/web:1" } });
+    fireEvent.change(screen.getByPlaceholderText("nginx:latest"), { target: { value: "ghcr.io/acme/web:1" } });
   }
 
   async function openStorage() {
@@ -75,7 +75,7 @@ describe("CreateApplicationWizard", () => {
     );
     render(<CreateApplicationWizard tenantId="t1" appGroupId="ag1" />);
 
-    const imageInput = screen.getByLabelText("Container image") as HTMLInputElement;
+    const imageInput = screen.getByPlaceholderText("nginx:latest") as HTMLInputElement;
     fireEvent.change(imageInput, { target: { value: "ngi" } });
 
     const suggestion = await screen.findByRole("option", { name: /library\/nginx/i });
