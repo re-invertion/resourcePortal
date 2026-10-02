@@ -1,6 +1,5 @@
 import { Callout, LinkButton, PageHeader } from "../components/design-system";
 import { PlatformDnsPage } from "./platform-dns";
-import { PlatformNetworkEgressPage } from "./platform-network-egress";
 import { PlatformResourceBotPage } from "./platform-resource-bot";
 import { PlatformBillingPage } from "./platform-billing";
 import { PlatformSettingsPage } from "./platform-settings";
@@ -30,7 +29,7 @@ export function PlatformPage({ section, segments }: { section: string; resourceI
   }
   if (section === "resource-bot") return <PlatformResourceBotPage />;
   if (section === "dns") return <PlatformDnsPage />;
-  if (section === "network-egress") return <PlatformNetworkEgressPage />;
+  if (section === "network-egress") return <PlatformInfrastructurePage />;
   if (section === "security" || section === "operations" || section === "audit") return <PlatformSecurityPage />;
   if (section === "maintenance") return <PlatformMaintenancePage />;
   if (section === "bug-reports") return <PlatformBugReportsPage />;

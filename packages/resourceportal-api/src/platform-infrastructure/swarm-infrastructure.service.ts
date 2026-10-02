@@ -128,7 +128,7 @@ export class SwarmInfrastructureService {
 
     for (const removed of plan.removed) {
       const current = existingByNodeId.get(removed.swarmNodeId);
-      await this.store.markRemoteLocationRemoved(removed.id);
+      await this.store.removeRemoteLocation(removed.id);
       await this.audit.recordRemoved({
         remoteLocationId: removed.id,
         swarmNodeId: removed.swarmNodeId,

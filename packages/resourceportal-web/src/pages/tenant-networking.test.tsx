@@ -237,6 +237,9 @@ it("builds the graph only from real topology relations and contains applications
     `gate-edge:${gateId}:${networkId}`,
   ]);
   expect(graph.edges.some((edge) => edge.id.startsWith("app-group-edge:"))).toBe(false);
+  expect(graph.nodes.find((node) => node.id === `app:${appId}`)?.data).toMatchObject({
+    addresses: ["10.240.10.12"],
+  });
 });
 
 it("focuses one Network and removes unrelated graph clusters", () => {

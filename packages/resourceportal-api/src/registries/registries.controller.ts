@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
@@ -23,6 +24,12 @@ export class RegistriesController {
   @Get()
   listRegistries(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
     return this.registriesService.listRegistries(tenantId);
+  }
+
+  @RequirePermissions("registry.read")
+  @Get("public-images/search")
+  searchPublicImages(@Query("query") query = "") {
+    return this.registriesService.searchPublicImages(query);
   }
 
   @RequirePermissions("registry.create")

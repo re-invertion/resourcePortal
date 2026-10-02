@@ -6,6 +6,8 @@ import {
 import { BugReportPriority } from "@prisma/client";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { OpenAiResourceBotProvider } from "../resource-bot/openai-resource-bot.provider";
+import { PlatformResourceBotService } from "../resource-bot/platform-resource-bot.service";
 import {
   BUG_REPORT_IMAGE_MIME_TYPES,
   CreateBugReportDto,
@@ -17,13 +19,20 @@ type AllowedMime = (typeof BUG_REPORT_IMAGE_MIME_TYPES)[number];
 
 @Injectable()
 export class BugReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly resourceBot?: PlatformResourceBotService,
+    private readonly openAi?: OpenAiResourceBotProvider,
+  ) {}
 
   async create(dto: CreateBugReportDto, actor: AuthenticatedUser) {
     const image = decodeImage(dto);
+    const description = dto.description.trim();
+    const priority = await this.classifyPriority(description);
     const report = await this.prisma.bugReport.create({
       data: {
-        description: dto.description.trim(),
+        description,
+        priority,
         reportedById: actor.id,
         imageData: image?.data,
         imageMimeType: image?.mimeType,
@@ -34,6 +43,17 @@ export class BugReportsService {
     });
 
     return report;
+  }
+
+  private async classifyPriority(description: string): Promise<BugReportPriority> {
+    if (!this.resourceBot || !this.openAi) return BugReportPriority.P2;
+    try {
+      const configuration = await this.resourceBot.getRuntimeConfiguration();
+      const classified = await this.openAi.classifyBugReport(configuration, description);
+      return classified.priority as BugReportPriority;
+    } catch {
+      return BugReportPriority.P2;
+    }
   }
 
   async list() {

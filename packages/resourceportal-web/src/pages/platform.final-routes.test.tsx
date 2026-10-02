@@ -16,6 +16,7 @@ function installApi() {
     if (url === "/api/platform/swarm-cluster") return json({ health: "Healthy", nodeCount: 3, managerCount: 1, lastSyncedAt: "2026-09-13T18:00:00.000Z" });
     if (url === "/api/platform/remote-locations") return json([]);
     if (url === "/api/platform/storage-backends") return json([]);
+    if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "0", cpuTotalNano: "0", memoryUsedBytes: "0", memoryTotalBytes: "0", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "0", storageTotalBytes: "0", runningReplicas: 0 });
     if (url === "/api/platform/identity-providers") return json([]);
     if (url === "/api/platform/oauth-applications") return json([]);
     if (url === "/api/platform/service-identities") return json([]);
@@ -48,7 +49,7 @@ describe("Platform Admin final routes", () => {
     ["billing", "Billing"],
     ["resource-bot", "AI & ResourceBot"],
     ["dns", "DNS & Domains"],
-    ["network-egress", "Network Egress"],
+    ["network-egress", "Infrastructure"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
     ["settings", "Settings"],

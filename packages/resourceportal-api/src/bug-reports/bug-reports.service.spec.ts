@@ -46,6 +46,45 @@ describe("BugReportsService", () => {
     expect(createArgs.data.url).toBe("https://resource-portal.test/apps");
   });
 
+  it("uses the configured ResourceBot model to classify bug priority and falls back safely", async () => {
+    const prisma = prismaMock();
+    prisma.bugReport.create.mockResolvedValue({
+      id: "r-critical",
+      priority: BugReportPriority.P0,
+      createdAt: new Date(),
+    });
+    const resourceBot = {
+      getRuntimeConfiguration: vi.fn().mockResolvedValue({
+        apiKey: "configured",
+        generationModel: "gpt-test",
+        embeddingModel: "embed-test",
+      }),
+    };
+    const openAi = {
+      classifyBugReport: vi.fn().mockResolvedValue({
+        priority: "P0",
+        reason: "Platform-wide outage",
+      }),
+    };
+    const service = new BugReportsService(
+      prisma as never,
+      resourceBot as never,
+      openAi as never,
+    );
+
+    await service.create({ description: "All tenants return 503" }, actor);
+
+    expect(openAi.classifyBugReport).toHaveBeenCalledWith(
+      expect.objectContaining({ generationModel: "gpt-test" }),
+      "All tenants return 503",
+    );
+    expect(prisma.bugReport.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priority: BugReportPriority.P0 }),
+      }),
+    );
+  });
+
   it("accepts a valid PNG attachment and rejects spoofed image content", async () => {
     const prisma = prismaMock();
     prisma.bugReport.create.mockResolvedValue({

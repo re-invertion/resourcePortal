@@ -163,6 +163,11 @@ describe("TenantMcpProtocolService", () => {
       expect(listAppGroups?.annotations?.readOnlyHint).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_stop_app_group")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_tenant_api")).toBe(true);
+      expect(result.tools.some((tool) => tool.name === "resourceportal_manage_single_apps")).toBe(true);
+      expect(result.tools.some((tool) => tool.name === "resourceportal_manage_networking")).toBe(true);
+      expect(result.tools.some((tool) => tool.name === "resourceportal_manage_domains")).toBe(true);
+      expect(result.tools.some((tool) => tool.name === "resourceportal_manage_access")).toBe(true);
+      expect(result.tools.some((tool) => tool.name === "resourceportal_manage_identity")).toBe(true);
     } finally {
       await connection.close();
     }
@@ -267,6 +272,46 @@ describe("TenantMcpProtocolService", () => {
           toolName: "resourceportal_list_app_groups",
           method: "GET",
           path: "/app-groups",
+          success: true,
+        }),
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("routes managed networking operations through the tenant API with the connected identity", async () => {
+    const { service, settings } = fixture();
+    const request = mcpRequest({ authorization: "Bearer user-token" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((requestInfo: string | URL | Request, init?: RequestInit) => {
+        const apiRequest = requestInfo instanceof Request ? requestInfo : new Request(requestInfo, init);
+        expect(apiRequest.url).toBe(
+          "http://127.0.0.1:3000/api/tenants/" + tenantId + "/networking/networks",
+        );
+        expect(apiRequest.method).toBe("POST");
+        expect(apiRequest.headers.get("authorization")).toBe("Bearer user-token");
+        return Promise.resolve(new Response(JSON.stringify({ id: "network-1" }), { status: 201 }));
+      }),
+    );
+    const connection = await connectClient({ service, request, authenticated: true });
+
+    try {
+      const result = await connection.client.callTool({
+        name: "resourceportal_manage_networking",
+        arguments: { operation: "create_network", body: { name: "backend" } },
+      });
+      expect(result.structuredContent).toEqual({
+        status: 201,
+        ok: true,
+        data: { id: "network-1" },
+      });
+      expect(settings.recordToolCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: "resourceportal_manage_networking",
+          method: "POST",
+          path: "/networking/networks",
           success: true,
         }),
       );

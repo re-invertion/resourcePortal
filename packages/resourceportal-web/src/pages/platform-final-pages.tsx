@@ -173,10 +173,21 @@ export function PlatformInfrastructurePage() {
   const swarm = useApi<Row>("/api/platform/swarm-cluster");
   const remotes = useApi<unknown>("/api/platform/remote-locations", []);
   const backends = useApi<unknown>("/api/platform/storage-backends", []);
+  const usage = useApi<Row>("/api/platform/resource-usage");
   const [busy, setBusy] = useState<string>();
   const remoteRows = items<Row>(remotes.data); const backendRows = items<Row>(backends.data);
   async function run(label: string, path: string, reload?: () => Promise<void>) { setBusy(label); try { await apiRequest(path, { method: "POST" }); if (reload) await reload(); toast.success(`${label} completed.`); } catch (error) { toast.error(`${label} failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   const swarmRow = asRecord(swarm.data); const swarmState = text(valueOf(swarmRow, "health", "status"), "Unknown");
+  const usageRow = asRecord(usage.data);
+  const cpuUsed = numberOf(usageRow.cpuUsedNano, 0) / 1_000_000_000;
+  const cpuTotal = numberOf(usageRow.cpuTotalNano, 0) / 1_000_000_000;
+  const memoryUsed = numberOf(usageRow.memoryUsedBytes, 0);
+  const memoryTotal = numberOf(usageRow.memoryTotalBytes, 0);
+  const storageUsed = numberOf(usageRow.storageUsedBytes, 0);
+  const storageTotal = numberOf(usageRow.storageTotalBytes, 0);
+  const gpuUsed = numberOf(usageRow.gpuUsed, 0);
+  const gpuTotal = numberOf(usageRow.gpuTotal, 0);
+  const pct = (used: number, total: number) => total > 0 ? `${Math.round((used / total) * 100)}% used` : "Capacity unavailable";
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Infrastructure" description="Swarm health, remote locations and storage backends using platform infrastructure APIs." actions={<Button variant="primary" disabled={busy === "Reconcile Swarm cluster"} onClick={() => void run("Reconcile Swarm cluster", "/api/platform/swarm-cluster/reconcile", swarm.reload)}>Reconcile Swarm cluster</Button>} />
 
@@ -185,6 +196,12 @@ export function PlatformInfrastructurePage() {
       <MetricCard label="Nodes" value={String(numberOf(valueOf(swarmRow, "nodeCount", "nodes"), 0))} icon={<GridIcon />} loading={swarm.loading} error={swarm.error} />
       <MetricCard label="Remote locations" value={String(remoteRows.length)} icon={<NetworkIcon />} loading={remotes.loading} error={remotes.error} />
       <MetricCard label="Storage backends" value={String(backendRows.length)} icon={<NetworkIcon />} loading={backends.loading} error={backends.error} />
+    </section>
+    <section className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Current platform resource usage">
+      <MetricCard label="CPU usage" value={`${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(2)} cores`} detail={pct(cpuUsed, cpuTotal)} loading={usage.loading} error={usage.error} />
+      <MetricCard label="Memory usage" value={`${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)}`} detail={pct(memoryUsed, memoryTotal)} loading={usage.loading} error={usage.error} />
+      <MetricCard label="Storage usage" value={`${formatBytes(storageUsed)} / ${formatBytes(storageTotal)}`} detail={pct(storageUsed, storageTotal)} loading={usage.loading} error={usage.error} />
+      <MetricCard label="GPU usage" value={`${gpuUsed} / ${gpuTotal}`} detail={pct(gpuUsed, gpuTotal)} loading={usage.loading} error={usage.error} />
     </section>
     <div className="mt-6 space-y-6">
       <Card className="overflow-hidden"><SectionTitle eyebrow="Compute" title="Swarm cluster" description="Current persisted/live platform cluster state." /><div className="p-5">{swarm.error ? <ErrorCard label="Swarm cluster" error={swarm.error} retry={swarm.reload} /> : swarm.loading ? <p className="text-sm text-[#5B6678]">Loading cluster state…</p> : <DetailList columns={3} items={[{ label: "Status", value: <StatusBadge tone={statusTone(swarmState)}>{swarmState}</StatusBadge> },{ label: "Nodes", value: numberOf(valueOf(swarmRow, "nodeCount", "nodes"), 0) },{ label: "Managers", value: numberOf(valueOf(swarmRow, "managerCount", "managers"), 0) },{ label: "Last synchronized", value: formatDate(valueOf(swarmRow, "lastSyncedAt", "updatedAt")) }]} />}</div></Card>

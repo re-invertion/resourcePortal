@@ -259,7 +259,7 @@ function platformCrumbs(route: Extract<Route, { kind: "platform" }>): Crumb[] {
     "bug-reports": "Bug reports",
     settings: "Settings",
     dns: "DNS & Domains",
-    "network-egress": "Network Egress",
+    "network-egress": "Infrastructure",
   };
   return [root, { label: labels[section] ?? titleCase(section), href: platformHref(section, ...segments) }];
 }

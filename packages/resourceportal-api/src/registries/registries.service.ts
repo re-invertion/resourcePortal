@@ -34,6 +34,32 @@ export class RegistriesService {
     return registries.map(mapRegistry);
   }
 
+  async searchPublicImages(query: string) {
+    const normalized = query.trim();
+    if (normalized.length < 2) return [];
+    const response = await fetch(
+      `https://hub.docker.com/v2/search/repositories/?query=${encodeURIComponent(normalized.slice(0, 100))}&page_size=6`,
+      { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5_000) },
+    ).catch(() => undefined);
+    if (!response?.ok) return [];
+    const payload = (await response.json().catch(() => ({}))) as { summaries?: unknown[] };
+    if (!Array.isArray(payload.summaries)) return [];
+    return payload.summaries.slice(0, 6).flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const row = item as Record<string, unknown>;
+      const name = typeof row.repo_name === "string" ? row.repo_name.trim() : "";
+      if (!name) return [];
+      return [{
+        name,
+        image: name,
+        description: typeof row.short_description === "string" ? row.short_description : "",
+        stars: typeof row.star_count === "number" ? row.star_count : 0,
+        pulls: typeof row.pull_count === "number" ? row.pull_count : 0,
+        iconUrl: typeof row.logo_url === "string" && row.logo_url ? row.logo_url : "https://hub.docker.com/favicon.ico",
+      }];
+    });
+  }
+
   async getRegistry(tenantId: string, registryId: string) {
     const registry = await this.findRegistryOrThrow(tenantId, registryId);
     return mapRegistry(registry);
