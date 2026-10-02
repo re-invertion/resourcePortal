@@ -161,6 +161,7 @@ type ApplicationNodeData = {
   runtimeState?: string;
   pending: boolean;
   attachmentCount: number;
+  addresses: string[];
 };
 
 type NetworkNodeData = {
@@ -419,6 +420,7 @@ function ApplicationNode(props: NodeProps) {
           <span className="truncate text-[11px] text-[#718096]">
             {data.runtimeState || "Unknown"} · {data.attachmentCount} network{data.attachmentCount === 1 ? "" : "s"}
           </span>
+          {data.addresses.length ? <code className="block truncate text-[10px] text-[#526070]" title={data.addresses.join(", ")}>{data.addresses.join(" · ")}</code> : null}
         </div>
       </div>
       <Handle
@@ -726,6 +728,7 @@ export function buildTopologyGraph(
           runtimeState: app.runtimeState,
           pending: item.group.hasPendingChanges,
           attachmentCount: app.networkAttachments.length,
+          addresses: app.networkAttachments.map((attachment) => attachment.address).filter(Boolean),
         } satisfies ApplicationNodeData,
         style: { width: APP_NODE_WIDTH, height: APP_NODE_HEIGHT },
         ariaLabel: `Application ${app.name} in ${item.group.name}`,

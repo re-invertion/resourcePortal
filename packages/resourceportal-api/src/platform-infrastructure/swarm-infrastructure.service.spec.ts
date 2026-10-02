@@ -39,7 +39,7 @@ describe("SwarmInfrastructureService", () => {
         },
       ]),
       upsertRemoteLocation: vi.fn().mockResolvedValue(undefined),
-      markRemoteLocationRemoved: vi.fn().mockResolvedValue(undefined),
+      removeRemoteLocation: vi.fn().mockResolvedValue(undefined),
       saveCluster: vi.fn().mockResolvedValue(undefined),
       setClusterError: vi.fn().mockResolvedValue(undefined),
     };
@@ -103,13 +103,42 @@ describe("SwarmInfrastructureService", () => {
     );
   });
 
+  it("deletes stale Remote Locations when a complete Swarm snapshot no longer contains the node", async () => {
+    const store = {
+      listRemoteLocations: vi.fn().mockResolvedValue([
+        { id: "remote-1", swarmNodeId: "node-1", hostname: "manager-1", status: "Ready" },
+        { id: "remote-old", swarmNodeId: "node-old", hostname: "old-worker", status: "Ready" },
+      ]),
+      upsertRemoteLocation: vi.fn().mockResolvedValue(undefined),
+      removeRemoteLocation: vi.fn().mockResolvedValue(undefined),
+      saveCluster: vi.fn().mockResolvedValue(undefined),
+    };
+    const docker = {
+      inspectSwarm: vi.fn().mockResolvedValue({ dockerClusterId: "cluster-1" }),
+      listNodes: vi.fn().mockResolvedValue([managerNode]),
+    };
+    const audit = {
+      recordDiscovered: vi.fn().mockResolvedValue(undefined),
+      recordRemoved: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new SwarmInfrastructureService(store as never, docker as never, audit as never);
+
+    const result = await service.reconcile();
+
+    expect(result.removed).toBe(1);
+    expect(store.removeRemoteLocation).toHaveBeenCalledWith("remote-old");
+    expect(audit.recordRemoved).toHaveBeenCalledWith(
+      expect.objectContaining({ remoteLocationId: "remote-old", swarmNodeId: "node-old" }),
+    );
+  });
+
   it("does not remove known nodes when Docker returns an incomplete snapshot", async () => {
     const store = {
       listRemoteLocations: vi.fn().mockResolvedValue([
         { id: "remote-1", swarmNodeId: "node-1", status: "Ready" },
       ]),
       upsertRemoteLocation: vi.fn(),
-      markRemoteLocationRemoved: vi.fn(),
+      removeRemoteLocation: vi.fn(),
       saveCluster: vi.fn(),
       setClusterError: vi.fn().mockResolvedValue(undefined),
     };
@@ -129,7 +158,7 @@ describe("SwarmInfrastructureService", () => {
     await expect(service.reconcile()).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
-    expect(store.markRemoteLocationRemoved).not.toHaveBeenCalled();
+    expect(store.removeRemoteLocation).not.toHaveBeenCalled();
     expect(store.setClusterError).toHaveBeenCalledOnce();
     expect(audit.recordReconcileFailed).toHaveBeenCalledOnce();
   });

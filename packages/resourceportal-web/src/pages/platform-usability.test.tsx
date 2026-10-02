@@ -15,6 +15,7 @@ describe("platform action feedback", () => {
       if (url === "/api/platform/swarm-cluster/reconcile") return json({ reconciled: true, nodeCount: 3 });
       if (url === "/api/platform/remote-locations") return json([]);
       if (url === "/api/platform/storage-backends") return json([]);
+      if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "0", cpuTotalNano: "0", memoryUsedBytes: "0", memoryTotalBytes: "0", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "0", storageTotalBytes: "0" });
       return json({ error: { message: `Unexpected ${url}` } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -34,6 +35,7 @@ describe("platform action feedback", () => {
       if (url === "/api/platform/swarm-cluster") return json({ status: "Ready" });
       if (url === "/api/platform/remote-locations") return json([{ id: "11111111-1111-4111-8111-111111111111", displayName: "Edge EU", status: "Ready", type: "Remote" }]);
       if (url === "/api/platform/storage-backends") return json([{ id: "22222222-2222-4222-8222-222222222222", name: "Primary storage", type: "NFS", health: "Healthy" }]);
+      if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "1000000000", cpuTotalNano: "4000000000", memoryUsedBytes: "1073741824", memoryTotalBytes: "8589934592", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "1000", storageTotalBytes: "10000" });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);

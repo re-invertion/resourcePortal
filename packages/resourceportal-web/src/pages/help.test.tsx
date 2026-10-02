@@ -1,5 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { TenantHelpPage } from "./help";
 
 describe("TenantHelpPage", () => {
@@ -43,6 +43,27 @@ describe("TenantHelpPage", () => {
     expect(document.getElementById("app-group-yaml")).toBeTruthy();
     expect(document.getElementById("domain")).toBeTruthy();
     expect(document.getElementById("troubleshooting")).toBeTruthy();
+  });
+
+  it("scrolls directly to a section when the Help URL contains a hash", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScroll = HTMLElement.prototype.scrollIntoView;
+    const originalRaf = window.requestAnimationFrame;
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    Object.defineProperty(window, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => { callback(0); return 1; },
+    });
+    window.history.replaceState({}, "", "#billing");
+
+    try {
+      render(<TenantHelpPage tenantId="tenant-1" />);
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    } finally {
+      window.history.replaceState({}, "", window.location.pathname);
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: originalScroll });
+      Object.defineProperty(window, "requestAnimationFrame", { configurable: true, value: originalRaf });
+    }
   });
 
   it("adds explanatory context instead of only listing steps", () => {

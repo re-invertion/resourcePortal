@@ -64,6 +64,44 @@ function serviceFor(item = registry()) {
 describe("RegistriesService.validateRegistry", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("searches public Docker Hub repositories and returns compact image suggestions", async () => {
+    const { service } = serviceFor();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            summaries: [
+              {
+                repo_name: "library/nginx",
+                short_description: "Official NGINX image",
+                star_count: 42,
+                pull_count: 1000,
+                logo_url: "https://example.test/nginx.png",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const result = await service.searchPublicImages("nginx");
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("query=nginx"),
+      expect.objectContaining({ headers: { accept: "application/json" } }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        name: "library/nginx",
+        image: "library/nginx",
+        description: "Official NGINX image",
+        stars: 42,
+      }),
+    ]);
+  });
+
   it("validates a TLS registry through /v2/", async () => {
     const { service, prisma } = serviceFor();
     vi.stubGlobal(

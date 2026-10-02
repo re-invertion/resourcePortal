@@ -112,17 +112,8 @@ export class SwarmInfrastructureStore {
     return this.mapRemoteLocation(row);
   }
 
-  async markRemoteLocationRemoved(id: string) {
-    await this.prisma.remoteLocation.updateMany({
-      where: { id },
-      data: {
-        status: "Removed",
-        health: "Unhealthy",
-        maintenance: false,
-        availableCpuNano: 0n,
-        availableMemoryBytes: 0n,
-      },
-    });
+  async removeRemoteLocation(id: string) {
+    await this.prisma.remoteLocation.deleteMany({ where: { id } });
   }
 
   async saveCluster(input: {

@@ -35,7 +35,7 @@ describe("CreateApplicationWizard", () => {
 
   function enterBasics() {
     fireEvent.change(screen.getByPlaceholderText("web-api"), { target: { value: "web-api" } });
-    fireEvent.change(screen.getByPlaceholderText("ghcr.io/example/web-api:1.4.2"), { target: { value: "ghcr.io/acme/web:1" } });
+    fireEvent.change(screen.getByPlaceholderText("nginx:latest"), { target: { value: "ghcr.io/acme/web:1" } });
   }
 
   async function openStorage() {
@@ -50,6 +50,38 @@ describe("CreateApplicationWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByRole("heading", { name: "Config" })).toBeTruthy();
   }
+
+  it("suggests matching public images when no private registry is selected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        const initial = initialResponse(path);
+        if (initial) return initial;
+        if (path.includes("/registries/public-images/search?query=ngi")) {
+          return json([
+            {
+              name: "library/nginx",
+              image: "library/nginx",
+              description: "Official NGINX image",
+              iconUrl: "https://example.test/nginx.png",
+              stars: 42,
+              pulls: 1000,
+            },
+          ]);
+        }
+        return json([]);
+      }),
+    );
+    render(<CreateApplicationWizard tenantId="t1" appGroupId="ag1" />);
+
+    const imageInput = screen.getByPlaceholderText("nginx:latest") as HTMLInputElement;
+    fireEvent.change(imageInput, { target: { value: "ngi" } });
+
+    const suggestion = await screen.findByRole("option", { name: /library\/nginx/i });
+    fireEvent.click(suggestion);
+    expect(imageInput.value).toBe("library/nginx");
+  });
 
   it("blocks leaving Storage when a selected volume uses a relative mount path", async () => {
     await openStorage();

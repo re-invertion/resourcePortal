@@ -44,6 +44,11 @@ export class PlatformInfrastructureController {
     return this.service.listRemoteLocations();
   }
 
+  @Get("resource-usage")
+  getResourceUsage() {
+    return this.service.getResourceUsage();
+  }
+
   @Get("remote-locations/:remoteLocationId")
   getRemoteLocation(
     @Param("remoteLocationId", ParseUUIDPipe) remoteLocationId: string,

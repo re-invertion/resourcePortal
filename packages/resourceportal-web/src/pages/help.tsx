@@ -141,6 +141,19 @@ function Subheading({ children }: { children: ReactNode }) {
 }
 
 export function TenantHelpPage({ tenantId }: { tenantId: string }) {
+  useEffect(() => {
+    const scrollToHash = () => {
+      const id = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      if (!id) return;
+      window.requestAnimationFrame(() => {
+        document.getElementById(id)?.scrollIntoView({ block: "start" });
+      });
+    };
+    scrollToHash();
+    window.addEventListener("hashchange", scrollToHash);
+    return () => window.removeEventListener("hashchange", scrollToHash);
+  }, []);
+
   return <main>
     <header className="mb-7">
       <p className="text-[12px] font-semibold uppercase tracking-[0.05em] text-[#1769E0]">User help</p>
@@ -181,7 +194,7 @@ export function TenantHelpPage({ tenantId }: { tenantId: string }) {
             <Subheading>A typical first deployment</Subheading>
             <StepList>
               <span>Open <strong>Applications</strong> and create an App Group for the service or project you are deploying.</span>
-              <span>Inside the App Group, create an Application and enter its container image.</span>
+              <span>Inside the App Group, create an Application and enter its container image. When no private Registry is selected, typing the image name searches public Docker Hub repositories and lets you pick a matching image from the suggestion list.</span>
               <span>If the image is private, configure a Registry before the first deployment.</span>
               <span>Add environment variables, secrets, storage and compute settings required by the application.</span>
               <span>Add a Domain or other networking configuration if the workload must be reachable over HTTP.</span>
@@ -434,11 +447,11 @@ spec:
               <span>Run the installer on a Linux host in the LAN that should act as the VPN router. The installer creates a systemd service and a WireGuard identity locally.</span>
               <span>Wait until the Gate appears as <strong>Ready</strong> and reports a LAN address.</span>
               <span>Connect the Gate node to one or more Network nodes. Each Gate→Network edge means that Network is routed through the encrypted Gate tunnel.</span>
-              <span>If the Gate host is not the LAN default router, add a static route on your LAN router for each RP Network CIDR using the Gate LAN address as the next hop. The Networking page shows the exact route plan.</span>
+              <span>If the Gate host is not the LAN default router, choose the Gate route-advertisement mode. Manual mode shows the static route required for each RP Network CIDR. BGP mode configures export-only eBGP through FRR using the Gate ASN and LAN router settings, and advertises only CIDRs from active Gate→Network attachments.</span>
             </StepList>
 
-            <InfoBox title="V1 uses IP addresses, not DNS">
-              ResourcePortalGate v1 does not provide private DNS or service discovery. Connect to the stable private IP shown on the application→Network edge. DNS can be added later without changing the Network/Gate routing model.
+            <InfoBox title="Container IPs are visible on the topology">
+              ResourcePortalGate v1 does not provide private DNS or service discovery. The Networking topology shows each application's stable private addresses directly under the application node and on application→Network edges, so LAN clients can connect to the correct IP.
             </InfoBox>
 
             <InfoBox title="Direction of access">
@@ -553,6 +566,11 @@ spec:
               <span>In OpenAI/ChatGPT, add a remote MCP server and paste that URL. You do not need to create or paste a Client ID or Client Secret.</span>
               <span>When OpenAI asks to connect the account, complete OAuth sign-in with the same ResourcePortal identity system used for normal login.</span>
             </StepList>
+
+            <Subheading>Focused tools cover tenant operations</Subheading>
+            <Paragraph>
+              ResourcePortal exposes focused MCP tools for App Groups and applications, variables/configs/secrets, volumes, registries, domains, private networking/ResourcePortalGate, access and billing, tenant identity, ResourceBot, operations/audit/search and MCP settings. The compatibility tenant API tool remains available for advanced clients, but normal clients should prefer the focused domain tools because their supported operations are discoverable directly from the MCP tool schema.
+            </Paragraph>
 
             <Subheading>Access through MCP does not bypass tenant roles</Subheading>
             <Paragraph>
