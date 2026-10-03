@@ -113,6 +113,7 @@ export class VolumesService {
           .cleanupProvisionedVolume(
             reservation.backend,
             reservation.storagePath,
+            reservation.projectId,
           )
           .then(() => true)
           .catch(() => false);
