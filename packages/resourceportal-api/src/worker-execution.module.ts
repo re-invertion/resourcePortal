@@ -16,6 +16,7 @@ import { StackRuntimeService } from "./internal/stack-runtime.service";
 import { StackSecretProvisionerService } from "./internal/stack-secret-provisioner.service";
 import { StackVolumeProvisionerService } from "./internal/stack-volume-provisioner.service";
 import { TraefikCertificateObserverService } from "./internal/traefik-certificate-observer.service";
+import { AppGroupDeleteOperationExecutor } from "./operations/executors/app-group-delete-operation.executor";
 import { DeploymentOperationExecutor } from "./operations/executors/deployment-operation.executor";
 import { DomainOperationExecutor } from "./operations/executors/domain-operation.executors";
 import { InfrastructureOperationExecutor } from "./operations/executors/infrastructure-operation.executor";
@@ -50,6 +51,7 @@ import { VolumesModule } from "./volumes/volumes.module";
   ],
   providers: [
     DeploymentAuditService,
+    AppGroupDeleteOperationExecutor,
     DeploymentOperationExecutor,
     DeploymentRecoveryService,
     DeploymentExecutionService,
@@ -76,6 +78,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     {
       provide: OperationExecutorRegistry,
       useFactory: (
+        appGroupDeleteExecutor: AppGroupDeleteOperationExecutor,
         deploymentExecutor: DeploymentOperationExecutor,
         infrastructureExecutor: InfrastructureOperationExecutor,
         installerEnrollmentExecutor: InstallerEnrollmentOperationExecutor,
@@ -85,6 +88,7 @@ import { VolumesModule } from "./volumes/volumes.module";
         networkTopologyExecutor: NetworkTopologyOperationExecutor,
       ) =>
         new OperationExecutorRegistry([
+          appGroupDeleteExecutor,
           deploymentExecutor,
           infrastructureExecutor,
           installerEnrollmentExecutor,
@@ -94,6 +98,7 @@ import { VolumesModule } from "./volumes/volumes.module";
           networkTopologyExecutor,
         ]),
       inject: [
+        AppGroupDeleteOperationExecutor,
         DeploymentOperationExecutor,
         InfrastructureOperationExecutor,
         InstallerEnrollmentOperationExecutor,

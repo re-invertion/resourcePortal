@@ -71,13 +71,12 @@ describe("RegistriesService.validateRegistry", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            summaries: [
+            results: [
               {
-                name: "library/nginx",
+                repo_name: "nginx",
                 short_description: "Official NGINX image",
                 star_count: 42,
                 pull_count: 1000,
-                logo_url: "https://example.test/nginx.png",
               },
             ],
           }),
@@ -94,10 +93,39 @@ describe("RegistriesService.validateRegistry", () => {
     );
     expect(result).toEqual([
       expect.objectContaining({
-        name: "library/nginx",
-        image: "library/nginx",
+        name: "nginx",
+        image: "nginx",
         description: "Official NGINX image",
         stars: 42,
+      }),
+    ]);
+  });
+
+  it("accepts the alternate Docker Hub summaries/name response shape", async () => {
+    const { service } = serviceFor();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            summaries: [
+              {
+                name: "library/redis",
+                short_description: "Redis image",
+                star_count: 12,
+                pull_count: 345,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(service.searchPublicImages("redis")).resolves.toEqual([
+      expect.objectContaining({
+        name: "library/redis",
+        image: "library/redis",
       }),
     ]);
   });

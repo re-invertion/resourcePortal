@@ -42,12 +42,24 @@ export class RegistriesService {
       { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5_000) },
     ).catch(() => undefined);
     if (!response?.ok) return [];
-    const payload = (await response.json().catch(() => ({}))) as { summaries?: unknown[] };
-    if (!Array.isArray(payload.summaries)) return [];
-    return payload.summaries.slice(0, 6).flatMap((item) => {
+    const payload = (await response.json().catch(() => ({}))) as {
+      results?: unknown[];
+      summaries?: unknown[];
+    };
+    const repositories = Array.isArray(payload.results)
+      ? payload.results
+      : Array.isArray(payload.summaries)
+        ? payload.summaries
+        : [];
+    return repositories.slice(0, 6).flatMap((item) => {
       if (!item || typeof item !== "object") return [];
       const row = item as Record<string, unknown>;
-      const name = typeof row.name === "string" ? row.name.trim() : "";
+      const name =
+        typeof row.repo_name === "string"
+          ? row.repo_name.trim()
+          : typeof row.name === "string"
+            ? row.name.trim()
+            : "";
       if (!name) return [];
       return [{
         name,
