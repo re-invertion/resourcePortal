@@ -29,6 +29,7 @@ import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { mirrorDeploymentOperation } from "../operations/deployment-operation-adapter.service";
+import { createOperationWithClient } from "../operations/operations.repository";
 import { RegistriesService } from "../registries/registries.service";
 import { EncryptionService } from "../security/encryption.service";
 import { SecretStorageService } from "../security/secret-storage.service";
@@ -396,6 +397,19 @@ export class AppGroupsService {
           result: "Success",
           correlationId: crypto.randomUUID(),
         },
+      });
+
+      await createOperationWithClient(tx, {
+        type: "APP_GROUP_DELETE",
+        tenantId,
+        resourceType: "AppGroup",
+        resourceId: appGroupId,
+        createdBy: actor.id,
+        createdByEmail: actor.email,
+        createdByDisplayName: actor.displayName,
+        input: { appGroupId },
+        idempotencyKey: `app-group-delete:${appGroupId}`,
+        maxAttempts: 8,
       });
 
       return result;

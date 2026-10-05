@@ -47,6 +47,64 @@ describe("StackRuntimeService v0.2 App Group networking", () => {
     spawnMock.mockReset();
   });
 
+  it("removes an App Group stack and its managed overlay networks", async () => {
+    const appGroupId = "11111111-1111-4111-8111-111111111111";
+    const appNetwork = `rp-appgroup-${appGroupId}`;
+    const legacyNetwork = `rp-ingress-${appGroupId}`;
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess())
+      .mockImplementationOnce(() => dockerProcess("app-network-id"))
+      .mockImplementationOnce(() => dockerProcess("app-network-id"))
+      .mockImplementationOnce(() => dockerProcess("app-network-id"))
+      .mockImplementationOnce(() => dockerProcess())
+      .mockImplementationOnce(() => dockerProcess())
+      .mockImplementationOnce(() => dockerProcess("", 1, "No such network"));
+
+    const result = await service().removeAppGroupRuntime(appGroupId);
+
+    expect(result).toEqual({ success: true, changed: true });
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual([
+      "stack",
+      "rm",
+      "rp_11111111_1111_4111_8111_111111111111",
+    ]);
+    expect(spawnMock.mock.calls[4]?.[1]).toEqual([
+      "service",
+      "update",
+      "--network-rm",
+      appNetwork,
+      "resourceportal-control-plane_traefik",
+    ]);
+    expect(spawnMock.mock.calls[5]?.[1]).toEqual([
+      "network",
+      "rm",
+      appNetwork,
+    ]);
+    expect(spawnMock.mock.calls[6]?.[1]).toEqual([
+      "network",
+      "inspect",
+      legacyNetwork,
+      "--format",
+      "{{.Id}}",
+    ]);
+  });
+
+  it("treats already-removed App Group runtime state as success", async () => {
+    spawnMock
+      .mockImplementationOnce(() =>
+        dockerProcess("", 1, "Nothing found in stack: rp_missing"),
+      )
+      .mockImplementationOnce(() => dockerProcess("", 1, "No such network"))
+      .mockImplementationOnce(() => dockerProcess("", 1, "No such network"));
+
+    const result = await service().removeAppGroupRuntime(
+      "11111111-1111-4111-8111-111111111111",
+    );
+
+    expect(result).toEqual({ success: true, changed: false });
+  });
+
+
   it("creates an encrypted managed tenant overlay with the requested subnet", async () => {
     spawnMock
       .mockImplementationOnce(() => dockerProcess("", 1, "No such network"))

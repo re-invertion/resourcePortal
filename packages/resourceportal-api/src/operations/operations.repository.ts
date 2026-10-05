@@ -272,7 +272,7 @@ export class OperationsRepository {
 
 type OperationSqlClient = Pick<Prisma.TransactionClient, "$queryRaw">;
 
-async function createOperationWithClient(
+export async function createOperationWithClient(
   client: OperationSqlClient,
   input: CreateOperationInput,
 ) {

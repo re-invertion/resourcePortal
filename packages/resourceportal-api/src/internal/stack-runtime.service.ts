@@ -2,6 +2,10 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import { ObservedRuntimeService } from "../app-groups/runtime-drift";
+import {
+  appGroupNetworkName,
+  legacyAppGroupIngressNetworkName,
+} from "./traefik-routing";
 
 type RuntimeResult = {
   command: string;
@@ -58,6 +62,42 @@ export class StackRuntimeService {
             create.stdout ||
             `docker network create ${input.networkName} failed`,
         };
+  }
+
+  async removeAppGroupRuntime(appGroupId: string) {
+    const stackName = `rp_${appGroupId.replaceAll("-", "_")}`;
+    const removeStack = await this.runDocker(["stack", "rm", stackName]);
+    if (
+      removeStack.exitCode !== 0 &&
+      !this.isMissingStack(removeStack.stderr, removeStack.stdout)
+    ) {
+      return {
+        success: false,
+        changed: false,
+        error:
+          removeStack.stderr ||
+          removeStack.stdout ||
+          `docker stack rm ${stackName} failed`,
+      };
+    }
+
+    const appGroupNetwork = await this.removeAppGroupNetwork(
+      appGroupNetworkName(appGroupId),
+    );
+    if (!appGroupNetwork.success) return appGroupNetwork;
+
+    const legacyIngress = await this.removeLegacyIngressNetwork(
+      legacyAppGroupIngressNetworkName(appGroupId),
+    );
+    if (!legacyIngress.success) return legacyIngress;
+
+    return {
+      success: true,
+      changed:
+        removeStack.exitCode === 0 ||
+        appGroupNetwork.changed ||
+        legacyIngress.changed,
+    };
   }
 
   async removeTenantNetwork(networkName: string) {
@@ -330,6 +370,35 @@ export class StackRuntimeService {
         };
   }
 
+  private async removeAppGroupNetwork(networkName: string) {
+    this.assertManagedAppGroupNetwork(networkName);
+    const network = await this.inspectNetwork(networkName);
+    if (!network.success) {
+      return network.missing
+        ? { success: true, changed: false }
+        : { success: false, changed: false, error: network.error };
+    }
+
+    const membership = await this.reconcileTraefikNetworkMembership(
+      networkName,
+      false,
+    );
+    if (!membership.success) return membership;
+
+    const remove = await this.runDocker(["network", "rm", networkName]);
+    if (remove.exitCode !== 0 && !this.isMissingNetwork(remove.stderr)) {
+      return {
+        success: false,
+        changed: membership.changed,
+        error:
+          remove.stderr ||
+          remove.stdout ||
+          `docker network rm ${networkName} failed`,
+      };
+    }
+    return { success: true, changed: true };
+  }
+
   private async ensureAppGroupNetwork(networkName: string) {
     const network = await this.inspectNetwork(networkName);
     if (network.success) {
@@ -576,6 +645,15 @@ export class StackRuntimeService {
       normalized.includes("no such network") ||
       normalized.includes("network not found") ||
       /network\s+[^\n]+\s+not found/.test(normalized)
+    );
+  }
+
+  private isMissingStack(stderr: string, stdout: string) {
+    const normalized = `${stderr} ${stdout}`.toLowerCase();
+    return (
+      normalized.includes("nothing found in stack") ||
+      normalized.includes("no such stack") ||
+      normalized.includes("stack not found")
     );
   }
 
