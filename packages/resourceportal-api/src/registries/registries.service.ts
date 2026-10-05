@@ -47,7 +47,7 @@ export class RegistriesService {
     return payload.summaries.slice(0, 6).flatMap((item) => {
       if (!item || typeof item !== "object") return [];
       const row = item as Record<string, unknown>;
-      const name = typeof row.repo_name === "string" ? row.repo_name.trim() : "";
+      const name = typeof row.name === "string" ? row.name.trim() : "";
       if (!name) return [];
       return [{
         name,

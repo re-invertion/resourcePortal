@@ -121,12 +121,22 @@ describe("SwarmInfrastructureService", () => {
       recordDiscovered: vi.fn().mockResolvedValue(undefined),
       recordRemoved: vi.fn().mockResolvedValue(undefined),
     };
-    const service = new SwarmInfrastructureService(store as never, docker as never, audit as never);
+    const observability = {
+      removeRemoteLocationSnapshot: vi.fn(),
+      recordRemoteLocationSnapshot: vi.fn(),
+    };
+    const service = new SwarmInfrastructureService(
+      store as never,
+      docker as never,
+      audit as never,
+      observability as never,
+    );
 
     const result = await service.reconcile();
 
     expect(result.removed).toBe(1);
     expect(store.removeRemoteLocation).toHaveBeenCalledWith("remote-old");
+    expect(observability.removeRemoteLocationSnapshot).toHaveBeenCalledWith("remote-old");
     expect(audit.recordRemoved).toHaveBeenCalledWith(
       expect.objectContaining({ remoteLocationId: "remote-old", swarmNodeId: "node-old" }),
     );
