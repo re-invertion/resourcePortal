@@ -73,7 +73,7 @@ describe("RegistriesService.validateRegistry", () => {
           JSON.stringify({
             summaries: [
               {
-                repo_name: "library/nginx",
+                name: "library/nginx",
                 short_description: "Official NGINX image",
                 star_count: 42,
                 pull_count: 1000,
