@@ -213,15 +213,19 @@ describe("AuditService platform audit", () => {
     });
 
     expect(result.items).toEqual([platformEntry]);
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          tenantId: null,
-          action: "platform.mcp.tool.call",
-        }),
-        take: 51,
-      }),
-    );
+    const findManyCall = findMany.mock.calls[0]?.[0] as
+      | {
+          where?: { tenantId?: string | null; action?: string };
+          take?: number;
+        }
+      | undefined;
+    expect(findManyCall).toMatchObject({
+      where: {
+        tenantId: null,
+        action: "platform.mcp.tool.call",
+      },
+      take: 51,
+    });
   });
 
   it("exports only platform-level audit events", async () => {
@@ -243,11 +247,12 @@ describe("AuditService platform audit", () => {
     const exported = await service.exportPlatformAuditLog({ format: "json" });
 
     expect(exported.fileName).toBe("audit-log-platform.json");
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ tenantId: null }),
-      }),
-    );
+    const findManyCall = findMany.mock.calls[0]?.[0] as
+      | { where?: { tenantId?: string | null } }
+      | undefined;
+    expect(findManyCall).toMatchObject({
+      where: { tenantId: null },
+    });
     expect(JSON.parse(exported.body)).toEqual([
       {
         ...platformEntry,

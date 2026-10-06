@@ -316,7 +316,9 @@ describe("AdminMcpProtocolService", () => {
           success: true,
         }),
       );
-      const auditCall = audit.recordToolCall.mock.calls.at(-1)?.[0];
+      const auditCall = audit.recordToolCall.mock.calls.at(-1)?.[0] as
+        | Record<string, unknown>
+        | undefined;
       expect(auditCall).not.toHaveProperty("body");
       expect(JSON.stringify(auditCall)).not.toContain("Fixed in v0.2.62.");
     } finally {

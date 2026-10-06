@@ -100,7 +100,7 @@ export class AdminMcpProtocolService {
           },
         });
 
-        server.setRequestHandler("tools/list", async () => {
+        server.setRequestHandler("tools/list", () => {
           return {
             tools: this.tools(),
           } as unknown as ListToolsResult;
@@ -204,7 +204,9 @@ export class AdminMcpProtocolService {
   }
 
   private tools(): ToolDescriptor[] {
-    const definitions = this.definitions().map(({ execute: _execute, ...tool }) => tool);
+    const definitions = this.definitions().map((definition) =>
+      this.toolDescriptor(definition),
+    );
     const securitySchemes = this.securitySchemes();
     const commonMeta = { securitySchemes };
     const noArgs = this.objectSchema({});
@@ -1236,7 +1238,8 @@ export class AdminMcpProtocolService {
         }),
         (payload, args) => {
           if (!Array.isArray(payload)) return payload;
-          return payload.filter((row) => {
+          const reports: unknown[] = payload;
+          return reports.filter((row) => {
             if (!row || typeof row !== "object") return false;
             const report = row as Record<string, unknown>;
             if (
@@ -1325,6 +1328,23 @@ export class AdminMcpProtocolService {
     ];
 
     return tools;
+  }
+
+  private toolDescriptor(
+    definition: AdminToolDefinition,
+  ): ToolDescriptor {
+    return {
+      name: definition.name,
+      title: definition.title,
+      description: definition.description,
+      inputSchema: definition.inputSchema,
+      ...(definition.outputSchema
+        ? { outputSchema: definition.outputSchema }
+        : {}),
+      securitySchemes: definition.securitySchemes,
+      annotations: definition.annotations,
+      _meta: definition._meta,
+    };
   }
 
   private definition(input: {
