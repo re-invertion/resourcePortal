@@ -81,6 +81,11 @@ describe("CreateApplicationWizard", () => {
     const suggestion = await screen.findByRole("option", { name: /library\/nginx/i });
     fireEvent.click(suggestion);
     expect(imageInput.value).toBe("library/nginx");
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.filter(([input]) =>
+      String(input).includes("/registries/public-images/search?"),
+    )).toHaveLength(1);
+    expect(screen.queryByRole("listbox", { name: "Public image suggestions" })).toBeNull();
   });
 
   it("blocks leaving Storage when a selected volume uses a relative mount path", async () => {

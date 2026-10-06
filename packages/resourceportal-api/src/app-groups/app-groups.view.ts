@@ -11,10 +11,16 @@ import {
   SingleApp,
   Variable,
   VariableAttachment,
+  Volume,
+  VolumeAttachment,
 } from "@prisma/client";
 
 type SingleAppWithRelations = SingleApp & {
   httpEndpoints?: Array<HttpEndpoint & { domains?: Domain[] }>;
+  volumeAttachments?: Array<VolumeAttachment & { volume?: Pick<Volume, "id" | "name"> }>;
+  variableAttachments?: Array<VariableAttachment & { variable?: Pick<Variable, "id" | "name"> }>;
+  configAttachments?: Array<ConfigAttachment & { config?: Pick<Config, "id" | "name"> }>;
+  secretAttachments?: Array<SecretAttachment & { secret?: Pick<Secret, "id" | "name"> }>;
 };
 
 type AppGroupWithRelations = AppGroup & {

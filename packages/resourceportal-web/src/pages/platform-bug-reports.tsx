@@ -56,7 +56,7 @@ export function PlatformBugReportsPage() {
   const reports = useApi<BugReport[]>("/api/platform/bug-reports", []);
   const [filter, setFilter] = useState<"all" | Priority>("all");
   const [resolutionFilter, setResolutionFilter] =
-    useState<ResolutionFilter>("all");
+    useState<ResolutionFilter>("open");
   const [working, setWorking] = useState<string>();
   const [resolutionTarget, setResolutionTarget] = useState<BugReport>();
   const [resolutionNote, setResolutionNote] = useState("");
@@ -80,11 +80,14 @@ export function PlatformBugReportsPage() {
       Object.fromEntries(
         (["P0", "P1", "P2", "P3"] as Priority[]).map((priority) => [
           priority,
-          (reports.data ?? []).filter((item) => item.priority === priority)
-            .length,
+          (reports.data ?? []).filter((item) =>
+            item.priority === priority &&
+            (resolutionFilter === "all" ||
+              (resolutionFilter === "resolved" ? item.resolved : !item.resolved)),
+          ).length,
         ]),
       ) as Record<Priority, number>,
-    [reports.data],
+    [reports.data, resolutionFilter],
   );
 
   const resolutionCounts = useMemo(
@@ -176,8 +179,8 @@ export function PlatformBugReportsPage() {
       >
         <MetricFilterCard
           label="All reports"
-          value={(reports.data ?? []).length}
-          detail="Total submitted"
+          value={resolutionFilter === "all" ? (reports.data ?? []).length : resolutionFilter === "open" ? resolutionCounts.open : resolutionCounts.resolved}
+          detail={resolutionFilter === "all" ? "Total submitted" : resolutionFilter === "open" ? "Open reports" : "Resolved reports"}
           icon={<BugIcon size={17} />}
           active={filter === "all"}
           onClick={() => setFilter("all")}
