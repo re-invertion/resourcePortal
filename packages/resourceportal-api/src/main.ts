@@ -1,4 +1,4 @@
-import { Logger, RequestMethod, ValidationPipe } from "@nestjs/common";
+import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { randomUUID, timingSafeEqual } from "node:crypto";
@@ -11,6 +11,7 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { SwaggerModule } from "@nestjs/swagger";
 import { ApiModule } from "./api.module";
 import { apiTrustProxy } from "./config/http-proxy-config";
+import { globalPrefixExcludes } from "./config/global-prefix-config";
 import { buildSwaggerConfig } from "./config/swagger-config";
 import { ObservabilityService } from "./observability/observability.service";
 import { structuredLog } from "./observability/structured-log";
@@ -56,20 +57,7 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix("api", {
-    exclude: [
-      {
-        path: ".well-known/oauth-protected-resource/api/tenants/:mcpTenantId/mcp",
-        method: RequestMethod.GET,
-      },
-      {
-        path: ".well-known/oauth-authorization-server",
-        method: RequestMethod.GET,
-      },
-      {
-        path: "oauth/v2/register",
-        method: RequestMethod.POST,
-      },
-    ],
+    exclude: globalPrefixExcludes,
   });
   const fastify = app.getHttpAdapter().getInstance();
   fastify.addHook("onRequest", async (request: ObservedRequest, reply) => {
