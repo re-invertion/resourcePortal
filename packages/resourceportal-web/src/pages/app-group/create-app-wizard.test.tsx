@@ -81,6 +81,30 @@ describe("CreateApplicationWizard", () => {
     const suggestion = await screen.findByRole("option", { name: /library\/nginx/i });
     fireEvent.click(suggestion);
     expect(imageInput.value).toBe("library/nginx");
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls.filter(([input]) =>
+      String(input).includes("/registries/public-images/search?"),
+    )).toHaveLength(1);
+    expect(screen.queryByRole("listbox", { name: "Public image suggestions" })).toBeNull();
+  });
+
+  it("does not search Docker Hub for an explicitly qualified registry image", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      initialResponse(String(input)) ?? json([]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CreateApplicationWizard tenantId="t1" appGroupId="ag1" />);
+
+    fireEvent.change(screen.getByPlaceholderText("nginx:latest"), {
+      target: { value: "ghcr.io/acme/web:1" },
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/registries/public-images/search?"),
+      ),
+    ).toBe(false);
   });
 
   it("blocks leaving Storage when a selected volume uses a relative mount path", async () => {

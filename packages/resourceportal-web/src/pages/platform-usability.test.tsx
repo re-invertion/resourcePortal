@@ -48,6 +48,36 @@ describe("platform action feedback", () => {
     expect(screen.getByRole("button", { name: "Validate" })).toBeTruthy();
   });
 
+  it("toggles storage backend maintenance through the platform API", async () => {
+    let maintenance = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/platform/swarm-cluster") return json({ status: "Ready" });
+      if (url === "/api/platform/remote-locations") return json([]);
+      if (url === "/api/platform/resource-usage") return json({});
+      if (url === "/api/platform/storage-backends" && (init?.method ?? "GET") === "GET") {
+        return json([{ id: "22222222-2222-4222-8222-222222222222", name: "Primary storage", type: "LocalFilesystem", health: "Healthy", maintenance }]);
+      }
+      if (url.endsWith("/maintenance") && init?.method === "PATCH") {
+        maintenance = (JSON.parse(String(init.body)) as { enabled: boolean }).enabled;
+        return json({ id: "22222222-2222-4222-8222-222222222222", name: "Primary storage", maintenance });
+      }
+      return json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlatformPage section="infrastructure" />);
+    await screen.findByText("Primary storage");
+    fireEvent.click(screen.getByRole("button", { name: "Enter maintenance" }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) =>
+      String(input).endsWith("/maintenance") &&
+      init?.method === "PATCH" &&
+      String(init.body).includes('"enabled":true'),
+    )).toBe(true));
+    expect(await screen.findByRole("button", { name: "Exit maintenance" })).toBeTruthy();
+  });
+
   it("reports settings saves without rendering a second copy of the response", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

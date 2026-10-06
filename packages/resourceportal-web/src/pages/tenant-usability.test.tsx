@@ -34,7 +34,7 @@ describe("AppGroup task-oriented selection", () => {
     expect(appLink).toBeTruthy();
   });
 
-  it("uses resource names for attachments and refuses unsafe detach without attachment IDs", async () => {
+  it("uses resource names for attachments and does not offer detach without attachment IDs", async () => {
     installAppGroupBase((url) => {
       if (url.endsWith("/single-apps/app-1/runtime-config")) return json({ desiredReplicas: 1, cpu: 0.1, memoryBytes: 134217728, environment: {} });
       if (url.endsWith("/single-apps/app-1/http-endpoints")) return json([]);
@@ -55,7 +55,7 @@ describe("AppGroup task-oriented selection", () => {
     const resource = screen.getByLabelText("Resource") as HTMLSelectElement;
     expect(resource.tagName).toBe("SELECT");
     expect(within(resource).getByRole("option", { name: "API_URL" })).toBeTruthy();
-    expect(screen.getByText(/cannot be safely detached here without guessing identifiers/i)).toBeTruthy();
+    expect(screen.getByText("No resources of this type are attached.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /detach/i })).toBeNull();
   });
 

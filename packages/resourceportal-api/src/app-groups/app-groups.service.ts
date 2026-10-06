@@ -1357,7 +1357,25 @@ export class AppGroupsService {
     const singleApps = await this.prisma.singleApp.findMany({
       where: { appGroupId },
       orderBy: { createdAt: "asc" },
-      include: { httpEndpoints: { include: { domains: true } } },
+      include: {
+        httpEndpoints: { include: { domains: true } },
+        volumeAttachments: {
+          orderBy: { mountPath: "asc" },
+          include: { volume: { select: { id: true, name: true } } },
+        },
+        variableAttachments: {
+          orderBy: { targetName: "asc" },
+          include: { variable: { select: { id: true, name: true } } },
+        },
+        configAttachments: {
+          orderBy: { targetPath: "asc" },
+          include: { config: { select: { id: true, name: true } } },
+        },
+        secretAttachments: {
+          orderBy: { targetName: "asc" },
+          include: { secret: { select: { id: true, name: true } } },
+        },
+      },
     });
 
     return singleApps.map((singleApp) => mapSingleApp(singleApp));
