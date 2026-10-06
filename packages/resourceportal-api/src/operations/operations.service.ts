@@ -47,6 +47,10 @@ export class OperationsService {
     return this.repository.listOperations(tenantId);
   }
 
+  listPlatform() {
+    return this.repository.listPlatformOperations();
+  }
+
   async get(tenantId: string, operationId: string) {
     const operation = await this.repository.getOperation(tenantId, operationId);
     if (!operation) {
@@ -57,6 +61,19 @@ export class OperationsService {
 
   async events(tenantId: string, operationId: string) {
     await this.get(tenantId, operationId);
+    return this.repository.listEvents(operationId);
+  }
+
+  async getPlatform(operationId: string) {
+    const operation = await this.repository.getPlatformOperation(operationId);
+    if (!operation) {
+      throw new NotFoundException("Operation not found");
+    }
+    return operation;
+  }
+
+  async eventsPlatform(operationId: string) {
+    await this.getPlatform(operationId);
     return this.repository.listEvents(operationId);
   }
 
@@ -82,6 +99,34 @@ export class OperationsService {
     await this.repository.appendEvent(operationId, {
       event: "ManualRetryRequested",
       message: "Operation was manually re-queued",
+      details: { previousStatus: operation.status },
+    });
+    await this.publish(retried, "ManualRetryRequested", {
+      previousStatus: operation.status,
+    });
+    return retried;
+  }
+
+  async retryPlatform(operationId: string) {
+    const operation = await this.getPlatform(operationId);
+    if (
+      operation.type === "APP_GROUP_DEPLOY" ||
+      operation.type === "APP_GROUP_ROLLBACK" ||
+      (operation.status !== "Failed" &&
+        operation.status !== "RollbackFailed")
+    ) {
+      throw new ConflictException("OperationNotRetryable");
+    }
+
+    const retried =
+      await this.repository.retryFailedPlatformOperation(operationId);
+    if (!retried) {
+      throw new ConflictException("OperationNotRetryable");
+    }
+
+    await this.repository.appendEvent(operationId, {
+      event: "ManualRetryRequested",
+      message: "Platform operation was manually re-queued",
       details: { previousStatus: operation.status },
     });
     await this.publish(retried, "ManualRetryRequested", {

@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { AppGroupsController } from "../app-groups/app-groups.controller";
 import { AuditController } from "../audit/audit.controller";
+import { PlatformAuditController } from "../audit/platform-audit.controller";
 import { DomainsController } from "../domains/domains.controller";
 import { BugReportsController } from "../bug-reports/bug-reports.controller";
 import { PlatformBugReportsController } from "../bug-reports/platform-bug-reports.controller";
@@ -20,8 +21,13 @@ import {
   ObservabilityController,
   ObservabilityDiagnosticsController,
 } from "../observability/observability.controller";
+import {
+  AdminMcpController,
+  AdminMcpOAuthMetadataController,
+} from "../mcp/admin-mcp.controller";
 import { OAuthApplicationsController } from "../oauth-applications/oauth-applications.controller";
 import { PlatformOAuthApplicationsController } from "../oauth-applications/platform-oauth-applications.controller";
+import { PlatformOperationsController } from "../operations/platform-operations.controller";
 import { PlatformInfrastructureController } from "../platform-infrastructure/platform-infrastructure.controller";
 import { RegistriesController } from "../registries/registries.controller";
 import { PlatformServiceIdentitiesController } from "../service-identities/platform-service-identities.controller";
@@ -45,6 +51,9 @@ const controllers = [
   BugReportsController,
   PlatformBugReportsController,
   AuditController,
+  PlatformAuditController,
+  AdminMcpController,
+  AdminMcpOAuthMetadataController,
   AuthController,
   DomainsController,
   HealthController,
@@ -55,6 +64,7 @@ const controllers = [
   PlatformEmailController,
   PlatformIdentityProvidersController,
   PlatformInfrastructureController,
+  PlatformOperationsController,
   PlatformOAuthApplicationsController,
   PlatformServiceIdentitiesController,
   RegistriesController,

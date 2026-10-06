@@ -10,7 +10,7 @@ import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
-import { applyMcpBearerChallenge, isTenantMcpRequest } from "../mcp/mcp-oauth";
+import { applyMcpBearerChallenge, isMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
@@ -82,11 +82,11 @@ export class DevAuthGuard implements CanActivate {
     if (token) {
       let principal;
       try {
-        principal = isTenantMcpRequest(request)
+        principal = isMcpRequest(request)
           ? await this.oidcAuth.authenticateMcpPrincipalToken(token)
           : await this.oidcAuth.authenticatePrincipalToken(token);
       } catch (error) {
-        if (isTenantMcpRequest(request)) applyMcpBearerChallenge(request, reply);
+        if (isMcpRequest(request)) applyMcpBearerChallenge(request, reply);
         throw error;
       }
       if (principal.type === "ServiceIdentity") {
@@ -128,7 +128,7 @@ export class DevAuthGuard implements CanActivate {
 
     if (isPublic) return true;
 
-    if (isTenantMcpRequest(request)) applyMcpBearerChallenge(request, reply);
+    if (isMcpRequest(request)) applyMcpBearerChallenge(request, reply);
     throw new UnauthorizedException(
       "Authorization bearer token or session cookie is required",
     );

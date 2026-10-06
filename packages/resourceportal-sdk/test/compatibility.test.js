@@ -52,6 +52,7 @@ test("classifies every API controller so new public surface cannot drift silentl
   const classified = [
     "app-groups/app-groups.controller.ts",
     "audit/audit.controller.ts",
+    "audit/platform-audit.controller.ts",
     "auth/auth.controller.ts",
     "billing/platform-billing.controller.ts",
     "bug-reports/bug-reports.controller.ts",
@@ -62,6 +63,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "identity-providers/identity-providers.controller.ts",
     "identity-providers/platform-identity-providers.controller.ts",
     "internal/installer-enrollment.controller.ts",
+    "mcp/admin-mcp.controller.ts",
     "mcp/mcp-oauth-dcr.controller.ts",
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
@@ -70,6 +72,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
     "operations/operations.controller.ts",
+    "operations/platform-operations.controller.ts",
     "platform-dns/cloudflare-oauth.controller.ts",
     "platform-dns/platform-dns.controller.ts",
     "platform-infrastructure/platform-infrastructure.controller.ts",

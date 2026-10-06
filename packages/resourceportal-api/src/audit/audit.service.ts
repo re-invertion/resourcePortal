@@ -110,6 +110,51 @@ export class AuditService {
     };
   }
 
+  async listPlatformAuditLog(query: ListAuditLogDto) {
+    const where = this.buildPlatformWhere(query);
+    const take = query.limit ?? 50;
+    const entries = await this.prisma.auditLogEntry.findMany({
+      where,
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+      take: take + 1,
+      ...(query.cursor
+        ? {
+            cursor: { id: query.cursor },
+            skip: 1,
+          }
+        : {}),
+    });
+    const hasNextPage = entries.length > take;
+    const rawItems = entries.slice(0, take);
+
+    return {
+      items: rawItems.map(mapAuditLogEntry),
+      nextCursor: hasNextPage ? rawItems.at(-1)?.id ?? null : null,
+    };
+  }
+
+  async exportPlatformAuditLog(query: ExportAuditLogDto) {
+    const entries = await this.prisma.auditLogEntry.findMany({
+      where: this.buildPlatformWhere(query),
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+    });
+    const items = entries.map(mapAuditLogEntry);
+
+    if (query.format === "csv") {
+      return {
+        contentType: "text/csv; charset=utf-8",
+        fileName: "audit-log-platform.csv",
+        body: this.toCsv(items),
+      };
+    }
+
+    return {
+      contentType: "application/json; charset=utf-8",
+      fileName: "audit-log-platform.json",
+      body: JSON.stringify(items),
+    };
+  }
+
   private async buildBillingUsageSummary(
     tenantId: string,
     tenantName: string,
@@ -180,6 +225,24 @@ export class AuditService {
     tenantId: string,
     query: AuditLogFiltersDto,
   ): Prisma.AuditLogEntryWhereInput {
+    return {
+      tenantId,
+      ...this.buildFilters(query),
+    };
+  }
+
+  private buildPlatformWhere(
+    query: AuditLogFiltersDto,
+  ): Prisma.AuditLogEntryWhereInput {
+    return {
+      tenantId: null,
+      ...this.buildFilters(query),
+    };
+  }
+
+  private buildFilters(
+    query: AuditLogFiltersDto,
+  ): Prisma.AuditLogEntryWhereInput {
     const from = query.from ? new Date(query.from) : undefined;
     const to = query.to ? new Date(query.to) : undefined;
     if (from && to && from > to) {
@@ -187,7 +250,6 @@ export class AuditService {
     }
 
     return {
-      tenantId,
       action: query.action,
       actor: query.actor,
       resourceType: query.resourceType,
