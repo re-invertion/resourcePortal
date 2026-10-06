@@ -1,7 +1,6 @@
 import { RequestMethod } from "@nestjs/common";
-import type { RouteInfo } from "@nestjs/common/interfaces";
 
-export const globalPrefixExcludes: RouteInfo[] = [
+export const globalPrefixExcludes = [
   {
     path: ".well-known/oauth-protected-resource/api/tenants/:mcpTenantId/mcp",
     method: RequestMethod.GET,
