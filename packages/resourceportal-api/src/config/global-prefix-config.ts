@@ -1,4 +1,5 @@
-import { RequestMethod, RouteInfo } from "@nestjs/common";
+import { RequestMethod } from "@nestjs/common";
+import type { RouteInfo } from "@nestjs/common/interfaces";
 
 export const globalPrefixExcludes: RouteInfo[] = [
   {
