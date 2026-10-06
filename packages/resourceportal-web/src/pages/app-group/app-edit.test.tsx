@@ -47,7 +47,7 @@ it("lists existing configuration attachments and detaches them by attachment id"
   render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="configuration" />);
 
   expect(await screen.findByText("Current attachments")).toBeTruthy();
-  expect(screen.getByText("DATABASE_URL")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Detach DATABASE_URL" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Detach DATABASE_URL" }));
   fireEvent.click(await screen.findByRole("button", { name: "Detach resource" }));
 

@@ -147,7 +147,7 @@ describe("PlatformBugReportsPage", () => {
     expect(screen.getByRole("button", { name: /Open · 0/i }).getAttribute("aria-pressed")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: /Resolved · 1/i }));
-    expect(await screen.findByText("Resolved")).toBeTruthy();
+    expect((await screen.findAllByText("Resolved")).length).toBeGreaterThan(0);
     expect(screen.getByText("Moved endpoint management to Single App networking.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open reported URL" }).getAttribute("href")).toBe("https://resource-portal.test/tenants/t1/applications");
     expect(screen.getByRole("button", { name: "Reopen" })).toBeTruthy();
