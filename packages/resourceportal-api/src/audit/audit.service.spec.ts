@@ -190,6 +190,73 @@ describe("AuditService.listAuditLog", () => {
   });
 });
 
+describe("AuditService platform audit", () => {
+  it("lists only platform-level audit events with tenantId null", async () => {
+    const platformEntry = {
+      ...entry(
+        "77777777-7777-4777-8777-777777777777",
+        new Date("2026-10-06T10:00:00Z"),
+      ),
+      tenantId: null,
+      tenantName: "ResourcePortal Platform",
+      action: "platform.mcp.tool.call",
+      resourceType: "AdminMcp",
+      resourceId: null,
+    };
+    const findMany = vi.fn().mockResolvedValue([platformEntry]);
+    const prisma = { auditLogEntry: { findMany } };
+    const service = new AuditService(prisma as unknown as PrismaService);
+
+    const result = await service.listPlatformAuditLog({
+      limit: 50,
+      action: "platform.mcp.tool.call",
+    });
+
+    expect(result.items).toEqual([platformEntry]);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: null,
+          action: "platform.mcp.tool.call",
+        }),
+        take: 51,
+      }),
+    );
+  });
+
+  it("exports only platform-level audit events", async () => {
+    const platformEntry = {
+      ...entry(
+        "88888888-8888-4888-8888-888888888888",
+        new Date("2026-10-06T10:00:00Z"),
+      ),
+      tenantId: null,
+      tenantName: "ResourcePortal Platform",
+      action: "platform.maintenance.changed",
+      resourceType: "PlatformMaintenance",
+      resourceId: null,
+    };
+    const findMany = vi.fn().mockResolvedValue([platformEntry]);
+    const prisma = { auditLogEntry: { findMany } };
+    const service = new AuditService(prisma as unknown as PrismaService);
+
+    const exported = await service.exportPlatformAuditLog({ format: "json" });
+
+    expect(exported.fileName).toBe("audit-log-platform.json");
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tenantId: null }),
+      }),
+    );
+    expect(JSON.parse(exported.body)).toEqual([
+      {
+        ...platformEntry,
+        timestamp: platformEntry.timestamp.toISOString(),
+      },
+    ]);
+  });
+});
+
 describe("AuditService.exportAuditLog", () => {
   it("exports the complete filtered result set as JSON without list pagination", async () => {
     const auditEntry = entry(

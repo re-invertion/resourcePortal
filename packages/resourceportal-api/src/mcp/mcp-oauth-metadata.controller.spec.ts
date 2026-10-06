@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FastifyRequest } from "fastify";
+import { AdminMcpOAuthMetadataController } from "./admin-mcp.controller";
 import {
   McpOAuthAuthorizationServerMetadataController,
   TenantMcpOAuthMetadataController,
@@ -34,6 +35,32 @@ describe("MCP OAuth metadata", () => {
     expect(metadata).toMatchObject({
       resource: `https://resource-portal.test/api/tenants/${tenantId}/mcp`,
       authorization_servers: ["https://auth.resource-portal.test"],
+    });
+    expect(metadata.scopes_supported).toContain("openid");
+    expect(metadata.scopes_supported).toContain("offline_access");
+    expect(metadata.scopes_supported).toContain(
+      "urn:zitadel:iam:org:project:id:project-id:aud",
+    );
+  });
+
+  it("publishes a separate Platform Admin protected-resource metadata document", () => {
+    const controller = new AdminMcpOAuthMetadataController(config() as never);
+    const request = {
+      protocol: "http",
+      headers: {
+        host: "web.internal:5173",
+        "x-forwarded-host": "resource-portal.test",
+        "x-forwarded-proto": "https",
+      },
+    } as unknown as FastifyRequest;
+
+    const metadata = controller.metadata(request);
+    expect(metadata).toMatchObject({
+      resource: "https://resource-portal.test/api/platform/mcp",
+      resource_name: "ResourcePortal Admin MCP",
+      authorization_servers: ["https://auth.resource-portal.test"],
+      resource_documentation:
+        "https://resource-portal.test/help#resourceportal-admin-mcp",
     });
     expect(metadata.scopes_supported).toContain("openid");
     expect(metadata.scopes_supported).toContain("offline_access");

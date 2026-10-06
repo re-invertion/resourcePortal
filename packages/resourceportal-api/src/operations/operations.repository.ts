@@ -36,6 +36,17 @@ export class OperationsRepository {
     `);
   }
 
+  async listPlatformOperations(limit = 100) {
+    const safeLimit = Math.min(250, Math.max(1, Math.floor(limit)));
+    return this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+      SELECT *
+      FROM "Operation"
+      WHERE "tenantId" IS NULL
+      ORDER BY "createdAt" DESC
+      LIMIT ${safeLimit}
+    `);
+  }
+
   async getOperation(tenantId: string, operationId: string) {
     const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
       SELECT *
@@ -52,6 +63,17 @@ export class OperationsRepository {
       SELECT *
       FROM "Operation"
       WHERE "id" = ${operationId}::uuid
+      LIMIT 1
+    `);
+    return rows[0] ?? null;
+  }
+
+  async getPlatformOperation(operationId: string) {
+    const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+      SELECT *
+      FROM "Operation"
+      WHERE "id" = ${operationId}::uuid
+        AND "tenantId" IS NULL
       LIMIT 1
     `);
     return rows[0] ?? null;
@@ -267,7 +289,30 @@ export class OperationsRepository {
     return rows[0] ?? null;
   }
 
-
+  async retryFailedPlatformOperation(operationId: string) {
+    const rows = await this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+      UPDATE "Operation"
+      SET
+        "status" = 'Pending'::"OperationStatus",
+        "attempt" = 0,
+        "nextAttemptAt" = NOW(),
+        "errorCode" = NULL,
+        "errorMessage" = NULL,
+        "leaseOwner" = NULL,
+        "leaseExpiresAt" = NULL,
+        "heartbeatAt" = NULL,
+        "startedAt" = NULL,
+        "completedAt" = NULL
+      WHERE "id" = ${operationId}::uuid
+        AND "tenantId" IS NULL
+        AND "status" IN (
+          'Failed'::"OperationStatus",
+          'RollbackFailed'::"OperationStatus"
+        )
+      RETURNING *
+    `);
+    return rows[0] ?? null;
+  }
 }
 
 type OperationSqlClient = Pick<Prisma.TransactionClient, "$queryRaw">;

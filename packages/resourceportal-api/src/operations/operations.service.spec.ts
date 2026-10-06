@@ -76,4 +76,48 @@ describe("Stage 16 OperationsService", () => {
     ).rejects.toBeDefined();
     expect(retryFailedOperation).not.toHaveBeenCalled();
   });
+
+  it("lists and retries platform-scoped operations through dedicated methods", async () => {
+    expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
+    const imported = (await import(modulePath)) as unknown as {
+      OperationsService: new (repository: unknown) => {
+        listPlatform: () => Promise<OperationRecord[]>;
+        getPlatform: (operationId: string) => Promise<OperationRecord>;
+        retryPlatform: (operationId: string) => Promise<OperationRecord>;
+      };
+    };
+    const platformOperation = {
+      ...operation,
+      type: "SWARM_RECONCILE",
+      status: "Failed",
+      tenantId: null,
+    } as OperationRecord;
+    const repository = {
+      listPlatformOperations: vi.fn().mockResolvedValue([platformOperation]),
+      getPlatformOperation: vi.fn().mockResolvedValue(platformOperation),
+      retryFailedPlatformOperation: vi.fn().mockResolvedValue({
+        ...platformOperation,
+        status: "Pending",
+      }),
+      appendEvent: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = new imported.OperationsService(repository);
+
+    await expect(service.listPlatform()).resolves.toEqual([platformOperation]);
+    await expect(service.getPlatform(platformOperation.id)).resolves.toEqual(
+      platformOperation,
+    );
+    await expect(service.retryPlatform(platformOperation.id)).resolves.toMatchObject({
+      id: platformOperation.id,
+      status: "Pending",
+      tenantId: null,
+    });
+    expect(repository.retryFailedPlatformOperation).toHaveBeenCalledWith(
+      platformOperation.id,
+    );
+    expect(repository.appendEvent).toHaveBeenCalledWith(
+      platformOperation.id,
+      expect.objectContaining({ event: "ManualRetryRequested" }),
+    );
+  });
 });

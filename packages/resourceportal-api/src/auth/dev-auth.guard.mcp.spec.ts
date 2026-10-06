@@ -80,6 +80,20 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     expect(request).toMatchObject({ user: userPrincipal.user });
   });
 
+  it("uses MCP-specific token validation for Platform Admin MCP requests", async () => {
+    const oidcAuth = {
+      authenticateMcpPrincipalToken: vi.fn().mockResolvedValue(userPrincipal),
+      authenticatePrincipalToken: vi.fn(),
+    };
+    const target = guard(oidcAuth);
+    const { request, executionContext } = context("/api/platform/mcp");
+
+    await expect(target.canActivate(executionContext)).resolves.toBe(true);
+    expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token");
+    expect(oidcAuth.authenticatePrincipalToken).not.toHaveBeenCalled();
+    expect(request).toMatchObject({ user: userPrincipal.user });
+  });
+
   it("keeps ordinary bearer requests on the general token validation path", async () => {
     const oidcAuth = {
       authenticateMcpPrincipalToken: vi.fn(),
