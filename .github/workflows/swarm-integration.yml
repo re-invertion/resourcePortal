@@ -134,7 +134,7 @@ jobs:
       - name: Prepare Stage 14 XFS storage harness
         run: |
           # Playwright's immediately preceding --with-deps install already refreshes apt metadata.
-          sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs nfs-common xfsprogs quota
+          sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs nfs-common xfsprogs quota wireguard-tools
           sudo systemctl stop nfs-ganesha 2>/dev/null || true
 
           STORAGE_IMAGE="$RUNNER_TEMP/resourceportal-storage.img"
@@ -325,6 +325,21 @@ jobs:
 
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
+
+      - name: Build VPN dataplane smoke image
+        run: docker build --tag resourceportal-vpn-e2e:current .
+
+      - name: Run Site VPN real dataplane smoke
+        timeout-minutes: 8
+        env:
+          RP_GATE_E2E_IMAGE: resourceportal-vpn-e2e:current
+        run: bash scripts/run-gate-dataplane-smoke.sh
+
+      - name: Run Device VPN real dataplane isolation smoke
+        timeout-minutes: 8
+        env:
+          RP_DEVICE_VPN_E2E_IMAGE: resourceportal-vpn-e2e:current
+        run: bash scripts/run-device-vpn-dataplane-smoke.sh
 
       - name: Remove real-Swarm ingress anchor
         if: always()

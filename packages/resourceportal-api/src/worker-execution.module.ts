@@ -25,6 +25,7 @@ import { RuntimeOperationExecutor } from "./operations/executors/runtime-operati
 import { VolumeOperationExecutor } from "./operations/executors/volume-operation.executors";
 import { NetworkTopologyOperationExecutor } from "./operations/executors/network-topology-operation.executor";
 import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
+import { DeviceVpnRuntimeReconcilerService } from "./networking/device-vpn-runtime-reconciler.service";
 import { NetworkingModule } from "./networking/networking.module";
 import { OperationExecutorRegistry } from "./operations/operation-executor-registry";
 import { OperationsModule } from "./operations/operations.module";
@@ -59,6 +60,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainOperationExecutor,
     IngressReconcilerService,
     GateRuntimeReconcilerService,
+    DeviceVpnRuntimeReconcilerService,
     InstallerEnrollmentNodeLabelService,
     InfrastructureOperationExecutor,
     InstallerEnrollmentOperationExecutor,
@@ -114,6 +116,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainCertificateReconcilerService,
     IngressReconcilerService,
     GateRuntimeReconcilerService,
+    DeviceVpnRuntimeReconcilerService,
     OperationsWorkerService,
     RuntimeDriftReconcilerService,
     StackApplyService,

@@ -10,7 +10,8 @@ export type WorkerReconcileKey =
   | "volumeUsage"
   | "legacySecrets"
   | "egressPolicy"
-  | "gateRuntime";
+  | "gateRuntime"
+  | "deviceVpnRuntime";
 
 @Injectable()
 export class WorkerRuntimeObservabilityService {

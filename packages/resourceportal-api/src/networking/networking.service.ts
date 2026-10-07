@@ -15,6 +15,9 @@ import { EncryptionService } from "../security/encryption.service";
 import type { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
 import type { AttachNetworkDto } from "./dto/attach-network.dto";
 import type { CreateGateDto } from "./dto/create-gate.dto";
+import type { CreateDeviceVpnDeviceDto } from "./dto/create-device-vpn-device.dto";
+import type { UpdateDeviceVpnDeviceDto } from "./dto/update-device-vpn-device.dto";
+import type { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-heartbeat.dto";
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
@@ -22,13 +25,16 @@ import type { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
 import {
   DEFAULT_GATE_TUNNEL_POOL,
+  DEFAULT_DEVICE_VPN_POOL,
   DEFAULT_NETWORK_POOL,
   DEFAULT_NETWORK_PREFIX,
   DEFAULT_OVERLAY_POOL,
   cidrsOverlap,
   containsIpv4,
+  intToIpv4,
   isPrivateIpv4Cidr,
   nextAvailableApplicationAddress,
+  nextAvailableDeviceVpnAddress,
   nextAvailableGateTunnel,
   nextAvailableNetworkCidr,
   parseIpv4Cidr,
@@ -401,14 +407,18 @@ export class NetworkingService {
       where: { id: networkId, tenantId },
       include: {
         _count: {
-          select: { attachments: true, gateAttachments: true },
+          select: { attachments: true, gateAttachments: true, deviceVpnAccess: true },
         },
       },
     });
     if (!network) throw new NotFoundException("Network not found");
-    if (network._count.attachments > 0 || network._count.gateAttachments > 0) {
+    if (
+      network._count.attachments > 0 ||
+      network._count.gateAttachments > 0 ||
+      network._count.deviceVpnAccess > 0
+    ) {
       throw new ConflictException(
-        "Detach all applications and ResourcePortalGate instances before deleting this Network",
+        "Detach all applications, Site VPN instances and Device VPN access before deleting this Network",
       );
     }
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -945,6 +955,295 @@ export class NetworkingService {
     return this.publicGate(updated);
   }
 
+  async listDeviceVpnDevices(
+    tenantId: string,
+    actor: AuthenticatedUser,
+  ) {
+    await this.ensureTenantExists(tenantId);
+    const devices = await this.prisma.deviceVpnDevice.findMany({
+      where: { tenantId, userId: actor.id, revokedAt: null },
+      orderBy: { createdAt: "asc" },
+      include: {
+        networks: {
+          orderBy: { createdAt: "asc" },
+          include: { network: true },
+        },
+      },
+    });
+    return devices.map((device) => this.publicDeviceVpnDevice(device));
+  }
+
+  async createDeviceVpnDevice(
+    tenantId: string,
+    dto: CreateDeviceVpnDeviceDto,
+    actor: AuthenticatedUser,
+  ) {
+    await this.ensureTenantExists(tenantId);
+    const name = dto.name.trim();
+    if (!name) throw new BadRequestException("Device name is required");
+
+    const networkIds = [...new Set(dto.networkIds)].sort();
+    const networks = await this.prisma.network.findMany({
+      where: {
+        tenantId,
+        id: { in: networkIds },
+        status: { not: "Deleting" },
+      },
+      orderBy: { name: "asc" },
+    });
+    if (networks.length !== networkIds.length) {
+      throw new BadRequestException(
+        "Every Device VPN Network must exist in this tenant and not be deleting",
+      );
+    }
+
+    const [gateway, usedDevices, clientKeyPair] = await Promise.all([
+      this.ensureDeviceVpnGateway(),
+      this.prisma.deviceVpnDevice.findMany({
+        select: { assignedAddress: true },
+      }),
+      Promise.resolve(this.wireGuard.generateKeyPair()),
+    ]);
+    const assignedAddress = nextAvailableDeviceVpnAddress(
+      usedDevices.map((device) => device.assignedAddress),
+      this.deviceVpnPool(),
+    );
+    if (!assignedAddress) {
+      throw new ConflictException("No free Device VPN address is available");
+    }
+
+    try {
+      const device = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.deviceVpnDevice.create({
+          data: {
+            tenantId,
+            userId: actor.id,
+            name,
+            publicKey: clientKeyPair.publicKey,
+            assignedAddress,
+            status: "Pending",
+            createdBy: actor.id,
+            updatedBy: actor.id,
+            networks: {
+              create: networkIds.map((networkId) => ({
+                networkId,
+                createdBy: actor.id,
+              })),
+            },
+          },
+          include: {
+            networks: {
+              orderBy: { createdAt: "asc" },
+              include: { network: true },
+            },
+          },
+        });
+        await this.audit(tx, tenantId, actor, {
+          action: "device_vpn.device.create",
+          resourceType: "DeviceVpnDevice",
+          resourceId: created.id,
+          resourceName: created.name,
+          changes: {
+            assignedAddress,
+            networkIds,
+            privateKeyStored: false,
+          },
+        });
+        return created;
+      });
+      return {
+        device: this.publicDeviceVpnDevice(device),
+        configuration: this.deviceVpnConfiguration(
+          gateway,
+          device,
+          networks,
+          clientKeyPair.privateKey,
+        ),
+      };
+    } catch (error) {
+      this.rethrowKnownConflict(
+        error,
+        "A Device VPN with this name, public key or address already exists",
+      );
+      throw error;
+    }
+  }
+
+  async updateDeviceVpnDevice(
+    tenantId: string,
+    deviceId: string,
+    dto: UpdateDeviceVpnDeviceDto,
+    actor: AuthenticatedUser,
+  ) {
+    const existing = await this.deviceVpnDeviceOrThrow(
+      tenantId,
+      deviceId,
+      actor.id,
+    );
+    if (existing.revokedAt) {
+      throw new ConflictException("Device VPN is revoked");
+    }
+
+    const name = dto.name === undefined ? existing.name : dto.name.trim();
+    if (!name) throw new BadRequestException("Device name is required");
+    const networkIds =
+      dto.networkIds === undefined
+        ? existing.networks.map((link) => link.networkId).sort()
+        : [...new Set(dto.networkIds)].sort();
+    if (networkIds.length === 0) {
+      throw new BadRequestException("Device VPN requires at least one Network");
+    }
+    const networks = await this.prisma.network.findMany({
+      where: {
+        tenantId,
+        id: { in: networkIds },
+        status: { not: "Deleting" },
+      },
+      orderBy: { name: "asc" },
+    });
+    if (networks.length !== networkIds.length) {
+      throw new BadRequestException(
+        "Every Device VPN Network must exist in this tenant and not be deleting",
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.deviceVpnNetworkAccess.deleteMany({ where: { deviceId } });
+        await tx.deviceVpnNetworkAccess.createMany({
+          data: networkIds.map((networkId) => ({
+            deviceId,
+            networkId,
+            createdBy: actor.id,
+          })),
+        });
+        await tx.deviceVpnDevice.update({
+          where: { id: deviceId },
+          data: {
+            name,
+            status: "Pending",
+            lastError: null,
+            configRevision: { increment: 1 },
+            updatedBy: actor.id,
+          },
+        });
+        await this.audit(tx, tenantId, actor, {
+          action: "device_vpn.device.update",
+          resourceType: "DeviceVpnDevice",
+          resourceId: deviceId,
+          resourceName: name,
+          changes: { networkIds },
+        });
+      });
+    } catch (error) {
+      this.rethrowKnownConflict(
+        error,
+        "A Device VPN with this name already exists for this user",
+      );
+      throw error;
+    }
+
+    const updated = await this.deviceVpnDeviceOrThrow(
+      tenantId,
+      deviceId,
+      actor.id,
+    );
+    return this.publicDeviceVpnDevice(updated);
+  }
+
+  async revokeDeviceVpnDevice(
+    tenantId: string,
+    deviceId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const existing = await this.deviceVpnDeviceOrThrow(
+      tenantId,
+      deviceId,
+      actor.id,
+    );
+    if (existing.revokedAt) return this.publicDeviceVpnDevice(existing);
+
+    const revokedAt = new Date();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const device = await tx.deviceVpnDevice.update({
+        where: { id: deviceId },
+        data: {
+          status: "Revoked",
+          revokedAt,
+          lastError: null,
+          configRevision: { increment: 1 },
+          updatedBy: actor.id,
+        },
+        include: {
+          networks: {
+            orderBy: { createdAt: "asc" },
+            include: { network: true },
+          },
+        },
+      });
+      await this.audit(tx, tenantId, actor, {
+        action: "device_vpn.device.revoke",
+        resourceType: "DeviceVpnDevice",
+        resourceId: device.id,
+        resourceName: device.name,
+        changes: { revokedAt: revokedAt.toISOString() },
+      });
+      return device;
+    });
+    return this.publicDeviceVpnDevice(updated);
+  }
+
+  async deviceVpnRuntimeHeartbeat(
+    authorization: string | undefined,
+    dto: DeviceVpnRuntimeHeartbeatDto,
+  ) {
+    const token = bearerToken(authorization);
+    if (!token) {
+      throw new UnauthorizedException("Device VPN runtime bearer token is required");
+    }
+    const gateway = await this.prisma.deviceVpnGateway.findUnique({
+      where: { runtimeTokenHash: hashToken(token) },
+    });
+    if (!gateway) {
+      throw new UnauthorizedException("Invalid Device VPN runtime token");
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deviceVpnGateway.update({
+        where: { id: gateway.id },
+        data: { lastSeenAt: now, status: "Ready", lastError: null },
+      });
+      for (const peer of dto.peers) {
+        if (
+          !this.wireGuard.isPublicKey(peer.publicKey) ||
+          peer.latestHandshake <= 0
+        ) {
+          continue;
+        }
+        const handshake = new Date(peer.latestHandshake * 1000);
+        if (
+          !Number.isFinite(handshake.getTime()) ||
+          handshake.getTime() > now.getTime() + 60_000
+        ) {
+          continue;
+        }
+        await tx.deviceVpnDevice.updateMany({
+          where: {
+            publicKey: peer.publicKey,
+            revokedAt: null,
+            OR: [
+              { lastSeenAt: null },
+              { lastSeenAt: { lt: handshake } },
+            ],
+          },
+          data: { lastSeenAt: handshake },
+        });
+      }
+    });
+    return { ok: true };
+  }
+
   async enrollGate(dto: GateEnrollDto) {
     const enrollment = await this.prisma.resourcePortalGateEnrollment.findUnique({
       where: { tokenHash: hashToken(dto.token) },
@@ -1130,6 +1429,198 @@ export class NetworkingService {
       });
     }
     return gate;
+  }
+
+  private async ensureDeviceVpnGateway() {
+    const existing = await this.prisma.deviceVpnGateway.findUnique({
+      where: { id: "primary" },
+    });
+    if (existing) return existing;
+
+    const keyPair = this.wireGuard.generateKeyPair();
+    const runtimeToken = randomBytes(32).toString("base64url");
+    try {
+      return await this.prisma.deviceVpnGateway.create({
+        data: {
+          id: "primary",
+          publicKey: keyPair.publicKey,
+          privateKeyCiphertext: this.encryption.encrypt(keyPair.privateKey),
+          runtimeTokenHash: hashToken(runtimeToken),
+          runtimeTokenCiphertext: this.encryption.encrypt(runtimeToken),
+          listenPort: this.deviceVpnPort(),
+          serverTunnelAddress: this.deviceVpnServerAddress(),
+          status: "Provisioning",
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return this.prisma.deviceVpnGateway.findUniqueOrThrow({
+          where: { id: "primary" },
+        });
+      }
+      throw error;
+    }
+  }
+
+  private deviceVpnConfiguration(
+    gateway: {
+      publicKey: string;
+      listenPort: number;
+    },
+    device: {
+      assignedAddress: string;
+    },
+    networks: Array<{ cidr: string }>,
+    privateKey: string,
+  ) {
+    const allowedIps = networks.map((network) => network.cidr).sort();
+    const endpoint = `${this.deviceVpnEndpointHost()}:${gateway.listenPort}`;
+    const address = `${device.assignedAddress}/32`;
+    const wireguardConfig = [
+      "[Interface]",
+      `PrivateKey = ${privateKey}`,
+      `Address = ${address}`,
+      "",
+      "[Peer]",
+      `PublicKey = ${gateway.publicKey}`,
+      `Endpoint = ${endpoint}`,
+      `AllowedIPs = ${allowedIps.join(", ")}`,
+      "PersistentKeepalive = 25",
+      "",
+    ].join("\n");
+    return {
+      endpoint,
+      serverPublicKey: gateway.publicKey,
+      address,
+      allowedIps,
+      persistentKeepaliveSeconds: 25,
+      privateKey,
+      wireguardConfig,
+      privateKeyStored: false,
+    };
+  }
+
+  private publicDeviceVpnDevice(
+    device: Record<string, unknown> & {
+      networks?: Array<{
+        networkId: string;
+        network?: {
+          id: string;
+          name: string;
+          cidr: string;
+        };
+      }>;
+    },
+  ) {
+    const safe: Record<string, unknown> = { ...device };
+    safe.address =
+      typeof device.assignedAddress === "string"
+        ? `${device.assignedAddress}/32`
+        : device.assignedAddress;
+    safe.networks = (device.networks ?? [])
+      .flatMap((link) =>
+        link.network
+          ? [
+              {
+                id: link.network.id,
+                name: link.network.name,
+                cidr: link.network.cidr,
+              },
+            ]
+          : [],
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return safe;
+  }
+
+  private deviceVpnDeviceOrThrow(
+    tenantId: string,
+    deviceId: string,
+    userId: string,
+  ) {
+    return this.prisma.deviceVpnDevice
+      .findFirst({
+        where: { id: deviceId, tenantId, userId },
+        include: {
+          networks: {
+            orderBy: { createdAt: "asc" },
+            include: { network: true },
+          },
+        },
+      })
+      .then((device) => {
+        if (!device) throw new NotFoundException("Device VPN not found");
+        return device;
+      });
+  }
+
+  private deviceVpnEndpointHost() {
+    const value =
+      this.config.get<string>("RESOURCEPORTAL_DEVICE_VPN_ENDPOINT_HOST") ??
+      this.config.get<string>("RESOURCEPORTAL_GATE_ENDPOINT_HOST") ??
+      this.config.get<string>("RESOURCEPORTAL_PUBLIC_HOSTNAME");
+    if (!value) {
+      throw new ConflictException("Device VPN endpoint host is not configured");
+    }
+    return value.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
+
+  private deviceVpnPool() {
+    return (
+      this.config.get<string>("RESOURCEPORTAL_DEVICE_VPN_POOL") ??
+      DEFAULT_DEVICE_VPN_POOL
+    );
+  }
+
+  private deviceVpnPort() {
+    const value = Number.parseInt(
+      this.config.get<string>("RESOURCEPORTAL_DEVICE_VPN_PORT", "51820"),
+      10,
+    );
+    if (!Number.isInteger(value) || value < 1 || value > 65535) {
+      throw new ConflictException("Device VPN UDP port is invalid");
+    }
+    if (value >= GATE_PORT_MIN && value <= GATE_PORT_MAX) {
+      throw new ConflictException(
+        "Device VPN UDP port must not overlap the Site VPN Gate port range",
+      );
+    }
+    return value;
+  }
+
+  private deviceVpnServerAddress() {
+    const configured = this.config.get<string>(
+      "RESOURCEPORTAL_DEVICE_VPN_SERVER_ADDRESS",
+    );
+    if (configured) {
+      const parsed = parseIpv4Cidr(configured);
+      const pool = parseIpv4Cidr(this.deviceVpnPool());
+      const address = configured.split("/")[0]?.trim();
+      if (
+        !parsed ||
+        !pool ||
+        !address ||
+        !containsIpv4(pool, address) ||
+        parsed.prefix !== pool.prefix ||
+        parsed.network !== pool.network
+      ) {
+        throw new ConflictException(
+          "Device VPN server address must be a usable host in the configured Device VPN pool using the pool prefix",
+        );
+      }
+      if (address === intToIpv4(pool.network) || address === intToIpv4(pool.broadcast)) {
+        throw new ConflictException("Device VPN server address is not usable");
+      }
+      return `${address}/${pool.prefix}`;
+    }
+    const pool = parseIpv4Cidr(this.deviceVpnPool());
+    if (!pool || pool.prefix > 30) {
+      throw new ConflictException("Device VPN address pool is invalid");
+    }
+    return `${intToIpv4(pool.network + 1)}/${pool.prefix}`;
   }
 
   private resolveNetworkCidr(

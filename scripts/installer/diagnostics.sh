@@ -9,6 +9,12 @@ rp_gate_wireguard_ufw_rule_present() {
   grep -F '52000:52999/udp' <<<"$status" | grep -Fq '# ResourcePortal-Gate-WireGuard'
 }
 
+rp_device_vpn_ufw_rule_present() {
+  local status
+  status="$(ufw status 2>/dev/null || true)"
+  grep -F '51820/udp' <<<"$status" | grep -Fq '# ResourcePortal-Device-VPN'
+}
+
 rp_zitadel_mcp_dcr_advertised() {
   local domain="${RP_CFG_ZITADEL_DOMAIN:-}" discovery issuer registration expected_base
   [[ -n "$domain" ]] || return 1
@@ -48,7 +54,8 @@ rp_run_diagnostics() {
   rp_diagnostic_cmd 'supported OS' rp_detect_os
   rp_diagnostic_cmd 'Docker daemon' docker info
   rp_diagnostic_cmd 'UFW status' ufw status
-  rp_diagnostic_cmd 'Gate UDP firewall' rp_gate_wireguard_ufw_rule_present
+  rp_diagnostic_cmd 'Site VPN UDP firewall' rp_gate_wireguard_ufw_rule_present
+  rp_diagnostic_cmd 'Device VPN UDP firewall' rp_device_vpn_ufw_rule_present
   [[ -n "${RP_CFG_GATE_ENDPOINT_HOST:-}" ]] && rp_diagnostic_line 'Gate endpoint host' "$RP_CFG_GATE_ENDPOINT_HOST"
   rp_diagnostic_cmd 'Swarm active' test "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)" = active
   quorum="$(rp_check_manager_quorum 2>/dev/null || true)"; rp_diagnostic_line 'manager quorum' "${quorum:-unavailable}"

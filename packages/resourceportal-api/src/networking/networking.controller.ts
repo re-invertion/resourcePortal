@@ -22,6 +22,9 @@ import { OperationsService } from "../operations/operations.service";
 import { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
 import { AttachNetworkDto } from "./dto/attach-network.dto";
 import { CreateGateDto } from "./dto/create-gate.dto";
+import { CreateDeviceVpnDeviceDto } from "./dto/create-device-vpn-device.dto";
+import { UpdateDeviceVpnDeviceDto } from "./dto/update-device-vpn-device.dto";
+import { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-heartbeat.dto";
 import { CreateNetworkDto } from "./dto/create-network.dto";
 import { GateEnrollDto } from "./dto/gate-enroll.dto";
 import { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
@@ -250,6 +253,46 @@ export class NetworkingController {
     });
   }
 
+  @RequirePermissions("device_vpn.read")
+  @Get("device-vpn/devices")
+  listDeviceVpnDevices(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.listDeviceVpnDevices(tenantId, actor);
+  }
+
+  @RequirePermissions("device_vpn.create")
+  @Post("device-vpn/devices")
+  createDeviceVpnDevice(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: CreateDeviceVpnDeviceDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.createDeviceVpnDevice(tenantId, dto, actor);
+  }
+
+  @RequirePermissions("device_vpn.manage")
+  @Patch("device-vpn/devices/:deviceId")
+  updateDeviceVpnDevice(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("deviceId", ParseUUIDPipe) deviceId: string,
+    @Body() dto: UpdateDeviceVpnDeviceDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.updateDeviceVpnDevice(tenantId, deviceId, dto, actor);
+  }
+
+  @RequirePermissions("device_vpn.delete")
+  @Delete("device-vpn/devices/:deviceId")
+  revokeDeviceVpnDevice(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("deviceId", ParseUUIDPipe) deviceId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.revokeDeviceVpnDevice(tenantId, deviceId, actor);
+  }
+
   @RequirePermissions("gate.delete")
   @Delete("gates/:gateId")
   revokeGate(
@@ -288,5 +331,20 @@ export class GateAgentController {
   @Get("agent/config")
   config(@Headers("authorization") authorization: string | undefined) {
     return this.networking.gateAgentConfig(authorization);
+  }
+}
+
+
+@Public()
+@Controller("networking/device-vpn/runtime")
+export class DeviceVpnRuntimeController {
+  constructor(private readonly networking: NetworkingService) {}
+
+  @Post("heartbeat")
+  heartbeat(
+    @Headers("authorization") authorization: string | undefined,
+    @Body() dto: DeviceVpnRuntimeHeartbeatDto,
+  ) {
+    return this.networking.deviceVpnRuntimeHeartbeat(authorization, dto);
   }
 }

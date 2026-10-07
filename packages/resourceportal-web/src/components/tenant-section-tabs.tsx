@@ -41,7 +41,7 @@ export function NetworkingTabs({
       label="Networking sections"
       items={[
         {
-          label: "Networks & Gate",
+          label: "Networks & VPN",
           href: tenantHref(tenantId, "networking"),
           active: active === "networking",
         },

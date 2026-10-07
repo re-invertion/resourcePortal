@@ -1,6 +1,7 @@
 export const DEFAULT_NETWORK_POOL = "10.240.0.0/16";
 export const DEFAULT_OVERLAY_POOL = "10.200.0.0/16";
 export const DEFAULT_GATE_TUNNEL_POOL = "100.96.0.0/11";
+export const DEFAULT_DEVICE_VPN_POOL = "100.64.0.0/11";
 export const DEFAULT_NETWORK_PREFIX = 24;
 export const FIRST_APPLICATION_HOST_OFFSET = 10;
 
@@ -143,6 +144,28 @@ export function nextAvailableGateTunnel(
         client: `${client}/30`,
       };
     }
+  }
+  return null;
+}
+
+export function nextAvailableDeviceVpnAddress(
+  usedAddresses: Iterable<string>,
+  poolInput = DEFAULT_DEVICE_VPN_POOL,
+) {
+  const pool = parseIpv4Cidr(poolInput);
+  if (!pool || pool.prefix > 30) {
+    throw new Error("Invalid Device VPN address pool");
+  }
+  const used = new Set(
+    [...usedAddresses]
+      .map((value) => value.split("/")[0]?.trim())
+      .filter((value): value is string => Boolean(value)),
+  );
+  const first = pool.network + 2;
+  const last = pool.broadcast - 1;
+  for (let value = first; value <= last; value += 1) {
+    const address = intToIpv4(value);
+    if (!used.has(address)) return address;
   }
   return null;
 }

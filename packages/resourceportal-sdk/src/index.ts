@@ -50,6 +50,48 @@ export type ResourcePortalGate = {
   revokedAt?: string | null;
 };
 
+export type SiteVpn = ResourcePortalGate;
+
+export type DeviceVpnNetwork = {
+  id: string;
+  name: string;
+  cidr: string;
+};
+
+export type DeviceVpnDevice = {
+  id: string;
+  tenantId: string;
+  userId: string;
+  name: string;
+  publicKey: string;
+  assignedAddress: string;
+  address: string;
+  status: string;
+  configRevision: number;
+  networks: DeviceVpnNetwork[];
+  lastSeenAt?: string | null;
+  lastError?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DeviceVpnConfiguration = {
+  endpoint: string;
+  serverPublicKey: string;
+  address: string;
+  allowedIps: string[];
+  persistentKeepaliveSeconds: number;
+  privateKey: string;
+  wireguardConfig: string;
+  privateKeyStored: false;
+};
+
+export type DeviceVpnProvisioning = {
+  device: DeviceVpnDevice;
+  configuration: DeviceVpnConfiguration;
+};
+
 export type NetworkTopologyOperation = {
   id: string;
   type: "NETWORK_TOPOLOGY_CHANGE";
@@ -430,6 +472,36 @@ export class ResourcePortalClient {
     listGates: (tenantId: string) =>
       this.request<ResourcePortalGate[]>(
         `/tenants/${encode(tenantId)}/networking/gates`,
+      ),
+    listSiteVpns: (tenantId: string) =>
+      this.request<SiteVpn[]>(
+        `/tenants/${encode(tenantId)}/networking/gates`,
+      ),
+    listDeviceVpnDevices: (tenantId: string) =>
+      this.request<DeviceVpnDevice[]>(
+        `/tenants/${encode(tenantId)}/networking/device-vpn/devices`,
+      ),
+    createDeviceVpnDevice: (
+      tenantId: string,
+      body: { name: string; networkIds: string[] },
+    ) =>
+      this.request<DeviceVpnProvisioning>(
+        `/tenants/${encode(tenantId)}/networking/device-vpn/devices`,
+        { method: "POST", body },
+      ),
+    updateDeviceVpnDevice: (
+      tenantId: string,
+      deviceId: string,
+      body: { name?: string; networkIds?: string[] },
+    ) =>
+      this.request<DeviceVpnDevice>(
+        `/tenants/${encode(tenantId)}/networking/device-vpn/devices/${encode(deviceId)}`,
+        { method: "PATCH", body },
+      ),
+    revokeDeviceVpnDevice: (tenantId: string, deviceId: string) =>
+      this.request<DeviceVpnDevice>(
+        `/tenants/${encode(tenantId)}/networking/device-vpn/devices/${encode(deviceId)}`,
+        { method: "DELETE" },
       ),
     createGate: (
       tenantId: string,
