@@ -4,6 +4,7 @@ import {
   cidrsOverlap,
   isPrivateIpv4Cidr,
   nextAvailableApplicationAddress,
+  nextAvailableDeviceVpnAddress,
   nextAvailableGateTunnel,
   nextAvailableNetworkCidr,
   parseIpv4Cidr,
@@ -48,6 +49,16 @@ describe("network addressing", () => {
       server: "100.96.0.5/30",
       client: "100.96.0.6/30",
     });
+  });
+
+  it("allocates Device VPN /32 addresses from a pool that does not overlap Site VPN tunnels", () => {
+    expect(nextAvailableDeviceVpnAddress([])).toBe("100.64.0.2");
+    expect(
+      nextAvailableDeviceVpnAddress(["100.64.0.2", "100.64.0.3"]),
+    ).toBe("100.64.0.4");
+    const devicePool = parseIpv4Cidr("100.64.0.0/11")!;
+    const sitePool = parseIpv4Cidr("100.96.0.0/11")!;
+    expect(cidrsOverlap(devicePool, sitePool)).toBe(false);
   });
 
   it("allocates stable application addresses after infrastructure reservations", () => {

@@ -607,10 +607,10 @@ it("explains how to connect an app and Gate when the tenant has no Network", asy
   render(<TenantNetworkingPage tenantId="tenant-1" />);
 
   expect(
-    await screen.findByText("Create a Network before connecting an app and Gate"),
+    await screen.findByText("Create a Network before connecting an app and Site VPN"),
   ).toBeTruthy();
   expect(
-    screen.getByText(/Applications and ResourcePortalGate instances meet through a tenant Network/i),
+    screen.getByText(/Applications and Site VPN instances meet through a tenant Network/i),
   ).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Create Network" }).length).toBeGreaterThan(0);
 });
@@ -625,12 +625,12 @@ it("keeps invalid Gate names in the form instead of raising a global validation 
   render(<><TenantNetworkingPage tenantId="tenant-1" /><ToastViewport /></>);
   await waitFor(() => expect(screen.getAllByText("backend").length).toBeGreaterThan(0));
 
-  fireEvent.click(screen.getByRole("button", { name: "Add Gate" }));
-  const dialog = screen.getByRole("dialog", { name: "Add ResourcePortalGate" });
-  fireEvent.change(within(dialog).getByPlaceholderText("office-gateway"), {
+  fireEvent.click(screen.getByRole("button", { name: "Add Site VPN" }));
+  const dialog = screen.getByRole("dialog", { name: "Add Site VPN" });
+  fireEvent.change(within(dialog).getByPlaceholderText("office-site-vpn"), {
     target: { value: "Office Gateway" },
   });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Create Gate" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create Site VPN" }));
 
   expect(await within(dialog).findByText(/lowercase letters/i)).toBeTruthy();
   expect(
@@ -639,7 +639,7 @@ it("keeps invalid Gate names in the form instead of raising a global validation 
         String(input).endsWith("/networking/gates") && init?.method === "POST",
     ),
   ).toBe(false);
-  expect(screen.queryByText("Unable to create ResourcePortalGate.")).toBeNull();
+  expect(screen.queryByText("Unable to create Site VPN.")).toBeNull();
 });
 
 it("creates a Gate and shows the one-time curl installer command", async () => {
@@ -670,18 +670,18 @@ it("creates a Gate and shows the one-time curl installer command", async () => {
   render(<TenantNetworkingPage tenantId="tenant-1" />);
   await waitFor(() => expect(screen.getAllByText("backend").length).toBeGreaterThan(0));
 
-  fireEvent.click(screen.getByRole("button", { name: "Add Gate" }));
-  const dialog = screen.getByRole("dialog", { name: "Add ResourcePortalGate" });
-  const gateName = within(dialog).getByPlaceholderText("office-gateway");
+  fireEvent.click(screen.getByRole("button", { name: "Add Site VPN" }));
+  const dialog = screen.getByRole("dialog", { name: "Add Site VPN" });
+  const gateName = within(dialog).getByPlaceholderText("office-site-vpn");
   expect(gateName.className).toContain("selection:bg-[#1769E0]");
   expect(gateName.className).toContain("selection:text-white");
   fireEvent.change(gateName, {
     target: { value: "branch" },
   });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Create Gate" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create Site VPN" }));
 
   const installDialog = await screen.findByRole("dialog", {
-    name: "Install ResourcePortalGate",
+    name: "Install Site VPN",
   });
   expect(installDialog.textContent).toContain(
     "/api/networking/gates/install.sh",

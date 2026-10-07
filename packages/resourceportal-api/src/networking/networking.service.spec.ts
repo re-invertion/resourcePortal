@@ -40,6 +40,15 @@ function fixture(overrides: Record<string, any> = {}) {
       create: vi.fn(),
       delete: vi.fn(),
     },
+    deviceVpnDevice: {
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    deviceVpnNetworkAccess: {
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     appGroup: {
       update: vi.fn().mockResolvedValue({}),
     },
@@ -80,6 +89,18 @@ function fixture(overrides: Record<string, any> = {}) {
       findMany: vi.fn().mockResolvedValue([]),
       findFirst: vi.fn(),
     },
+    deviceVpnGateway: {
+      findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    deviceVpnDevice: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+      update: vi.fn(),
+    },
     tenant: {
       findUnique: vi.fn().mockResolvedValue({ id: "tenant-1" }),
     },
@@ -89,9 +110,13 @@ function fixture(overrides: Record<string, any> = {}) {
     ...overrides,
   } as unknown as PrismaService;
   const config = {
-    get: vi.fn((key: string) => {
+    get: vi.fn((key: string, fallback?: string) => {
       if (key === "RESOURCEPORTAL_GATE_ENDPOINT_HOST") return "10.0.0.10";
-      return undefined;
+      if (key === "RESOURCEPORTAL_DEVICE_VPN_ENDPOINT_HOST") return "vpn.example.test";
+      if (key === "RESOURCEPORTAL_DEVICE_VPN_PORT") return "51820";
+      if (key === "RESOURCEPORTAL_DEVICE_VPN_POOL") return "100.64.0.0/11";
+      if (key === "RESOURCEPORTAL_DEVICE_VPN_SERVER_ADDRESS") return "100.64.0.1/11";
+      return fallback;
     }),
   } as unknown as ConfigService;
   const encryption = {
@@ -216,6 +241,123 @@ describe("NetworkingService control plane", () => {
         runtimeDraftRevision: { increment: 1 },
         updatedBy: actor.id,
       },
+    });
+  });
+
+  it("creates Device VPN with a one-time private key and tenant-scoped Network access", async () => {
+    const { service, prisma, tx } = fixture();
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const networkId = "22222222-2222-4222-8222-222222222222";
+    const network = {
+      id: networkId,
+      tenantId,
+      name: "backend",
+      cidr: "10.240.10.0/24",
+      status: "Ready",
+    };
+    (prisma.network.findMany as any).mockResolvedValue([network]);
+    (prisma.deviceVpnGateway.findUnique as any).mockResolvedValue(null);
+    (prisma.deviceVpnGateway.create as any).mockImplementation(({ data }: any) =>
+      Promise.resolve({ ...data }),
+    );
+    (prisma.deviceVpnDevice.findMany as any).mockResolvedValue([]);
+    tx.deviceVpnDevice.create.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        id: "33333333-3333-4333-8333-333333333333",
+        ...data,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        networks: [
+          {
+            networkId,
+            network,
+          },
+        ],
+      }),
+    );
+
+    const result = await service.createDeviceVpnDevice(
+      tenantId,
+      { name: "work-laptop", networkIds: [networkId] },
+      actor,
+    );
+
+    expect(result.device).toMatchObject({
+      name: "work-laptop",
+      assignedAddress: "100.64.0.2",
+      address: "100.64.0.2/32",
+      networks: [{ id: networkId, name: "backend", cidr: "10.240.10.0/24" }],
+    });
+    expect(result.configuration).toMatchObject({
+      endpoint: "vpn.example.test:51820",
+      address: "100.64.0.2/32",
+      allowedIps: ["10.240.10.0/24"],
+      privateKeyStored: false,
+    });
+    expect(result.configuration.wireguardConfig).toContain(
+      "AllowedIPs = 10.240.10.0/24",
+    );
+    expect(tx.deviceVpnDevice.create).toHaveBeenCalledWith({
+      data: expect.not.objectContaining({
+        privateKey: expect.anything(),
+        privateKeyCiphertext: expect.anything(),
+      }),
+      include: expect.anything(),
+    });
+    expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "device_vpn.device.create",
+        resourceType: "DeviceVpnDevice",
+      }),
+    });
+  });
+
+  it("revokes only the current user's Device VPN peer", async () => {
+    const { service, prisma, tx } = fixture();
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const deviceId = "33333333-3333-4333-8333-333333333333";
+    const device = {
+      id: deviceId,
+      tenantId,
+      userId: actor.id,
+      name: "work-laptop",
+      publicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      assignedAddress: "100.64.0.2",
+      status: "Ready",
+      configRevision: 1,
+      revokedAt: null,
+      networks: [],
+    };
+    (prisma.deviceVpnDevice.findFirst as any).mockResolvedValue(device);
+    tx.deviceVpnDevice.update.mockImplementation(({ data }: any) =>
+      Promise.resolve({
+        ...device,
+        ...data,
+        revokedAt: data.revokedAt,
+        networks: [],
+      }),
+    );
+
+    const result = await service.revokeDeviceVpnDevice(
+      tenantId,
+      deviceId,
+      actor,
+    );
+
+    expect(result).toMatchObject({
+      id: deviceId,
+      status: "Revoked",
+      revokedAt: expect.any(Date),
+    });
+    expect(prisma.deviceVpnDevice.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: deviceId, tenantId, userId: actor.id },
+      }),
+    );
+    expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "device_vpn.device.revoke",
+      }),
     });
   });
 

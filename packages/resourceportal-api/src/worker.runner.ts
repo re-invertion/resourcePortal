@@ -6,6 +6,7 @@ import { IngressReconcilerService } from "./internal/ingress-reconciler.service"
 import { RuntimeDriftReconcilerService } from "./internal/runtime-drift-reconciler.service";
 import { NetworkEgressReconcilerService } from "./network-egress/network-egress-reconciler.service";
 import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
+import { DeviceVpnRuntimeReconcilerService } from "./networking/device-vpn-runtime-reconciler.service";
 import {
   errorMessage,
   operationCorrelationId,
@@ -60,6 +61,7 @@ async function main() {
   const volumeUsage = app.get(VolumeUsageReconcilerService);
   const egressPolicy = app.get(NetworkEgressReconcilerService);
   const gateRuntime = app.get(GateRuntimeReconcilerService);
+  const deviceVpnRuntime = app.get(DeviceVpnRuntimeReconcilerService);
   const runtimeObservability = app.get(WorkerRuntimeObservabilityService);
 
   const workerId = config.get<string>("WORKER_ID") ?? `worker-${process.pid}`;
@@ -105,6 +107,12 @@ async function main() {
       10_000,
       2_000,
     ),
+    deviceVpnRuntime: readInt(
+      config,
+      "DEVICE_VPN_RUNTIME_RECONCILE_INTERVAL_MS",
+      10_000,
+      2_000,
+    ),
   };
   const next = {
     certificate: 0,
@@ -114,6 +122,7 @@ async function main() {
     legacySecrets: 0,
     egressPolicy: 0,
     gateRuntime: 0,
+    deviceVpnRuntime: 0,
   };
   let stopping = false;
   let crashed = false;
@@ -275,6 +284,7 @@ async function main() {
       await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
       await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
       await startupReconcile("gateRuntime", () => gateRuntime.reconcile());
+      await startupReconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
     }
 
     while (!stopping) {
@@ -291,6 +301,7 @@ async function main() {
         await reconcile("legacySecrets", () => legacySecrets.migrateAll());
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
         await reconcile("gateRuntime", () => gateRuntime.reconcile());
+        await reconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
       }
 
       let processed;

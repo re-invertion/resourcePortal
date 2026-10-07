@@ -32,6 +32,7 @@ import {
 } from "./tenant-networking-graph";
 import { toast } from "../components/toast";
 import { NetworkingTabs } from "../components/tenant-section-tabs";
+import { DeviceVpnPanel } from "./device-vpn-panel";
 import { tenantHref } from "../router/router";
 import {
   hasFormErrors,
@@ -117,7 +118,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     }
     if (!sourceId || !targetId?.startsWith("network:")) {
       setConnectionGuidance(
-        "Applications and ResourcePortalGate instances do not connect directly. Create or choose a Network, then connect both nodes to that same Network.",
+        "Applications and Site VPN instances do not connect directly. Create or choose a Network, then connect both nodes to that same Network.",
       );
       return;
     }
@@ -154,7 +155,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       } else if (sourceId.startsWith("gate:")) {
         const gateId = sourceId.slice("gate:".length);
         const gate = topology.data?.gates.find((item) => item.id === gateId);
-        if (!gate) throw new Error("The selected ResourcePortalGate is no longer available.");
+        if (!gate) throw new Error("The selected Site VPN is no longer available.");
         operation = await apiRequest<Operation>(
           `${root}/gates/${encodeURIComponent(gate.id)}/networks`,
           {
@@ -174,7 +175,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       await topology.reload();
       toast.success(sourceId.startsWith("app:")
         ? "Application connected. Deploy the affected App Group to apply the new Network attachment."
-        : "ResourcePortalGate route connected and queued for runtime reconciliation.");
+        : "Site VPN route connected and queued for runtime reconciliation.");
     } catch (error) {
       toast.errorFrom(error, "Unable to connect topology nodes.");
     } finally {
@@ -204,7 +205,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       await topology.reload();
       toast.success(data.kind === "application-network"
         ? "Application disconnected. Deploy the App Group to apply the change."
-        : "Gate route disconnected.");
+        : "Site VPN route disconnected.");
     } catch (error) {
       toast.errorFrom(error, "Unable to disconnect topology edge.");
     } finally {
@@ -258,7 +259,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       setGateErrors({});
       await topology.reload();
     } catch (error) {
-      toast.errorFrom(error, "Unable to create ResourcePortalGate.");
+      toast.errorFrom(error, "Unable to create Site VPN.");
     } finally {
       setWorking(false);
     }
@@ -275,7 +276,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       setGateOpen(true);
       await topology.reload();
     } catch (error) {
-      toast.errorFrom(error, "Unable to rotate Gate enrollment.");
+      toast.errorFrom(error, "Unable to rotate Site VPN enrollment.");
     } finally {
       setWorking(false);
     }
@@ -327,10 +328,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       toast.success(
         routingForm.mode === "BGP"
           ? "BGP route advertisement enabled."
-          : "Gate routing changed to manual static routes.",
+          : "Site VPN routing changed to manual static routes.",
       );
     } catch (error) {
-      toast.errorFrom(error, "Unable to update Gate routing.");
+      toast.errorFrom(error, "Unable to update Site VPN routing.");
     } finally {
       setWorking(false);
     }
@@ -358,7 +359,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         method: "DELETE",
       });
       await topology.reload();
-      toast.success(`ResourcePortalGate ${gate.name} deletion requested.`);
+      toast.success(`Site VPN ${gate.name} deletion requested.`);
     } catch (error) {
       toast.errorFrom(error, "Unable to delete Gate.");
     } finally {
@@ -385,7 +386,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           triggerVariant="ghost"
           disabled={working || network.attachments.length > 0 || network.gateAttachments.length > 0}
           confirmTitle="Delete Network?"
-          confirmDescription="A Network can only be deleted after every application and Gate has been disconnected."
+          confirmDescription="A Network can only be deleted after every application, Site VPN and Device VPN access has been disconnected."
           confirmLabel="Delete Network"
           onConfirm={() => deleteNetwork(network)}
         >
@@ -431,9 +432,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             size="sm"
             triggerVariant="ghost"
             disabled={working || Boolean(gate.revokedAt)}
-            confirmTitle="Delete ResourcePortalGate?"
-            confirmDescription="The agent token is invalidated immediately. The Gate record is permanently deleted after its RP-side VPN stack and private key secret are removed."
-            confirmLabel="Delete Gate"
+            confirmTitle="Delete Site VPN?"
+            confirmDescription="The agent token is invalidated immediately. The Site VPN record is permanently deleted after its RP-side VPN stack and private key secret are removed."
+            confirmLabel="Delete Site VPN"
             onConfirm={() => deleteGate(gate)}
           >
             Delete
@@ -491,14 +492,14 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       <PageHeader
         eyebrow="Tenant networking"
         title="Networking"
-        description="Connect applications across App Groups with tenant-scoped Networks and route selected private Networks into your LAN through ResourcePortalGate."
+        description="Connect applications across App Groups, expose selected Networks to a whole site with Site VPN, or connect individual devices with Device VPN."
         actions={
           <>
             <Button onClick={() => setNetworkOpen(true)}>
               <PlusIcon size={15} /> Create Network
             </Button>
             <Button variant="primary" onClick={() => { setEnrollment(undefined); setGateOpen(true); }}>
-              <PlusIcon size={15} /> Add Gate
+              <PlusIcon size={15} /> Add Site VPN
             </Button>
           </>
         }
@@ -514,13 +515,13 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       ) : null}
 
       <Callout title="How to connect">
-        Applications and ResourcePortalGate instances meet through a tenant Network; they are never linked directly. Connect both nodes to the same Network. Application connections update desired state and require Deploy changes in that App Group; Gate routes reconcile automatically.
+        Applications and Site VPN instances meet through a tenant Network; they are never linked directly. Connect both nodes to the same Network. Application connections update desired state and require Deploy changes in that App Group; Site VPN routes reconcile automatically.
       </Callout>
 
       {topology.data && topology.data.networks.length === 0 ? (
         <div className="mt-4">
-          <Callout tone="warning" title="Create a Network before connecting an app and Gate">
-            This tenant has no Network yet. Create one first (the CIDR can be allocated automatically), then connect the Application and ResourcePortalGate to that same Network.
+          <Callout tone="warning" title="Create a Network before connecting an app and Site VPN">
+            This tenant has no Network yet. Create one first (the CIDR can be allocated automatically), then connect the Application and Site VPN to that same Network.
             <div className="mt-3"><Button size="sm" onClick={() => setNetworkOpen(true)}>Create Network</Button></div>
           </Callout>
         </div>
@@ -571,8 +572,8 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
         <Card className="overflow-hidden">
           <div className="border-b border-[#E1E7F0] px-5 py-4">
-            <h2 className="font-semibold text-[#172033]">ResourcePortalGate</h2>
-            <p className="mt-1 text-xs text-[#718096]">Outbound control agent plus WireGuard routed VPN. No Docker socket or control-plane secrets on the LAN host.</p>
+            <h2 className="font-semibold text-[#172033]">Site VPN</h2>
+            <p className="mt-1 text-xs text-[#718096]">Site-to-site WireGuard access for an entire LAN. ResourcePortalGate remains the internal compatibility name for this Site VPN resource.</p>
           </div>
           <DataTable
             embedded
@@ -586,14 +587,19 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
               { key: "actions", label: "" },
             ]}
             rows={gateRows}
-            empty={<EmptyState icon={<ServerIcon />} title="No Gate instances" description="Add a Gate to route selected RP Networks into your LAN." />}
+            empty={<EmptyState icon={<ServerIcon />} title="No Site VPN instances" description="Add Site VPN to route selected RP Networks into an entire LAN." />}
           />
         </Card>
       </div>
 
+      <DeviceVpnPanel
+        tenantId={tenantId}
+        networks={topology.data?.networks ?? []}
+      />
+
       <Card className="mt-6 overflow-hidden">
         <div className="border-b border-[#E1E7F0] px-5 py-4">
-          <h2 className="font-semibold text-[#172033]">LAN route advertisement</h2>
+          <h2 className="font-semibold text-[#172033]">Site VPN route advertisement</h2>
           <p className="mt-1 text-xs text-[#718096]">
             Manual Gates require static routes on the LAN router. BGP Gates advertise attached RP Network CIDRs automatically and never import LAN routes into ResourcePortal.
           </p>
@@ -609,7 +615,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             { key: "route", label: "Route" },
           ]}
           rows={routeRows}
-          empty={<EmptyState icon={<NetworkIcon />} title="No exported routes" description="Connect a ResourcePortalGate node to a Network node." />}
+          empty={<EmptyState icon={<NetworkIcon />} title="No exported routes" description="Connect a Site VPN node to a Network node." />}
         />
       </Card>
 
@@ -643,8 +649,8 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       <Dialog
         open={gateOpen}
         onClose={() => { if (!working) { setGateOpen(false); setEnrollment(undefined); } }}
-        title={enrollment ? "Install ResourcePortalGate" : "Add ResourcePortalGate"}
-        description={enrollment ? "Run this one-time command on the Linux host that will route your LAN into selected RP Networks." : "Create a routed VPN gateway for this tenant."}
+        title={enrollment ? "Install Site VPN" : "Add Site VPN"}
+        description={enrollment ? "Run this one-time command on the Linux host that will route your LAN into selected RP Networks." : "Create a Site VPN gateway for an entire LAN."}
         actions={
           enrollment ? (
             <Button variant="primary" onClick={() => { setGateOpen(false); setEnrollment(undefined); }}>Done</Button>
@@ -652,7 +658,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             <>
               <Button disabled={working} onClick={() => setGateOpen(false)}>Cancel</Button>
               <Button variant="primary" type="submit" form="create-gate-form" disabled={working || !gateForm.name.trim()}>
-                {working ? "Creating…" : "Create Gate"}
+                {working ? "Creating…" : "Create Site VPN"}
               </Button>
             </>
           )
@@ -681,10 +687,10 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         ) : (
           <form id="create-gate-form" className="space-y-4" onSubmit={(event) => void createGate(event)}>
             <Field label="Name" required error={gateErrors.name}>
-              <TextInput required aria-required="true" value={gateForm.name} onChange={(event) => { setGateForm({ ...gateForm, name: event.target.value }); setGateErrors((current) => ({ ...current, name: undefined })); }} placeholder="office-gateway" />
+              <TextInput required aria-required="true" value={gateForm.name} onChange={(event) => { setGateForm({ ...gateForm, name: event.target.value }); setGateErrors((current) => ({ ...current, name: undefined })); }} placeholder="office-site-vpn" />
             </Field>
             <Field label="Description" error={gateErrors.description}>
-              <TextInput value={gateForm.description} onChange={(event) => { setGateForm({ ...gateForm, description: event.target.value }); setGateErrors((current) => ({ ...current, description: undefined })); }} placeholder="Office LAN router" />
+              <TextInput value={gateForm.description} onChange={(event) => { setGateForm({ ...gateForm, description: event.target.value }); setGateErrors((current) => ({ ...current, description: undefined })); }} placeholder="Office Site VPN gateway" />
             </Field>
           </form>
         )}
@@ -699,7 +705,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           }
         }}
         title={routingGate ? `Route advertisement · ${routingGate.name}` : "Route advertisement"}
-        description="Choose how the LAN router learns routes to Networks attached to this ResourcePortalGate."
+        description="Choose how the LAN router learns routes to Networks attached to this Site VPN."
         actions={
           <>
             <Button
@@ -757,7 +763,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
                 Routes received from the LAN router are denied and are never imported into ResourcePortal.
               </Callout>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Gate ASN" required hint="Private ASN is recommended, for example 65050." error={routingErrors.localAsn}>
+                <Field label="Site VPN ASN" required hint="Private ASN is recommended, for example 65050." error={routingErrors.localAsn}>
                   <TextInput
                     type="number"
                     min={1}
@@ -836,7 +842,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
                     ))
                   ) : (
                     <span className="text-xs text-[#718096]">
-                      None. Attach this Gate to a Network to advertise a prefix.
+                      None. Attach this Site VPN to a Network to advertise a prefix.
                     </span>
                   )}
                 </div>

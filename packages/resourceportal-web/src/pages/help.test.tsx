@@ -34,7 +34,7 @@ describe("TenantHelpPage", () => {
     expect(within(toc).getByRole("link", { name: "Getting started" }).getAttribute("href")).toBe("#getting-started");
     expect(within(toc).getByRole("link", { name: "Create an application" }).getAttribute("href")).toBe("#create-application");
     expect(within(toc).getByRole("link", { name: "Import from YAML" }).getAttribute("href")).toBe("#app-group-yaml");
-    expect(within(toc).getByRole("link", { name: "Private Networks & Gate" }).getAttribute("href")).toBe("#private-networking");
+    expect(within(toc).getByRole("link", { name: "Private Networks & VPN" }).getAttribute("href")).toBe("#private-networking");
     expect(within(toc).getByRole("link", { name: "Domains & HTTP routing" }).getAttribute("href")).toBe("#domain");
     expect(within(toc).getByRole("link", { name: "Billing & vouchers" }).getAttribute("href")).toBe("#billing");
     expect(within(toc).getByRole("link", { name: "Troubleshooting" }).getAttribute("href")).toBe("#troubleshooting");

@@ -484,7 +484,7 @@ function GateNode(props: NodeProps) {
         "relative h-[108px] w-[270px] rounded-2xl border bg-white px-4 py-3.5 shadow-[0_8px_24px_rgba(19,122,74,.08)] transition",
         props.selected ? "border-[#137A4A] ring-4 ring-[#137A4A]/10" : "border-[#B8D9C8]",
       )}
-      aria-label={`ResourcePortalGate ${data.label}`}
+      aria-label={`Site VPN ${data.label}`}
     >
       <Handle
         id="network-in"
@@ -799,7 +799,7 @@ export function buildTopologyGraph(
         lastError: item.gate.lastError,
       } satisfies GateNodeData,
       style: { width: GATE_WIDTH, height: GATE_HEIGHT },
-      ariaLabel: `ResourcePortalGate ${item.gate.name}`,
+      ariaLabel: `Site VPN ${item.gate.name}`,
     });
   }
 
@@ -922,7 +922,7 @@ function GraphInspector({
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[.04em] text-[#718096]">Connection</p>
             <h3 className="mt-1 truncate text-[15px] font-semibold text-[#172033]">
-              {applicationLink ? "Application → Network" : "Gate → Network"}
+              {applicationLink ? "Application → Network" : "Site VPN → Network"}
             </h3>
           </div>
           <StatusBadge tone={statusTone(edgeData.status)}>{edgeData.status}</StatusBadge>
@@ -947,7 +947,7 @@ function GraphInspector({
             confirmDescription={
               applicationLink
                 ? "This removes the Application → Network attachment from desired state. Deploy the affected App Group to apply the change to the runtime."
-                : "This removes the WireGuard route between this ResourcePortalGate and Network. The Gate remains installed."
+                : "This removes the WireGuard route between this Site VPN and Network. The Site VPN remains installed."
             }
             confirmLabel={applicationLink ? "Delete connection" : "Delete VPN route"}
             onConfirm={() => onDisconnect(selectedEdge!)}
@@ -1042,7 +1042,7 @@ function GraphInspector({
     <aside className="min-w-0 p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[.04em] text-[#137A4A]">ResourcePortalGate</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[.04em] text-[#137A4A]">Site VPN</p>
           <h3 className="mt-1 truncate text-[15px] font-semibold text-[#172033]">{data.label}</h3>
         </div>
         <StatusBadge tone={statusTone(data.status)}>{data.status}</StatusBadge>
@@ -1072,7 +1072,7 @@ function GraphInspector({
           triggerVariant="danger"
           disabled={working || !gate || Boolean(gate.revokedAt)}
           confirmTitle="Delete VPN?"
-          confirmDescription="This permanently deletes the ResourcePortalGate after its RP-side WireGuard/VPN stack and private key secret are removed. The agent token is invalidated immediately and all routes through this Gate stop working."
+          confirmDescription="This permanently deletes the Site VPN after its RP-side WireGuard/VPN stack and private key secret are removed. The agent token is invalidated immediately and all routes through this Site VPN stop working."
           confirmLabel="Delete VPN"
           onConfirm={() => gate && onDeleteGate(gate)}
         >
@@ -1164,7 +1164,7 @@ export function TenantNetworkingGraph({
               {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : null}
             </div>
             <p className="mt-1 text-xs text-[#718096]">
-              App Groups contain their real applications. Lines represent real Network attachments and Gate routes.
+              App Groups contain their real applications. Lines represent real Network attachments and Site VPN routes.
             </p>
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 xl:max-w-[760px] xl:justify-end">

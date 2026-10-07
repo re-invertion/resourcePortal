@@ -58,7 +58,8 @@ assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 2049 proto tcp' "r
 assert_contains "$rules" 'allow from 10.20.0.0/24 to any port 7443 proto tcp comment ResourcePortal-Enrollment' "restrict enrollment listener"
 assert_contains "$rules" 'allow 80/tcp comment ResourcePortal-HTTP' "public HTTP ingress"
 assert_contains "$rules" 'allow 443/tcp comment ResourcePortal-HTTPS' "public HTTPS ingress"
-assert_contains "$rules" 'allow 52000:52999/udp comment ResourcePortal-Gate-WireGuard' "public ResourcePortalGate WireGuard ingress range"
+assert_contains "$rules" 'allow 51820/udp comment ResourcePortal-Device-VPN' "public Device VPN WireGuard ingress"
+assert_contains "$rules" 'allow 52000:52999/udp comment ResourcePortal-Gate-WireGuard' "public Site VPN WireGuard ingress range"
 assert_before "$rules" 'allow 2222/tcp comment ResourcePortal-SSH' 'allow 80/tcp comment ResourcePortal-HTTP' "SSH rule rendered before public ingress"
 
 rules_no_ingress="$(rp_render_ufw_rules 22 10.20.0.0/24 false)"

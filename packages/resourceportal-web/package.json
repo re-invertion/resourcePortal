@@ -19,6 +19,7 @@
   "dependencies": {
     "@resource-portal/help": "0.1.0",
     "@xyflow/react": "^12.12.0",
+    "qrcode.react": "^4.2.0",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
