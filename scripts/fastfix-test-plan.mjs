@@ -26,7 +26,10 @@ const commands = {
   ],
   "sdk": [["npm", "--workspace", "@resource-portal/sdk", "test"]],
   "cli": [["npm", "run", "test:cli-release"]],
-  "help": [["npm", "--workspace", "@resource-portal/help", "test"]],
+  "help": [
+    ["npm", "--workspace", "@resource-portal/help", "run", "build"],
+    ["npm", "--workspace", "@resource-portal/help", "test"],
+  ],
   "installer": [
     ["bash", "test/installer/test-host-runtime.sh"],
     ["bash", "test/installer/test-diagnostics.sh"],
