@@ -1095,7 +1095,7 @@ export class TenantMcpProtocolService {
               this.objectSchema({
                 priority: {
                   type: "string",
-                  enum: ["P0", "P1", "P2", "P3"],
+                  enum: ["Unassigned", "P0", "P1", "P2", "P3"],
                   description:
                     "Optional priority filter. Omit it to return all platform bug reports.",
                 },
@@ -1346,9 +1346,14 @@ export class TenantMcpProtocolService {
   }
 
   private bugReportPriority(value: unknown) {
-    const priority = this.string(value, "priority must be P0, P1, P2, or P3");
-    if (!["P0", "P1", "P2", "P3"].includes(priority)) {
-      throw new BadRequestException("priority must be P0, P1, P2, or P3");
+    const priority = this.string(
+      value,
+      "priority must be Unassigned, P0, P1, P2, or P3",
+    );
+    if (!["Unassigned", "P0", "P1", "P2", "P3"].includes(priority)) {
+      throw new BadRequestException(
+        "priority must be Unassigned, P0, P1, P2, or P3",
+      );
     }
     return priority;
   }
