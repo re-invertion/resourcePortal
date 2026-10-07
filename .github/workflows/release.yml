@@ -28,20 +28,30 @@ jobs:
           cache: npm
       - name: Install Node dependencies
         run: npm ci
-      - name: Determine release validation mode
+      - name: Resolve semantic release validation mode
         id: release-mode
         shell: bash
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
         run: |
-          if git log -1 --pretty=%B | grep -Fq '[fastfix]'; then
-            echo "fastfix=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$MANUAL_VERSION"
           else
-            echo "fastfix=false" >> "$GITHUB_OUTPUT"
+            VERSION="${GITHUB_REF_NAME#v}"
           fi
-      - name: Validate targeted fastfix before publishing
-        if: steps.release-mode.outputs.fastfix == 'true'
-        run: npm run test:fastfix:mcp-oauth
-      - name: Validate Production Installer contracts before publishing
-        if: steps.release-mode.outputs.fastfix != 'true'
+          node scripts/release-validation-mode.mjs --version "$VERSION" --github-output "$GITHUB_OUTPUT"
+      - name: Validate only changed scope for patch release
+        if: steps.release-mode.outputs.mode == 'fastfix'
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
+          AUTH_MODE: dev
+          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+        run: node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run
+      - name: Validate Production Installer contracts for milestone release
+        if: steps.release-mode.outputs.mode == 'milestone'
         run: npm run test:installer
       - name: Validate installable CLI release package before publishing
         run: npm run test:cli-release

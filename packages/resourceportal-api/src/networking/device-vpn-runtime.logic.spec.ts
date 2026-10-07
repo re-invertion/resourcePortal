@@ -73,6 +73,20 @@ describe("Device VPN runtime", () => {
     ]);
   });
 
+  it("brings wg0 UP before adding any peer routes (real Swarm regression)", () => {
+    const commands = deviceVpnWireGuardSetupCommands(config);
+    const up = commands.findIndex(
+      ([command, args]) =>
+        command === "ip" && args[0] === "link" && args.includes("up"),
+    );
+    const routes = commands.flatMap(([command, args], index) =>
+      command === "ip" && args[0] === "route" ? [index] : [],
+    );
+    expect(up).toBeGreaterThan(0);
+    expect(routes).toHaveLength(config.peers.length);
+    for (const routeIndex of routes) expect(routeIndex).toBeGreaterThan(up);
+  });
+
   it("authorizes stable address mappings only for the peer's explicitly attached Networks", () => {
     const rules = deviceVpnFirewallRules(
       config,

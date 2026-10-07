@@ -14,17 +14,38 @@ concurrency:
 jobs:
   targeted-hotfix:
     if: startsWith(github.head_ref, 'fastfix/')
-    name: Targeted hotfix validation
+    name: Patch release - changed-scope tests and VPN dataplane
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     env:
       NODE_ENV: test
       DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
       AUTH_MODE: dev
       RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
     steps:
-      - name: Checkout
+      - name: Checkout complete history for patch classification
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine patch version and reject milestones
+        id: version
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_REF" =~ ^fastfix/(v[0-9]+\.[0-9]+\.[0-9]+)(-|$) ]] ||
+            { echo "Fastfix branch must be fastfix/vX.Y.N-description" >&2; exit 1; }
+          node scripts/release-validation-mode.mjs --version "${BASH_REMATCH[1]}" --require fastfix
+
+      - name: Select tests from changed release files (fail closed)
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node scripts/fastfix-test-plan.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -32,26 +53,39 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies and generate Prisma
+        run: |
+          npm ci
+          npm run api:prisma:generate
 
-      - name: Generate Prisma client
-        run: npm run api:prisma:generate
+      - name: Run ONLY scoped patch tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node scripts/fastfix-test-plan.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --run
 
-      - name: Run targeted MCP/OAuth hotfix tests
-        run: npm run test:fastfix:mcp-oauth
+      - name: Typecheck and build affected API/Web runtime
+        run: |
+          npm run lint --workspace @resource-portal/api
+          npm run build --workspace @resource-portal/api
+          npm run lint --workspace @resource-portal/web
+          npm run build --workspace @resource-portal/web
 
-      - name: Lint API
-        run: npm run lint --workspace @resource-portal/api
+      - name: Prepare isolated real Docker Swarm for changed VPN dataplane
+        if: steps.plan.outputs.vpn_smoke == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools iproute2 iptables jq curl
+          docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')"
+          docker build --tag resourceportal-vpn-e2e:current .
 
-      - name: Build API
-        run: npm run build --workspace @resource-portal/api
+      - name: Run Device VPN real dataplane isolation and handshake test
+        if: steps.plan.outputs.vpn_smoke == 'true'
+        env:
+          RP_DEVICE_VPN_E2E_IMAGE: resourceportal-vpn-e2e:current
+        run: bash scripts/run-device-vpn-dataplane-smoke.sh
 
-      - name: Validate Web proxy
-        run: npm run lint --workspace @resource-portal/web
-
-      - name: Build Web
-        run: npm run build --workspace @resource-portal/web
-
-      - name: Validate touched shell syntax
-        run: bash -n scripts/installer/identity.sh scripts/installer/upgrade.sh
+      - name: Leave isolated Swarm
+        if: always() && steps.plan.outputs.vpn_smoke == 'true'
+        run: docker swarm leave --force || true

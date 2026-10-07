@@ -36,6 +36,14 @@ export function deviceVpnWireGuardSetupCommands(
     ],
   ];
 
+  // Linux rejects routes via a link that is not UP (real Swarm dataplane).
+  // Configure the private key/listener first, then enable the interface before peer routes.
+  commands.push([
+    "ip",
+    ["link", "set", "mtu", "1380", "up", "dev", interfaceName],
+    false,
+  ]);
+
   for (const peer of config.peers) {
     commands.push([
       "wg",
@@ -62,11 +70,6 @@ export function deviceVpnWireGuardSetupCommands(
     ]);
   }
 
-  commands.push([
-    "ip",
-    ["link", "set", "mtu", "1380", "up", "dev", interfaceName],
-    false,
-  ]);
   return commands;
 }
 
