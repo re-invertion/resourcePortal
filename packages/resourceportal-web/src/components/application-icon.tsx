@@ -81,9 +81,9 @@ function faviconUrl(webUiUrl: string) {
   }
 }
 
-type IconSource = { kind: "selfhst" | "favicon"; url: string };
+type IconSource = { kind: "selfhst" | "favicon" | "fallback"; url: string };
 
-function sourcesFor(app: AppLike) {
+function sourcesFor(app: AppLike, fallbackIconUrl = "") {
   const sources: IconSource[] = selfHostedCandidates(app).map((candidate) => ({
     kind: "selfhst",
     url: `https://cdn.jsdelivr.net/gh/selfhst/icons/png/${candidate}.png`,
@@ -91,6 +91,10 @@ function sourcesFor(app: AppLike) {
   const webUiUrl = value(app.webUiUrl);
   const favicon = faviconUrl(webUiUrl);
   if (favicon) sources.push({ kind: "favicon", url: favicon });
+  const fallback = value(fallbackIconUrl);
+  if (fallback && !sources.some((source) => source.url === fallback)) {
+    sources.push({ kind: "fallback", url: fallback });
+  }
   return sources;
 }
 
@@ -98,14 +102,16 @@ export function ApplicationIcon({
   app,
   className,
   imageClassName,
+  fallbackIconUrl,
 }: {
   app: AppLike;
   className?: string;
   imageClassName?: string;
+  fallbackIconUrl?: string;
 }) {
   const sources = useMemo(
-    () => sourcesFor(app),
-    [app.image, app.name, app.webUiUrl],
+    () => sourcesFor(app, fallbackIconUrl),
+    [app.image, app.name, app.webUiUrl, fallbackIconUrl],
   );
   const [index, setIndex] = useState(0);
   useEffect(() => setIndex(0), [sources.map((source) => source.url).join("|")]);
