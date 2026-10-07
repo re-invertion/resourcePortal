@@ -1229,7 +1229,7 @@ export class AdminMcpProtocolService {
         this.objectSchema({
           priority: {
             type: "string",
-            enum: ["P0", "P1", "P2", "P3"],
+            enum: ["Unassigned", "P0", "P1", "P2", "P3"],
           },
           resolved: {
             type: "boolean",
@@ -1270,7 +1270,7 @@ export class AdminMcpProtocolService {
             reportId: uuid("Bug Report UUID."),
             priority: {
               type: "string",
-              enum: ["P0", "P1", "P2", "P3"],
+              enum: ["Unassigned", "P0", "P1", "P2", "P3"],
             },
           },
           ["reportId", "priority"],
