@@ -62,6 +62,23 @@ describe("ApplicationIcon", () => {
     );
   });
 
+  it("falls back to an explicit image source after selfh.st candidates fail", () => {
+    const { container } = render(
+      <ApplicationIcon
+        app={{ name: "Nginx", image: "library/nginx:latest" }}
+        fallbackIconUrl="https://hub.example.test/nginx.png"
+      />,
+    );
+
+    const selfHosted = container.querySelector("img");
+    expect(selfHosted?.getAttribute("src")).toContain("/nginx.png");
+    fireEvent.error(selfHosted!);
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "https://hub.example.test/nginx.png",
+    );
+  });
+
   it("falls back to a custom application favicon after selfh.st candidates fail", () => {
     const { container } = render(
       <ApplicationIcon

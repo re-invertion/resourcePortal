@@ -28,11 +28,10 @@ export class BugReportsService {
   async create(dto: CreateBugReportDto, actor: AuthenticatedUser) {
     const image = decodeImage(dto);
     const description = dto.description.trim();
-    const priority = await this.classifyPriority(description);
     const report = await this.prisma.bugReport.create({
       data: {
         description,
-        priority,
+        priority: BugReportPriority.Unassigned,
         reportedById: actor.id,
         imageData: image?.data,
         imageMimeType: image?.mimeType,
@@ -42,18 +41,28 @@ export class BugReportsService {
       select: { id: true, priority: true, createdAt: true },
     });
 
+    this.schedulePriorityClassification(report.id, description);
     return report;
   }
 
-  private async classifyPriority(description: string): Promise<BugReportPriority> {
-    if (!this.resourceBot || !this.openAi) return BugReportPriority.P2;
-    try {
-      const configuration = await this.resourceBot.getRuntimeConfiguration();
-      const classified = await this.openAi.classifyBugReport(configuration, description);
-      return classified.priority;
-    } catch {
-      return BugReportPriority.P2;
-    }
+  private schedulePriorityClassification(id: string, description: string) {
+    if (!this.resourceBot || !this.openAi) return;
+    void Promise.resolve().then(async () => {
+      try {
+        const configuration = await this.resourceBot!.getRuntimeConfiguration();
+        const classified = await this.openAi!.classifyBugReport(
+          configuration,
+          description,
+        );
+        await this.prisma.bugReport.updateMany({
+          where: { id, priority: BugReportPriority.Unassigned },
+          data: { priority: classified.priority },
+        });
+      } catch {
+        // Classification is best-effort. A report remains Unassigned until
+        // AI or an administrator explicitly assigns a priority.
+      }
+    });
   }
 
   async list() {

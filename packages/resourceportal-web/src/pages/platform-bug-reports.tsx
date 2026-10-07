@@ -17,7 +17,7 @@ import {
 import { toast } from "../components/toast";
 import { formatDate, useApi } from "../hooks/use-api";
 
-type Priority = "P0" | "P1" | "P2" | "P3";
+type Priority = "Unassigned" | "P0" | "P1" | "P2" | "P3";
 type ResolutionFilter = "all" | "open" | "resolved";
 
 type BugReport = {
@@ -40,6 +40,7 @@ const priorityMeta: Record<
   Priority,
   { label: string; tone: "danger" | "warning" | "info" | "neutral" }
 > = {
+  Unassigned: { label: "Unassigned", tone: "neutral" },
   P0: { label: "Critical", tone: "danger" },
   P1: { label: "High", tone: "warning" },
   P2: { label: "Normal", tone: "info" },
@@ -78,7 +79,7 @@ export function PlatformBugReportsPage() {
   const counts = useMemo(
     () =>
       Object.fromEntries(
-        (["P0", "P1", "P2", "P3"] as Priority[]).map((priority) => [
+        (["Unassigned", "P0", "P1", "P2", "P3"] as Priority[]).map((priority) => [
           priority,
           (reports.data ?? []).filter((item) =>
             item.priority === priority &&
@@ -174,7 +175,7 @@ export function PlatformBugReportsPage() {
       ) : null}
 
       <div
-        className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
+        className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"
         aria-label="Bug report statistics and priority filters"
       >
         <MetricFilterCard
@@ -185,7 +186,7 @@ export function PlatformBugReportsPage() {
           active={filter === "all"}
           onClick={() => setFilter("all")}
         />
-        {(["P0", "P1", "P2", "P3"] as Priority[]).map((priority) => (
+        {(["Unassigned", "P0", "P1", "P2", "P3"] as Priority[]).map((priority) => (
           <MetricFilterCard
             key={priority}
             label={priority}
@@ -340,6 +341,7 @@ export function PlatformBugReportsPage() {
                           )
                         }
                       >
+                        <option value="Unassigned">Unassigned</option>
                         <option value="P0">P0 — Critical</option>
                         <option value="P1">P1 — High</option>
                         <option value="P2">P2 — Normal</option>

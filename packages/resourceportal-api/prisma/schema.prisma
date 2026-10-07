@@ -1399,6 +1399,7 @@ model ApiRateLimitBucket {
 
 
 enum BugReportPriority {
+  Unassigned
   P0
   P1
   P2
@@ -1408,7 +1409,7 @@ enum BugReportPriority {
 model BugReport {
   id            String            @id @default(uuid()) @db.Uuid
   description   String            @db.Text
-  priority      BugReportPriority @default(P2)
+  priority      BugReportPriority @default(Unassigned)
   reportedById  String            @db.Uuid
   imageData     Bytes?
   imageMimeType String?           @db.VarChar(64)

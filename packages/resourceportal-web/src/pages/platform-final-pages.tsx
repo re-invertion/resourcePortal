@@ -188,6 +188,8 @@ export function PlatformInfrastructurePage() {
   const storageTotal = numberOf(usageRow.storageTotalBytes, 0);
   const gpuUsed = numberOf(usageRow.gpuUsed, 0);
   const gpuTotal = numberOf(usageRow.gpuTotal, 0);
+  const liveUsageAvailable = usageRow.liveUsageAvailable === true;
+  const liveUsageReason = text(usageRow.liveUsageReason, "Live host usage unavailable");
   const pct = (used: number, total: number) => total > 0 ? `${Math.round((used / total) * 100)}% used` : "Capacity unavailable";
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Infrastructure" description="Swarm health, remote locations and storage backends using platform infrastructure APIs." actions={<Button variant="primary" disabled={busy === "Reconcile Swarm cluster"} onClick={() => void run("Reconcile Swarm cluster", "/api/platform/swarm-cluster/reconcile", swarm.reload)}>Reconcile Swarm cluster</Button>} />
@@ -199,8 +201,8 @@ export function PlatformInfrastructurePage() {
       <MetricCard label="Storage backends" value={String(backendRows.length)} icon={<NetworkIcon />} loading={backends.loading} error={backends.error} />
     </section>
     <section className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Current platform resource usage">
-      <MetricCard label="CPU usage" value={`${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(2)} cores`} detail={pct(cpuUsed, cpuTotal)} loading={usage.loading} error={usage.error} />
-      <MetricCard label="Memory usage" value={`${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)}`} detail={pct(memoryUsed, memoryTotal)} loading={usage.loading} error={usage.error} />
+      <MetricCard label="CPU usage" value={liveUsageAvailable ? `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(2)} cores` : "Unavailable"} detail={liveUsageAvailable ? `Live host measurement · ${pct(cpuUsed, cpuTotal)}` : liveUsageReason} loading={usage.loading} error={usage.error} />
+      <MetricCard label="Memory usage" value={liveUsageAvailable ? `${formatBytes(memoryUsed)} / ${formatBytes(memoryTotal)}` : "Unavailable"} detail={liveUsageAvailable ? `Live host measurement · ${pct(memoryUsed, memoryTotal)}` : liveUsageReason} loading={usage.loading} error={usage.error} />
       <MetricCard label="Storage usage" value={`${formatBytes(storageUsed)} / ${formatBytes(storageTotal)}`} detail={pct(storageUsed, storageTotal)} loading={usage.loading} error={usage.error} />
       <MetricCard label="GPU usage" value={`${gpuUsed} / ${gpuTotal}`} detail={pct(gpuUsed, gpuTotal)} loading={usage.loading} error={usage.error} />
     </section>

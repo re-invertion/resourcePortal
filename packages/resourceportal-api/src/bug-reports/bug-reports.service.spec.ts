@@ -18,16 +18,17 @@ function prismaMock() {
       findMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   };
 }
 
 describe("BugReportsService", () => {
-  it("creates a P2 bug report for the authenticated user", async () => {
+  it("creates an Unassigned bug report for the authenticated user", async () => {
     const prisma = prismaMock();
     prisma.bugReport.create.mockResolvedValue({
       id: "r1",
-      priority: BugReportPriority.P2,
+      priority: BugReportPriority.Unassigned,
       createdAt: new Date(),
     });
     const service = new BugReportsService(prisma as never);
@@ -37,22 +38,24 @@ describe("BugReportsService", () => {
     );
     expect(prisma.bugReport.create).toHaveBeenCalledOnce();
     const [createArgs] = prisma.bugReport.create.mock.calls[0] as unknown as [
-      { data: { description: string; reportedById: string; url?: string | null } },
+      { data: { description: string; priority: BugReportPriority; reportedById: string; url?: string | null } },
     ];
     expect(createArgs.data.description).toBe(
       "Deployment fails after clicking deploy.",
     );
+    expect(createArgs.data.priority).toBe(BugReportPriority.Unassigned);
     expect(createArgs.data.reportedById).toBe(actor.id);
     expect(createArgs.data.url).toBe("https://resource-portal.test/apps");
   });
 
-  it("uses the configured ResourceBot model to classify bug priority and falls back safely", async () => {
+  it("creates Unassigned first and lets the AI classifier assign priority asynchronously", async () => {
     const prisma = prismaMock();
     prisma.bugReport.create.mockResolvedValue({
       id: "r-critical",
-      priority: BugReportPriority.P0,
+      priority: BugReportPriority.Unassigned,
       createdAt: new Date(),
     });
+    prisma.bugReport.updateMany.mockResolvedValue({ count: 1 });
     const resourceBot = {
       getRuntimeConfiguration: vi.fn().mockResolvedValue({
         apiKey: "configured",
@@ -72,16 +75,57 @@ describe("BugReportsService", () => {
       openAi as never,
     );
 
-    await service.create({ description: "All tenants return 503" }, actor);
+    const created = await service.create(
+      { description: "All tenants return 503" },
+      actor,
+    );
 
+    expect(created.priority).toBe(BugReportPriority.Unassigned);
+    const [createArgs] = prisma.bugReport.create.mock.calls[0] as unknown as [
+      { data: { priority: BugReportPriority } },
+    ];
+    expect(createArgs.data.priority).toBe(BugReportPriority.Unassigned);
+    await vi.waitFor(() =>
+      expect(prisma.bugReport.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "r-critical",
+          priority: BugReportPriority.Unassigned,
+        },
+        data: { priority: BugReportPriority.P0 },
+      }),
+    );
     expect(openAi.classifyBugReport).toHaveBeenCalledWith(
       expect.objectContaining({ generationModel: "gpt-test" }),
       "All tenants return 503",
     );
-    const [createArgs] = prisma.bugReport.create.mock.calls[0] as unknown as [
-      { data: { priority: BugReportPriority } },
-    ];
-    expect(createArgs.data.priority).toBe(BugReportPriority.P0);
+  });
+
+  it("keeps the report Unassigned when automatic classification fails", async () => {
+    const prisma = prismaMock();
+    prisma.bugReport.create.mockResolvedValue({
+      id: "r-unassigned",
+      priority: BugReportPriority.Unassigned,
+      createdAt: new Date(),
+    });
+    const resourceBot = {
+      getRuntimeConfiguration: vi.fn().mockRejectedValue(new Error("not configured")),
+    };
+    const openAi = { classifyBugReport: vi.fn() };
+    const service = new BugReportsService(
+      prisma as never,
+      resourceBot as never,
+      openAi as never,
+    );
+
+    const created = await service.create(
+      { description: "Needs triage" },
+      actor,
+    );
+
+    expect(created.priority).toBe(BugReportPriority.Unassigned);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prisma.bugReport.updateMany).not.toHaveBeenCalled();
   });
 
   it("accepts a valid PNG attachment and rejects spoofed image content", async () => {

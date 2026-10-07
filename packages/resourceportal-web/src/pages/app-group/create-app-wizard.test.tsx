@@ -79,6 +79,19 @@ describe("CreateApplicationWizard", () => {
     fireEvent.change(imageInput, { target: { value: "ngi" } });
 
     const suggestion = await screen.findByRole("option", { name: /library\/nginx/i });
+    expect(suggestion.className).not.toContain("rounded-md");
+    expect(suggestion.className).toContain("border-b");
+    const icon = suggestion.querySelector("img");
+    expect(icon?.getAttribute("src")).toBe(
+      "https://cdn.jsdelivr.net/gh/selfhst/icons/png/nginx.png",
+    );
+    fireEvent.error(icon!);
+    const alternateSelfHosted = suggestion.querySelector("img");
+    expect(alternateSelfHosted?.getAttribute("src")).toContain("/library-nginx.png");
+    fireEvent.error(alternateSelfHosted!);
+    expect(suggestion.querySelector("img")?.getAttribute("src")).toBe(
+      "https://example.test/nginx.png",
+    );
     fireEvent.click(suggestion);
     expect(imageInput.value).toBe("library/nginx");
     await new Promise((resolve) => window.setTimeout(resolve, 350));

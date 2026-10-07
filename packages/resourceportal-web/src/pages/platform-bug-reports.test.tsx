@@ -91,6 +91,24 @@ describe("PlatformBugReportsPage", () => {
     await waitFor(() => expect((select as HTMLSelectElement).value).toBe("P0"));
   });
 
+  it("shows Unassigned reports as a first-class triage state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json([{ ...baseReport, priority: "Unassigned" }])),
+    );
+
+    render(<PlatformBugReportsPage />);
+
+    expect(await screen.findByText("Unassigned · Unassigned")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Unassigned.*1.*Unassigned/i }),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("combobox", { name: /Priority for bug report/ }) as HTMLSelectElement)
+        .value,
+    ).toBe("Unassigned");
+  });
+
   it("marks a report as resolved, filters by resolution status and can reopen it", async () => {
     let current = { ...baseReport };
     const fetchMock = vi.fn(

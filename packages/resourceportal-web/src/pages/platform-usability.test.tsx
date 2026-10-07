@@ -35,13 +35,16 @@ describe("platform action feedback", () => {
       if (url === "/api/platform/swarm-cluster") return json({ status: "Ready" });
       if (url === "/api/platform/remote-locations") return json([{ id: "11111111-1111-4111-8111-111111111111", displayName: "Edge EU", status: "Ready", type: "Remote" }]);
       if (url === "/api/platform/storage-backends") return json([{ id: "22222222-2222-4222-8222-222222222222", name: "Primary storage", type: "NFS", health: "Healthy" }]);
-      if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "1000000000", cpuTotalNano: "4000000000", memoryUsedBytes: "1073741824", memoryTotalBytes: "8589934592", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "1000", storageTotalBytes: "10000" });
+      if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "1000000000", cpuTotalNano: "4000000000", memoryUsedBytes: "1073741824", memoryTotalBytes: "8589934592", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "1000", storageTotalBytes: "10000", liveUsageAvailable: true, liveUsageScope: "host", liveUsageReason: null });
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<PlatformPage section="infrastructure" />);
     await screen.findByText("Primary storage");
+    expect(screen.getByText("1.00 / 4.00 cores")).toBeTruthy();
+    expect(screen.getByText("1.0 GiB / 8.0 GiB")).toBeTruthy();
+    expect(screen.getAllByText(/Live host measurement/).length).toBe(2);
 
     expect(screen.getByRole("button", { name: "Reconcile Swarm cluster" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /reconcile/i })).toHaveLength(1);
