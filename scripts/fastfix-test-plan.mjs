@@ -64,6 +64,9 @@ const commands = {
 
 const classifiers = [
   [/^packages\/resourceportal-api\/src\/networking\//, ["networking"]],
+  [/^packages\/resourceportal-api\/scripts\/smoke-stage9-ingress\.ts$/, ["domains", "applications"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-usability\.test\.tsx$/, ["domains"]],
+  [/^scripts\/verify-stage20-management-matrix\.mjs$/, ["platform-release", "platform-admin-ui"]],
   [/^packages\/resourceportal-api\/src\/(domains|platform-dns)\//, ["domains"]],
   [/^packages\/resourceportal-api\/src\/mcp\/admin-mcp-protocol\.service(\.spec)?\.ts$/, ["bug-reports", "platform-admin-ui"]],
   [/^packages\/resourceportal-api\/src\/mcp\//, ["mcp-oauth"]],
