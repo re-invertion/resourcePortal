@@ -13,8 +13,8 @@ describe("PlatformReleaseService", () => {
       }),
     };
     const operations = { enqueue: vi.fn() };
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
       if (url.endsWith("/releases/latest")) {
         return new Response(JSON.stringify({
           tag_name: "v0.2.67",
@@ -51,13 +51,13 @@ describe("PlatformReleaseService", () => {
     const operations = {
       enqueue: vi.fn().mockResolvedValue({ id: "op1", status: "Pending" }),
     };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       tag_name: "v0.2.67",
       assets: [{
         name: "resourceportal-release-manifest.json",
         browser_download_url: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json",
       }],
-    }), { status: 200 })));
+    }), { status: 200 }))));
     const service = new PlatformReleaseService(
       config as unknown as ConfigService,
       operations as unknown as OperationsService,

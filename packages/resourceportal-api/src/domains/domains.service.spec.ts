@@ -567,9 +567,9 @@ describe("DomainsService manual custom DNS validation", () => {
   it("does not report Valid when a custom hostname does not point at ResourcePortal", async () => {
     const f = fixture();
     resolveCnameMock.mockRejectedValue(new Error("no cname"));
-    resolve4Mock.mockImplementation(async (host: string) =>
+    resolve4Mock.mockImplementation((host: string) => Promise.resolve(
       host === "missing.example.net" ? ["203.0.113.10"] : ["198.51.100.20"],
-    );
+    ));
     resolve6Mock.mockResolvedValue([]);
 
     const result = await f.service.validateDomain(

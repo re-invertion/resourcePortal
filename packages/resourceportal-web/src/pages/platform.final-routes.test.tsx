@@ -7,7 +7,7 @@ function json(value: unknown, status = 200) {
 }
 
 function installApi() {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/health") return json({ status: "ok", service: "resource-portal-api", dependencies: { postgres: "ok" } });
     if (url === "/api/tenants") return json([]);
@@ -106,7 +106,7 @@ it("matches the Penpot Platform overview hierarchy with truthful platform data",
 });
 
 it("keeps Platform Admin tenant inventory read-only and isolated from tenant workspaces", async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/platform/tenants") {
       return json([{
@@ -135,7 +135,7 @@ it("keeps Platform Admin tenant inventory read-only and isolated from tenant wor
 });
 
 it("shows the global ResourcePortal user directory in Platform Admin", async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/platform/users") {
       return json([{

@@ -151,7 +151,7 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     if (!operation.input || typeof operation.input !== "object" || Array.isArray(operation.input)) {
       throw new Error("InvalidOperationInput");
     }
-    return operation.input as UpdateInput;
+    return operation.input;
   }
 
   private version(value: unknown) {
