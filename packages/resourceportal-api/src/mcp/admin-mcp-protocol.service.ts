@@ -20,6 +20,7 @@ const serverInfo = {
 };
 
 const maxToolBodyBytes = 256 * 1024;
+const maxBugReportBodyBytes = 5 * 1024 * 1024;
 const maxToolResponseBytes = 1024 * 1024;
 const maxImageBytes = 4 * 1024 * 1024;
 const jsonSchemaDialect = "https://json-schema.org/draft/2020-12/schema";
@@ -1221,6 +1222,44 @@ export class AdminMcpProtocolService {
         true,
       ),
 
+      write(
+        "resourceportal_admin_create_bug_report",
+        "Create Bug Report",
+        "Create a ResourcePortal Bug Report as the authenticated Platform Admin. Supports the same description, URL and optional image fields as the Web/API Bug Report form.",
+        "POST",
+        "/api/platform/bug-reports",
+        this.objectSchema(
+          {
+            description: string("Bug description.", {
+              minLength: 5,
+              maxLength: 4000,
+            }),
+            url: string("Optional page URL where the bug occurred.", {
+              maxLength: 2048,
+            }),
+            imageData: string(
+              "Optional base64 image data without a data: URL prefix.",
+              { maxLength: 4_300_000 },
+            ),
+            imageMimeType: {
+              type: "string",
+              enum: ["image/png", "image/jpeg", "image/gif", "image/webp"],
+            },
+            imageFileName: string("Optional image file name.", {
+              maxLength: 255,
+            }),
+          },
+          ["description"],
+        ),
+        (args) =>
+          this.pick(args, [
+            "description",
+            "url",
+            "imageData",
+            "imageMimeType",
+            "imageFileName",
+          ]),
+      ),
       read(
         "resourceportal_admin_list_bug_reports",
         "List Bug Reports",
@@ -1592,9 +1631,15 @@ export class AdminMcpProtocolService {
 
     if (body !== undefined) {
       const serialized = JSON.stringify(body);
-      if (Buffer.byteLength(serialized, "utf8") > maxToolBodyBytes) {
+      const bodyLimit =
+        method === "POST" && path === "/api/platform/bug-reports"
+          ? maxBugReportBodyBytes
+          : maxToolBodyBytes;
+      if (Buffer.byteLength(serialized, "utf8") > bodyLimit) {
         throw new BadRequestException(
-          "Admin MCP request body exceeds 256 KiB",
+          bodyLimit === maxBugReportBodyBytes
+            ? "Admin MCP Bug Report request body exceeds 5 MiB"
+            : "Admin MCP request body exceeds 256 KiB",
         );
       }
     }

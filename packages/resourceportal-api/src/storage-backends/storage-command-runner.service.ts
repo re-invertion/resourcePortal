@@ -12,8 +12,10 @@ export type StorageCommandResult = {
 export class StorageCommandRunnerService {
   constructor(private readonly config: ConfigService) {}
 
-  run(program: string, args: string[]): Promise<StorageCommandResult> {
-    const timeoutMs = this.config.get<number>("STORAGE_COMMAND_TIMEOUT_MS", 120000);
+  run(program: string, args: string[], timeoutOverrideMs?: number): Promise<StorageCommandResult> {
+    const timeoutMs =
+      timeoutOverrideMs ??
+      this.config.get<number>("STORAGE_COMMAND_TIMEOUT_MS", 120000);
 
     return new Promise((resolve) => {
       const child = spawn(program, args, { stdio: ["ignore", "pipe", "pipe"] });

@@ -3,7 +3,11 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
-import { CloudflareApiError, CloudflareDnsService } from "./cloudflare-dns.service";
+import {
+  CloudflareApiError,
+  CloudflareDnsRecordConflictError,
+  CloudflareDnsService,
+} from "./cloudflare-dns.service";
 import { ManagedDnsService } from "./managed-dns.service";
 
 const CLOUDFLARE_AUTHORIZE_URL = "https://dash.cloudflare.com/oauth2/auth";
@@ -167,6 +171,63 @@ export class CloudflareTenantOauthService {
     }
   }
 
+  async ensureManagedCustomDomain(input: {
+    tenantId: string;
+    userId: string;
+    hostname: string;
+  }) {
+    const token = await this.accessToken(input.tenantId, input.userId);
+    try {
+      const zone = await this.zoneForHostname(token, input.hostname);
+      return await this.cloudflare.ensureManagedCname({
+        apiToken: token,
+        zoneId: zone.id,
+        hostname: input.hostname,
+        targetHostname: this.managedDns.getDomainTargetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
+  }
+
+  async deleteManagedCustomDomain(input: {
+    tenantId: string;
+    userId: string;
+    hostname: string;
+  }) {
+    const token = await this.accessToken(input.tenantId, input.userId);
+    try {
+      const zone = await this.zoneForHostname(token, input.hostname);
+      return await this.cloudflare.deleteManagedCname({
+        apiToken: token,
+        zoneId: zone.id,
+        hostname: input.hostname,
+        targetHostname: this.managedDns.getDomainTargetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
+  }
+
+  async managedCustomDomainExists(input: {
+    tenantId: string;
+    userId: string;
+    hostname: string;
+  }) {
+    const token = await this.accessToken(input.tenantId, input.userId);
+    try {
+      const zone = await this.zoneForHostname(token, input.hostname);
+      return await this.cloudflare.hasManagedCname({
+        apiToken: token,
+        zoneId: zone.id,
+        hostname: input.hostname,
+        targetHostname: this.managedDns.getDomainTargetHostname(),
+      });
+    } catch (error) {
+      this.throwCloudflareHttpError(error);
+    }
+  }
+
   async disconnect(tenantId: string, userId: string) {
     const connection = await this.prisma.cloudflareOAuthConnection.findUnique({
       where: { tenantId_userId: { tenantId, userId } },
@@ -224,7 +285,39 @@ export class CloudflareTenantOauthService {
     return token.access_token;
   }
 
+  private async zoneForHostname(apiToken: string, hostname: string) {
+    const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+    const zones = await this.cloudflare.listZones(apiToken);
+    const matches = zones
+      .filter(
+        (zone) =>
+          normalized === zone.name || normalized.endsWith(`.${zone.name}`),
+      )
+      .sort((a, b) => b.name.length - a.name.length);
+    const zone = matches[0];
+    if (!zone) {
+      throw new BadRequestException({
+        code: "CloudflareZoneNotFound",
+        message: `No authorized Cloudflare zone contains ${normalized}`,
+      });
+    }
+    return zone;
+  }
+
   private throwCloudflareHttpError(error: unknown): never {
+    if (error instanceof CloudflareDnsRecordConflictError) {
+      throw new ConflictException({
+        code: "CloudflareDnsRecordConflict",
+        message: error.message,
+        details: {
+          hostname: error.hostname,
+          existingRecords: error.records.map((record) => ({
+            type: record.type,
+            content: record.content,
+          })),
+        },
+      });
+    }
     if (error instanceof CloudflareApiError) {
       if (error.category === "configuration") {
         throw new BadRequestException({

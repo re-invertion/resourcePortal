@@ -169,11 +169,11 @@ it("hides Managed ResourcePortal domains until Platform Admin enables Cloudflare
   render(<TenantDomainsPage tenantId="t1" />);
   expect(await screen.findByText(/managed ResourcePortal domains are disabled/i)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
-  const type = screen.getByLabelText("Domain type");
-  expect(within(type).queryByRole("option", { name: "Managed ResourcePortal domain" })).toBeNull();
-  expect(within(type).getByRole("option", { name: "Custom domain" })).toBeTruthy();
+  const root = screen.getByLabelText("Domain root");
+  expect(within(root).queryByRole("option", { name: "resource-portal.pl" })).toBeNull();
+  expect(within(root).getByRole("option", { name: "No verified domains available" })).toBeTruthy();
+  expect(screen.queryByLabelText("Domain type")).toBeNull();
 });
-
 it("offers Managed ResourcePortal domains only after the platform Cloudflare capability is enabled", async () => {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
@@ -187,9 +187,47 @@ it("offers Managed ResourcePortal domains only after the platform Cloudflare cap
   render(<TenantDomainsPage tenantId="t1" />);
   await screen.findByText("Domains & routing");
   fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
-  const type = screen.getByLabelText("Domain type");
-  expect(within(type).getByRole("option", { name: "Managed ResourcePortal domain" })).toBeTruthy();
+  const root = screen.getByLabelText("Domain root");
+  expect(within(root).getByRole("option", { name: "resource-portal.pl" })).toBeTruthy();
+  expect(screen.getByLabelText("Domain prefix")).toBeTruthy();
   expect(screen.getByText(/Creates app\.resource-portal\.pl/i)).toBeTruthy();
+});
+it("creates a domain from one prefix plus a verified custom root", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/tenants/t1/domains") && (!init?.method || init.method === "GET")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/domains") && init?.method === "POST") return Promise.resolve(json({ id: "d1", hostname: "api.example.com", dnsStatus: "Valid" }));
+    if (url.endsWith("/api/tenants/t1/domains/capabilities")) return Promise.resolve(json({ managedDomains: { enabled: false, provider: "Cloudflare", baseDomain: "resource-portal.pl" } }));
+    if (url.endsWith("/api/tenants/t1/domains/custom-root-domains")) return Promise.resolve(json([{ id: "r1", rootDomain: "example.com", verificationStatus: "Verified", verificationMethod: "CLOUDFLARE_OAUTH" }]));
+    if (url.endsWith("/api/tenants/t1/app-groups")) return Promise.resolve(json([]));
+    if (url.endsWith("/api/tenants/t1/domains/cloudflare/status")) return Promise.resolve(json({ configured: true, connected: true }));
+    return Promise.resolve(json({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<TenantDomainsPage tenantId="t1" />);
+  await screen.findByText("Domains & routing");
+  fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
+
+  const root = screen.getByLabelText("Domain root");
+  await waitFor(() => expect(within(root).getByRole("option", { name: "example.com" })).toBeTruthy());
+  fireEvent.change(root, { target: { value: "custom:r1" } });
+  fireEvent.change(screen.getByLabelText("Domain prefix"), { target: { value: "api" } });
+  const addButtons = screen.getAllByRole("button", { name: "Add domain" });
+  fireEvent.click(addButtons[addButtons.length - 1]);
+
+  await waitFor(() => {
+    const post = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).endsWith("/api/tenants/t1/domains") && (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(post).toBeTruthy();
+    expect(JSON.parse(String((post?.[1] as RequestInit | undefined)?.body))).toEqual({
+      type: "Custom",
+      customRootDomainId: "r1",
+      subdomain: "api",
+      tlsEnabled: true,
+    });
+  });
 });
 
 it("offers Cloudflare and standard methods when adding a custom root domain", async () => {

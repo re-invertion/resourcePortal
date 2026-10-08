@@ -3,6 +3,7 @@ import { OperationsModule } from "../operations/operations.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { HostMachineResourceUsageService } from "./host-machine-resource-usage.service";
 import { PlatformInfrastructureController } from "./platform-infrastructure.controller";
+import { PlatformReleaseService } from "./platform-release.service";
 import { SwarmInfrastructureReadService } from "./swarm-infrastructure-read.service";
 import { SwarmInfrastructureStore } from "./swarm-infrastructure.store";
 
@@ -11,6 +12,7 @@ import { SwarmInfrastructureStore } from "./swarm-infrastructure.store";
   controllers: [PlatformInfrastructureController],
   providers: [
     HostMachineResourceUsageService,
+    PlatformReleaseService,
     SwarmInfrastructureStore,
     SwarmInfrastructureReadService,
   ],

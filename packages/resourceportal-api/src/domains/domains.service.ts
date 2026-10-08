@@ -13,7 +13,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import crypto from "node:crypto";
-import { resolveTxt } from "node:dns/promises";
+import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises";
 import { AuthenticatedUser } from "../auth/types";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
@@ -251,9 +251,25 @@ export class DomainsService {
       ? await this.findEndpointContextOrThrow(tenantId, dto.httpEndpointId)
       : undefined;
     const tlsState = this.domainTlsState(endpointContext?.protocolMode, true);
+    const customRoot =
+      dto.type === DomainType.Custom && dto.customRootDomainId
+        ? await this.findCustomRootDomainOrThrow(tenantId, dto.customRootDomainId)
+        : undefined;
     const managedProvision =
       dto.type === DomainType.Managed
         ? await this.requireManagedDns().provisionManagedDomain(hostname)
+        : undefined;
+    const customProvision =
+      customRoot?.verificationMethod === "CLOUDFLARE_OAUTH"
+        ? await this.requireTenantCloudflare().ensureManagedCustomDomain({
+            tenantId,
+            userId: customRoot.createdBy,
+            hostname,
+          })
+        : undefined;
+    const manualCustomDnsValid =
+      dto.type === DomainType.Custom && !customProvision
+        ? await this.customDomainHasDns(hostname)
         : undefined;
 
     try {
@@ -269,7 +285,11 @@ export class DomainsService {
               dto.type === DomainType.Managed ? dto.prefix : dto.subdomain,
             hostname,
             dnsStatus:
-              dto.type === DomainType.Managed ? DnsStatus.Valid : DnsStatus.Pending,
+              dto.type === DomainType.Managed || customProvision
+                ? DnsStatus.Valid
+                : manualCustomDnsValid
+                  ? DnsStatus.Valid
+                  : DnsStatus.Invalid,
             ...tlsState,
             httpEndpointId: dto.httpEndpointId,
             createdBy: actor.id,
@@ -296,6 +316,15 @@ export class DomainsService {
           .deleteManagedDomain(hostname)
           .catch(() => undefined);
       }
+      if (customProvision?.created && customRoot) {
+        await this.requireTenantCloudflare()
+          .deleteManagedCustomDomain({
+            tenantId,
+            userId: customRoot.createdBy,
+            hostname,
+          })
+          .catch(() => undefined);
+      }
       this.handleKnownConflict(error, "Domain already exists");
       throw error;
     }
@@ -308,6 +337,16 @@ export class DomainsService {
     actor: AuthenticatedUser,
   ) {
     const existing = await this.findDomainOrThrow(tenantId, domainId);
+    if (
+      existing.type === DomainType.Custom &&
+      existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
+    ) {
+      await this.requireTenantCloudflare().ensureManagedCustomDomain({
+        tenantId,
+        userId: existing.customRootDomain.createdBy,
+        hostname: existing.hostname,
+      });
+    }
     const nextEndpointContext =
       dto.httpEndpointId === undefined || dto.httpEndpointId === null
         ? undefined
@@ -364,6 +403,15 @@ export class DomainsService {
       existing.type === DomainType.Managed
         ? await this.requireManagedDns().deleteManagedDomain(existing.hostname)
         : undefined;
+    const customDnsRemoved =
+      existing.type === DomainType.Custom &&
+      existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
+        ? await this.requireTenantCloudflare().deleteManagedCustomDomain({
+            tenantId,
+            userId: existing.customRootDomain.createdBy,
+            hostname: existing.hostname,
+          })
+        : undefined;
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -381,6 +429,19 @@ export class DomainsService {
           .provisionManagedDomain(existing.hostname)
           .catch(() => undefined);
       }
+      if (
+        existing.type === DomainType.Custom &&
+        customDnsRemoved?.deleted &&
+        existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
+      ) {
+        await this.requireTenantCloudflare()
+          .ensureManagedCustomDomain({
+            tenantId,
+            userId: existing.customRootDomain.createdBy,
+            hostname: existing.hostname,
+          })
+          .catch(() => undefined);
+      }
       throw error;
     }
 
@@ -389,10 +450,20 @@ export class DomainsService {
 
   async validateDomain(tenantId: string, domainId: string, actor: AuthenticatedUser) {
     const existing = await this.findDomainOrThrow(tenantId, domainId);
-    const valid =
-      existing.type === DomainType.Managed
-        ? await this.requireManagedDns().managedDomainExists(existing.hostname)
-        : true;
+    let valid: boolean;
+    if (existing.type === DomainType.Managed) {
+      valid = await this.requireManagedDns().managedDomainExists(existing.hostname);
+    } else if (
+      existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
+    ) {
+      valid = await this.requireTenantCloudflare().managedCustomDomainExists({
+        tenantId,
+        userId: existing.customRootDomain.createdBy,
+        hostname: existing.hostname,
+      });
+    } else {
+      valid = await this.customDomainHasDns(existing.hostname);
+    }
 
     const domain = await this.prisma.domain.update({
       where: { id: domainId },
@@ -448,6 +519,57 @@ export class DomainsService {
     return this.config.get<string>(
       "MANAGED_DOMAIN_BASE",
       "apps.resource-portal.local",
+    );
+  }
+
+  private async customDomainHasDns(hostname: string) {
+    const target = (
+      this.managedDns?.getDomainTargetHostname() ??
+      this.config.get<string>(
+        "RESOURCEPORTAL_PUBLIC_HOSTNAME",
+        this.managedBaseDomain(),
+      )
+    )
+      .trim()
+      .toLowerCase()
+      .replace(/\.$/, "");
+    const normalized = hostname.toLowerCase();
+    if (normalized === target) return true;
+
+    try {
+      const cnames = await resolveCname(hostname);
+      if (
+        Array.isArray(cnames) &&
+        cnames.some(
+          (value) => value.toLowerCase().replace(/\.$/, "") === target,
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      // A/AAAA records are checked below for providers that flatten CNAMEs.
+    }
+
+    const safeAddresses = async (
+      resolver: (value: string) => Promise<string[]>,
+      value: string,
+    ) => {
+      try {
+        const addresses = await resolver(value);
+        return Array.isArray(addresses) ? addresses : [];
+      } catch {
+        return [];
+      }
+    };
+    const [hostnameV4, targetV4, hostnameV6, targetV6] = await Promise.all([
+      safeAddresses((value) => resolve4(value), hostname),
+      safeAddresses((value) => resolve4(value), target),
+      safeAddresses((value) => resolve6(value), hostname),
+      safeAddresses((value) => resolve6(value), target),
+    ]);
+    const targetAddresses = new Set([...targetV4, ...targetV6]);
+    return [...hostnameV4, ...hostnameV6].some((address) =>
+      targetAddresses.has(address),
     );
   }
 

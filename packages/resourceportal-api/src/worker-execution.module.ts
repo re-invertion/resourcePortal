@@ -21,6 +21,7 @@ import { DeploymentOperationExecutor } from "./operations/executors/deployment-o
 import { DomainOperationExecutor } from "./operations/executors/domain-operation.executors";
 import { InfrastructureOperationExecutor } from "./operations/executors/infrastructure-operation.executor";
 import { InstallerEnrollmentOperationExecutor } from "./operations/executors/installer-enrollment-operation.executor";
+import { PlatformReleaseUpdateOperationExecutor } from "./operations/executors/platform-release-update-operation.executor";
 import { RuntimeOperationExecutor } from "./operations/executors/runtime-operation.executor";
 import { VolumeOperationExecutor } from "./operations/executors/volume-operation.executors";
 import { NetworkTopologyOperationExecutor } from "./operations/executors/network-topology-operation.executor";
@@ -64,6 +65,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     InstallerEnrollmentNodeLabelService,
     InfrastructureOperationExecutor,
     InstallerEnrollmentOperationExecutor,
+    PlatformReleaseUpdateOperationExecutor,
     NetworkTopologyOperationExecutor,
     OperationsWorkerService,
     RuntimeDriftReconcilerService,
@@ -84,6 +86,7 @@ import { VolumesModule } from "./volumes/volumes.module";
         deploymentExecutor: DeploymentOperationExecutor,
         infrastructureExecutor: InfrastructureOperationExecutor,
         installerEnrollmentExecutor: InstallerEnrollmentOperationExecutor,
+        platformReleaseUpdateExecutor: PlatformReleaseUpdateOperationExecutor,
         runtimeExecutor: RuntimeOperationExecutor,
         volumeExecutor: VolumeOperationExecutor,
         domainExecutor: DomainOperationExecutor,
@@ -94,6 +97,7 @@ import { VolumesModule } from "./volumes/volumes.module";
           deploymentExecutor,
           infrastructureExecutor,
           installerEnrollmentExecutor,
+          platformReleaseUpdateExecutor,
           runtimeExecutor,
           volumeExecutor,
           domainExecutor,
@@ -104,6 +108,7 @@ import { VolumesModule } from "./volumes/volumes.module";
         DeploymentOperationExecutor,
         InfrastructureOperationExecutor,
         InstallerEnrollmentOperationExecutor,
+        PlatformReleaseUpdateOperationExecutor,
         RuntimeOperationExecutor,
         VolumeOperationExecutor,
         DomainOperationExecutor,

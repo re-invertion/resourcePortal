@@ -12,7 +12,9 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
+import { RequestPlatformUpdateDto } from "./dto/request-platform-update.dto";
 import { SetRemoteLocationMaintenanceDto } from "./dto/set-maintenance.dto";
+import { PlatformReleaseService } from "./platform-release.service";
 import { SwarmInfrastructureReadService } from "./swarm-infrastructure-read.service";
 
 @Controller("platform")
@@ -21,7 +23,21 @@ export class PlatformInfrastructureController {
   constructor(
     private readonly service: SwarmInfrastructureReadService,
     private readonly operations: OperationsService,
+    private readonly releases: PlatformReleaseService,
   ) {}
+
+  @Get("release")
+  getReleaseStatus() {
+    return this.releases.status();
+  }
+
+  @Post("release/update")
+  updateRelease(
+    @Body() dto: RequestPlatformUpdateDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.releases.requestUpdate(dto, actor);
+  }
 
   @Get("swarm-cluster")
   getCluster() {

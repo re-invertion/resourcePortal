@@ -1,10 +1,15 @@
-import { BadRequestException, UnauthorizedException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedUser } from "../auth/types";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { EncryptionService } from "../security/encryption.service";
 import {
   CloudflareApiError,
+  CloudflareDnsRecordConflictError,
   type CloudflareDnsService,
 } from "./cloudflare-dns.service";
 import { CloudflareTenantOauthService } from "./cloudflare-tenant-oauth.service";
@@ -72,12 +77,16 @@ function fixture() {
   const cloudflare = {
     listZones: vi.fn().mockResolvedValue([]),
     ensureVerificationTxt: vi.fn().mockResolvedValue({}),
+    ensureManagedCname: vi.fn().mockResolvedValue({ created: true }),
+    deleteManagedCname: vi.fn().mockResolvedValue({ deleted: 1 }),
+    hasManagedCname: vi.fn().mockResolvedValue(true),
   };
   const managedDns = {
     getTenantOauthConfiguration: vi.fn().mockResolvedValue(oauthConfig),
     getPlatformState: vi.fn().mockResolvedValue({
       tenantOauthConfigured: true,
     }),
+    getDomainTargetHostname: vi.fn().mockReturnValue("resource-portal.pl"),
   };
   return {
     prisma,
@@ -205,4 +214,70 @@ describe("CloudflareTenantOauthService", () => {
       BadRequestException,
     );
   });
+
+
+  it("uses the longest matching authorized zone and ResourcePortal ingress target for custom domains", async () => {
+    const f = fixture();
+    f.connectionFindUnique.mockResolvedValue({
+      id: "44444444-4444-4444-8444-444444444444",
+      tenantId,
+      userId: actor.id,
+      accessTokenCiphertext: "cipher:access-secret",
+      refreshTokenCiphertext: null,
+      accessTokenExpiresAt: new Date(Date.now() + 60 * 60_000),
+      scopes: ["zone.read", "dns.write"],
+    });
+    f.cloudflare.listZones.mockResolvedValue([
+      { id: "zone-root", name: "example.com" },
+      { id: "zone-nested", name: "sub.example.com" },
+    ]);
+
+    await f.service.ensureManagedCustomDomain({
+      tenantId,
+      userId: actor.id,
+      hostname: "app.sub.example.com",
+    });
+
+    expect(f.cloudflare.ensureManagedCname).toHaveBeenCalledWith({
+      apiToken: "access-secret",
+      zoneId: "zone-nested",
+      hostname: "app.sub.example.com",
+      targetHostname: "resource-portal.pl",
+    });
+  });
+
+  it("returns a readable conflict when an unmanaged Cloudflare record already exists", async () => {
+    const f = fixture();
+    f.connectionFindUnique.mockResolvedValue({
+      id: "44444444-4444-4444-8444-444444444444",
+      tenantId,
+      userId: actor.id,
+      accessTokenCiphertext: "cipher:access-secret",
+      refreshTokenCiphertext: null,
+      accessTokenExpiresAt: new Date(Date.now() + 60 * 60_000),
+      scopes: ["zone.read", "dns.write"],
+    });
+    f.cloudflare.listZones.mockResolvedValue([
+      { id: "zone-root", name: "example.com" },
+    ]);
+    f.cloudflare.ensureManagedCname.mockRejectedValue(
+      new CloudflareDnsRecordConflictError("app.example.com", [
+        {
+          id: "record-1",
+          type: "A",
+          name: "app.example.com",
+          content: "203.0.113.10",
+        },
+      ]),
+    );
+
+    await expect(
+      f.service.ensureManagedCustomDomain({
+        tenantId,
+        userId: actor.id,
+        hostname: "app.example.com",
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
 });

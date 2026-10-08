@@ -229,7 +229,7 @@ const FRAME_HEADER_HEIGHT = 66;
 const FRAME_PADDING_X = 18;
 const FRAME_PADDING_BOTTOM = 18;
 const APP_NODE_WIDTH = FRAME_WIDTH - FRAME_PADDING_X * 2;
-const APP_NODE_HEIGHT = 72;
+const APP_NODE_HEIGHT = 84;
 const APP_NODE_GAP = 12;
 const NETWORK_WIDTH = 292;
 const NETWORK_HEIGHT = 126;
@@ -399,10 +399,15 @@ function AppGroupFrameNode(props: NodeProps) {
 function ApplicationNode(props: NodeProps) {
   const data = nodeData(props);
   if (data.kind !== "application") return null;
+  const ipLabel = data.addresses.length
+    ? data.addresses.join(" · ")
+    : data.attachmentCount > 0
+      ? "IP pending"
+      : "No private IP";
   return (
     <div
       className={cx(
-        "flex h-[72px] w-full items-center gap-3 rounded-xl border bg-white px-3.5 shadow-[0_4px_14px_rgba(36,74,120,.07)] transition",
+        "flex h-[84px] w-full items-center gap-3 rounded-xl border bg-white px-3.5 shadow-[0_4px_14px_rgba(36,74,120,.07)] transition",
         props.selected ? "border-[#1769E0] ring-2 ring-[#1769E0]/15" : "border-[#D5DEEA]",
       )}
       aria-label={`Application ${data.label}`}
@@ -420,8 +425,10 @@ function ApplicationNode(props: NodeProps) {
           <span className="truncate text-[11px] text-[#718096]">
             {data.runtimeState || "Unknown"} · {data.attachmentCount} network{data.attachmentCount === 1 ? "" : "s"}
           </span>
-          {data.addresses.length ? <code className="block truncate text-[10px] text-[#526070]" title={data.addresses.join(", ")}>{data.addresses.join(" · ")}</code> : null}
         </div>
+        <code className={cx("mt-1 block truncate text-[10px]", data.addresses.length ? "text-[#0F56A7]" : "text-[#8A96A8]")} title={data.addresses.join(", ") || ipLabel}>
+          {data.addresses.length ? `IP ${ipLabel}` : ipLabel}
+        </code>
       </div>
       <Handle
         id="network-out"

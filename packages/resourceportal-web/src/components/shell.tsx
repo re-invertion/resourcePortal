@@ -45,6 +45,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Security & Ops", href: platformHref("security"), icon: <ActivityIcon />, active: ["security", "operations", "audit"].includes(route.section) },
     { label: "Maintenance", href: platformHref("maintenance"), icon: <SettingsIcon />, active: route.section === "maintenance" },
     { label: "Bug reports", href: platformHref("bug-reports"), icon: <BugIcon />, active: route.section === "bug-reports" },
+    { label: "Platform MCP", href: platformHref("mcp"), icon: <SettingsIcon />, active: route.section === "mcp" },
     { label: "Settings", href: platformHref("settings"), icon: <SettingsIcon />, active: route.section === "settings" },
   ];
 }
@@ -127,6 +128,7 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-security", label: "Security & Ops", description: "Security, operations and audit", href: platformHref("security"), category: "Navigation", keywords: "audit operations security" },
     { id: "platform-maintenance", label: "Maintenance", description: "Platform maintenance controls", href: platformHref("maintenance"), category: "Navigation", keywords: "system maintenance" },
     { id: "platform-bug-reports", label: "Bug reports", description: "Review user-submitted issues and assign priority", href: platformHref("bug-reports"), category: "Navigation", keywords: "bug issue report p0 p1 p2 p3 priority" },
+    { id: "platform-mcp", label: "Platform Admin MCP", description: "Dedicated MCP endpoint for platform administration", href: platformHref("mcp"), category: "Navigation", keywords: "mcp model context protocol admin tools oauth" },
     { id: "platform-settings", label: "Settings", description: "Platform-wide ResourcePortal settings and SMTP email delivery", href: platformHref("settings"), category: "Navigation", keywords: "settings smtp email mail server outbound" },
   ];
 }

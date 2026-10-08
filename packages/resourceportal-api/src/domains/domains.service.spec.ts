@@ -11,12 +11,18 @@ import { ManagedDnsService } from "../platform-dns/managed-dns.service";
 import type { CloudflareTenantOauthService } from "../platform-dns/cloudflare-tenant-oauth.service";
 
 vi.mock("node:dns/promises", () => ({
+  resolve4: vi.fn(),
+  resolve6: vi.fn(),
+  resolveCname: vi.fn(),
   resolveTxt: vi.fn(),
 }));
 
-import { resolveTxt } from "node:dns/promises";
+import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises";
 import { DomainsService } from "./domains.service";
 
+const resolve4Mock = vi.mocked(resolve4);
+const resolve6Mock = vi.mocked(resolve6);
+const resolveCnameMock = vi.mocked(resolveCname);
 const resolveTxtMock = vi.mocked(resolveTxt);
 const actor = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -388,5 +394,204 @@ describe("DomainsService tenant Cloudflare root-domain verification", () => {
     });
     expect(result.verificationStatus).toBe(CustomRootDomainVerificationStatus.Verified);
     expect(result.verifiedAt).toBeInstanceOf(Date);
+  });
+});
+
+
+describe("DomainsService Cloudflare OAuth custom DNS lifecycle", () => {
+  function oauthFixture() {
+    const customRoot = root({
+      verificationStatus: CustomRootDomainVerificationStatus.Verified,
+      verificationMethod: "CLOUDFLARE_OAUTH",
+      createdBy: actor.id,
+    });
+    const existing = domainRecord({
+      type: DomainType.Custom,
+      prefix: null,
+      customRootDomainId: customRoot.id,
+      subdomain: "app",
+      hostname: "app.example.com",
+      dnsStatus: DnsStatus.Valid,
+      httpEndpointId: null,
+      httpEndpoint: null,
+      customRootDomain: customRoot,
+    });
+    const tx = {
+      domain: {
+        create: vi.fn().mockResolvedValue(existing),
+        delete: vi.fn().mockResolvedValue(existing),
+        update: vi.fn().mockResolvedValue(existing),
+      },
+      appGroup: {
+        update: vi.fn().mockResolvedValue({}),
+      },
+    };
+    const prisma = {
+      customRootDomain: {
+        findFirst: vi.fn().mockResolvedValue(customRoot),
+      },
+      domain: {
+        findFirst: vi.fn().mockResolvedValue(existing),
+        update: vi.fn().mockImplementation(({ data }: DomainUpdateCall) =>
+          Promise.resolve({ ...existing, ...data }),
+        ),
+      },
+      httpEndpoint: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      $transaction: vi
+        .fn()
+        .mockImplementation(
+          (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+        ),
+    };
+    const config = {
+      get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
+    };
+    const cloudflare = {
+      ensureManagedCustomDomain: vi.fn().mockResolvedValue({ created: true }),
+      deleteManagedCustomDomain: vi.fn().mockResolvedValue({ deleted: 1 }),
+      managedCustomDomainExists: vi.fn().mockResolvedValue(true),
+    };
+    const service = new DomainsService(
+      prisma as unknown as PrismaService,
+      config as unknown as ConfigService,
+      undefined,
+      cloudflare as unknown as CloudflareTenantOauthService,
+    );
+    return { service, prisma, tx, cloudflare, customRoot, existing };
+  }
+
+  it("provisions an RP-owned CNAME before persisting a Cloudflare OAuth custom domain", async () => {
+    const f = oauthFixture();
+
+    const result = await f.service.createDomain(
+      f.existing.tenantId,
+      {
+        type: DomainType.Custom,
+        customRootDomainId: f.customRoot.id,
+        subdomain: "app",
+      },
+      actor,
+    );
+
+    expect(f.cloudflare.ensureManagedCustomDomain).toHaveBeenCalledWith({
+      tenantId: f.existing.tenantId,
+      userId: actor.id,
+      hostname: "app.example.com",
+    });
+    const createCall = f.tx.domain.create.mock.calls[0]?.[0] as DomainCreateCall;
+    expect(createCall.data.dnsStatus).toBe(DnsStatus.Valid);
+    expect(result.dnsStatus).toBe(DnsStatus.Valid);
+  });
+
+  it("removes only the RP-owned custom-domain record when deleting the domain", async () => {
+    const f = oauthFixture();
+
+    await expect(
+      f.service.deleteDomain(f.existing.tenantId, f.existing.id, actor),
+    ).resolves.toEqual({ deleted: true });
+
+    expect(f.cloudflare.deleteManagedCustomDomain).toHaveBeenCalledWith({
+      tenantId: f.existing.tenantId,
+      userId: actor.id,
+      hostname: "app.example.com",
+    });
+    expect(f.tx.domain.delete).toHaveBeenCalledWith({
+      where: { id: f.existing.id },
+    });
+  });
+
+  it("checks the actual RP-owned Cloudflare record when validating the domain", async () => {
+    const f = oauthFixture();
+    f.cloudflare.managedCustomDomainExists.mockResolvedValue(false);
+
+    const result = await f.service.validateDomain(
+      f.existing.tenantId,
+      f.existing.id,
+      actor,
+    );
+
+    expect(f.cloudflare.managedCustomDomainExists).toHaveBeenCalledWith({
+      tenantId: f.existing.tenantId,
+      userId: actor.id,
+      hostname: "app.example.com",
+    });
+    expect(result.dnsStatus).toBe(DnsStatus.Invalid);
+  });
+});
+
+describe("DomainsService manual custom DNS validation", () => {
+  afterEach(() => {
+    resolveCnameMock.mockReset();
+    resolve4Mock.mockReset();
+    resolve6Mock.mockReset();
+  });
+
+  function fixture(hostname = "missing.example.net") {
+    const existing = domainRecord({
+      type: DomainType.Custom,
+      prefix: null,
+      customRootDomainId: null,
+      subdomain: null,
+      hostname,
+      dnsStatus: DnsStatus.Pending,
+      httpEndpointId: null,
+      httpEndpoint: null,
+      customRootDomain: null,
+    });
+    const prisma = {
+      domain: {
+        findFirst: vi.fn().mockResolvedValue(existing),
+        update: vi.fn().mockImplementation(({ data }: DomainUpdateCall) =>
+          Promise.resolve({ ...existing, ...data }),
+        ),
+      },
+    };
+    const config = {
+      get: vi.fn((key: string, defaultValue: unknown) =>
+        key === "RESOURCEPORTAL_PUBLIC_HOSTNAME"
+          ? "resource-portal.pl"
+          : defaultValue,
+      ),
+    };
+    return {
+      existing,
+      service: new DomainsService(
+        prisma as unknown as PrismaService,
+        config as unknown as ConfigService,
+      ),
+    };
+  }
+
+  it("does not report Valid when a custom hostname does not point at ResourcePortal", async () => {
+    const f = fixture();
+    resolveCnameMock.mockRejectedValue(new Error("no cname"));
+    resolve4Mock.mockImplementation(async (host: string) =>
+      host === "missing.example.net" ? ["203.0.113.10"] : ["198.51.100.20"],
+    );
+    resolve6Mock.mockResolvedValue([]);
+
+    const result = await f.service.validateDomain(
+      f.existing.tenantId,
+      f.existing.id,
+      actor,
+    );
+
+    expect(result.dnsStatus).toBe(DnsStatus.Invalid);
+  });
+
+  it("accepts a custom hostname CNAME that targets ResourcePortal ingress", async () => {
+    const f = fixture("app.example.net");
+    resolveCnameMock.mockResolvedValue(["resource-portal.pl."]);
+
+    const result = await f.service.validateDomain(
+      f.existing.tenantId,
+      f.existing.id,
+      actor,
+    );
+
+    expect(resolveCnameMock).toHaveBeenCalledWith("app.example.net");
+    expect(result.dnsStatus).toBe(DnsStatus.Valid);
   });
 });

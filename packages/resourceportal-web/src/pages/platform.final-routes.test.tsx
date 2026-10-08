@@ -17,6 +17,7 @@ function installApi() {
     if (url === "/api/platform/remote-locations") return json([]);
     if (url === "/api/platform/storage-backends") return json([]);
     if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "0", cpuTotalNano: "0", memoryUsedBytes: "0", memoryTotalBytes: "0", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "0", storageTotalBytes: "0", runningReplicas: 0 });
+    if (url === "/api/platform/release") return json({ currentVersion: "0.2.66", latestVersion: "0.2.67", updateAvailable: true, releaseFeedAvailable: true, rollbackPolicy: "image-only", automaticRollbackAvailable: true, fallbackCommand: "sudo ./resourceportal-install.sh --mode upgrade --manifest /absolute/path/resourceportal-release-manifest.json --non-interactive" });
     if (url === "/api/platform/identity-providers") return json([]);
     if (url === "/api/platform/oauth-applications") return json([]);
     if (url === "/api/platform/service-identities") return json([]);
@@ -52,6 +53,7 @@ describe("Platform Admin final routes", () => {
     ["network-egress", "Infrastructure"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
+    ["mcp", "Platform Admin MCP"],
     ["settings", "Settings"],
   ])("renders %s with the final page header", async (section, heading) => {
     installApi();
@@ -193,4 +195,30 @@ it("filters and searches the Platform Admin user directory", async () => {
   fireEvent.change(screen.getByLabelText("Filter users by status"), { target: { value: "Active" } });
   expect(screen.getByText("Owner User")).toBeTruthy();
   expect(screen.queryByText("Blocked User")).toBeNull();
+});
+
+it("requires an explicit typed confirmation before starting a ResourcePortal update", async () => {
+  const fetchMock = installApi();
+  render(<PlatformPage section="infrastructure" />);
+
+  const update = await screen.findByRole("button", { name: "Update ResourcePortal" });
+  fireEvent.click(update);
+  expect(screen.getByRole("dialog", { name: "Confirm ResourcePortal update" })).toBeTruthy();
+
+  const start = screen.getByRole("button", { name: "Start update" }) as HTMLButtonElement;
+  expect(start.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Update confirmation"), { target: { value: "AKTUALIZUJ" } });
+  expect(start.disabled).toBe(false);
+  fireEvent.click(start);
+
+  await vi.waitFor(() => {
+    const call = fetchMock.mock.calls.find(([url, init]) =>
+      String(url) === "/api/platform/release/update" && (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(call).toBeTruthy();
+    expect(JSON.parse(String((call?.[1] as RequestInit | undefined)?.body))).toEqual({
+      targetVersion: "0.2.67",
+      confirmation: "AKTUALIZUJ",
+    });
+  });
 });

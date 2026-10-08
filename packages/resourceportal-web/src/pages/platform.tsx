@@ -4,6 +4,7 @@ import { PlatformResourceBotPage } from "./platform-resource-bot";
 import { PlatformBillingPage } from "./platform-billing";
 import { PlatformSettingsPage } from "./platform-settings";
 import { PlatformBugReportsPage } from "./platform-bug-reports";
+import { PlatformMcpPage } from "./platform-mcp";
 import { PlatformCredentialsPage, PlatformIdentityProvidersPage } from "./platform-identity-pages";
 import {
   PlatformIdentityPage,
@@ -33,6 +34,7 @@ export function PlatformPage({ section, segments }: { section: string; resourceI
   if (section === "security" || section === "operations" || section === "audit") return <PlatformSecurityPage />;
   if (section === "maintenance") return <PlatformMaintenancePage />;
   if (section === "bug-reports") return <PlatformBugReportsPage />;
+  if (section === "mcp") return <PlatformMcpPage />;
   if (section === "settings") return <PlatformSettingsPage />;
   return <main><PageHeader eyebrow="Platform Admin" title="Platform page not found" description={`Unknown section: ${section}`} /><Callout tone="warning" title="This Platform Admin route is not available" action={<LinkButton href="/platform/overview">Open overview</LinkButton>}>Use the final Platform Admin navigation to open a supported section.</Callout></main>;
 }
