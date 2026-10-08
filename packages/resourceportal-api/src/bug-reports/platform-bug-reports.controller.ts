@@ -4,14 +4,18 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Body,
   StreamableFile,
   UseGuards,
   Res,
 } from "@nestjs/common";
 import { FastifyReply } from "fastify";
+import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
+import type { AuthenticatedUser } from "../auth/types";
 import { BugReportsService } from "./bug-reports.service";
+import { CreateBugReportDto } from "./dto/create-bug-report.dto";
 import { UpdateBugReportPriorityDto } from "./dto/update-bug-report-priority.dto";
 import { UpdateBugReportResolutionDto } from "./dto/update-bug-report-resolution.dto";
 
@@ -23,6 +27,14 @@ export class PlatformBugReportsController {
   @Get()
   list() {
     return this.reports.list();
+  }
+
+  @Post()
+  create(
+    @Body() dto: CreateBugReportDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.reports.create(dto, actor);
   }
 
   @Patch(":id/priority")

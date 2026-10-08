@@ -139,6 +139,7 @@ describe("AdminMcpProtocolService", () => {
       expect(names).toContain("resourceportal_admin_list_identity_providers");
       expect(names).toContain("resourceportal_admin_list_oauth_applications");
       expect(names).toContain("resourceportal_admin_list_service_identities");
+      expect(names).toContain("resourceportal_admin_create_bug_report");
       expect(names).toContain("resourceportal_admin_list_bug_reports");
       expect(names).toContain("resourceportal_admin_resolve_bug_report");
       expect(names).not.toContain("resourceportal_admin_api");
@@ -256,6 +257,59 @@ describe("AdminMcpProtocolService", () => {
           correlationId: "corr-tenants",
         }),
       );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("creates Bug Reports through the authenticated platform endpoint with optional screenshot fields", async () => {
+    const { service, audit } = fixture();
+    const request = mcpRequest({ authorization: "Bearer admin-token" });
+    const apiFetch = vi.fn(async (requestInfo: string | URL | Request, init?: RequestInit) => {
+      const request = requestInfo instanceof Request ? requestInfo : new Request(requestInfo, init);
+      expect(request.url).toBe("http://127.0.0.1:3000/api/platform/bug-reports");
+      expect(request.method).toBe("POST");
+      expect(await request.json()).toEqual({
+        description: "Application page fails to load attached storage.",
+        url: "https://resource-portal.pl/tenants/t1/app-groups/ag1/apps/app1",
+        imageData: "aGVsbG8=",
+        imageMimeType: "image/png",
+        imageFileName: "bug.png",
+      });
+      return new Response(JSON.stringify({ id: "44444444-4444-4444-8444-444444444444" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", apiFetch);
+
+    const connection = await connectClient({
+      service,
+      request,
+      authenticated: true,
+    });
+    try {
+      const result = await connection.client.callTool({
+        name: "resourceportal_admin_create_bug_report",
+        arguments: {
+          description: "Application page fails to load attached storage.",
+          url: "https://resource-portal.pl/tenants/t1/app-groups/ag1/apps/app1",
+          imageData: "aGVsbG8=",
+          imageMimeType: "image/png",
+          imageFileName: "bug.png",
+        },
+      });
+      expect(result.structuredContent).toMatchObject({
+        status: 201,
+        ok: true,
+        data: { id: "44444444-4444-4444-8444-444444444444" },
+      });
+      expect(audit.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "resourceportal_admin_create_bug_report",
+        method: "POST",
+        path: "/api/platform/bug-reports",
+        success: true,
+      }));
     } finally {
       await connection.close();
     }

@@ -1363,6 +1363,10 @@ export class AppGroupsService {
           orderBy: { mountPath: "asc" },
           include: { volume: { select: { id: true, name: true } } },
         },
+        networkAttachments: {
+          orderBy: { address: "asc" },
+          include: { network: { select: { id: true, name: true, cidr: true } } },
+        },
         variableAttachments: {
           orderBy: { targetName: "asc" },
           include: { variable: { select: { id: true, name: true } } },

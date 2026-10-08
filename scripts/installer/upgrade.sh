@@ -249,6 +249,9 @@ rp_upgrade_prepare_zitadel_for_mcp_oauth() {
 
 rp_upgrade_refresh_firewall() {
   local ssh_port
+  if [[ "${RP_UPGRADE_SKIP_HOST_FIREWALL:-false}" == true ]]; then
+    return 0
+  fi
   # resourceportal-install.sh sources firewall.sh before upgrade dispatch.
   # Keep isolated unit sourcing safe while making real upgrades fail closed.
   if ! declare -F rp_detect_ssh_port >/dev/null || ! declare -F rp_configure_ufw >/dev/null; then

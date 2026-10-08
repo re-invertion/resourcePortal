@@ -265,6 +265,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/rp_database_url
       RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key
       RESOURCE_STORAGE_BASE_PATH: __STORAGE_BASE_PATH__
+      RESOURCE_STORAGE_QUOTA_DEVICE: __STORAGE_QUOTA_DEVICE__
       RESOURCE_VOLUME_RUNTIME_ROOT: /mnt/resourceportal/volumes
       RESOURCE_SECRET_RUNTIME_ROOT: /mnt/resourceportal/secrets
       RESOURCE_PLATFORM_RUNTIME_ROOT: /mnt/resourceportal/platform

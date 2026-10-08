@@ -8,3 +8,24 @@ it("runs application runtime actions through the application endpoint", async()=
  const stop=await screen.findByRole("button",{name:"Stop application"});fireEvent.click(stop);
  await vi.waitFor(()=>expect(fetchMock.mock.calls.some(([p])=>String(p).endsWith("/single-apps/app1/runtime/stop"))).toBe(true));
 });
+
+
+it("shows attached storage and network IP addresses from the application payload", async()=>{
+ const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
+  const p=String(input);
+  if(p.endsWith("/single-apps"))return json([{
+   id:"app1",name:"checkout",runtimeState:"Running",effectiveRuntimeState:"Running",health:"Healthy",
+   volumeAttachments:[{id:"va1",mountPath:"/data",mode:"ReadWrite",volume:{id:"v1",name:"orders-data"}}],
+   networkAttachments:[{id:"na1",address:"10.20.0.12",network:{id:"n1",name:"private-apps",cidr:"10.20.0.0/24"}}]
+  }]);
+  if(p.endsWith("/runtime-config"))return json({environment:{},secrets:[]});
+  if(p.endsWith("/http-endpoints"))return json([]);
+  return json([]);
+ });
+ vi.stubGlobal("fetch",fetchMock);
+ render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1"/>);
+ expect(await screen.findByText("orders-data")).toBeTruthy();
+ expect(screen.getByText("/data")).toBeTruthy();
+ expect(screen.getByText("private-apps")).toBeTruthy();
+ expect(screen.getByText("10.20.0.12")).toBeTruthy();
+});

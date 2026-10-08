@@ -145,8 +145,8 @@ describe("guided access and routing", () => {
     render(<TenantPage tenantId="t" section="domains" userId="u" />);
     await screen.findByRole("row", { name: /app\.example\.com/i });
     fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
-    expect(screen.getByRole("combobox", { name: /Domain type/i })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: /Prefix/i })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /Domain prefix/i })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: /Domain root/i })).toBeTruthy();
     expect(screen.queryByLabelText("HTTP endpoint ID")).toBeNull();
   });
 });

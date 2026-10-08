@@ -137,6 +137,13 @@ async function main() {
     "Succeeded",
   );
 
+  // The synthetic .example.test hostname cannot resolve to the CI ingress.
+  // Seed verified DNS only for this isolated real-Swarm ingress smoke fixture.
+  await prisma.domain.update({
+    where: { id: domainId },
+    data: { dnsStatus: "Valid" },
+  });
+
   const deployment = await api<JsonObject>(
     `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
     {

@@ -132,9 +132,15 @@ jobs:
           WEB_DIGEST: ${{ steps.web.outputs.digest }}
           POSTGRES_DIGEST: ${{ steps.postgres.outputs.digest }}
           MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
         shell: bash
         run: |
           set -euo pipefail
+          ROLLBACK_POLICY=none
+          if [[ "$VALIDATION_MODE" == fastfix ]] && git diff --quiet "$PREVIOUS_TAG"...HEAD -- packages/resourceportal-api/prisma/migrations; then
+            ROLLBACK_POLICY=image-only
+          fi
           mapfile -t ancestor_versions < <(
             git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
               | sed 's/^v//' \
@@ -159,8 +165,9 @@ jobs:
             --arg postgres "ghcr.io/${GITHUB_REPOSITORY_OWNER}/resourceportal-postgres@${POSTGRES_DIGEST}" \
             --arg zitadel "$ZITADEL_REF" \
             --arg traefik "$TRAEFIK_REF" \
+            --arg rollback_policy "$ROLLBACK_POLICY" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
-            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:"none"}}' \
+            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy}}' \
             > resourceportal-release-manifest.json
       - name: Verify published images are anonymously pullable
         env:

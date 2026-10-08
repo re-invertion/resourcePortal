@@ -42,6 +42,10 @@ export class ManagedDnsService {
     };
   }
 
+  getDomainTargetHostname() {
+    return this.targetHostname();
+  }
+
   async updatePlatformState(dto: UpdatePlatformDnsDto, actor: AuthenticatedUser) {
     const current = await this.getState();
     const nextZoneId = dto.zoneId?.trim() || current.zoneId;

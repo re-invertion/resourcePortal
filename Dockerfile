@@ -47,6 +47,11 @@ ENV NODE_ENV=production
 # overrides the user on the authoritative storage/control-plane node because
 # infrastructure Operations include Docker and filesystem quota mutations.
 RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    curl \
+    jq \
+    openssl \
     docker-cli \
     iptables \
     iproute2 \
@@ -68,6 +73,9 @@ COPY --from=build /app/packages/resourceportal-api/prisma ./prisma
 COPY --chown=node:node packages/resourceportal-web/public/brand ./brand
 COPY --from=build /app/packages/resourceportal-help/package.json /app/packages/resourceportal-help/package.json
 COPY --from=build /app/packages/resourceportal-help/dist /app/packages/resourceportal-help/dist
+COPY --chown=root:root resourceportal-install.sh /app/resourceportal-installer/resourceportal-install.sh
+COPY --chown=root:root scripts/installer /app/resourceportal-installer/scripts/installer
+COPY --chown=root:root config/production /app/resourceportal-installer/config/production
 
 USER node
 

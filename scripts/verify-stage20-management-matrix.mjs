@@ -203,11 +203,16 @@ try {
       "x-dev-user-id": userId,
     };
     delete headers.host;
-    const response = await route.fetch({
-      url: `${apiBase}${apiPath}${requestUrl.search}`,
-      headers,
-    });
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch({
+        url: `${apiBase}${apiPath}${requestUrl.search}`,
+        headers,
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      if (/Request context disposed|TargetClosedError|Target page, context or browser has been closed/.test(String(error))) return;
+      throw error;
+    }
   });
 
   try {
@@ -250,6 +255,7 @@ try {
       `Stage 20 management matrix passed: ${expectedContracts.length} API contracts and ${tenantRoutes.length + platformRoutes.length + 1} document routes`,
     );
   } finally {
+    await context.unrouteAll({ behavior: "ignoreErrors" });
     await context.close();
   }
 } finally {
@@ -260,6 +266,10 @@ try {
         console.warn(`Stage 20 matrix tenant cleanup failed: ${error.message}`),
       );
   }
+  await browser.contexts().reduce(async (previous, context) => {
+    await previous;
+    await context.unrouteAll({ behavior: "ignoreErrors" });
+  }, Promise.resolve());
   await browser.close();
   await prisma.$disconnect();
 }
