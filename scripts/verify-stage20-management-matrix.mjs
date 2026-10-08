@@ -260,6 +260,10 @@ try {
         console.warn(`Stage 20 matrix tenant cleanup failed: ${error.message}`),
       );
   }
+  await browser.contexts().reduce(async (previous, context) => {
+    await previous;
+    await context.unrouteAll({ behavior: "ignoreErrors" });
+  }, Promise.resolve());
   await browser.close();
   await prisma.$disconnect();
 }
