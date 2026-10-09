@@ -298,7 +298,7 @@ rp_primary_refresh_traefik_release_image() {
   local version="${RP_CFG_RELEASE_VERSION:?RP_CFG_RELEASE_VERSION is required}"
   local current="${RP_CFG_TRAEFIK_IMAGE:?RP_CFG_TRAEFIK_IMAGE is required}"
   local tmp remote_version remote_ref
-  tmp="$(mktemp /tmp/resourceportal-release-refresh.XXXXXX.json)" || return 1
+  tmp="$(mktemp /tmp/resourceportal-release-refresh.XXXXXX)" || return 1
   if ! rp_download_release_manifest "$version" "$tmp"; then
     rm -f "$tmp"
     rp_log WARN "could not refresh Traefik image for release ${version}; keeping existing immutable ref"
