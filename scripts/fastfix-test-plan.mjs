@@ -32,7 +32,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/auth/github-security-regressions.spec.ts"],
   ],
   "web-proxy": [
-    ["node", "--test", "packages/resourceportal-web/proxy-target.test.mjs"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "proxy-target.test.mjs"],
     ["node", "--check", "packages/resourceportal-web/server.mjs"],
   ],
   "runtime-config": [
