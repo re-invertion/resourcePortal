@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "description": "Stable suite registry; existing test files retained and grouped by execution semantics.",
+  "suites": [
+    {
+      "id": "catalog",
+      "level": "contract",
+      "domain": "tooling",
+      "command": [
+        "npm",
+        "run",
+        "test:catalog"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "api",
+      "level": "unit",
+      "domain": "api",
+      "command": [
+        "npm",
+        "run",
+        "test",
+        "--workspace",
+        "@resource-portal/api"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "web",
+      "level": "component",
+      "domain": "web",
+      "command": [
+        "npm",
+        "run",
+        "test",
+        "--workspace",
+        "@resource-portal/web"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "sdk",
+      "level": "unit",
+      "domain": "sdk",
+      "command": [
+        "npm",
+        "run",
+        "test",
+        "--workspace",
+        "@resource-portal/sdk"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "cli",
+      "level": "unit",
+      "domain": "cli",
+      "command": [
+        "npm",
+        "run",
+        "test",
+        "--workspace",
+        "@resource-portal/cli"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "help",
+      "level": "unit",
+      "domain": "help",
+      "command": [
+        "npm",
+        "run",
+        "test",
+        "--workspace",
+        "@resource-portal/help"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "installer",
+      "level": "contract",
+      "domain": "installer",
+      "command": [
+        "npm",
+        "run",
+        "test:installer"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "cli-package",
+      "level": "packaging",
+      "domain": "cli",
+      "command": [
+        "npm",
+        "run",
+        "test:cli-release"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "federation",
+      "level": "e2e",
+      "domain": "identity",
+      "command": [
+        "bash",
+        "scripts/run-federation-e2e.sh",
+        "browser"
+      ],
+      "environment": "workflow",
+      "workflow": "federation-integration.yml"
+    },
+    {
+      "id": "swarm",
+      "level": "system",
+      "domain": "infrastructure",
+      "command": [
+        "bash",
+        "scripts/run-real-swarm-smoke.sh"
+      ],
+      "environment": "workflow",
+      "workflow": "swarm-integration.yml"
+    },
+    {
+      "id": "site-vpn",
+      "level": "system",
+      "domain": "networking",
+      "command": [
+        "bash",
+        "scripts/run-gate-dataplane-smoke.sh"
+      ],
+      "environment": "workflow",
+      "workflow": "swarm-integration.yml"
+    },
+    {
+      "id": "device-vpn",
+      "level": "system",
+      "domain": "networking",
+      "command": [
+        "bash",
+        "scripts/run-device-vpn-dataplane-smoke.sh"
+      ],
+      "environment": "workflow",
+      "workflow": "swarm-integration.yml"
+    },
+    {
+      "id": "mcp-contract",
+      "level": "contract",
+      "domain": "mcp",
+      "command": [
+        "npm",
+        "--workspace",
+        "@resource-portal/api",
+        "test",
+        "--",
+        "src/mcp"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "dns-contract",
+      "level": "contract",
+      "domain": "domains",
+      "command": [
+        "npm",
+        "--workspace",
+        "@resource-portal/api",
+        "test",
+        "--",
+        "src/domains",
+        "src/platform-dns"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "security-api",
+      "level": "security",
+      "domain": "security",
+      "command": [
+        "npm",
+        "--workspace",
+        "@resource-portal/api",
+        "test",
+        "--",
+        "src/security",
+        "src/auth"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "security-web",
+      "level": "security",
+      "domain": "security",
+      "command": [
+        "npm",
+        "--workspace",
+        "@resource-portal/web",
+        "test",
+        "--",
+        "src/security"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "upgrade-contract",
+      "level": "upgrade",
+      "domain": "installer",
+      "command": [
+        "bash",
+        "test/installer/test-releases.sh"
+      ],
+      "environment": "local"
+    },
+    {
+      "id": "migration-compatibility",
+      "level": "integration",
+      "domain": "database",
+      "command": [
+        "npm",
+        "--workspace",
+        "@resource-portal/api",
+        "test",
+        "--",
+        "src/networking/device-vpn-migration.spec.ts"
+      ],
+      "environment": "local"
+    }
+  ]
+}

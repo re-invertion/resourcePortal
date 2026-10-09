@@ -1,6 +1,7 @@
 name: Production Installer Quality Gate
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:

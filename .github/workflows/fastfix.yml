@@ -3,6 +3,8 @@ name: ResourcePortal Fast Fix
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -13,7 +15,7 @@ concurrency:
 
 jobs:
   targeted-hotfix:
-    if: startsWith(github.head_ref, 'fastfix/')
+    if: (github.event_name == 'pull_request' && startsWith(github.head_ref, 'fastfix/')) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[fastfix]'))
     name: Patch release - changed-scope tests and VPN dataplane
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -29,6 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Determine patch version and reject milestones
+        if: github.event_name == 'pull_request'
         id: version
         shell: bash
         env:
@@ -42,8 +45,8 @@ jobs:
       - name: Select tests from changed release files (fail closed)
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node scripts/fastfix-test-plan.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
 
@@ -58,10 +61,13 @@ jobs:
           npm ci
           npm run api:prisma:generate
 
+      - name: Verify test inventory and taxonomy
+        run: npm run test:catalog
+
       - name: Run ONLY scoped patch tests
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node scripts/fastfix-test-plan.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --run
 

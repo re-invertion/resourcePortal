@@ -1,6 +1,7 @@
 name: Installer + Identity Federation
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:

@@ -18,11 +18,14 @@ test("documentation-only change does not trigger unrelated tests", () => {
   assert.equal(plan.vpnSmoke, false);
 });
 
-test("unknown runtime changes fail closed, not silently skip test coverage", () => {
-  assert.throws(
-    () => selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]),
-    /unclassified changes/,
-  );
+test("security runtime changes select security tests (never silently skipped)", () => {
+  assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
+});
+test("unregistered root-level changes still fail closed", () => {
+  assert.throws(() => selectProfiles(["new-unmapped-runtime/entry.ts"]), /unclassified changes/);
+});
+test("unregistered API modules safely fall back to full API tests", () => {
+  assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/new-domain/new.service.ts"]).profiles, ["api-general"]);
 });
 
 test("MCP OAuth patch chooses the existing targeted regression suite", () => {

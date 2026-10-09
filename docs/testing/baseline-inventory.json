@@ -1,0 +1,1391 @@
+{
+  "schemaVersion": 1,
+  "description": "Inventory snapshot of existing tests; preserve or explicitly migrate every entry.",
+  "tests": [
+    {
+      "path": "packages/resourceportal-api/scripts/root-install-prisma.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/scripts/setup-federation-e2e.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/scripts/zitadel-api-response.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/scripts/zitadel-web-oidc.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/app-group-manifest.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/app-group-manifest.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/app-groups.view.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/restart-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/sensitive-runtime-config.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/stage15-runtime-capacity.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/stage3-appgroup.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/app-groups/stage4-singleapp.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/audit/audit.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/audit/audit.view.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/auth-registration-recovery.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/auth-session.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/auth.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/controller-access-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/dev-auth.guard.mcp.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/dev-auth.guard.production.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/oidc-auth.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/stage1-credential-rotation-recovery.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/stage1-platform-admin-guard.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/stage1-session-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/stage1-user-status.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/auth/stage2-permission-model.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-funding-access.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-preflight.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-read.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-usage.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-voucher-codes.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/billing-worker.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/billing/stage10-billing-math.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/bug-reports/bug-reports.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/capacity/capacity-deployment-admission.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/capacity/capacity-errors.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/capacity/capacity-preflight.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/capacity/capacity.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/env.validation.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/global-prefix-config.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/http-proxy-config.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/production-auth-entrypoints.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/secret-file-loader.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/swagger-config.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/config/worker-env.validation.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/disaster-recovery/disaster-recovery.restore-flow.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/disaster-recovery/disaster-recovery.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/disaster-recovery/runtime-restore.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/domains/domains.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/domains/domains.view.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/domains/stage16-domains.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/email/platform-email.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/email/zitadel-email-provider.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/health/health.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/identity-providers/zitadel-identity-provider.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/app-group-networking.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/deployment-artifact-generation.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/deployment-artifact-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/deployment-artifact.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/domain-certificate-reconciler.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/explicit-rollback-completion.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/ingress-reconciler.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/installer-enrollment-node-label.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/installer-enrollment.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/installer-enrollment.env.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/installer-enrollment.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/observed-state-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/observed-state-ownership.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/runtime-drift-reconciler.maintenance.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/runtime-drift-reconciler.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-apply.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-registry-auth.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-rollout.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-runtime-observed.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-runtime-traefik.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stack-volume-provisioner.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stage12-system-audit.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stage14-stack-storage.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/stage6-worker-recovery.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/traefik-certificate-observer.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/traefik-routing.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/internal/v020-placement-networking.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/admin-mcp-access.guard.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/admin-mcp-protocol.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/mcp-oauth-dcr.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/mcp-oauth-metadata.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/tenant-mcp-access.guard.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/tenant-mcp-protocol.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/mcp/tenant-mcp-settings.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/migrations/penpot-runtime-secrets.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/network-egress/egress-guard.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/network-egress/network-egress-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/network-egress/network-egress-reconciler.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/network-egress/network-egress.cidr.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/network-egress/network-egress.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/advanced-networking-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/device-vpn-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/device-vpn-runtime-reconciler.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/device-vpn-runtime.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/device-vpn-stack.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/gate-installer.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/gate-runtime-reconciler.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/gate-runtime.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/gate-stack.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/network-addressing.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/networking.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/networking/wireguard-key.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/observability-shared-metrics.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/observability-stack.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/observability.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/resource-bot-observability.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/structured-log.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/tracing.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/worker-observability-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/observability/worker-runtime-observability.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/deployment-operation-adapter.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/app-group-delete-operation.executor.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/domain-operation.executors.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/installer-enrollment-operation.executor.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/network-topology-operation.executor.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/platform-release-update-operation.executor.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/executors/volume-operation.executors.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operation-event-bus.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operation-executor-registry.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operation-retry.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operations-v020-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operations-worker.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operations.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operations.repository.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/operations.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/operations/stage16-async-endpoints.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-dns/cloudflare-dns.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-dns/cloudflare-tenant-oauth.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-dns/managed-dns.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/docker-swarm-parsing.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/host-machine-resource-usage.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/platform-release.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/swarm-infrastructure-read.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/swarm-infrastructure.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-infrastructure/swarm-infrastructure.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-maintenance/platform-maintenance.guard.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/platform-maintenance/platform-maintenance.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/prisma/database-connectivity.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/prisma/raw-sql-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/prisma/schema-source-of-truth.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/registries/docker-image.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/registries/registries.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/help-chunks.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/openai-resource-bot.provider.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/resource-bot-billing.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/resource-bot-chat.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/resource-bot-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/resource-bot/tenant-resource-bot-settings.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/search/tenant-search.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/deployment-artifact-security-migration.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/encryption.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/legacy-secret-migration.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/rate-limit-migration.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/rate-limit-policy.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/rate-limit.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/secret-storage.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/security/sensitive-environment.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/storage-backends/local-filesystem-storage-adapter.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/storage-backends/nfs-remote-access-validator.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/storage-backends/storage-backend.logic.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/storage-backends/storage-backend.prisma.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/storage-backends/storage-paths.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/tenants/platform-tenants.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/tenants/tenant-invitation-links.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/tenants/tenants.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/tenants/tenants.view.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/users/platform-users.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/users/users.controller.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/volumes/stage14-volume-backend.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/volumes/stage7-volume-lifecycle.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/volumes/volume-read.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/volumes/volume-storage.service.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/worker-one-shot-schedulers.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-api/src/worker-startup-resync.spec.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-api"
+    },
+    {
+      "path": "packages/resourceportal-cli/test/auth.test.js",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-cli"
+    },
+    {
+      "path": "packages/resourceportal-cli/test/compatibility.test.js",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-cli"
+    },
+    {
+      "path": "packages/resourceportal-cli/test/volume-wait.test.js",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-cli"
+    },
+    {
+      "path": "packages/resourceportal-help/test/corpus.test.cjs",
+      "runner": "other",
+      "scope": "packages/resourceportal-help"
+    },
+    {
+      "path": "packages/resourceportal-sdk/test/compatibility.test.js",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-sdk"
+    },
+    {
+      "path": "packages/resourceportal-web/codespaces-config.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/final-ui-e2e-contract.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/production-ui.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/proxy-target.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/App.deep-routes.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/App.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/api/client.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/auth/provider-logout.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/application-icon.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/bug-report-dialog.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/design-system/confirm-action.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/design-system/data.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/form-contracts.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/forms-number-controls.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/forms.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/resource-bot-drawer.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/resource-create.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/resource.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/shell.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/stored-secret-input.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/components/ui.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/entry-server.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/lib/audit-display.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group-import.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group-workspace.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/app-detail.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/app-edit.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/config.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/create-app-wizard.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/deployments.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/layout.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/networking.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/overview.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/route.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/app-group/settings.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/applications.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/audit-query.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/auth.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/billing-funding-ui.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/device-vpn-panel.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/form-templates.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/help.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/invitation.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/networking-form-validation.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-bug-reports.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-dns.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-network-egress.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-resource-bot.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-settings.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform-usability.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/platform.final-routes.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/quota-payload.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-access-pages.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-dashboard.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-networking-bgp.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-networking.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-resources.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-settings.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-storage-pages.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant-usability.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/pages/tenant.final-routes.test.tsx",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/playwright-form-controls.test.mjs",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/router/router.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/security/storage.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "packages/resourceportal-web/src/styles.test.ts",
+      "runner": "vitest",
+      "scope": "packages/resourceportal-web"
+    },
+    {
+      "path": "scripts/federation-browser-deps.test.mjs",
+      "runner": "vitest",
+      "scope": "scripts"
+    },
+    {
+      "path": "scripts/run-federation-e2e.test.mjs",
+      "runner": "vitest",
+      "scope": "scripts"
+    },
+    {
+      "path": "test/cli/test-release-package.sh",
+      "runner": "shell",
+      "scope": "test/cli"
+    },
+    {
+      "path": "test/installer/test-acme-resilience.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-control-plane.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-core.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-dashboard.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-diagnostics.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-enrollment.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-error-reporting.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-host-runtime.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-identity-domain.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-managed-domain-defaults.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-nfs.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-ownership.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-packaging.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-releases.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-reset.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-storage.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-tui-integration.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-ui.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-v018-production-stabilization.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-v020-placement-networking.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-workflows.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    },
+    {
+      "path": "test/installer/test-zitadel-management.sh",
+      "runner": "shell",
+      "scope": "test/installer"
+    }
+  ],
+  "workflowFiles": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/codespaces-preview.yml",
+    ".github/workflows/fastfix.yml",
+    ".github/workflows/federation-integration.yml",
+    ".github/workflows/production-installer.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/stage20-dev.yml",
+    ".github/workflows/swarm-integration.yml"
+  ]
+}
