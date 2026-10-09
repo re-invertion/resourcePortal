@@ -86,12 +86,18 @@ describe("CreateApplicationWizard", () => {
       "https://cdn.jsdelivr.net/gh/selfhst/icons/png/nginx.png",
     );
     fireEvent.error(icon!);
-    const alternateSelfHosted = suggestion.querySelector("img");
-    expect(alternateSelfHosted?.getAttribute("src")).toContain("/library-nginx.png");
+    // React can commit the candidate source transition asynchronously under CI load.
+    const alternateSelfHosted = await waitFor(() => {
+      const next = suggestion.querySelector("img");
+      expect(next?.getAttribute("src")).toContain("/library-nginx.png");
+      return next;
+    });
     fireEvent.error(alternateSelfHosted!);
-    expect(suggestion.querySelector("img")?.getAttribute("src")).toBe(
-      "https://example.test/nginx.png",
-    );
+    await waitFor(() => {
+      expect(suggestion.querySelector("img")?.getAttribute("src")).toBe(
+        "https://example.test/nginx.png",
+      );
+    });
     fireEvent.click(suggestion);
     expect(imageInput.value).toBe("library/nginx");
     await new Promise((resolve) => window.setTimeout(resolve, 350));

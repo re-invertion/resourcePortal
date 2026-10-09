@@ -9,6 +9,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  "security": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/auth", "src/security", "src/mcp"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/security"],
+  ],
   "networking": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/networking"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
@@ -36,7 +40,8 @@ const commands = {
   ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
-    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs"],
+    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
+    ["node", "scripts/test-catalog.mjs"],
     ["bash", "-n", "scripts/run-device-vpn-dataplane-smoke.sh"],
   ],
   "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
@@ -64,6 +69,8 @@ const commands = {
 
 const classifiers = [
   [/^packages\/resourceportal-api\/src\/networking\//, ["networking"]],
+  [/^packages\/resourceportal-api\/src\/security\//, ["security"]],
+  [/^packages\/resourceportal-web\/src\/security\//, ["security"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-stage9-ingress\.ts$/, ["domains", "applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-usability\.test\.tsx$/, ["domains"]],
   [/^scripts\/verify-stage20-management-matrix\.mjs$/, ["platform-release", "platform-admin-ui"]],
@@ -98,8 +105,9 @@ const classifiers = [
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
   [/^\.github\/workflows\//, ["workflow"]],
-  [/^scripts\/(fastfix-test-plan|release-validation-mode)\.mjs$/, ["workflow"]],
-  [/^test\/(fastfix-test-plan|release-validation-mode)\.test\.mjs$/, ["workflow"]],
+  [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix)\.mjs$/, ["workflow"]],
+  [/^test\/.*\.test\.mjs$/, ["workflow"]],
+  [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],
   [/^(package\.json|package-lock\.json)$/, ["dependency", "cli"]],
   [/^\.env\.example$/, []],
   [/^docs\//, []],

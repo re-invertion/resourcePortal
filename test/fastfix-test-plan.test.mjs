@@ -18,9 +18,19 @@ test("documentation-only change does not trigger unrelated tests", () => {
   assert.equal(plan.vpnSmoke, false);
 });
 
-test("unknown runtime changes fail closed, not silently skip test coverage", () => {
+test("security runtime changes select security tests (never silently skipped)", () => {
+  assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
+});
+test("unregistered root-level changes still fail closed", () => {
+  assert.throws(() => selectProfiles(["new-unmapped-runtime/entry.ts"]), /unclassified changes/);
+});
+test("unregistered API and Web modules fail closed instead of bypassing runtime coverage", () => {
   assert.throws(
-    () => selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]),
+    () => selectProfiles(["packages/resourceportal-api/src/new-vpn/device-vpn.ts"]),
+    /unclassified changes/,
+  );
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/new-network/route.tsx"]),
     /unclassified changes/,
   );
 });

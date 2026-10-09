@@ -13,9 +13,55 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: write
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.release-mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Classify release and check tag history
+        id: release-mode
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$MANUAL_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          node scripts/release-validation-mode.mjs --version "$VERSION" --github-output "$GITHUB_OUTPUT"
+
+  milestone-swarm:
+    needs: classify
+    if: needs.classify.outputs.mode == 'milestone'
+    uses: ./.github/workflows/swarm-integration.yml
+
+  milestone-federation:
+    needs: classify
+    if: needs.classify.outputs.mode == 'milestone'
+    uses: ./.github/workflows/federation-integration.yml
+
+  milestone-installer:
+    needs: classify
+    if: needs.classify.outputs.mode == 'milestone'
+    uses: ./.github/workflows/production-installer.yml
+
   publish:
+    needs: [classify, milestone-swarm, milestone-federation, milestone-installer]
+    if: >-
+      always() && needs.classify.result == 'success' &&
+      (needs.milestone-swarm.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-swarm.result == 'skipped')) &&
+      (needs.milestone-federation.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-federation.result == 'skipped')) &&
+      (needs.milestone-installer.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-installer.result == 'skipped'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +74,8 @@ jobs:
           cache: npm
       - name: Install Node dependencies
         run: npm ci
+      - name: Verify test inventory and taxonomy
+        run: npm run test:catalog
       - name: Resolve semantic release validation mode
         id: release-mode
         shell: bash
@@ -50,6 +98,15 @@ jobs:
           RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
         run: node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run
+      - name: Full lint, test and build gates for milestone release
+        if: steps.release-mode.outputs.mode == 'milestone'
+        env:
+          NODE_ENV: test
+          AUTH_MODE: dev
+        run: |
+          npm run lint
+          npm run test
+          npm run build
       - name: Validate Production Installer contracts for milestone release
         if: steps.release-mode.outputs.mode == 'milestone'
         run: npm run test:installer
