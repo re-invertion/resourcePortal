@@ -7,9 +7,21 @@ rp_upgrade_rollback_allowed() {
   case "$policy" in image-only|tested) return 0 ;; *) return 1 ;; esac
 }
 
+rp_upgrade_check_temporary_files() {
+  # The updater runs in Alpine (BusyBox mktemp), not the host's GNU coreutils.
+  # Fail before quiescing API/Worker/ZITADEL when /tmp cannot create files.
+  local probe
+  probe="$(mktemp /tmp/resourceportal-upgrade-preflight.XXXXXX)" || {
+    printf 'Upgrade preflight: cannot create a temporary file in /tmp.\n' >&2
+    return 1
+  }
+  rm -f -- "$probe"
+}
+
 rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
-  rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version"
+  rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
+  rp_upgrade_check_temporary_files
 }
 
 rp_pull_release_images() {
@@ -277,6 +289,8 @@ rp_upgrade_apply() {
   local manifest="$1" previous_stack="$2" canonical_manifest
   local source_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
   [[ -r "$previous_stack" ]] || return 1
+  # Keep this guard even when the apply function is invoked directly.
+  rp_upgrade_check_temporary_files || return 1
   rp_config_apply_defaults || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
