@@ -152,8 +152,9 @@ export class StorageBackendsService {
   async cleanupProvisionedVolume(
     backend: LocalFilesystemBackendDescriptor,
     storagePath: string,
+    projectId: number,
   ) {
-    await this.localFilesystem.deleteVolume(backend, storagePath);
+    await this.localFilesystem.deleteVolume(backend, storagePath, projectId);
   }
 
   async reserveResize(
@@ -218,8 +219,11 @@ export class StorageBackendsService {
   }
 
   async deleteVolume(volumeId: string, storagePath: string) {
-    const backend = await this.store.requireForVolume(volumeId);
-    await this.localFilesystem.deleteVolume(backend, storagePath);
+    const [backend, projectId] = await Promise.all([
+      this.store.requireForVolume(volumeId),
+      this.store.requireProjectIdForVolume(volumeId),
+    ]);
+    await this.localFilesystem.deleteVolume(backend, storagePath, projectId);
   }
 
   async measureUsedSize(volumeId: string, storagePath: string) {
