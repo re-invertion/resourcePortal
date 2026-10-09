@@ -84,7 +84,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wireguard-tools iproute2 iptables jq curl
           docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')"
-          docker build --tag resourceportal-vpn-e2e:current .
+          # ECR Public mirrors the official Node image; avoid Docker Hub auth
+          # outages blocking the mandatory VPN dataplane validation.
+          docker build --build-arg RP_NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:24-alpine --tag resourceportal-vpn-e2e:current .
 
       - name: Run Device VPN real dataplane isolation and handshake test
         if: steps.plan.outputs.vpn_smoke == 'true'
