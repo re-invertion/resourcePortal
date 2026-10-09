@@ -31,7 +31,6 @@ import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
 import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
-import { UpdateQuotaDto } from "./dto/update-quota.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
 import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import { TenantsService } from "./tenants.service";
@@ -124,16 +123,6 @@ export class TenantsController {
   @Get(":tenantId/quota")
   getQuota(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
     return this.tenantsService.getQuota(tenantId);
-  }
-
-  @RequirePermissions("tenant.settings.update")
-  @Patch(":tenantId/quota")
-  updateQuota(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Body() dto: UpdateQuotaDto,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
-    return this.tenantsService.updateQuota(tenantId, dto, user);
   }
 
   @RequirePermissions("tenant_auth_policy.read")

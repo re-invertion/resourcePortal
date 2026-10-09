@@ -182,9 +182,12 @@ export class ResourceBotBillingService {
       const account = await this.lockAccount(tx, input.tenantId);
       const existingUsage = await tx.resourceBotUsageRecord.findUnique({
         where: { requestId: input.requestId },
-        select: { id: true, chargedCredits: true },
+        select: { id: true, tenantId: true, chargedCredits: true },
       });
       if (existingUsage) {
+        if (existingUsage.tenantId !== input.tenantId) {
+          throw new ConflictException("ResourceBot requestId belongs to another tenant");
+        }
         return {
           duplicate: true as const,
           usageRecordId: existingUsage.id,
@@ -204,6 +207,9 @@ export class ResourceBotBillingService {
           where: { requestId: input.requestId },
         });
       if (existingReservation) {
+        if (existingReservation.tenantId !== input.tenantId) {
+          throw new ConflictException("ResourceBot reservation belongs to another tenant");
+        }
         return {
           duplicate: false as const,
           reservationId: existingReservation.id,
@@ -285,8 +291,11 @@ export class ResourceBotBillingService {
         where: { requestId: input.requestId },
       });
       if (existing) {
+        if (existing.tenantId !== input.tenantId) {
+          throw new ConflictException("ResourceBot requestId belongs to another tenant");
+        }
         await tx.resourceBotUsageReservation.deleteMany({
-          where: { requestId: input.requestId },
+          where: { requestId: input.requestId, tenantId: input.tenantId },
         });
         return this.toUsageView(existing);
       }
@@ -355,7 +364,7 @@ export class ResourceBotBillingService {
       });
 
       await tx.resourceBotUsageReservation.deleteMany({
-        where: { requestId: input.requestId },
+        where: { requestId: input.requestId, tenantId: input.tenantId },
       });
 
       await tx.auditLogEntry.create({
@@ -392,9 +401,9 @@ export class ResourceBotBillingService {
     });
   }
 
-  async release(requestId: string) {
+  async release(requestId: string, tenantId: string) {
     await this.prisma.resourceBotUsageReservation.deleteMany({
-      where: { requestId },
+      where: { requestId, tenantId },
     });
   }
 

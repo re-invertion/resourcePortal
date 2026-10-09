@@ -88,8 +88,12 @@ async function reconcile() {
       .join(",")}`;
   if (digest === lastDigest) return;
 
+  const ipv6ToolAvailable = await commandExists("ip6tables");
+  if (ipv6Rules.length > 0 && !ipv6ToolAvailable) {
+    throw new Error("Tenant IPv6 workload detected but ip6tables is unavailable");
+  }
   await applyFamily("iptables", ipv4Rules);
-  if (await commandExists("ip6tables")) {
+  if (ipv6ToolAvailable) {
     const ipv6ForwardingAvailable = await chainExists(
       "ip6tables",
       "DOCKER-USER",

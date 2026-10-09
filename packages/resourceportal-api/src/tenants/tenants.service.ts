@@ -426,6 +426,7 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     await this.ensureRolesExist(dto.roleIds);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, dto.roleIds);
     const email = normalizeEmail(dto.email);
     const existingMembership = await this.prisma.tenantMembership.findFirst({
       where: {
@@ -511,6 +512,7 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     const existing = await this.findInvitationOrThrow(tenantId, invitationId);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, existing.roleIds);
     const token = randomToken();
 
     const invitation = await this.prisma.$transaction(async (tx) => {
@@ -977,6 +979,7 @@ export class TenantsService {
     const tenant = await this.ensureTenantExists(tenantId);
     const group = await this.findGroupOrThrow(tenantId, groupId);
     await this.ensureRolesExist([dto.roleId]);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, [dto.roleId]);
 
     try {
       const role = await this.prisma.$transaction(async (tx) => {
@@ -1037,6 +1040,7 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     const group = await this.findGroupOrThrow(tenantId, groupId);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, [roleId]);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantGroupRole.delete({
@@ -1078,6 +1082,7 @@ export class TenantsService {
     const tenant = await this.ensureTenantExists(tenantId);
     await this.ensureUserExists(dto.userId);
     await this.ensureRolesExist(dto.roleIds);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, dto.roleIds);
 
     try {
       const membership = await this.prisma.$transaction(async (tx) => {
@@ -1141,10 +1146,19 @@ export class TenantsService {
     if (dto.roleIds !== undefined) {
       await this.ensureRolesExist(dto.roleIds);
     }
-
-    await this.assertLastOwnerIsPreserved(tenantId, existing, dto);
+    await this.assertOwnerRoleChangeAllowed(
+      tenantId,
+      actor,
+      [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
+    );
 
     const membership = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+      const lockedMembership = await tx.tenantMembership.findFirst({
+        where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
+      });
+      if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, dto, tx);
       if (dto.roleIds !== undefined) {
         await tx.membershipRole.deleteMany({
           where: { membershipId },
@@ -1198,12 +1212,20 @@ export class TenantsService {
     const tenant = await this.ensureTenantExists(tenantId);
     const existing = await this.findMembershipOrThrow(tenantId, membershipId);
 
-    await this.assertLastOwnerIsPreserved(tenantId, existing, {
-      status: MembershipStatus.Suspended,
-      roleIds: [],
-    });
-
+    await this.assertOwnerRoleChangeAllowed(
+      tenantId,
+      actor,
+      existing.roles.map(({ role }) => role.id),
+    );
     await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+      const lockedMembership = await tx.tenantMembership.findFirst({
+        where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
+      });
+      if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, {
+        status: MembershipStatus.Suspended, roleIds: [],
+      }, tx);
       await tx.tenantMembership.delete({
         where: { id: membershipId },
       });
@@ -1289,6 +1311,29 @@ export class TenantsService {
     }
   }
 
+  // The tenant-admin permission set must never grant the wildcard Owner role,
+  // including indirectly via group roles or invitation links.
+  private async assertOwnerRoleChangeAllowed(
+    tenantId: string,
+    actor: AuthenticatedUser,
+    roleIds: string[],
+  ) {
+    if (!roleIds.includes(TENANT_OWNER_ROLE_ID)) return;
+    const membership = await this.prisma.tenantMembership.findUnique({
+      where: { userId_tenantId: { userId: actor.id, tenantId } },
+      select: {
+        status: true,
+        roles: { select: { roleId: true } },
+      },
+    });
+    if (
+      membership?.status !== MembershipStatus.Active ||
+      !membership.roles.some((role) => role.roleId === TENANT_OWNER_ROLE_ID)
+    ) {
+      throw new ForbiddenException("Only an active tenant owner can manage Owner roles");
+    }
+  }
+
   private async ensureRolesExist(roleIds: string[]) {
     if (new Set(roleIds).size !== roleIds.length) {
       throw new BadRequestException("Role ids must be unique");
@@ -1351,6 +1396,7 @@ export class TenantsService {
     tenantId: string,
     membership: Awaited<ReturnType<TenantsService["findMembershipOrThrow"]>>,
     dto: Pick<UpdateMembershipDto, "roleIds" | "status">,
+    client: Prisma.TransactionClient = this.prisma,
   ) {
     const currentlyOwner = membership.roles.some(
       ({ role }) => role.id === TENANT_OWNER_ROLE_ID,
@@ -1373,7 +1419,7 @@ export class TenantsService {
       return;
     }
 
-    const otherOwnerCount = await this.prisma.tenantMembership.count({
+    const otherOwnerCount = await client.tenantMembership.count({
       where: {
         tenantId,
         id: { not: membership.id },

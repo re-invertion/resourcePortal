@@ -12,7 +12,8 @@ describe("Stage 19 observability stack", () => {
     expect(stack).toContain("loki:");
     expect(stack).toContain("alloy:");
     expect(stack).toContain("otel-collector:");
-    expect(stack).toContain("4318");
+    expect(stack).not.toMatch(/published:\s*4318/);
+    expect(stack).not.toMatch(/mode:\s*ingress/);
   });
 
   it("contains Prometheus and Alertmanager with ResourcePortal alert rules", () => {

@@ -100,7 +100,7 @@ export class AppGroupsController {
     return this.appGroupsService.getAppGroup(tenantId, appGroupId);
   }
 
-  @RequirePermissions("appgroup.deployment.read")
+  @RequirePermissions("appgroup.deployment.read", "appgroup.update")
   @Get(":appGroupId/stack-preview")
   previewStack(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
@@ -138,7 +138,7 @@ export class AppGroupsController {
     return this.appGroupsService.listDeployments(tenantId, appGroupId);
   }
 
-  @RequirePermissions("appgroup.deployment.read")
+  @RequirePermissions("appgroup.deployment.read", "appgroup.update")
   @Get(":appGroupId/deployments/:deploymentId")
   getDeployment(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,

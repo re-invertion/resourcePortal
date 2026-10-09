@@ -13,6 +13,31 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/auth", "src/security", "src/mcp"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/security"],
   ],
+  "tenant-access": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/tenants", "src/auth/github-security-regressions.spec.ts"],
+  ],
+  "resource-bot": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/resource-bot"],
+  ],
+  "operations": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/operations"],
+  ],
+  "observability": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/observability"],
+  ],
+  "egress": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
+  ],
+  "identity": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/auth/github-security-regressions.spec.ts"],
+  ],
+  "web-proxy": [
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "proxy-target.test.mjs"],
+    ["node", "--check", "packages/resourceportal-web/server.mjs"],
+  ],
+  "runtime-config": [
+    ["docker", "compose", "-f", "docker-compose.yml", "config", "--no-interpolate"],
+  ],
   "networking": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/networking"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
@@ -50,7 +75,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx"],
   ],
   "bug-reports": [
@@ -68,6 +93,17 @@ const commands = {
 };
 
 const classifiers = [
+  [/^config\/observability\//, ["observability"]],
+  [/^docker-compose\.yml$/, ["runtime-config"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.controller\.ts$/, ["applications"]],
+  [/^packages\/resourceportal-api\/src\/identity-providers\//, ["identity"]],
+  [/^packages\/resourceportal-api\/src\/network-egress\//, ["egress", "networking"]],
+  [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],
+  [/^packages\/resourceportal-api\/src\/operations\/operations\.repository\.ts$/, ["operations"]],
+  [/^packages\/resourceportal-api\/src\/prisma\/raw-sql-policy\.spec\.ts$/, ["operations"]],
+  [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
+  [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
+  [/^packages\/resourceportal-web\/server\.mjs$/, ["web-proxy"]],
   [/^packages\/resourceportal-api\/src\/networking\//, ["networking"]],
   [/^packages\/resourceportal-api\/src\/security\//, ["security"]],
   [/^packages\/resourceportal-web\/src\/security\//, ["security"]],

@@ -47,11 +47,7 @@ services:
     configs:
       - source: otel_config
         target: /etc/otel/config.yml
-    ports:
-      - target: 4318
-        published: 4318
-        protocol: tcp
-        mode: ingress
+    # OTLP receiver is private to the observability overlay, never Swarm ingress.
     networks: [observability]
     deploy:
       replicas: 1

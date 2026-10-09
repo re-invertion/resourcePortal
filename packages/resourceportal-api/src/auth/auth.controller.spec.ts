@@ -487,7 +487,7 @@ describe("AuthController cookie flow", () => {
     });
   });
 
-  it("revokes an existing browser session and clears cookies when OIDC callback claims are invalid", async () => {
+  it("preserves an existing session when an unauthenticated OIDC callback fails", async () => {
     const loginResponse = await app.inject({
       method: "GET",
       url: "/api/auth/login",
@@ -514,14 +514,11 @@ describe("AuthController cookie flow", () => {
     expect(response.json()).toMatchObject({
       message: "OIDC email claim is required",
     });
-    expect(prisma.portalSession.updateMany).toHaveBeenCalledWith({
-      where: { id: "session-1", revokedAt: null },
-      data: { revokedAt: expect.any(Date) as Date },
-    });
+    expect(prisma.portalSession.updateMany).not.toHaveBeenCalled();
     const cookies = getSetCookieHeaders(response);
+    expect(cookies.some((cookie) => cookie.startsWith("rp_session=;"))).toBe(false);
+    expect(cookies.some((cookie) => cookie.startsWith("rp_csrf=;"))).toBe(false);
     for (const name of [
-      "rp_session",
-      "rp_csrf",
       "rp_oidc_state",
       "rp_oidc_verifier",
       "rp_oidc_provider",

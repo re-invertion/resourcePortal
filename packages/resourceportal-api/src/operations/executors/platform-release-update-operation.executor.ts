@@ -167,7 +167,12 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     if (
       url.protocol !== "https:" ||
       url.hostname !== "github.com" ||
-      !url.pathname.includes(`/releases/download/v${version}/resourceportal-release-manifest.json`)
+      url.pathname !== `/re-invertion/resourcePortal/releases/download/v${version}/resourceportal-release-manifest.json` ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.port !== "" ||
+      url.search !== "" ||
+      url.hash !== ""
     ) {
       throw new Error("InvalidOperationInput:manifestUrl");
     }

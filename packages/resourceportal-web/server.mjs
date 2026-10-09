@@ -48,12 +48,29 @@ function proxyApi(request, response) {
     upstreamResponse.pipe(response);
   });
 
+  // Use an absolute upstream deadline and propagate client disconnects.
+  const configuredTimeout = Number(process.env.RESOURCE_PORTAL_PROXY_TIMEOUT_MS ?? 30_000);
+  const timeoutMs = Number.isFinite(configuredTimeout)
+    ? Math.max(1_000, Math.min(configuredTimeout, 300_000))
+    : 30_000;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    upstream.destroy(new Error("Resource Portal API proxy timed out"));
+  }, timeoutMs);
+  timer.unref();
+  request.once("aborted", () => upstream.destroy());
+  response.once("close", () => {
+    clearTimeout(timer);
+    if (!response.writableEnded) upstream.destroy();
+  });
   upstream.on("error", (error) => {
+    if (response.destroyed) return;
     console.error("Resource Portal API proxy error", error);
     if (!response.headersSent) {
-      response.statusCode = 502;
+      response.statusCode = timedOut ? 504 : 502;
       response.setHeader("content-type", "text/plain; charset=utf-8");
-      response.end("Resource Portal API is unavailable");
+      response.end(timedOut ? "Resource Portal API timed out" : "Resource Portal API is unavailable");
     } else {
       response.destroy(error);
     }

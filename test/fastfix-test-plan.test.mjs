@@ -85,3 +85,33 @@ test("workflow contract changes stay inside the workflow patch profile", () => {
   assert.deepEqual(plan.profiles, ["workflow"]);
   assert.equal(plan.vpnSmoke, false);
 });
+
+
+test("security and infrastructure hardening selects explicit release gates", () => {
+  const plan = selectProfiles([
+    "config/observability/docker-stack.yml",
+    "docker-compose.yml",
+    "packages/resourceportal-api/src/app-groups/app-groups.controller.ts",
+    "packages/resourceportal-api/src/identity-providers/zitadel-identity-provider.service.ts",
+    "packages/resourceportal-api/src/network-egress/egress-guard.runner.ts",
+    "packages/resourceportal-api/src/observability/observability.controller.ts",
+    "packages/resourceportal-api/src/operations/operations.repository.ts",
+    "packages/resourceportal-api/src/prisma/raw-sql-policy.spec.ts",
+    "packages/resourceportal-api/src/resource-bot/resource-bot-billing.service.ts",
+    "packages/resourceportal-api/src/tenants/tenants.service.ts",
+    "packages/resourceportal-web/server.mjs",
+  ]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.deepEqual(plan.profiles, [
+    "applications",
+    "egress",
+    "identity",
+    "networking",
+    "observability",
+    "operations",
+    "resource-bot",
+    "runtime-config",
+    "tenant-access",
+    "web-proxy",
+  ]);
+});

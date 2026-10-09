@@ -1273,10 +1273,13 @@ export class NetworkingService {
     const agentToken = randomBytes(32).toString("base64url");
     const now = new Date();
     const gate = await this.prisma.$transaction(async (tx) => {
-      await tx.resourcePortalGateEnrollment.update({
-        where: { id: enrollment.id },
+      const claimed = await tx.resourcePortalGateEnrollment.updateMany({
+        where: { id: enrollment.id, usedAt: null, expiresAt: { gt: now } },
         data: { usedAt: now },
       });
+      if (claimed.count !== 1) {
+        throw new UnauthorizedException("ResourcePortalGate enrollment token was already used or expired");
+      }
       return tx.resourcePortalGate.update({
         where: { id: enrollment.gateId },
         data: {

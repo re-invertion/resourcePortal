@@ -158,6 +158,7 @@ async function heartbeat(runtime: DeviceVpnRuntimeConfig) {
   const token = readFileSync(runtime.runtimeTokenPath, "utf8").trim();
   if (!token) throw new Error("Device VPN runtime token is empty");
   const response = await fetch(runtime.heartbeatUrl, {
+    signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -193,6 +194,7 @@ async function main() {
   );
 
   let nextHeartbeat = 0;
+  let heartbeatInFlight: Promise<void> | undefined;
   while (!stopping) {
     try {
       const resolved = reconcileFirewall(runtime);
@@ -205,15 +207,12 @@ async function main() {
       logger.error(error instanceof Error ? error.message : String(error));
     }
 
-    if (Date.now() >= nextHeartbeat) {
+    if (Date.now() >= nextHeartbeat && !heartbeatInFlight) {
       nextHeartbeat = Date.now() + heartbeatMs;
-      try {
-        await heartbeat(runtime);
-      } catch (error) {
-        logger.warn(
-          error instanceof Error ? error.message : String(error),
-        );
-      }
+      // Telemetry cannot postpone safety-critical firewall reconciliation.
+      heartbeatInFlight = heartbeat(runtime)
+        .catch((error) => logger.warn(error instanceof Error ? error.message : String(error)))
+        .finally(() => { heartbeatInFlight = undefined; });
     }
     await new Promise((resolve) => setTimeout(resolve, reconcileMs));
   }
