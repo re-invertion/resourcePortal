@@ -69,6 +69,26 @@ contains "$final" 'RESOURCEPORTAL_GATE_ENDPOINT_HOST: gate.rp.example.com' 'API 
 # therefore ensure the Traefik ACME bind source exists immediately before the
 # stack enables the Traefik replica.
 ingress_prepare_log="$(mktemp /tmp/rp-ingress-prepare.XXXXXX)"
+busybox_stack_template_test() (
+  # A stand-in for BusyBox mktemp on an Ubuntu test host: unlike GNU mktemp,
+  # its template must terminate in six X characters.
+  mktemp() {
+    case "${*: -1}" in
+      *XXXXXX) command mktemp "$@" ;;
+      *) printf 'mktemp: : Invalid argument\n' >&2; return 1 ;;
+    esac
+  }
+  rp_prepare_zitadel_public_config() { :; }
+  rp_recover_zitadel_management_state() { :; }
+  rp_recover_zitadel_cli_client_state() { :; }
+  rp_require_stack_config() { :; }
+  rp_render_stack() { printf 'version: "3.9"\nservices: {}\n'; }
+  rp_wait_control_plane_converged() { :; }
+  docker() { [[ "$1 $2" == 'stack config' || "$1 $2" == 'stack deploy' ]]; }
+  rp_deploy_control_plane final
+)
+status 0 'final stack deploy uses BusyBox-compatible mktemp template' busybox_stack_template_test
+
 original_ingress_deploy="$(declare -f rp_deploy_control_plane)"
 rp_validate_domain_dns(){ return 0; }
 mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
