@@ -35,6 +35,38 @@ cat >"$manifest" <<'JSON'
 }
 JSON
 
+# The updater is based on Alpine: BusyBox mktemp requires XXXXXX at the end
+# of a supplied template. GNU mktemp accepts the old .XXXXXX.yml/.json form,
+# so run a compatibility scan even on Ubuntu CI runners.
+busybox_mktemp_templates_valid() {
+  local file
+  while IFS= read -r file; do
+    if grep -nE 'mktemp[[:space:]][^)]*XXXXXX\.[[:alnum:]]+' "$file"; then
+      printf 'BusyBox-incompatible mktemp template in %s\n' "$file" >&2
+      return 1
+    fi
+  done < <(find "$repo_root/scripts/installer" -name '*.sh' -type f)
+}
+status 0 'installer mktemp templates support Alpine BusyBox' busybox_mktemp_templates_valid
+status 0 'upgrade preflight can create a runtime temporary file' rp_upgrade_check_temporary_files
+recovery_source="$(cat "$repo_root/scripts/upgrade-recovery-from-0.2.68.sh")"
+contains "$recovery_source" 'docker pull "$image"' 'legacy recovery pulls target immutable API image'
+contains "$recovery_source" '"$image" /bin/bash /app/resourceportal-installer/resourceportal-install.sh' 'legacy recovery boots fixed target installer, never installed v0.2.68 image'
+contains "$recovery_source" 'resourceportal.updater=true' 'legacy recovery participates in updater concurrency guard'
+contains "$recovery_source" 'docker wait "$container"' 'legacy recovery observes detached installer result'
+
+
+upgrade_temp_fail_closed() (
+  mktemp() { printf 'simulated mktemp error\n' >&2; return 1; }
+  # Critical dependencies must not be quiesced if runtime temp files fail.
+  rp_upgrade_quiesce_database_clients() {
+    printf 'unsafe: quiesced services before temp preflight\n' >&2
+    return 0
+  }
+  rp_upgrade_apply "$manifest" "$manifest"
+)
+status 1 'upgrade aborts before changing running services if mktemp fails' upgrade_temp_fail_closed
+
 status 0 'valid release manifest accepted' rp_validate_release_manifest "$manifest"
 eq '0.2.0' "$(rp_manifest_value "$manifest" '.version')" 'reads release version'
 

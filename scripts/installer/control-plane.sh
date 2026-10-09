@@ -222,7 +222,7 @@ rp_deploy_control_plane() {
     }
     rp_require_stack_config final || return 1
   fi
-  stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX.yml)" || return 1
+  stack_file="$(mktemp /tmp/resourceportal-stack.XXXXXX)" || return 1
   if ! rp_render_stack "$state" >"$stack_file"; then
     rm -f "$stack_file"
     return 1

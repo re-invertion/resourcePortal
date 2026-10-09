@@ -81,7 +81,7 @@ rp_ensure_versioned_swarm_config() {
 rp_prepare_zitadel_public_config() {
   local target="${RP_ZITADEL_PUBLIC_CONFIG_PATH:-/etc/resourceportal/zitadel-config.yaml}" tmp ref
   [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || return 1
-  tmp="$(mktemp /tmp/resourceportal-zitadel-public.XXXXXX.yaml)" || return 1
+  tmp="$(mktemp /tmp/resourceportal-zitadel-public.XXXXXX)" || return 1
   if ! rp_render_zitadel_public_config "$RP_CFG_ZITADEL_DOMAIN" >"$tmp"; then
     rm -f "$tmp"
     return 1

@@ -66,6 +66,7 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "applications",
     "bug-reports",
     "domains",
+    "installer",
     "networking",
     "platform-admin-ui",
     "platform-release",
@@ -120,4 +121,20 @@ test("security and infrastructure hardening selects explicit release gates", () 
 test("app creation wizard test is classified in release scopes", () => {
   const plan = selectProfiles(["packages/resourceportal-web/src/pages/app-group/create-app-wizard.test.tsx"]);
   assert.deepEqual(plan.profiles, ["applications"]);
+});
+
+
+test("BusyBox installer hotfix executes upgrade and control-plane regression coverage", () => {
+  const plan = selectProfiles([
+    "scripts/installer/control-plane.sh",
+    "scripts/installer/identity.sh",
+    "scripts/installer/lifecycle.sh",
+    "scripts/installer/smtp.sh",
+    "scripts/installer/upgrade.sh",
+    "scripts/upgrade-recovery-from-0.2.68.sh",
+    "test/installer/test-releases.sh",
+    "test/installer/test-control-plane.sh",
+  ]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.deepEqual(plan.profiles, ["installer", "platform-release"]);
 });
