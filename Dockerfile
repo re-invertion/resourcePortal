@@ -1,4 +1,5 @@
-FROM node:24-alpine AS dependencies
+ARG RP_NODE_BASE_IMAGE=node:24-alpine
+FROM ${RP_NODE_BASE_IMAGE} AS dependencies
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -12,7 +13,7 @@ COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/pa
 COPY packages/resourceportal-api/prisma ./packages/resourceportal-api/prisma
 RUN npm ci --workspace @resource-portal/api --include-workspace-root=false
 
-FROM node:24-alpine AS production-dependencies
+FROM ${RP_NODE_BASE_IMAGE} AS production-dependencies
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -22,7 +23,7 @@ COPY packages/resourceportal-sdk/package.json ./packages/resourceportal-sdk/pack
 COPY packages/resourceportal-help/package.json ./packages/resourceportal-help/package.json
 RUN npm ci --omit=dev --ignore-scripts --workspace @resource-portal/api --include-workspace-root=false
 
-FROM node:24-alpine AS build
+FROM ${RP_NODE_BASE_IMAGE} AS build
 WORKDIR /app/packages/resourceportal-api
 
 COPY --from=dependencies /app/node_modules /app/node_modules
@@ -37,7 +38,7 @@ COPY packages/resourceportal-help /app/packages/resourceportal-help
 RUN npm run prisma:generate
 RUN npm run build
 
-FROM node:24-alpine AS runtime
+FROM ${RP_NODE_BASE_IMAGE} AS runtime
 LABEL org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"
 WORKDIR /app/packages/resourceportal-api
 
