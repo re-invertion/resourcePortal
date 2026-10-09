@@ -305,6 +305,7 @@ export class ZitadelIdentityProviderService {
     ignoredErrorMessages: string[] = [],
   ): Promise<T> {
     const response = await fetch(`${this.baseUrl()}${path}`, {
+      signal: AbortSignal.timeout(10_000),
       method,
       headers: {
         authorization: `Bearer ${this.managementToken()}`,

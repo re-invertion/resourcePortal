@@ -33,6 +33,7 @@ export class McpOAuthDcrService {
 
   async register(metadata: unknown, authorization?: string): Promise<DcrResult> {
     const response = await fetch(`${this.internalUrl()}/oauth/v2/register`, {
+      signal: AbortSignal.timeout(10_000),
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -134,6 +135,7 @@ export class McpOAuthDcrService {
     extraHeaders: Record<string, string> = {},
   ): Promise<T> {
     const response = await fetch(`${this.internalUrl()}${path}`, {
+      signal: AbortSignal.timeout(10_000),
       method,
       headers: {
         authorization: `Bearer ${this.managementToken()}`,
@@ -157,6 +159,7 @@ export class McpOAuthDcrService {
     if (!registration.registration_access_token || !registration.registration_client_uri) return;
     const path = new URL(registration.registration_client_uri).pathname;
     await fetch(`${this.internalUrl()}${path}`, {
+      signal: AbortSignal.timeout(10_000),
       method: "DELETE",
       headers: {
         authorization: `Bearer ${registration.registration_access_token}`,

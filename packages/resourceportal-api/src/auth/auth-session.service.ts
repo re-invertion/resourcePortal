@@ -411,6 +411,7 @@ export class AuthSessionService {
     }
 
     const response = await fetch(discovery.tokenEndpoint, {
+      signal: AbortSignal.timeout(10_000),
       method: "POST",
       headers,
       body,

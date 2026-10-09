@@ -426,7 +426,12 @@ export class AppGroupsService {
       orderBy: { version: "desc" },
     });
 
-    return deployments.map(mapAppGroupDeployment);
+    // Deployment summaries are readable by viewers, but stackConfig may contain
+    // environment variable values and full application config snapshots.
+    return deployments.map((deployment) => ({
+      ...deployment,
+      stackConfig: null,
+    }));
   }
 
   async getDeployment(

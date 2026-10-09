@@ -40,6 +40,8 @@ const allowedRawSqlFiles = new Set([
   "storage-backends/storage-backend.store.ts",
   // Tenant quota advisory transaction lock.
   "tenants/quota-concurrency.ts",
+  // Tenant owner row lock serializes owner-role removals.
+  "tenants/tenants.service.ts",
   // Reservation calculation using pending-or-current volume size in one query.
   "volumes/volumes.service.ts",
 ]);

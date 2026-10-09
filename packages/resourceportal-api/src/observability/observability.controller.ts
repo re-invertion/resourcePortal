@@ -1,11 +1,10 @@
 import { Controller, Get, Header, UseGuards } from "@nestjs/common";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
-import { Public } from "../auth/public.decorator";
 import { AllowDuringPlatformMaintenance } from "../platform-maintenance/allow-during-platform-maintenance.decorator";
 import { ObservabilityService } from "./observability.service";
 import { WorkerRuntimeObservabilityService } from "./worker-runtime-observability.service";
 
-@Public()
+@UseGuards(PlatformAdminGuard)
 @AllowDuringPlatformMaintenance()
 @Controller("metrics")
 export class ObservabilityController {

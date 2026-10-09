@@ -180,7 +180,7 @@ export class ResourceBotChatService {
       };
     } catch (error) {
       if (reservationCreated) {
-        await this.billing.release(requestId).catch(() => undefined);
+        await this.billing.release(requestId, tenantId).catch(() => undefined);
       }
       this.observability.recordResourceBotRequest("error");
       throw error;

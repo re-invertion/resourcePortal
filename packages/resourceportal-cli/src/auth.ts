@@ -116,6 +116,7 @@ export async function logout(): Promise<{ status: "LoggedOut"; warning?: string 
       const token = config.auth.refreshToken ?? config.token;
       if (token) {
         const response = await fetch(config.auth.revocationEndpoint, {
+          signal: AbortSignal.timeout(10_000),
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -178,6 +179,7 @@ async function refreshDeviceAuth(
   auth: CliAuthMetadata,
 ): Promise<{ token: string }> {
   const response = await fetch(auth.tokenEndpoint, {
+    signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -289,7 +291,7 @@ function normalizeApiUrl(apiUrl: string) {
 }
 
 async function fetchCliAuthConfig(apiUrl: string): Promise<CliAuthConfigResponse> {
-  const response = await fetch(`${apiUrl}/auth/cli-config`);
+  const response = await fetch(`${apiUrl}/auth/cli-config`, { signal: AbortSignal.timeout(10_000) });
   const payload = await responseJson(response, "Resource Portal CLI authentication configuration is invalid");
   if (!response.ok) {
     throw new Error(`Resource Portal CLI authentication is unavailable (HTTP ${response.status})`);
@@ -310,7 +312,7 @@ async function fetchCliAuthConfig(apiUrl: string): Promise<CliAuthConfigResponse
 }
 
 async function fetchOidcDiscovery(issuer: string): Promise<OidcDiscoveryResponse> {
-  const response = await fetch(`${issuer}/.well-known/openid-configuration`);
+  const response = await fetch(`${issuer}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(10_000) });
   const payload = await responseJson(response, "OIDC discovery document is invalid");
   if (!response.ok || !isRecord(payload)) {
     throw new Error("OIDC discovery document is unavailable");
@@ -338,6 +340,7 @@ async function requestDeviceAuthorization(
   cliConfig: CliAuthConfigResponse,
 ): Promise<DeviceAuthorizationResponse> {
   const response = await fetch(discovery.deviceAuthorizationEndpoint, {
+    signal: AbortSignal.timeout(10_000),
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -384,6 +387,7 @@ async function pollDeviceToken(
       break;
     }
     const response = await fetch(discovery.tokenEndpoint, {
+      signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, deadline - runtime.now()))),
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

@@ -34,7 +34,7 @@ function fixture(overrides: Record<string, any> = {}) {
     resourcePortalGateEnrollment: {
       create: vi.fn(),
       update: vi.fn(),
-      updateMany: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     gateNetworkAttachment: {
       create: vi.fn(),

@@ -106,6 +106,9 @@ export class DevAuthGuard implements CanActivate {
         return true;
       }
 
+      if (principal.user.status !== UserStatus.Active) {
+        throw new UnauthorizedException("Active user is required");
+      }
       request.user = principal.user;
       return true;
     }

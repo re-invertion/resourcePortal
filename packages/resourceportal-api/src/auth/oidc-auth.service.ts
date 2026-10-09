@@ -130,6 +130,7 @@ export class OidcAuthService {
     }
 
     const response = await fetch(discovery.userInfoEndpoint, {
+      signal: AbortSignal.timeout(10_000),
       headers: { authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -214,9 +215,9 @@ export class OidcAuthService {
       }
 
       const status =
-        existingIdentity.user.status === UserStatus.Pending
-          ? verificationStatus
-          : existingIdentity.user.status;
+        existingIdentity.user.status === UserStatus.Suspended
+          ? UserStatus.Suspended
+          : verificationStatus;
 
       return this.prisma.user.update({
         where: { id: existingIdentity.userId },
@@ -299,13 +300,21 @@ export class OidcAuthService {
   async getDiscovery(): Promise<OidcDiscovery> {
     if (this.discovery) return this.discovery;
     this.discoveryPromise ??= this.fetchDiscovery();
-    this.discovery = await this.discoveryPromise;
-    return this.discovery;
+    try {
+      this.discovery = await this.discoveryPromise;
+      return this.discovery;
+    } catch (error) {
+      // A transient IdP outage must not permanently poison discovery until restart.
+      this.discoveryPromise = undefined;
+      throw error;
+    }
   }
 
   private async fetchDiscovery(): Promise<OidcDiscovery> {
     const issuer = this.getIssuer();
-    const response = await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
+    const response = await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!response.ok) {
       throw new UnauthorizedException("OIDC discovery document is unavailable");
     }

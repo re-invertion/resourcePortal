@@ -649,28 +649,43 @@ export class TenantMcpProtocolService {
     if (requestId) headers["x-request-id"] = requestId;
     if (correlationId) headers["x-correlation-id"] = correlationId;
 
-    const response = await fetch(target, { method, headers });
-    const text = await response.text();
-    const boundedText =
-      Buffer.byteLength(text, "utf8") > maxToolResponseBytes
-        ? `${text.slice(0, maxToolResponseBytes)}\n...[response truncated at 1 MiB]`
-        : text;
-    let payload: unknown = boundedText;
-    if (boundedText) {
-      try {
-        payload = JSON.parse(boundedText);
-      } catch {
-        payload = boundedText;
-      }
-    } else {
-      payload = null;
-    }
+    const response = await fetch(target, { method, headers, signal: AbortSignal.timeout(15_000) });
+    const payload = await this.boundedApiPayload(response);
 
     return {
       status: response.status,
       ok: response.ok,
       payload,
     };
+  }
+
+  private async boundedApiPayload(response: Response): Promise<unknown> {
+    if (!response.body) return null;
+    const reader = response.body.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    let truncated = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const remaining = maxToolResponseBytes - size;
+        if (value.byteLength > remaining) {
+          if (remaining > 0) chunks.push(value.subarray(0, remaining));
+          truncated = true;
+          await reader.cancel();
+          break;
+        }
+        chunks.push(value);
+        size += value.byteLength;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (truncated) return `${text}\n...[response truncated at 1 MiB]`;
+    if (!text) return null;
+    try { return JSON.parse(text) as unknown; } catch { return text; }
   }
 
   private async recordToolCall(
@@ -748,26 +763,13 @@ export class TenantMcpProtocolService {
     const response = await fetch(target, {
       method,
       headers,
+      signal: AbortSignal.timeout(15_000),
       body:
         body !== undefined && method !== "GET"
           ? JSON.stringify(body)
           : undefined,
     });
-    const text = await response.text();
-    const boundedText =
-      Buffer.byteLength(text, "utf8") > maxToolResponseBytes
-        ? `${text.slice(0, maxToolResponseBytes)}\n...[response truncated at 1 MiB]`
-        : text;
-    let payload: unknown = boundedText;
-    if (boundedText) {
-      try {
-        payload = JSON.parse(boundedText);
-      } catch {
-        payload = boundedText;
-      }
-    } else {
-      payload = null;
-    }
+    const payload = await this.boundedApiPayload(response);
 
     return {
       status: response.status,

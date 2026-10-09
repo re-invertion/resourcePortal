@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -412,5 +412,24 @@ export async function createOperationWithClient(
   if (!operation) {
     throw new Error("Operation could not be created or resolved idempotently");
   }
+  // Idempotency only applies to a replay of the same operation, not to
+  // different resources or inputs accidentally sharing a client key.
+  if (idempotencyKey && operation.id !== id && (
+    operation.resourceType !== input.resourceType ||
+    operation.resourceId !== resourceId ||
+    operation.createdBy !== input.createdBy ||
+    canonicalJson(operation.input) !== canonicalJson(input.input ?? {})
+  )) {
+    throw new ConflictException("Idempotency-Key was already used for a different operation");
+  }
   return operation;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

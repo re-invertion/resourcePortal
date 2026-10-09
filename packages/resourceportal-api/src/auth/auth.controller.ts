@@ -176,7 +176,8 @@ export class AuthController {
         this.getSignedCookie(request, providerCookieName),
       );
     } catch (error) {
-      await this.sessions.invalidateRequestSession(request, reply);
+      // A failed public callback is not authenticated and must not revoke the
+      // browser's unrelated existing session.
       this.clearOidcCallbackCookies(reply);
       throw error;
     }
