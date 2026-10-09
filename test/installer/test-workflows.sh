@@ -71,5 +71,6 @@ federation_zitadel_version="$(grep -oE 'ZITADEL_VERSION: v[0-9]+\.[0-9]+\.[0-9]+
 if [[ "$release_zitadel_version" == "$federation_zitadel_version" ]]; then pass 'Release and federation pin the same ZITADEL version'; else printf 'release=%s federation=%s\n' "$release_zitadel_version" "$federation_zitadel_version" >&2; fail 'Release and federation pin the same ZITADEL version'; fi
 contains_file "$repo_root/.github/workflows/release.yml" 'ghcr.io/zitadel/zitadel:v4.17.0' 'Release pins ZITADEL with Dynamic Client Registration support'
 
+contains_file "$repo_root/.github/workflows/release.yml" 'assets+=(resourceportal-upgrade-recovery.sh)' 'v0.2.71 publishes legacy updater recovery asset'
 if (( failures > 0 )); then printf '%s workflow test(s) failed\n' "$failures" >&2; exit 1; fi
 printf 'All installer workflow contract tests passed.\n'
