@@ -74,6 +74,22 @@ ResourcePortal production images are published in GHCR with `org.opencontainers.
 
 Upgrade consumes a release manifest containing exact image digests, installer compatibility, minimum Docker version, config schema and migration rollback policy. `latest` is rejected. Images are pulled before migration/deploy. Automatic rollback is refused when the selected release declares an irreversible migration policy.
 
+### Recovery from v0.2.68 (issue #242)
+
+The platform-update worker in v0.2.68 starts the updater from its **own runtime image**, not the target release. This means the installer embedded in v0.2.68 still uses GNU-style `mktemp /tmp/name.XXXXXX.yml`, which fails in Alpine BusyBox, even when the *target* is v0.2.71. Publishing a corrected installer alone cannot make the old worker switch its runtime.
+
+After confirming the original installation is operational, use the version-pinned recovery script **on the ResourcePortal Swarm manager** to run the v0.2.71 installer directly from its immutable API-image digest. The script is published as a GitHub Release asset; review it before execution. It requires root, Docker, curl, jq, the configured storage quota block device and a working manager. It checks for concurrent platform updaters and refuses to run if prerequisites are missing.
+
+```bash
+curl -fL --proto '=https' --proto-redir '=https' \
+  -o resourceportal-upgrade-recovery.sh \
+  https://github.com/re-invertion/resourcePortal/releases/download/v0.2.71/resourceportal-upgrade-recovery.sh
+# Inspect the downloaded script before executing it.
+sudo bash ./resourceportal-upgrade-recovery.sh --confirm
+```
+
+This is a **manual recovery operation**, not an instruction to reset or reinstall the platform. It preserves the persistent data volumes and invokes the same installer upgrade checks. The container is left available for inspection if it fails. Verify API version and readiness after completion. Do not run the legacy UI update and this recovery command simultaneously.
+
 ## Reconfigure
 
 Supported v1 reconfiguration is deliberately controlled. The installer supports domain/ACME changes, SMTP validation, versioned rotation of the cookie signing secret and internal worker token, manager control-plane/ingress participation, and safe local Swarm/NFS address migration using drain/remount sequencing. Storage data migrations are not performed automatically.
