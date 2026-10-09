@@ -43,7 +43,7 @@ npm run build
 | Patch tag | Scope validation against previous release tag, CLI package and image checks |
 | Milestone tag | Full static/unit/build plus installer, federation and real Swarm before publish |
 
-Unknown source paths outside supported source areas fail closed; new API/Web modules default to **full workspace tests** to prevent silent under-testing. Root-level workflow and test infrastructure files trigger control-plane regression.
+Any newly introduced API/Web source path without an explicit classifier **fails closed**. Register a reviewed profile that includes all required unit, integration and real-runtime smoke gates before using Fast Fix. A full workspace unit-test fallback is not a substitute for VPN dataplane or other system tests. Root-level workflow and test infrastructure files trigger control-plane regression.
 
 ## Test quality checklist
 

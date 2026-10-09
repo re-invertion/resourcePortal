@@ -13,8 +13,6 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/auth", "src/security", "src/mcp"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/security"],
   ],
-  "api-general": [["npm", "--workspace", "@resource-portal/api", "test"]],
-  "web-general": [["npm", "--workspace", "@resource-portal/web", "test"]],
   "networking": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/networking"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
@@ -99,8 +97,6 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/(device-vpn|tenant-networking|help)/, ["web-console"]],
   [/^packages\/resourceportal-web\/src\/components\/tenant-section-tabs\.tsx$/, ["web-console"]],
   [/^packages\/resourceportal-web\/package\.json$/, ["web-console"]],
-  [/^packages\/resourceportal-api\//, ["api-general"]],
-  [/^packages\/resourceportal-web\//, ["web-general"]],
   [/^scripts\/installer\/upgrade\.sh$/, ["platform-release"]],
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],

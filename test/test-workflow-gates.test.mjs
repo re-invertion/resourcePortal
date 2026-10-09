@@ -38,3 +38,11 @@ test('milestone release runs complete lint, test and build suite',()=>{
   assert.match(step.run,/npm run test/);
   assert.match(step.run,/npm run build/);
 });
+
+test('called milestone gates cannot be suppressed by fastfix-tag commit messages',()=>{
+  for(const name of ['swarm-integration.yml','federation-integration.yml','production-installer.yml']){
+    const workflow=load(name);
+    const job=Object.values(workflow.jobs)[0];
+    assert.match(job.if,/startsWith\(github\.ref, 'refs\/tags\/v'\)/,name);
+  }
+});

@@ -24,8 +24,15 @@ test("security runtime changes select security tests (never silently skipped)", 
 test("unregistered root-level changes still fail closed", () => {
   assert.throws(() => selectProfiles(["new-unmapped-runtime/entry.ts"]), /unclassified changes/);
 });
-test("unregistered API modules safely fall back to full API tests", () => {
-  assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/new-domain/new.service.ts"]).profiles, ["api-general"]);
+test("unregistered API and Web modules fail closed instead of bypassing runtime coverage", () => {
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/new-vpn/device-vpn.ts"]),
+    /unclassified changes/,
+  );
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/new-network/route.tsx"]),
+    /unclassified changes/,
+  );
 });
 
 test("MCP OAuth patch chooses the existing targeted regression suite", () => {
