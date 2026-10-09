@@ -88,6 +88,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/platform-infrastructure/platform-release.service.spec.ts", "src/operations/executors/platform-release-update-operation.executor.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx"],
     ["bash", "test/installer/test-releases.sh"],
+    ["bash", "test/installer/test-control-plane.sh"],
     ["bash", "test/installer/test-packaging.sh"],
   ],
 };
@@ -134,7 +135,9 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/(device-vpn|tenant-networking|help)/, ["web-console"]],
   [/^packages\/resourceportal-web\/src\/components\/tenant-section-tabs\.tsx$/, ["web-console"]],
   [/^packages\/resourceportal-web\/package\.json$/, ["web-console"]],
-  [/^scripts\/installer\/upgrade\.sh$/, ["platform-release"]],
+  [/^scripts\/installer\/(control-plane|identity|lifecycle|smtp|upgrade)\.sh$/, ["platform-release", "installer"]],
+  [/^scripts\/upgrade-recovery-from-0\.2\.68\.sh$/, ["platform-release", "installer"]],
+  [/^test\/installer\/test-(releases|control-plane)\.sh$/, ["platform-release", "installer"]],
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],
   [/^test\/installer\/test-(host-runtime|diagnostics)\.sh$/, ["installer"]],
