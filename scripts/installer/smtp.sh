@@ -12,8 +12,8 @@ rp_test_smtp() {
   if [[ -n "$username" ]]; then
     [[ "$password_file" == /* && -r "$password_file" ]] || return 1
   fi
-  config="$(mktemp /tmp/resourceportal-smtp.XXXXXX.conf)"
-  message="$(mktemp /tmp/resourceportal-smtp.XXXXXX.eml)"
+  config="$(mktemp /tmp/resourceportal-smtp.XXXXXX)"
+  message="$(mktemp /tmp/resourceportal-smtp.XXXXXX)"
   chmod 0600 "$config" "$message"
   trap 'rm -f "$config" "$message"' RETURN
 
