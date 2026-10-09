@@ -255,6 +255,11 @@ jobs:
             "cli-release/resource-portal-cli-${VERSION}.tgz"
             cli-release/SHA256SUMS
           )
+          if [[ "$VERSION" == "0.2.71" ]]; then
+            cp scripts/upgrade-recovery-from-0.2.68.sh resourceportal-upgrade-recovery.sh
+            chmod 0755 resourceportal-upgrade-recovery.sh
+            assets+=(resourceportal-upgrade-recovery.sh)
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
