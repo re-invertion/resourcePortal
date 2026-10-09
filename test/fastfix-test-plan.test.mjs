@@ -115,3 +115,9 @@ test("security and infrastructure hardening selects explicit release gates", () 
     "web-proxy",
   ]);
 });
+
+
+test("app creation wizard test is classified in release scopes", () => {
+  const plan = selectProfiles(["packages/resourceportal-web/src/pages/app-group/create-app-wizard.test.tsx"]);
+  assert.deepEqual(plan.profiles, ["applications"]);
+});
