@@ -40,9 +40,31 @@ if (process.argv[1]?.endsWith("/next-main-release.mjs")) {
   if (ancestor.status !== 0) {
     throw new Error("Latest published tag is not an ancestor of main");
   }
+  const publishedCommit = shell("git", ["rev-list", "-n", "1", publishedTag]);
   const tags = shell("git", ["tag", "--list", "v*"]).split("\n").filter(Boolean);
   const milestones = JSON.parse(readFileSync("config/release-milestones.json", "utf8")).milestones ?? [];
-  const plan = nextMainRelease(tags, publishedTag, milestones);
+  // An Actions re-run of an already published SHA is a verified no-op.
+  // Without this guard the allocator could create a second patch for the same merge.
+  let plan;
+  if (publishedCommit === target) {
+    const publishedAssets = JSON.parse(shell("gh", [
+      "api", `repos/${process.env.GITHUB_REPOSITORY}/releases/tags/${publishedTag}`,
+      "--jq", ".assets | map(.name)",
+    ]));
+    const version = publishedTag.slice(1);
+    for (const name of [
+      `resource-portal-cli-${version}.tgz`,
+      "resourceportal-release-manifest.json",
+      "SHA256SUMS",
+    ]) {
+      if (!publishedAssets.includes(name)) {
+        throw new Error(`Published release is incomplete (${name} missing); fail closed`);
+      }
+    }
+    plan = { version, previousTag: publishedTag, mode: "published" };
+  } else {
+    plan = nextMainRelease(tags, publishedTag, milestones);
+  }
   console.log(JSON.stringify({ ...plan, target }));
   const index = process.argv.indexOf("--github-output");
   if (index >= 0) {
