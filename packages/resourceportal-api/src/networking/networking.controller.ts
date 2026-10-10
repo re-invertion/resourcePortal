@@ -28,6 +28,7 @@ import { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-heartbeat
 import { CreateNetworkDto } from "./dto/create-network.dto";
 import { GateEnrollDto } from "./dto/gate-enroll.dto";
 import { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
 import { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import { UpdateNetworkDto } from "./dto/update-network.dto";
 import { resourcePortalGateInstallerScript } from "./gate-installer";
@@ -174,6 +175,17 @@ export class NetworkingController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.networking.createGateEnrollment(tenantId, gateId, actor);
+  }
+
+  @RequirePermissions("gate.manage")
+  @Patch("gates/:gateId/firewall")
+  updateGateFirewall(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("gateId", ParseUUIDPipe) gateId: string,
+    @Body() dto: UpdateGateFirewallDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.updateGateFirewall(tenantId, gateId, dto, actor);
   }
 
   @RequirePermissions("gate.manage")

@@ -119,6 +119,8 @@ export type GateResource = {
   description?: string | null;
   status: string;
   configRevision: number;
+  allowLanToRp?: boolean;
+  allowRpToLan?: boolean;
   serverListenPort?: number | null;
   clientTunnelAddress?: string | null;
   serverTunnelAddress?: string | null;

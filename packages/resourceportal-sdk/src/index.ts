@@ -32,6 +32,8 @@ export type ResourcePortalGate = {
   description?: string | null;
   status: string;
   configRevision: number;
+  allowLanToRp: boolean;
+  allowRpToLan: boolean;
   serverListenPort?: number | null;
   clientTunnelAddress?: string | null;
   serverTunnelAddress?: string | null;
@@ -515,6 +517,15 @@ export class ResourcePortalClient {
       this.request(
         `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/enrollment`,
         { method: "POST" },
+      ),
+    updateGateFirewall: (
+      tenantId: string,
+      gateId: string,
+      body: { allowLanToRp: boolean; allowRpToLan: boolean; expectedRevision: number },
+    ) =>
+      this.request<ResourcePortalGate>(
+        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/firewall`,
+        { method: "PATCH", body },
       ),
     updateGateRouting: (
       tenantId: string,

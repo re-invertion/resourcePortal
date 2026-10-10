@@ -121,6 +121,10 @@ function reconcileFirewall(runtime: GateRuntimeConfig) {
 
 async function main() {
   const runtime = config();
+  // Load the deny-by-default policy before bringing up WireGuard.
+  // Otherwise first startup can briefly forward unauthorized tunnel traffic.
+  setupFirewall();
+  reconcileFirewall(runtime);
   for (const [command, args, allowFailure] of wireGuardSetupCommands(
     runtime,
     interfaceName,
@@ -133,7 +137,6 @@ async function main() {
       "ResourcePortalGate requires net.ipv4.ip_forward=1 in its network namespace",
     );
   }
-  setupFirewall();
   logger.log(
     `Gate ${runtime.gateId} listening UDP/${runtime.listenPort} mappings=${runtime.mappings.length}`,
   );

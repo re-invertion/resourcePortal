@@ -121,3 +121,40 @@ describe("ResourcePortalGate runtime", () => {
     ]);
   });
 });
+
+describe("Site VPN directional firewall", () => {
+  const resolved = new Map([["rp-att-attachment-1", "10.200.12.21"]]);
+
+  it("preserves LAN→RP by default while blocking RP→LAN initiation", () => {
+    const rules = firewallRules(config, resolved);
+    expect(rules.dnat).toHaveLength(1);
+    expect(rules.forward.some((r) => r.includes("NEW") && r.includes("-i") && r.includes("wg0"))).toBe(true);
+    expect(rules.forward.some((r) => r.includes("NEW") && r.includes("-o") && r.includes("wg0"))).toBe(false);
+  });
+
+  it("blocks LAN→RP when disabled, while preserving established reply traffic", () => {
+    const rules = firewallRules({ ...config, allowLanToRp: false }, resolved);
+    expect(rules.dnat).toHaveLength(0);
+    expect(rules.forward.filter((r) => r.includes("NEW"))).toHaveLength(0);
+    expect(rules.forward.some((r) => r.includes("ESTABLISHED,RELATED"))).toBe(true);
+  });
+
+  it("permits RP→LAN only for attached overlays and reported LAN CIDRs using tunnel SNAT", () => {
+    const rules = firewallRules({
+      ...config,
+      allowLanToRp: false,
+      allowRpToLan: true,
+      rpOverlayCidrs: ["10.200.12.0/24"],
+    }, resolved);
+    expect(rules.dnat).toHaveLength(0);
+    expect(rules.forward).toContainEqual([
+      "-A", "RP-GATE-FWD", "-o", "wg0", "-s", "10.200.12.0/24",
+      "-d", "192.168.50.0/24", "-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT",
+    ]);
+    expect(rules.snat).toContainEqual([
+      "-A", "RP-GATE-SNAT", "-o", "wg0", "-s", "10.200.12.0/24",
+      "-d", "192.168.50.0/24", "-j", "SNAT", "--to-source", "10.253.0.1",
+    ]);
+    expect(rules.forward.some((r) => r.includes("0.0.0.0/0"))).toBe(false);
+  });
+});

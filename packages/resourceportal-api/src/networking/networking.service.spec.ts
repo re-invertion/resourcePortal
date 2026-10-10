@@ -773,3 +773,77 @@ describe("NetworkingService control plane", () => {
   });
 
 });
+describe("Site VPN firewall policy API", () => {
+  const gateId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const tenantId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const gate = {
+    id: gateId, tenantId, name: "Home LAN", revokedAt: null,
+    lanCidrs: ["192.168.50.0/24"], agentVersion: "gate-shell-v3",
+    allowLanToRp: true, allowRpToLan: false, configRevision: 3,
+  };
+
+  it("rejects enabling RP → LAN on a legacy agent", async () => {
+    const { service, prisma } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({ ...gate, agentVersion: "gate-shell-v2" });
+    await expect(service.updateGateFirewall(tenantId, gateId, {
+      allowLanToRp: true, allowRpToLan: true, expectedRevision: 3,
+    }, actor)).rejects.toThrow(/agent v3/);
+  });
+
+  it("rejects RP → LAN without a reported LAN prefix", async () => {
+    const { service, prisma } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({ ...gate, lanCidrs: [] });
+    await expect(service.updateGateFirewall(tenantId, gateId, {
+      allowLanToRp: true, allowRpToLan: true, expectedRevision: 3,
+    }, actor)).rejects.toThrow(/LAN CIDRs/);
+  });
+
+  it("updates flags with revision check and records a tenant-scoped audit", async () => {
+    const { service, prisma, tx } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
+    (tx.resourcePortalGate as any).updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    (tx.resourcePortalGate as any).findUniqueOrThrow = vi.fn().mockResolvedValue({
+      ...gate, allowLanToRp: false, allowRpToLan: true, configRevision: 4,
+    });
+    const result = await service.updateGateFirewall(tenantId, gateId, {
+      allowLanToRp: false, allowRpToLan: true, expectedRevision: 3,
+    }, actor);
+    expect(result).toMatchObject({ allowLanToRp: false, allowRpToLan: true, configRevision: 4 });
+    expect((tx.resourcePortalGate as any).updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: gateId, tenantId, revokedAt: null, configRevision: 3 },
+    }));
+    expect(tx.auditLogEntry.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ tenantId, action: "gate.firewall.update" }),
+    }));
+  });
+
+  it("prevents concurrent stale updates", async () => {
+    const { service, prisma, tx } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
+    (tx.resourcePortalGate as any).updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    await expect(service.updateGateFirewall(tenantId, gateId, {
+      allowLanToRp: false, allowRpToLan: false, expectedRevision: 3,
+    }, actor)).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe("Site VPN agent re-enrollment safety", () => {
+  it("resets RP → LAN authorization when the agent identity is rotated", async () => {
+    const { service, prisma, tx } = fixture();
+    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      tenantId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      name: "Home LAN", revokedAt: null,
+      allowRpToLan: true,
+    });
+    const result = await service.createGateEnrollment(
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      actor,
+    );
+    expect(result.enrollment.token).toBeTruthy();
+    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ allowRpToLan: false, agentVersion: null }),
+    }));
+  });
+});

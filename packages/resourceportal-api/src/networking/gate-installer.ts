@@ -5,7 +5,7 @@ set -euo pipefail
 API_URL=""
 ENROLLMENT_TOKEN=""
 INTERVAL="30"
-AGENT_VERSION="gate-shell-v2"
+AGENT_VERSION="gate-shell-v3"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
@@ -117,9 +117,10 @@ PRIVATE_KEY="/etc/resourceportal-gate/private.key"
 WG_CONF="/etc/wireguard/rp-gate.conf"
 WG_INTERFACE="rp-gate"
 FIREWALL_CHAIN="RP-GATE-LAN"
+LAN_SNAT_CHAIN="RP-GATE-LAN-SNAT"
 TUNNEL_UP_FILE="/run/resourceportal-gate-last-up"
 HANDSHAKE_STALE_SECONDS="90"
-AGENT_VERSION="gate-shell-v2"
+AGENT_VERSION="gate-shell-v3"
 FRR_CONFIG="/etc/frr/frr.conf"
 FRR_DAEMONS="/etc/frr/daemons"
 FRR_BEGIN="! BEGIN RESOURCEPORTAL-GATE"
@@ -180,27 +181,73 @@ ensure_tunnel_health() {
 sync_firewall() {
   local lan_cidrs="$1"
   local allowed_ips="$2"
+  local allow_lan_to_rp="$3"
+  local allow_rp_to_lan="$4"
+  local server_tunnel_source="$5"
+  local rules_file
 
   iptables -N "$FIREWALL_CHAIN" 2>/dev/null || true
-  iptables -F "$FIREWALL_CHAIN"
-  iptables -C FORWARD -j "$FIREWALL_CHAIN" 2>/dev/null \
-    || iptables -I FORWARD 1 -j "$FIREWALL_CHAIN"
+  iptables -t nat -N "$LAN_SNAT_CHAIN" 2>/dev/null || true
+  rules_file="$(mktemp)"
+  # A single iptables-restore COMMIT avoids transient fail-open during policy updates.
+  {
+    printf '*filter\n'
+    printf -- '-F %s\n' "$FIREWALL_CHAIN"
+    printf -- '-A %s -i %s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n' "$FIREWALL_CHAIN" "$WG_INTERFACE"
+    printf -- '-A %s -o %s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n' "$FIREWALL_CHAIN" "$WG_INTERFACE"
 
-  iptables -A "$FIREWALL_CHAIN" \
-    -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    if [ "$allow_lan_to_rp" = "true" ]; then
+      while IFS= read -r lan; do
+        [ -n "$lan" ] || continue
+        while IFS= read -r target; do
+          [ -n "$target" ] || continue
+          printf -- '-A %s -s %s -d %s -o %s -m conntrack --ctstate NEW -j ACCEPT\n' \
+            "$FIREWALL_CHAIN" "$lan" "$target" "$WG_INTERFACE"
+        done < <(printf '%s' "$allowed_ips" | jq -r '.[]')
+      done < <(printf '%s' "$lan_cidrs" | jq -r '.[]')
+    fi
 
-  while IFS= read -r lan; do
-    [ -n "$lan" ] || continue
-    while IFS= read -r target; do
-      [ -n "$target" ] || continue
-      iptables -A "$FIREWALL_CHAIN" \
-        -s "$lan" -d "$target" -o "$WG_INTERFACE" -j ACCEPT
-    done < <(printf '%s' "$allowed_ips" | jq -r '.[]')
-  done < <(printf '%s' "$lan_cidrs" | jq -r '.[]')
-
-  iptables -A "$FIREWALL_CHAIN" -o "$WG_INTERFACE" -j REJECT
-  iptables -A "$FIREWALL_CHAIN" -i "$WG_INTERFACE" -j REJECT
-  iptables -A "$FIREWALL_CHAIN" -j RETURN
+    if [ "$allow_rp_to_lan" = "true" ] && [ -n "$server_tunnel_source" ]; then
+      while IFS= read -r lan; do
+        [ -n "$lan" ] || continue
+        printf -- '-A %s -i %s -s %s -d %s -m conntrack --ctstate NEW -j ACCEPT\n' \
+          "$FIREWALL_CHAIN" "$WG_INTERFACE" "$server_tunnel_source" "$lan"
+      done < <(printf '%s' "$lan_cidrs" | jq -r '.[]')
+    fi
+    printf -- '-A %s -o %s -j REJECT\n' "$FIREWALL_CHAIN" "$WG_INTERFACE"
+    printf -- '-A %s -i %s -j REJECT\n' "$FIREWALL_CHAIN" "$WG_INTERFACE"
+    printf -- '-A %s -j RETURN\n' "$FIREWALL_CHAIN"
+    printf 'COMMIT\n'
+    printf '*nat\n'
+    printf -- '-F %s\n' "$LAN_SNAT_CHAIN"
+    if [ "$allow_rp_to_lan" = "true" ] && [ -n "$server_tunnel_source" ]; then
+      # Translate tunnel sources to this Gate host's LAN address so devices
+      # can reply locally without a separate /32 route on the LAN router.
+      while IFS= read -r lan; do
+        [ -n "$lan" ] || continue
+        printf -- '-A %s -s %s -d %s -j MASQUERADE\n' \
+          "$LAN_SNAT_CHAIN" "$server_tunnel_source" "$lan"
+      done < <(printf '%s' "$lan_cidrs" | jq -r '.[]')
+    fi
+    printf 'COMMIT\n'
+  } > "$rules_file"
+  if ! iptables-restore -w 5 --noflush < "$rules_file"; then
+    log "Failed to apply Gate firewall policy; taking down tunnel (fail closed)"
+    rm -f "$rules_file"
+    down_tunnel
+    return 1
+  fi
+  rm -f "$rules_file"
+  if ! (iptables -C FORWARD -j "$FIREWALL_CHAIN" 2>/dev/null \
+    || iptables -I FORWARD 1 -j "$FIREWALL_CHAIN"); then
+    down_tunnel
+    return 1
+  fi
+  if ! (iptables -t nat -C POSTROUTING -j "$LAN_SNAT_CHAIN" 2>/dev/null \
+    || iptables -t nat -I POSTROUTING 1 -j "$LAN_SNAT_CHAIN"); then
+    down_tunnel
+    return 1
+  fi
 }
 
 write_wireguard_config() {
@@ -474,12 +521,17 @@ while true; do
   CONFIG="$(cat "$RESPONSE_FILE")"
   rm -f "$RESPONSE_FILE"
   ALLOWED_IPS="$(printf '%s' "$CONFIG" | jq -c '.allowedIps // []')"
+  RP_NETWORK_CIDRS="$(printf '%s' "$CONFIG" | jq -c '[.networks[]?.cidr]')"
+
 
   if [ "$(printf '%s' "$ALLOWED_IPS" | jq 'length')" -eq 0 ]; then
     down_tunnel
   else
     write_wireguard_config "$CONFIG"
-    sync_firewall "$LAN_CIDRS" "$ALLOWED_IPS"
+    ALLOW_LAN_TO_RP="$(printf '%s' "$CONFIG" | jq -r '.allowLanToRp // true')"
+    ALLOW_RP_TO_LAN="$(printf '%s' "$CONFIG" | jq -r '.allowRpToLan // false')"
+    SERVER_TUNNEL_SOURCE="$(printf '%s' "$CONFIG" | jq -r '.serverTunnelAddress // ""' | cut -d/ -f1)"
+    sync_firewall "$LAN_CIDRS" "$RP_NETWORK_CIDRS" "$ALLOW_LAN_TO_RP" "$ALLOW_RP_TO_LAN" "$SERVER_TUNNEL_SOURCE"
   fi
   sync_bgp "$CONFIG" "$LAN_ADDRESSES"
 

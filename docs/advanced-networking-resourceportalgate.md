@@ -209,3 +209,38 @@ Reusable real-data-plane smoke runners:
 - Device VPN: `scripts/run-device-vpn-dataplane-smoke.sh`
 
 The Device VPN smoke deliberately gives one client routes to two RP Networks while authorizing it for only one and verifies that the authorized Network works while the other is rejected server-side.
+
+## Site VPN direction firewall
+
+Each Site VPN exposes **Firewall** in tenant Networking with two independently
+configurable stateful initiation policies:
+
+- **LAN → RP** (`allowLanToRp`, default `true`): LAN peers may initiate
+  connections to the Site VPN's attached RP Networks, preserving pre-upgrade behavior.
+- **RP → LAN** (`allowRpToLan`, default `false`): selected RP Networks may initiate
+  connections to the LAN prefixes reported by this Gate's agent.
+- Replies in `ESTABLISHED,RELATED` state are permitted for both directions.
+  This feature does **not** implement mDNS, port-level ACLs, internet
+  tunneling, or cross-tenant routing.
+
+The tenant-scoped `PATCH /tenants/:tenantId/networking/gates/:gateId/firewall`
+accepts `{allowLanToRp, allowRpToLan, expectedRevision}`, requires
+`gate.manage`, uses optimistic locking and creates an audit entry.
+
+RP → LAN forwarding performs narrowly scoped SNAT to the **Gate's own
+server tunnel IP** so responses return over WireGuard. Both the RP-side
+gateway and the LAN-side agent enforce new-connection policy. The LAN-side
+agent needs **gate-shell-v3** for the new direction. For existing Gate
+installations, use Re-enroll and run the generated installer on the same site
+host. The API rejects enabling RP → LAN until v3 heartbeats and the site
+reports LAN CIDRs. BGP remains export-only.
+
+**Routing prerequisite:** These toggles control tunnel/firewall admission;
+they do not install routes in each individual application network namespace.
+Before RP → LAN can carry production traffic, a valid route to the Gate
+gateway for each participating application/network must also be provisioned.
+Docker Swarm overlay networking does not automatically route arbitrary
+LAN CIDRs through another attached service. Do not infer end-to-end
+connectivity from a saved firewall policy or a WireGuard handshake;
+verify the application → Gate → LAN → Gate → application path.
+The Gate agent additionally MASQUERADEs the tunnel source to its outgoing LAN interface IP; LAN devices can therefore reply to their directly reachable Gate host without a separate tunnel-/32 return route. App-to-Gate routing inside Swarm is still an independent prerequisite.

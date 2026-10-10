@@ -60,16 +60,8 @@ export function firewallRules(
   interfaceName = "wg0",
 ) {
   const forward: string[][] = [
-    [
-      "-A",
-      GATE_FORWARD_CHAIN,
-      "-m",
-      "conntrack",
-      "--ctstate",
-      "ESTABLISHED,RELATED",
-      "-j",
-      "ACCEPT",
-    ],
+    ["-A", GATE_FORWARD_CHAIN, "-i", interfaceName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+    ["-A", GATE_FORWARD_CHAIN, "-o", interfaceName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
   ];
   const dnat: string[][] = [];
   const snat: string[][] = [];
@@ -78,7 +70,7 @@ export function firewallRules(
     ...config.peerLanCidrs,
   ];
 
-  for (const mapping of config.mappings) {
+  for (const mapping of config.allowLanToRp === false ? [] : config.mappings) {
     const target = resolved.get(mapping.attachmentAlias);
     if (!target) continue;
     dnat.push([
@@ -93,16 +85,12 @@ export function firewallRules(
       "--to-destination",
       target,
     ]);
-    forward.push([
-      "-A",
-      GATE_FORWARD_CHAIN,
-      "-i",
-      interfaceName,
-      "-d",
-      target,
-      "-j",
-      "ACCEPT",
-    ]);
+    for (const cidr of sourceCidrs) {
+      forward.push([
+        "-A", GATE_FORWARD_CHAIN, "-i", interfaceName, "-s", cidr,
+        "-d", target, "-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT",
+      ]);
+    }
     for (const sourceCidr of sourceCidrs) {
       snat.push([
         "-A",
@@ -117,6 +105,26 @@ export function firewallRules(
     }
   }
 
+  // RP-to-LAN is opt-in. Source addresses are restricted to attached
+  // RP overlays, destinations to Gate-reported LAN CIDRs.
+  if (config.allowRpToLan === true) {
+    const overlays = new Set(config.rpOverlayCidrs ?? config.mappings.map((m) => m.overlayCidr));
+    const serverTunnelSource = hostAddressCidr(config.serverTunnelAddress).split("/")[0];
+    for (const overlay of overlays) {
+      for (const lan of config.peerLanCidrs) {
+        forward.push([
+          "-A", GATE_FORWARD_CHAIN, "-o", interfaceName,
+          "-s", overlay, "-d", lan, "-m", "conntrack",
+          "--ctstate", "NEW", "-j", "ACCEPT",
+        ]);
+        snat.push([
+          "-A", GATE_SNAT_CHAIN, "-o", interfaceName,
+          "-s", overlay, "-d", lan,
+          "-j", "SNAT", "--to-source", serverTunnelSource,
+        ]);
+      }
+    }
+  }
   forward.push([
     "-A",
     GATE_FORWARD_CHAIN,

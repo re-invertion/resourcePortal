@@ -99,6 +99,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const [gateErrors, setGateErrors] = useState<Record<string, string | undefined>>({});
   const [connectionGuidance, setConnectionGuidance] = useState<string>();
   const [enrollment, setEnrollment] = useState<EnrollmentResponse>();
+  const [firewallGate, setFirewallGate] = useState<GateResource>();
+  const [firewallOpen, setFirewallOpen] = useState(false);
+  const [firewallForm, setFirewallForm] = useState({ allowLanToRp: true, allowRpToLan: false });
   const [routingGate, setRoutingGate] = useState<GateResource>();
   const [routingOpen, setRoutingOpen] = useState(false);
   const [routingForm, setRoutingForm] = useState({
@@ -288,6 +291,35 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     }
   }
 
+  function editGateFirewall(gate: GateResource) {
+    setFirewallGate(gate);
+    setFirewallForm({ allowLanToRp: gate.allowLanToRp ?? true, allowRpToLan: gate.allowRpToLan ?? false });
+    setFirewallOpen(true);
+  }
+
+  async function saveGateFirewall(event: FormEvent) {
+    event.preventDefault();
+    if (!firewallGate) return;
+    setWorking(true);
+    try {
+      await apiRequest(
+        `${root}/gates/${encodeURIComponent(firewallGate.id)}/firewall`,
+        {
+          method: "PATCH",
+          body: { ...firewallForm, expectedRevision: firewallGate.configRevision },
+        },
+      );
+      setFirewallOpen(false);
+      setFirewallGate(undefined);
+      await topology.reload();
+      toast.success("Site VPN firewall policy updated.");
+    } catch (error) {
+      toast.errorFrom(error, "Unable to update Site VPN firewall.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   function editGateRouting(gate: GateResource) {
     setRoutingGate(gate);
     setRoutingForm({
@@ -428,6 +460,9 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       lastSeen: formatDate(gate.lastSeenAt),
       actions: (
         <div className="flex flex-wrap gap-1">
+          <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateFirewall(gate)}>
+            Firewall
+          </Button>
           <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateRouting(gate)}>
             Routing
           </Button>
@@ -716,6 +751,48 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             </Field>
           </form>
         )}
+      </Dialog>
+
+      <Dialog
+        open={firewallOpen}
+        onClose={() => { if (!working) { setFirewallOpen(false); setFirewallGate(undefined); } }}
+        title={firewallGate ? `Firewall · ${firewallGate.name}` : "Site VPN Firewall"}
+        description="Choose which side may initiate new connections. Established reply traffic is still permitted."
+        actions={
+          <>
+            <Button disabled={working} onClick={() => { setFirewallOpen(false); setFirewallGate(undefined); }}>Cancel</Button>
+            <Button variant="primary" type="submit" form="gate-firewall-form" disabled={working || !firewallGate || (firewallForm.allowRpToLan && firewallGate.agentVersion !== "gate-shell-v3")}>
+              {working ? "Saving…" : "Save firewall"}
+            </Button>
+          </>
+        }
+      >
+        <form id="gate-firewall-form" className="space-y-4" onSubmit={(event) => void saveGateFirewall(event)}>
+          <label className="flex items-center justify-between gap-4 rounded-xl border border-[#D7E0EC] p-4">
+            <span>
+              <strong className="block text-sm text-[#172033]">LAN → RP</strong>
+              <span className="block text-xs text-[#718096]">Allow LAN devices to initiate connections to Networks attached to this Site VPN.</span>
+            </span>
+            <input type="checkbox" className="h-5 w-5 shrink-0 accent-[#137A4A]" checked={firewallForm.allowLanToRp}
+              onChange={(event) => setFirewallForm(current => ({ ...current, allowLanToRp: event.target.checked }))} />
+          </label>
+          <label className="flex items-center justify-between gap-4 rounded-xl border border-[#D7E0EC] p-4">
+            <span>
+              <strong className="block text-sm text-[#172033]">RP → LAN</strong>
+              <span className="block text-xs text-[#718096]">Allow attached ResourcePortal Networks to initiate connections to this Site VPN's reported LAN CIDRs.</span>
+            </span>
+            <input type="checkbox" className="h-5 w-5 shrink-0 accent-[#137A4A]" checked={firewallForm.allowRpToLan}
+              onChange={(event) => setFirewallForm(current => ({ ...current, allowRpToLan: event.target.checked }))} />
+          </label>
+          {firewallForm.allowRpToLan && firewallGate?.agentVersion !== "gate-shell-v3" ? (
+            <Callout tone="warning" title="Site VPN agent upgrade required">
+              Re-enroll and reinstall the Site VPN agent to activate RP → LAN. The agent must report gate-shell-v3.
+            </Callout>
+          ) : null}
+          <Callout title="Routing prerequisite">
+            Site VPN policy controls tunnel forwarding, not application routing. RP → LAN also needs a valid route from each RP application to the Gate gateway and the Gate LAN host must be able to reach destination devices. No mDNS or discovery relay is enabled.
+          </Callout>
+        </form>
       </Dialog>
 
       <Dialog
