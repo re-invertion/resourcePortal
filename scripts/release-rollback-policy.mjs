@@ -42,7 +42,7 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
   }
   // Fail closed on any Git error, unknown history, or missing comparison tag.
   const paths = execFileSync("git", [
-    "diff", "--name-only", previous + "...", head, "--",
+    "diff", "--name-only", previous + "..." + head, "--",
   ], { encoding: "utf8" }).split("\n").filter(Boolean);
   const commit = execFileSync("git", ["rev-parse", head + "^{commit}"], {
     encoding: "utf8",

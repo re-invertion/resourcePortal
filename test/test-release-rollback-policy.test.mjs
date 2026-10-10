@@ -1,3 +1,8 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rollbackAssessment } from "../scripts/release-rollback-policy.mjs";
@@ -23,4 +28,43 @@ test("SQL or Prisma schema edits can never claim tested without a real compatibi
 });
 test("milestones fail closed, including an empty diff", () => {
   assert.equal(rollbackAssessment([], "milestone", "v0.2.75", hash).policy, "none");
+});
+
+// A real isolated Git repository catches incorrect argument construction that
+// pure rollbackAssessment tests cannot detect.
+test("CLI computes rollback policy from real Git ancestry and fails closed", () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = fs;
+  const { tmpdir } = os;
+  const root = mkdtempSync(join(tmpdir(), "rp-release-rollback-"));
+  try {
+    const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+    git("init", "-q");
+    git("config", "user.name", "CI Test");
+    git("config", "user.email", "ci@example.test");
+    writeFileSync(join(root, "file.txt"), "base\n");
+    git("add", "file.txt");
+    git("commit", "-qm", "base");
+    git("tag", "v0.2.75");
+    writeFileSync(join(root, "file.txt"), "patch\n");
+    git("commit", "-qam", "patch");
+    const args = [fileURLToPath(new URL("../scripts/release-rollback-policy.mjs", import.meta.url)),
+      "--previous-tag", "v0.2.75", "--head", "HEAD", "--mode", "fastfix"];
+    const run = () => JSON.parse(execFileSync(process.execPath, args, {
+      cwd: root, encoding: "utf8",
+    }));
+    assert.equal(run().policy, "image-only");
+
+    const migration = join(root, "packages/resourceportal-api/prisma/migrations/test_1");
+    mkdirSync(migration, { recursive: true });
+    writeFileSync(join(migration, "migration.sql"), "ALTER TABLE demo ADD COLUMN new_flag BOOLEAN;\n");
+    git("add", ".");
+    git("commit", "-qm", "schema change");
+    assert.deepEqual({ policy: run().policy, reason: run().reason },
+      { policy: "none", reason: "database-compatibility-not-verified" });
+    assert.throws(() => execFileSync(process.execPath,
+      args.map(a => a === "v0.2.75" ? "v9.9.9" : a),
+      { cwd: root, stdio: "pipe" }));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
