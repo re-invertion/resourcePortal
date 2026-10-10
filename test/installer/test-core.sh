@@ -104,7 +104,8 @@ assert_eq "U1RBR0lORy1ST09ULUNB" "${RP_CFG_OIDC_EXTRA_CA_B64:-}" "loads public O
 
 # Values written with printf %q must round-trip without executing shell code.
 (
-  export RP_CFG_SMTP_SENDER="$(printf '%s' 'literal $(id); double "quotes" and \ backslash')"
+  RP_CFG_SMTP_SENDER="$(printf '%s' 'literal $(id); double "quotes" and \ backslash')"
+  export RP_CFG_SMTP_SENDER
   expected="$RP_CFG_SMTP_SENDER"
   rp_config_write "$tmpdir/quoted.conf"
   unset RP_CFG_SMTP_SENDER
