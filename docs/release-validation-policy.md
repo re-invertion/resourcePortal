@@ -18,3 +18,15 @@ This file and `AGENTS.md` are the durable release rule for maintainers and agent
 - API auth, RBAC, database, networking and installer changes require their dedicated regressions. Add a new scoped test profile for other risk domains rather than running all unrelated tests.
 - Existing `test:fastfix:mcp-oauth` is retained for legacy MCP/OAuth fixes, not used as the only patch-release test for every feature.
 - `[fastfix]` in a merge commit is a legacy marker for skipping broad CI on main; version and test plan remain authoritative for publishing tagged patches.
+
+
+### Published-source safety in recovery releases
+
+A Git tag alone does not prove a release was successfully published. The
+official release workflow retrieves the latest published non-prerelease
+GitHub Release and validates that this source tag exists in the checkout.
+It passes that source to the semantic classifier, patch test selector, and
+rollback manifest assessment. If no published source can be verified, the
+workflow fails closed. This prevents an unsuccessful tagged build from being
+advertised as a valid rollback source for a later release. Release tags are
+never rewritten.

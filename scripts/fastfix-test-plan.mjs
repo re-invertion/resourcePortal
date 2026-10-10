@@ -103,6 +103,9 @@ const commands = {
     ["bash", "test/installer/test-releases.sh"],
     ["bash", "test/installer/test-control-plane.sh"],
     ["bash", "test/installer/test-packaging.sh"],
+    ["bash", "test/installer/test-v020-placement-networking.sh"],
+    ["bash", "test/installer/test-zitadel-management.sh"],
+    ["node", "--test", "test/test-release-rollback-policy.test.mjs"],
   ],
 };
 
@@ -113,6 +116,9 @@ const classifiers = [
   [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
   [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release"]],
 
+  [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
+  [/^scripts\/release-rollback-policy\.mjs$/, ["platform-release", "workflow"]],
+  [/^test\/installer\/test-(v020-placement-networking|zitadel-management)\.sh$/, ["installer", "platform-release"]],
   [/^config\/observability\//, ["observability"]],
   [/^docker-compose\.yml$/, ["runtime-config"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-groups\.controller\.ts|app-groups\.module\.ts|single-app-logs\.service(\.spec)?\.ts)$/, ["applications"]],
