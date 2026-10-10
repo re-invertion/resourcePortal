@@ -39,6 +39,28 @@ rp_validate_release_manifest() {
     (.migrations.rollbackPolicy == "none" or .migrations.rollbackPolicy == "image-only" or .migrations.rollbackPolicy == "tested") and
     ([.images.api,.images.web,.images.postgres,.images.zitadel,.images.traefik] | all(type == "string"))
   ' "$manifest" >/dev/null || return 1
+  # Assessment fields are optional for old release manifests, but when
+  # present must be coherent. A "tested" claim needs explicit integration
+  # evidence. The release builder never generates such a claim by inference.
+  jq -e '
+    (.migrations.rollbackAssessment == null or
+      ((.migrations.rollbackAssessment.sourceVersion | type == "string") and
+       (.migrations.rollbackAssessment.targetCommit | test("^[a-f0-9]{40}$")) and
+       (.migrations.rollbackAssessment.reason |
+         IN("no-resourceportal-database-schema-changes",
+            "database-compatibility-not-verified",
+            "milestone-requires-verified-recovery", "verified-recovery-test")))) and
+    (if .migrations.rollbackPolicy == "tested" then
+      (.migrations.rollbackAssessment.reason == "verified-recovery-test" and
+       (.migrations.rollbackEvidence.kind == "real-upgrade-and-restore" and
+        (.migrations.rollbackEvidence.workflowRunId | type == "number") and
+        (.migrations.rollbackEvidence.sourceVersion | type == "string") and
+        .migrations.rollbackEvidence.sourceVersion == .migrations.rollbackAssessment.sourceVersion))
+     else true end) and
+    (if .migrations.rollbackAssessment != null and .migrations.rollbackPolicy == "image-only"
+     then .migrations.rollbackAssessment.reason == "no-resourceportal-database-schema-changes"
+     else true end)
+  ' "$manifest" >/dev/null || return 1
   for role in api web postgres zitadel traefik; do
     image="$(jq -er --arg role "$role" '.images[$role]' "$manifest")" || return 1
     rp_release_image_ref_valid "$image" || return 1

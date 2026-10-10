@@ -227,6 +227,96 @@ schema="$(cat "$repo_root/config/production/release-manifest.schema.json")"
 contains "$schema" 'rollbackPolicy' 'manifest schema declares rollback policy'
 contains "$schema" 'minimumVersion' 'manifest schema declares installer compatibility'
 
+# Stateful upgrade checkpoint regression: the previous stack/configuration
+# must survive failure, and unsafe/interrupted operations must fail closed.
+upgrade_checkpoint_recovers_previous_state() (
+  local root previous previous_copy original
+  root="$(mktemp -d /tmp/rp-safe-recovery.XXXXXX)"
+  trap 'rm -rf "$root"' EXIT
+  previous="$root/old-stack.yml"
+  printf 'services: {api: {image: old}}\n' >"$previous"
+  install -d -m 0700 "$root/installed" "$root/config"
+  cp "$manifest" "$root/installed/release.json"
+  printf 'old-config\n' >"$root/config/installer.conf"
+  printf 'old-installed-stack\n' >"$root/config/stack.yml"
+  export RP_UPGRADE_STATE_DIR="$root/checkpoint"
+  export RP_INSTALLER_STATE_DIR="$root/installed"
+  export RP_UPGRADE_INSTALLER_CONFIG_FILE="$root/config/installer.conf"
+  export RP_UPGRADE_STACK_FILE="$root/config/stack.yml"
+  export RP_CFG_RELEASE_VERSION=0.1.0 RP_CFG_DOMAIN=rp.example.test
+  RP_UPGRADE_SOURCE_VERSION=0.1.0
+  export RP_UPGRADE_SOURCE_VERSION
+  rp_upgrade_checkpoint_prepare "$safe_manifest" "$previous" 0.1.0 || return 1
+  [[ "$(jq -r .phase "$root/checkpoint/state.json")" == prepared ]] || return 1
+  [[ "$(stat -c %a "$root/checkpoint/state.json")" == 600 ]] || return 1
+  original="$(sha256sum "$root/checkpoint/previous-stack.yml" | cut -d' ' -f1)"
+  [[ "$original" == "$(jq -r .previousStackSha256 "$root/checkpoint/state.json")" ]] || return 1
+  # Mutate both installed files as the failed updater could have done.
+  printf 'incomplete-new-config\n' >"$root/config/installer.conf"
+  printf 'incomplete-new-stack\n' >"$root/config/stack.yml"
+  printf 'fake-new-manifest\n' >"$root/installed/release.json"
+  rp_upgrade_checkpoint_phase applying "inject failure" || return 1
+  local restored="$root/restored"
+  docker() { [[ "$1 $2" == "stack deploy" ]] || return 1; printf '%s\n' "$*" >"$restored"; }
+  rp_wait_for_https_origin() { return 0; }
+  rp_upgrade_restore_after_failure "$safe_manifest" "$previous" "injected failure" && return 1
+  [[ -r "$restored" && "$(jq -r .phase "$root/checkpoint/state.json")" == rolled-back ]] || return 1
+  cmp -s "$manifest" "$root/installed/release.json" || return 1
+  [[ "$(cat "$root/config/installer.conf")" == old-config ]] || return 1
+  [[ "$(cat "$root/config/stack.yml")" == old-installed-stack ]] || return 1
+  # Successful verified rollback releases the upgrade lock before a new attempt.
+  # The journal permits a new update only after successful verified recovery.
+  rp_upgrade_checkpoint_prepare "$safe_manifest" "$previous" 0.1.0 || return 1
+  rp_upgrade_checkpoint_phase applying "incomplete" || return 1
+  if rp_upgrade_checkpoint_prepare "$safe_manifest" "$previous" 0.1.0; then
+    printf 'Unsafe continuation of interrupted update\n' >&2
+    return 1
+  fi
+)
+status 0 'upgrade checkpoint survives failure and prevents blind restart' upgrade_checkpoint_recovers_previous_state
+
+upgrade_checkpoint_denies_tampering() (
+  local root previous
+  root="$(mktemp -d /tmp/rp-safe-tamper.XXXXXX)"
+  trap 'rm -rf "$root"' EXIT
+  previous="$root/old.yml"
+  printf 'services: {}\n' >"$previous"
+  export RP_UPGRADE_STATE_DIR="$root/checkpoint"
+  export RP_INSTALLER_STATE_DIR="$root/installed"
+  export RP_UPGRADE_INSTALLER_CONFIG_FILE="$root/installed/installer.conf"
+  export RP_UPGRADE_STACK_FILE="$root/installed/stack.yml"
+  export RP_CFG_RELEASE_VERSION=0.1.0 RP_CFG_DOMAIN=rp.example.test
+  RP_UPGRADE_SOURCE_VERSION=0.1.0
+  export RP_UPGRADE_SOURCE_VERSION
+  rp_upgrade_checkpoint_prepare "$safe_manifest" "$previous" 0.1.0 || return 1
+  printf 'tampered\n' >"$root/checkpoint/previous-stack.yml"
+  docker() { printf 'INVALID deployment attempted\n' >&2; return 0; }
+  rp_wait_for_https_origin() { return 0; }
+  rp_upgrade_restore_after_failure "$safe_manifest" "$previous" "tampered" && return 1
+  [[ "$(jq -r .phase "$root/checkpoint/state.json")" == rollback-failed ]]
+)
+status 0 'tampered checkpoint never restores prior stack' upgrade_checkpoint_denies_tampering
+
+upgrade_policy_blocks_cross_version_automatic_rollback() (
+  local strict
+  strict="$(mktemp /tmp/rp-safe-source-policy.XXXXXX)"
+  trap 'rm -f "$strict"' EXIT
+  jq '.migrations.rollbackPolicy="image-only" | .migrations.rollbackAssessment={reason:"no-resourceportal-database-schema-changes",sourceVersion:"0.2.75",targetCommit:("a"*40)}' "$manifest" >"$strict"
+  rp_validate_release_manifest "$strict" || return 1
+  RP_UPGRADE_SOURCE_VERSION=0.2.74 rp_upgrade_rollback_allowed "$strict" && return 1
+  RP_UPGRADE_SOURCE_VERSION=0.2.75 rp_upgrade_rollback_allowed "$strict"
+)
+status 0 'assessment restricts automatic rollback to tested source version' upgrade_policy_blocks_cross_version_automatic_rollback
+
+upgrade_policy_rejects_unsupported_tested_claim() (
+  local forged
+  forged="$(mktemp /tmp/rp-forged-tested.XXXXXX)"
+  trap 'rm -f "$forged"' EXIT
+  jq '.migrations.rollbackPolicy="tested"' "$manifest" >"$forged"
+  ! rp_validate_release_manifest "$forged"
+)
+status 0 'tested policy requires explicit integration evidence' upgrade_policy_rejects_unsupported_tested_claim
+
 rm -f "$manifest" "$safe_manifest" "$mutable"
 
 upgrade_source="$(cat "$repo_root/scripts/installer/upgrade.sh")"
@@ -244,6 +334,7 @@ contains "$upgrade_source" 'rp_upgrade_refresh_enrollment_listener' 'upgrade ref
 contains "$upgrade_source" 'rp_primary_start_enrollment' 'upgrade reuses the hardened primary enrollment listener lifecycle'
 contains "$upgrade_source" 'case "$current" in' 'upgrade preserves explicit tenant-workloads false opt-out'
 contains "$upgrade_source" 'rp_upgrade_prepare_postgres_services' 'upgrade pre-rolls PostgreSQL before dependent services'
+contains "$(cat "$repo_root/Dockerfile")" '    flock \' 'runtime installer image includes flock for upgrade locking'
 contains "$upgrade_source" 'rp_upgrade_quiesce_database_clients' 'upgrade quiesces old database clients before PostgreSQL rollout'
 
 
@@ -323,7 +414,13 @@ upgrade_orders_dependencies_before_final_rollout() (
   local log previous postgres_line zitadel_line migration_line deploy_line
   log="$(mktemp /tmp/rp-upgrade-dependency-order.XXXXXX)"
   previous="$(mktemp /tmp/rp-upgrade-previous-stack.XXXXXX.yml)"
-  trap 'rm -f "$log" "$previous"' EXIT
+  RP_UPGRADE_STATE_DIR="$(mktemp -d /tmp/rp-upgrade-journal.XXXXXX)"
+  RP_INSTALLER_STATE_DIR="$RP_UPGRADE_STATE_DIR/installed"
+  RP_UPGRADE_INSTALLER_CONFIG_FILE="$RP_UPGRADE_STATE_DIR/mock-installed/installer.conf"
+  RP_UPGRADE_STACK_FILE="$RP_UPGRADE_STATE_DIR/mock-installed/stack.yml"
+  local fixture_manifest="$RP_UPGRADE_STATE_DIR/target-manifest.json"
+  printf '{"version":"0.2.14"}\n' >"$fixture_manifest"
+  trap 'rm -f "$log" "$previous"; rm -rf "$RP_UPGRADE_STATE_DIR"' EXIT
   printf 'services: {}\n' >"$previous"
   RP_CFG_RELEASE_VERSION=0.2.13
   RP_CFG_ACME_ENVIRONMENT=production
@@ -345,7 +442,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_persist_release_manifest(){ printf '%s\n' "$1"; }
   rp_config_write(){ printf 'persist-config\n' >>"$log"; }
   rp_write_stack(){ printf 'persist-stack\n' >>"$log"; }
-  rp_upgrade_apply "$manifest" "$previous"
+  rp_upgrade_apply "$fixture_manifest" "$previous"
   firewall_line="$(grep -n '^firewall$' "$log" | cut -d: -f1)"
   quiesce_line="$(grep -n '^clients-quiesced$' "$log" | cut -d: -f1)"
   postgres_line="$(grep -n '^postgres-ready$' "$log" | cut -d: -f1)"

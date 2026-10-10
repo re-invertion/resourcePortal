@@ -2,7 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import type { OperationsService } from "../operations/operations.service";
-import { PlatformReleaseService } from "./platform-release.service";
+import { PlatformReleaseService, classifyReleaseRollback } from "./platform-release.service";
 
 describe("PlatformReleaseService", () => {
   it("reports current/latest version and rollback capability from the release manifest", async () => {
@@ -93,5 +93,56 @@ describe("PlatformReleaseService", () => {
       { targetVersion: "0.2.66", confirmation: "AKTUALIZUJ" },
       actor,
     )).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("release rollback safety classification", () => {
+  const hash = "a".repeat(40);
+  const manifest = {
+    version: "0.2.76",
+    migrations: {
+      rollbackPolicy: "image-only",
+      rollbackAssessment: {
+        reason: "no-resourceportal-database-schema-changes",
+        sourceVersion: "0.2.75",
+        targetCommit: hash,
+      },
+    },
+  };
+  it("permits image-only solely from attested source release", () => {
+    expect(classifyReleaseRollback(manifest, "0.2.76", "0.2.75")).toMatchObject({
+      automaticRollbackAvailable: true, rollbackReason: "available",
+    });
+    expect(classifyReleaseRollback(manifest, "0.2.76", "0.2.74")).toMatchObject({
+      automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified",
+    });
+  });
+  it("disallows unverifiable tested claims and inconsistent manifests", () => {
+    expect(classifyReleaseRollback({ ...manifest, migrations: { rollbackPolicy: "tested" } },
+      "0.2.76", "0.2.75").rollbackReason).toBe("tested-evidence-missing");
+    expect(classifyReleaseRollback(manifest, "0.2.77", "0.2.75").rollbackReason).toBe("manifest-invalid");
+    expect(classifyReleaseRollback({ ...manifest, migrations: { rollbackPolicy: "none" } },
+      "0.2.76", "0.2.75").rollbackReason).toBe("policy-disallows-rollback");
+  });
+  it("separates missing and unreadable release manifests", async () => {
+    const config = { get: vi.fn((key: string) => key === "RESOURCEPORTAL_VERSION" ? "0.2.75" : undefined) };
+    const service = new PlatformReleaseService(config as unknown as ConfigService,
+      { enqueue: vi.fn() } as unknown as OperationsService);
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      if (input.endsWith("/releases/latest")) {
+        return new Response(JSON.stringify({ tag_name: "v0.2.76", assets: [] }), { status: 200 });
+      }
+      return new Response("blocked", { status: 503 });
+    }));
+    expect(await service.status()).toMatchObject({ rollbackReason: "manifest-missing" });
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      if (input.endsWith("/releases/latest")) {
+        return new Response(JSON.stringify({ tag_name: "v0.2.76",
+          assets: [{ name: "resourceportal-release-manifest.json", browser_download_url: "https://test.invalid/manifest" }] }), { status: 200 });
+      }
+      return new Response("blocked", { status: 503 });
+    }));
+    expect(await service.status()).toMatchObject({ rollbackReason: "manifest-unavailable" });
+    vi.unstubAllGlobals();
   });
 });

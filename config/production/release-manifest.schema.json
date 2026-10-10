@@ -23,7 +23,16 @@
       "required": ["supportedFromVersions", "rollbackPolicy"],
       "properties": {
         "supportedFromVersions": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "rollbackPolicy": {"enum": ["none", "image-only", "tested"]}
+        "rollbackPolicy": {"enum": ["none", "image-only", "tested"]},
+        "rollbackAssessment": {
+          "type": "object",
+          "required": ["reason", "sourceVersion", "targetCommit"],
+          "properties": {
+            "reason": {"enum": ["no-resourceportal-database-schema-changes", "database-compatibility-not-verified", "milestone-requires-verified-recovery", "verified-recovery-test"]},
+            "sourceVersion": {"type": "string"},
+            "targetCommit": {"type": "string", "pattern": "^[a-f0-9]{40}$"}
+          }
+        }
       }
     }
   },

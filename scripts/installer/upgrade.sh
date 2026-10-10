@@ -4,7 +4,17 @@ rp_upgrade_rollback_allowed() {
   local manifest="$1" policy
   rp_validate_release_manifest "$manifest" || return 1
   policy="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
-  case "$policy" in image-only|tested) return 0 ;; *) return 1 ;; esac
+  case "$policy" in image-only|tested) ;; *) return 1 ;; esac
+  # New manifests attest compatibility with the immediately preceding
+  # release only. Do not automatically roll back an older source even if the
+  # manifest advertises other supported *upgrade* source versions.
+  local assessment_source source_version
+  assessment_source="$(jq -r '.migrations.rollbackAssessment.sourceVersion // empty' "$manifest")" || return 1
+  if [[ -n "$assessment_source" ]]; then
+    source_version="${RP_UPGRADE_SOURCE_VERSION:-${RP_CFG_RELEASE_VERSION:-}}"
+    [[ -n "$source_version" && "$source_version" == "$assessment_source" ]] || return 1
+  fi
+  return 0
 }
 
 rp_upgrade_check_temporary_files() {
@@ -285,22 +295,181 @@ rp_upgrade_refresh_enrollment_listener() {
   fi
 }
 
+# Upgrade journal lives on the persisted installer volume (also mounted in
+# the updater container). An interrupted update is *never* resumed blindly:
+# an operator must verify schema/runtime state and reconcile the checkpoint.
+rp_upgrade_checkpoint_copy() {
+  local source="$1" destination="$2" tmp
+  [[ -r "$source" && ! -L "$source" ]] || return 1
+  tmp="$(mktemp "${destination%/*}/.checkpoint.XXXXXX")" || return 1
+  if ! cp -- "$source" "$tmp" || ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$destination"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+rp_upgrade_checkpoint_verify() {
+  local dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" expected observed
+  [[ -n "$dir" && -r "$dir/state.json" ]] || return 1
+  expected="$(jq -er '.previousStackSha256' "$dir/state.json")" || return 1
+  observed="$(sha256sum "$dir/previous-stack.yml" | cut -d' ' -f1)" || return 1
+  [[ "$expected" == "$observed" ]] || {
+    printf 'Checkpoint integrity failure: previous stack has changed. Manual recovery required.\n' >&2
+    return 1
+  }
+}
+
+rp_upgrade_checkpoint_restore_file() {
+  local source="$1" target="$2" exists="$3" tmp
+  if [[ "$exists" == true ]]; then
+    [[ -r "$source" ]] || return 1
+    install -d -m 0700 "${target%/*}" || return 1
+    tmp="$(mktemp "${target%/*}/.rollback.XXXXXX")" || return 1
+    if ! cp -- "$source" "$tmp" || ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$target"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+  else
+    rm -f -- "$target" || return 1
+  fi
+}
+
+rp_upgrade_checkpoint_prepare() {
+  local manifest="$1" previous_stack="$2" source_version="$3"
+  local dir="${RP_UPGRADE_STATE_DIR:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/upgrade}" tmp prior
+  local config_file="${RP_UPGRADE_INSTALLER_CONFIG_FILE:-/etc/resourceportal/installer.conf}"
+  local stack_file="${RP_UPGRADE_STACK_FILE:-/etc/resourceportal/stack.yml}"
+  local config_exists=false manifest_exists=false
+  [[ "$dir" == /* && -r "$manifest" && -r "$previous_stack" ]] || return 1
+  command -v flock >/dev/null 2>&1 || {
+    printf 'Upgrade lock support (flock) is required.\n' >&2
+    return 1
+  }
+  install -d -m 0700 "$dir" || return 1
+  [[ ! -L "$dir" ]] || return 1
+  exec {RP_UPGRADE_LOCK_FD}>"$dir/lock" || return 1
+  if ! flock -n "$RP_UPGRADE_LOCK_FD"; then
+    printf 'Another ResourcePortal upgrade is already active.\n' >&2
+    return 1
+  fi
+  if [[ -e "$dir/state.json" ]]; then
+    prior="$(jq -r '.phase // "unknown"' "$dir/state.json" 2>/dev/null || printf 'invalid')"
+    case "$prior" in
+      completed|rolled-back) ;;
+      *)
+        printf 'Unresolved previous upgrade checkpoint (%s). Manual recovery required before retry.\n' "$prior" >&2
+        return 1
+        ;;
+    esac
+  fi
+  rp_upgrade_checkpoint_copy "$previous_stack" "$dir/previous-stack.yml" || return 1
+  if [[ -e "$config_file" ]]; then
+    rp_upgrade_checkpoint_copy "$config_file" "$dir/previous-installer.conf" || return 1
+    config_exists=true
+  else
+    rm -f "$dir/previous-installer.conf" || return 1
+  fi
+  if [[ -e "$stack_file" ]]; then
+    rp_upgrade_checkpoint_copy "$stack_file" "$dir/previous-installed-stack.yml" || return 1
+  else
+    # The supplied previous stack is authoritative when the installed copy
+    # does not exist, but never guess where an old stack could have lived.
+    rp_upgrade_checkpoint_copy "$previous_stack" "$dir/previous-installed-stack.yml" || return 1
+  fi
+  # Preserve the previous manifest so a failure after manifest persistence
+  # cannot leave state.json pointing at a failed target release.
+  local installed_manifest="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/release.json"
+  if [[ -r "$installed_manifest" ]]; then
+    rp_upgrade_checkpoint_copy "$installed_manifest" "$dir/previous-release.json" || return 1
+    manifest_exists=true
+  else
+    rm -f "$dir/previous-release.json"
+  fi
+  tmp="$(mktemp "$dir/.state.XXXXXX")" || return 1
+  jq -n --arg source "$source_version" \
+    --arg target "$(rp_manifest_value "$manifest" '.version')" \
+    --arg stackSha256 "$(sha256sum "$dir/previous-stack.yml" | cut -d' ' -f1)" \
+    --arg manifestSha256 "$(sha256sum "$manifest" | cut -d' ' -f1)" \
+    --argjson configExists "$config_exists" --argjson manifestExists "$manifest_exists" \
+    '{phase:"prepared", sourceVersion:$source, targetVersion:$target, previousStackSha256:$stackSha256, targetManifestSha256:$manifestSha256, configExists:$configExists, manifestExists:$manifestExists}' >"$tmp" &&
+    chmod 0600 "$tmp" && mv -f "$tmp" "$dir/state.json" || { rm -f "$tmp"; return 1; }
+  RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
+  export RP_UPGRADE_ACTIVE_CHECKPOINT
+}
+
+rp_upgrade_checkpoint_phase() {
+  local phase="$1" step="${2:-}" dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" tmp
+  [[ -n "$dir" ]] || return 0
+  [[ -r "$dir/state.json" ]] || return 1
+  tmp="$(mktemp "$dir/.state.XXXXXX")" || return 1
+  if ! jq --arg phase "$phase" --arg step "$step" \
+    '.phase=$phase | .lastStep=$step' "$dir/state.json" > "$tmp" ||
+    ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$dir/state.json"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  # Allow a new attempt in the current shell only after a terminal,
+  # verified outcome. Incomplete updates keep the lock until process exit.
+  case "$phase" in
+    completed|rolled-back)
+      if [[ -n "${RP_UPGRADE_LOCK_FD:-}" ]]; then
+        flock -u "$RP_UPGRADE_LOCK_FD" || return 1
+        exec {RP_UPGRADE_LOCK_FD}>&-
+        unset RP_UPGRADE_LOCK_FD
+      fi
+      ;;
+  esac
+}
+
+rp_upgrade_restore_manifest_checkpoint() {
+  local dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" manifest_file
+  local config_file="${RP_UPGRADE_INSTALLER_CONFIG_FILE:-/etc/resourceportal/installer.conf}"
+  local stack_file="${RP_UPGRADE_STACK_FILE:-/etc/resourceportal/stack.yml}"
+  local state_file config_exists manifest_exists
+  [[ -n "$dir" ]] || return 0
+  state_file="$dir/state.json"
+  rp_upgrade_checkpoint_verify || return 1
+  config_exists="$(jq -r '.configExists | if type == "boolean" then . else error("invalid") end' "$state_file")" || return 1
+  manifest_exists="$(jq -r '.manifestExists | if type == "boolean" then . else error("invalid") end' "$state_file")" || return 1
+  manifest_file="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/release.json"
+  rp_upgrade_checkpoint_restore_file "$dir/previous-release.json" "$manifest_file" "$manifest_exists" || return 1
+  rp_upgrade_checkpoint_restore_file "$dir/previous-installer.conf" "$config_file" "$config_exists" || return 1
+  rp_upgrade_checkpoint_restore_file "$dir/previous-installed-stack.yml" "$stack_file" true || return 1
+}
+
 rp_upgrade_restore_after_failure() {
   local manifest="$1" previous_stack="$2" failed_step="$3"
   printf "ResourcePortal update failed at %s.\n" "$failed_step" >&2
   if ! rp_upgrade_rollback_allowed "$manifest"; then
-    printf "Automatic rollback refused: release manifest does not declare an image-only or tested rollback policy. Manual recovery may be required.\n" >&2
+    rp_upgrade_checkpoint_phase manual-recovery-required "$failed_step" || true
+    printf "Automatic rollback refused: release manifest does not authorize safe rollback from this source version. Manual recovery may be required.\n" >&2
     return 1
   fi
+  rp_upgrade_checkpoint_phase rolling-back "$failed_step" || return 1
+  local rollback_stack="$previous_stack"
+  if [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]]; then
+    rp_upgrade_checkpoint_verify || {
+      rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+      return 1
+    }
+    rollback_stack="$RP_UPGRADE_ACTIVE_CHECKPOINT/previous-stack.yml"
+  fi
   printf "Automatically restoring the previous ResourcePortal stack...\n" >&2
-  if ! docker stack deploy --compose-file "$previous_stack" --with-registry-auth --prune "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
+  if ! docker stack deploy --compose-file "$rollback_stack" --with-registry-auth --prune "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     printf "Automatic rollback failed: previous stack could not be deployed.\n" >&2
     return 1
   fi
   if ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     printf "Automatic rollback deployed previous stack, but health verification failed.\n" >&2
     return 1
   fi
+  rp_upgrade_restore_manifest_checkpoint || {
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+    return 1
+  }
+  rp_upgrade_checkpoint_phase rolled-back "$failed_step" || return 1
   printf "Automatic rollback completed: previous ResourcePortal stack is healthy. Update failed.\n" >&2
   return 1
 }
@@ -308,14 +477,22 @@ rp_upgrade_restore_after_failure() {
 rp_upgrade_apply() {
   local manifest="$1" previous_stack="$2" canonical_manifest
   local source_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
+  RP_UPGRADE_SOURCE_VERSION="$source_version"
+  export RP_UPGRADE_SOURCE_VERSION
   [[ -r "$previous_stack" ]] || return 1
   # Keep this guard even when the apply function is invoked directly.
   rp_upgrade_check_temporary_files || return 1
   rp_config_apply_defaults || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
-  rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
-  rp_upgrade_refresh_firewall || return 1
+  rp_upgrade_checkpoint_prepare "$manifest" "$previous_stack" "$source_version" || return 1
+  rp_upgrade_checkpoint_phase applying "before-mutating-runtime" || return 1
+  rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || {
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "node-role reconcile"; return 1;
+  }
+  rp_upgrade_refresh_firewall || {
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "host firewall refresh"; return 1;
+  }
   rp_upgrade_quiesce_database_clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database quiesce"; return 1; }
   rp_upgrade_prepare_postgres_services || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "PostgreSQL preparation"; return 1; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "ZITADEL preparation"; return 1; }
@@ -336,6 +513,13 @@ rp_upgrade_apply() {
   RP_CFG_RELEASE_VERSION="$(rp_manifest_value "$canonical_manifest" '.version')"
   RP_CFG_RELEASE_MANIFEST="$canonical_manifest"
   export RP_CFG_RELEASE_VERSION RP_CFG_RELEASE_MANIFEST
-  rp_config_write /etc/resourceportal/installer.conf
-  rp_write_stack final /etc/resourceportal/stack.yml
+  rp_config_write /etc/resourceportal/installer.conf || {
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "installer configuration persistence"
+    return 1
+  }
+  rp_write_stack final /etc/resourceportal/stack.yml || {
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "stack file persistence"
+    return 1
+  }
+  rp_upgrade_checkpoint_phase completed "target-stack-healthy" || return 1
 }

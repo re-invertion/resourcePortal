@@ -11,8 +11,54 @@ type GithubRelease = {
 
 type ReleaseManifest = {
   version?: string;
-  migrations?: { rollbackPolicy?: string };
+  migrations?: {
+    rollbackPolicy?: string;
+    rollbackAssessment?: { reason?: string; sourceVersion?: string; targetCommit?: string };
+    rollbackEvidence?: { kind?: string; sourceVersion?: string; workflowRunId?: number };
+  };
 };
+
+type RollbackReason =
+  | "available"
+  | "release-feed-unavailable"
+  | "manifest-missing"
+  | "manifest-unavailable"
+  | "manifest-invalid"
+  | "policy-disallows-rollback"
+  | "source-version-not-verified"
+  | "tested-evidence-missing";
+
+export function classifyReleaseRollback(
+  manifest: ReleaseManifest,
+  releaseVersion: string | null,
+  currentVersion: string,
+): { rollbackPolicy: string | null; automaticRollbackAvailable: boolean; rollbackReason: RollbackReason } {
+  const policy = manifest.migrations?.rollbackPolicy;
+  if (!releaseVersion || manifest.version !== releaseVersion ||
+      !["none", "image-only", "tested"].includes(policy ?? "")) {
+    return { rollbackPolicy: null, automaticRollbackAvailable: false, rollbackReason: "manifest-invalid" };
+  }
+  if (policy === "none") {
+    return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "policy-disallows-rollback" };
+  }
+  const assessment = manifest.migrations?.rollbackAssessment;
+  if (assessment && (assessment.sourceVersion !== currentVersion ||
+      !/^[a-f0-9]{40}$/.test(assessment.targetCommit ?? ""))) {
+    return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified" };
+  }
+  if (policy === "tested" &&
+      (assessment?.reason !== "verified-recovery-test" ||
+       manifest.migrations?.rollbackEvidence?.kind !== "real-upgrade-and-restore" ||
+       manifest.migrations.rollbackEvidence.sourceVersion !== assessment.sourceVersion ||
+       !Number.isInteger(manifest.migrations.rollbackEvidence.workflowRunId))) {
+    return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "tested-evidence-missing" };
+  }
+  if (policy === "image-only" && assessment &&
+      assessment.reason !== "no-resourceportal-database-schema-changes") {
+    return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "manifest-invalid" };
+  }
+  return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: true, rollbackReason: "available" };
+}
 
 @Injectable()
 export class PlatformReleaseService {
@@ -27,16 +73,24 @@ export class PlatformReleaseService {
     try {
       const release = await this.latestRelease();
       const latestVersion = normalizeVersion(release.tag_name);
-      let rollbackPolicy: string | null = null;
+      let rollbackStatus: ReturnType<typeof classifyReleaseRollback> = {
+        rollbackPolicy: null,
+        automaticRollbackAvailable: false,
+        rollbackReason: "manifest-missing",
+      };
       const manifestUrl = release.assets?.find(
         (asset) => asset.name === "resourceportal-release-manifest.json",
       )?.browser_download_url;
       if (manifestUrl) {
         try {
           const manifest = await this.fetchJson<ReleaseManifest>(manifestUrl);
-          rollbackPolicy = manifest.migrations?.rollbackPolicy ?? null;
+          rollbackStatus = classifyReleaseRollback(manifest, latestVersion, currentVersion);
         } catch {
-          rollbackPolicy = null;
+          rollbackStatus = {
+            rollbackPolicy: null,
+            automaticRollbackAvailable: false,
+            rollbackReason: "manifest-unavailable",
+          };
         }
       }
       return {
@@ -47,9 +101,7 @@ export class PlatformReleaseService {
           latestVersion !== null &&
           compareVersions(latestVersion, currentVersion) > 0,
         releaseFeedAvailable: true,
-        rollbackPolicy,
-        automaticRollbackAvailable:
-          rollbackPolicy === "image-only" || rollbackPolicy === "tested",
+        ...rollbackStatus,
       };
     } catch (error) {
       return {
@@ -59,6 +111,7 @@ export class PlatformReleaseService {
         releaseFeedAvailable: false,
         rollbackPolicy: null,
         automaticRollbackAvailable: false,
+        rollbackReason: "release-feed-unavailable" as const,
         releaseFeedError:
           error instanceof Error ? error.message : "Release feed unavailable",
       };

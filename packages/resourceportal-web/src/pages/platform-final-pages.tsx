@@ -43,6 +43,19 @@ function SectionTitle({ eyebrow, title, description, action }: { eyebrow?: strin
   return <div className="flex flex-col justify-between gap-3 border-b border-[#E1E7F0] px-5 py-4 sm:flex-row sm:items-center"><div>{eyebrow ? <p className="text-[11px] font-semibold uppercase tracking-[.06em] text-[#1769E0]">{eyebrow}</p> : null}<h2 className="mt-0.5 text-lg font-semibold text-[#172033]">{title}</h2>{description ? <p className="mt-1 text-xs text-[#718096]">{description}</p> : null}</div>{action}</div>;
 }
 
+function rollbackExplanation(reason: unknown) {
+  switch (reason) {
+    case "available": return "The release manifest authorizes a rollback for this source version. Restoration still depends on successful rollout health checks.";
+    case "policy-disallows-rollback": return "This release contains changes that were not proven safe for automatic rollback. A manual recovery plan is required.";
+    case "source-version-not-verified": return "Rollback compatibility has not been verified from the currently installed version.";
+    case "tested-evidence-missing": return "The release claims a tested rollback but does not provide valid integration evidence.";
+    case "manifest-missing": return "This release has no manifest. Automatic rollback cannot be determined.";
+    case "manifest-unavailable": return "The release manifest could not be loaded. Retry before starting the update.";
+    case "manifest-invalid": return "Release manifest rollback metadata is invalid or inconsistent.";
+    case "release-feed-unavailable": return "Release information is unavailable; automatic rollback cannot be assessed.";
+    default: return "Automatic rollback is not verified for this update.";
+  }
+}
 function LoadingCard({ label }: { label: string }) { return <Card className="p-5 text-sm text-[#5B6678]">Loading {label}…</Card>; }
 function ErrorCard({ label, error, retry }: { label: string; error: unknown; retry?: () => void }) { return <Callout tone="danger" title={`${label} unavailable`} action={retry ? <Button size="sm" onClick={retry}>Retry</Button> : undefined}>{readableError(error)}</Callout>; }
 
@@ -232,7 +245,7 @@ export function PlatformInfrastructurePage() {
         <Callout tone={release.data?.automaticRollbackAvailable===true?"info":"warning"} title={release.data?.automaticRollbackAvailable===true?"Automatic rollback available":"Automatic rollback is not guaranteed"}>
           {release.data?.automaticRollbackAvailable===true
             ?"This release manifest permits installer rollback if rollout health checks fail."
-            :"The release manifest does not advertise a tested/image-only rollback policy. The installer will fail closed instead of attempting an unsafe rollback."}
+            :rollbackExplanation(release.data?.rollbackReason)}
         </Callout>
         <Field label="Type AKTUALIZUJ to confirm" required>
           <TextInput aria-label="Update confirmation" autoComplete="off" value={updateConfirmation} onChange={e=>setUpdateConfirmation(e.target.value)} />

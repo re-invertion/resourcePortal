@@ -182,6 +182,18 @@ jobs:
           for image in ghcr.io/zitadel/zitadel:v4.17.0 traefik:v3.6.16; do docker pull "$image"; done
           echo "ZITADEL_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/zitadel/zitadel:v4.17.0)" >> "$GITHUB_ENV"
           echo "TRAEFIK_REF=$(docker inspect --format='{{index .RepoDigests 0}}' traefik:v3.6.16)" >> "$GITHUB_ENV"
+      - name: Classify database rollback capability (fail closed)
+        id: rollback-assessment
+        shell: bash
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        run: |
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$PREVIOUS_TAG" \
+            --head HEAD \
+            --mode "$VALIDATION_MODE" \
+            --github-output "$GITHUB_OUTPUT"
       - name: Create release manifest
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -194,10 +206,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROLLBACK_POLICY=none
-          if [[ "$VALIDATION_MODE" == fastfix ]] && git diff --quiet "$PREVIOUS_TAG"...HEAD -- packages/resourceportal-api/prisma/migrations; then
-            ROLLBACK_POLICY=image-only
-          fi
+          ROLLBACK_POLICY="${{ steps.rollback-assessment.outputs.rollback_policy }}"
+          ROLLBACK_REASON="${{ steps.rollback-assessment.outputs.rollback_reason }}"
+          ROLLBACK_SOURCE_VERSION="${{ steps.rollback-assessment.outputs.rollback_source_version }}"
+          ROLLBACK_TARGET_COMMIT="${{ steps.rollback-assessment.outputs.rollback_target_commit }}"
+          [[ "$ROLLBACK_POLICY" == image-only || "$ROLLBACK_POLICY" == none ]] || exit 1
           mapfile -t ancestor_versions < <(
             git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
               | sed 's/^v//' \
@@ -223,8 +236,11 @@ jobs:
             --arg zitadel "$ZITADEL_REF" \
             --arg traefik "$TRAEFIK_REF" \
             --arg rollback_policy "$ROLLBACK_POLICY" \
+            --arg rollback_reason "$ROLLBACK_REASON" \
+            --arg rollback_source_version "$ROLLBACK_SOURCE_VERSION" \
+            --arg rollback_target_commit "$ROLLBACK_TARGET_COMMIT" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
-            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy}}' \
+            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}' \
             > resourceportal-release-manifest.json
       - name: Verify published images are anonymously pullable
         env:
