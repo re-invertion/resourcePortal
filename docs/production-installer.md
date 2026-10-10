@@ -158,3 +158,43 @@ Unattended destructive storage additionally requires `--allow-destructive-storag
 Primary installation is resumable, but checkpoints are not treated as proof that runtime state still exists. When the `release` phase has already completed, the installer restores all immutable image references from `/var/lib/resourceportal/installer-state/release.json` before continuing. When the `secrets` phase has already completed, it reconstructs the runtime Swarm secret references from the existing files under `/var/lib/resourceportal/installer-state/secrets` and re-ensures the corresponding Swarm Secrets without generating replacement secret material. Missing required secret-state files fail closed. Before migrations, it verifies that the bootstrap services `postgres-rp`, `postgres-zitadel`, and `zitadel` exist in Swarm; missing services trigger a bootstrap redeploy. If a fresh-install resume has completed `bootstrap` but not `migrations` or `identity`, the installer treats the ZITADEL database as incomplete bootstrap state: it scales ZITADEL and its PostgreSQL service to zero, moves the installer-owned ZITADEL database directory to a timestamped `.incomplete-*` quarantine, and redeploys bootstrap against a fresh ZITADEL database. This recovery is restricted to the pre-identity state and does not touch the ResourcePortal PostgreSQL database. The ZITADEL `start-from-init` service mounts `/mnt/resourceportal/platform/zitadel-bootstrap` at `/zitadel/bootstrap`, matching `FirstInstance.PatPath`; the later ResourcePortal bootstrap job reads the generated PAT from the same host directory. This keeps bootstrap credentials on protected platform storage and avoids partial first-instance setup caused by an unwritable or missing PAT path.
 
 Control-plane deployment is fail-closed. Failure to render the stack, validate it with `docker stack config`, or deploy it with `docker stack deploy` aborts the phase and prevents a false completion checkpoint.
+
+### Upgrade recovery and rollback policy (v0.2.76+)
+
+The upgrade installer keeps an atomic, permission-restricted checkpoint on the
+persistent installer volume before changing node labels, database services,
+API/worker replicas, or the control-plane stack. The checkpoint contains the
+previous Swarm stack, installed manifest, installer configuration (if present),
+and a JSON state journal with the source and target versions and SHA-256
+checksums. Do not delete this checkpoint while an upgrade is incomplete.
+
+Upgrade phases in the journal include `prepared`, `applying`,
+`rolling-back`, `rolled-back`, `rollback-failed`,
+`manual-recovery-required`, and `completed`. The installer acquires a
+non-blocking file lock and refuses to start a second upgrade while an
+incomplete checkpoint exists. An interrupted process **is not** assumed
+safe to restart, even if the API/worker has come back online. Inspect the
+journal and running stack before any manual recovery.
+
+Releases generated after v0.2.75 record rollback assessment provenance
+(source version, target Git commit, classification reason) in the release
+manifest. An `image-only` policy authorizes automatic restoration only
+when the migration and Prisma schema paths were unchanged and the *actual*
+source version matches the attested previous release. A `tested` policy
+requires explicit integration evidence of a real upgrade-and-restore run;
+an SQL allowlist or syntactic migration check **does not** constitute proof.
+Unverified migrations and milestone releases default to `none`.
+
+With `none`, a failed upgrade remains stopped for manual inspection, rather
+than deploying old binaries against a database that may have migrated. The
+installer will never silently downgrade PostgreSQL data. With an authorized
+rollback, it verifies the checkpoint digest, restores the previous stack,
+waits for HTTPS health, and restores the installed manifest and configuration.
+If restoring any of these fails, the journal reports `rollback-failed`.
+The checkpoint is **not** a database backup: operators must maintain
+separate database backup and restore procedures for irreversible migrations.
+
+The admin update dialog reports why automatic rollback is unavailable:
+missing/unreachable/invalid release manifest, incompatible source version,
+or explicit `none` policy. A green availability message is scoped to the
+installed source version and the release's documented rollback policy.
