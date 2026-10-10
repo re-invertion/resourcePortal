@@ -23,6 +23,21 @@ export function nextMainRelease(tags, publishedTag, milestones = []) {
   return { version: next.slice(1), previousTag: publishedTag, mode: classified.mode };
 }
 
+export function alreadyPublishedMainRelease(publishedTag, publishedCommit, target, assetNames) {
+  if (publishedCommit !== target) return null;
+  const version = publishedTag.slice(1);
+  for (const name of [
+    `resource-portal-cli-${version}.tgz`,
+    "resourceportal-release-manifest.json",
+    "SHA256SUMS",
+  ]) {
+    if (!assetNames.includes(name)) {
+      throw new Error(`Published release is incomplete (${name} missing); fail closed`);
+    }
+  }
+  return { version, previousTag: publishedTag, mode: "published" };
+}
+
 function shell(command, args) {
   return execFileSync(command, args, { encoding: "utf8" }).trim();
 }
@@ -51,17 +66,7 @@ if (process.argv[1]?.endsWith("/next-main-release.mjs")) {
       "api", `repos/${process.env.GITHUB_REPOSITORY}/releases/tags/${publishedTag}`,
       "--jq", ".assets | map(.name)",
     ]));
-    const version = publishedTag.slice(1);
-    for (const name of [
-      `resource-portal-cli-${version}.tgz`,
-      "resourceportal-release-manifest.json",
-      "SHA256SUMS",
-    ]) {
-      if (!publishedAssets.includes(name)) {
-        throw new Error(`Published release is incomplete (${name} missing); fail closed`);
-      }
-    }
-    plan = { version, previousTag: publishedTag, mode: "published" };
+    plan = alreadyPublishedMainRelease(publishedTag, publishedCommit, target, publishedAssets);
   } else {
     plan = nextMainRelease(tags, publishedTag, milestones);
   }
