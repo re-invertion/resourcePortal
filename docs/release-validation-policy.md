@@ -7,7 +7,7 @@ This file and `AGENTS.md` are the durable release rule for maintainers and agent
 - **Patch / non-milestone release**: `X.Y.N` with only **N** changing (e.g. `v0.2.65 → v0.2.66`). Default to **Fast Fix**, not full project E2E.
 - **Milestone release**: major/minor changes (`X` or `Y`), or a version explicitly listed in `config/release-milestones.json`. Perform full CI, live federation, installer and real-Swarm E2E.
 - To prepare a patch PR use `fastfix/vX.Y.N-short-description`; the `ResourcePortal Fast Fix` job validates the branch version against existing Git tags and rejects milestone versions.
-- Do not mark a milestone as fastfix to bypass its gates. The automatic main release resolves the next unused version from existing semver tags and compares against the latest **published** release; it does **not** trust a commit marker alone.
+- Do not mark a milestone as fastfix to bypass its gates. The automatic release workflow allocates a new version from the latest published release and all existing tags; it does **not** trust a commit marker alone.
 
 ## Patch validation
 
@@ -19,9 +19,18 @@ This file and `AGENTS.md` are the durable release rule for maintainers and agent
 - Existing `test:fastfix:mcp-oauth` is retained for legacy MCP/OAuth fixes, not used as the only patch-release test for every feature.
 - `[fastfix]` in a merge commit is a legacy marker for skipping broad CI on main; version and test plan remain authoritative for publishing tagged patches.
 
-## Main branch delivery contract
 
-- Every approved change enters `main` exclusively via a PR and **Merge Queue**; a repository Ruleset must enforce `Required release readiness`, without administrator bypass or direct pushes. See `docs/automatic-main-releases.md`.
-- Before the merge, run actual candidate image builds, CLI packaging, relevant tests, and real Swarm/federation/installer checks. Any failing or skipped required gate prevents merge.
-- `release.yml` runs on each `push` to `main`, chooses a new version, serializes publication and pins it to the triggering commit SHA. Git tag and GitHub Release are created only after all publish checks succeed; they are not created manually.
-- A previous unpublished `main` blocks all subsequent merges; failures require recovery and complete publication before normal queue operation resumes. No production deployment is part of this process.
+### Published-source safety in recovery releases
+
+A Git tag alone does not prove a release was successfully published. The
+official release workflow retrieves the latest published non-prerelease
+GitHub Release and validates that this source tag exists in the checkout.
+It passes that source to the semantic classifier, patch test selector, and
+rollback manifest assessment. If no published source can be verified, the
+workflow fails closed. This prevents an unsuccessful tagged build from being
+advertised as a valid rollback source for a later release. Release tags are
+never rewritten.
+
+## Protected main delivery
+
+An enforced GitHub Ruleset requires PR and Merge Queue (one PR per group), together with `Required release readiness`. Direct pushes, administrator bypass and force pushes are forbidden. Each merged main revision starts publication of an immutable-SHA release plus images, CLI and manifest. The next merge is blocked until the prior main SHA has been published. See `docs/automatic-main-releases.md`.
