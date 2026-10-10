@@ -53,7 +53,7 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.ok(release.on.push.branches.includes('main'));
   assert.ok(!('workflow_dispatch' in release.on));
   assert.ok(!('tags' in release.on.push));
-  assert.equal(release.concurrency.cancel-in-progress,false);
+  assert.equal(release.concurrency['cancel-in-progress'],false);
   const classification=release.jobs.classify.steps.find(s=>s.name?.includes('Resolve next version'));
   assert.match(classification.run,/next-main-release\.mjs/);
   const publish=release.jobs.publish.steps.find(s=>s.name?.includes('Publish GitHub Release assets'));
