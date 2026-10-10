@@ -230,7 +230,7 @@ contains "$schema" 'minimumVersion' 'manifest schema declares installer compatib
 # Stateful upgrade checkpoint regression: the previous stack/configuration
 # must survive failure, and unsafe/interrupted operations must fail closed.
 upgrade_checkpoint_recovers_previous_state() (
-  local root previous previous_copy original
+  local root previous original
   root="$(mktemp -d /tmp/rp-safe-recovery.XXXXXX)"
   trap 'rm -rf "$root"' EXIT
   previous="$root/old-stack.yml"

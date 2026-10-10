@@ -311,7 +311,16 @@ status 0 'domain reconfigure rolls back ZITADEL config and OIDC client after fin
 
 upgrade_preserves_management_state() (
   previous="$(mktemp /tmp/rp-zitadel-upgrade-stack.XXXXXX.yml)"; manifest="$(mktemp /tmp/rp-zitadel-upgrade-manifest.XXXXXX.json)"; log="$(mktemp /tmp/rp-zitadel-upgrade.XXXXXX)"
-  trap 'rm -f "$previous" "$manifest" "$log"' EXIT
+  local temporary_state
+  temporary_state="$(mktemp -d /tmp/rp-zitadel-upgrade-state.XXXXXX)"
+  # Keep this integration test's checkpoint on a temporary volume: runners
+  # intentionally have no write access to the host installer-state path.
+  RP_UPGRADE_STATE_DIR="$temporary_state/checkpoint"
+  RP_INSTALLER_STATE_DIR="$temporary_state/installed"
+  RP_UPGRADE_INSTALLER_CONFIG_FILE="$temporary_state/config/installer.conf"
+  RP_UPGRADE_STACK_FILE="$temporary_state/config/stack.yml"
+  export RP_UPGRADE_STATE_DIR RP_INSTALLER_STATE_DIR RP_UPGRADE_INSTALLER_CONFIG_FILE RP_UPGRADE_STACK_FILE
+  trap 'rm -f "$previous" "$manifest" "$log"; rm -rf "$temporary_state"' EXIT
   printf 'version: "3.9"\n' >"$previous"
   printf '%s\n' '{"version":"0.1.4"}' >"$manifest"
   RP_CFG_DOMAIN='rp.example.com'
