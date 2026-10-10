@@ -128,14 +128,14 @@ describe("release rollback safety classification", () => {
     const config = { get: vi.fn((key: string) => key === "RESOURCEPORTAL_VERSION" ? "0.2.75" : undefined) };
     const service = new PlatformReleaseService(config as unknown as ConfigService,
       { enqueue: vi.fn() } as unknown as OperationsService);
-    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    vi.stubGlobal("fetch", vi.fn((input: string) => {
       if (input.endsWith("/releases/latest")) {
         return new Response(JSON.stringify({ tag_name: "v0.2.76", assets: [] }), { status: 200 });
       }
       return new Response("blocked", { status: 503 });
     }));
     expect(await service.status()).toMatchObject({ rollbackReason: "manifest-missing" });
-    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    vi.stubGlobal("fetch", vi.fn((input: string) => {
       if (input.endsWith("/releases/latest")) {
         return new Response(JSON.stringify({ tag_name: "v0.2.76",
           assets: [{ name: "resourceportal-release-manifest.json", browser_download_url: "https://test.invalid/manifest" }] }), { status: 200 });
