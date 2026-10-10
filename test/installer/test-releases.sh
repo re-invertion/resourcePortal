@@ -204,7 +204,9 @@ rm -f "$arbitrary_publisher"
 
 workflow="$(cat "$repo_root/.github/workflows/release.yml")"
 contains "$workflow" 'packages: write' 'release workflow can publish GHCR'
-contains "$workflow" 'workflow_dispatch:' 'release workflow supports controlled manual republish'
+contains "$workflow" 'branches: [main]' 'release workflow automatically publishes every main merge'
+contains "$workflow" '--target "$GITHUB_SHA"' 'release workflow pins tag to the validated main revision'
+not_contains "$workflow" 'workflow_dispatch:' 'release workflow cannot be manually dispatched'
 contains "$workflow" 'steps.version.outputs.tag' 'release workflow uses validated release tag for image publication'
 contains "$workflow" 'docker/build-push-action' 'release workflow builds immutable images'
 contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}' 'release workflow publishes fenced PostgreSQL image'
