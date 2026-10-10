@@ -180,6 +180,13 @@ test("rollback release paths require explicit scoped tests, including legacy ins
     "test/installer/test-v020-placement-networking.sh",
     "test/installer/test-zitadel-management.sh",
   ]);
-  assert.deepEqual(plan.profiles, ["installer", "platform-release", "workflow"]);
-  assert.equal(plan.vpnSmoke, false);
+  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "workflow"]);
+  assert.equal(plan.vpnSmoke, true);
+});
+
+test("placement-networking fixture must select live VPN dataplane coverage", () => {
+  const plan = selectProfiles(["test/installer/test-v020-placement-networking.sh"]);
+  assert.ok(plan.profiles.includes("networking"));
+  assert.ok(plan.profiles.includes("platform-release"));
+  assert.equal(plan.vpnSmoke, true);
 });

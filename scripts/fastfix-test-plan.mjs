@@ -65,6 +65,8 @@ const commands = {
     ["bash", "test/installer/test-host-runtime.sh"],
     ["bash", "test/installer/test-diagnostics.sh"],
     ["bash", "test/installer/test-core.sh"],
+    ["bash", "test/installer/test-v020-placement-networking.sh"],
+    ["bash", "test/installer/test-zitadel-management.sh"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
   // fixtures now also have explicit regression checks in patch releases.
@@ -118,7 +120,8 @@ const classifiers = [
 
   [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
   [/^scripts\/release-rollback-policy\.mjs$/, ["platform-release", "workflow"]],
-  [/^test\/installer\/test-(v020-placement-networking|zitadel-management)\.sh$/, ["installer", "platform-release"]],
+  [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
+  [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],
   [/^docker-compose\.yml$/, ["runtime-config"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-groups\.controller\.ts|app-groups\.module\.ts|single-app-logs\.service(\.spec)?\.ts)$/, ["applications"]],
@@ -169,10 +172,13 @@ const classifiers = [
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],
   [/^test\/installer\/test-(host-runtime|diagnostics|core)\.sh$/, ["installer"]],
+
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
   [/^\.github\/workflows\//, ["workflow"]],
+
+  [/^scripts\/next-main-release\.mjs$/, ["platform-release", "workflow"]],
   [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix)\.mjs$/, ["workflow"]],
   [/^test\/.*\.test\.mjs$/, ["workflow"]],
   [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],
@@ -224,7 +230,12 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
   const plan = selectProfiles(files);
   console.log(JSON.stringify(plan, null, 2));
   const output = readArg("--github-output");
-  if (output) appendFileSync(output, `vpn_smoke=${plan.vpnSmoke}\n`);
+  if (output) appendFileSync(output, [
+    `vpn_smoke=${plan.vpnSmoke}`,
+    `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
+    `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,
+    "",
+  ].join("\n"));
   if (process.argv.includes("--run")) {
     const selected = new Map();
     for (const profile of plan.profiles) {

@@ -7,7 +7,7 @@ This file and `AGENTS.md` are the durable release rule for maintainers and agent
 - **Patch / non-milestone release**: `X.Y.N` with only **N** changing (e.g. `v0.2.65 → v0.2.66`). Default to **Fast Fix**, not full project E2E.
 - **Milestone release**: major/minor changes (`X` or `Y`), or a version explicitly listed in `config/release-milestones.json`. Perform full CI, live federation, installer and real-Swarm E2E.
 - To prepare a patch PR use `fastfix/vX.Y.N-short-description`; the `ResourcePortal Fast Fix` job validates the branch version against existing Git tags and rejects milestone versions.
-- Do not mark a milestone as fastfix to bypass its gates. The release workflow resolves the version from the tag and compares it to the immediately preceding semver tag; it does **not** trust a commit marker alone.
+- Do not mark a milestone as fastfix to bypass its gates. The automatic release workflow allocates a new version from the latest published release and all existing tags; it does **not** trust a commit marker alone.
 
 ## Patch validation
 
@@ -30,3 +30,7 @@ rollback manifest assessment. If no published source can be verified, the
 workflow fails closed. This prevents an unsuccessful tagged build from being
 advertised as a valid rollback source for a later release. Release tags are
 never rewritten.
+
+## Protected main delivery
+
+An enforced GitHub Ruleset requires PR and Merge Queue (one PR per group), together with `Required release readiness`. Direct pushes, administrator bypass and force pushes are forbidden. Each merged main revision starts publication of an immutable-SHA release plus images, CLI and manifest. The next merge is blocked until the prior main SHA has been published. See `docs/automatic-main-releases.md`.

@@ -46,3 +46,39 @@ test('called milestone gates cannot be suppressed by fastfix-tag commit messages
     assert.match(job.if,/startsWith\(github\.ref, 'refs\/tags\/v'\)/,name);
   }
 });
+
+
+test('main publication is automatic, serialized and never allows manual/tag release triggers',()=>{
+  const release=load('release.yml');
+  assert.ok(release.on.push.branches.includes('main'));
+  assert.ok(!('workflow_dispatch' in release.on));
+  assert.ok(!('tags' in release.on.push));
+  assert.equal(release.concurrency['cancel-in-progress'],false);
+  const classification=release.jobs.classify.steps.find(s=>s.name?.includes('Resolve next unused version'));
+  assert.match(classification.run,/next-main-release\.mjs/);
+  const publish=release.jobs.publish.steps.find(s=>s.name?.includes('Publish GitHub Release assets'));
+  assert.match(publish.run,/--target "\$GITHUB_SHA"/);
+  assert.doesNotMatch(publish.run,/--clobber/);
+});
+test('Merge Queue requires pre-merge validation and only applicable Fast Fix integration gates',()=>{
+  const gate=load('release-readiness.yml');
+  assert.ok('merge_group' in gate.on);
+  assert.ok('pull_request' in gate.on);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer']);
+  const candidate=gate.jobs.candidate;
+  assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
+  const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
+  assert.match(scoped.if,/fastfix/);
+  assert.match(scoped.run,/fastfix-test-plan\.mjs.*--run/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/\$CANDIDATE.*success/);
+  const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
+  for(const name of ['swarm','federation','installer']){
+    assert.equal(gate.jobs[name].with.force_gate,true);
+    assert.equal(gate.jobs[name].needs,'candidate');
+    assert.match(gate.jobs[name].if,new RegExp(conditionKeys[name]));
+    assert.match(gate.jobs[name].if,/milestone/);
+    const called=load(gate.jobs[name].uses.split('/').at(-1));
+    assert.match(Object.values(called.jobs)[0].if,/inputs\.force_gate == true/);
+  }
+});
