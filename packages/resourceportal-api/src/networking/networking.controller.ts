@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { Public } from "../auth/public.decorator";
+import { MachineBearerAuth } from "../auth/machine-bearer-auth.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import type { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
@@ -332,6 +333,7 @@ export class GateAgentController {
     return this.networking.enrollGate(dto);
   }
 
+  @MachineBearerAuth()
   @Post("agent/heartbeat")
   heartbeat(
     @Headers("authorization") authorization: string | undefined,
@@ -340,6 +342,7 @@ export class GateAgentController {
     return this.networking.gateHeartbeat(authorization, dto);
   }
 
+  @MachineBearerAuth()
   @Get("agent/config")
   config(@Headers("authorization") authorization: string | undefined) {
     return this.networking.gateAgentConfig(authorization);
@@ -352,6 +355,7 @@ export class GateAgentController {
 export class DeviceVpnRuntimeController {
   constructor(private readonly networking: NetworkingService) {}
 
+  @MachineBearerAuth()
   @Post("heartbeat")
   heartbeat(
     @Headers("authorization") authorization: string | undefined,
