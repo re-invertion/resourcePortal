@@ -34,6 +34,8 @@ export class ResourceBotChatService {
   ) {
     const requestId = dto.requestId ?? randomUUID();
     let reservationCreated = false;
+    let reservationId: string | undefined;
+    let renewalTimer: ReturnType<typeof setInterval> | undefined;
 
     try {
       await this.settings.assertEnabled(tenantId);
@@ -54,6 +56,13 @@ export class ResourceBotChatService {
         });
       }
       reservationCreated = true;
+      reservationId = reservation.reservationId;
+      // Keep the authorized reservation alive while retrieval/generation runs.
+      // If the DB cannot extend it, settlement fails closed.
+      renewalTimer = setInterval(() => {
+        if (reservationId) void this.billing.renew(requestId, tenantId, reservationId).catch(() => undefined);
+      }, 60_000);
+      renewalTimer.unref();
 
       const retrievalStartedAt = Date.now();
       let retrievalResult: Awaited<
@@ -75,6 +84,7 @@ export class ResourceBotChatService {
       if (sources.length === 0) {
         const usage = await this.billing.settle({
           tenantId,
+          reservationId: reservation.reservationId,
           requestId,
           actor,
           provider: "OpenAI",
@@ -127,6 +137,7 @@ export class ResourceBotChatService {
 
       const usage = await this.billing.settle({
         tenantId,
+        reservationId: reservation.reservationId,
         requestId,
         actor,
         provider: "OpenAI",
@@ -179,11 +190,13 @@ export class ResourceBotChatService {
         },
       };
     } catch (error) {
-      if (reservationCreated) {
-        await this.billing.release(requestId, tenantId).catch(() => undefined);
+      if (reservationCreated && reservationId) {
+        await this.billing.release(requestId, tenantId, reservationId).catch(() => undefined);
       }
       this.observability.recordResourceBotRequest("error");
       throw error;
+    } finally {
+      if (renewalTimer) clearInterval(renewalTimer);
     }
   }
 

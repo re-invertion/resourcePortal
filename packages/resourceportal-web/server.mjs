@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   isApiProxyPath,
+  isInternalOnlyApiPath,
   resolveApiTarget,
   resolveProxyHeaders,
 } from "./proxy-target.mjs";
@@ -152,6 +153,12 @@ async function renderDocument(request, response, url) {
 
 const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://resourceportal.local");
+
+  if (isInternalOnlyApiPath(url.pathname)) {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("Not found");
+    return;
+  }
 
   if (isApiProxyPath(url.pathname)) {
     proxyApi(request, response);

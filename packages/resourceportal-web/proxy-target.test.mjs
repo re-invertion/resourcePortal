@@ -2,9 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalForwardedClientIp,
   isApiProxyPath,
+  isInternalOnlyApiPath,
   resolveApiTarget,
   resolveProxyHeaders,
 } from "./proxy-target.mjs";
+
+describe("private metrics ingress boundary", () => {
+  it("blocks direct and encoded requests for the internal metrics endpoint", () => {
+    for (const path of ["/api/metrics", "/api/metrics/", "/api/%6detrics", "/api/%256detrics", "//api//metrics", "/api/metrics/any"]) {
+      expect(isInternalOnlyApiPath(path)).toBe(true);
+    }
+    for (const path of ["/api/auth/login", "/api/tenants/t1", "/api/metrics-info"]) {
+      expect(isInternalOnlyApiPath(path)).toBe(false);
+    }
+  });
+});
 
 describe("production API proxy target", () => {
   it("proxies MCP OAuth well-known endpoints to the API instead of SSR", () => {

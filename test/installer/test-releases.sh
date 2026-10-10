@@ -24,7 +24,7 @@ cat >"$manifest" <<'JSON'
   "images": {
     "api": "ghcr.io/re-invertion/resourceportal-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "web": "ghcr.io/re-invertion/resourceportal-web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "postgres": "postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "postgres": "ghcr.io/re-invertion/resourceportal-postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "zitadel": "ghcr.io/zitadel/zitadel@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "traefik": "traefik@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   },
@@ -195,6 +195,12 @@ status 0 'incompatible failed upgrade does not deploy previous stack' upgrade_ro
 mutable="$(mktemp /tmp/rp-release-mutable.XXXXXX.json)"
 sed 's#ghcr.io/re-invertion/resourceportal-api@sha256:[a-f]*#ghcr.io/re-invertion/resourceportal-api:latest#' "$manifest" >"$mutable"
 status 1 'mutable latest image rejected' rp_validate_release_manifest "$mutable"
+
+arbitrary_publisher="$(mktemp /tmp/rp-release-evil.XXXXXX.json)"
+sed 's#ghcr.io/re-invertion/resourceportal-api@#ghcr.io/attacker/payload@#' "$manifest" >"$arbitrary_publisher"
+status 1 'arbitrary image publisher is rejected even with immutable digest' rp_validate_release_manifest "$arbitrary_publisher"
+rm -f "$arbitrary_publisher"
+
 
 workflow="$(cat "$repo_root/.github/workflows/release.yml")"
 contains "$workflow" 'packages: write' 'release workflow can publish GHCR'

@@ -393,6 +393,7 @@ model ResourceBotPriceVersion {
   createdBy               String
   createdAt               DateTime                 @default(now())
   usageRecords            ResourceBotUsageRecord[]
+  reservations            ResourceBotUsageReservation[]
 
   @@unique([provider, model, effectiveFrom], map: "ResourceBotPrice_provider_model_effective_key")
   @@index([provider, model, effectiveFrom(sort: Desc)], map: "ResourceBotPrice_provider_model_effective_idx")
@@ -404,10 +405,12 @@ model ResourceBotUsageReservation {
   tenantId         String         @db.Uuid
   requestId        String         @unique
   reservedCredits  Decimal        @db.Decimal(24, 8)
+  priceVersionId   String?        @db.Uuid
   expiresAt        DateTime
   createdAt        DateTime       @default(now())
   billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
   tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  priceVersion     ResourceBotPriceVersion? @relation(fields: [priceVersionId], references: [id], onDelete: Restrict)
 
   @@index([billingAccountId, expiresAt], map: "ResourceBotReservation_account_expiry_idx")
   @@index([tenantId, createdAt], map: "ResourceBotReservation_tenant_created_idx")

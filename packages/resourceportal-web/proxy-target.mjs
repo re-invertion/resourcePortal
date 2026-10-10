@@ -11,6 +11,23 @@ export function isApiProxyPath(pathname) {
   );
 }
 
+// The API metrics scrape endpoint is available only on the internal Swarm API
+// network. Never forward it through the public web/Trafik ingress.
+export function isInternalOnlyApiPath(pathname) {
+  let path = pathname;
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      const decoded = decodeURIComponent(path);
+      if (decoded === path) break;
+      path = decoded;
+    }
+  } catch {
+    return true;
+  }
+  path = path.replaceAll("\\", "/").replace(/\/{2,}/g, "/");
+  return /^\/api\/metrics(?:\/|$)/i.test(path);
+}
+
 export function resolveApiTarget(requestUrl, apiOrigin) {
   const localRequest = new URL(requestUrl ?? "/api", "http://resourceportal.local");
   return new URL(`${localRequest.pathname}${localRequest.search}`, apiOrigin).toString();

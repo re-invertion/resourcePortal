@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { atomicVpnFirewallRestore } from "./atomic-vpn-firewall";
 import {
   DEVICE_VPN_DNAT_CHAIN,
   DEVICE_VPN_FORWARD_CHAIN,
@@ -35,8 +36,8 @@ process.once("SIGINT", () => {
   stopping = true;
 });
 
-function run(command: string, args: string[], allowFailure = false) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+function run(command: string, args: string[], allowFailure = false, input?: string) {
+  const result = spawnSync(command, args, { encoding: "utf8", input });
   if (result.status !== 0 && !allowFailure) {
     throw new Error(
       `${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
@@ -73,7 +74,7 @@ function config() {
 function ensureChain(table: "filter" | "nat", chain: string) {
   const prefix = table === "nat" ? ["-t", "nat"] : [];
   run("iptables", [...prefix, "-N", chain], true);
-  run("iptables", [...prefix, "-F", chain]);
+  // Never flush a live chain before the replacement rules are committed.
 }
 
 function ensureJump(
@@ -121,18 +122,14 @@ function reconcileFirewall(runtime: DeviceVpnRuntimeConfig) {
     if (address) resolved.set(mapping.attachmentAlias, address);
   }
 
-  run("iptables", ["-F", DEVICE_VPN_FORWARD_CHAIN]);
-  run("iptables", ["-t", "nat", "-F", DEVICE_VPN_DNAT_CHAIN]);
-  run("iptables", ["-t", "nat", "-F", DEVICE_VPN_SNAT_CHAIN]);
-
   const rules = deviceVpnFirewallRules(runtime, resolved, interfaceName);
-  for (const args of rules.forward) run("iptables", args);
-  for (const args of rules.dnat) {
-    run("iptables", ["-t", "nat", ...args]);
-  }
-  for (const args of rules.snat) {
-    run("iptables", ["-t", "nat", ...args]);
-  }
+  const script = atomicVpnFirewallRestore({
+    forwardChain: DEVICE_VPN_FORWARD_CHAIN,
+    dnatChain: DEVICE_VPN_DNAT_CHAIN,
+    snatChain: DEVICE_VPN_SNAT_CHAIN,
+    ...rules,
+  });
+  run("iptables-restore", ["-w", "5", "--noflush"], false, script);
   return resolved.size;
 }
 

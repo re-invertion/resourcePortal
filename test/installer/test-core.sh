@@ -101,6 +101,32 @@ assert_eq "/srv/resource-portal/storage" "${RP_CFG_STORAGE_BASE_PATH:-}" "loads 
 assert_eq "rp.example.com" "${RP_CFG_DOMAIN:-}" "loads persisted domain"
 assert_eq "staging" "${RP_CFG_ACME_ENVIRONMENT:-}" "loads persisted ACME environment"
 assert_eq "U1RBR0lORy1ST09ULUNB" "${RP_CFG_OIDC_EXTRA_CA_B64:-}" "loads public OIDC staging CA trust material"
+
+# Values written with printf %q must round-trip without executing shell code.
+(
+  RP_CFG_SMTP_SENDER='literal $(id); double "quotes" and \ backslash'
+  export RP_CFG_SMTP_SENDER
+  expected="$RP_CFG_SMTP_SENDER"
+  rp_config_write "$tmpdir/quoted.conf"
+  unset RP_CFG_SMTP_SENDER
+  rp_config_load "$tmpdir/quoted.conf"
+  [[ "$RP_CFG_SMTP_SENDER" == "$expected" ]]
+) && printf 'PASS: quoted configuration round-trip\n' || { printf 'FAIL: quoted configuration round-trip\n' >&2; failures=$((failures+1)); }
+(
+  RP_CFG_SMTP_SENDER="$(printf 'first line\nsecond line\n')"
+  export RP_CFG_SMTP_SENDER
+  expected="$RP_CFG_SMTP_SENDER"
+  rp_config_write "$tmpdir/multiline.conf"
+  unset RP_CFG_SMTP_SENDER
+  rp_config_load "$tmpdir/multiline.conf"
+  [[ "$RP_CFG_SMTP_SENDER" == "$expected" ]]
+) && printf 'PASS: ANSI-escaped multiline configuration round-trip\n' || { printf 'FAIL: ANSI-escaped multiline configuration round-trip\n' >&2; failures=$((failures+1)); }
+printf 'RP_CFG_DOMAIN=$(touch %s)\n' "$tmpdir/config-executed" >"$tmpdir/injection.conf"
+chmod 600 "$tmpdir/injection.conf"
+assert_status 1 "installer rejects command substitution" rp_config_load "$tmpdir/injection.conf"
+[[ ! -e "$tmpdir/config-executed" ]] || { printf 'FAIL: config command executed\n' >&2; failures=$((failures+1)); }
+ln -s "$config_path" "$tmpdir/link.conf"
+assert_status 1 "installer rejects symlinked config" rp_config_load "$tmpdir/link.conf"
 RP_CFG_ACME_ENVIRONMENT=production; export RP_CFG_ACME_ENVIRONMENT
 rp_config_apply_defaults
 assert_eq "" "${RP_CFG_OIDC_EXTRA_CA_B64:-}" "production defaults remove stale staging CA trust"

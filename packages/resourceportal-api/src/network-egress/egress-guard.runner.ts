@@ -4,6 +4,8 @@ import {
   decodeEgressPolicy,
   egressPolicyDigest,
   firewallRulesForWorkloads,
+  DEFAULT_EGRESS_POLICY,
+  renderAtomicEgressRules,
   shouldPreserveExistingFirewallState,
   tenantWorkloads,
   type DockerContainerInspect,
@@ -20,6 +22,7 @@ const reconcileMs = readPositiveInt(
 );
 let stopping = false;
 let lastDigest = "";
+let lastAppliedPolicy: ReturnType<typeof decodeEgressPolicy> | undefined;
 let eventProcess: ChildProcess | undefined;
 let wakeReconcile: (() => void) | undefined;
 
@@ -62,10 +65,11 @@ async function main() {
 async function reconcile() {
   const encodedPolicy = process.env[EGRESS_POLICY_ENV];
   if (!encodedPolicy && (await hasExistingPolicyState())) {
-    // A normal `docker stack deploy` can temporarily omit the worker-managed
-    // snapshot. Preserve the last applied host firewall state until the worker
-    // reattaches the authoritative policy. On a fresh node no RP chains exist,
-    // so the fail-closed default policy is still applied immediately.
+    // Keep all existing deny rules and extend them to newly arrived tenant
+    // workloads while an authoritative snapshot is temporarily unavailable.
+    // Never flush/rebuild using a weaker policy or leave new IPs unprotected.
+    await preserveAndExtendDeniedWorkloads(lastAppliedPolicy ?? DEFAULT_EGRESS_POLICY);
+    lastDigest = ""; // Always reconcile when the authoritative policy returns.
     return;
   }
   const policy = decodeEgressPolicy(encodedPolicy);
@@ -107,9 +111,39 @@ async function reconcile() {
     }
   }
   lastDigest = digest;
+  lastAppliedPolicy = policy;
   logger.log(
     `Applied network policy revision=${policy.revision} enabled=${policy.enabled} workloads=${workloads.length} firewallRules=${ipv4Rules.length + ipv6Rules.length}`,
   );
+}
+
+async function preserveAndExtendDeniedWorkloads(
+  policy: ReturnType<typeof decodeEgressPolicy>,
+) {
+  const [containersRaw, gatewayRaw] = await Promise.all([
+    dockerJson(["inspect", ...await containerIds()]),
+    dockerJson(["network", "inspect", "docker_gwbridge"]),
+  ]);
+  const workloads = tenantWorkloads(
+    Array.isArray(containersRaw) ? containersRaw as DockerContainerInspect[] : [],
+    Array.isArray(gatewayRaw) ? (gatewayRaw[0] ?? {}) as DockerGatewayNetworkInspect : {},
+  );
+  for (const [binary, family] of [["iptables", 4], ["ip6tables", 6]] as const) {
+    const rules = firewallRulesForWorkloads(policy, workloads, family);
+    if (rules.length === 0) continue;
+    if (binary === "ip6tables" && (!await commandExists(binary) || !await chainExists(binary, FORWARD_CHAIN))) {
+      throw new Error("IPv6 protection is unavailable while policy snapshot is missing");
+    }
+    for (const rule of rules) {
+      for (const chain of [FORWARD_CHAIN, HOST_CHAIN]) {
+        const args = ["-w", "5", "-C", chain, ...rule];
+        const exists = await run(binary, args, true);
+        if (exists.exitCode !== 0) {
+          await run(binary, ["-w", "5", "-A", chain, ...rule]);
+        }
+      }
+    }
+  }
 }
 
 async function applyFamily(
@@ -118,14 +152,13 @@ async function applyFamily(
 ) {
   await ensureChain(binary, FORWARD_CHAIN);
   await ensureChain(binary, HOST_CHAIN);
+  // Validate the complete policy before mutating the live firewall.
+  const script = renderAtomicEgressRules(FORWARD_CHAIN, HOST_CHAIN, rules);
+  const restore = binary === "iptables" ? "iptables-restore" : "ip6tables-restore";
+  await run(restore, ["-w", "5", "--noflush"], false, script);
+  // On initial setup, attach already populated chains to enforcement paths.
   await ensureJump(binary, "DOCKER-USER", FORWARD_CHAIN);
   await ensureJump(binary, "INPUT", HOST_CHAIN);
-  await run(binary, ["-w", "5", "-F", FORWARD_CHAIN]);
-  await run(binary, ["-w", "5", "-F", HOST_CHAIN]);
-  for (const rule of rules) {
-    await run(binary, ["-w", "5", "-A", FORWARD_CHAIN, ...rule]);
-    await run(binary, ["-w", "5", "-A", HOST_CHAIN, ...rule]);
-  }
 }
 
 async function hasExistingPolicyState() {
@@ -251,17 +284,18 @@ async function commandExists(command: string) {
   return result.exitCode === 0;
 }
 
-async function run(command: string, args: string[], allowFailure = false) {
+async function run(command: string, args: string[], allowFailure = false, stdin?: string) {
   const result = await new Promise<{
     exitCode: number;
     stdout: string;
     stderr: string;
   }>((resolve) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    if (stdin !== undefined) child.stdin?.end(stdin);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.on("error", (error) =>
       resolve({ exitCode: 127, stdout: "", stderr: error.message }),
     );
