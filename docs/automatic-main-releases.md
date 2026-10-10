@@ -21,12 +21,12 @@ Verify **with a negative test**: an administrator and a contributor attempt a di
 
 ## How validation works
 
-- `.github/workflows/release-readiness.yml` runs for both PR and Merge Queue events. The required final check fails if **any** of the build, complete tests, CLI packaging, real Swarm, federation/browser, or installer jobs fail/skip/cancel.
+- `.github/workflows/release-readiness.yml` runs for PR and Merge Queue events. It validates the release candidate, installable CLI and production images. **Patches use changed-path Fast Fix tests** (plus mandatory dependency audit), while explicit milestones run the complete lint, test, build, installer and live integration suites. Real Swarm/VPN, federation/browser and installer gates are required for affected patch profiles; the final check fails if any applicable gate fails, skips or is cancelled.
 - Before accepting another merge, it requires that the latest published GitHub Release tag resolves to the current `main` SHA.
 - There is no exception for unpublished `main` revisions; reconcile the release backlog before enabling merges.
 - `.github/workflows/release.yml` triggers on every push to `main`. Jobs are serialized, never cancelled; version selection uses the last **published** release plus all existing tags. Failed/orphan tags are not reused.
 - On the immutable triggering SHA, it reruns release checks, builds and pushes API/Web/PostgreSQL images, verifies anonymous registry access, creates the CLI package and manifest, and only then creates the GitHub tag/release. It verifies that the new tag resolves to the trigger SHA.
-- `scripts/next-main-release.mjs` advances the patch component for each merge. Major/minor release numbering requires a separate explicit design. Versions present in `config/release-milestones.json` still run full milestone gates.
+- `scripts/next-main-release.mjs` advances the patch component for each new main SHA. Reruns for an already completely published SHA are **verified no-ops**, preventing duplicate releases. Incomplete published assets fail closed. Major/minor numbering requires a separate explicit design. Explicit milestone versions run full gates.
 - If the publication fails, **do not merge another PR**. Inspect the failed GitHub Actions run, fix the cause, rerun on the original SHA if safe, and verify release/tag/images/manifest. Do not force a release tag or mutate old assets.
 
 ## Limits and recovery
