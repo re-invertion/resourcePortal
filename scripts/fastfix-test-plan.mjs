@@ -66,6 +66,16 @@ const commands = {
     ["bash", "test/installer/test-diagnostics.sh"],
     ["bash", "test/installer/test-core.sh"],
   ],
+  // Previously covered by full real-Swarm and application CI. These individual
+  // fixtures now also have explicit regression checks in patch releases.
+  "release-fixtures": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/config/production-auth-entrypoints.spec.ts", "src/tenants"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "deployment-entrypoints.test.mjs", "src/pages/quota-payload.test.ts"],
+    ["npm", "--workspace", "@resource-portal/sdk", "test"],
+    ["node", "--check", "scripts/run-stage20-real-swarm-web-e2e.mjs"],
+    ["bash", "test/installer/test-workflows.sh"],
+    ["bash", "test/installer/test-core.sh"],
+  ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
     ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
@@ -97,6 +107,12 @@ const commands = {
 };
 
 const classifiers = [
+  [/^README\.md$/, ["workflow"]],
+  [/^packages\/resourceportal-api\/scripts\/smoke-(deploy|stage11-quota-concurrency|stage15-capacity|stage16-operations|volume-lifecycle)\.ts$/, ["release-fixtures", "tenant-access", "platform-release"]],
+  [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
+  [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
+  [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release"]],
+
   [/^config\/observability\//, ["observability"]],
   [/^docker-compose\.yml$/, ["runtime-config"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-groups\.controller\.ts|app-groups\.module\.ts|single-app-logs\.service(\.spec)?\.ts)$/, ["applications"]],
