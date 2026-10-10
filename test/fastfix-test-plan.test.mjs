@@ -172,3 +172,14 @@ test("unregistered release fixtures still fail closed", () => {
     "packages/resourceportal-api/scripts/smoke-new-unknown.ts",
   ]), /unclassified changes/);
 });
+
+test("rollback release paths require explicit scoped tests, including legacy installer contracts", () => {
+  const plan = selectProfiles([
+    "config/production/release-manifest.schema.json",
+    "scripts/release-rollback-policy.mjs",
+    "test/installer/test-v020-placement-networking.sh",
+    "test/installer/test-zitadel-management.sh",
+  ]);
+  assert.deepEqual(plan.profiles, ["installer", "platform-release", "workflow"]);
+  assert.equal(plan.vpnSmoke, false);
+});

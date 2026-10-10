@@ -827,6 +827,40 @@ describe("Site VPN firewall policy API", () => {
   });
 });
 
+describe("Site VPN machine-token validation", () => {
+  it("rejects unknown opaque agent tokens after passing the global user-auth guard", async () => {
+    const { service, prisma } = fixture();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(null);
+
+    await expect(service.gateHeartbeat("Bearer invalid-machine-token", {
+      lanAddresses: ["192.168.100.142"],
+      lanCidrs: ["192.168.100.0/24"],
+      agentVersion: "gate-shell-v3",
+    })).rejects.toThrow("Invalid or revoked ResourcePortalGate token");
+    expect(prisma.resourcePortalGate.findUnique).toHaveBeenCalledWith({
+      where: {
+        agentTokenHash: createHash("sha256").update("invalid-machine-token").digest("hex"),
+      },
+    });
+  });
+
+  it("requires a bearer token on every machine heartbeat", async () => {
+    const { service } = fixture();
+    await expect(service.gateHeartbeat(undefined, {
+      lanAddresses: [],
+      lanCidrs: [],
+    })).rejects.toThrow("ResourcePortalGate bearer token is required");
+  });
+
+  it("rejects unknown Device VPN runtime bearer tokens", async () => {
+    const { service, prisma } = fixture();
+    (prisma.deviceVpnGateway.findUnique as any).mockResolvedValue(null);
+    await expect(service.deviceVpnRuntimeHeartbeat("Bearer invalid-device-token", {
+      peers: [],
+    })).rejects.toThrow("Invalid Device VPN runtime token");
+  });
+});
+
 describe("Site VPN agent re-enrollment safety", () => {
   it("resets RP → LAN authorization when the agent identity is rotated", async () => {
     const { service, prisma, tx } = fixture();
