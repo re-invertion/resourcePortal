@@ -1,0 +1,129 @@
+name: ResourcePortal Release Readiness
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Build and validate release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Block merges while the previous main release is unpublished
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          previous_sha="$(git rev-list -n 1 "$previous_tag")"
+          main_sha="$(git rev-parse origin/main)"
+          if [[ "$previous_sha" != "$main_sha" ]]; then
+            # One-time bootstrap for the existing v0.2.76 publication backlog.
+            if [[ "$previous_tag" == v0.2.75 &&
+                  "$main_sha" == 776e4f9e7244049c11ac69fd1a6e7d6ea4cead48 ]]; then
+              echo "Existing unpublished main backlog accepted once for migration."
+            else
+              echo "Blocking merge: current main has not yet been published as a verified release." >&2
+              exit 1
+            fi
+          fi
+          node scripts/next-main-release.mjs
+      - name: Install dependencies and generate Prisma
+        run: |
+          npm ci
+          npm run api:prisma:generate
+      - name: Validate release selection and test taxonomy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:catalog
+          node --test test/next-main-release.test.mjs test/release-validation-mode.test.mjs test/test-workflow-gates.test.mjs
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          node scripts/fastfix-test-plan.mjs --base "$previous_tag" --head HEAD
+      - name: Validate all source code, test suites and packages
+        run: |
+          npm audit --audit-level=high
+          npm run lint
+          npm run test
+          npm run build
+          npm run test:installer
+          npm run test:cli-release
+      - name: Dry-run actual installable CLI packaging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/next-main-release.mjs | jq -er .version)"
+          scripts/package-cli-release.sh "$version" \
+            packages/resourceportal-cli/dist packages/resourceportal-sdk/dist cli-release
+          (cd cli-release && sha256sum -c SHA256SUMS)
+          prefix="$(mktemp -d)"
+          trap 'rm -rf "$prefix"' EXIT
+          npm install --global --prefix "$prefix" "./cli-release/resource-portal-cli-${version}.tgz"
+          "$prefix/bin/rp" --help
+      - name: Build the three production release images before merge
+        run: |
+          set -euo pipefail
+          docker build -t resourceportal-api-candidate .
+          docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
+          docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
+          docker run --rm --entrypoint /bin/bash resourceportal-postgres-candidate \
+            -ec 'command -v flock && test -x /usr/local/bin/resourceportal-postgres-fence'
+          test "$(docker run --rm --entrypoint /usr/bin/id resourceportal-api-candidate -u)" != "0"
+
+  swarm:
+    name: Real Swarm gate
+    uses: ./.github/workflows/swarm-integration.yml
+    with:
+      force_gate: true
+
+  federation:
+    name: Federation and browser gate
+    uses: ./.github/workflows/federation-integration.yml
+    with:
+      force_gate: true
+
+  installer:
+    name: Production installer gate
+    uses: ./.github/workflows/production-installer.yml
+    with:
+      force_gate: true
+
+  release-ready:
+    name: Required release readiness
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [candidate, swarm, federation, installer]
+    steps:
+      - name: Fail closed unless every required check succeeded
+        env:
+          CANDIDATE: ${{ needs.candidate.result }}
+          SWARM: ${{ needs.swarm.result }}
+          FEDERATION: ${{ needs.federation.result }}
+          INSTALLER: ${{ needs.installer.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in "$CANDIDATE" "$SWARM" "$FEDERATION" "$INSTALLER"; do
+            if [[ "$result" != success ]]; then
+              echo "Release readiness blocked (check result: $result)" >&2
+              exit 1
+            fi
+          done
