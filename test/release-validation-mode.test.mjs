@@ -19,3 +19,20 @@ test("no previous tag or malformed version fails closed", () => {
   assert.throws(() => releaseMode("v0.2.66", []), /Missing previous/);
   assert.throws(() => releaseMode("v0.2", ["v0.2.65"]), /Invalid semver/);
 });
+
+test("a failed tagged release is not treated as the previous published version", () => {
+  assert.deepEqual(
+    releaseMode("v0.2.77", ["v0.2.75", "v0.2.76"], [], "v0.2.75"),
+    { version: "v0.2.77", previousTag: "v0.2.75", mode: "fastfix" },
+  );
+});
+test("published source override fails closed on forged or future tags", () => {
+  assert.throws(
+    () => releaseMode("v0.2.77", ["v0.2.75", "v0.2.76"], [], "v0.2.74"),
+    /missing from checkout/,
+  );
+  assert.throws(
+    () => releaseMode("v0.2.77", ["v0.2.75", "v0.2.78"], [], "v0.2.78"),
+    /precede target/,
+  );
+});
