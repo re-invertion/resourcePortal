@@ -57,6 +57,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
   const activeSection = section === "mcp" ? "mcp" : "resource-bot";
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
   const settings = useApi<McpSettings>(`${root}/mcp-settings`);
+  const catalog = useApi<{ items: Array<{ name: string; title: string; description: string }> }>(activeSection === "mcp" ? `${root}/mcp-settings/catalog` : undefined);
   const resourceBotSettings = useApi<ResourceBotSettings>(`${root}/resource-bot/settings`);
   const memberships = useApi<unknown>(`${root}/memberships`);
   const [resourceBotEnabled, setResourceBotEnabled] = useState(true);
@@ -268,6 +269,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
           {!oauth?.openAiReady ? <Callout tone="warning" title="OAuth setup incomplete">Dynamic Client Registration and PKCE S256 must be available before compatible MCP clients can complete OAuth authorization. Run the current ResourcePortal upgrade or platform repair.</Callout> : null}
         </div>
       </Card>
+      <Card className="mt-6 overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Available Tenant MCP tools</h2><p className="mt-1 text-xs text-[#718096]">Current tenant-scoped tool catalog. {catalog.data?.items?.length ?? 0} tools.</p></div>{catalog.loading?<p className="p-5 text-sm">Loading tools…</p>:catalog.error?<p className="p-5 text-sm text-[#B42318]">Tool catalog unavailable.</p>:<div className="max-h-[480px] divide-y divide-[#E1E7F0] overflow-y-auto">{catalog.data?.items?.map(tool=><div key={tool.name} className="px-5 py-3"><strong className="block break-all text-[13px]">{tool.name}</strong><p className="mt-1 text-xs text-[#526070]">{tool.description}</p></div>)}</div>}</Card>
       </>}
     </main>
   );

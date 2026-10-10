@@ -2,9 +2,11 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { AdminMcpAccessGuard } from "./admin-mcp-access.guard";
+import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AdminMcpAuditService } from "./admin-mcp-audit.service";
 import {
   AdminMcpController,
+  AdminMcpCatalogController,
   AdminMcpOAuthMetadataController,
 } from "./admin-mcp.controller";
 import { AdminMcpProtocolService } from "./admin-mcp-protocol.service";
@@ -27,6 +29,7 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
     TenantMcpController,
     TenantMcpOAuthMetadataController,
     AdminMcpController,
+    AdminMcpCatalogController,
     AdminMcpOAuthMetadataController,
     McpOAuthAuthorizationServerMetadataController,
     McpOAuthDcrController,
@@ -36,6 +39,7 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
     TenantMcpAccessGuard,
     TenantMcpProtocolService,
     AdminMcpAccessGuard,
+    PlatformAdminGuard,
     AdminMcpAuditService,
     AdminMcpProtocolService,
     McpOAuthDcrService,

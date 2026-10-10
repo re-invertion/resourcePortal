@@ -285,6 +285,26 @@ rp_upgrade_refresh_enrollment_listener() {
   fi
 }
 
+rp_upgrade_restore_after_failure() {
+  local manifest="$1" previous_stack="$2" failed_step="$3"
+  printf "ResourcePortal update failed at %s.\n" "$failed_step" >&2
+  if ! rp_upgrade_rollback_allowed "$manifest"; then
+    printf "Automatic rollback refused: release manifest does not declare an image-only or tested rollback policy. Manual recovery may be required.\n" >&2
+    return 1
+  fi
+  printf "Automatically restoring the previous ResourcePortal stack...\n" >&2
+  if ! docker stack deploy --compose-file "$previous_stack" --with-registry-auth --prune "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
+    printf "Automatic rollback failed: previous stack could not be deployed.\n" >&2
+    return 1
+  fi
+  if ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
+    printf "Automatic rollback deployed previous stack, but health verification failed.\n" >&2
+    return 1
+  fi
+  printf "Automatic rollback completed: previous ResourcePortal stack is healthy. Update failed.\n" >&2
+  return 1
+}
+
 rp_upgrade_apply() {
   local manifest="$1" previous_stack="$2" canonical_manifest
   local source_version="${RP_CFG_RELEASE_VERSION:-0.0.0}"
@@ -296,27 +316,23 @@ rp_upgrade_apply() {
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '.version')" || return 1
   rp_upgrade_refresh_firewall || return 1
-  rp_upgrade_quiesce_database_clients || return 1
-  rp_upgrade_prepare_postgres_services || return 1
-  rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || return 1
-  rp_run_zitadel_mcp_oauth_reconcile || return 1
+  rp_upgrade_quiesce_database_clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database quiesce"; return 1; }
+  rp_upgrade_prepare_postgres_services || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "PostgreSQL preparation"; return 1; }
+  rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "ZITADEL preparation"; return 1; }
+  rp_run_zitadel_mcp_oauth_reconcile || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "MCP OAuth reconciliation"; return 1; }
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1
-    rp_prepare_oidc_staging_ca "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" || return 1
+    rp_prepare_oidc_staging_ca "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "OIDC staging CA"; return 1; }
   fi
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
-    if rp_upgrade_rollback_allowed "$manifest"; then
-      docker stack deploy --compose-file "$previous_stack" --with-registry-auth --prune "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"
-      return 1
-    fi
-    printf 'Upgrade failed after an irreversible/incompatible migration. Automatic rollback refused.\n' >&2
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
     return 1
   fi
   if ! rp_upgrade_refresh_enrollment_listener; then
-    printf 'Upgrade core services are healthy, but the enrollment listener could not be refreshed to the target release.\n' >&2
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "enrollment listener"
     return 1
   fi
-  canonical_manifest="$(rp_persist_release_manifest "$manifest")" || return 1
+  canonical_manifest="$(rp_persist_release_manifest "$manifest")" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "manifest persistence"; return 1; }
   RP_CFG_RELEASE_VERSION="$(rp_manifest_value "$canonical_manifest" '.version')"
   RP_CFG_RELEASE_MANIFEST="$canonical_manifest"
   export RP_CFG_RELEASE_VERSION RP_CFG_RELEASE_MANIFEST

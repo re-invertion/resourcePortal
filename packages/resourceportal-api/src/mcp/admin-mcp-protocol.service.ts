@@ -204,6 +204,10 @@ export class AdminMcpProtocolService {
     return this.executeJsonCall(context, name, execution);
   }
 
+  catalog() {
+    return this.tools().map(({ name, title, description }) => ({ name, title, description }));
+  }
+
   private tools(): ToolDescriptor[] {
     const definitions = this.definitions().map((definition) =>
       this.toolDescriptor(definition),

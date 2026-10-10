@@ -625,7 +625,8 @@ it("keeps invalid Gate names in the form instead of raising a global validation 
   render(<><TenantNetworkingPage tenantId="tenant-1" /><ToastViewport /></>);
   await waitFor(() => expect(screen.getAllByText("backend").length).toBeGreaterThan(0));
 
-  fireEvent.click(screen.getByRole("button", { name: "Add Site VPN" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add VPN" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Site VPN" }));
   const dialog = screen.getByRole("dialog", { name: "Add Site VPN" });
   fireEvent.change(within(dialog).getByPlaceholderText("office-site-vpn"), {
     target: { value: "Office Gateway" },
@@ -670,7 +671,8 @@ it("creates a Gate and shows the one-time curl installer command", async () => {
   render(<TenantNetworkingPage tenantId="tenant-1" />);
   await waitFor(() => expect(screen.getAllByText("backend").length).toBeGreaterThan(0));
 
-  fireEvent.click(screen.getByRole("button", { name: "Add Site VPN" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add VPN" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Site VPN" }));
   const dialog = screen.getByRole("dialog", { name: "Add Site VPN" });
   const gateName = within(dialog).getByPlaceholderText("office-site-vpn");
   expect(gateName.className).toContain("selection:bg-[#1769E0]");
@@ -693,4 +695,35 @@ it("creates a Gate and shows the one-time curl installer command", async () => {
   );
   expect(commandCode.closest("pre")).toBeTruthy();
   expect(commandCode.closest("pre")?.className).toContain("text-white");
+});
+
+it("renders a circular Internet node with a separate HTTP/HTTPS edge per assigned hostname", () => {
+  const exposed: Topology = {
+    ...topology,
+    appGroups: topology.appGroups.map(group => ({
+      ...group,
+      singleApps: group.singleApps.map(app => ({
+        ...app,
+        httpEndpoints: [{
+          id: "endpoint-1",
+          protocolMode: "HTTP",
+          domains: [
+            { hostname: "secure.example.test", tlsEnabled: true, dnsStatus: "Valid" },
+            { hostname: "plain.example.test", tlsEnabled: false, dnsStatus: "Valid" },
+          ],
+        }],
+      })),
+    })),
+  };
+  const graph = buildTopologyGraph(exposed, defaultFilters);
+  const internetNode = graph.nodes.find(node=>node.id==="internet:public");
+  expect(internetNode?.type).toBe("internet");
+  expect(internetNode?.data.domainCount).toBe(2);
+  const routes = graph.edges.filter(edge=>String(edge.id).startsWith("internet-edge:"));
+  expect(routes).toHaveLength(2);
+  expect(routes.map(edge=>(edge.data as { label: string }).label).sort()).toEqual([
+    "HTTP · plain.example.test",
+    "HTTPS · secure.example.test",
+  ]);
+  expect(routes.every(edge=>edge.target==="internet:public" && edge.source===`app:${appId}`)).toBe(true);
 });

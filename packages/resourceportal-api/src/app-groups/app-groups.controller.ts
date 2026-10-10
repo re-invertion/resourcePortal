@@ -17,6 +17,7 @@ import { FastifyRequest } from "fastify";
 import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
 import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
+import { SingleAppLogsService } from "./single-app-logs.service";
 import { AppGroupManifestRequestDto } from "./dto/app-group-manifest-request.dto";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
@@ -43,6 +44,7 @@ export class AppGroupsController {
     private readonly appGroupsService: AppGroupsService,
     private readonly runtimeOperations: AppGroupRuntimeOperationsService,
     private readonly manifestService: AppGroupManifestService,
+    private readonly appLogs: SingleAppLogsService,
   ) {}
 
   @RequirePermissions("appgroup.read")
@@ -503,6 +505,16 @@ export class AppGroupsController {
       appGroupId,
       singleAppId,
     );
+  }
+
+  @RequirePermissions("singleapp.read", "appgroup.deployment.read")
+  @Get(":appGroupId/single-apps/:singleAppId/logs")
+  getSingleAppLogs(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+  ) {
+    return this.appLogs.list(tenantId, appGroupId, singleAppId);
   }
 
   @RequirePermissions("endpoint.read")

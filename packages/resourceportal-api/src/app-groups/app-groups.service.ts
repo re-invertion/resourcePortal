@@ -2630,7 +2630,7 @@ export class AppGroupsService {
   }
 
   private mapHttpEndpoint(
-    endpoint: HttpEndpoint & { domains?: { id: string }[] },
+    endpoint: HttpEndpoint & { domains?: { id: string; hostname: string }[] },
   ) {
     return {
       ...endpoint,
