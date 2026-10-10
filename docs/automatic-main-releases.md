@@ -23,7 +23,7 @@ Verify **with a negative test**: an administrator and a contributor attempt a di
 
 - `.github/workflows/release-readiness.yml` runs for both PR and Merge Queue events. The required final check fails if **any** of the build, complete tests, CLI packaging, real Swarm, federation/browser, or installer jobs fail/skip/cancel.
 - Before accepting another merge, it requires that the latest published GitHub Release tag resolves to the current `main` SHA.
-- Exactly one historical bootstrap exception permits the currently unpublished `main` SHA `776e4f9e7244049c11ac69fd1a6e7d6ea4cead48` when the latest release is `v0.2.75`. This is not a generic bypass.
+- There is no exception for unpublished `main` revisions; reconcile the release backlog before enabling merges.
 - `.github/workflows/release.yml` triggers on every push to `main`. Jobs are serialized, never cancelled; version selection uses the last **published** release plus all existing tags. Failed/orphan tags are not reused.
 - On the immutable triggering SHA, it reruns release checks, builds and pushes API/Web/PostgreSQL images, verifies anonymous registry access, creates the CLI package and manifest, and only then creates the GitHub tag/release. It verifies that the new tag resolves to the trigger SHA.
 - `scripts/next-main-release.mjs` advances the patch component for each merge. Major/minor release numbering requires a separate explicit design. Versions present in `config/release-milestones.json` still run full milestone gates.
