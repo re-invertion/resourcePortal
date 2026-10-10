@@ -34,14 +34,8 @@ jobs:
           previous_sha="$(git rev-list -n 1 "$previous_tag")"
           main_sha="$(git rev-parse origin/main)"
           if [[ "$previous_sha" != "$main_sha" ]]; then
-            # One-time bootstrap for the existing v0.2.76 publication backlog.
-            if [[ "$previous_tag" == v0.2.75 &&
-                  "$main_sha" == 776e4f9e7244049c11ac69fd1a6e7d6ea4cead48 ]]; then
-              echo "Existing unpublished main backlog accepted once for migration."
-            else
-              echo "Blocking merge: current main has not yet been published as a verified release." >&2
-              exit 1
-            fi
+            echo "Current main commit has no published release. Resolve the publication backlog before merge." >&2
+            exit 1
           fi
           node scripts/next-main-release.mjs
       - name: Install dependencies and generate Prisma
