@@ -444,6 +444,7 @@ export class AuthSessionService {
 
     try {
       const response = await fetch(endpoint, {
+        signal: AbortSignal.timeout(10_000),
         method: "POST",
         headers,
         body,

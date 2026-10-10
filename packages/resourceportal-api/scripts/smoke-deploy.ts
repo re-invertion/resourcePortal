@@ -39,7 +39,7 @@ async function main() {
   });
   createdTenantId = stringField(tenant, "id");
 
-  await api(`/tenants/${createdTenantId}/quota`, {
+  await api(`/platform/tenants/${createdTenantId}/quota`, {
     method: "PATCH",
     userId,
     body: {

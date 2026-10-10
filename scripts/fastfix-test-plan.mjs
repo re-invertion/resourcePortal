@@ -64,6 +64,7 @@ const commands = {
   "installer": [
     ["bash", "test/installer/test-host-runtime.sh"],
     ["bash", "test/installer/test-diagnostics.sh"],
+    ["bash", "test/installer/test-core.sh"],
   ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
@@ -106,7 +107,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/prisma\/raw-sql-policy\.spec\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
-  [/^packages\/resourceportal-web\/server\.mjs$/, ["web-proxy"]],
+  [/^packages\/resourceportal-web\/(server|proxy-target(\.test)?)\.mjs$/, ["web-proxy"]],
   [/^packages\/resourceportal-api\/src\/networking\//, ["networking"]],
   [/^packages\/resourceportal-api\/src\/security\//, ["security"]],
   [/^packages\/resourceportal-web\/src\/security\//, ["security"]],
@@ -140,12 +141,12 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/(device-vpn|tenant-networking|help)/, ["web-console"]],
   [/^packages\/resourceportal-web\/src\/components\/tenant-section-tabs\.tsx$/, ["web-console"]],
   [/^packages\/resourceportal-web\/package\.json$/, ["web-console"]],
-  [/^scripts\/installer\/(control-plane|identity|lifecycle|smtp|upgrade)\.sh$/, ["platform-release", "installer"]],
+  [/^scripts\/installer\/(config|control-plane|identity|lifecycle|releases|smtp|upgrade)\.sh$/, ["platform-release", "installer"]],
   [/^scripts\/upgrade-recovery-from-0\.2\.68\.sh$/, ["platform-release", "installer"]],
   [/^test\/installer\/test-(releases|control-plane)\.sh$/, ["platform-release", "installer"]],
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],
-  [/^test\/installer\/test-(host-runtime|diagnostics)\.sh$/, ["installer"]],
+  [/^test\/installer\/test-(host-runtime|diagnostics|core)\.sh$/, ["installer"]],
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
@@ -209,6 +210,8 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
         selected.set(JSON.stringify(command), command);
       }
     }
+    // Mandatory for every patch; scoped tests must never suppress dependency audit.
+    selected.set("mandatory-dependency-audit", ["npm", "audit", "--audit-level=high"]);
     for (const command of selected.values()) {
       console.log(`Targeted: ${command.join(" ")}`);
       const result = spawnSync(command[0], command.slice(1), {

@@ -99,16 +99,63 @@ rp_config_write() {
   mv -f "$tmp" "$path"
 }
 
+# Strictly parse the printf %q serialization instead of executing it.
+# REPLY is filled only on success; no shell code from config runs.
+rp_config_decode_value() {
+  local encoded="$1" i=0 char result="" body
+  if [[ "$encoded" == "''" ]]; then REPLY=""; return 0; fi
+  if [[ "${encoded:0:2}" == "\$'" ]]; then
+    [[ "${encoded: -1}" == "'" && ${#encoded} -ge 3 ]] || return 1
+    body="${encoded:2:${#encoded}-3}"
+    while (( i < ${#body} )); do
+      char="${body:i:1}"
+      if [[ "$char" == "\\" ]]; then
+        ((i+=1)); (( i < ${#body} )) || return 1
+      elif [[ "$char" == "'" ]]; then
+        return 1
+      fi
+      ((i+=1))
+    done
+    printf -v REPLY '%b' "$body"
+    return 0
+  fi
+  while (( i < ${#encoded} )); do
+    char="${encoded:i:1}"
+    if [[ "$char" == "\\" ]]; then
+      ((i+=1)); (( i < ${#encoded} )) || return 1
+      result+="${encoded:i:1}"
+    elif [[ "$char" =~ ^[a-zA-Z0-9_./:@%+=,#-]$ ]]; then
+      result+="$char"
+    else
+      return 1
+    fi
+    ((i+=1))
+  done
+  REPLY="$result"
+}
+
 rp_config_load() {
-  local path="$1" line key value
-  [[ -r "$path" ]] || return 1
+  local path="$1" line key encoded i owner mode
+  local -a keys=() values=()
+  [[ -f "$path" && -r "$path" && ! -L "$path" ]] || return 1
+  if [[ "$EUID" -eq 0 ]]; then
+    owner="$(stat -c '%u' -- "$path")" || return 1
+    mode="$(stat -c '%a' -- "$path")" || return 1
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+    (( (8#$mode & 0022) == 0 )) || return 1
+  fi
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || return 1
     key="${line%%=*}"
-    value="${line#*=}"
+    encoded="${line#*=}"
     rp_config_key_allowed "$key" || continue
-    eval "value=$value"
-    export "$key=$value"
+    rp_config_decode_value "$encoded" || return 1
+    keys+=("$key")
+    values+=("$REPLY")
   done <"$path"
+  for (( i=0; i<${#keys[@]}; i++ )); do
+    export "${keys[i]}=${values[i]}"
+  done
   rp_config_apply_defaults
 }

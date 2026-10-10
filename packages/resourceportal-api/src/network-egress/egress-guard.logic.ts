@@ -71,6 +71,28 @@ export function shouldPreserveExistingFirewallState(state: {
   );
 }
 
+
+/**
+ * Render a single atomic iptables-restore transaction. The active chains remain
+ * installed until COMMIT; in particular, no separate -F can fail open.
+ */
+export function renderAtomicEgressRules(forwardChain: string, hostChain: string, rules: string[][]) {
+  const chains = [forwardChain, hostChain];
+  for (const chain of chains) {
+    if (!/^[A-Z0-9-]+$/.test(chain)) throw new Error("Invalid egress chain name");
+  }
+  const lines = ["*filter", ...chains.map((chain) => `-F ${chain}`)];
+  for (const rule of rules) {
+    for (const token of rule) {
+      if (!/^[A-Za-z0-9._:!/-]+$/.test(token)) {
+        throw new Error("Unsafe egress policy token");
+      }
+    }
+    for (const chain of chains) lines.push(`-A ${chain} ${rule.join(" ")}`);
+  }
+  return [...lines, "COMMIT", ""].join("\n");
+}
+
 export function tenantWorkloads(
   containers: DockerContainerInspect[],
   gateway: DockerGatewayNetworkInspect,

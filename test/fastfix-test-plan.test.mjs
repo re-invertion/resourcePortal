@@ -138,3 +138,11 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
   assert.equal(plan.vpnSmoke, false);
   assert.deepEqual(plan.profiles, ["installer", "platform-release"]);
 });
+test("installer configuration fixes select the core safety suite", () => {
+  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles, ["installer", "platform-release"]);
+});
+test("the fastfix runner requires a dependency security audit for all releases", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(source, /selected\.set\("mandatory-dependency-audit", \["npm", "audit", "--audit-level=high"\]\)/);
+});

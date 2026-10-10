@@ -16,15 +16,12 @@ check_workflow(){
 check_workflow "$repo_root/.github/workflows/ci.yml" 'ResourcePortal CI + Installer' 'CI'
 check_workflow "$repo_root/.github/workflows/swarm-integration.yml" 'Installer + Real Docker Swarm' 'Swarm'
 check_workflow "$repo_root/.github/workflows/federation-integration.yml" 'Installer + Identity Federation' 'Federation'
-check_workflow "$repo_root/.github/workflows/codespaces-preview.yml" 'Installer + Codespaces Preview' 'Codespaces'
 check_workflow "$repo_root/.github/workflows/release.yml" 'Installer-Gated Release' 'Release'
 check_workflow "$repo_root/.github/workflows/stage20-dev.yml" 'Installer + Web Console Dev' 'Web dev'
 check_workflow "$repo_root/.github/workflows/production-installer.yml" 'Production Installer Quality Gate' 'Dedicated installer'
 
 contains_file "$repo_root/.github/workflows/production-installer.yml" 'shellcheck --severity=warning' 'dedicated installer gate runs ShellCheck'
 contains_file "$repo_root/.github/workflows/production-installer.yml" 'test/installer/test-acme-resilience.sh' 'dedicated installer gate highlights ACME resilience suite'
-contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'scripts/installer/**' 'Codespaces workflow watches installer changes'
-contains_file "$repo_root/.github/workflows/codespaces-preview.yml" 'test/installer/**' 'Codespaces workflow watches installer tests'
 contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:cli-release' 'CI validates installable CLI release package'
 contains_file "$repo_root/.github/workflows/release.yml" 'node scripts/release-validation-mode.mjs --version "$VERSION" --github-output "$GITHUB_OUTPUT"' 'Release classifies patch and milestone versions semantically'
 contains_file "$repo_root/.github/workflows/release.yml" 'node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run' 'Release uses changed-scope validation for patch releases'
@@ -35,13 +32,14 @@ contains_file "$repo_root/.github/workflows/fastfix.yml" "startsWith(github.head
 contains_file "$repo_root/.github/workflows/fastfix.yml" 'node scripts/fastfix-test-plan.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --run' 'Fastfix workflow runs changed-scope patch tests'
 contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run build --workspace @resource-portal/api' 'Fastfix workflow builds API'
 contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run build --workspace @resource-portal/web' 'Fastfix workflow builds Web'
-for workflow in ci.yml codespaces-preview.yml federation-integration.yml production-installer.yml swarm-integration.yml; do contains_file "$repo_root/.github/workflows/$workflow" "!startsWith(github.head_ref, 'fastfix/')" "$workflow skips expensive PR job for fastfix branches"; done
 for workflow in ci.yml federation-integration.yml production-installer.yml swarm-integration.yml; do contains_file "$repo_root/.github/workflows/$workflow" "!contains(github.event.head_commit.message, '[fastfix]')" "$workflow skips expensive main-push job for marked fastfix merges"; done
 contains_file "$repo_root/.github/workflows/federation-integration.yml" 'run: npx playwright install --with-deps chromium' 'Federation uses Playwright from npm ci dependency graph'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'run: npx playwright install --with-deps chromium' 'Swarm smoke uses Playwright from npm ci dependency graph'
 if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_root/.github/workflows/federation-integration.yml" "$repo_root/.github/workflows/swarm-integration.yml"; then fail 'CI workflows avoid ad-hoc Playwright npm install'; else pass 'CI workflows avoid ad-hoc Playwright npm install'; fi
 for smoke in scripts/run-stage20-real-swarm-web-e2e.mjs scripts/verify-stage20-management-matrix.mjs; do contains_file "$repo_root/$smoke" 'process.env.RESOURCE_PORTAL_API_URL' "$smoke uses the dedicated test API origin"; contains_file "$repo_root/$smoke" 'await route.fetch({' "$smoke bridges browser API calls directly to the test API"; done
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'runOperationToTerminal' 'real-Swarm browser smoke drains the v0.2 Operation queue to a specific terminal operation'
+contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" '/platform/tenants/${createdTenantId}/quota' 'real-Swarm E2E uses the platform-admin quota mutation route'
+contains_file "$repo_root/scripts/verify-stage20-management-matrix.mjs" '"/platform/tenants/*/quota"' 'management API coverage lists quota update on platform endpoint'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'RolledBack' 'real-Swarm browser smoke validates rollback terminal semantics'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'STAGE20_WORKER_TIMEOUT_MS' 'real-Swarm browser smoke bounds one-shot worker execution'
 contains_file "$repo_root/scripts/run-stage20-real-swarm-web-e2e.mjs" 'process.stdout.write(text);' 'real-Swarm browser smoke streams worker stdout while it runs'

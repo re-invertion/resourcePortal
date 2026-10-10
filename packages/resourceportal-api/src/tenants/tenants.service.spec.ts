@@ -6,11 +6,11 @@ describe("TenantsService.getTenant", () => {
   it("returns a JSON-serializable tenant when quota contains bigint values", async () => {
     const tenant = {
       id: "11111111-1111-4111-8111-111111111111",
-      name: "codespace-demo",
-      displayName: "Codespaces Demo",
+      name: "sample-tenant",
+      displayName: "Sample Tenant",
       description: null,
       status: "Active",
-      contactEmail: "codespace-admin@resourceportal.local",
+      contactEmail: "sample-admin@resourceportal.local",
       createdAt: new Date("2026-09-02T00:00:00.000Z"),
       updatedAt: new Date("2026-09-02T00:00:00.000Z"),
       billing: null,

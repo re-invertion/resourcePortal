@@ -257,6 +257,7 @@ export class ResourceBotBillingService {
           tenantId: input.tenantId,
           requestId: input.requestId,
           reservedCredits,
+          priceVersionId: price.id,
           expiresAt: new Date(Date.now() + RESERVATION_TTL_MS),
         },
       });
@@ -271,6 +272,7 @@ export class ResourceBotBillingService {
   async settle(input: {
     tenantId: string;
     requestId: string;
+    reservationId: string;
     actor: AuthenticatedUser;
     provider: string;
     model: string;
@@ -282,9 +284,6 @@ export class ResourceBotBillingService {
     totalTokens: number;
     supportedByHelp: boolean;
   }) {
-    const price = await this.getActivePrice(input.provider, input.model);
-    const theoreticalCost = this.costForUsage(price, input);
-
     return this.prisma.$transaction(async (tx) => {
       const account = await this.lockAccount(tx, input.tenantId);
       const existing = await tx.resourceBotUsageRecord.findUnique({
@@ -300,6 +299,37 @@ export class ResourceBotBillingService {
         return this.toUsageView(existing);
       }
 
+      // The reservation is the authorization to spend. Never select a new
+      // price at settlement or charge a request after its reservation expired.
+      const reservation = await tx.resourceBotUsageReservation.findUnique({
+        where: { requestId: input.requestId },
+        include: { priceVersion: true },
+      });
+      if (
+        !reservation ||
+        reservation.id !== input.reservationId ||
+        reservation.tenantId !== input.tenantId ||
+        reservation.billingAccountId !== account.id ||
+        reservation.expiresAt.getTime() <= Date.now() ||
+        !reservation.priceVersion ||
+        reservation.priceVersion.provider !== input.provider ||
+        reservation.priceVersion.model !== input.model
+      ) {
+        throw new ConflictException({
+          code: "ResourceBotReservationInvalid",
+          message: "ResourceBot reservation expired or its original price is unavailable",
+        });
+      }
+      const price = reservation.priceVersion;
+      const theoreticalCost = this.costForUsage(price, input);
+      // A provider can report more tokens than reserved. Cap the charge to
+      // the original authorization and the nonnegative available balance.
+      const chargedCredits = Prisma.Decimal.min(
+        theoreticalCost,
+        reservation.reservedCredits,
+        Prisma.Decimal.max(account.balance, new Prisma.Decimal(0)),
+      );
+
       const tenant = await tx.tenant.findUnique({
         where: { id: input.tenantId },
         select: { name: true },
@@ -308,7 +338,7 @@ export class ResourceBotBillingService {
 
       const usageRecordId = randomUUID();
       const balanceBefore = account.balance;
-      const balanceAfter = balanceBefore.minus(theoreticalCost);
+      const balanceAfter = balanceBefore.minus(chargedCredits);
 
       const usage = await tx.resourceBotUsageRecord.create({
         data: {
@@ -326,7 +356,7 @@ export class ResourceBotBillingService {
           totalTokens: Math.max(0, Math.floor(input.totalTokens)),
           priceVersionId: price.id,
           theoreticalCostCredits: theoreticalCost,
-          chargedCredits: theoreticalCost,
+          chargedCredits,
           status: "Succeeded",
           requestId: input.requestId,
         },
@@ -341,7 +371,7 @@ export class ResourceBotBillingService {
         data: {
           billingAccountId: account.id,
           type: "UsageCharge",
-          amount: theoreticalCost.neg(),
+          amount: chargedCredits.neg(),
           balanceBefore,
           balanceAfter,
           status: "Succeeded",
@@ -389,7 +419,9 @@ export class ResourceBotBillingService {
             outputTokens: input.outputTokens,
             embeddingInputTokens: input.embeddingInputTokens,
             totalTokens: input.totalTokens,
-            chargedCredits: theoreticalCost.toString(),
+            chargedCredits: chargedCredits.toString(),
+            theoreticalCostCredits: theoreticalCost.toString(),
+            chargeCapped: chargedCredits.lt(theoreticalCost),
             balanceBeforeCredits: balanceBefore.toString(),
             balanceAfterCredits: balanceAfter.toString(),
             supportedByHelp: input.supportedByHelp,
@@ -401,9 +433,23 @@ export class ResourceBotBillingService {
     });
   }
 
-  async release(requestId: string, tenantId: string) {
+  async renew(requestId: string, tenantId: string, reservationId: string) {
+    const now = new Date();
+    const result = await this.prisma.resourceBotUsageReservation.updateMany({
+      where: { id: reservationId, requestId, tenantId, expiresAt: { gt: now } },
+      data: { expiresAt: new Date(now.getTime() + RESERVATION_TTL_MS) },
+    });
+    if (result.count !== 1) {
+      throw new ConflictException({
+        code: "ResourceBotReservationInvalid",
+        message: "ResourceBot reservation has expired",
+      });
+    }
+  }
+
+  async release(requestId: string, tenantId: string, reservationId: string) {
     await this.prisma.resourceBotUsageReservation.deleteMany({
-      where: { requestId, tenantId },
+      where: { id: reservationId, requestId, tenantId },
     });
   }
 

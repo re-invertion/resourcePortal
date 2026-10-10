@@ -5,6 +5,7 @@ import {
   decodeEgressPolicy,
   encodeEgressPolicy,
   firewallRulesForWorkloads,
+  renderAtomicEgressRules,
   shouldPreserveExistingFirewallState,
   tenantWorkloads,
 } from "./egress-guard.logic";
@@ -150,5 +151,29 @@ describe("egress guard logic", () => {
     );
     expect(rules).toHaveLength(DEFAULT_EGRESS_POLICY.blockedIpv4Cidrs.length);
     expect(rules.every((rule) => rule.at(-1) === "REJECT")).toBe(true);
+  });
+});
+describe("atomic egress guard commits", () => {
+  it("replaces both guard chains at a single COMMIT boundary", () => {
+    const script = renderAtomicEgressRules("RP-TENANT-EGRESS", "RP-TENANT-HOST", [
+      ["-s", "172.19.0.18/32", "-d", "10.0.0.0/8", "-j", "REJECT"],
+    ]);
+    expect(script).toBe([
+      "*filter",
+      "-F RP-TENANT-EGRESS",
+      "-F RP-TENANT-HOST",
+      "-A RP-TENANT-EGRESS -s 172.19.0.18/32 -d 10.0.0.0/8 -j REJECT",
+      "-A RP-TENANT-HOST -s 172.19.0.18/32 -d 10.0.0.0/8 -j REJECT",
+      "COMMIT",
+      "",
+    ].join("\n"));
+    expect(script.match(/COMMIT/g)).toHaveLength(1);
+  });
+
+  it("rejects newline injection and invalid chain names before firewall mutation", () => {
+    expect(() => renderAtomicEgressRules("RP-CHAIN", "RP-HOST", [
+      ["-d", "10.0.0.0/8\n-F INPUT", "-j", "REJECT"],
+    ])).toThrow("Unsafe egress policy token");
+    expect(() => renderAtomicEgressRules("INPUT\nCOMMIT", "RP-HOST", [])).toThrow();
   });
 });

@@ -1,1 +1,6 @@
-{"schemaVersion":1,"moves":{}}
+{
+  "schemaVersion": 1,
+  "moves": {
+    "packages/resourceportal-web/codespaces-config.test.mjs": "packages/resourceportal-web/deployment-entrypoints.test.mjs"
+  }
+}

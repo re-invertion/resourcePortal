@@ -155,7 +155,7 @@ export class ResourcePortalClient {
     quota: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/quota`),
     updateQuota: (tenantId: string, body: unknown) =>
-      this.request(`/tenants/${encode(tenantId)}/quota`, {
+      this.request(`/platform/tenants/${encode(tenantId)}/quota`, {
         method: "PATCH",
         body,
       }),

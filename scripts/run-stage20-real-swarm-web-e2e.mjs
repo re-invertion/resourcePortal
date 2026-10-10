@@ -64,7 +64,7 @@ try {
     });
     createdTenantId = stringField(tenant, "id");
 
-    await proxyApi(context, `/tenants/${createdTenantId}/quota`, {
+    await proxyApi(context, `/platform/tenants/${createdTenantId}/quota`, {
       method: "PATCH",
       body: {
         cpu: 2,

@@ -9,8 +9,24 @@ rp_release_image_ref_valid() {
   [[ "$1" =~ ^[^[:space:]@]+@sha256:[a-fA-F0-9]{64}$ ]]
 }
 
+# A digest pins bytes, but cannot authorize an arbitrary publisher/repository.
+# Image roles are restricted to projects managed by the release pipeline.
+rp_release_image_repo_allowed() {
+  local image="$1" role="$2" repository
+  repository="${image%@sha256:*}"
+  case "$role:$repository" in
+    api:ghcr.io/re-invertion/resourceportal-api|\
+    web:ghcr.io/re-invertion/resourceportal-web|\
+    postgres:ghcr.io/re-invertion/resourceportal-postgres|\
+    zitadel:ghcr.io/zitadel/zitadel|\
+    traefik:traefik|\
+    traefik:docker.io/library/traefik) return 0 ;;
+  esac
+  return 1
+}
+
 rp_validate_release_manifest() {
-  local manifest="$1" image
+  local manifest="$1" image role
   [[ "$manifest" == /* && -r "$manifest" ]] || return 1
   command -v jq >/dev/null 2>&1 || return 1
   jq -e '
@@ -23,9 +39,11 @@ rp_validate_release_manifest() {
     (.migrations.rollbackPolicy == "none" or .migrations.rollbackPolicy == "image-only" or .migrations.rollbackPolicy == "tested") and
     ([.images.api,.images.web,.images.postgres,.images.zitadel,.images.traefik] | all(type == "string"))
   ' "$manifest" >/dev/null || return 1
-  while IFS= read -r image; do
+  for role in api web postgres zitadel traefik; do
+    image="$(jq -er --arg role "$role" '.images[$role]' "$manifest")" || return 1
     rp_release_image_ref_valid "$image" || return 1
-  done < <(jq -r '.images | [.api,.web,.postgres,.zitadel,.traefik][]' "$manifest")
+    rp_release_image_repo_allowed "$image" "$role" || return 1
+  done
 }
 
 rp_release_install_compatible() {
