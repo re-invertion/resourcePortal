@@ -65,6 +65,8 @@ const commands = {
     ["bash", "test/installer/test-host-runtime.sh"],
     ["bash", "test/installer/test-diagnostics.sh"],
     ["bash", "test/installer/test-core.sh"],
+    ["bash", "test/installer/test-v020-placement-networking.sh"],
+    ["bash", "test/installer/test-zitadel-management.sh"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
   // fixtures now also have explicit regression checks in patch releases.
@@ -163,6 +165,7 @@ const classifiers = [
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],
   [/^test\/installer\/test-(host-runtime|diagnostics|core)\.sh$/, ["installer"]],
+  [/^test\/installer\/test-(v020-placement-networking|zitadel-management)\.sh$/, ["installer", "networking"]],
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
