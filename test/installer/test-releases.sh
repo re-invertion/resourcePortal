@@ -169,6 +169,28 @@ status 1 'irreversible migration refuses automatic rollback' rp_upgrade_rollback
 safe_manifest="$(mktemp /tmp/rp-release-safe.XXXXXX.json)"
 sed 's/"rollbackPolicy": "none"/"rollbackPolicy": "image-only"/' "$manifest" >"$safe_manifest"
 status 0 'explicit image-only compatibility allows rollback' rp_upgrade_rollback_allowed "$safe_manifest"
+upgrade_automatic_recovery_smoke() (
+  local log
+  log="$(mktemp /tmp/rp-rollback-smoke.XXXXXX)"
+  trap 'rm -f "$log"' EXIT
+  RP_CFG_DOMAIN=rp.example.test
+  docker(){ printf 'docker:%s\n' "$*" >>"$log"; return 0; }
+  rp_wait_for_https_origin(){ printf 'healthy:%s\n' "$1" >>"$log"; return 0; }
+  rp_upgrade_restore_after_failure "$safe_manifest" "$manifest" "injected upgrade failure" || true
+  grep -q 'docker:stack deploy' "$log" && grep -q 'healthy:rp.example.test' "$log"
+)
+status 0 'compatible failed upgrade restores previous stack and verifies health' upgrade_automatic_recovery_smoke
+
+upgrade_rollback_denied_smoke() (
+  local log
+  log="$(mktemp /tmp/rp-rollback-refused.XXXXXX)"
+  trap 'rm -f "$log"' EXIT
+  docker(){ printf 'unsafe rollback\n' >>"$log"; return 0; }
+  rp_upgrade_restore_after_failure "$manifest" "$manifest" "injected incompatible migration" || true
+  [[ ! -s "$log" ]]
+)
+status 0 'incompatible failed upgrade does not deploy previous stack' upgrade_rollback_denied_smoke
+
 
 mutable="$(mktemp /tmp/rp-release-mutable.XXXXXX.json)"
 sed 's#ghcr.io/re-invertion/resourceportal-api@sha256:[a-f]*#ghcr.io/re-invertion/resourceportal-api:latest#' "$manifest" >"$mutable"

@@ -50,10 +50,6 @@ export class PlatformReleaseService {
         rollbackPolicy,
         automaticRollbackAvailable:
           rollbackPolicy === "image-only" || rollbackPolicy === "tested",
-        fallbackCommand:
-          latestVersion === null
-            ? null
-            : `sudo ./resourceportal-install.sh --mode upgrade --manifest /absolute/path/resourceportal-release-manifest.json --non-interactive`,
       };
     } catch (error) {
       return {
@@ -63,8 +59,6 @@ export class PlatformReleaseService {
         releaseFeedAvailable: false,
         rollbackPolicy: null,
         automaticRollbackAvailable: false,
-        fallbackCommand:
-          "sudo ./resourceportal-install.sh --mode upgrade --manifest /absolute/path/resourceportal-release-manifest.json --non-interactive",
         releaseFeedError:
           error instanceof Error ? error.message : "Release feed unavailable",
       };

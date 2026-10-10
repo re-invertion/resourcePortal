@@ -15,12 +15,14 @@ const commands = {
   ],
   "tenant-access": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/tenants", "src/auth/github-security-regressions.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant.final-routes.test.tsx"],
   ],
   "resource-bot": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/resource-bot"],
   ],
   "operations": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/operations"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant.final-routes.test.tsx"],
   ],
   "observability": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/observability"],
@@ -75,7 +77,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx", "src/pages/app-group/create-app-wizard.test.tsx"],
   ],
   "bug-reports": [
@@ -96,7 +98,7 @@ const commands = {
 const classifiers = [
   [/^config\/observability\//, ["observability"]],
   [/^docker-compose\.yml$/, ["runtime-config"]],
-  [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.controller\.ts$/, ["applications"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/(app-groups\.controller\.ts|app-groups\.module\.ts|single-app-logs\.service(\.spec)?\.ts)$/, ["applications"]],
   [/^packages\/resourceportal-api\/src\/identity-providers\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/network-egress\//, ["egress", "networking"]],
   [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],
@@ -128,6 +130,9 @@ const classifiers = [
   [/^packages\/resourceportal-cli\//, ["cli"]],
   [/^packages\/resourceportal-help\//, ["help"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-storage-pages(\.test)?\.tsx$/, ["domains"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-access-pages\.tsx$/, ["tenant-access"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-activity-pages\.tsx$/, ["operations"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.tsx$/, ["mcp-oauth"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-detail(\.test)?\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/create-app-wizard\.test\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/(platform|platform-final-pages|platform-mcp|platform\.final-routes\.test)\.tsx$/, ["platform-admin-ui", "platform-release"]],

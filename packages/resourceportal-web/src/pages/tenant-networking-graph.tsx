@@ -24,6 +24,7 @@ import {
   Button,
   ConfirmActionButton,
   GridIcon,
+  GlobeIcon,
   NetworkIcon,
   SearchField,
   Select,
@@ -47,6 +48,7 @@ export type Application = {
   image?: string;
   runtimeState?: string;
   networkAttachments: ApplicationAttachment[];
+  httpEndpoints?: Array<{ id: string; protocolMode: string; domains: Array<{ hostname: string; tlsEnabled: boolean; dnsStatus?: string }> }>;
 };
 
 export type AppGroup = {
@@ -142,6 +144,8 @@ export type Topology = {
   appGroups: AppGroup[];
 };
 
+type InternetNodeData = { kind: "internet"; label: string; domainCount: number };
+
 type AppGroupNodeData = {
   kind: "app-group";
   appGroupId: string;
@@ -191,12 +195,14 @@ type GateNodeData = {
 };
 
 export type TopologyNodeData =
+  | InternetNodeData
   | AppGroupNodeData
   | ApplicationNodeData
   | NetworkNodeData
   | GateNodeData;
 
 export type TopologyEdgeData =
+  | { kind: "internet-route"; appId: string; hostname: string; protocol: string; label: string }
   | {
       kind: "application-network";
       networkId: string;
@@ -520,7 +526,14 @@ function GateNode(props: NodeProps) {
   );
 }
 
+function InternetNode(props: NodeProps) {
+  const data = nodeData(props);
+  if (data.kind !== "internet") return null;
+  return <div className="relative flex h-[130px] w-[130px] flex-col items-center justify-center rounded-full border-2 border-[#67A6E5] bg-[#E7F1FF] text-[#135FBB] shadow-lg" aria-label="Internet"><Handle type="target" id="ingress" position={Position.Left} className="!h-3 !w-3 !border-white !bg-[#1769E0]"/><GlobeIcon size={32}/><strong className="mt-1 text-sm">Internet</strong><span className="text-[10px]">{data.domainCount} domains</span></div>;
+}
+
 const nodeTypes = {
+  internet: InternetNode,
   appGroup: AppGroupFrameNode,
   application: ApplicationNode,
   network: NetworkNode,
@@ -539,7 +552,8 @@ function RelationshipEdge(props: EdgeProps) {
     borderRadius: 18,
   });
   const gate = data?.kind === "gate-network";
-  const stroke = props.selected ? (gate ? "#137A4A" : "#1769E0") : gate ? "#71AE8D" : "#8AAFD9";
+  const internet = data?.kind === "internet-route";
+  const stroke = internet ? "#0F77BA" : props.selected ? (gate ? "#137A4A" : "#1769E0") : gate ? "#71AE8D" : "#8AAFD9";
   return (
     <>
       <BaseEdge
@@ -859,6 +873,21 @@ export function buildTopologyGraph(
     }
   }
 
+  const publicRoutes = view.groups.flatMap(group=>group.singleApps.flatMap(app=>
+    (app.httpEndpoints??[]).flatMap(endpoint=>endpoint.domains.map(domain=>({
+      appId: app.id,
+      endpointId: endpoint.id,
+      hostname: domain.hostname,
+      protocol: domain.tlsEnabled && endpoint.protocolMode !== "HTTP_ONLY" ? "HTTPS" : "HTTP",
+      dnsStatus: domain.dnsStatus,
+    }))).filter(route=>Boolean(route.hostname)),
+  ));
+  if(publicRoutes.length){
+    nodes.push({id:"internet:public",type:"internet",position:{x:1460,y:Math.max(80,groupLayout.length*90)},data:{kind:"internet",label:"Internet",domainCount:publicRoutes.length} satisfies InternetNodeData,style:{width:130,height:130},ariaLabel:"Internet, public application routes"});
+    for(const route of publicRoutes){
+      edges.push({id:`internet-edge:${route.endpointId}:${route.hostname}`,source:`app:${route.appId}`,sourceHandle:"network-out",target:"internet:public",targetHandle:"ingress",type:"relationship",data:{kind:"internet-route",appId:route.appId,hostname:route.hostname,protocol:route.protocol,label:`${route.protocol} · ${route.hostname}`} satisfies TopologyEdgeData,ariaLabel:`${route.protocol} public domain ${route.hostname}`});
+    }
+  }
   return { nodes, edges };
 }
 
@@ -913,6 +942,9 @@ function GraphInspector({
     );
   }
 
+  if(edgeData?.kind === "internet-route"){
+    return <aside className="min-w-0 p-5"><h3 className="font-semibold">Public Internet route</h3><dl className="mt-3"><DetailRow label="Domain">{edgeData.hostname}</DetailRow><DetailRow label="Protocol">{edgeData.protocol}</DetailRow><DetailRow label="Connection">Read-only routing visualization</DetailRow></dl></aside>;
+  }
   if (edgeData) {
     const applicationLink = edgeData.kind === "application-network";
     const network = topology.networks.find((item) => item.id === edgeData.networkId);
@@ -968,6 +1000,7 @@ function GraphInspector({
   }
 
   if (!data) return null;
+  if (data.kind === "internet") return <aside className="p-5"><h3 className="font-semibold">Internet</h3><p className="mt-2 text-sm text-[#5B6678]">{data.domainCount} public application routes based on assigned domains.</p></aside>;
 
   if (data.kind === "network") {
     const network = topology.networks.find((item) => item.id === data.networkId);
@@ -1096,12 +1129,14 @@ export function TenantNetworkingGraph({
   onConnect,
   onDisconnect,
   onDeleteGate,
+  onAddVpn,
 }: {
   topology: Topology;
   working: boolean;
   onConnect: (connection: Connection) => void | Promise<void>;
   onDisconnect: (edge: Edge) => void | Promise<void>;
   onDeleteGate: (gate: GateResource) => void | Promise<void>;
+  onAddVpn?: (kind: "site" | "device") => void;
 }) {
   const [filters, setFilters] = useState<TopologyGraphFilters>({
     query: "",
@@ -1113,6 +1148,7 @@ export function TenantNetworkingGraph({
   const graph = useMemo(() => buildTopologyGraph(topology, filters), [topology, filters]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(graph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(graph.edges);
+  const [vpnMenuOpen, setVpnMenuOpen] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [selectedEdgeId, setSelectedEdgeId] = useState<string>();
   const [flow, setFlow] = useState<ReactFlowInstance<Node, Edge>>();
@@ -1167,6 +1203,7 @@ export function TenantNetworkingGraph({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-semibold text-[#172033]">Network Control Center</h2>
+              {onAddVpn ? <div className="relative"><Button size="sm" variant="primary" onClick={()=>setVpnMenuOpen(open=>!open)}>Add VPN</Button>{vpnMenuOpen?<div role="menu" aria-label="VPN type" className="absolute left-0 top-full z-30 mt-1 min-w-[170px] rounded-lg border border-[#D7E0EC] bg-white p-1 shadow-lg"><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("site");}}>Site VPN</button><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("device");}}>Device VPN</button></div>:null}</div> : null}
               {filters.focusNetworkId ? <StatusBadge tone="info">Focused</StatusBadge> : null}
               {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : null}
             </div>

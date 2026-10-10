@@ -247,6 +247,13 @@ export class NetworkingService {
               name: true,
               image: true,
               runtimeState: true,
+              httpEndpoints: {
+                select: {
+                  id: true,
+                  protocolMode: true,
+                  domains: { select: { hostname: true, tlsEnabled: true, dnsStatus: true } },
+                },
+              },
               networkAttachments: {
                 orderBy: { createdAt: "asc" },
                 select: {

@@ -22,7 +22,7 @@ import {
   TrashIcon,
   statusTone,
 } from "../components/design-system";
-import { formatDate, useApi } from "../hooks/use-api";
+import { formatDate, items, useApi } from "../hooks/use-api";
 import {
   TenantNetworkingGraph,
   type GateResource,
@@ -33,6 +33,8 @@ import {
 import { toast } from "../components/toast";
 import { NetworkingTabs } from "../components/tenant-section-tabs";
 import { DeviceVpnPanel } from "./device-vpn-panel";
+
+type VpnDevice = { id: string; name: string; assignedAddress: string; address?: string; status: string; networks: Array<{ id: string; name: string }>; lastSeenAt?: string | null };
 import { tenantHref } from "../router/router";
 import {
   hasFormErrors,
@@ -84,6 +86,10 @@ function installCommand(response: EnrollmentResponse) {
 export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/networking`;
   const topology = useApi<Topology>(`${root}/topology`);
+  const devices = useApi<VpnDevice[]>(`${root}/device-vpn/devices`);
+  const [deviceCreateRequestId, setDeviceCreateRequestId] = useState(0);
+  const [deviceEditRequest, setDeviceEditRequest] = useState<{ id: string; nonce: number }>();
+  const [deviceRefreshId, setDeviceRefreshId] = useState(0);
   const [working, setWorking] = useState(false);
   const [networkOpen, setNetworkOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
@@ -185,7 +191,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
   async function disconnectEdge(edge: Edge) {
     const data = edge.data as TopologyEdgeData | undefined;
-    if (!data) return;
+    if (!data || data.kind === "internet-route") return;
     setWorking(true);
     try {
       let operation: Operation;
@@ -444,6 +450,18 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     },
   }));
 
+  const deviceRows = items<VpnDevice>(devices.data).map(device => ({
+    key: `device:${device.id}`,
+    cells: {
+      gate: <div><strong className="block text-[13px]">{device.name}</strong><code className="text-xs text-[#718096]">{device.address ?? `${device.assignedAddress}/32`}</code></div>,
+      status: <StatusBadge tone={statusTone(device.status)}>{device.status}</StatusBadge>,
+      routing: <StatusBadge tone="success">Device VPN</StatusBadge>,
+      networks: device.networks.map(network=>network.name).join(", ") || "—",
+      lastSeen: formatDate(device.lastSeenAt),
+      actions: <div className="flex flex-wrap gap-1"><Button size="sm" variant="ghost" onClick={()=>setDeviceEditRequest(current=>({id:device.id,nonce:(current?.nonce??0)+1}))}>Edit access</Button><ConfirmActionButton size="sm" triggerVariant="ghost" confirmTitle={`Revoke Device VPN ${device.name}?`} confirmDescription="The WireGuard peer and its access will be revoked." confirmLabel="Revoke" onConfirm={async()=>{await apiRequest(`${root}/device-vpn/devices/${encodeURIComponent(device.id)}`,{method:"DELETE"});await devices.reload();setDeviceRefreshId(value=>value+1);}}><TrashIcon size={14}/> Revoke</ConfirmActionButton></div>,
+    },
+  }));
+
   const routeRows = (topology.data?.gates ?? []).flatMap((gate) =>
     (gate.networks ?? []).map((link) => ({
       key: `${gate.id}:${link.network.id}`,
@@ -498,9 +516,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             <Button onClick={() => setNetworkOpen(true)}>
               <PlusIcon size={15} /> Create Network
             </Button>
-            <Button variant="primary" onClick={() => { setEnrollment(undefined); setGateOpen(true); }}>
-              <PlusIcon size={15} /> Add Site VPN
-            </Button>
+
           </>
         }
       />
@@ -540,6 +556,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             onConnect={submitConnection}
             onDisconnect={disconnectEdge}
             onDeleteGate={deleteGate}
+            onAddVpn={kind=>{if(kind==="site"){setEnrollment(undefined);setGateOpen(true);}else setDeviceCreateRequestId(id=>id+1);}}
           />
         ) : (
           <div className="flex min-h-[420px] items-center justify-center bg-[#F8FAFD] px-6 text-sm text-[#718096]">
@@ -572,8 +589,8 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
 
         <Card className="overflow-hidden">
           <div className="border-b border-[#E1E7F0] px-5 py-4">
-            <h2 className="font-semibold text-[#172033]">Site VPN</h2>
-            <p className="mt-1 text-xs text-[#718096]">Site-to-site WireGuard access for an entire LAN. ResourcePortalGate remains the internal compatibility name for this Site VPN resource.</p>
+            <h2 className="font-semibold text-[#172033]">VPN connections</h2>
+            <p className="mt-1 text-xs text-[#718096]">Site VPN connects entire LANs; Device VPN connects individual WireGuard clients to selected tenant Networks.</p>
           </div>
           <DataTable
             embedded
@@ -581,13 +598,13 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
             columns={[
               { key: "gate", label: "Gate" },
               { key: "status", label: "Status" },
-              { key: "routing", label: "Routing" },
+              { key: "routing", label: "Type" },
               { key: "networks", label: "Networks" },
               { key: "lastSeen", label: "Last seen" },
               { key: "actions", label: "" },
             ]}
-            rows={gateRows}
-            empty={<EmptyState icon={<ServerIcon />} title="No Site VPN instances" description="Add Site VPN to route selected RP Networks into an entire LAN." />}
+            rows={[...gateRows.map(row=>({...row,cells:{...row.cells,routing:<StatusBadge tone="info">Site VPN</StatusBadge>}})),...deviceRows]}
+            empty={<EmptyState icon={<ServerIcon />} title="No VPN connections" description="Use Add VPN in Network Control Center to add Site VPN or Device VPN." />}
           />
         </Card>
       </div>
@@ -595,6 +612,11 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
       <DeviceVpnPanel
         tenantId={tenantId}
         networks={topology.data?.networks ?? []}
+        showTable={false}
+        createRequestId={deviceCreateRequestId}
+        editRequest={deviceEditRequest}
+        refreshId={deviceRefreshId}
+        onChanged={()=>void devices.reload()}
       />
 
       <Card className="mt-6 overflow-hidden">

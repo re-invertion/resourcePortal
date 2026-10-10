@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiRequest } from "../api/client";
 import {
@@ -71,9 +71,19 @@ function downloadConfig(name: string, configuration: string) {
 export function DeviceVpnPanel({
   tenantId,
   networks,
+  showTable = true,
+  createRequestId = 0,
+  editRequest,
+  onChanged,
+  refreshId = 0,
 }: {
   tenantId: string;
   networks: NetworkResource[];
+  showTable?: boolean;
+  createRequestId?: number;
+  editRequest?: { id: string; nonce: number };
+  onChanged?: () => void;
+  refreshId?: number;
 }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/networking/device-vpn/devices`;
   const devices = useApi<DeviceVpnDevice[]>(root);
@@ -97,6 +107,10 @@ export function DeviceVpnPanel({
     setCreateOpen(true);
   }
 
+  useEffect(() => { if (createRequestId > 0) beginCreate(); }, [createRequestId]);
+  useEffect(() => { if (refreshId > 0) void devices.reload(); }, [refreshId]);
+  useEffect(() => { if (!editRequest) return; const device = devices.data?.find(item=>item.id===editRequest.id); if(device) beginEdit(device); }, [editRequest?.nonce, devices.data]);
+
   function toggleNetwork(networkId: string, checked: boolean) {
     setSelectedNetworks((current) =>
       checked
@@ -119,6 +133,7 @@ export function DeviceVpnPanel({
       });
       setProvisioning(response);
       await devices.reload();
+      onChanged?.();
       toast.success("Device VPN created.");
     } catch (error) {
       toast.errorFrom(error, "Unable to create Device VPN.");
@@ -142,6 +157,7 @@ export function DeviceVpnPanel({
         body: { networkIds: editNetworks },
       });
       await devices.reload();
+      onChanged?.();
       toast.success(`Device VPN ${editDevice.name} access updated.`);
       setEditDevice(undefined);
       setEditNetworks([]);
@@ -159,6 +175,7 @@ export function DeviceVpnPanel({
         method: "DELETE",
       });
       await devices.reload();
+      onChanged?.();
       toast.success(`Device VPN ${device.name} revoked.`);
     } catch (error) {
       toast.errorFrom(error, "Unable to revoke Device VPN.");
@@ -169,7 +186,7 @@ export function DeviceVpnPanel({
 
   return (
     <>
-      <Card className="mt-6 overflow-hidden">
+      {showTable ? <Card className="mt-6 overflow-hidden">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E1E7F0] px-5 py-4">
           <div>
             <h2 className="font-semibold text-[#172033]">Device VPN</h2>
@@ -271,7 +288,7 @@ export function DeviceVpnPanel({
             />
           </div>
         )}
-      </Card>
+      </Card> : null}
 
       <Dialog
         open={createOpen}

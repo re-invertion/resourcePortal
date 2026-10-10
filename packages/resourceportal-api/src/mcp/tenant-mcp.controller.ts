@@ -27,7 +27,17 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
 
 @Controller("tenants/:tenantId/mcp-settings")
 export class TenantMcpSettingsController {
-  constructor(private readonly settings: TenantMcpSettingsService) {}
+  constructor(private readonly settings: TenantMcpSettingsService, private readonly protocol: TenantMcpProtocolService) {}
+
+  @RequirePermissions("tenant.settings.update")
+  @Get("catalog")
+  catalog(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.protocol.catalog({ tenantId, actor, request, hasInteractiveCredential: true }).then(items => ({ items }));
+  }
 
   @RequirePermissions("tenant.settings.update")
   @Get()

@@ -12,8 +12,20 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { Public } from "../auth/public.decorator";
 import { AllowDuringPlatformMaintenance } from "../platform-maintenance/allow-during-platform-maintenance.decorator";
 import { AdminMcpAccessGuard } from "./admin-mcp-access.guard";
+import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AdminMcpProtocolService } from "./admin-mcp-protocol.service";
 import { requestOrigin } from "./mcp-oauth";
+
+@Controller("platform/mcp-catalog")
+@UseGuards(PlatformAdminGuard)
+export class AdminMcpCatalogController {
+  constructor(private readonly protocol: AdminMcpProtocolService) {}
+
+  @Get()
+  list() {
+    return { items: this.protocol.catalog() };
+  }
+}
 
 @Public()
 @AllowDuringPlatformMaintenance()

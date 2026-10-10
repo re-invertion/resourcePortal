@@ -778,6 +778,10 @@ export class TenantMcpProtocolService {
     };
   }
 
+  async catalog(context: McpCallContext) {
+    return (await this.tools(context)).map(({ name, title, description }) => ({ name, title, description }));
+  }
+
   private async tools(context: McpCallContext): Promise<ToolDescriptor[]> {
     const securitySchemes = this.securitySchemes();
     const commonMeta = {
