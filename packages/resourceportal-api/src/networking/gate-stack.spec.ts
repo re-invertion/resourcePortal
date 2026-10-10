@@ -54,6 +54,18 @@ describe("ResourcePortalGate stack rendering", () => {
     expect(stack.services.gateway).not.toHaveProperty("volumes");
   });
 
+  it("encodes firewall policy into the runtime and stack digest", () => {
+    const original = gateRuntimeConfig(input);
+    expect(original.allowLanToRp).toBe(true);
+    expect(original.allowRpToLan).toBe(false);
+    expect(original.rpOverlayCidrs).toEqual(["10.200.12.0/24"]);
+    const enabled = { ...input, allowLanToRp: false, allowRpToLan: true };
+    const next = gateRuntimeConfig(enabled);
+    expect(next.allowLanToRp).toBe(false);
+    expect(next.allowRpToLan).toBe(true);
+    expect(gateStackDigest(input)).not.toEqual(gateStackDigest(enabled));
+  });
+
   it("produces a deterministic desired-state digest", () => {
     const reversed = {
       ...input,

@@ -14,12 +14,14 @@ describe("ResourcePortalGate installer", () => {
     expect(script).toContain("systemctl enable --now resourceportal-gate.service");
     expect(script).toContain("/networking/gates/enroll");
     expect(script).toContain("/networking/gates/agent/heartbeat");
-    expect(script).toContain(
-      'iptables -A "$FIREWALL_CHAIN" -o "$WG_INTERFACE" -j REJECT',
-    );
-    expect(script).toContain(
-      'iptables -A "$FIREWALL_CHAIN" -i "$WG_INTERFACE" -j REJECT',
-    );
+    expect(script).toContain("iptables-restore -w 5 --noflush");
+    expect(script).toContain('LAN_SNAT_CHAIN="RP-GATE-LAN-SNAT"');
+    expect(script).toContain("'-A %s -s %s -d %s -j MASQUERADE");
+    expect(script).toContain('iptables -t nat -C POSTROUTING -j "$LAN_SNAT_CHAIN"');
+
+    expect(script).toContain("'-A %s -o %s -j REJECT");
+    expect(script).toContain("'-A %s -i %s -j REJECT");
+    expect(script).not.toContain('iptables -F "$FIREWALL_CHAIN"');
     expect(script).toContain('HANDSHAKE_STALE_SECONDS="90"');
     expect(script).toContain(
       'wg show "$WG_INTERFACE" latest-handshakes',
@@ -27,6 +29,10 @@ describe("ResourcePortalGate installer", () => {
     expect(script).toContain(
       'WireGuard handshake stale for ${age}s; rebuilding tunnel',
     );
+    expect(script.match(/AGENT_VERSION="gate-shell-v3"/g)).toHaveLength(2);
+    expect(script).toContain('ALLOW_LAN_TO_RP=');
+    expect(script).toContain('ALLOW_RP_TO_LAN=');
+    expect(script).toContain('"$server_tunnel_source" "$lan"');
     expect(script).toContain("! BEGIN RESOURCEPORTAL-GATE");
     expect(script).toContain("ip prefix-list RP-GATE-EXPORT seq 65535 deny any");
     expect(script).toContain("ip prefix-list RP-GATE-IMPORT seq 5 deny any");

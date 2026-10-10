@@ -727,3 +727,49 @@ it("renders a circular Internet node with a separate HTTP/HTTPS edge per assigne
   ]);
   expect(routes.every(edge=>edge.target==="internet:public" && edge.source===`app:${appId}`)).toBe(true);
 });
+
+it("saves independent Site VPN firewall directions with optimistic revision", async () => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).endsWith("/networking/topology")) {
+      return Promise.resolve(json({
+        ...topology,
+        gates: topology.gates.map(gate => ({
+          ...gate, agentVersion: "gate-shell-v3", allowLanToRp: true, allowRpToLan: false,
+        })),
+      }));
+    }
+    if (String(input).endsWith(`/networking/gates/${gateId}/firewall`) && init?.method === "PATCH") {
+      return Promise.resolve(json({ ...topology.gates[0], allowLanToRp: false, allowRpToLan: true }));
+    }
+    return Promise.resolve(json([]));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantNetworkingPage tenantId="tenant-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Firewall" }));
+  const dialog = screen.getByRole("dialog", { name: "Firewall · office" });
+  const switches = within(dialog).getAllByRole("checkbox");
+  expect(switches).toHaveLength(2);
+  expect((switches[0] as HTMLInputElement).checked).toBe(true);
+  expect((switches[1] as HTMLInputElement).checked).toBe(false);
+  fireEvent.click(switches[0]!);
+  fireEvent.click(switches[1]!);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save firewall" }));
+  await waitFor(() => {
+    const req = fetchMock.mock.calls.find(([input, init]) =>
+      String(input).endsWith(`/networking/gates/${gateId}/firewall`) && init?.method === "PATCH");
+    expect(req).toBeDefined();
+    expect(JSON.parse(String(req?.[1]?.body))).toEqual({
+      allowLanToRp: false, allowRpToLan: true, expectedRevision: 4,
+    });
+  });
+});
+
+it("does not enable RP to LAN while a Gate uses the legacy agent", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(json(topology))));
+  render(<TenantNetworkingPage tenantId="tenant-1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Firewall" }));
+  const dialog = screen.getByRole("dialog", { name: "Firewall · office" });
+  fireEvent.click(within(dialog).getAllByRole("checkbox")[1]!);
+  expect(within(dialog).getByText("Site VPN agent upgrade required")).toBeTruthy();
+  expect((within(dialog).getByRole("button", { name: "Save firewall" }) as HTMLButtonElement).disabled).toBe(true);
+});

@@ -145,6 +145,8 @@ export class GateRuntimeReconcilerService {
           clientTunnelAddress: gate.clientTunnelAddress,
           peerPublicKey: gate.publicKey,
           peerLanCidrs: gate.lanCidrs,
+          allowLanToRp: gate.allowLanToRp,
+          allowRpToLan: gate.allowRpToLan,
           privateSecretName: secretName,
           networks: gate.networks.map((link) => ({
             id: link.network.id,

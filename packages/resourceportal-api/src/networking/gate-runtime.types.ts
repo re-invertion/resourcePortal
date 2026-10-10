@@ -11,6 +11,9 @@ export type GateRuntimeConfig = {
   clientTunnelAddress: string;
   peerPublicKey: string;
   peerLanCidrs: string[];
+  allowLanToRp?: boolean;
+  allowRpToLan?: boolean;
+  rpOverlayCidrs?: string[];
   privateKeyPath: string;
   mappings: GateRuntimeMapping[];
 };

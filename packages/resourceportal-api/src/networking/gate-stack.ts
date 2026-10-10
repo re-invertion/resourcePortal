@@ -26,6 +26,8 @@ export type GateStackInput = {
   clientTunnelAddress: string;
   peerPublicKey: string;
   peerLanCidrs: string[];
+  allowLanToRp?: boolean;
+  allowRpToLan?: boolean;
   privateSecretName: string;
   networks: GateStackNetwork[];
 };
@@ -38,6 +40,9 @@ export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
     clientTunnelAddress: input.clientTunnelAddress,
     peerPublicKey: input.peerPublicKey,
     peerLanCidrs: input.peerLanCidrs,
+    allowLanToRp: input.allowLanToRp ?? true,
+    allowRpToLan: input.allowRpToLan ?? false,
+    rpOverlayCidrs: input.networks.map((network) => network.overlayCidr),
     privateKeyPath: "/run/secrets/gate-private-key",
     mappings: input.networks.flatMap((network) =>
       network.attachments.map((attachment) => ({

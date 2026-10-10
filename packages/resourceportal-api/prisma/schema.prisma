@@ -1044,6 +1044,8 @@ model ResourcePortalGate {
   serverTunnelAddress        String?                        @unique
   agentTokenHash             String?                        @unique
   configRevision             Int                            @default(1)
+  allowLanToRp               Boolean                        @default(true)
+  allowRpToLan               Boolean                        @default(false)
   lanAddresses               String[]                       @default([])
   lanCidrs                   String[]                       @default([])
   agentVersion               String?

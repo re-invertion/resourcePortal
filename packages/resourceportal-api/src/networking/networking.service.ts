@@ -21,6 +21,7 @@ import type { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-hear
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import type { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
 import type { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
 import {
@@ -717,6 +718,9 @@ export class NetworkingService {
           lastError: null,
           lanAddresses: [],
           lanCidrs: [],
+          // Re-enrollment may replace the LAN agent with an older binary.
+          // Re-enable RP-to-LAN only after a v3 heartbeat.
+          allowRpToLan: false,
           configRevision: { increment: 1 },
           updatedBy: actor.id,
         },
@@ -734,6 +738,50 @@ export class NetworkingService {
       enrollment,
       endpointHost: this.endpointHost(),
     };
+  }
+
+  async updateGateFirewall(
+    tenantId: string,
+    gateId: string,
+    dto: UpdateGateFirewallDto,
+    actor: AuthenticatedUser,
+  ) {
+    const gate = await this.gateOrThrow(tenantId, gateId);
+    if (gate.revokedAt) throw new ConflictException("ResourcePortalGate is revoked");
+    if (dto.allowRpToLan && gate.agentVersion !== "gate-shell-v3") {
+      throw new BadRequestException(
+        "RP to LAN requires Site VPN agent v3; rotate enrollment and reinstall the Gate agent",
+      );
+    }
+    if (dto.allowRpToLan && gate.lanCidrs.length === 0) {
+      throw new BadRequestException("Site VPN must report LAN CIDRs before RP to LAN can be enabled");
+    }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.resourcePortalGate.updateMany({
+        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
+        data: {
+          allowLanToRp: dto.allowLanToRp,
+          allowRpToLan: dto.allowRpToLan,
+          configRevision: { increment: 1 },
+          updatedBy: actor.id,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("Site VPN settings changed; refresh before saving");
+      }
+      await this.audit(tx, tenantId, actor, {
+        action: "gate.firewall.update",
+        resourceType: "ResourcePortalGate",
+        resourceId: gateId,
+        resourceName: gate.name,
+        changes: {
+          previous: { allowLanToRp: gate.allowLanToRp, allowRpToLan: gate.allowRpToLan },
+          current: { allowLanToRp: dto.allowLanToRp, allowRpToLan: dto.allowRpToLan },
+        },
+      });
+      return tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } });
+    });
+    return this.publicGate(updated);
   }
 
   async updateGateRouting(
@@ -1366,9 +1414,12 @@ export class NetworkingService {
     serverPublicKey: string | null;
     serverListenPort: number | null;
     clientTunnelAddress: string | null;
+    serverTunnelAddress: string | null;
     configRevision: number;
     revokedAt: Date | null;
     routeAdvertisementMode: string;
+    allowLanToRp: boolean;
+    allowRpToLan: boolean;
     bgpLocalAsn: bigint | null;
     bgpRouterAddress: string | null;
     bgpRouterAsn: bigint | null;
@@ -1388,7 +1439,15 @@ export class NetworkingService {
       endpoint: `${this.endpointHost()}:${gate.serverListenPort}`,
       serverPublicKey: gate.serverPublicKey,
       tunnelAddress: gate.clientTunnelAddress,
-      allowedIps: gate.networks.map((link) => link.network.cidr).sort(),
+      allowedIps: [
+        ...gate.networks.map((link) => link.network.cidr),
+        ...(gate.allowRpToLan && gate.serverTunnelAddress
+          ? [gate.serverTunnelAddress.split("/")[0] + "/32"]
+          : []),
+      ].sort(),
+      serverTunnelAddress: gate.serverTunnelAddress,
+      allowLanToRp: gate.allowLanToRp,
+      allowRpToLan: gate.allowRpToLan,
       networks: gate.networks.map((link) => ({
         id: link.network.id,
         name: link.network.name,
