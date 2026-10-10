@@ -44,19 +44,20 @@ jobs:
           [[ "$message" == *'[fastfix]'* && "$message" == *'[release-v0.2.78]'* ]] ||
             { echo "Not an authorized v0.2.78 release commit" >&2; exit 1; }
           node scripts/release-validation-mode.mjs --version v0.2.78 --require fastfix
-      - name: Tag and explicitly dispatch official release workflow
+      - name: Publish existing verified v0.2.78 tag via official release workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "$(git ls-remote --tags origin refs/tags/v0.2.78)" ]]; then
-            echo "v0.2.78 already tagged; do not dispatch twice"
+          # The original bridge already created this immutable annotated tag.
+          # Do not retag newer main commits: publish the exact previously validated artifact source.
+          tag_target="$(git rev-parse 'refs/tags/v0.2.78^{commit}')"
+          [[ "$tag_target" == 'b2a1ef3c765c286a31e5aab604df8aec0feaa3f5' ]] ||
+            { echo "v0.2.78 tag target has unexpectedly changed" >&2; exit 1; }
+          if gh release view v0.2.78 >/dev/null 2>&1; then
+            echo "v0.2.78 is already published; do not dispatch again"
             exit 0
           fi
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            tag -a v0.2.78 "$VALIDATED_SHA" -m 'ResourcePortal v0.2.78 Site VPN machine bearer authentication fix'
-          git push origin refs/tags/v0.2.78
-          # GITHUB_TOKEN-created tag pushes do not start workflows; dispatch is explicit.
-          gh workflow run release.yml --ref main --field version=0.2.77
+          # The workflow_dispatch ref must target the immutable tag, not a newer main.
+          gh workflow run release.yml --ref v0.2.78 --field version=0.2.78
