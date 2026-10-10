@@ -146,3 +146,29 @@ test("the fastfix runner requires a dependency security audit for all releases",
   const source = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
   assert.match(source, /selected\.set\("mandatory-dependency-audit", \["npm", "audit", "--audit-level=high"\]\)/);
 });
+
+
+test("retired Codespaces, quota fixtures and browser Swarm E2E have explicit patch checks", () => {
+  const plan = selectProfiles([
+    "README.md",
+    "packages/resourceportal-api/scripts/smoke-deploy.ts",
+    "packages/resourceportal-api/scripts/smoke-stage11-quota-concurrency.ts",
+    "packages/resourceportal-api/scripts/smoke-stage15-capacity.ts",
+    "packages/resourceportal-api/scripts/smoke-stage16-operations.ts",
+    "packages/resourceportal-api/scripts/smoke-volume-lifecycle.ts",
+    "packages/resourceportal-api/src/config/production-auth-entrypoints.spec.ts",
+    "packages/resourceportal-web/deployment-entrypoints.test.mjs",
+    "scripts/run-stage20-real-swarm-web-e2e.mjs",
+  ]);
+  assert.deepEqual(plan.profiles, [
+    "identity", "platform-release", "release-fixtures",
+    "tenant-access", "workflow",
+  ]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("unregistered release fixtures still fail closed", () => {
+  assert.throws(() => selectProfiles([
+    "packages/resourceportal-api/scripts/smoke-new-unknown.ts",
+  ]), /unclassified changes/);
+});
