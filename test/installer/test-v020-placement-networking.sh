@@ -21,7 +21,8 @@ contains "$lifecycle_source" '--label-add resourceportal.control-plane=true' 'fr
 contains "$reconfigure_source" 'rp_reconfigure_manager_label rp.node.control-plane resourceportal.control-plane' 'control-plane reconfigure updates new and legacy labels together'
 contains "$reconfigure_source" 'rp_reconfigure_manager_label rp.node.ingress resourceportal.ingress' 'ingress reconfigure updates new and legacy labels together'
 contains "$reconfigure_source" 'rp_reconfigure_node_label rp.node.tenant-workloads resourceportal.tenant-workloads' 'tenant workload reconfigure updates new and legacy labels together'
-contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '\''.version'\'')" || return 1' 'upgrade backfills v0.2 labels'
+contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels "$(rp_manifest_value "$manifest" '\''.version'\'')" || {' 'upgrade backfills v0.2 labels'
+contains "$upgrade_source" '"node-role reconcile"; return 1;' 'upgrade label reconciliation failure requests controlled recovery'
 label_backfill_line="$(grep -n 'rp_upgrade_ensure_v020_node_labels.*manifest' "$repo_root/scripts/installer/upgrade.sh" | tail -n1 | cut -d: -f1)"
 migration_line="$(grep -n 'if ! rp_run_migrations' "$repo_root/scripts/installer/upgrade.sh" | head -n1 | cut -d: -f1)"
 if [[ -n "$label_backfill_line" && -n "$migration_line" && "$label_backfill_line" -lt "$migration_line" ]]; then
