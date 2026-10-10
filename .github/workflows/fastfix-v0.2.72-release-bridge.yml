@@ -1,4 +1,4 @@
-name: Fastfix v0.2.71 release bridge
+name: Fastfix v0.2.72 release bridge
 
 on:
   workflow_run:
@@ -10,7 +10,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: fastfix-v0.2.71-tag
+  group: fastfix-v0.2.72-tag
   cancel-in-progress: false
 
 jobs:
@@ -41,9 +41,9 @@ jobs:
           [[ "$(git ls-remote origin refs/heads/main | cut -f1)" == "$VALIDATED_SHA" ]] ||
             { echo "main advanced after the validated run" >&2; exit 1; }
           message="$(git log -1 --format=%B)"
-          [[ "$message" == *'[fastfix]'* && "$message" == *'[release-v0.2.71]'* ]] ||
-            { echo "Not an authorized v0.2.71 release commit" >&2; exit 1; }
-          node scripts/release-validation-mode.mjs --version v0.2.71 --require fastfix
+          [[ "$message" == *'[fastfix]'* && "$message" == *'[release-v0.2.72]'* ]] ||
+            { echo "Not an authorized v0.2.72 release commit" >&2; exit 1; }
+          node scripts/release-validation-mode.mjs --version v0.2.72 --require fastfix
       - name: Tag and explicitly dispatch official release workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,12 +51,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "$(git ls-remote --tags origin refs/tags/v0.2.71)" ]]; then
-            echo "v0.2.71 already tagged; do not dispatch twice"
+          if [[ -n "$(git ls-remote --tags origin refs/tags/v0.2.72)" ]]; then
+            echo "v0.2.72 already tagged; do not dispatch twice"
             exit 0
           fi
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            tag -a v0.2.71 "$VALIDATED_SHA" -m 'ResourcePortal v0.2.71 Alpine mktemp upgrade hotfix'
-          git push origin refs/tags/v0.2.71
+            tag -a v0.2.72 "$VALIDATED_SHA" -m 'ResourcePortal v0.2.72 RP Bugs correction release'
+          git push origin refs/tags/v0.2.72
           # GITHUB_TOKEN-created tag pushes do not start workflows; dispatch is explicit.
-          gh workflow run release.yml --ref main --field version=0.2.71
+          gh workflow run release.yml --ref main --field version=0.2.72
