@@ -4,6 +4,7 @@ import { Reflector } from "@nestjs/core";
 import { UserStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
+import { IS_PUBLIC_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { DevAuthGuard } from "./dev-auth.guard";
 import { OidcAuthService } from "./oidc-auth.service";
@@ -38,7 +39,7 @@ function guard(oidcAuth: {
   authenticatePrincipalToken: ReturnType<typeof vi.fn>;
 }) {
   return new DevAuthGuard(
-    { getAllAndOverride: vi.fn().mockReturnValue(true) } as unknown as Reflector,
+    { getAllAndOverride: vi.fn((key: string) => key === IS_PUBLIC_KEY) } as unknown as Reflector,
     {
       get: vi.fn((key: string, fallback?: string) =>
         ({ AUTH_MODE: "oidc", NODE_ENV: "test" } as Record<string, string>)[key] ?? fallback,

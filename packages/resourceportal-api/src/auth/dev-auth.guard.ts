@@ -12,7 +12,7 @@ import { UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { applyMcpBearerChallenge, isMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
-import { IS_PUBLIC_KEY } from "./auth.constants";
+import { IS_PUBLIC_KEY, MACHINE_BEARER_AUTH_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
 
@@ -31,8 +31,17 @@ export class DevAuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const machineBearerAuth = this.reflector.getAllAndOverride<boolean>(MACHINE_BEARER_AUTH_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const authMode = this.getAuthMode();
+
+    // These explicitly public machine endpoints authenticate their own opaque bearer
+    // token. Do not pass it to the OIDC user-token verifier first (which rejects it).
+    // The endpoint itself remains responsible for enforcing its machine credential.
+    if (isPublic && machineBearerAuth) return true;
 
     if (authMode === "oidc") {
       const reply = context.switchToHttp().getResponse<FastifyReply>();
