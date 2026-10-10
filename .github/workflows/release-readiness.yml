@@ -15,6 +15,11 @@ jobs:
     name: Build and validate release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      mode: ${{ steps.release-mode.outputs.mode }}
+      vpn_smoke: ${{ steps.test-plan.outputs.vpn_smoke }}
+      federation_required: ${{ steps.test-plan.outputs.federation_required }}
+      installer_required: ${{ steps.test-plan.outputs.installer_required }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,6 +29,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Block merges while the previous main release is unpublished
+        id: release-mode
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -37,12 +43,13 @@ jobs:
             echo "Current main commit has no published release. Resolve the publication backlog before merge." >&2
             exit 1
           fi
-          node scripts/next-main-release.mjs
+          node scripts/next-main-release.mjs --github-output "$GITHUB_OUTPUT"
       - name: Install dependencies and generate Prisma
         run: |
           npm ci
           npm run api:prisma:generate
       - name: Validate release selection and test taxonomy
+        id: test-plan
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -51,8 +58,9 @@ jobs:
           npm run test:catalog
           node --test test/next-main-release.test.mjs test/release-validation-mode.test.mjs test/test-workflow-gates.test.mjs
           previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
-          node scripts/fastfix-test-plan.mjs --base "$previous_tag" --head HEAD
+          node scripts/fastfix-test-plan.mjs --base "$previous_tag" --head HEAD --github-output "$GITHUB_OUTPUT"
       - name: Validate all source code, test suites and packages
+        if: steps.release-mode.outputs.mode == 'milestone'
         run: |
           npm audit --audit-level=high
           npm run lint
@@ -60,6 +68,19 @@ jobs:
           npm run build
           npm run test:installer
           npm run test:cli-release
+      - name: Validate affected patch scope without unrelated project-wide functional suites
+        if: steps.release-mode.outputs.mode == 'fastfix'
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
+          AUTH_MODE: dev
+          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          node scripts/fastfix-test-plan.mjs --base "$previous_tag" --head HEAD --run
       - name: Dry-run actual installable CLI packaging
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,6 +88,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node scripts/next-main-release.mjs | jq -er .version)"
+          npm run build --workspace @resource-portal/sdk
+          npm run build --workspace @resource-portal/cli
           scripts/package-cli-release.sh "$version" \
             packages/resourceportal-cli/dist packages/resourceportal-sdk/dist cli-release
           (cd cli-release && sha256sum -c SHA256SUMS)
@@ -86,18 +109,24 @@ jobs:
 
   swarm:
     name: Real Swarm gate
+    needs: candidate
+    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.vpn_smoke == 'true'
     uses: ./.github/workflows/swarm-integration.yml
     with:
       force_gate: true
 
   federation:
     name: Federation and browser gate
+    needs: candidate
+    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.federation_required == 'true'
     uses: ./.github/workflows/federation-integration.yml
     with:
       force_gate: true
 
   installer:
     name: Production installer gate
+    needs: candidate
+    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.installer_required == 'true'
     uses: ./.github/workflows/production-installer.yml
     with:
       force_gate: true
@@ -108,18 +137,44 @@ jobs:
     if: always()
     needs: [candidate, swarm, federation, installer]
     steps:
-      - name: Fail closed unless every required check succeeded
+      - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
           CANDIDATE: ${{ needs.candidate.result }}
+          MODE: ${{ needs.candidate.outputs.mode }}
+          VPN_SMOKE: ${{ needs.candidate.outputs.vpn_smoke }}
+          FEDERATION_REQUIRED: ${{ needs.candidate.outputs.federation_required }}
+          INSTALLER_REQUIRED: ${{ needs.candidate.outputs.installer_required }}
           SWARM: ${{ needs.swarm.result }}
           FEDERATION: ${{ needs.federation.result }}
           INSTALLER: ${{ needs.installer.result }}
         shell: bash
         run: |
           set -euo pipefail
-          for result in "$CANDIDATE" "$SWARM" "$FEDERATION" "$INSTALLER"; do
-            if [[ "$result" != success ]]; then
-              echo "Release readiness blocked (check result: $result)" >&2
+          [[ "$CANDIDATE" == success ]] || { echo "Release candidate validation failed" >&2; exit 1; }
+          [[ "$MODE" == fastfix || "$MODE" == milestone ]] || { echo "Unexpected release classification" >&2; exit 1; }
+          verify_gate() {
+            local name="$1" result="$2" required="$3"
+            if [[ "$required" == true && "$result" != success ]]; then
+              echo "Required $name gate not successful ($result)" >&2
               exit 1
             fi
-          done
+            if [[ "$required" != true && "$result" != success && "$result" != skipped ]]; then
+              echo "Optional $name gate failed ($result)" >&2
+              exit 1
+            fi
+          }
+          if [[ "$MODE" == milestone || "$VPN_SMOKE" == true ]]; then
+            verify_gate swarm "$SWARM" true
+          else
+            verify_gate swarm "$SWARM" false
+          fi
+          if [[ "$MODE" == milestone || "$FEDERATION_REQUIRED" == true ]]; then
+            verify_gate federation "$FEDERATION" true
+          else
+            verify_gate federation "$FEDERATION" false
+          fi
+          if [[ "$MODE" == milestone || "$INSTALLER_REQUIRED" == true ]]; then
+            verify_gate installer "$INSTALLER" true
+          else
+            verify_gate installer "$INSTALLER" false
+          fi
