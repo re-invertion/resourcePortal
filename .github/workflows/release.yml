@@ -2,13 +2,12 @@ name: Installer-Gated Release
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Semantic release version to republish (for example 0.1.0)'
-        required: true
-        type: string
+    branches: [main]
+
+# One publication per main revision; never cancel a publication in progress.
+concurrency:
+  group: resourceportal-automatic-main-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -20,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.release-mode.outputs.mode }}
+      version: ${{ steps.release-mode.outputs.version }}
+      previous_tag: ${{ steps.release-mode.outputs.previous_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,33 +28,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Classify release and check tag history
+      - name: Resolve next version for this exact main commit
         id: release-mode
         env:
-          MANUAL_VERSION: ${{ inputs.version }}
-        shell: bash
-        run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            VERSION="$MANUAL_VERSION"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          node scripts/release-validation-mode.mjs --version "$VERSION" --github-output "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/next-main-release.mjs --github-output "$GITHUB_OUTPUT"
 
   milestone-swarm:
     needs: classify
     if: needs.classify.outputs.mode == 'milestone'
     uses: ./.github/workflows/swarm-integration.yml
+    with:
+      force_gate: true
 
   milestone-federation:
     needs: classify
     if: needs.classify.outputs.mode == 'milestone'
     uses: ./.github/workflows/federation-integration.yml
+    with:
+      force_gate: true
 
   milestone-installer:
     needs: classify
     if: needs.classify.outputs.mode == 'milestone'
     uses: ./.github/workflows/production-installer.yml
+    with:
+      force_gate: true
 
   publish:
     needs: [classify, milestone-swarm, milestone-federation, milestone-installer]
@@ -66,6 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Setup Node for Production Installer gate
         uses: actions/setup-node@v4
@@ -76,19 +77,14 @@ jobs:
         run: npm ci
       - name: Verify test inventory and taxonomy
         run: npm run test:catalog
-      - name: Resolve semantic release validation mode
+      - name: Use the classification validated for this exact main revision
         id: release-mode
-        shell: bash
         env:
-          MANUAL_VERSION: ${{ inputs.version }}
+          MODE: ${{ needs.classify.outputs.mode }}
+          PREVIOUS_TAG: ${{ needs.classify.outputs.previous_tag }}
+        shell: bash
         run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            VERSION="$MANUAL_VERSION"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          node scripts/release-validation-mode.mjs --version "$VERSION" --github-output "$GITHUB_OUTPUT"
+          printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -118,17 +114,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Validate semantic tag
+      - name: Validate selected version
         id: version
-        shell: bash
         env:
-          MANUAL_VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.classify.outputs.version }}
+        shell: bash
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            VERSION="$MANUAL_VERSION"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
@@ -276,8 +268,18 @@ jobs:
             chmod 0755 resourceportal-upgrade-recovery.sh
             assets+=(resourceportal-upgrade-recovery.sh)
           fi
+          # Create the tag/release only after all gates, builds and public-pull checks.
+          # Never mutate or overwrite an earlier release, even after partial failure.
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-          else
-            gh release create "$RELEASE_TAG" "${assets[@]}" --generate-notes
+            echo "Release already published: immutable artifacts may not be overwritten" >&2
+            exit 1
           fi
+          if git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | grep -q .; then
+            echo "Tag exists without a completed release; reconcile before publishing" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --target "$GITHUB_SHA" --generate-notes --latest
+          test "$(gh release view "$RELEASE_TAG" --json tagName --jq .tagName)" = "$RELEASE_TAG"
+          git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
