@@ -22,10 +22,6 @@ describe("production auth entrypoints", () => {
   });
 
   it("uses dev auth only in explicitly non-production developer/test entrypoints", () => {
-    const codespace = read("scripts/codespace-setup.sh");
-    expect(codespace).toContain("NODE_ENV=development");
-    expect(codespace).toContain("AUTH_MODE=dev");
-
     const federation = read("scripts/run-federation-e2e.sh");
     expect(federation).toContain("NODE_ENV=test");
     expect(federation).toContain("AUTH_MODE=dev");

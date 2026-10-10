@@ -199,7 +199,7 @@ async function createTenant(kind: string) {
 }
 
 async function setQuota(tenantId: string, quota: Record<string, number>) {
-  const result = await request(`/tenants/${tenantId}/quota`, "PATCH", quota);
+  const result = await request(`/platform/tenants/${tenantId}/quota`, "PATCH", quota);
   expectSuccess(result, "set quota");
 }
 

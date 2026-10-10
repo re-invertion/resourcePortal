@@ -54,7 +54,7 @@ async function main() {
   });
   tenantId = stringField(tenant, "id");
 
-  await api(`/tenants/${tenantId}/quota`, {
+  await api(`/platform/tenants/${tenantId}/quota`, {
     method: "PATCH",
     body: {
       cpu: 100000,
