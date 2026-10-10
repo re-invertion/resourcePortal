@@ -60,14 +60,24 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.match(publish.run,/--target "\$GITHUB_SHA"/);
   assert.doesNotMatch(publish.run,/--clobber/);
 });
-test('Merge Queue cannot merge without release-ready candidate and all integration checks',()=>{
+test('Merge Queue requires pre-merge validation and only applicable Fast Fix integration gates',()=>{
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
   assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer']);
-  assert.match(gate.jobs['release-ready'].steps[0].run,/!= success/);
+  const candidate=gate.jobs.candidate;
+  assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
+  const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
+  assert.match(scoped.if,/fastfix/);
+  assert.match(scoped.run,/fastfix-test-plan\.mjs.*--run/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/\$CANDIDATE.*success/);
+  const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
   for(const name of ['swarm','federation','installer']){
     assert.equal(gate.jobs[name].with.force_gate,true);
+    assert.equal(gate.jobs[name].needs,'candidate');
+    assert.match(gate.jobs[name].if,new RegExp(conditionKeys[name]));
+    assert.match(gate.jobs[name].if,/milestone/);
     const called=load(gate.jobs[name].uses.split('/').at(-1));
     assert.match(Object.values(called.jobs)[0].if,/inputs\.force_gate == true/);
   }
