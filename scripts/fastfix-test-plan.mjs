@@ -24,7 +24,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/volume-operation-tracker.test.ts", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "reactive-web-state": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
   ],
   "storage-isolation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
@@ -144,6 +144,7 @@ const commands = {
 };
 
 const classifiers = [
+  [/^packages\/resourceportal-web\/src\/App\.test\.tsx$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing-preflight\.guard(?:\.spec)?|billing-worker\.service|deployed-compute-allocation(?:\.spec)?)\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
