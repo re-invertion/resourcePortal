@@ -537,24 +537,24 @@ rp_upgrade_apply() {
   rp_upgrade_refresh_firewall || {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "host firewall refresh"; return 1;
   }
-  rp_upgrade_checkpoint_stage quiescing-clients || return 1
+  rp_upgrade_checkpoint_stage quiescing-clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint quiescing-clients"; return 1; }
   rp_upgrade_quiesce_database_clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database quiesce"; return 1; }
-  rp_upgrade_checkpoint_stage postgres-rollout || return 1
+  rp_upgrade_checkpoint_stage postgres-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint postgres-rollout"; return 1; }
   rp_upgrade_prepare_postgres_services || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "PostgreSQL preparation"; return 1; }
-  rp_upgrade_checkpoint_stage zitadel-rollout || return 1
+  rp_upgrade_checkpoint_stage zitadel-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint zitadel-rollout"; return 1; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "ZITADEL preparation"; return 1; }
-  rp_upgrade_checkpoint_stage mcp-oauth-reconciliation || return 1
+  rp_upgrade_checkpoint_stage mcp-oauth-reconciliation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint mcp-oauth-reconciliation"; return 1; }
   rp_run_zitadel_mcp_oauth_reconcile || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "MCP OAuth reconciliation"; return 1; }
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1
     rp_prepare_oidc_staging_ca "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "OIDC staging CA"; return 1; }
   fi
-  rp_upgrade_checkpoint_stage resourceportal-migrations-started || return 1
+  rp_upgrade_checkpoint_stage resourceportal-migrations-started || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint resourceportal-migrations-started"; return 1; }
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
     return 1
   fi
-  rp_upgrade_checkpoint_stage target-stack-healthy || return 1
+  rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }
   if ! rp_upgrade_refresh_enrollment_listener; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "enrollment listener"
     return 1
@@ -571,5 +571,5 @@ rp_upgrade_apply() {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "stack file persistence"
     return 1
   }
-  rp_upgrade_checkpoint_phase completed "target-stack-healthy" || return 1
+  rp_upgrade_checkpoint_phase completed "target-stack-healthy" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint completed"; return 1; }
 }
