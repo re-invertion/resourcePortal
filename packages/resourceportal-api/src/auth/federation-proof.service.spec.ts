@@ -9,21 +9,21 @@ const nonce = "A".repeat(43);
 function fixture() {
   const proof = { nonce, providerId: "actual-oidc-idp", consumedAt: null as Date | null,
     createdAt: new Date() };
-  const create = vi.fn(async (args: { data: { nonce: string; providerId: string } }) => {
+  const create = vi.fn((args: { data: { nonce: string; providerId: string } }) => {
     proof.providerId = args.data.providerId;
-    return proof;
+    return Promise.resolve(proof);
   });
   const findUnique = vi.fn().mockResolvedValue(proof);
-  const updateMany = vi.fn(async (args: { where: {
+  const updateMany = vi.fn((args: { where: {
     nonce: string; providerId: string; consumedAt: null; createdAt: { gte: Date };
   }; data: { consumedAt: Date } }) => {
     if (args.where.nonce !== proof.nonce ||
         args.where.providerId !== proof.providerId ||
         proof.consumedAt || proof.createdAt < args.where.createdAt.gte) {
-      return { count: 0 };
+      return Promise.resolve({ count: 0 });
     }
     proof.consumedAt = args.data.consumedAt;
-    return { count: 1 };
+    return Promise.resolve({ count: 1 });
   });
   const prisma = { federationLoginProof: { create, findUnique, updateMany } };
   const service = new FederationProofService(prisma as unknown as PrismaService, {
