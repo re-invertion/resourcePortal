@@ -448,6 +448,24 @@ export class DeploymentExecutionService {
     return this.stackRegistryAuth.login(resolved.loginTargets);
   }
 
+  /** Restore or rollback an immutable deployment with the tenant's scoped
+   * registry credentials. Never read worker-global Docker auth.
+   */
+  async applyDeploymentArtifactWithRegistryAuth(
+    stackConfig: string | null,
+    params: {
+      stackName: string;
+      renderedStack: string;
+      artifactSha256: string;
+      appGroupId: string;
+    },
+  ) {
+    return this.applyWithScopedRegistryAuth(
+      this.parseStackConfig(stackConfig),
+      params,
+    );
+  }
+
   private async applyWithScopedRegistryAuth(
     snapshot: StackConfigSnapshot,
     params: {
