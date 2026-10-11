@@ -194,6 +194,8 @@ async function main() {
   );
   assert(serviceIdentity.clientSecret, "Service identity did not return its initial client secret");
 
+  await installFederationAttestationAction();
+
   await apiRequest(
     "PATCH",
     `/tenants/${tenant.id}/auth-policy`,
