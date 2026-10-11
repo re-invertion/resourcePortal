@@ -11,7 +11,9 @@ import { appendFileSync } from "node:fs";
 const commands = {
   "upgrade-recovery": [
     ["node", "--test", "test/installer/test-target-upgrade.test.mjs", "test/installer/test-upgrade-preflight.test.mjs", "test/installer/test-upgrade-recovery.test.mjs"],
-    ["bash", "-n", "scripts/installer/target-upgrade.sh", "scripts/installer/recovery.sh", "scripts/upgrade-recovery-from-0.2.78.sh"],
+    ["bash", "-n", "scripts/installer/target-upgrade.sh"],
+    ["bash", "-n", "scripts/installer/recovery.sh"],
+    ["bash", "-n", "scripts/upgrade-recovery-from-0.2.78.sh"],
   ],
   "billing-correctness": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/billing"],

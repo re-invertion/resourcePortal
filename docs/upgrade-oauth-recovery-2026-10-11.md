@@ -103,3 +103,31 @@ The tests use isolated synthetic secrets; no production key material is
 needed. Do not mark this incident resolved merely because unit tests pass.
 A real isolated Swarm run and a separately authorized production apply are
 distinct gates. Recovery never bypasses protected PR/Merge Queue delivery.
+
+### Verified on 2026-10-11
+- Approved source: ba663bdc84be26c1b423788271626f18440a68e2 (v0.2.81).
+- Complete changed-path Fast Fix run: identity, installer, platform-release,
+  upgrade-recovery and workflow profiles; exit 0. New regressions: 27/27.
+  Workflow tests: 47/47; dependency audit: zero vulnerabilities; API build: exit 0.
+- Review found and corrected premature active-journal removal and unshared
+  installer locks. Added real flock contention, takeover/replay, authorization
+  hash, backup corruption and Docker startup regressions. Re-review reported
+  no remaining Critical/Important findings.
+- Disposable Docker 27 Swarm on .200 (overlay2, no production mounts/ports):
+  actual 0.2.81 bootstrap with old installer parameters reproduced the exact
+  missing federation secret/callback failure. Target parameters completed,
+  including a second reconciliation.
+- Actual pinned 0.2.78 API image migrated a synthetic PostgreSQL database.
+  Custom backup restored into a separate database with identical source
+  migration inventory; pinned 0.2.81 migration and repeat both completed.
+- The published 0.2.81 image's real GitHub CLI verified the official signed
+  release manifest against main and the official release workflow.
+- Read-only --plan on seprd1 .11: exit 0. Checkpoint/config/images and actual
+  source migration names/checksums passed. GitHub CLI is absent there.
+  Production apply, production service restart and merge were not performed.
+
+Scope: the isolated test covers actual Swarm OAuth jobs, published images,
+Prisma upgrade, backup restoration and provenance. It does not run a complete
+fresh Primary installation, storage-device provisioning or browser login.
+Production completion still requires separately authorized apply and the
+operator health/OIDC/MCP checks above.
