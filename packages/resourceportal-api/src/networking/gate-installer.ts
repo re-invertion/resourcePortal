@@ -11,6 +11,7 @@ STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
 AGENT_BIN="/usr/local/sbin/resourceportal-gate-agent"
 WG_CONF="/etc/wireguard/rp-gate.conf"
+WG_INTERFACE="rp-gate"
 SERVICE_FILE="/etc/systemd/system/resourceportal-gate.service"
 
 log() { printf '[ResourcePortalGate] %s\n' "$*"; }
@@ -49,8 +50,9 @@ install_dependencies() {
 }
 
 discover_lan_addresses() {
+  # Do not report our WireGuard tunnel address as physical LAN.
   ip -o -4 addr show scope global \
-    | awk '{print $4}' \
+    | awk -v gate="$WG_INTERFACE" '$2 != gate {print $4}' \
     | cut -d/ -f1 \
     | sort -u \
     | jq -R . \
@@ -58,9 +60,9 @@ discover_lan_addresses() {
 }
 
 discover_lan_cidrs() {
+  # Link routes installed on rp-gate belong to RP, not to this LAN.
   ip -o -4 route show scope link \
-    | awk '{print $1}' \
-    | grep -E '^[0-9]+(\.[0-9]+){3}/[0-9]+$' \
+    | awk -v gate="$WG_INTERFACE" '$1 ~ /^[0-9]+(\.[0-9]+)(\.[0-9]+)(\.[0-9]+)\/[0-9]+$/ {for (i = 1; i < NF; i++) if ($i == "dev" && $(i + 1) == gate) next; print $1}' \
     | sort -u \
     | jq -R . \
     | jq -s .
@@ -129,8 +131,9 @@ FRR_END="! END RESOURCEPORTAL-GATE"
 log() { printf '[ResourcePortalGate] %s\n' "$*"; }
 
 discover_lan_addresses() {
+  # Do not report our WireGuard tunnel address as physical LAN.
   ip -o -4 addr show scope global \
-    | awk '{print $4}' \
+    | awk -v gate="$WG_INTERFACE" '$2 != gate {print $4}' \
     | cut -d/ -f1 \
     | sort -u \
     | jq -R . \
@@ -138,9 +141,9 @@ discover_lan_addresses() {
 }
 
 discover_lan_cidrs() {
+  # Link routes installed on rp-gate belong to RP, not to this LAN.
   ip -o -4 route show scope link \
-    | awk '{print $1}' \
-    | grep -E '^[0-9]+(\.[0-9]+){3}/[0-9]+$' \
+    | awk -v gate="$WG_INTERFACE" '$1 ~ /^[0-9]+(\.[0-9]+)(\.[0-9]+)(\.[0-9]+)\/[0-9]+$/ {for (i = 1; i < NF; i++) if ($i == "dev" && $(i + 1) == gate) next; print $1}' \
     | sort -u \
     | jq -R . \
     | jq -s .
@@ -563,7 +566,10 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now resourceportal-gate.service
+systemctl enable resourceportal-gate.service
+# A re-enrollment replaces the agent binary and machine token. An already
+# running service must be restarted to use them (enable --now is not enough).
+systemctl restart resourceportal-gate.service
 
 log "ResourcePortalGate enrolled as $GATE_ID"
 log "The Gate will automatically receive RP Network routes."
