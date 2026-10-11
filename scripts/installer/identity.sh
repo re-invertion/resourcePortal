@@ -168,6 +168,9 @@ rp_run_zitadel_bootstrap() {
     --mount type=bind,src="$output_dir",dst=/bootstrap-output \
     --secret source="${RP_CFG_OIDC_SWARM_REF:-rp_oidc_client_secret_bootstrap}",target=rp_oidc_client_secret \
     --secret source=rp_first_admin_password,target=rp_first_admin_password \
+    --secret source=rp_encryption_key,target=rp_encryption_key \
+    --env FEDERATION_ATTESTATION_MASTER_FILE=/run/secrets/rp_encryption_key \
+    --env FEDERATION_ATTESTATION_CALLBACK_URL=http://api:3000/api/auth/federation/attest \
     --env ZITADEL_BOOTSTRAP_MODE=production \
     --env ZITADEL_ISSUER_URL=http://zitadel:8080 \
     --env ZITADEL_BOOTSTRAP_READY_TIMEOUT_SECONDS="$timeout" \
@@ -318,6 +321,10 @@ rp_run_zitadel_mcp_oauth_reconcile() {
     --constraint 'node.labels.resourceportal.storage.authoritative==true' \
     --network "${stack_name}_rp-control" \
     --mount type=bind,src=/mnt/resourceportal/platform/zitadel-bootstrap,dst=/platform/zitadel-bootstrap,readonly \
+    --secret source=rp_encryption_key,target=rp_encryption_key \
+    --env FEDERATION_ATTESTATION_MASTER_FILE=/run/secrets/rp_encryption_key \
+    --env FEDERATION_ATTESTATION_CALLBACK_URL=http://api:3000/api/auth/federation/attest \
+    --env ZITADEL_ORGANIZATION_ID="${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" \
     --env ZITADEL_BOOTSTRAP_MODE=production \
     --env ZITADEL_BOOTSTRAP_MCP_OAUTH_ONLY=true \
     --env ZITADEL_ISSUER_URL=http://zitadel:8080 \
