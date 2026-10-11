@@ -140,3 +140,21 @@ if (rp_recovery_prepare_checkpoint "$DIR/target.json" "$DIR/previous-stack.yml" 
     assert.equal(r.status, 0, r.stderr);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+for (const drift of ["", "api", "dr-reconciliation"]) {
+  test("post-recovery replicas follow the target final stack contract: " + (drift || "healthy"), () => {
+    const r = spawnSync("bash", ["-c", `
+set -eu
+source scripts/installer/control-plane.sh
+source scripts/installer/recovery.sh
+docker() {
+  local service
+  service="$(printf %s "$4" | sed 's/^name=resourceportal-control-plane_//')"
+  if [[ "$service" == "$DRIFT" ]]; then printf '0/1'; return; fi
+  if [[ "$service" == dr-reconciliation ]]; then printf '0/0'; else printf '1/1'; fi
+}
+rp_recovery_verify_control_plane resourceportal-control-plane
+`], { encoding: "utf8", env: { ...process.env, DRIFT: drift } });
+    if (drift) { assert.notEqual(r.status, 0); assert.ok(r.stderr.includes("Post-recovery verification failed: " + drift), r.stderr); }
+    else assert.equal(r.status, 0, r.stderr);
+  });
+}

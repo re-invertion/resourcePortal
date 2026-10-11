@@ -4,7 +4,7 @@
 set -euo pipefail
 umask 077
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-for library in common config releases upgrade identity recovery; do
+for library in common config releases upgrade identity recovery control-plane; do
   source "$root/scripts/installer/$library.sh"
 done
 mode=plan
@@ -158,10 +158,7 @@ result="$(docker wait "$name")"
 }
 rp_config_load "$config"
 [[ "${RP_CFG_RELEASE_VERSION:-}" == 0.2.81 && "$(jq -er '.phase' "$dir/state.json")" == completed ]] || exit 1
-for service in api worker dr-reconciliation postgres-rp postgres-zitadel traefik web zitadel; do
-  observed="$(docker service ls --filter "name=${stack}_$service" --format '{{.Replicas}}')"
-  [[ "$observed" == 1/1 ]] || { printf 'Post-recovery verification failed: %s %s\n' "$service" "$observed" >&2; exit 1; }
-done
+rp_recovery_verify_control_plane "$stack" || exit 1
 curl --fail --silent --show-error "https://${RP_CFG_DOMAIN}/api/health/ready" | jq -e '.status == "ok" and .version == "0.2.81"' >/dev/null
 curl --fail --silent --show-error "https://${RP_CFG_DOMAIN}/api/health/worker" | jq -e ' .status == "ok" and .workers.active > 0' >/dev/null
 curl --fail --silent --show-error "https://${RP_CFG_DOMAIN}/" >/dev/null

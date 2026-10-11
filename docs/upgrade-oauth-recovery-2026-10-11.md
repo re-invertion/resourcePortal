@@ -131,3 +131,19 @@ Prisma upgrade, backup restoration and provenance. It does not run a complete
 fresh Primary installation, storage-device provisioning or browser login.
 Production completion still requires separately authorized apply and the
 operator health/OIDC/MCP checks above.
+
+### Production recovery on seprd1
+After direct operator authorization, GitHub CLI was installed from its signed
+official package repository and --plan passed with real provenance verification.
+Backups were verified at
+/var/backups/resourceportal/oauth-recovery-20261011T183005Z-155358.
+The pinned target installer exited 0 and completed the checkpoint at
+2026-10-11 20:32:56 Europe/Warsaw. Installed version, readiness/PostgreSQL,
+Worker heartbeat, Web HTTP and OIDC discovery subsequently passed.
+
+The outer recovery verifier reported failure because it expected DR 1/1;
+the final stack contract deliberately sets dr-reconciliation to 0 replicas.
+This follow-up uses rp_stack_replica_value(final, service) and adds healthy
+0/0 plus unhealthy service regressions. It does not scale DR to hide the error.
+The original failed verifier journal and the original upgrade evidence are
+retained. Generated TEST_MATRIX.md is refreshed for the added test files.

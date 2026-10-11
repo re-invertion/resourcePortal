@@ -63,3 +63,15 @@ rp_recovery_prepare_checkpoint() {
   RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
   export RP_UPGRADE_ACTIVE_CHECKPOINT
 }
+
+rp_recovery_verify_control_plane() {
+  local stack="$1" service expected observed
+  for service in api worker dr-reconciliation postgres-rp postgres-zitadel traefik web zitadel; do
+    expected="$(rp_stack_replica_value final "$service")" || return 1
+    observed="$(docker service ls --filter "name=${stack}_$service" --format '{{.Replicas}}')" || return 1
+    [[ "$observed" == "$expected/$expected" ]] || {
+      printf 'Post-recovery verification failed: %s %s (expected %s/%s)\n' "$service" "$observed" "$expected" "$expected" >&2
+      return 1
+    }
+  done
+}
