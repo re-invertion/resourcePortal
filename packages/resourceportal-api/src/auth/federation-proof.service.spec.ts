@@ -1,4 +1,8 @@
 import { ConfigService } from "@nestjs/config";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { deriveFederationAttestationSecret } from "./federation-attestation-secret";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
 import { FederationProofService } from "./federation-proof.service";
@@ -58,5 +62,35 @@ describe("ZITADEL external authentication evidence (#238)", () => {
     f.proof.createdAt = new Date(Date.now() - 601_000);
     expect(await f.service.consume(nonce, "actual-oidc-idp")).toBe(false);
     expect(await f.service.consume("bad", "actual-oidc-idp")).toBe(false);
+  });
+});
+
+describe("production federation secret derivation", () => {
+  it("uses a separate HMAC-derived secret without sharing the master encryption key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rp-federation-proof-"));
+    const masterPath = join(dir, "encryption");
+    const master = "A".repeat(64);
+    writeFileSync(masterPath, master, { mode: 0o600 });
+    try {
+      const derived = deriveFederationAttestationSecret(master);
+      expect(derived).toHaveLength(64);
+      expect(derived).not.toBe(master);
+      expect(deriveFederationAttestationSecret(master)).toBe(derived);
+      expect(deriveFederationAttestationSecret("B".repeat(64))).not.toBe(derived);
+      const prisma = {
+        federationLoginProof: { create: vi.fn().mockResolvedValue({}) },
+      };
+      const service = new FederationProofService(prisma as unknown as PrismaService, {
+        get: vi.fn((key: string) =>
+          key === "RESOURCE_ENCRYPTION_KEY_FILE" ? masterPath : undefined,
+        ),
+      } as unknown as ConfigService);
+      await expect(service.record(`Bearer ${derived}`, {
+        nonce, providerId: "actual-oidc-idp",
+      })).resolves.toEqual({ accepted: true });
+      expect(prisma.federationLoginProof.create).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
