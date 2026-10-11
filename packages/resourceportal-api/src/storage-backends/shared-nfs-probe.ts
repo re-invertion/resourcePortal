@@ -12,7 +12,12 @@ export function sharedNfsProbeCommand(nodeCount: number, nonce: string): string 
   }
   return [
     "set -eu",
-    `awk '$2 == "/probe" && $3 ~ /^nfs(4)?$/ { ok=1 } END { exit !ok }' /proc/mounts || { echo StorageProbeNotNfs >&2; exit 11; }`,
+    // A single-node LocalFilesystem backend is valid on ext4/XFS; requiring
+    // NFS there incorrectly rejects the supported Stage14 installation path.
+    // For multi-node placement, local filesystem fallback is forbidden.
+    ...(nodeCount > 1
+      ? [`awk '$2 == "/probe" && $3 ~ /^nfs(4)?$/ { ok=1 } END { exit !ok }' /proc/mounts || { echo StorageProbeNotNfs >&2; exit 11; }`]
+      : []),
     `dir=/probe/.rp-shared-probe-${nonce}`,
     "case \"$HOSTNAME\" in *[!a-zA-Z0-9._-]*|'') echo StorageProbeInvalidHostname >&2; exit 15 ;; esac",
     "if [ -L \"$dir\" ]; then echo StorageProbeUnsafeDirectory >&2; exit 16; fi",
