@@ -122,6 +122,15 @@ if (rp_recovery_prepare_checkpoint "$DIR/target.json" "$DIR/previous-stack.yml" 
 cmp "$DIR/state.json" "$DIR-backup/original-checkpoint/state.json"
 flock -u "$held"
 exec {held}>&-
+# A changed authorization hash or corrupted backup cannot remove the guard.
+valid_hash="$RP_RECOVERY_CHECKPOINT_SHA256"
+export RP_RECOVERY_CHECKPOINT_SHA256="$(printf '%064d' 0)"
+if (rp_recovery_prepare_checkpoint "$DIR/target.json" "$DIR/previous-stack.yml" 0.2.78); then exit 12; fi
+export RP_RECOVERY_CHECKPOINT_SHA256="$valid_hash"
+printf damaged >> "$DIR-backup/resourceportal.dump"
+if (rp_recovery_prepare_checkpoint "$DIR/target.json" "$DIR/previous-stack.yml" 0.2.78); then exit 13; fi
+cmp "$DIR/state.json" "$DIR-backup/original-checkpoint/state.json"
+printf fixture > "$DIR-backup/resourceportal.dump"
 # A fresh process assumes ownership and releases its lock at process exit.
 (rp_recovery_prepare_checkpoint "$DIR/target.json" "$DIR/previous-stack.yml" 0.2.78)
 jq -e '.phase == "prepared" and .recovery.originalCheckpointSha256 != null' "$DIR/state.json" >/dev/null
