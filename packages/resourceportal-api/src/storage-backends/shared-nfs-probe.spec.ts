@@ -25,3 +25,19 @@ describe("shared NFS validation (#228)", () => {
     expect(() => sharedNfsProbeCommand(2, "unsafe/path")).toThrow();
   });
 });
+
+  // Regression: single-node local filesystem is permitted, but multi-node local fallback is rejected.
+describe("filesystem type by storage topology (#228)", () => {
+  it("allows a one-node local filesystem probe without requiring NFS", () => {
+    const script = sharedNfsProbeCommand(1, "abcdefabcdef1234");
+    expect(script).not.toContain("StorageProbeNotNfs");
+    expect(script).toContain('if [ "$files" -ge "1" ]');
+    const checked = spawnSync("sh", ["-n"], { input: script, encoding: "utf8" });
+    expect(checked.status).toBe(0);
+  });
+  it("retains the NFS-only invariant for two or more storage nodes", () => {
+    const script = sharedNfsProbeCommand(2, "abcdefabcdef1234");
+    expect(script).toContain("StorageProbeNotNfs");
+    expect(script).toContain('if [ "$files" -ge "2" ]');
+  });
+});
