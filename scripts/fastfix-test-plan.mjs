@@ -193,6 +193,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/security\//, ["security"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-stage9-ingress\.ts$/, ["domains", "applications"]],
   [/^packages\/resourceportal-api\/scripts\/setup-federation-e2e\.ts$/, ["identity", "security"]],
+  [/^packages\/resourceportal-api\/scripts\/bootstrap-zitadel\.ts$/, ["identity", "security", "installer"]],
   [/^scripts\/run-federation-e2e\.sh$/, ["identity", "security"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-usability\.test\.tsx$/, ["domains"]],
   [/^scripts\/verify-stage20-management-matrix\.mjs$/, ["platform-release", "platform-admin-ui"]],
