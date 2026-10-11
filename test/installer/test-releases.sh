@@ -102,8 +102,8 @@ contains "$(cat "$provenance_args")" "--bundle $test_bundle" 'updater verifies l
 contains "$(cat "$provenance_args")" '--signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml' 'provenance pins official release workflow'
 contains "$(cat "$provenance_args")" '--source-ref refs/heads/main' 'provenance pins main source ref'
 unset -f gh
-unset MOCK_ATTEST_EXIT RP_RELEASE_ATTESTATION_BUNDLE
-rm -f "$provenance_args" "$test_bundle"
+unset MOCK_ATTEST_EXIT
+rm -f "$provenance_args"
 preflight_marker="$(mktemp /tmp/rp-preflight-invoked.XXXXXX)"
 rm -f "$preflight_marker"
 untrusted_preflight() (
@@ -114,6 +114,8 @@ untrusted_preflight() (
 status 1 'unsigned manifest aborts full upgrade preflight' untrusted_preflight
 if [[ ! -e "$preflight_marker" ]]; then pass 'unsigned manifest aborts before checkpoint mutation'; else fail 'unsigned manifest preflight advanced'; fi
 rm -f "$preflight_marker"
+unset RP_RELEASE_ATTESTATION_BUNDLE
+rm -f "$test_bundle"
 untrusted_release_manifest="$(mktemp /tmp/rp-untrusted-release.XXXXXX)"
 jq '.images.api = "ghcr.io/untrusted/other-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$manifest" >"$untrusted_release_manifest"
 status 1 'manifest rejects otherwise valid digest from untrusted API repository' rp_validate_release_manifest "$untrusted_release_manifest"
