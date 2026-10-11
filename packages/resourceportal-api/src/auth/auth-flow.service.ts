@@ -58,6 +58,12 @@ export class AuthFlowService {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", selection.scopes.join(" "));
     url.searchParams.set("state", state);
+    if (selection.identityProviderId) {
+      // Random handle for ZITADEL External Authentication / Post Authentication.
+      // Its selection alone is never trusted by RP; a server-to-server event
+      // naming the actually used provider is required at callback.
+      url.searchParams.set("login_hint", `rp-proof-${state}`);
+    }
     url.searchParams.set("code_challenge", codeChallenge(codeVerifier));
     url.searchParams.set("code_challenge_method", "S256");
     if (prompt) {
@@ -93,6 +99,7 @@ export class AuthFlowService {
       tokenResponse.id_token,
       tokenResponse.access_token,
       identityProviderId,
+      state,
     );
     if (user.status !== UserStatus.Active) {
       throw new UnauthorizedException("Email verification is required before login");
