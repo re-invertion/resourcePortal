@@ -5,6 +5,8 @@ import {
   decodeEgressPolicy,
   encodeEgressPolicy,
   firewallRulesForWorkloads,
+  hasAuthoritativeEgressPolicy,
+  installedDeniedDestinations,
   renderAtomicEgressRules,
   shouldPreserveExistingFirewallState,
   tenantWorkloads,
@@ -175,5 +177,51 @@ describe("atomic egress guard commits", () => {
       ["-d", "10.0.0.0/8\n-F INPUT", "-j", "REJECT"],
     ])).toThrow("Unsafe egress policy token");
     expect(() => renderAtomicEgressRules("INPUT\nCOMMIT", "RP-HOST", [])).toThrow();
+  });
+});
+
+describe("missing policy snapshot after egress-guard restart (#217)", () => {
+  it("recovers custom IPv4 deny CIDRs and applies them to newly started workloads", () => {
+    const installed = installedDeniedDestinations([
+      "-N RP-TENANT-EGRESS",
+      "-A RP-TENANT-EGRESS -s 172.19.0.18/32 -d 192.168.0.0/16 -j REJECT",
+      "-A RP-TENANT-EGRESS -s 172.19.0.18/32 -d 203.0.113.0/24 -j REJECT",
+      "-A UNRELATED -s 172.19.0.18/32 -d 8.8.8.8/32 -j REJECT",
+    ].join("\n"), "RP-TENANT-EGRESS", 4);
+    expect(installed).toEqual(["192.168.0.0/16", "203.0.113.0/24"]);
+    const rules = firewallRulesForWorkloads(
+      { ...DEFAULT_EGRESS_POLICY,
+        blockedIpv4Cidrs: [...new Set([...DEFAULT_EGRESS_POLICY.blockedIpv4Cidrs, ...installed])],
+      },
+      [{ containerId: "new-container", appGroupId: appGroupA, ipv4: "172.19.0.42" }],
+      4,
+    );
+    expect(rules).toContainEqual(["-s", "172.19.0.42/32", "-d", "203.0.113.0/24", "-j", "REJECT"]);
+  });
+
+  it("recovers IPv6 deny destinations, ignoring other families and non-deny jumps", () => {
+    const rules = installedDeniedDestinations([
+      "-A RP-TENANT-EGRESS -s 2001:db8::1/128 -d fd42::/32 -j DROP",
+      "-A RP-TENANT-EGRESS -s 2001:db8::1/128 -d 192.168.0.0/16 -j REJECT",
+      "-A RP-TENANT-EGRESS -s 2001:db8::1/128 -d 2001:4860::/32 -j ACCEPT",
+    ].join("\n"), "RP-TENANT-EGRESS", 6);
+    expect(rules).toEqual(["fd42::/32"]);
+  });
+
+  it("does not interpret malformed destinations as installed restrictions", () => {
+    expect(installedDeniedDestinations(
+      "-A RP-TENANT-EGRESS -d nonsense/99 -j REJECT",
+      "RP-TENANT-EGRESS", 4,
+    )).toEqual([]);
+  });
+});
+
+
+describe("policy-snapshot validity (#217)", () => {
+  it("treats missing, invalid or obsolete snapshots as non-authoritative rather than overwriting active denies", () => {
+    expect(hasAuthoritativeEgressPolicy(undefined)).toBe(false);
+    expect(hasAuthoritativeEgressPolicy("bad-base64")).toBe(false);
+    expect(hasAuthoritativeEgressPolicy(Buffer.from(JSON.stringify({ ...DEFAULT_EGRESS_POLICY, version: 1 })).toString("base64"))).toBe(false);
+    expect(hasAuthoritativeEgressPolicy(encodeEgressPolicy(DEFAULT_EGRESS_POLICY))).toBe(true);
   });
 });

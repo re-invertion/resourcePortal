@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "./storage-paths";
+import { sharedNfsProbeCommand } from "./shared-nfs-probe";
 import {
   dockerNodeLabelConstraint,
   LEGACY_STORAGE_NODE_LABELS,
@@ -30,14 +31,6 @@ export class NfsRemoteAccessValidatorService {
 
   async validate(basePath: string): Promise<NfsRemoteValidationResult> {
     void basePath;
-    if (!this.enabled()) {
-      return {
-        ok: true,
-        skipped: true,
-        error: "Remote storage validation disabled by configuration",
-      };
-    }
-
     const nodes = await this.docker([
       "node",
       "ls",
@@ -83,6 +76,14 @@ export class NfsRemoteAccessValidatorService {
       };
     }
 
+    if (!this.enabled()) {
+      // Disabling cross-node validation on a multi-node topology permits
+      // split-brain data if one host silently falls back to a local directory.
+      return eligibleNodeCount === 1
+        ? { ok: true, skipped: true, error: "Single-node storage validation explicitly disabled" }
+        : { ok: false, skipped: false, error: "Cross-node NFS validation cannot be disabled for multi-node storage" };
+    }
+
     const serviceName = `rp-storage-runtime-probe-${randomUUID().slice(0, 8)}`;
     const image = this.config.get<string>(
       "STORAGE_REMOTE_VALIDATION_IMAGE",
@@ -111,7 +112,7 @@ export class NfsRemoteAccessValidatorService {
       image,
       "sh",
       "-c",
-      'probe="/probe/.rp-storage-runtime-probe-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
+      sharedNfsProbeCommand(eligibleNodeCount, randomUUID().replaceAll("-", "")),
     ]);
     if (create.exitCode !== 0) {
       return {
@@ -144,7 +145,7 @@ export class NfsRemoteAccessValidatorService {
         "ps",
         "--no-trunc",
         "--format",
-        "{{.CurrentState}}|{{.Error}}",
+        "{{.Node}}|{{.CurrentState}}|{{.Error}}",
         serviceName,
       ]);
       if (result.exitCode !== 0) {
@@ -156,7 +157,7 @@ export class NfsRemoteAccessValidatorService {
       }
 
       const tasks = result.stdout.split("\n").filter(Boolean);
-      const failed = tasks.find((line) => /^(Failed|Rejected)/i.test(line));
+      const failed = tasks.find((line) => /(^|\|)(Failed|Rejected)/i.test(line));
       if (failed) {
         return {
           ok: false,
@@ -164,7 +165,7 @@ export class NfsRemoteAccessValidatorService {
           error: `storage runtime probe failed: ${failed}`,
         };
       }
-      const completed = tasks.filter((line) => /^Complete/i.test(line)).length;
+      const completed = tasks.filter((line) => /(^|\|)Complete/i.test(line)).length;
       if (completed >= nodeCount) {
         return { ok: true, skipped: false, error: null };
       }

@@ -9,6 +9,21 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  "storage-isolation": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
+  ],
+  "registry-auth": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/internal/stack-registry-auth.service.spec.ts", "src/internal/stack-apply.service.spec.ts", "src/internal/deployment-registry-isolation.spec.ts", "src/internal/isolated-docker-context.spec.ts"],
+  ],
+  "volume-safety": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/volumes/stage7-volume-lifecycle.spec.ts", "src/volumes/deployed-volume-reference.spec.ts", "src/volumes/stage14-volume-backend.spec.ts", "src/app-groups/volume-attachment-race.spec.ts"],
+  ],
+  "quota-security": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/app-group-manifest.spec.ts", "src/app-groups/app-group-manifest.service.spec.ts", "src/app-groups/cpu-quota-validation.spec.ts", "src/internal/deployment-cpu-validation.spec.ts"],
+  ],
+  "registry-validation": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/registries/registries.service.spec.ts", "src/registries/registry-ping.spec.ts"],
+  ],
   "security": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/auth", "src/security", "src/mcp"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/security"],
@@ -86,7 +101,7 @@ const commands = {
   ],
   "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
   "domains": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
@@ -112,6 +127,17 @@ const commands = {
 };
 
 const classifiers = [
+  [/^packages\/resourceportal-api\/src\/storage-backends\/local-filesystem-storage-adapter\.service(\.spec)?\.ts$/, ["storage-isolation"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/volume-attachment-race\.spec\.ts$/, ["volume-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/isolated-docker-context(\.spec)?\.ts$/, ["registry-auth"]],
+  [/^packages\/resourceportal-api\/src\/internal\/(stack-registry-auth\.service(\.spec)?|stack-apply\.service(\.spec)?|deployment-registry-isolation\.spec)\.ts$/, ["registry-auth"]],
+  [/^packages\/resourceportal-api\/src\/volumes\/(volumes\.service\.ts|stage7-volume-lifecycle\.spec\.ts|deployed-volume-reference(\.spec)?\.ts)$/, ["volume-safety"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.service\.ts$/, ["applications", "volume-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
+  [/^packages\/resourceportal-api\/src\/internal\/(deployment-execution\.service\.ts|deployment-cpu-validation\.spec\.ts)$/, ["quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],
   [/^README\.md$/, ["workflow"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-(deploy|stage11-quota-concurrency|stage15-capacity|stage16-operations|volume-lifecycle)\.ts$/, ["release-fixtures", "tenant-access", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
@@ -31,7 +31,7 @@ export class AuthSessionService {
     private readonly encryption: EncryptionService,
   ) {}
 
-  async createSession(userId: string, tokens: TokenResponse) {
+  async createSession(userId: string, tokens: TokenResponse, authenticatedIdpId?: string | null) {
     const now = Date.now();
     const accessTokenTtlSeconds = tokens.expires_in ?? 3600;
     const sessionTtlSeconds = this.getSessionTtlSeconds();
@@ -46,6 +46,7 @@ export class AuthSessionService {
           ? this.encryption.encrypt(tokens.refresh_token)
           : "",
         idToken: this.encryption.encrypt(tokens.id_token),
+        authenticatedIdpId: authenticatedIdpId ?? null,
         accessTokenExpiresAt: new Date(now + accessTokenTtlSeconds * 1000),
         expiresAt,
       },
@@ -106,6 +107,7 @@ export class AuthSessionService {
       email: session.user.email,
       displayName: session.user.displayName,
       status: session.user.status,
+      ...(session.authenticatedIdpId ? { authenticatedIdpId: session.authenticatedIdpId } : {}),
     };
   }
 
@@ -328,50 +330,87 @@ export class AuthSessionService {
     );
   }
 
+  // Same-worker requests share a refresh, while the PostgreSQL advisory lock
+  // prevents a second API replica using a consumed refresh token.
+  private readonly refreshingSessions = new Map<string, Promise<void>>();
+
   private async refreshSessionTokens(session: PortalSessionWithUser) {
-    if (!session.refreshToken) {
-      await this.revokeSession(session.id);
-      throw new UnauthorizedException("Session refresh token is missing");
-    }
-
+    const existing = this.refreshingSessions.get(session.id);
+    if (existing) return existing;
+    const work = this.refreshSessionTokensLocked(session);
+    this.refreshingSessions.set(session.id, work);
     try {
-      const refreshToken = this.encryption.decrypt(session.refreshToken);
-      const tokens = await this.exchangeRefreshToken(refreshToken);
-      const accessTokenTtlSeconds = tokens.expires_in ?? 3600;
+      return await work;
+    } finally {
+      if (this.refreshingSessions.get(session.id) === work) {
+        this.refreshingSessions.delete(session.id);
+      }
+    }
+  }
 
-      await this.prisma.portalSession.update({
-        where: {
-          id: session.id,
-        },
-        data: {
-          accessToken: this.encryption.encrypt(tokens.access_token),
-          accessTokenExpiresAt: new Date(
-            Date.now() + accessTokenTtlSeconds * 1000,
-          ),
-          idToken: this.encryption.encrypt(
-            tokens.id_token
-              ? tokens.id_token
-              : this.encryption.decrypt(session.idToken),
-          ),
-          refreshToken: this.encryption.encrypt(
-            tokens.refresh_token
-              ? tokens.refresh_token
-              : this.encryption.decrypt(session.refreshToken),
-          ),
-        },
-      });
+  private async refreshSessionTokensLocked(session: PortalSessionWithUser) {
+    try {
+      const ttl = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`rp-session-refresh:${session.id}`}, 0)) IS NULL AS "locked"`,
+        );
+        const current = await tx.portalSession.findUnique({
+          where: { id: session.id },
+          include: { user: true },
+        });
+        if (!current || !this.isSessionUsable(current, Date.now())) {
+          throw new UnauthorizedException("Session is invalid");
+        }
+        // Another worker refreshed this exact session while waiting for lock.
+        if (current.accessTokenExpiresAt.getTime() > Date.now()) return null;
+        if (!current.refreshToken) {
+          throw new UnauthorizedException("Session refresh token is missing");
+        }
+        const refreshToken = this.encryption.decrypt(current.refreshToken);
+        const tokens = await this.exchangeRefreshToken(refreshToken);
+        const accessTokenTtlSeconds = tokens.expires_in ?? 3600;
+        await tx.portalSession.update({
+          where: { id: current.id },
+          data: {
+            accessToken: this.encryption.encrypt(tokens.access_token),
+            accessTokenExpiresAt: new Date(Date.now() + accessTokenTtlSeconds * 1000),
+            idToken: this.encryption.encrypt(
+              tokens.id_token
+                ? tokens.id_token
+                : this.encryption.decrypt(current.idToken),
+            ),
+            refreshToken: this.encryption.encrypt(
+              tokens.refresh_token
+                ? tokens.refresh_token
+                : this.encryption.decrypt(current.refreshToken),
+            ),
+          },
+        });
+        return accessTokenTtlSeconds;
+      }, { timeout: 20_000, maxWait: 10_000 });
 
-      await this.writeSessionAudit({
-        action: "auth.session.refreshed",
-        actor: session.user.id,
-        actorName: session.user.displayName,
-        result: "Success",
-        sessionId: session.id,
-        changes: {
-          accessTokenExpiresInSeconds: accessTokenTtlSeconds,
-        },
-      });
+      if (ttl !== null) {
+        await this.writeSessionAudit({
+          action: "auth.session.refreshed",
+          actor: session.user.id,
+          actorName: session.user.displayName,
+          result: "Success",
+          sessionId: session.id,
+          changes: { accessTokenExpiresInSeconds: ttl },
+        });
+      }
     } catch (error) {
+      // A competing worker might have rotated successfully. Never revoke its
+      // valid replacement token on an invalid_grant from an older request.
+      const latest = await this.prisma.portalSession.findUnique({
+        where: { id: session.id },
+        select: { refreshToken: true, accessTokenExpiresAt: true, revokedAt: true },
+      });
+      if (latest && !latest.revokedAt &&
+          latest.refreshToken !== session.refreshToken &&
+          latest.accessTokenExpiresAt.getTime() > Date.now()) {
+        return;
+      }
       await this.writeSessionAudit({
         action: "auth.session.refresh_failed",
         actor: session.user.id,
@@ -379,15 +418,29 @@ export class AuthSessionService {
         result: "Failure",
         sessionId: session.id,
         errorCode: "OIDC_REFRESH_FAILED",
-        errorMessage:
-          error instanceof Error ? error.message : "Session refresh failed",
+        errorMessage: error instanceof Error ? error.message : "Session refresh failed",
       });
-      await this.revokeSession(session.id);
-
-      if (error instanceof UnauthorizedException) {
-        throw error;
+      const permanentlyInvalid =
+        error instanceof UnauthorizedException &&
+        ["OIDC refresh token exchange failed", "Session refresh token is missing", "Session is invalid"]
+          .includes(error.message);
+      if (!permanentlyInvalid) {
+        // An unavailable discovery endpoint can also raise an auth exception.
+        // Only invalid_grant or a demonstrably invalid session should revoke.
+        // Timeouts, IdP outages and DB contention must preserve the session.
+        throw new ServiceUnavailableException("OIDC refresh temporarily unavailable");
       }
-
+      const revoked = await this.prisma.portalSession.updateMany({
+        where: { id: session.id, revokedAt: null, refreshToken: session.refreshToken },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count > 0) {
+        await this.writeSessionAudit({
+          action: "auth.session.revoked", actor: session.user.id,
+          actorName: session.user.displayName, result: "Success", sessionId: session.id,
+        });
+      }
+      if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException("Session refresh failed");
     }
   }
@@ -417,12 +470,27 @@ export class AuthSessionService {
       body,
     });
     const text = await response.text();
-    const payload = text ? (JSON.parse(text) as unknown) : {};
-
-    if (!response.ok || !isRefreshTokenResponse(payload)) {
-      throw new UnauthorizedException("OIDC refresh token exchange failed");
+    let payload: unknown;
+    try {
+      payload = text ? (JSON.parse(text) as unknown) : {};
+    } catch {
+      throw new ServiceUnavailableException("OIDC refresh response was malformed");
     }
 
+    // Only explicit invalid_grant proves permanent token rejection.
+    // Rate limits, 5xx, malformed responses and transport errors must not
+    // revoke all otherwise valid browser sessions.
+    if (!response.ok) {
+      if ((response.status === 400 || response.status === 401) &&
+          payload && typeof payload === "object" && "error" in payload &&
+          payload.error === "invalid_grant") {
+        throw new UnauthorizedException("OIDC refresh token exchange failed");
+      }
+      throw new ServiceUnavailableException("OIDC refresh endpoint unavailable");
+    }
+    if (!isRefreshTokenResponse(payload)) {
+      throw new ServiceUnavailableException("OIDC refresh response was incomplete");
+    }
     return payload;
   }
 

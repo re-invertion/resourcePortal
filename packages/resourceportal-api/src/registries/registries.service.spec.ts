@@ -7,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import { RegistriesService } from "./registries.service";
+import { pingRegistry } from "./registry-ping";
+
+vi.mock("./registry-ping", () => ({ pingRegistry: vi.fn() }));
 
 const actor = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -62,7 +65,7 @@ function serviceFor(item = registry()) {
 }
 
 describe("RegistriesService.validateRegistry", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
   it("searches public Docker Hub repositories and returns compact image suggestions", async () => {
     const { service } = serviceFor();
@@ -132,10 +135,7 @@ describe("RegistriesService.validateRegistry", () => {
 
   it("validates a TLS registry through /v2/", async () => {
     const { service, prisma } = serviceFor();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
-    );
+    vi.mocked(pingRegistry).mockResolvedValue(200);
 
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",
@@ -143,9 +143,9 @@ describe("RegistriesService.validateRegistry", () => {
       actor,
     );
 
-    expect(fetch).toHaveBeenCalledWith(
+    expect(pingRegistry).toHaveBeenCalledWith(
       "https://registry.example.com/v2/",
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({ accept: "application/json" }),
     );
     expect(result.validationStatus).toBe(RegistryValidationStatus.Valid);
     const updateArgs = prisma.registry.update.mock.lastCall?.[0] as unknown;
@@ -165,31 +165,22 @@ describe("RegistriesService.validateRegistry", () => {
       credentialData: { valueCiphertext: "enc:secret" },
     });
     const { service, encryption } = serviceFor(item);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
-    );
+    vi.mocked(pingRegistry).mockResolvedValue(200);
 
     await service.validateRegistry(item.tenantId, item.id, actor);
 
     expect(encryption.decrypt).toHaveBeenCalledWith("enc:secret");
-    const fetchArgs = vi.mocked(fetch).mock.lastCall as unknown;
-    expect(fetchArgs).toMatchObject([
+    expect(pingRegistry).toHaveBeenCalledWith(
       "https://registry.example.com/v2/",
-      {
-        headers: {
-          authorization: `Basic ${Buffer.from("alice:secret").toString("base64")}`,
-        },
-      },
-    ]);
+      expect.objectContaining({
+        authorization: `Basic ${Buffer.from("alice:secret").toString("base64")}`,
+      }),
+    );
   });
 
   it("marks non-success registry responses as invalid", async () => {
     const { service } = serviceFor();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 401 })),
-    );
+    vi.mocked(pingRegistry).mockResolvedValue(401);
 
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",
@@ -203,7 +194,7 @@ describe("RegistriesService.validateRegistry", () => {
 
   it("marks transport failures as errors", async () => {
     const { service } = serviceFor();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
+    vi.mocked(pingRegistry).mockRejectedValue(new Error("connection refused"));
 
     const result = await service.validateRegistry(
       "33333333-3333-4333-8333-333333333333",

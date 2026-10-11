@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readConfig, resolveAuth } from "./auth.js";
+import { coerceCliFlag } from "./flag-coercion.js";
 import {
   ResourcePortalApiError,
   ResourcePortalClient,
@@ -447,7 +448,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       const key = camelCase(raw.slice(2));
       const next = argv[index + 1];
       const value = !next || next.startsWith("--") ? true : coerceFlagValue(key, next);
-      if (value !== true || next === "true") index += 1;
+      if (next !== undefined && !next.startsWith("--")) index += 1;
       appendFlag(flags, key, value);
       continue;
     }
@@ -544,14 +545,7 @@ function appendFlag(flags: Flags, key: string, value: string | number | boolean)
 
 function coerceFlagValue(key: string, value: string): string | number | boolean {
   if (DECIMAL_STRING_FIELDS.has(key) || DTO_ARRAY_FIELDS.has(key)) return value;
-  return coerce(value);
-}
-
-function coerce(value: string): string | number | boolean {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
-  return value;
+  return coerceCliFlag(key, value);
 }
 
 function printCompatibilityHelp(group?: string) {

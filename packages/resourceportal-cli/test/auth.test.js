@@ -88,7 +88,7 @@ test("stored dev user takes precedence over stored token and clearConfig removes
   const { writeConfig, resolveAuth, clearConfig, readConfig } = loadAuth();
   delete process.env.RESOURCE_PORTAL_TOKEN;
   delete process.env.RESOURCE_PORTAL_DEV_USER_ID;
-  writeConfig({ token: "stored-token", devUserId: "stored-dev" });
+  writeConfig({ apiUrl: "https://rp.example/api", token: "stored-token", devUserId: "stored-dev" });
 
   assert.deepEqual(await resolveAuth("https://rp.example/api"), { devUserId: "stored-dev" });
   clearConfig();
@@ -515,6 +515,52 @@ test("logout revokes refresh token best-effort and always clears local config", 
     assert.equal(body.get("token_type_hint"), "refresh_token");
   } finally {
     await server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+
+test("stored CLI credentials cannot cross API URL boundary, including token refresh", async () => {
+  const home = withHome();
+  const previousFetch = global.fetch;
+  try {
+    delete process.env.RESOURCE_PORTAL_TOKEN;
+    delete process.env.RESOURCE_PORTAL_DEV_USER_ID;
+    const { writeConfig, resolveAuth } = loadAuth();
+    let requests = 0;
+    global.fetch = async () => { requests += 1; throw new Error("must not fetch"); };
+    writeConfig({
+      apiUrl: "https://rp.example/api",
+      token: "expired-token",
+      auth: {
+        mode: "device",
+        issuer: "https://idp.example",
+        clientId: "cli-client",
+        tokenEndpoint: "https://idp.example/token",
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        refreshToken: "secret-refresh-token",
+      },
+    });
+    await assert.rejects(resolveAuth("https://attacker.example/api"), /Stored credentials belong to another API URL/);
+    assert.equal(requests, 0);
+    // A trailing slash does not change the intended API base URL.
+    await assert.rejects(resolveAuth("https://rp.example/api/"), /must not fetch/);
+    assert.equal(requests, 1);
+  } finally {
+    global.fetch = previousFetch;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("legacy unbound stored tokens fail closed on any API endpoint", async () => {
+  const home = withHome();
+  try {
+    delete process.env.RESOURCE_PORTAL_TOKEN;
+    delete process.env.RESOURCE_PORTAL_DEV_USER_ID;
+    const { writeConfig, resolveAuth } = loadAuth();
+    writeConfig({ token: "legacy-token" });
+    await assert.rejects(resolveAuth("https://rp.example/api"), /Stored credentials belong to another API URL/);
+  } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });

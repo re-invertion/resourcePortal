@@ -33,6 +33,15 @@ export const DEFAULT_EGRESS_POLICY: NetworkEgressPolicySnapshot = {
   blockedIpv6Cidrs: [...DEFAULT_BLOCKED_IPV6_CIDRS],
 };
 
+export function hasAuthoritativeEgressPolicy(encoded: string | undefined): boolean {
+  if (!encoded) return false;
+  try {
+    return isPolicy(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")));
+  } catch {
+    return false;
+  }
+}
+
 export function decodeEgressPolicy(
   encoded: string | undefined,
 ): NetworkEgressPolicySnapshot {
@@ -179,4 +188,30 @@ function isPolicy(value: unknown): value is NetworkEgressPolicySnapshot {
     Array.isArray(item.blockedIpv6Cidrs) &&
     item.blockedIpv6Cidrs.every((cidr) => typeof cidr === "string")
   );
+}
+
+/** Recover deny destinations from installed rules while the snapshot is unavailable.
+ * This permits a restarted guard to extend CUSTOM CIDR restrictions to new IPs
+ * without erasing the still-active deny rules for existing workloads.
+ */
+export function installedDeniedDestinations(
+  chainRules: string,
+  chain: string,
+  family: 4 | 6,
+): string[] {
+  const found = new Set<string>();
+  for (const line of chainRules.split("\n")) {
+    const tokens = line.trim().split(/\s+/);
+    if (tokens[0] !== "-A" || tokens[1] !== chain) continue;
+    const jump = tokens.indexOf("-j");
+    if (jump === -1 || !["REJECT", "DROP"].includes(tokens[jump + 1] ?? "")) continue;
+    const destination = tokens.indexOf("-d");
+    if (destination === -1 || !tokens[destination + 1]) continue;
+    const cidr = tokens[destination + 1];
+    const [address, prefix] = cidr.split("/");
+    if (isIP(address) !== family) continue;
+    if (prefix !== undefined && (!/^\d{1,3}$/.test(prefix) || Number(prefix) > (family === 4 ? 32 : 128))) continue;
+    found.add(cidr);
+  }
+  return [...found].sort();
 }

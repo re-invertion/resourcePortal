@@ -1,12 +1,13 @@
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { chmod, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalFilesystemStorageAdapterService } from "./local-filesystem-storage-adapter.service";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
 
 vi.mock("node:fs/promises", () => ({
   chmod: vi.fn(),
+  chown: vi.fn(),
   lstat: vi.fn(),
   mkdir: vi.fn(),
   readdir: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 const mockedChmod = vi.mocked(chmod);
+const mockedChown = vi.mocked(chown);
 const mockedLstat = vi.mocked(lstat);
 const mockedMkdir = vi.mocked(mkdir);
 const mockedReaddir = vi.mocked(readdir);
@@ -154,6 +156,10 @@ beforeEach(() => {
   );
   mockedRm.mockResolvedValue(undefined);
   mockedReaddir.mockResolvedValue([]);
+  mockedLstat.mockResolvedValue({
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+  } as never);
 });
 
 afterAll(() => {
@@ -227,6 +233,10 @@ describe("LocalFilesystemStorageAdapterService", () => {
     ).resolves.toEqual({ storagePath: "/srv/resource-portal/storage/volumes/tenant-a/volume-a" });
 
     expect(mockedMkdir).toHaveBeenCalledWith(localPath, { recursive: true });
+    const tenantPath = "/srv/resource-portal/storage/volumes/tenant-a";
+    expect(mockedMkdir).toHaveBeenCalledWith(tenantPath, { recursive: true, mode: 0o700 });
+    expect(mockedChown).toHaveBeenCalledWith(tenantPath, 0, 0);
+    expect(mockedChmod).toHaveBeenCalledWith(tenantPath, 0o700);
     expect(mockedChmod).toHaveBeenCalledWith(localPath, 0o777);
     expect(runner.run).toHaveBeenCalledWith("xfs_quota", [
       "-P/dev/null",
@@ -319,7 +329,9 @@ describe("LocalFilesystemStorageAdapterService", () => {
   });
 
   it("preserves a pre-existing directory when an idempotent retry fails", async () => {
-    mockedMkdir.mockResolvedValueOnce(undefined);
+    mockedMkdir
+      .mockResolvedValueOnce("/srv/resource-portal/storage/volumes/tenant-a")
+      .mockResolvedValueOnce(undefined);
     const { adapter } = adapterFor({ projectIdReadback: 12099 });
 
     await expect(
@@ -365,6 +377,14 @@ describe("LocalFilesystemStorageAdapterService", () => {
     });
     mockedLstat.mockImplementation((path) => {
       const value = String(path);
+      if (value === "/srv/resource-portal/storage/volumes/tenant-a") {
+        return Promise.resolve({
+          size: 4096,
+          isSymbolicLink: () => false,
+          isDirectory: () => true,
+          isFile: () => false,
+        } as never);
+      }
       if (value.endsWith("/a.txt")) {
         return Promise.resolve({
           size: 5,
@@ -412,5 +432,30 @@ describe("LocalFilesystemStorageAdapterService", () => {
     const { adapter } = adapterFor({ filesystem: "ext4", projectIdReadback: 12002, quotaHardKiB: 10 });
     await expect(adapter.provisionVolume(backend, { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 8193n, projectId: 12002 }))
       .rejects.toThrow("Storage project quota verification failed");
+  });
+});
+
+
+describe("tenant storage parent isolation (#221)", () => {
+  const input = { tenantId: "tenant-a", volumeId: "volume-a", sizeBytes: 4096n, projectId: 12001 };
+  it.each(["xfs", "ext4"])("makes the existing %s tenant parent root-owned, non-traversable to other host users", async (filesystem) => {
+    const { adapter } = adapterFor({ filesystem, projectIdReadback: filesystem === "ext4" ? 12002 : 12001, quotaHardKiB: 4 });
+    await adapter.provisionVolume(backend, { ...input, projectId: filesystem === "ext4" ? 12002 : 12001 });
+    const tenantPath = "/srv/resource-portal/storage/volumes/tenant-a";
+    expect(mockedChown).toHaveBeenCalledWith(tenantPath, 0, 0);
+    expect(mockedChmod).toHaveBeenCalledWith(tenantPath, 0o700);
+    // Workload UID can write its direct bind mount; unrelated host UIDs
+    // cannot walk through 0700 tenant root to access arbitrary volumes.
+    expect(mockedChmod).toHaveBeenCalledWith(tenantPath + "/volume-a", 0o777);
+    expect(mockedChmod.mock.calls.map((args) => args[0])).toEqual([
+      tenantPath, tenantPath + "/volume-a",
+    ]);
+  });
+  it("fails closed on symlink tenant parent to prevent chmod/chown of external storage", async () => {
+    const { adapter } = adapterFor();
+    mockedLstat.mockResolvedValueOnce({ isDirectory: () => false, isSymbolicLink: () => true } as never);
+    await expect(adapter.provisionVolume(backend, input)).rejects.toThrow("Unsafe tenant storage directory");
+    expect(mockedChown).not.toHaveBeenCalled();
+    expect(mockedChmod).not.toHaveBeenCalled();
   });
 });

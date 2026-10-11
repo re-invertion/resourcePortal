@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { isDomainPublishable } from "../domains/domain-publication";
 import { inspectPersistedAppGroupNetworkTopology } from "./app-group-networking";
 import {
   appGroupNetworkName,
@@ -34,9 +35,7 @@ export class IngressReconcilerService {
           include: {
             httpEndpoints: {
               include: {
-                domains: {
-                  select: { hostname: true },
-                },
+                domains: { include: { customRootDomain: true } },
               },
             },
           },
@@ -52,7 +51,18 @@ export class IngressReconcilerService {
       const stackName = this.stackName(appGroup.id);
       const networkName = appGroupNetworkName(appGroup.id);
       const legacyNetworkName = legacyAppGroupIngressNetworkName(appGroup.id);
-      const groupRequiresIngress = appGroup.singleApps.some((singleApp) =>
+      // Source DB state is authoritative, not stale successful deployment labels.
+      // Legacy custom domains lacking ownership proof must lose public routes.
+      const publishableApps = appGroup.singleApps.map((singleApp) => ({
+        ...singleApp,
+        httpEndpoints: singleApp.httpEndpoints.map((endpoint) => ({
+          ...endpoint,
+          domains: endpoint.domains.filter((domain) =>
+            isDomainPublishable(domain, appGroup.tenantId),
+          ),
+        })),
+      }));
+      const groupRequiresIngress = publishableApps.some((singleApp) =>
         hasPublishedHttpRouting(singleApp),
       );
       const currentDeployment = appGroup.deployments.find(
@@ -100,7 +110,7 @@ export class IngressReconcilerService {
       }
 
       let cleanupSafe = true;
-      for (const singleApp of appGroup.singleApps) {
+      for (const singleApp of publishableApps) {
         checked += 1;
         const serviceName = `${stackName}_${this.serviceName(singleApp.name)}`;
         const published = hasPublishedHttpRouting(singleApp);

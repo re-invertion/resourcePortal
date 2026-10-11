@@ -96,3 +96,24 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("platform release provenance restrictions (#227)", () => {
+  it.each([
+    "https://github.com/attacker/evil/releases/download/v0.2.67/resourceportal-release-manifest.json",
+    "https://github.com/re-invertion/other/releases/download/v0.2.67/resourceportal-release-manifest.json",
+    "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.66/resourceportal-release-manifest.json",
+    "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json?bad=1",
+    "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/../resourceportal-release-manifest.json",
+    "https://github.com.evil.example/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json",
+  ])("rejects non-canonical release manifest %s before starting privileged updater", async (manifestUrl) => {
+    const run = vi.fn();
+    const executor = new PlatformReleaseUpdateOperationExecutor(
+      { run } as unknown as StorageCommandRunnerService,
+      { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.66" : undefined) } as unknown as ConfigService,
+    );
+    await expect(executor.execute({
+      ...operation(), input: { targetVersion: "0.2.67", manifestUrl },
+    })).rejects.toThrow("InvalidOperationInput:manifestUrl");
+    expect(run).not.toHaveBeenCalled();
+  });
+});

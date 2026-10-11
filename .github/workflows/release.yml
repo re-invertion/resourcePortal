@@ -12,6 +12,9 @@ permissions:
   contents: write
   packages: write
   pull-requests: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   classify:
@@ -233,6 +236,18 @@ jobs:
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
             '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}' \
             > resourceportal-release-manifest.json
+      - name: Attest release manifest with GitHub Actions OIDC provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: resourceportal-release-manifest.json
+      - name: Verify the signed manifest against the official release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify resourceportal-release-manifest.json \
+            --repo re-invertion/resourcePortal \
+            --signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml \
+            --source-ref refs/heads/main
       - name: Verify published images are anonymously pullable
         env:
           API_DIGEST: ${{ steps.api.outputs.digest }}

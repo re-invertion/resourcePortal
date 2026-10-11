@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { computeMinuteCost, storageMinuteCost } from "./billing-math";
 import { BillingService } from "./billing.service";
 import { BillingUsageService } from "./billing-usage.service";
+import { deployedComputeAllocation } from "./deployed-compute-allocation";
 import {
   billedReplicaCount,
   effectiveReplicaCount,
@@ -112,6 +113,11 @@ export class BillingWorkerService
             id: true,
             tenantId: true,
             runtimeState: true,
+            currentDeploymentVersion: true,
+            deployments: {
+              where: { status: "Succeeded" },
+              select: { version: true, stackConfig: true },
+            },
             tenant: { select: { status: true } },
           },
         },
@@ -122,14 +128,25 @@ export class BillingWorkerService
       const account = accountsByTenant.get(app.appGroup.tenantId);
       if (!account) continue;
 
+      const version = app.appGroup.currentDeploymentVersion;
+      const snapshot = version === null ? undefined : app.appGroup.deployments.find(
+        (deployment) => deployment.version === version,
+      );
+      if (version !== null && !snapshot?.stackConfig) {
+        throw new Error(`BillingCurrentDeploymentSnapshotMissing:${app.appGroup.id}`);
+      }
+      const deployed = snapshot?.stackConfig
+        ? deployedComputeAllocation(snapshot.stackConfig, app.id)
+        : null;
       const effectiveReplicas = effectiveReplicaCount({
-        desiredReplicas: app.desiredReplicas,
+        desiredReplicas: deployed?.desiredReplicas ?? 0,
         appGroupRunning:
           app.appGroup.runtimeState === RuntimeState.Running &&
           app.appGroup.tenant.status === TenantStatus.Active,
-        singleAppRunning: app.runtimeState === RuntimeState.Running,
+        singleAppRunning: app.runtimeState === RuntimeState.Running &&
+          (deployed?.runtimeState ?? "Stopped") === "Running",
         billingActive: account.balance.gt(0),
-        pendingDeletion: app.pendingDeletion,
+        pendingDeletion: false, // a draft deletion does not stop a deployed task
       });
       const billedReplicas = billedReplicaCount(
         app.actualReplicas,
@@ -137,9 +154,9 @@ export class BillingWorkerService
       );
       const theoreticalCost = computeMinuteCost({
         billedReplicas,
-        cpu: app.cpu,
-        memoryBytes: app.memoryBytes,
-        gpu: app.gpu,
+        cpu: deployed?.cpu ?? app.cpu,
+        memoryBytes: deployed?.memoryBytes ?? app.memoryBytes,
+        gpu: deployed?.gpu ?? app.gpu,
         cpuCreditsPerVcpuHour: priceList.cpuCreditsPerVcpuHour,
         memoryCreditsPerGbHour: priceList.memoryCreditsPerGbHour,
         gpuCreditsPerGpuHour: priceList.gpuCreditsPerGpuHour,
@@ -157,13 +174,13 @@ export class BillingWorkerService
         allowDebt: false,
         usage: {
           appGroupId: app.appGroup.id,
-          desiredReplicas: app.desiredReplicas,
+          desiredReplicas: deployed?.desiredReplicas ?? 0,
           actualReplicas: app.actualReplicas,
           effectiveReplicas,
           billedReplicas,
-          cpuPerReplica: app.cpu.toString(),
-          memoryBytesPerReplica: app.memoryBytes.toString(),
-          gpuPerReplica: app.gpu,
+          cpuPerReplica: (deployed?.cpu ?? app.cpu).toString(),
+          memoryBytesPerReplica: (deployed?.memoryBytes ?? app.memoryBytes).toString(),
+          gpuPerReplica: deployed?.gpu ?? app.gpu,
           rates: {
             cpuPerVcpuHourCredits: priceList.cpuCreditsPerVcpuHour.toString(),
             memoryPerGbHourCredits: priceList.memoryCreditsPerGbHour.toString(),

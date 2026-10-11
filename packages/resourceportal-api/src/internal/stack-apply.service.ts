@@ -1,6 +1,10 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { copyDockerContextWithoutRegistryCredentials } from "./isolated-docker-context";
 import { parse } from "yaml";
 import { deploymentArtifactMatches } from "./deployment-artifact";
 import { inspectAppGroupNetworkTopology } from "./app-group-networking";
@@ -37,6 +41,7 @@ export class StackApplyService {
     renderedStack: string;
     artifactSha256: string;
     appGroupId: string;
+    dockerConfigPath?: string;
   }): Promise<ApplyResult> {
     if (
       !deploymentArtifactMatches(params.renderedStack, params.artifactSha256)
@@ -145,21 +150,37 @@ export class StackApplyService {
       "-",
       params.stackName,
     ];
-    const result = await this.run("docker", args, params.renderedStack);
-
-    if (result.exitCode === 0 && topology.mode === "single") {
-      // v0.2 single-network deployment has already removed the legacy network
-      // from tenant services. Detach Traefik and delete the obsolete overlay.
-      // Cleanup is best effort and is retried by IngressReconcilerService.
-      await this.runtime
-        .reconcileLegacyIngressNetwork({
-          networkName: legacyIngressNetwork,
-          required: false,
-        })
-        .catch(() => undefined);
+    // Every deployment gets a private Docker credential store. Direct
+    // callers with no registry also get an empty store, never worker-global auth.
+    const ownedConfigPath = params.dockerConfigPath
+      ? null
+      : await mkdtemp(join(tmpdir(), "resourceportal-docker-deploy-"));
+    try {
+      if (ownedConfigPath) {
+        await chmod(ownedConfigPath, 0o700);
+        await copyDockerContextWithoutRegistryCredentials(
+          ownedConfigPath,
+          this.config.get<string>("DOCKER_CONTEXT"),
+        );
+      }
+      const result = await this.run(
+        "docker",
+        args,
+        params.renderedStack,
+        params.dockerConfigPath ?? ownedConfigPath!,
+      );
+      if (result.exitCode === 0 && topology.mode === "single") {
+        await this.runtime
+          .reconcileLegacyIngressNetwork({
+            networkName: legacyIngressNetwork,
+            required: false,
+          })
+          .catch(() => undefined);
+      }
+      return { ...result, stackName: params.stackName };
+    } finally {
+      if (ownedConfigPath) await rm(ownedConfigPath, { recursive: true, force: true });
     }
-
-    return { ...result, stackName: params.stackName };
   }
 
   private tenantNetworksFromArtifact(renderedStack: string) {
@@ -196,13 +217,17 @@ export class StackApplyService {
     command: string,
     args: string[],
     stdin?: string,
+    dockerConfigPath?: string,
   ): Promise<CommandResult> {
     const timeoutMs = this.config.get<number>(
       "DOCKER_APPLY_TIMEOUT_MS",
       120000,
     );
     return new Promise((resolve) => {
-      const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(command, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, DOCKER_CONFIG: dockerConfigPath },
+      });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       const renderedCommand = `${command} ${args.join(" ")}`;

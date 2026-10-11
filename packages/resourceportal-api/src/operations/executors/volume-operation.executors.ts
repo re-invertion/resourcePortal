@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { UserStatus } from "@prisma/client";
 import type { AuthenticatedUser } from "../../auth/types";
 import type { CreateVolumeDto } from "../../volumes/dto/create-volume.dto";
@@ -27,7 +27,7 @@ export class VolumeOperationExecutor implements OperationExecutor {
     switch (operation.type) {
       case "VOLUME_CREATE": {
         const dto = this.dto<CreateVolumeDto>(operation);
-        const volume = await this.volumes.createVolume(tenantId, dto, actor);
+        const volume = await this.volumes.createVolume(tenantId, dto, actor, operation.id);
         return { resourceId: volume.id, result: volume };
       }
       case "VOLUME_RESIZE": {
@@ -43,12 +43,17 @@ export class VolumeOperationExecutor implements OperationExecutor {
       }
       case "VOLUME_DELETE": {
         const resourceId = this.requireResourceId(operation);
-        const result = await this.volumes.deleteVolume(
-          tenantId,
-          resourceId,
-          actor,
-        );
-        return { resourceId, result };
+        try {
+          const result = await this.volumes.deleteVolume(tenantId, resourceId, actor);
+          return { resourceId, result };
+        } catch (error) {
+          // A reclaimed delete can find its target already removed by the
+          // first worker. It is safe only for an operation that was retried.
+          if (operation.attempt > 1 && error instanceof NotFoundException) {
+            return { resourceId, result: { deleted: true, alreadyDeleted: true } };
+          }
+          throw error;
+        }
       }
       default:
         throw new Error(`UnsupportedOperationType: ${operation.type}`);

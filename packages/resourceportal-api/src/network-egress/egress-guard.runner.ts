@@ -4,6 +4,8 @@ import {
   decodeEgressPolicy,
   egressPolicyDigest,
   firewallRulesForWorkloads,
+  hasAuthoritativeEgressPolicy,
+  installedDeniedDestinations,
   DEFAULT_EGRESS_POLICY,
   renderAtomicEgressRules,
   shouldPreserveExistingFirewallState,
@@ -64,7 +66,7 @@ async function main() {
 
 async function reconcile() {
   const encodedPolicy = process.env[EGRESS_POLICY_ENV];
-  if (!encodedPolicy && (await hasExistingPolicyState())) {
+  if (!hasAuthoritativeEgressPolicy(encodedPolicy) && (await hasExistingPolicyState())) {
     // Keep all existing deny rules and extend them to newly arrived tenant
     // workloads while an authoritative snapshot is temporarily unavailable.
     // Never flush/rebuild using a weaker policy or leave new IPs unprotected.
@@ -129,11 +131,31 @@ async function preserveAndExtendDeniedWorkloads(
     Array.isArray(gatewayRaw) ? (gatewayRaw[0] ?? {}) as DockerGatewayNetworkInspect : {},
   );
   for (const [binary, family] of [["iptables", 4], ["ip6tables", 6]] as const) {
-    const rules = firewallRulesForWorkloads(policy, workloads, family);
-    if (rules.length === 0) continue;
+    const hasWorkloads = workloads.some((workload) =>
+      family === 4 ? Boolean(workload.ipv4) : Boolean(workload.ipv6),
+    );
+    if (!hasWorkloads) continue;
     if (binary === "ip6tables" && (!await commandExists(binary) || !await chainExists(binary, FORWARD_CHAIN))) {
       throw new Error("IPv6 protection is unavailable while policy snapshot is missing");
     }
+    // On process restart lastAppliedPolicy is unset, but firewall rules survive.
+    // Recover the previously denied custom CIDRs instead of falling back to
+    // DEFAULT_EGRESS_POLICY for newly started containers.
+    const installed = [];
+    for (const chain of [FORWARD_CHAIN, HOST_CHAIN]) {
+      const current = await run(binary, ["-w", "5", "-S", chain], true);
+      if (current.exitCode !== 0) {
+        throw new Error(`Cannot read ${binary} ${chain} during policy snapshot outage`);
+      }
+      installed.push(...installedDeniedDestinations(current.stdout, chain, family));
+    }
+    const effectivePolicy = {
+      ...policy,
+      ...(family === 4
+        ? { blockedIpv4Cidrs: [...new Set([...policy.blockedIpv4Cidrs, ...installed])] }
+        : { blockedIpv6Cidrs: [...new Set([...policy.blockedIpv6Cidrs, ...installed])] }),
+    };
+    const rules = firewallRulesForWorkloads(effectivePolicy, workloads, family);
     for (const rule of rules) {
       for (const chain of [FORWARD_CHAIN, HOST_CHAIN]) {
         const args = ["-w", "5", "-C", chain, ...rule];

@@ -286,3 +286,23 @@ it("shows persistent voucher codes and captures an optional expiration date when
   expect(await screen.findByRole("heading", { name: "Voucher created" })).toBeTruthy();
   expect(screen.getByText("RPV-NEWVISIBLECODE1234567890")).toBeTruthy();
 });
+it("shows tenant quota read-only and never calls the removed quota PATCH endpoint (#269)", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/quota")) return json({
+      cpu: 3, memoryBytes: 1024, gpu: 0, storageBytes: 4096, maxSingleApps: 4, maxVolumes: 5,
+    });
+    if (url.endsWith("/billing")) return json({ balanceCredits: "1", billingState: "Active" });
+    if (url.includes("/usage-series")) return json({ items: [] });
+    if (init?.method === "PATCH") return json({ error: "Forbidden" }, 404);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantBilling tenantId="t1" />);
+  expect(await screen.findByText("Allocated by Platform Admin.", { exact: false })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Save quota" })).toBeNull();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    String(input).endsWith("/quota") && init?.method === "PATCH",
+  )).toBe(false);
+});

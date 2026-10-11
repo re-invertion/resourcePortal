@@ -47,8 +47,9 @@ export class CreateSingleAppDto {
   @IsEnum(RuntimeState)
   runtimeState?: RuntimeState;
 
+  // Zero means an unlimited Docker CPU allocation and must never bypass quotas.
   @IsNumber()
-  @Min(0)
+  @Min(0.01)
   @Max(128)
   cpu!: number;
 

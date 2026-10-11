@@ -39,6 +39,7 @@ describe("Stage 16 volume operation executor", () => {
       baseOperation.tenantId,
       { name: "data", sizeBytes: 1024 },
       expect.objectContaining({ id: baseOperation.createdBy, email: baseOperation.createdByEmail }),
+      baseOperation.id,
     );
     expect(result.resourceId).toBe("55555555-5555-4555-8555-555555555555");
   });

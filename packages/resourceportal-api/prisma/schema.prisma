@@ -204,6 +204,7 @@ model PortalSession {
   accessToken          String
   refreshToken         String
   idToken              String
+  authenticatedIdpId   String?
   accessTokenExpiresAt DateTime
   lastSeenAt           DateTime  @default(now())
   expiresAt            DateTime

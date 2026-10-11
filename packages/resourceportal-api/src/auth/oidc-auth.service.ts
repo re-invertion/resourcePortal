@@ -69,8 +69,20 @@ export class OidcAuthService {
     identityProviderId?: string,
   ): Promise<AuthenticatedUser> {
     const idTokenClaims = await this.verifyToken(idToken);
+    const authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
+    if (identityProviderId) {
+      const selected = await this.prisma.identityProvider.findUnique({
+        where: { id: identityProviderId },
+        select: { enabled: true, zitadelIdentityProviderId: true },
+      });
+      if (!selected?.enabled || !authenticatedIdpId ||
+          selected.zitadelIdentityProviderId !== authenticatedIdpId) {
+        throw new UnauthorizedException("Selected external identity provider was not verified");
+      }
+    }
     const humanClaims = await this.resolveHumanClaims(accessToken, idTokenClaims);
-    return this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
+    const user = await this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
+    return { ...user, authenticatedIdpId };
   }
 
   async authenticateMcpPrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
@@ -104,7 +116,10 @@ export class OidcAuthService {
     const humanClaims = await this.resolveHumanClaims(token, payload);
     return {
       type: "User",
-      user: await this.findOrProvisionUser(this.getIssuer(), humanClaims),
+      user: {
+        ...await this.findOrProvisionUser(this.getIssuer(), humanClaims),
+        authenticatedIdpId: this.verifiedAuthenticationIdpId(payload),
+      },
     };
   }
 
@@ -118,6 +133,19 @@ export class OidcAuthService {
 
     const subject = this.requireStringClaim(payload.sub, "sub");
     return this.fetchUserInfo(token, subject);
+  }
+
+  /**
+   * Only a signed, issuer-verified token claim produced by the Zitadel login
+   * action may establish the IdP used for THIS authentication event. Never
+   * infer it from an account's historical linked identities, request params,
+   * UserInfo, or the login selection cookie.
+   */
+  private verifiedAuthenticationIdpId(payload: JWTPayload): string | null {
+    const claim = payload["urn:resourceportal:auth:external_idp_id"];
+    return typeof claim === "string" && /^[a-zA-Z0-9_-]{1,256}$/.test(claim)
+      ? claim
+      : null;
   }
 
   private async fetchUserInfo(

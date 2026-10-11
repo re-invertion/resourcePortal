@@ -50,6 +50,16 @@ spec:
 `;
 
 describe("App Group YAML manifest", () => {
+  it("rejects CPU=0 and allocations below the supported tenant minimum", () => {
+    for (const cpu of [0, -1, 0.001]) {
+      const result = parseAppGroupManifest(validManifest.replace("cpu: 0.5", `cpu: ${cpu}`));
+      expect(result.manifest).toBeUndefined();
+      expect(result.errors).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "$.spec.apps[0].resources.cpu" }),
+      ]));
+    }
+    expect(parseAppGroupManifest(validManifest.replace("cpu: 0.5", "cpu: 0.01")).errors).toEqual([]);
+  });
   it("parses and normalizes the versioned v1alpha1 format", () => {
     const result = parseAppGroupManifest(validManifest);
 

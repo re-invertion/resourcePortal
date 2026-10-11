@@ -5,6 +5,7 @@ import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { RegistriesService } from "../registries/registries.service";
 import { SecretStorageService } from "../security/secret-storage.service";
+import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
 import {
   AppGroupManifest,
@@ -152,6 +153,18 @@ export class AppGroupManifestService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // Serialize all writes which change a tenant's quota consumption.
+        // A preflight read cannot protect against concurrent imports/creates.
+        await lockTenantQuota(tx, tenantId);
+        const quotaErrors: ManifestIssue[] = [];
+        await this.validateQuota(tenantId, manifest, quotaErrors, tx);
+        if (quotaErrors.length > 0) {
+          throw new BadRequestException({
+            code: "ManifestValidationFailed",
+            message: "App Group manifest quota changed before import",
+            details: { valid: false, errors: quotaErrors, warnings: [] },
+          });
+        }
         const appGroup = await tx.appGroup.create({
           data: {
             tenantId,
@@ -506,11 +519,12 @@ export class AppGroupManifestService {
     tenantId: string,
     manifest: AppGroupManifest,
     errors: ManifestIssue[],
+    db: Pick<Prisma.TransactionClient, "quota" | "singleApp"> = this.prisma,
   ) {
-    const quota = await this.prisma.quota.findUnique({ where: { tenantId } });
+    const quota = await db.quota.findUnique({ where: { tenantId } });
     if (!quota) return;
 
-    const currentApps = await this.prisma.singleApp.findMany({
+    const currentApps = await db.singleApp.findMany({
       where: { appGroup: { tenantId }, pendingDeletion: false },
       select: { cpu: true, memoryBytes: true, gpu: true, desiredReplicas: true },
     });

@@ -2,8 +2,12 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { RegistryAuthType } from "@prisma/client";
 import { spawn } from "node:child_process";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { copyDockerContextWithoutRegistryCredentials } from "./isolated-docker-context";
 
-type RegistryLogin = {
+export type RegistryLogin = {
   host: string;
   authType: RegistryAuthType;
   username: string | null;
@@ -28,6 +32,33 @@ export class StackRegistryAuthService {
   constructor(private readonly config: ConfigService) {}
 
   async login(registries: RegistryLogin[]): Promise<RegistryAuthResult> {
+    const { auth } = await this.withScopedLogin(registries, () => Promise.resolve(undefined));
+    return auth;
+  }
+
+  /** Keep credentials scoped to one apply attempt, including concurrent tenants. */
+  async withScopedLogin<T>(
+    registries: RegistryLogin[],
+    action: (dockerConfigPath: string) => Promise<T>,
+  ): Promise<{ auth: RegistryAuthResult; result?: T }> {
+    const dockerConfigPath = await mkdtemp(join(tmpdir(), "resourceportal-docker-auth-"));
+    try {
+      await chmod(dockerConfigPath, 0o700);
+      await copyDockerContextWithoutRegistryCredentials(
+        dockerConfigPath,
+        this.config.get<string>("DOCKER_CONTEXT"),
+      );
+      return await this.loginScoped(registries, dockerConfigPath, action);
+    } finally {
+      await rm(dockerConfigPath, { recursive: true, force: true });
+    }
+  }
+
+  private async loginScoped<T>(
+    registries: RegistryLogin[],
+    dockerConfigPath: string,
+    action: (dockerConfigPath: string) => Promise<T>,
+  ): Promise<{ auth: RegistryAuthResult; result?: T }> {
     const requiredRegistries = registries.filter(
       (registry) => registry.authType !== RegistryAuthType.None,
     );
@@ -37,11 +68,11 @@ export class StackRegistryAuthService {
       const loginUsername = this.loginUsername(registry);
 
       if (!loginUsername || !registry.credential) {
-        return {
+        return { auth: {
           success: false,
           message: `Registry credentials are incomplete for ${registry.host}`,
           details: `Registry ${registry.host} requires valid credentials for docker login`,
-        };
+        } };
       }
 
       const result = await this.runDocker(
@@ -53,10 +84,11 @@ export class StackRegistryAuthService {
           "--password-stdin",
         ],
         registry.credential,
+        dockerConfigPath,
       );
 
       if (result.exitCode !== 0) {
-        return {
+        return { auth: {
           success: false,
           message: `Docker login failed for ${registry.host}`,
           details: [
@@ -64,16 +96,19 @@ export class StackRegistryAuthService {
             result.command,
             result.stderr || result.stdout || `Exit code ${result.exitCode}`,
           ].join("\n"),
-        };
+        } };
       }
 
       details.push(`Docker login succeeded for ${registry.host}`);
     }
 
     return {
-      success: true,
-      message: `Authenticated ${requiredRegistries.length} registry(ies)`,
-      details: details.join("\n"),
+      auth: {
+        success: true,
+        message: `Authenticated ${requiredRegistries.length} registry(ies)`,
+        details: details.join("\n"),
+      },
+      result: await action(dockerConfigPath),
     };
   }
 
@@ -85,7 +120,7 @@ export class StackRegistryAuthService {
     return registry.username;
   }
 
-  private runDocker(args: string[], stdin: string) {
+  private runDocker(args: string[], stdin: string, dockerConfigPath: string) {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const timeoutMs = this.config.get<number>(
       "DOCKER_REGISTRY_AUTH_TIMEOUT_MS",
@@ -97,6 +132,7 @@ export class StackRegistryAuthService {
     return new Promise<CommandResult>((resolve) => {
       const child = spawn("docker", fullArgs, {
         stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, DOCKER_CONFIG: dockerConfigPath },
       });
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];

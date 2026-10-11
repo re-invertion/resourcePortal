@@ -22,6 +22,7 @@ describe("Stage 2 Permission model", () => {
       user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
     };
     const prisma = {
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
       tenantMembership: {
         findUnique: vi.fn().mockResolvedValue({
           id: membershipId,

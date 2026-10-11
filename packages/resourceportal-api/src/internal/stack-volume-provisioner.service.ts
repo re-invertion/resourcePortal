@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_VOLUME_RUNTIME_ROOT } from "../storage-backends/storage-paths";
+import { sharedNfsProbeCommand } from "../storage-backends/shared-nfs-probe";
 import {
   dockerNodeLabelConstraint,
   LEGACY_STORAGE_NODE_LABELS,
@@ -104,7 +105,18 @@ export class StackVolumeProvisionerService {
       };
     }
 
+    const validationDisabled = this.config.get<string>(
+      "STORAGE_REMOTE_VALIDATION_ENABLED", "true",
+    ) === "false";
+    if (validationDisabled && eligibleNodes.length !== 1) {
+      return {
+        success: false,
+        message: "Cross-node NFS validation cannot be disabled for multi-node storage",
+        details: `${eligibleNodes.length} eligible storage nodes`,
+      };
+    }
     const serviceName = `rp-volume-runtime-probe-${randomUUID().slice(0, 8)}`;
+    const probeNonce = randomUUID().replaceAll("-", "");
     const runtimeRoot = this.config.get<string>(
       "RESOURCE_VOLUME_RUNTIME_ROOT",
       DEFAULT_VOLUME_RUNTIME_ROOT,
@@ -132,7 +144,15 @@ export class StackVolumeProvisionerService {
       image,
       "sh",
       "-c",
-      'probe="/probe/.rp-volume-runtime-probe-$HOSTNAME"; printf ok > "$probe" && test "$(cat "$probe")" = ok && rm -f "$probe"',
+      validationDisabled
+        ? [
+          "set -eu",
+          `probe=/probe/.rp-single-node-write-probe-${probeNonce}`,
+          "printf ok > \"$probe\"",
+          'test "$(cat "$probe")" = ok',
+          'rm -f -- "$probe"',
+        ].join("\n")
+        : sharedNfsProbeCommand(eligibleNodes.length, probeNonce),
     ]);
 
     if (create.exitCode !== 0) {
@@ -157,7 +177,9 @@ export class StackVolumeProvisionerService {
       }
       return {
         success: true,
-        message: `Validated canonical Volume runtime namespace on ${eligibleNodes.length} Ready storage node(s)`,
+        message: validationDisabled
+          ? "Validated single-node Volume runtime namespace"
+          : `Validated canonical Volume runtime namespace on ${eligibleNodes.length} Ready storage node(s)`,
         details: `${runtimeRoot} is writable on eligible nodes`,
       };
     } finally {
@@ -178,7 +200,7 @@ export class StackVolumeProvisionerService {
         "ps",
         "--no-trunc",
         "--format",
-        "{{.CurrentState}}|{{.Error}}",
+        "{{.Node}}|{{.CurrentState}}|{{.Error}}",
         serviceName,
       ]);
       if (status.exitCode !== 0) {
@@ -188,9 +210,9 @@ export class StackVolumeProvisionerService {
         };
       }
       const tasks = status.stdout.split("\n").filter(Boolean);
-      const failed = tasks.find((line) => /^(Failed|Rejected)/i.test(line));
+      const failed = tasks.find((line) => /(^|\|)(Failed|Rejected)/i.test(line));
       if (failed) return { success: false, details: failed };
-      const completed = tasks.filter((line) => /^Complete/i.test(line)).length;
+      const completed = tasks.filter((line) => /(^|\|)Complete/i.test(line)).length;
       if (completed >= nodeCount) {
         return { success: true, details: status.stdout };
       }

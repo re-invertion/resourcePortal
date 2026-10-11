@@ -32,7 +32,7 @@ function dockerProcess(stdout = "", exitCode = 0) {
   return child;
 }
 
-function service() {
+function service(disabled = false) {
   const config = {
     get: vi.fn((key: string, fallback?: unknown) => {
       const values: Record<string, unknown> = {
@@ -40,6 +40,7 @@ function service() {
         DOCKER_VOLUME_PROVISION_TIMEOUT_MS: 1000,
         RESOURCE_VOLUME_RUNTIME_ROOT: "/mnt/resourceportal/volumes",
         STORAGE_REMOTE_VALIDATION_IMAGE: "alpine:3.20",
+        STORAGE_REMOTE_VALIDATION_ENABLED: disabled ? "false" : "true",
       };
       return values[key] ?? fallback;
     }),
@@ -171,5 +172,41 @@ describe("StackVolumeProvisionerService", () => {
       success: false,
       message: "No Ready Swarm nodes with Volume storage readiness",
     });
+  });
+});
+
+describe("NFS probe setting must not weaken multi-node storage (#228)", () => {
+  beforeEach(() => spawnMock.mockReset());
+
+  it("preserves explicit no-NFS single-node behavior with isolated writable probe", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("node-a|Ready\n"))
+      .mockImplementationOnce(() => dockerProcess("true|true\n"))
+      .mockImplementationOnce(() => dockerProcess("probe-service\n"))
+      .mockImplementationOnce(() => dockerProcess("Complete 1 second ago|\n"))
+      .mockImplementationOnce(() => dockerProcess());
+    const result = await service(true).provisionVolumes([
+      { dockerVolumeName: "rp_vol_1", storagePath: "/data/vol-1" },
+    ]);
+    expect(result.success).toBe(true);
+    const createArgs = spawnMock.mock.calls.find((call) =>
+      (call[1] as string[]).includes("create"),
+    )?.[1] as string[] | undefined;
+    const script = createArgs?.at(-1) ?? "";
+    expect(script).toContain(".rp-single-node-write-probe");
+    expect(script).not.toContain("StorageProbeNotNfs");
+  });
+
+  it("never skips shared-NFS guard when more than one node is eligible", async () => {
+    spawnMock
+      .mockImplementationOnce(() => dockerProcess("a|Ready\nb|Ready\n"))
+      .mockImplementationOnce(() => dockerProcess("true|true\n"))
+      .mockImplementationOnce(() => dockerProcess("true|true\n"));
+    const result = await service(true).provisionVolumes([
+      { dockerVolumeName: "rp_vol_1", storagePath: "/data/vol-1" },
+    ]);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("cannot be disabled");
+    expect(spawnMock).toHaveBeenCalledTimes(3);
   });
 });

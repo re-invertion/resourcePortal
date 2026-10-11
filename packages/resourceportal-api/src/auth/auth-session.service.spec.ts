@@ -1,3 +1,4 @@
+import { UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -220,6 +221,16 @@ describe("AuthSessionService", () => {
       },
     };
 
+    (prisma as typeof prisma & { $transaction: unknown }).$transaction = async (
+      action: (tx: unknown) => Promise<unknown>,
+    ) => action({
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      portalSession: {
+        findUnique: prisma.portalSession.findUnique,
+        update: prisma.portalSession.update,
+      },
+    });
+
     vi.stubGlobal(
       "fetch",
       vi.fn((_input: string | URL | Request, init?: RequestInit) => {
@@ -373,5 +384,102 @@ describe("AuthSessionService", () => {
       where: { id: "session-1", revokedAt: null },
       data: { revokedAt: expect.any(Date) as Date },
     });
+  });
+});
+
+describe("session refresh rotation is serialized across worker instances (#222)", () => {
+  it("performs one refresh and keeps both requests authenticated", async () => {
+    const user = { id: "user-1", email: "a@example.com",
+      displayName: "User", status: UserStatus.Active };
+    const session = {
+      id: "session-1", revokedAt: null, user,
+      accessTokenExpiresAt: new Date(Date.now() - 10_000),
+      expiresAt: new Date(Date.now() + 3600_000),
+      lastSeenAt: new Date(),
+      accessToken: "enc:old-access-token",
+      refreshToken: "enc:old-refresh-token",
+      idToken: "enc:old-id-token",
+    };
+    const findUnique = vi.fn(() => Promise.resolve({ ...session }));
+    const update = vi.fn(({ data }: { data: Record<string, unknown> }) => {
+      Object.assign(session, data);
+      return Promise.resolve({ ...session });
+    });
+    let previous = Promise.resolve();
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const $transaction = vi.fn(async (
+      action: (tx: { $queryRaw: typeof queryRaw; portalSession: {
+        findUnique: typeof findUnique; update: typeof update;
+      } }) => Promise<unknown>,
+    ) => {
+      const before = previous;
+      let unlock!: () => void;
+      previous = new Promise<void>((resolve) => { unlock = resolve; });
+      await before;
+      try {
+        return await action({ $queryRaw: queryRaw, portalSession: { findUnique, update } });
+      } finally {
+        unlock();
+      }
+    });
+    const prisma = {
+      $transaction, auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
+      portalSession: { findUnique, update, updateMany: vi.fn() },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      access_token: "rotated-token", refresh_token: "new-refresh-token",
+      id_token: "new-id-token", expires_in: 600,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const mkService = () => new AuthSessionService(
+      createConfig({ OIDC_CLIENT_ID: "resource-portal" }),
+      prisma as unknown as PrismaService, createOidcAuth(), createEncryption(),
+    );
+    const first = mkService();
+    const second = mkService();
+    const [a, b] = await Promise.all([
+      first.authenticateSession(session.id),
+      second.authenticateSession(session.id),
+    ]);
+    expect(a.id).toBe(user.id);
+    expect(b.id).toBe(user.id);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(session.refreshToken).toBe("enc:new-refresh-token");
+    expect(prisma.portalSession.updateMany).not.toHaveBeenCalled();
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("OIDC provider outage retains browser session", () => {
+  it("does not revoke a valid session when OIDC discovery temporarily fails with an authentication exception (#215)", async () => {
+    const session = {
+      id: "session-oidc-down", revokedAt: null, idToken: "enc:id-token",
+      refreshToken: "enc:refresh-token", accessToken: "enc:access-token",
+      expiresAt: new Date(Date.now() + 3600_000),
+      lastSeenAt: new Date(),
+      accessTokenExpiresAt: new Date(Date.now() - 1000),
+      user: { id: "user-1", email: "u@example.com", displayName: "User", status: UserStatus.Active },
+    };
+    const findUnique = vi.fn().mockResolvedValue(session);
+    const updateMany = vi.fn();
+    const prisma = {
+      auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
+      portalSession: { findUnique, updateMany },
+      $transaction: vi.fn(async (work: (tx: unknown) => Promise<unknown>) =>
+        work({ $queryRaw: vi.fn().mockResolvedValue([]), portalSession: { findUnique } })),
+    };
+    const oidcAuth = {
+      getDiscovery: vi.fn().mockRejectedValue(
+        new UnauthorizedException("OIDC discovery document is unavailable"),
+      ),
+    } as unknown as OidcAuthService;
+    const service = new AuthSessionService(
+      createConfig({ OIDC_CLIENT_ID: "resource-portal" }),
+      prisma as unknown as PrismaService, oidcAuth, createEncryption(),
+    );
+    await expect(service.authenticateSession(session.id)).rejects.toThrow(
+      "OIDC refresh temporarily unavailable",
+    );
+    expect(updateMany).not.toHaveBeenCalled();
   });
 });

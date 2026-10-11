@@ -68,6 +68,26 @@ rp_validate_release_manifest() {
   done
 }
 
+# The manifest is an executable upgrade instruction for a privileged Docker-socket
+# updater. A digest and the repository URL alone cannot establish authorization.
+# Sigstore/GitHub verifies the bytes, the release-workflow identity, and main ref.
+# Unavailable verifier, missing attestation or invalid signature fail closed.
+rp_verify_release_manifest_attestation() {
+  local manifest="$1"
+  rp_validate_release_manifest "$manifest" || return 1
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'Release provenance verification requires GitHub CLI.\n' >&2
+    return 1
+  fi
+  GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh attestation verify "$manifest" \
+    --repo re-invertion/resourcePortal \
+    --signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml \
+    --source-ref refs/heads/main >/dev/null || {
+      printf 'Release manifest has no valid official signed provenance.\n' >&2
+      return 1
+    }
+}
+
 rp_release_install_compatible() {
   local manifest="$1" installer_version="$2" docker_version="$3" minimum_installer minimum_docker
   rp_validate_release_manifest "$manifest" || return 1

@@ -16,6 +16,7 @@ import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { CreateVolumeDto } from "./dto/create-volume.dto";
 import { ResizeVolumeDto } from "./dto/resize-volume.dto";
 import { mapVolume } from "./volumes.view";
+import { couldDeploymentStillMountVolume } from "./deployed-volume-reference";
 
 type ReservedVolumeSizeRow = {
   id: string;
@@ -46,17 +47,45 @@ export class VolumesService {
     tenantId: string,
     dto: CreateVolumeDto,
     actor: AuthenticatedUser,
+    operationId?: string,
   ) {
-    const volumeId = randomUUID();
+    // The durable operation ID is also the volume identity. Retries must not
+    // create a second volume or collide with the first one's tenant name.
+    const volumeId = operationId ?? randomUUID();
     const sizeBytes = BigInt(dto.sizeBytes);
     let reservation: StorageBackendReservation | undefined;
     let provisionAttempted = false;
+    let resumed = false;
+    let hasExistingResource = false;
+    let existingReady: Awaited<ReturnType<typeof this.findVolumeOrThrow>> | undefined;
 
     await this.storageBackends.refreshDefaultBackendForWrite();
 
     try {
       await this.prisma.$transaction(async (tx) => {
         await lockTenantQuota(tx, tenantId);
+        if (operationId) {
+          const existing = await tx.volume.findUnique({
+            where: { id: volumeId }, include: { attachments: true },
+          });
+          if (existing) {
+            hasExistingResource = true;
+            if (existing.tenantId !== tenantId || existing.createdBy !== actor.id ||
+                existing.name !== dto.name || existing.sizeBytes !== sizeBytes ||
+                (existing.description ?? null) !== (dto.description ?? null)) {
+              throw new ConflictException("VolumeOperationReplayMismatch");
+            }
+            if (existing.status === VolumeStatus.Ready) {
+              existingReady = existing;
+              return;
+            }
+            if (existing.status === VolumeStatus.Creating) {
+              resumed = true;
+              return;
+            }
+            throw new ConflictException("VolumeOperationReplayInvalidState");
+          }
+        }
         await this.assertQuotaAllowsVolumeChange(
           tx,
           tenantId,
@@ -87,6 +116,13 @@ export class VolumesService {
         });
       });
 
+      if (existingReady) return mapVolume(existingReady);
+      if (resumed) {
+        const current = await this.findVolumeOrThrow(tenantId, volumeId);
+        reservation = await this.storageBackends.recoverVolumeReservation(
+          volumeId, current.storagePath, current.storageProjectId,
+        );
+      }
       if (!reservation) {
         throw new Error("StorageBackend reservation was not created");
       }
@@ -108,6 +144,18 @@ export class VolumesService {
       });
       return mapVolume(volume);
     } catch (error) {
+      if (hasExistingResource && !resumed) {
+        // A conflicting replay must never delete or mutate the completed volume.
+        throw error;
+      }
+      if (resumed) {
+        // The resumed volume may already contain persistent tenant data.
+        // Never delete it after a failed retry; preserve for diagnosis/recovery.
+        await this.prisma.volume.update({
+          where: { id: volumeId }, data: { status: VolumeStatus.Error, updatedBy: actor.id },
+        }).catch(() => undefined);
+        throw error;
+      }
       if (reservation && provisionAttempted) {
         const cleaned = await this.storageBackends
           .cleanupProvisionedVolume(
@@ -217,18 +265,57 @@ export class VolumesService {
     volumeId: string,
     actor: AuthenticatedUser,
   ) {
-    const volume = await this.findVolumeOrThrow(tenantId, volumeId);
+    // Mark Deleting under the tenant quota/attachment lock, checking *deployed*
+    // mounts rather than only the mutable draft attachment list.
+    const volume = await this.prisma.$transaction(async (tx) => {
+      await lockTenantQuota(tx, tenantId);
+      const current = await tx.volume.findFirst({
+        where: { id: volumeId, tenantId },
+        include: { attachments: true },
+      });
+      if (!current) throw new NotFoundException("Volume not found");
+      if (
+        current.status !== VolumeStatus.Ready &&
+        current.status !== VolumeStatus.Error
+      ) throw new ConflictException("VolumeNotReadyForDeletion");
+      if (current.attachments.length) throw new ConflictException("VolumeInUse");
 
-    if (volume.attachments.length > 0) {
-      throw new ConflictException("VolumeInUse");
-    }
+      // A deployment may still mount this volume long after a draft detach.
+      const groups = await tx.appGroup.findMany({
+        where: { tenantId },
+        select: {
+          currentDeploymentVersion: true,
+          driftStatus: true,
+          lastObservedAt: true,
+          deployments: {
+            select: {
+              version: true,
+              status: true,
+              stackConfig: true,
+              completedAt: true,
+            },
+          },
+        },
+      });
+      if (couldDeploymentStillMountVolume(groups, volumeId)) {
+        throw new ConflictException("VolumeInUse");
+      }
 
-    await this.prisma.volume.update({
-      where: { id: volumeId },
-      data: {
-        status: VolumeStatus.Deleting,
-        updatedBy: actor.id,
-      },
+      const pendingOperations = await tx.operation.findFirst({
+        where: {
+          tenantId,
+          type: { in: ["APP_GROUP_DEPLOY", "APP_GROUP_ROLLBACK"] },
+          status: { in: ["Pending", "Running", "RollingBack"] },
+        },
+        select: { id: true },
+      });
+      if (pendingOperations) throw new ConflictException("VolumeInUse");
+
+      await tx.volume.update({
+        where: { id: volumeId },
+        data: { status: VolumeStatus.Deleting, updatedBy: actor.id },
+      });
+      return current;
     });
 
     try {

@@ -171,3 +171,25 @@ describe("McpOAuthDcrService", () => {
     );
   });
 });
+describe("MCP DCR bounded response and deadline (#213)", () => {
+  it("rejects oversized upstream DCR responses before buffering", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("A".repeat(1_048_577), { status: 201 }));
+    global.fetch = fetchMock as typeof fetch;
+    await expect(service().register({})).rejects.toThrow("response exceeded size limit");
+  });
+  it("provides AbortSignals on the registration and management requests", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ client_id: "c" }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [{ id: "p", name: "ZITADEL DCR" }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [{ id: "app", oidcConfig: {
+        clientId: "c", responseTypes: ["OIDC_RESPONSE_TYPE_CODE"], grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+      } }] })))
+      .mockResolvedValueOnce(new Response("{}"));
+    global.fetch = fetchMock as typeof fetch;
+    await service().register({});
+    for (const call of fetchMock.mock.calls) {
+      const options = call[1] as RequestInit | undefined;
+      expect(options?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+});

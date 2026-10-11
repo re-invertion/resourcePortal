@@ -97,7 +97,7 @@ export class AuthFlowService {
     if (user.status !== UserStatus.Active) {
       throw new UnauthorizedException("Email verification is required before login");
     }
-    const session = await this.sessions.createSession(user.id, tokenResponse);
+    const session = await this.sessions.createSession(user.id, tokenResponse, user.authenticatedIdpId);
 
     return {
       session,

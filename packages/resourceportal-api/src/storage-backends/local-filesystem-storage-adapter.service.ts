@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { HealthState } from "@prisma/client";
-import { chmod, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, readdir, rm, statfs } from "node:fs/promises";
 import { posix } from "node:path";
 import { resolveLocalStoragePath } from "./storage-backend.logic";
 import { StorageCommandRunnerService } from "./storage-command-runner.service";
@@ -61,7 +61,15 @@ export class LocalFilesystemStorageAdapterService {
       input.volumeId,
     );
     const localPath = this.localPath(backend, storagePath);
+    // Guard legacy and newly-created tenant directories alike.
+    await this.secureTenantParent(backend, storagePath, true);
     const created = (await mkdir(localPath, { recursive: true })) !== undefined;
+    const volumeStat = await lstat(localPath);
+    if (!volumeStat.isDirectory() || volumeStat.isSymbolicLink()) {
+      throw new InternalServerErrorException("Unsafe volume storage directory");
+    }
+    // This path is bind-mounted directly inside the authorized workload;
+    // external host access is blocked by the mode 0700 tenant parent.
     await chmod(localPath, 0o777);
 
     try {
@@ -89,6 +97,7 @@ export class LocalFilesystemStorageAdapterService {
     this.assertProjectId(projectId);
     const filesystem = await this.validateMount();
     const localPath = this.localPath(backend, storagePath);
+    await this.secureTenantParent(backend, storagePath, false);
     await this.verifyProject(localPath, projectId);
     await this.applyProjectLimit(filesystem, projectId, sizeBytes);
     await this.verifyProjectLimit(filesystem, projectId, sizeBytes);
@@ -108,7 +117,38 @@ export class LocalFilesystemStorageAdapterService {
     backend: LocalFilesystemBackendDescriptor,
     storagePath: string,
   ) {
+    this.assertPrivilegedMutation();
+    await this.secureTenantParent(backend, storagePath, false);
     return this.measureDirectory(this.localPath(backend, storagePath));
+  }
+
+  private async secureTenantParent(
+    backend: LocalFilesystemBackendDescriptor,
+    storagePath: string,
+    create: boolean,
+  ) {
+    const relative = posix.relative(backend.volumeBasePath, storagePath);
+    const segments = relative.split("/");
+    if (
+      segments.length !== 2 ||
+      segments.some((value) => !value || value === ".." || value === "." || value.includes("\\"))
+    ) {
+      throw new InternalServerErrorException("Unsafe tenant volume path");
+    }
+    const tenantPath = this.localPath(
+      backend, posix.join(backend.volumeBasePath, segments[0]),
+    );
+    if (create) {
+      await mkdir(tenantPath, { recursive: true, mode: 0o700 });
+    }
+    const info = await lstat(tenantPath);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new InternalServerErrorException("Unsafe tenant storage directory");
+    }
+    // Previously created 0755 tenant directories are repaired during the
+    // recurring usage sweep, not only on new volume allocation.
+    await chown(tenantPath, 0, 0);
+    await chmod(tenantPath, 0o700);
   }
 
   private async validateMount(): Promise<LocalStorageFilesystem> {
