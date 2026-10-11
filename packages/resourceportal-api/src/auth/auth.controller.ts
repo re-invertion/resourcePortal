@@ -32,6 +32,7 @@ import { Public } from "./public.decorator";
 import { AuthenticatedUser } from "./types";
 import { AuthFlowService } from "./auth-flow.service";
 import { AuthSessionService } from "./auth-session.service";
+import { MachineBearerAuth } from "./machine-bearer-auth.decorator";
 import { FederationProofService } from "./federation-proof.service";
 import {
   LoginProvidersQueryDto,
@@ -149,6 +150,7 @@ export class AuthController {
   }
 
   @Public()
+  @MachineBearerAuth()
   @Post("federation/attest")
   @HttpCode(200)
   async attestFederation(
