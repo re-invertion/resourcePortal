@@ -881,3 +881,54 @@ describe("Site VPN agent re-enrollment safety", () => {
     }));
   });
 });
+
+describe("Site VPN Gate physical LAN overlap regression (#279)", () => {
+  const token = "gate-agent-test-token";
+  function setup() {
+    const { service, prisma } = fixture();
+    const gate = {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      agentTokenHash: createHash("sha256").update(token).digest("hex"),
+      revokedAt: null,
+      serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+      serverListenPort: 52000,
+      clientTunnelAddress: "100.96.0.2/30",
+      serverTunnelAddress: "100.96.0.1/30",
+      configRevision: 1,
+      allowLanToRp: true,
+      allowRpToLan: false,
+      routeAdvertisementMode: "Manual",
+      networks: [{ network: { id: "net-1", name: "rp-service", cidr: "10.240.10.0/24" } }],
+    };
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(gate);
+    (prisma.gateNetworkAttachment.findMany as any).mockResolvedValue([
+      { network: { cidr: "10.240.10.0/24" } },
+    ]);
+    return { service, prisma };
+  }
+
+  it("accepts consecutive tunnel-up heartbeats advertising physical LAN only", async () => {
+    const { service, prisma } = setup();
+    const heartbeat = {
+      lanAddresses: ["192.168.50.2"],
+      lanCidrs: ["192.168.50.0/24"],
+      agentVersion: "gate-shell-v3",
+    };
+    const first = await service.gateHeartbeat(`Bearer ${token}`, heartbeat);
+    const second = await service.gateHeartbeat(`Bearer ${token}`, heartbeat);
+    expect(first.allowedIps).toEqual(["10.240.10.0/24"]);
+    expect(second.allowedIps).toEqual(["10.240.10.0/24"]);
+    expect(prisma.resourcePortalGate.update).toHaveBeenCalledTimes(4);
+  });
+
+  it("still rejects a genuine RP Network overlap on a physical LAN route", async () => {
+    const { service, prisma } = setup();
+    await expect(service.gateHeartbeat(`Bearer ${token}`, {
+      lanAddresses: ["192.168.50.2"],
+      lanCidrs: ["192.168.50.0/24", "10.240.10.0/24"],
+      agentVersion: "gate-shell-v3",
+    })).rejects.toThrow(ConflictException);
+    expect(prisma.resourcePortalGate.update).toHaveBeenCalledTimes(1);
+  });
+});
