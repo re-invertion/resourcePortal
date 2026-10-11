@@ -9,6 +9,23 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  "billing-correctness": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/billing"],
+  ],
+  "recovery-safety": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/disaster-recovery", "src/internal/runtime-drift-reconciler.pagination.spec.ts"],
+  ],
+  "cross-node-storage": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends", "src/internal/stack-volume-provisioner.service.spec.ts"],
+    ["bash", "test/installer/test-nfs.sh"],
+  ],
+  "volume-operations": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/volumes", "src/operations/executors/volume-operation.executors.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/volume-operation-tracker.test.ts", "src/pages/tenant-storage-pages.test.tsx"],
+  ],
+  "reactive-web-state": [
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
+  ],
   "storage-isolation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
   ],
@@ -127,6 +144,17 @@ const commands = {
 };
 
 const classifiers = [
+  [/^packages\/resourceportal-api\/src\/billing\/(?:billing-preflight\.guard(?:\.spec)?|billing-worker\.service|deployed-compute-allocation(?:\.spec)?)\.ts$/, ["billing-correctness"]],
+  [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/stack-volume-provisioner\.service(?:\.spec)?\.ts$/, ["cross-node-storage"]],
+  [/^packages\/resourceportal-api\/src\/storage-backends\/(?:nfs-remote-access-validator\.service(?:\.spec)?|shared-nfs-probe(?:\.spec)?|storage-backends\.service)\.ts$/, ["cross-node-storage"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/volume-operation\.executors(?:\.spec)?\.ts$/, ["volume-operations"]],
+  [/^packages\/resourceportal-api\/src\/volumes\/volume-usage-reconciler\.service(?:\.spec)?\.ts$/, ["volume-operations"]],
+  [/^packages\/resourceportal-web\/src\/hooks\/use-api(?:\.test)?\.tsx?$/, ["reactive-web-state"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-edit(?:\.test)?\.tsx$/, ["reactive-web-state"]],
+  [/^packages\/resourceportal-web\/src\/pages\/(?:billing-funding-ui\.test\.tsx|machine-credential-rotation\.test\.tsx|tenant-resources\.tsx)$/, ["reactive-web-state"]],
+  [/^packages\/resourceportal-web\/src\/pages\/volume-operation-tracker(?:\.test)?\.ts$/, ["volume-operations"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/local-filesystem-storage-adapter\.service(\.spec)?\.ts$/, ["storage-isolation"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/volume-attachment-race\.spec\.ts$/, ["volume-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/isolated-docker-context(\.spec)?\.ts$/, ["registry-auth"]],
