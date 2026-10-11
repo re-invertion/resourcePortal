@@ -18,7 +18,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ClaimDeploymentDto } from "./dto/claim-deployment.dto";
 import { HeartbeatDeploymentDto } from "./dto/heartbeat-deployment.dto";
 import { DeploymentExecutionService } from "./deployment-execution.service";
-import { StackApplyService } from "./stack-apply.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackRuntimeService } from "./stack-runtime.service";
 
@@ -64,7 +63,6 @@ export class DeploymentRecoveryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly worker: DeploymentExecutionService,
-    private readonly stackApply: StackApplyService,
     private readonly stackRollout: StackRolloutService,
     private readonly stackRuntime: StackRuntimeService,
   ) {}
@@ -324,12 +322,15 @@ export class DeploymentRecoveryService {
         `Worker recovery observed an incomplete rollback to v${target.version}; reconciling rollback target after inspection`,
       );
       const artifact = await this.workerInternals().ensureDeploymentArtifact(target.id);
-      const applyResult = await this.stackApply.applyStack({
-        stackName,
-        renderedStack: artifact.renderedStack,
-        artifactSha256: artifact.sha256,
-        appGroupId: deployment.appGroupId,
-      });
+      const applyResult = await this.worker.applyDeploymentArtifactWithRegistryAuth(
+        target.stackConfig,
+        {
+          stackName,
+          renderedStack: artifact.renderedStack,
+          artifactSha256: artifact.sha256,
+          appGroupId: deployment.appGroupId,
+        },
+      );
 
       if (applyResult.exitCode !== 0) {
         return this.markRollbackFailed(
