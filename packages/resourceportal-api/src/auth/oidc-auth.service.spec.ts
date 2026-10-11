@@ -627,3 +627,54 @@ describe("signed tenant IdP provenance and bounded OIDC provider I/O (#238, #215
     for (const [, init] of providerCalls) expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe("server-attested external IdP authentication (#238)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("accepts issuer-signed ID token plus one-time matching backend evidence", async () => {
+    const fixture = await createTokenFixture();
+    installOidcFetch(fixture);
+    const user = { id: "user-1", email: "user@example.com",
+      displayName: "Example User", status: UserStatus.Active };
+    const prisma = {
+      identityProvider: { findUnique: vi.fn().mockResolvedValue({
+        enabled: true, zitadelIdentityProviderId: "zitadel-real-idp",
+      }) },
+      userIdentity: { findUnique: vi.fn().mockResolvedValue({
+        id: "identity-1", userId: "user-1", user,
+      }) },
+      user: { update: vi.fn().mockResolvedValue(user) },
+    };
+    const proof = { consume: vi.fn().mockResolvedValue(true) };
+    const service = new OidcAuthService(
+      createConfig({ OIDC_ISSUER_URL: fixture.issuer, OIDC_CLIENT_ID: fixture.audience }),
+      prisma as unknown as PrismaService,
+      proof as unknown as import("./federation-proof.service").FederationProofService,
+    );
+    await expect(service.authenticateBrowserTokens(
+      fixture.token, "browser-access", "rp-provider-id", "A".repeat(43),
+    )).resolves.toEqual({ ...user, authenticatedIdpId: "zitadel-real-idp" });
+    expect(proof.consume).toHaveBeenCalledWith("A".repeat(43), "zitadel-real-idp");
+  });
+
+  it("rejects a mismatching IdP event even with a valid signed OIDC token", async () => {
+    const fixture = await createTokenFixture();
+    installOidcFetch(fixture);
+    const prisma = {
+      identityProvider: { findUnique: vi.fn().mockResolvedValue({
+        enabled: true, zitadelIdentityProviderId: "required-idp",
+      }) },
+      userIdentity: { findUnique: vi.fn() },
+    };
+    const proof = { consume: vi.fn().mockResolvedValue(false) };
+    const service = new OidcAuthService(
+      createConfig({ OIDC_ISSUER_URL: fixture.issuer, OIDC_CLIENT_ID: fixture.audience }),
+      prisma as unknown as PrismaService,
+      proof as unknown as import("./federation-proof.service").FederationProofService,
+    );
+    await expect(service.authenticateBrowserTokens(
+      fixture.token, "browser-access", "rp-provider-id", "A".repeat(43),
+    )).rejects.toThrow("Selected external identity provider was not verified");
+    expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+  });
+});
