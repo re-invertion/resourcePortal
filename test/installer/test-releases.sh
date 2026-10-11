@@ -87,6 +87,9 @@ status 0 'valid release manifest accepted' rp_validate_release_manifest "$manife
 # Simulated verifier: the production upgrade must fail closed without a
 # cryptographically valid GitHub workflow attestation before it stops services.
 provenance_args="$(mktemp /tmp/rp-attestation-flags.XXXXXX)"
+test_bundle="$(mktemp /tmp/rp-attestation-bundle.XXXXXX)"
+printf '%s\n' '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}' >"$test_bundle"
+export RP_RELEASE_ATTESTATION_BUNDLE="$test_bundle"
 gh() {
   printf '%s\n' "$*" > "$provenance_args"
   return "${MOCK_ATTEST_EXIT:-1}"
@@ -95,11 +98,12 @@ export MOCK_ATTEST_EXIT=1
 status 1 'unsigned manifest is rejected before applying release' rp_verify_release_manifest_attestation "$manifest"
 export MOCK_ATTEST_EXIT=0
 status 0 'trusted GitHub attestation is required for upgrade' rp_verify_release_manifest_attestation "$manifest"
+contains "$(cat "$provenance_args")" "--bundle $test_bundle" 'updater verifies local attestation bundle without GitHub API authentication'
 contains "$(cat "$provenance_args")" '--signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml' 'provenance pins official release workflow'
 contains "$(cat "$provenance_args")" '--source-ref refs/heads/main' 'provenance pins main source ref'
 unset -f gh
-unset MOCK_ATTEST_EXIT
-rm -f "$provenance_args"
+unset MOCK_ATTEST_EXIT RP_RELEASE_ATTESTATION_BUNDLE
+rm -f "$provenance_args" "$test_bundle"
 preflight_marker="$(mktemp /tmp/rp-preflight-invoked.XXXXXX)"
 rm -f "$preflight_marker"
 untrusted_preflight() (
@@ -567,6 +571,7 @@ rm -f "$refresh_manifest"
 
 release_workflow="$(cat "$repo_root/.github/workflows/release.yml")"
 contains "$release_workflow" 'uses: actions/attest@v4' 'release workflow signs manifest with GitHub OIDC'
+contains "$release_workflow" 'resourceportal-release-manifest.bundle.json' 'release bundles signed manifest for unauthenticated updater'
 contains "$release_workflow" 'id-token: write' 'workflow can request ephemeral signing certificate'
 contains "$release_workflow" 'attestations: write' 'workflow can publish signed provenance'
 contains "$release_workflow" 'artifact-metadata: write' 'workflow can publish the attested artifact record'
