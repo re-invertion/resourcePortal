@@ -44,7 +44,7 @@ rp_recovery_archive_checkpoint() {
 # It retains the authoritative source snapshots and consumes one exact failed
 # journal; generic installer checkpoint preparation remains fail-closed.
 rp_recovery_prepare_checkpoint() {
-  local manifest="$1" previous_stack="$2" source_version="$3"
+  local manifest="$1" source_version="$3"
   local dir="${RP_UPGRADE_STATE_DIR:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/upgrade}"
   local backup="${RP_RECOVERY_BACKUP:-}" expected="${RP_RECOVERY_CHECKPOINT_SHA256:-}" tmp
   [[ "$source_version" == 0.2.78 && "$expected" =~ ^[a-f0-9]{64}$ && "$dir" == /* && ! -L "$dir" ]] || return 1
