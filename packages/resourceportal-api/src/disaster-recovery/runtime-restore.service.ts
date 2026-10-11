@@ -1,29 +1,36 @@
 import { Injectable } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
 import { DeploymentExecutionService } from "../internal/deployment-execution.service";
-import { StackApplyService } from "../internal/stack-apply.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { PlatformMaintenanceService } from "../platform-maintenance/platform-maintenance.service";
+import { runtimeSafeRestoreArtifact } from "./runtime-restore-policy";
 
 @Injectable()
 export class RuntimeRestoreService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly stackApply: StackApplyService,
     private readonly deploymentExecution: DeploymentExecutionService,
+    private readonly maintenance: PlatformMaintenanceService,
   ) {}
 
   async reconcile() {
+    const maintenance = await this.maintenance.getState();
     const appGroups = await this.prisma.appGroup.findMany({
       where: { currentDeploymentVersion: { not: null } },
       select: {
         id: true,
+        status: true,
+        runtimeState: true,
         currentDeploymentVersion: true,
+        tenant: { select: { status: true, billing: { select: { balance: true } } } },
+        singleApps: { select: { id: true, runtimeState: true, pendingDeletion: true } },
         deployments: {
           where: { status: DeploymentStatus.Succeeded },
           select: {
             id: true,
             version: true,
             status: true,
+            stackConfig: true,
           },
         },
       },
@@ -53,12 +60,34 @@ export class RuntimeRestoreService {
         continue;
       }
 
-      const result = await this.stackApply.applyStack({
-        stackName: this.stackName(appGroup.id),
-        renderedStack: artifact.renderedStack,
-        artifactSha256: artifact.sha256,
-        appGroupId: appGroup.id,
-      });
+      // Do not resurrect workloads stopped after their last successful deploy,
+      // or blocked by maintenance, billing, tenant suspension, or deletion.
+      const blocked = maintenance.enabled ||
+        appGroup.status === "Deleting" ||
+        appGroup.status === "Error" ||
+        appGroup.runtimeState === "Stopped" ||
+        appGroup.tenant?.status === "Suspended" ||
+        (appGroup.tenant?.billing?.balance.lte(0) ?? false);
+      let safeArtifact: typeof artifact;
+      try {
+        safeArtifact = runtimeSafeRestoreArtifact(artifact, deployment.stackConfig, {
+          blocked,
+          singleApps: appGroup.singleApps,
+        });
+      } catch {
+        failed += 1;
+        continue;
+      }
+
+      const result = await this.deploymentExecution.applyDeploymentArtifactWithRegistryAuth(
+        deployment.stackConfig,
+        {
+          stackName: this.stackName(appGroup.id),
+          renderedStack: safeArtifact.renderedStack,
+          artifactSha256: safeArtifact.sha256,
+          appGroupId: appGroup.id,
+        },
+      );
 
       if (result.exitCode === 0) {
         applied += 1;

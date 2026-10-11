@@ -52,6 +52,7 @@ RUN apk add --no-cache \
     ca-certificates \
     curl \
     jq \
+    github-cli \
     flock \
     openssl \
     docker-cli \

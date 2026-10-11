@@ -194,6 +194,8 @@ async function main() {
   );
   assert(serviceIdentity.clientSecret, "Service identity did not return its initial client secret");
 
+  await installFederationAttestationAction();
+
   await apiRequest(
     "PATCH",
     `/tenants/${tenant.id}/auth-policy`,
@@ -252,6 +254,48 @@ async function main() {
   console.log(`SAML provider ${samlProvider.id} -> ZITADEL ${samlProvider.zitadelIdentityProviderId}`);
   console.log(`Platform provider ${platformProvider.id} -> ZITADEL ${platformProvider.zitadelIdentityProviderId}`);
   console.log(`Service identity ${serviceIdentity.id} -> client ${serviceIdentity.clientId}`);
+}
+
+/**
+ * ZITADEL Action V1 External Authentication / Post Authentication.
+ * The action knows the actually authenticated IdP. A shared-secret callback
+ * records evidence keyed to RP's high-entropy OAuth state (login_hint).
+ * This is never inferred from a user link, cookie selection or UserInfo.
+ */
+async function installFederationAttestationAction() {
+  const secret = requireEnv("FEDERATION_ATTESTATION_SECRET");
+  if (secret.length < 32) throw new Error("FEDERATION_ATTESTATION_SECRET is too short");
+  const endpoint = process.env.FEDERATION_E2E_ATTESTATION_CALLBACK_URL ??
+    "http://127.0.0.1:3000/api/auth/federation/attest";
+  const script = [
+    "var rpHttp = require('zitadel/http');",
+    "function rpFederationAttest(ctx, api) {",
+    "  if (!ctx || !ctx.v1 || ctx.v1.authError !== 'none') return;",
+    "  var request = ctx.v1.authRequest;",
+    "  var hint = request && request.loginHint;",
+    "  if (typeof hint !== 'string' || !/^rp-proof-[A-Za-z0-9_-]{43}$/.test(hint)) return;",
+    "  var external = ctx.v1.externalUser;",
+    "  var actualProvider = external && external.externalIdpId;",
+    "  if (typeof actualProvider !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(actualProvider)) throw 'Missing actual IdP';",
+    `  var response = rpHttp.fetch(${JSON.stringify(endpoint)}, {`,
+    "    method: 'POST',",
+    `    headers: { 'authorization': 'Bearer ' + ${JSON.stringify(secret)}, 'content-type': 'application/json' },`,
+    "    body: { nonce: hint.slice(9), providerId: actualProvider }",
+    "  });",
+    "  if (response.status !== 200) throw 'Federation attestation failed';",
+    "}",
+  ].join("\n");
+
+  const action = await zitadelRequest<{ id?: string }>(
+    "POST", "/management/v1/actions",
+    { name: "rpFederationAttest", script, timeout: "10s", allowedToFail: false },
+  );
+  assert(action.id, "ZITADEL did not create federation action");
+  await zitadelRequest(
+    "POST", "/management/v1/flows/1/trigger/1",
+    { actionIds: [action.id] },
+  );
+  console.log("ZITADEL External Authentication post-auth attestation action installed");
 }
 
 async function provisionOAuthApplications(tenantId: string, devUserId: string) {

@@ -2,6 +2,7 @@
 
 import { ResourcePortalApiError, ResourcePortalClient } from "@resource-portal/sdk";
 import { login, logout, readConfig, resolveAuth } from "./auth.js";
+import { coerceCliFlag } from "./flag-coercion.js";
 
 type OutputFormat = "json" | "table";
 type Flags = Record<string, string | number | boolean | string[]>;
@@ -603,9 +604,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (raw.startsWith("--")) {
       const key = camelCase(raw.slice(2));
       const next = argv[index + 1];
-      const value = !next || next.startsWith("--") ? true : coerce(next);
+      const value = !next || next.startsWith("--") ? true : coerceCliFlag(key, next);
 
-      if (value !== true) {
+      if (next !== undefined && !next.startsWith("--")) {
         index += 1;
       }
 
@@ -853,22 +854,6 @@ function appendFlag(
   }
 
   flags[key] = Array.isArray(existing) ? [...existing, String(value)] : [String(existing), String(value)];
-}
-
-function coerce(value: string) {
-  if (value === "true") {
-    return true;
-  }
-
-  if (value === "false") {
-    return false;
-  }
-
-  if (/^-?\d+(?:\.\d+)?$/.test(value)) {
-    return Number(value);
-  }
-
-  return value;
 }
 
 function camelCase(value: string) {

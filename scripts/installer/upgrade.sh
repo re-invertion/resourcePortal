@@ -20,9 +20,21 @@ rp_upgrade_rollback_allowed() {
 rp_upgrade_check_temporary_files() {
   # The updater runs in Alpine (BusyBox mktemp), not the host's GNU coreutils.
   # Fail before quiescing API/Worker/ZITADEL when /tmp cannot create files.
-  local probe
+  local probe state_dir
   probe="$(mktemp /tmp/resourceportal-upgrade-preflight.XXXXXX)" || {
-    printf 'Upgrade preflight: cannot create a temporary file in /tmp.\n' >&2
+    printf 'Upgrade preflight: mktemp failed in /tmp.\n' >&2
+    return 1
+  }
+  rm -f -- "$probe"
+  # Check the checkpoint directory BEFORE stopping API/Worker/ZITADEL; a
+  # successful /tmp probe alone does not prove this writable volume is usable.
+  state_dir="${RP_UPGRADE_STATE_DIR:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/upgrade}"
+  if [[ "$state_dir" != /* || -L "$state_dir" ]] || ! install -d -m 0700 "$state_dir"; then
+    printf 'Upgrade preflight: invalid or unavailable checkpoint directory.\n' >&2
+    return 1
+  fi
+  probe="$(mktemp "$state_dir/.rp-preflight.XXXXXX")" || {
+    printf 'Upgrade preflight: mktemp failed in checkpoint directory.\n' >&2
     return 1
   }
   rm -f -- "$probe"
@@ -31,6 +43,7 @@ rp_upgrade_check_temporary_files() {
 rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
   rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
+  rp_verify_release_manifest_attestation "$manifest" || return 1
   rp_upgrade_check_temporary_files
 }
 

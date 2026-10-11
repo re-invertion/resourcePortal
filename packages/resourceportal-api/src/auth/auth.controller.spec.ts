@@ -469,6 +469,7 @@ describe("AuthController cookie flow", () => {
       "id-token",
       "access-token",
       identityProviderId,
+      loginLocation.searchParams.get("state"),
     );
   });
 
@@ -548,6 +549,15 @@ describe("AuthController cookie flow", () => {
     prisma.portalSession.updateMany
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
+    (prisma as typeof prisma & { $transaction: unknown }).$transaction = async (
+      action: (tx: unknown) => Promise<unknown>,
+    ) => action({
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      portalSession: {
+        findUnique: prisma.portalSession.findUnique,
+        update: prisma.portalSession.update,
+      },
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -573,6 +583,45 @@ describe("AuthController cookie flow", () => {
     const cookies = getSetCookieHeaders(response);
     expect(cookies.some((cookie) => cookie.includes("rp_session=;"))).toBe(true);
     expect(cookies.some((cookie) => cookie.includes("rp_csrf=;"))).toBe(true);
+  });
+
+  it("keeps a valid browser session and cookies after a temporary ZITADEL refresh outage (#215)", async () => {
+    const signedSession = app.getHttpAdapter().getInstance().signCookie("session-1");
+    const expiredAccessSession = {
+      id: "session-1",
+      accessToken: "access-token",
+      accessTokenExpiresAt: new Date(Date.now() - 1000),
+      idToken: "id-token",
+      refreshToken: "refresh-token",
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      lastSeenAt: new Date(),
+      user,
+    };
+    prisma.portalSession.findUnique.mockResolvedValue(expiredAccessSession);
+    (prisma as typeof prisma & { $transaction: unknown }).$transaction = async (
+      action: (tx: unknown) => Promise<unknown>,
+    ) => action({
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      portalSession: {
+        findUnique: prisma.portalSession.findUnique,
+        update: prisma.portalSession.update,
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+        status: 503, headers: { "content-type": "application/json" },
+      }),
+    ));
+    const response = await app.inject({
+      method: "GET", url: "/api/auth/me",
+      headers: { cookie: `rp_session=${signedSession}; rp_csrf=csrf-token` },
+    });
+    expect(response.statusCode).toBe(503);
+    expect(prisma.portalSession.updateMany).not.toHaveBeenCalled();
+    const cookies = getSetCookieHeaders(response);
+    expect(cookies.some((cookie) => cookie.startsWith("rp_session=;"))).toBe(false);
+    expect(cookies.some((cookie) => cookie.startsWith("rp_csrf=;"))).toBe(false);
   });
 
   it("clears an invalid signed session cookie instead of leaving the browser stuck", async () => {

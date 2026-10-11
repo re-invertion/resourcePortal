@@ -5,6 +5,7 @@ export type AuthenticatedUser = {
   email: string;
   displayName: string;
   status: UserStatus;
+  authenticatedIdpId?: string | null;
 };
 
 export type AuthenticatedServiceIdentity = {

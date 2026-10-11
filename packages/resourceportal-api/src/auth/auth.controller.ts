@@ -1,5 +1,9 @@
 import {
   BadRequestException,
+  Body,
+  Headers,
+  HttpCode,
+  Optional,
   Controller,
   Get,
   Post,
@@ -28,6 +32,8 @@ import { Public } from "./public.decorator";
 import { AuthenticatedUser } from "./types";
 import { AuthFlowService } from "./auth-flow.service";
 import { AuthSessionService } from "./auth-session.service";
+import { MachineBearerAuth } from "./machine-bearer-auth.decorator";
+import { FederationProofService } from "./federation-proof.service";
 import {
   LoginProvidersQueryDto,
   LoginQueryDto,
@@ -53,6 +59,7 @@ export class AuthController {
     private readonly authFlow: AuthFlowService,
     private readonly sessions: AuthSessionService,
     private readonly config: ConfigService,
+    @Optional() private readonly federationProof?: FederationProofService,
   ) {}
 
   @Public()
@@ -140,6 +147,20 @@ export class AuthController {
       await this.authFlow.createRecoveryRequest(query),
       reply,
     );
+  }
+
+  @Public()
+  @MachineBearerAuth()
+  @Post("federation/attest")
+  @HttpCode(200)
+  async attestFederation(
+    @Headers("authorization") authorization: string | undefined,
+    @Body() body: { nonce?: unknown; providerId?: unknown },
+  ) {
+    if (!this.federationProof) {
+      throw new ServiceUnavailableException("Federation attestation is unavailable");
+    }
+    return this.federationProof.record(authorization, body);
   }
 
   @Public()

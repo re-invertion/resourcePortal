@@ -25,6 +25,7 @@ function volume(overrides: Record<string, unknown> = {}) {
       "rp_vol_22222222_2222_4222_8222_222222222222",
     sizeBytes: 10_000n,
     usedSizeBytes: null,
+    storageProjectId: 12001,
     status: VolumeStatus.Ready,
     createdBy: actor.id,
     updatedBy: actor.id,
@@ -40,6 +41,7 @@ function serviceFor(item = volume()) {
   const prisma = {
     volume: {
       findFirst: vi.fn(() => Promise.resolve(current)),
+      findUnique: vi.fn(() => Promise.resolve(current)),
       findMany: vi.fn(() => Promise.resolve([current])),
       update: vi.fn((params: { data: Record<string, unknown> }) => {
         current = { ...current, ...params.data };
@@ -50,9 +52,18 @@ function serviceFor(item = volume()) {
     quota: {
       findUnique: vi.fn(() => Promise.resolve(null)),
     },
+    $queryRaw: vi.fn(() => Promise.resolve([])),
+    appGroup: { findMany: vi.fn(() => Promise.resolve([])) },
+    operation: { findFirst: vi.fn(() => Promise.resolve(null)) },
+    $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(prisma)),
   };
   const storageBackends = {
     measureUsedSize: vi.fn(() => Promise.resolve(0n)),
+    refreshDefaultBackendForWrite: vi.fn().mockResolvedValue({}),
+    recoverVolumeReservation: vi.fn().mockResolvedValue({
+      backend: { id: "backend-1" }, storagePath: item.storagePath, projectId: item.storageProjectId,
+    }),
+    provisionVolume: vi.fn().mockResolvedValue(undefined),
     deleteVolume: vi.fn(() => Promise.resolve()),
   };
   const service = Reflect.construct(VolumesService, [
@@ -141,5 +152,90 @@ describe("Stage 7 volume lifecycle through Stage 14 backend", () => {
 
     expect(storageBackends.deleteVolume).not.toHaveBeenCalled();
     expect(prisma.volume.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("Volume deletion consistency across draft and deployed state (#254)", () => {
+  const deployedVolumeId = "22222222-2222-4222-8222-222222222222";
+  const currentDeployment = (volumeIds: string[]) => ({
+    currentDeploymentVersion: 1,
+    driftStatus: "InSync",
+    lastObservedAt: new Date("2026-10-10T10:30:00Z"),
+    deployments: [{
+      version: 1, status: "Succeeded",
+      completedAt: new Date("2026-10-10T10:00:00Z"),
+      stackConfig: JSON.stringify({
+        singleApps: [{ volumes: volumeIds.map((volumeId) => ({ volumeId })) }],
+      }),
+    }],
+  });
+
+  it("refuses physical delete when live deployment mounts a volume detached only from the draft", async () => {
+    const item = volume({ attachments: [] });
+    const { service, prisma, storageBackends } = serviceFor(item);
+    prisma.appGroup.findMany.mockResolvedValue([currentDeployment([deployedVolumeId])]);
+    await expect(service.deleteVolume(item.tenantId, item.id, actor)).rejects.toThrow("VolumeInUse");
+    expect(prisma.volume.update).not.toHaveBeenCalled();
+    expect(storageBackends.deleteVolume).not.toHaveBeenCalled();
+  });
+
+  it("prevents deletion if any deployment or rollback operation is queued", async () => {
+    const item = volume();
+    const { service, prisma, storageBackends } = serviceFor(item);
+    prisma.operation.findFirst.mockResolvedValue({ id: "operation-1" } as never);
+    await expect(service.deleteVolume(item.tenantId, item.id, actor)).rejects.toThrow("VolumeInUse");
+    expect(storageBackends.deleteVolume).not.toHaveBeenCalled();
+  });
+
+  it("blocks repeated deletion attempts while a previous delete is in progress", async () => {
+    const item = volume({ status: VolumeStatus.Deleting });
+    const { service, prisma, storageBackends } = serviceFor(item);
+    await expect(service.deleteVolume(item.tenantId, item.id, actor))
+      .rejects.toThrow("VolumeNotReadyForDeletion");
+    expect(prisma.appGroup.findMany).not.toHaveBeenCalled();
+    expect(storageBackends.deleteVolume).not.toHaveBeenCalled();
+  });
+});
+
+describe("volume create replay uses durable operation identity (#266)", () => {
+  const id = "22222222-2222-4222-8222-222222222222";
+  it("returns the already-created Ready volume after worker crash before marking operation succeeded", async () => {
+    const item = volume();
+    const { prisma, storageBackends, service } = serviceFor(item);
+    const result = await service.createVolume(item.tenantId, {
+      name: item.name, sizeBytes: Number(item.sizeBytes),
+    }, actor, id);
+    expect(result.id).toBe(id);
+    expect(prisma.volume.findUnique).toHaveBeenCalledWith({
+      where: { id }, include: { attachments: true },
+    });
+    expect(storageBackends.provisionVolume).not.toHaveBeenCalled();
+  });
+  it("replays a committed Creating reservation with the same storage path and project ID", async () => {
+    const item = volume({ status: VolumeStatus.Creating });
+    const { storageBackends, prisma, service } = serviceFor(item);
+    const result = await service.createVolume(item.tenantId, {
+      name: item.name, sizeBytes: Number(item.sizeBytes),
+    }, actor, id);
+    expect(result.status).toBe(VolumeStatus.Ready);
+    expect(storageBackends.recoverVolumeReservation).toHaveBeenCalledWith(
+      id, item.storagePath, item.storageProjectId,
+    );
+    expect(storageBackends.provisionVolume).toHaveBeenCalledOnce();
+    expect(prisma.volume.update).toHaveBeenCalledWith({
+      where: { id }, data: { status: VolumeStatus.Ready, updatedBy: actor.id },
+      include: { attachments: true },
+    });
+  });
+  it("refuses replay with a different name or size rather than accepting an unrelated volume", async () => {
+    const item = volume();
+    const { service, storageBackends } = serviceFor(item);
+    await expect(service.createVolume(item.tenantId, {
+      name: "other-name", sizeBytes: Number(item.sizeBytes),
+    }, actor, id)).rejects.toThrow("VolumeOperationReplayMismatch");
+    await expect(service.createVolume(item.tenantId, {
+      name: item.name, sizeBytes: Number(item.sizeBytes) + 1,
+    }, actor, id)).rejects.toThrow("VolumeOperationReplayMismatch");
+    expect(storageBackends.provisionVolume).not.toHaveBeenCalled();
   });
 });

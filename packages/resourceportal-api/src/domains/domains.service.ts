@@ -15,6 +15,7 @@ import {
 import crypto from "node:crypto";
 import { resolve4, resolve6, resolveCname, resolveTxt } from "node:dns/promises";
 import { AuthenticatedUser } from "../auth/types";
+import { isDomainPublishable } from "./domain-publication";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 import { PrismaService } from "../prisma/prisma.service";
 import { ManagedDnsService } from "../platform-dns/managed-dns.service";
@@ -339,6 +340,14 @@ export class DomainsService {
     const existing = await this.findDomainOrThrow(tenantId, domainId);
     if (
       existing.type === DomainType.Custom &&
+      dto.httpEndpointId !== null &&
+      (existing.customRootDomain?.verificationStatus !== CustomRootDomainVerificationStatus.Verified ||
+        existing.customRootDomain.tenantId !== tenantId)
+    ) {
+      throw new ConflictException("CustomRootDomainNotVerified");
+    }
+    if (
+      existing.type === DomainType.Custom &&
       existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
     ) {
       await this.requireTenantCloudflare().ensureManagedCustomDomain({
@@ -454,7 +463,14 @@ export class DomainsService {
     if (existing.type === DomainType.Managed) {
       valid = await this.requireManagedDns().managedDomainExists(existing.hostname);
     } else if (
-      existing.customRootDomain?.verificationMethod === "CLOUDFLARE_OAUTH"
+      !existing.customRootDomain ||
+      existing.customRootDomain.tenantId !== tenantId ||
+      !isDomainPublishable({ ...existing, dnsStatus: DnsStatus.Valid }, tenantId)
+    ) {
+      // Legacy custom domains without ownership proof remain unpublishable.
+      valid = false;
+    } else if (
+      existing.customRootDomain.verificationMethod === "CLOUDFLARE_OAUTH"
     ) {
       valid = await this.requireTenantCloudflare().managedCustomDomainExists({
         tenantId,
@@ -508,11 +524,11 @@ export class DomainsService {
       return `${dto.subdomain}.${root.rootDomain}`;
     }
 
-    if (!dto.hostname) {
-      throw new BadRequestException("Custom domain requires hostname");
-    }
-
-    return dto.hostname.toLowerCase();
+    // A matching DNS A/CNAME record only proves routing, not ownership.
+    // All custom hostnames must be derived from a verified tenant root.
+    throw new BadRequestException(
+      "Custom domain requires a verified customRootDomainId and subdomain",
+    );
   }
 
   private managedBaseDomain() {

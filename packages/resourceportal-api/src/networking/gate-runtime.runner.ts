@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { spawnSync } from "node:child_process";
 import { atomicVpnFirewallRestore } from "./atomic-vpn-firewall";
+import { applyVpnFirewallIfChanged, type VpnFirewallRevision } from "./vpn-firewall-revision";
 import {
   firewallRules,
   GATE_DNAT_CHAIN,
@@ -18,6 +19,7 @@ const reconcileMs = Math.max(
     5_000,
 );
 let stopping = false;
+const lastFirewallRevision: VpnFirewallRevision = {};
 
 process.once("SIGTERM", () => {
   stopping = true;
@@ -115,7 +117,9 @@ function reconcileFirewall(runtime: GateRuntimeConfig) {
     snatChain: GATE_SNAT_CHAIN,
     ...rules,
   });
-  run("iptables-restore", ["-w", "5", "--noflush"], false, script);
+  applyVpnFirewallIfChanged(lastFirewallRevision, script, (nextScript) => {
+    run("iptables-restore", ["-w", "5", "--noflush"], false, nextScript);
+  });
   return resolved.size;
 }
 

@@ -117,6 +117,8 @@ describe("StackApplyService timeout boundary", () => {
 
     const resultPromise = service.applyStack({
       stackName: "rp_test",
+      // Skip asynchronous mkdtemp while the timeout test uses fake timers.
+      dockerConfigPath: "/tmp/resourceportal-test-isolated-docker",
       renderedStack,
       artifactSha256: deploymentArtifactSha256(renderedStack),
       appGroupId,
@@ -286,5 +288,40 @@ describe("StackApplyService exact deployment artifact", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("network rp-appgroup-test not found");
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("StackApplyService does not inherit worker Docker credentials (#218)", () => {
+  it("uses a private disposable config even for a public-image deployment", async () => {
+    const { stat } = await import("node:fs/promises");
+    spawnMock.mockReset();
+    spawnMock.mockImplementationOnce(() => dockerProcess("stack updated"));
+    const { service } = fixture();
+    const renderedStack = privateStack();
+    const result = await service.applyStack({
+      stackName: "rp_isolated",
+      renderedStack,
+      artifactSha256: deploymentArtifactSha256(renderedStack),
+      appGroupId,
+    });
+    expect(result.exitCode).toBe(0);
+    const opts = spawnMock.mock.calls[0]?.[2] as { env: { DOCKER_CONFIG: string } };
+    expect(opts.env.DOCKER_CONFIG).toMatch(/resourceportal-docker-deploy-/);
+    await expect(stat(opts.env.DOCKER_CONFIG)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("forwards explicit scoped credential store instead of the inherited Docker config", async () => {
+    spawnMock.mockReset();
+    spawnMock.mockImplementationOnce(() => dockerProcess("stack updated"));
+    const { service } = fixture();
+    const renderedStack = privateStack();
+    await service.applyStack({
+      stackName: "rp_isolated",
+      renderedStack,
+      artifactSha256: deploymentArtifactSha256(renderedStack),
+      appGroupId,
+      dockerConfigPath: "/tmp/auth-for-one-deployment",
+    });
+    const opts = spawnMock.mock.calls[0]?.[2] as { env: { DOCKER_CONFIG: string } };
+    expect(opts.env.DOCKER_CONFIG).toBe("/tmp/auth-for-one-deployment");
   });
 });

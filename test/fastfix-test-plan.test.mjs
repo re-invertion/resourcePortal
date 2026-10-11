@@ -70,6 +70,7 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "networking",
     "platform-admin-ui",
     "platform-release",
+    "volume-safety",
     "web-console",
     "worker",
   ]);
@@ -189,4 +190,87 @@ test("placement-networking fixture must select live VPN dataplane coverage", () 
   assert.ok(plan.profiles.includes("networking"));
   assert.ok(plan.profiles.includes("platform-release"));
   assert.equal(plan.vpnSmoke, true);
+});
+
+
+test("security issue patches cannot skip quota, worker or registry SSRF regressions", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/registries/registry-ping.ts",
+    "packages/resourceportal-api/src/registries/registry-ping.spec.ts",
+    "packages/resourceportal-api/src/app-groups/app-group-manifest.service.ts",
+    "packages/resourceportal-api/src/app-groups/cpu-quota-validation.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
+    "packages/resourceportal-api/src/internal/deployment-cpu-validation.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+
+test("custom-domain ownership changes select deployment and ingress regression coverage", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/domains/domain-publication.ts",
+    "packages/resourceportal-api/src/internal/deployment-domain-ownership.spec.ts",
+    "packages/resourceportal-api/src/internal/ingress-reconciler.service.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["domains"]);
+});
+
+
+test("volume deletion and draft attachment changes cannot skip active-mount regression tests", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/volumes/deployed-volume-reference.ts",
+    "packages/resourceportal-api/src/volumes/volumes.service.ts",
+    "packages/resourceportal-api/src/app-groups/app-groups.service.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["applications", "volume-safety"]);
+});
+
+
+test("per-deployment registry authentication has its own mandatory patch regression gate", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/internal/stack-registry-auth.service.ts",
+    "packages/resourceportal-api/src/internal/stack-apply.service.ts",
+    "packages/resourceportal-api/src/internal/deployment-registry-isolation.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["registry-auth"]);
+});
+
+
+test("local storage adapter permission hardening always selects storage isolation tests", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/storage-backends/local-filesystem-storage-adapter.service.ts",
+    "packages/resourceportal-api/src/storage-backends/local-filesystem-storage-adapter.service.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["storage-isolation"]);
+});
+
+test("cross-cutting issue fix selects strict billing/recovery/storage/volume/web profiles", () => {
+  const paths = [
+    "packages/resourceportal-api/src/billing/billing-worker.service.ts",
+    "packages/resourceportal-api/src/billing/billing-preflight.guard.spec.ts",
+    "packages/resourceportal-api/src/disaster-recovery/runtime-restore.service.ts",
+    "packages/resourceportal-api/src/internal/runtime-drift-reconciler.pagination.spec.ts",
+    "packages/resourceportal-api/src/storage-backends/shared-nfs-probe.ts",
+    "packages/resourceportal-api/src/internal/stack-volume-provisioner.service.ts",
+    "packages/resourceportal-api/src/operations/executors/volume-operation.executors.ts",
+    "packages/resourceportal-api/src/volumes/volume-usage-reconciler.service.spec.ts",
+    "packages/resourceportal-web/src/hooks/use-api.test.tsx",
+    "packages/resourceportal-web/src/pages/volume-operation-tracker.ts",
+    "packages/resourceportal-web/src/pages/app-group/app-edit.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant-resources.tsx",
+  ];
+  const result = selectProfiles(paths);
+  assert.deepEqual(result.profiles, [
+    "billing-correctness", "cross-node-storage", "reactive-web-state",
+    "recovery-safety", "volume-operations",
+  ]);
+  assert.equal(result.changedPaths.length, paths.length);
+});
+
+test("unclassified changes still fail closed despite cross-cutting profiles", () => {
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/unknown-risk-module/untested.ts"]),
+    /Fastfix has unclassified changes/,
+  );
 });

@@ -28,6 +28,7 @@ import {
 import crypto from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { lockTenantQuota } from "../tenants/quota-concurrency";
 import { mirrorDeploymentOperation } from "../operations/deployment-operation-adapter.service";
 import { createOperationWithClient } from "../operations/operations.repository";
 import { RegistriesService } from "../registries/registries.service";
@@ -1865,6 +1866,16 @@ export class AppGroupsService {
 
     try {
       const attachment = await this.prisma.$transaction(async (tx) => {
+        // Serialize with volume deletion. A prior read of a Ready volume is
+        // not sufficient: its status may change before the draft insert.
+        await lockTenantQuota(tx, tenantId);
+        const volume = await tx.volume.findFirst({
+          where: { id: dto.volumeId, tenantId },
+          select: { status: true },
+        });
+        if (!volume || volume.status !== "Ready") {
+          throw new ConflictException("VolumeNotReadyForAttachment");
+        }
         const created = await tx.volumeAttachment.create({
           data: {
             volumeId: dto.volumeId,

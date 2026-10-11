@@ -25,6 +25,9 @@ const allowedRawSqlFiles = new Set([
   "billing/billing.service.ts",
   // Platform capacity snapshot + advisory mutation lock.
   "capacity/capacity-preflight.service.ts",
+  // PostgreSQL transaction-scoped advisory lock serializes refresh-token rotation
+  // across API replicas; parameter is safely bound via Prisma.sql.
+  "auth/auth-session.service.ts",
   // Minimal SELECT 1 readiness probe.
   "health/health.controller.ts",
   // Atomic mirrored Operation + OperationEvent creation in caller transaction.

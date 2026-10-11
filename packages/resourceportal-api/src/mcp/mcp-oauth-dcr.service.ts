@@ -32,6 +32,7 @@ export class McpOAuthDcrService {
   constructor(private readonly config: ConfigService) {}
 
   async register(metadata: unknown, authorization?: string): Promise<DcrResult> {
+    const deadline = Date.now() + 30_000;
     const response = await fetch(`${this.internalUrl()}/oauth/v2/register`, {
       signal: AbortSignal.timeout(10_000),
       method: "POST",
@@ -43,7 +44,7 @@ export class McpOAuthDcrService {
       },
       body: JSON.stringify(metadata ?? {}),
     });
-    const body = await response.text();
+    const body = await boundedDcrResponseText(response);
     const contentType = response.headers.get("content-type") ?? "application/json";
 
     if (response.status !== 201) {
@@ -52,7 +53,7 @@ export class McpOAuthDcrService {
 
     const registration = this.parseRegistration(body);
     try {
-      await this.forceJwtAccessToken(registration.client_id);
+      await this.forceJwtAccessToken(registration.client_id, deadline);
     } catch (error) {
       await this.rollbackRegistration(registration).catch(() => undefined);
       throw error;
@@ -74,9 +75,9 @@ export class McpOAuthDcrService {
     return registration as DcrRegistrationResponse & { client_id: string };
   }
 
-  private async forceJwtAccessToken(clientId: string) {
-    const projectId = await this.findDcrProjectId();
-    const app = await this.findDcrApp(projectId, clientId);
+  private async forceJwtAccessToken(clientId: string, deadline: number) {
+    const projectId = await this.findDcrProjectId(deadline);
+    const app = await this.findDcrApp(projectId, clientId, deadline);
     const responseTypes = app.oidcConfig?.responseTypes;
     const grantTypes = app.oidcConfig?.grantTypes;
     if (!responseTypes?.length || !grantTypes?.length) {
@@ -97,15 +98,18 @@ export class McpOAuthDcrService {
         },
       },
       { "connect-protocol-version": "1" },
+      deadline,
     );
   }
 
-  private async findDcrProjectId() {
+  private async findDcrProjectId(deadline: number) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const projects = await this.managementRequest<ProjectSearchResponse>(
         "POST",
         "/management/v1/projects/_search",
         {},
+        {},
+        deadline,
       );
       const project = projects.result?.find((candidate) => candidate.name === "ZITADEL DCR");
       if (project?.id) return project.id;
@@ -114,12 +118,14 @@ export class McpOAuthDcrService {
     throw new BadGatewayException("ZITADEL DCR project was not visible after registration");
   }
 
-  private async findDcrApp(projectId: string, clientId: string) {
+  private async findDcrApp(projectId: string, clientId: string, deadline: number) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const apps = await this.managementRequest<AppSearchResponse>(
         "POST",
         `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
         {},
+        {},
+        deadline,
       );
       const app = apps.result?.find((candidate) => candidate.oidcConfig?.clientId === clientId);
       if (app?.id) return app as typeof app & { id: string };
@@ -133,9 +139,12 @@ export class McpOAuthDcrService {
     path: string,
     body: Record<string, unknown>,
     extraHeaders: Record<string, string> = {},
+    deadline = Date.now() + 30_000,
   ): Promise<T> {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new BadGatewayException("ZITADEL DCR registration exceeded deadline");
     const response = await fetch(`${this.internalUrl()}${path}`, {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remainingMs))),
       method,
       headers: {
         authorization: `Bearer ${this.managementToken()}`,
@@ -146,7 +155,7 @@ export class McpOAuthDcrService {
       },
       body: JSON.stringify(body),
     });
-    const text = await response.text();
+    const text = await boundedDcrResponseText(response);
     if (!response.ok) {
       throw new BadGatewayException(
         `ZITADEL DCR compatibility update failed with HTTP ${response.status}`,
@@ -198,4 +207,37 @@ export class McpOAuthDcrService {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/** Limit successful and unsuccessful Zitadel response bodies before buffering. */
+async function boundedDcrResponseText(response: Response): Promise<string> {
+  const maxBytes = 1_048_576;
+  const expectedSize = Number(response.headers.get("content-length") ?? 0);
+  if (Number.isFinite(expectedSize) && expectedSize > maxBytes) {
+    throw new BadGatewayException("ZITADEL DCR response exceeded size limit");
+  }
+  if (!response.body) return "";
+  const reader: ReadableStreamDefaultReader<Uint8Array> = (response.body as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new BadGatewayException("ZITADEL DCR response exceeded size limit");
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(bytes);
+  } finally {
+    reader.releaseLock();
+  }
 }

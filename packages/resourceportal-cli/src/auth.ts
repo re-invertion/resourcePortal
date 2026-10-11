@@ -149,6 +149,12 @@ export async function resolveAuth(
   }
 
   const config = readConfig();
+  // Explicit environment credentials are intentional overrides; credentials saved by
+  // `rp login` must never be sent to a different API endpoint via --api-url.
+  if ((config.token || config.devUserId) &&
+      (!config.apiUrl || normalizeApiUrl(config.apiUrl) !== normalizeApiUrl(apiUrl))) {
+    throw new Error("Stored credentials belong to another API URL. Run rp login for this API URL.");
+  }
   if (config.devUserId) {
     return { devUserId: config.devUserId };
   }

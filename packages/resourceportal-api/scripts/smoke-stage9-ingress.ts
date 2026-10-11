@@ -107,38 +107,46 @@ async function main() {
     },
   );
   const endpointId = stringField(endpoint, "id");
-  const hostname = `stage9-${suffix}.example.test`;
+  const customRoot = await api<JsonObject>(
+    `/tenants/${tenantId}/domains/custom-root-domains`,
+    {
+      method: "POST",
+      userId,
+      body: { rootDomain: "example.test" },
+    },
+  );
+  const customRootDomainId = stringField(customRoot, "id");
 
-  // Stage 9 validates Traefik ingress behavior and must not depend on an
-  // external Cloudflare account. Managed domains are intentionally disabled
-  // until Platform Admin configures Cloudflare, so use the existing custom
-  // domain flow and validate it before deployment.
+  // .test names are intentionally non-resolvable. Mark the root verified
+  // exclusively in the disposable CI fixture DB, never in the application
+  // service. The domain itself is still created via normal tenant API.
+  await prisma.customRootDomain.update({
+    where: { id: customRootDomainId },
+    data: { verificationStatus: "Verified", verifiedAt: new Date() },
+  });
+  const subdomain = `stage9-${suffix}`;
+  const hostname = `${subdomain}.example.test`;
   const domain = await api<JsonObject>(`/tenants/${tenantId}/domains`, {
     method: "POST",
     userId,
     body: {
       type: "Custom",
-      hostname,
+      customRootDomainId,
+      subdomain,
       httpEndpointId: endpointId,
       tlsEnabled: false,
     },
   });
   const domainId = stringField(domain, "id");
+  if (domain.hostname !== hostname) {
+    throw new Error("Custom domain hostname did not come from the verified root");
+  }
   if (domain.tlsEnabled !== true) {
     throw new Error("HTTPS endpoint must force domain tlsEnabled=true");
   }
 
-  const verifyOperation = await api<JsonObject>(
-    `/tenants/${tenantId}/domains/${domainId}/validate`,
-    { method: "POST", userId },
-  );
-  await runOperationToTerminal(
-    stringField(verifyOperation, "id"),
-    "Succeeded",
-  );
-
-  // The synthetic .example.test hostname cannot resolve to the CI ingress.
-  // Seed verified DNS only for this isolated real-Swarm ingress smoke fixture.
+  // Real DNS validation is out of scope for the synthetic .test hostname.
+  // Seed only its resulting status within the ephemeral Swarm smoke fixture.
   await prisma.domain.update({
     where: { id: domainId },
     data: { dnsStatus: "Valid" },

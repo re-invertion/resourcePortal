@@ -305,7 +305,7 @@ function parseApps(value: unknown, errors: ManifestIssue[]): AppGroupManifest["s
 
     const resources = objectValue(row.resources, `${path}.resources`, errors, true);
     if (resources) rejectUnknown(resources, ["cpu", "memoryBytes", "gpu"], `${path}.resources`, errors);
-    const cpu = numberValue(resources?.cpu, `${path}.resources.cpu`, errors, 0, 128);
+    const cpu = numberValue(resources?.cpu, `${path}.resources.cpu`, errors, 0.01, 128);
     const memoryBytes = integerValue(resources?.memoryBytes, `${path}.resources.memoryBytes`, errors, 134217728);
     const gpu = integerValue(resources?.gpu ?? 0, `${path}.resources.gpu`, errors, 0, 0);
 

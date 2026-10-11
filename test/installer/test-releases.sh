@@ -48,7 +48,23 @@ busybox_mktemp_templates_valid() {
   done < <(find "$repo_root/scripts/installer" -name '*.sh' -type f)
 }
 status 0 'installer mktemp templates support Alpine BusyBox' busybox_mktemp_templates_valid
-status 0 'upgrade preflight can create a runtime temporary file' rp_upgrade_check_temporary_files
+upgrade_test_state="$(mktemp -d /tmp/rp-upgrade-preflight.XXXXXX)"
+export RP_UPGRADE_STATE_DIR="$upgrade_test_state/checkpoint"
+status 0 'upgrade preflight can create both temporary and checkpoint files' rp_upgrade_check_temporary_files
+
+upgrade_checkpoint_failure() (
+  mktemp() {
+    if [[ "${1:-}" == *'/.rp-preflight.XXXXXX' ]]; then
+      printf 'simulated checkpoint mktemp failure\n' >&2
+      return 1
+    fi
+    command mktemp "$@"
+  }
+  rp_upgrade_check_temporary_files
+)
+status 1 'upgrade preflight fails closed when checkpoint mktemp fails' upgrade_checkpoint_failure
+rm -rf -- "$upgrade_test_state"
+unset RP_UPGRADE_STATE_DIR
 recovery_source="$(cat "$repo_root/scripts/upgrade-recovery-from-0.2.68.sh")"
 contains "$recovery_source" 'docker pull "$image"' 'legacy recovery pulls target immutable API image'
 contains "$recovery_source" '"$image" /bin/bash /app/resourceportal-installer/resourceportal-install.sh' 'legacy recovery boots fixed target installer, never installed v0.2.68 image'
@@ -68,6 +84,45 @@ upgrade_temp_fail_closed() (
 status 1 'upgrade aborts before changing running services if mktemp fails' upgrade_temp_fail_closed
 
 status 0 'valid release manifest accepted' rp_validate_release_manifest "$manifest"
+# Simulated verifier: the production upgrade must fail closed without a
+# cryptographically valid GitHub workflow attestation before it stops services.
+provenance_args="$(mktemp /tmp/rp-attestation-flags.XXXXXX)"
+test_bundle="$(mktemp /tmp/rp-attestation-bundle.XXXXXX)"
+printf '%s\n' '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}' >"$test_bundle"
+export RP_RELEASE_ATTESTATION_BUNDLE="$test_bundle"
+gh() {
+  printf '%s\n' "$*" > "$provenance_args"
+  return "${MOCK_ATTEST_EXIT:-1}"
+}
+export MOCK_ATTEST_EXIT=1
+status 1 'unsigned manifest is rejected before applying release' rp_verify_release_manifest_attestation "$manifest"
+export MOCK_ATTEST_EXIT=0
+status 0 'trusted GitHub attestation is required for upgrade' rp_verify_release_manifest_attestation "$manifest"
+contains "$(cat "$provenance_args")" "--bundle $test_bundle" 'updater verifies local attestation bundle without GitHub API authentication'
+contains "$(cat "$provenance_args")" '--signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml' 'provenance pins official release workflow'
+contains "$(cat "$provenance_args")" '--source-ref refs/heads/main' 'provenance pins main source ref'
+unset -f gh
+unset MOCK_ATTEST_EXIT
+rm -f "$provenance_args"
+preflight_marker="$(mktemp /tmp/rp-preflight-invoked.XXXXXX)"
+rm -f "$preflight_marker"
+untrusted_preflight() (
+  gh() { return 1; }
+  rp_upgrade_check_temporary_files() { printf 'called' >"$preflight_marker"; }
+  rp_upgrade_preflight "$manifest" '0.1.0' '0.1.0' '28.0.0'
+)
+status 1 'unsigned manifest aborts full upgrade preflight' untrusted_preflight
+if [[ ! -e "$preflight_marker" ]]; then pass 'unsigned manifest aborts before checkpoint mutation'; else fail 'unsigned manifest preflight advanced'; fi
+rm -f "$preflight_marker"
+unset RP_RELEASE_ATTESTATION_BUNDLE
+rm -f "$test_bundle"
+untrusted_release_manifest="$(mktemp /tmp/rp-untrusted-release.XXXXXX)"
+jq '.images.api = "ghcr.io/untrusted/other-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$manifest" >"$untrusted_release_manifest"
+status 1 'manifest rejects otherwise valid digest from untrusted API repository' rp_validate_release_manifest "$untrusted_release_manifest"
+jq '.images.api = "ghcr.io/re-invertion/resourceportal-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" |
+    .images.web = "ghcr.io/untrusted/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$manifest" >"$untrusted_release_manifest"
+status 1 'manifest rejects otherwise valid digest from untrusted Web repository' rp_validate_release_manifest "$untrusted_release_manifest"
+rm -f -- "$untrusted_release_manifest"
 eq '0.2.0' "$(rp_manifest_value "$manifest" '.version')" 'reads release version'
 
 pull_release_images_reuses_local_digest() (
@@ -517,6 +572,13 @@ unset -f rp_download_release_manifest
 rm -f "$refresh_manifest"
 
 release_workflow="$(cat "$repo_root/.github/workflows/release.yml")"
+contains "$release_workflow" 'uses: actions/attest@v4' 'release workflow signs manifest with GitHub OIDC'
+contains "$release_workflow" 'resourceportal-release-manifest.bundle.json' 'release bundles signed manifest for unauthenticated updater'
+contains "$release_workflow" 'id-token: write' 'workflow can request ephemeral signing certificate'
+contains "$release_workflow" 'attestations: write' 'workflow can publish signed provenance'
+contains "$release_workflow" 'artifact-metadata: write' 'workflow can publish the attested artifact record'
+contains "$release_workflow" '--source-ref refs/heads/main' 'release job self-verifies main provenance'
+contains "$(cat "$repo_root/Dockerfile")" 'github-cli' 'privileged updater includes attestation verifier'
 contains "$release_workflow" 'traefik:v3.6.16' 'release pins Docker-29-compatible Traefik'
 not_contains "$release_workflow" 'traefik:v3.5' 'release no longer pins incompatible Traefik 3.5'
 

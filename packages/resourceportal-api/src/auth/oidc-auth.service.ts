@@ -1,4 +1,5 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Optional, UnauthorizedException } from "@nestjs/common";
+import { FederationProofService } from "./federation-proof.service";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import type { JWTPayload, JWTVerifyOptions } from "jose";
@@ -53,6 +54,7 @@ export class OidcAuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly federationProof?: FederationProofService,
   ) {}
 
   async authenticateBearerToken(
@@ -67,10 +69,37 @@ export class OidcAuthService {
     idToken: string,
     accessToken: string,
     identityProviderId?: string,
+    loginNonce?: string,
   ): Promise<AuthenticatedUser> {
     const idTokenClaims = await this.verifyToken(idToken);
+    let authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
+    if (identityProviderId) {
+      const selected = await this.prisma.identityProvider.findUnique({
+        where: { id: identityProviderId },
+        select: { enabled: true, zitadelIdentityProviderId: true },
+      });
+      if (!selected?.enabled || !selected.zitadelIdentityProviderId) {
+        throw new UnauthorizedException("Selected external identity provider was not verified");
+      }
+      if (!authenticatedIdpId) {
+        // The ZITADEL External Authentication action attests the *actual*
+        // provider through a shared-secret server-to-server call. RP's
+        // freshly generated OAuth state binds that evidence to this callback.
+        // It is atomically consumed and cannot be a browser-provided assertion.
+        const verified = loginNonce && await this.federationProof?.consume(
+          loginNonce, selected.zitadelIdentityProviderId,
+        );
+        if (!verified) {
+          throw new UnauthorizedException("Selected external identity provider was not verified");
+        }
+        authenticatedIdpId = selected.zitadelIdentityProviderId;
+      } else if (authenticatedIdpId !== selected.zitadelIdentityProviderId) {
+        throw new UnauthorizedException("Selected external identity provider was not verified");
+      }
+    }
     const humanClaims = await this.resolveHumanClaims(accessToken, idTokenClaims);
-    return this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
+    const user = await this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
+    return { ...user, authenticatedIdpId };
   }
 
   async authenticateMcpPrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
@@ -104,7 +133,10 @@ export class OidcAuthService {
     const humanClaims = await this.resolveHumanClaims(token, payload);
     return {
       type: "User",
-      user: await this.findOrProvisionUser(this.getIssuer(), humanClaims),
+      user: {
+        ...await this.findOrProvisionUser(this.getIssuer(), humanClaims),
+        authenticatedIdpId: this.verifiedAuthenticationIdpId(payload),
+      },
     };
   }
 
@@ -118,6 +150,19 @@ export class OidcAuthService {
 
     const subject = this.requireStringClaim(payload.sub, "sub");
     return this.fetchUserInfo(token, subject);
+  }
+
+  /**
+   * Only a signed, issuer-verified token claim produced by the Zitadel login
+   * action may establish the IdP used for THIS authentication event. Never
+   * infer it from an account's historical linked identities, request params,
+   * UserInfo, or the login selection cookie.
+   */
+  private verifiedAuthenticationIdpId(payload: JWTPayload): string | null {
+    const claim = payload["urn:resourceportal:auth:external_idp_id"];
+    return typeof claim === "string" && /^[a-zA-Z0-9_-]{1,256}$/.test(claim)
+      ? claim
+      : null;
   }
 
   private async fetchUserInfo(

@@ -141,7 +141,9 @@ describe("NfsRemoteAccessValidatorService", () => {
         key === "STORAGE_REMOTE_VALIDATION_ENABLED" ? "false" : fallback,
       ),
     };
-    const runner = { run: vi.fn() };
+    const runner = { run: vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "node-a|Ready", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "true|true", stderr: "" }) };
     const validator = new NfsRemoteAccessValidatorService(
       config as unknown as ConfigService,
       runner as unknown as StorageCommandRunnerService,
@@ -152,8 +154,30 @@ describe("NfsRemoteAccessValidatorService", () => {
     ).resolves.toEqual({
       ok: true,
       skipped: true,
-      error: "Remote storage validation disabled by configuration",
+      error: "Single-node storage validation explicitly disabled",
     });
-    expect(runner.run).not.toHaveBeenCalled();
+    expect(runner.run).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("multi-node storage validation cannot be disabled (#228)", () => {
+  it("fails closed if someone disables cross-node checks on two eligible nodes", async () => {
+    const config = { get: vi.fn((key: string, fallback?: unknown) =>
+      key === "STORAGE_REMOTE_VALIDATION_ENABLED" ? "false" : fallback) };
+    const responses = [
+      { exitCode: 0, stdout: "a|Ready\nb|Ready", stderr: "" },
+      { exitCode: 0, stdout: "true|true", stderr: "" },
+      { exitCode: 0, stdout: "true|true", stderr: "" },
+    ];
+    const runner = { run: vi.fn().mockImplementation(() => Promise.resolve(responses.shift())) };
+    const validator = new NfsRemoteAccessValidatorService(
+      config as unknown as ConfigService,
+      runner as unknown as StorageCommandRunnerService,
+    );
+    await expect(validator.validate("/srv/storage")).resolves.toEqual({
+      ok: false, skipped: false,
+      error: "Cross-node NFS validation cannot be disabled for multi-node storage",
+    });
+    expect(runner.run).toHaveBeenCalledTimes(3);
   });
 });

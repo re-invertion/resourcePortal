@@ -50,7 +50,7 @@ export class BillingPreflightGuard implements CanActivate {
       (route.endsWith("/:appGroupId/single-apps") ||
         route.endsWith("/:appGroupId/runtime/start") ||
         route.endsWith("/:appGroupId/single-apps/:singleAppId/runtime/start") ||
-        route === "/tenants/:tenantId/volumes")
+        route.endsWith("/tenants/:tenantId/volumes"))
     ) {
       await this.billing.assertActivePriceList();
       return true;
@@ -84,7 +84,7 @@ export class BillingPreflightGuard implements CanActivate {
 
     if (
       method === "PATCH" &&
-      route === "/tenants/:tenantId/volumes/:volumeId/resize" &&
+      route.endsWith("/tenants/:tenantId/volumes/:volumeId/resize") &&
       params.volumeId
     ) {
       const existing = await this.prisma.volume.findFirst({

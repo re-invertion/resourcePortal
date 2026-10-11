@@ -1,5 +1,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isZitadelNoChangesResponse } from "./zitadel-api-response";
+import { deriveFederationAttestationSecret } from "../src/auth/federation-attestation-secret";
+import { buildFederationActionScript } from "../src/auth/federation-action-script";
 import {
   bootstrapWebOidcConfig,
   selectBootstrapWebOidcApp,
@@ -107,6 +109,11 @@ async function main() {
   }
   if (mcpOauthOnlyBootstrap) {
     await configureMcpDynamicClientRegistration(pat);
+    if (productionBootstrap) {
+      await reconcileFederationAttestationAction(
+        pat, process.env.ZITADEL_ORGANIZATION_ID?.trim(),
+      );
+    }
     console.log("ZITADEL MCP OAuth reconciliation completed");
     return;
   }
@@ -119,6 +126,9 @@ async function main() {
     await configureMcpDynamicClientRegistration(pat);
   }
   const organization = await getOrCreateOrganization(pat);
+  if (productionBootstrap) {
+    await reconcileFederationAttestationAction(pat, organization.id);
+  }
   const project = await getOrCreateProject(pat, organization.id);
   const app = await getOrCreateOidcApp(pat, organization.id, project.id);
   const cliApp = await getOrCreateCliOidcApp(pat, organization.id, project.id);
@@ -724,6 +734,61 @@ async function zitadelApi<T>(
   }
 
   return payload as T;
+}
+
+async function reconcileFederationAttestationAction(pat: string, orgId?: string) {
+  const keyFile = process.env.FEDERATION_ATTESTATION_MASTER_FILE?.trim();
+  const callback = process.env.FEDERATION_ATTESTATION_CALLBACK_URL?.trim();
+  if (!keyFile || !callback) {
+    throw new Error("Production federation attestation requires secret and internal callback");
+  }
+  const secret = deriveFederationAttestationSecret(readFileSync(keyFile));
+  const payload = {
+    name: "rpFederationAttest",
+    script: buildFederationActionScript(callback, secret),
+    timeout: "10s",
+    allowedToFail: false,
+  };
+  const candidates = await zitadelApi<{ result?: Array<{ id: string; name: string }> }>(
+    pat, "/management/v1/actions/_search", { query: { limit: 100 } }, orgId,
+  );
+  const existing = candidates.result?.find((action) => action.name === payload.name);
+  const actionId = existing?.id ??
+    (await zitadelApi<{ id: string }>(
+      pat, "/management/v1/actions", payload, orgId,
+    )).id;
+  if (!actionId) throw new Error("ZITADEL returned no federation Action id");
+  if (existing) {
+    await zitadelApi(pat, `/management/v1/actions/${actionId}`, payload, orgId, "PUT");
+  }
+  // The SetTriggerActions endpoint replaces the entire trigger action list.
+  // Preserve other customer-defined actions when reconciling RP's Action.
+  const flowHeaders: Record<string, string> = {
+    authorization: `Bearer ${pat}`,
+    ...zitadelHostHeaders(),
+    ...(orgId ? { "x-zitadel-orgid": orgId } : {}),
+  };
+  const flowResponse = await fetch(`${issuerUrl}/management/v1/flows/1`, {
+    headers: flowHeaders, signal: AbortSignal.timeout(10_000),
+  });
+  let ids: string[] = [];
+  if (flowResponse.ok) {
+    const flow = (await flowResponse.json()) as {
+      flow?: { triggerActions?: Array<{
+        triggerType?: { id?: string };
+        actions?: Array<{ id: string }>;
+      }> };
+    };
+    ids = flow.flow?.triggerActions
+      ?.filter(trigger => trigger.triggerType?.id === "1")
+      .flatMap(trigger => trigger.actions?.map(action => action.id) ?? []) ?? [];
+  } else if (flowResponse.status !== 404) {
+    throw new Error(`ZITADEL GetFlow failed with HTTP ${flowResponse.status}`);
+  }
+  const next = [...new Set([...ids, actionId])];
+  await zitadelApi(pat, "/management/v1/flows/1/trigger/1",
+    { actionIds: next }, orgId);
+  console.log("ZITADEL federation login attestation Action reconciled");
 }
 
 async function zitadelAssetApi(

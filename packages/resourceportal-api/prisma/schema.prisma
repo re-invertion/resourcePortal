@@ -204,6 +204,7 @@ model PortalSession {
   accessToken          String
   refreshToken         String
   idToken              String
+  authenticatedIdpId   String?
   accessTokenExpiresAt DateTime
   lastSeenAt           DateTime  @default(now())
   expiresAt            DateTime
@@ -1485,4 +1486,15 @@ model BugReport {
   @@index([priority, createdAt])
   @@index([resolvedAt, createdAt])
   @@index([reportedById, createdAt])
+}
+
+// Short-lived, one-time evidence sent by ZITADEL's post-external-authentication
+// action, correlated to RP's random OIDC state. Not derived from UserIdentity.
+model FederationLoginProof {
+  nonce       String    @id @db.VarChar(64)
+  providerId  String    @db.VarChar(256)
+  createdAt   DateTime  @default(now())
+  consumedAt  DateTime?
+
+  @@index([createdAt])
 }

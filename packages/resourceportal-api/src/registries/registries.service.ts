@@ -16,6 +16,7 @@ import { EncryptionService } from "../security/encryption.service";
 import { CreateRegistryDto } from "./dto/create-registry.dto";
 import { UpdateRegistryDto } from "./dto/update-registry.dto";
 import { getDockerImageHost } from "./docker-image";
+import { pingRegistry } from "./registry-ping";
 import { mapRegistry } from "./registries.view";
 
 @Injectable()
@@ -180,14 +181,13 @@ export class RegistriesService {
 
     const validatedAt = new Date();
     try {
-      const response = await fetch(this.registryPingUrl(registry), {
-        method: "GET",
-        headers: this.registryValidationHeaders(registry),
-        signal: AbortSignal.timeout(10_000),
-      });
+      const status = await pingRegistry(
+        this.registryPingUrl(registry),
+        this.registryValidationHeaders(registry),
+      );
 
-      if (!response.ok) {
-        const message = `Registry /v2/ validation returned HTTP ${response.status}`;
+      if (status < 200 || status >= 300) {
+        const message = `Registry /v2/ validation returned HTTP ${status}`;
         const updated = await this.prisma.registry.update({
           where: { id: registryId },
           data: {

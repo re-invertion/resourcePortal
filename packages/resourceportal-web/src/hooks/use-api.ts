@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 
 export function items<T = Record<string, unknown>>(value: unknown): T[] {
@@ -11,9 +11,53 @@ export function items<T = Record<string, unknown>>(value: unknown): T[] {
 }
 
 export function useApi<T>(path: string | undefined, initial?: T) {
-  const [data, setData] = useState<T | undefined>(initial); const [loading, setLoading] = useState(Boolean(path)); const [error, setError] = useState<unknown>();
-  const reload = useCallback(async () => { if (!path) return; setLoading(true); setError(undefined); try { setData(await apiRequest<T>(path)); } catch (cause) { setError(cause); } finally { setLoading(false); } }, [path]);
-  useEffect(() => { void reload(); }, [reload]);
+  const [data, setData] = useState<T | undefined>(initial);
+  const [loading, setLoading] = useState(Boolean(path));
+  const [error, setError] = useState<unknown>();
+  const requestSequence = useRef(0);
+  const pathRef = useRef(path);
+  const previouslyLoadedPath = useRef(path);
+  // A stale promise must not mutate data even after the caller changes the
+  // path, before the effect for the new path has had a chance to run.
+  pathRef.current = path;
+
+  const reload = useCallback(async () => {
+    const sequence = ++requestSequence.current;
+    if (!path) {
+      setData(undefined);
+      setLoading(false);
+      setError(undefined);
+      return;
+    }
+    setLoading(true);
+    setError(undefined);
+    try {
+      const value = await apiRequest<T>(path);
+      if (sequence === requestSequence.current && pathRef.current === path) {
+        setData(value);
+      }
+    } catch (cause) {
+      if (sequence === requestSequence.current && pathRef.current === path) {
+        setError(cause);
+      }
+    } finally {
+      if (sequence === requestSequence.current && pathRef.current === path) {
+        setLoading(false);
+      }
+    }
+  }, [path]);
+
+  useEffect(() => {
+    // Avoid displaying a previous tenant/resource's data while loading another
+    // path; ignore responses arriving after cleanup/unmount.
+    if (previouslyLoadedPath.current !== path) {
+      previouslyLoadedPath.current = path;
+      setData(undefined);
+    }
+    void reload();
+    return () => { requestSequence.current += 1; };
+  }, [reload, path]);
+
   return { data, setData, loading, error, reload };
 }
 

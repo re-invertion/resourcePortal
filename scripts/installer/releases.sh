@@ -68,6 +68,47 @@ rp_validate_release_manifest() {
   done
 }
 
+# The manifest is an executable upgrade instruction for a privileged Docker-socket
+# updater. A digest and the repository URL alone cannot establish authorization.
+# Sigstore/GitHub verifies the bytes, the release-workflow identity, and main ref.
+# Unavailable verifier, missing attestation or invalid signature fail closed.
+rp_verify_release_manifest_attestation() (
+  local manifest="$1" version bundle tmp_dir url
+  rp_validate_release_manifest "$manifest" || exit 1
+  command -v gh >/dev/null 2>&1 || {
+    printf 'Release provenance verification requires GitHub CLI.\n' >&2
+    exit 1
+  }
+  version="$(jq -er '.version' "$manifest")" || exit 1
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+
+  # The updater has no GH_TOKEN by design. The official release publishes the
+  # signed Sigstore bundle as an immutable asset for API-free verification.
+  bundle="${RP_RELEASE_ATTESTATION_BUNDLE:-}"
+  if [[ -z "$bundle" ]]; then
+    tmp_dir="$(mktemp -d /tmp/resourceportal-release-proof.XXXXXX)" || exit 1
+    trap 'rm -rf -- "$tmp_dir"' EXIT
+    bundle="$tmp_dir/resourceportal-release-manifest.bundle.json"
+    url="https://github.com/re-invertion/resourcePortal/releases/download/v${version}/resourceportal-release-manifest.bundle.json"
+    curl --fail --silent --show-error --location --proto '=https' "$url" -o "$bundle" || {
+      printf 'Unable to fetch official release attestation bundle.\n' >&2
+      exit 1
+    }
+  fi
+  [[ -f "$bundle" && -s "$bundle" ]] || {
+    printf 'Signed release attestation bundle is missing.\n' >&2
+    exit 1
+  }
+  GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh attestation verify "$manifest" \
+    --bundle "$bundle" \
+    --repo re-invertion/resourcePortal \
+    --signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml \
+    --source-ref refs/heads/main >/dev/null || {
+      printf 'Release manifest has no valid official signed provenance.\n' >&2
+      exit 1
+    }
+)
+
 rp_release_install_compatible() {
   local manifest="$1" installer_version="$2" docker_version="$3" minimum_installer minimum_docker
   rp_validate_release_manifest "$manifest" || return 1

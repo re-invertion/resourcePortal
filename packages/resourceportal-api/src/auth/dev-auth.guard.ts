@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   Injectable,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -129,7 +130,12 @@ export class DevAuthGuard implements CanActivate {
         request.user = await this.sessions.authenticateSession(sessionId);
         return true;
       } catch (error) {
-        await this.sessions.invalidateRequestSession(request, reply);
+        // Provider outages, rate limits and interrupted refreshes do not
+        // invalidate otherwise legitimate browser sessions. Keep the cookie
+        // so the next request may safely retry the refresh.
+        if (!(error instanceof ServiceUnavailableException)) {
+          await this.sessions.invalidateRequestSession(request, reply);
+        }
         throw error;
       }
     }

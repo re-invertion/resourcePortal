@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
-import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, NumberInput, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
+import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
 import { AccessTabs } from "../components/tenant-section-tabs";
 import { formatBytes, formatDate, idOf, items, text, useApi } from "../hooks/use-api";
@@ -98,34 +98,8 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
     return `${root}/billing/usage-series?${params.toString()}`;
   },[root,usageRange]);
   const usage=useApi<unknown>(usagePath);
-  const [quotaForm,setQuotaForm]=useState({cpu:0,memoryBytes:0,gpu:0,storageBytes:0,maxSingleApps:0,maxVolumes:0});
   const [voucherCode,setVoucherCode]=useState("");
   const [working,setWorking]=useState<string>();
-
-  useEffect(()=>{
-    if(!quota.data)return;
-    setQuotaForm({
-      cpu:Number(quota.data.cpu??0),
-      memoryBytes:Number(quota.data.memoryBytes??0),
-      gpu:Number(quota.data.gpu??0),
-      storageBytes:Number(quota.data.storageBytes??0),
-      maxSingleApps:Number(quota.data.maxSingleApps??0),
-      maxVolumes:Number(quota.data.maxVolumes??0),
-    });
-  },[quota.data]);
-
-  async function saveQuota(){
-    setWorking("quota");
-    try{
-      await apiRequest(`${root}/quota`,{method:"PATCH",body:quotaForm});
-      await quota.reload();
-      toast.success("Quota saved.");
-    }catch(c){
-      toast.errorFrom(c,"Quota could not be saved.");
-    }finally{
-      setWorking(undefined);
-    }
-  }
 
   async function redeemVoucher(){
     const code=voucherCode.trim().toUpperCase();
@@ -158,16 +132,19 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
     <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_.8fr]">
       <Card className="p-5">
         <h2 className="font-semibold">Quota</h2>
-        <p className="mt-1 text-sm text-[#5B6678]">Resource limits applied to this tenant.</p>
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="CPU cores"><NumberInput min={0} step={0.1} value={quotaForm.cpu} onChange={e=>setQuotaForm({...quotaForm,cpu:Number(e.target.value)})}/></Field>
-          <Field label="Memory (bytes)"><NumberInput min={0} value={quotaForm.memoryBytes} onChange={e=>setQuotaForm({...quotaForm,memoryBytes:Number(e.target.value)})}/></Field>
-          <Field label="GPU"><NumberInput min={0} value={quotaForm.gpu} onChange={e=>setQuotaForm({...quotaForm,gpu:Number(e.target.value)})}/></Field>
-          <Field label="Storage (bytes)"><NumberInput min={0} value={quotaForm.storageBytes} onChange={e=>setQuotaForm({...quotaForm,storageBytes:Number(e.target.value)})}/></Field>
-          <Field label="Max applications"><NumberInput min={0} value={quotaForm.maxSingleApps} onChange={e=>setQuotaForm({...quotaForm,maxSingleApps:Number(e.target.value)})}/></Field>
-          <Field label="Max volumes"><NumberInput min={0} value={quotaForm.maxVolumes} onChange={e=>setQuotaForm({...quotaForm,maxVolumes:Number(e.target.value)})}/></Field>
-        </div>
-        <Button className="mt-5" variant="primary" disabled={working==="quota"} onClick={()=>void saveQuota()}>{working==="quota"?"Saving…":"Save quota"}</Button>
+        <p className="mt-1 text-sm text-[#5B6678]">Allocated by Platform Admin. Quotas are read-only for tenant members; contact your platform administrator to request changes.</p>
+        <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {([
+            ["CPU cores", text(quota.data?.cpu)],
+            ["Memory", formatBytes(quota.data?.memoryBytes)],
+            ["GPU", text(quota.data?.gpu)],
+            ["Storage", formatBytes(quota.data?.storageBytes)],
+            ["Max applications", text(quota.data?.maxSingleApps)],
+            ["Max volumes", text(quota.data?.maxVolumes)],
+          ] as const).map(([label,value]) => (
+            <div key={label}><dt className="text-xs text-[#718096]">{label}</dt><dd className="mt-1 font-semibold">{value}</dd></div>
+          ))}
+        </dl>
       </Card>
 
       <Card className="p-5">

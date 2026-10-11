@@ -58,3 +58,56 @@ it("lists existing configuration attachments and detaches them by attachment id"
     )).toBe(true),
   );
 });
+
+it("encodes removed and renamed environment keys with explicit null in the merge PATCH (#263)", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps") && (!init || init.method === "GET")) {
+      return json([{ id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running" }]);
+    }
+    if (url.endsWith("/runtime-config")) {
+      if (init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      }
+      return json({ environment: { KEEP: "1", REMOVE: "2", RENAME: "old" } });
+    }
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="environment" />);
+  await waitFor(() => expect(screen.getByDisplayValue("RENAME")).toBeTruthy());
+  fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+  fireEvent.change(screen.getByDisplayValue("RENAME"), { target: { value: "RENAMED" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save environment" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].environment).toEqual({
+    KEEP: "1", REMOVE: null, RENAME: null, RENAMED: "old",
+  });
+});
+
+it("can clear optional application string settings without dropping PATCH fields (#264)", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps") && (!init || init.method === "GET")) {
+      return json([{ id: "app1", name: "checkout", image: "nginx:latest",
+        runtimeState: "Running", entrypoint: "/custom", workingDir: "/old", user: "00123",
+        description: "Legacy", registryId: null }]);
+    }
+    if (url.endsWith("/single-apps/app1") && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return json({});
+    }
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
+  await waitFor(() => expect(screen.getByDisplayValue("/custom")).toBeTruthy());
+  fireEvent.change(screen.getByDisplayValue("/custom"), { target: { value: "" } });
+  fireEvent.change(screen.getByDisplayValue("/old"), { target: { value: "" } });
+  fireEvent.change(screen.getByDisplayValue("00123"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toMatchObject({ entrypoint: null, workingDir: null, user: null });
+});

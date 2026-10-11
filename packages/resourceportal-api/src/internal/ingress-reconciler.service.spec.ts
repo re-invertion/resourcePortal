@@ -29,6 +29,7 @@ function deployedAppGroup(
 ) {
   return {
     id,
+    tenantId: "33333333-3333-4333-8333-333333333333",
     currentDeploymentVersion: 3,
     deployments: [
       {
@@ -50,7 +51,7 @@ function deployedAppGroup(
             name: "public",
             containerPort: 8080,
             protocolMode: "HTTP_REDIRECT_TO_HTTPS",
-            domains: [{ hostname: "app.example.com" }],
+            domains: [{ hostname: "app.example.com", type: "Managed", dnsStatus: "Valid", tenantId: "33333333-3333-4333-8333-333333333333" }],
           },
         ],
       },
@@ -311,5 +312,23 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
 
     expect(runtime.reconcileTraefikLabels).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ checked: 2, changed: 1, failed: 1 });
+  });
+});
+
+describe("IngressReconcilerService domain ownership boundary (#204)", () => {
+  it("removes public routing for an unverified custom domain even if old deployment had a router", async () => {
+    const appGroup = deployedAppGroup();
+    Object.assign(appGroup.singleApps[0].httpEndpoints[0].domains[0], {
+      type: "Custom",
+      customRootDomain: null,
+    });
+    const { runtime, service } = serviceFor([appGroup]);
+    await service.reconcileBatch({ appGroupId: appGroup.id });
+    expect(runtime.reconcileAppGroupNetwork).toHaveBeenCalledWith(expect.objectContaining({
+      traefikRequired: false,
+    }));
+    expect(runtime.reconcileTraefikLabels).toHaveBeenCalledWith(expect.objectContaining({
+      desiredLabels: {},
+    }));
   });
 });

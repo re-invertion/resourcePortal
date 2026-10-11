@@ -5,7 +5,7 @@ import {
   Injectable,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { MembershipStatus } from "@prisma/client";
+import { IdentityProviderScope, MembershipStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
 import { isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
@@ -82,6 +82,31 @@ export class TenantContextGuard implements CanActivate {
 
     if (!membership || membership.status !== MembershipStatus.Active) {
       throw new ForbiddenException("Active tenant membership is required");
+    }
+
+    // Enforce the tenant policy on EVERY user request, not only during login.
+    // The provider ID must come from a signed OIDC assertion bound to this
+    // specific bearer token/browser session, never from UserIdentity links.
+    const policy = await this.prisma.tenantAuthPolicy.findUnique({
+      where: { tenantId }, select: { requireTenantIdentityProvider: true },
+    });
+    if (policy?.requireTenantIdentityProvider) {
+      const authenticatedIdpId = request.user.authenticatedIdpId;
+      if (!authenticatedIdpId) {
+        throw new ForbiddenException("This tenant requires a verified tenant identity provider");
+      }
+      const allowedProvider = await this.prisma.identityProvider.findFirst({
+        where: {
+          scope: IdentityProviderScope.Tenant,
+          tenantId,
+          enabled: true,
+          zitadelIdentityProviderId: authenticatedIdpId,
+        },
+        select: { id: true },
+      });
+      if (!allowedProvider) {
+        throw new ForbiddenException("Login did not use an enabled identity provider for this tenant");
+      }
     }
 
     const permissions = [

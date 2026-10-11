@@ -22,7 +22,10 @@ export class DisasterRecoveryService {
     let storageFailed = 0;
     for (const backend of backends) {
       try {
-        await this.storage.validateBackend(backend.id);
+        const validated = await this.storage.validateBackend(backend.id);
+        // The storage service returns status=Error for failed checks instead
+        // of throwing. Recovery must treat that as a failed gate.
+        if (validated.status !== "Ready") storageFailed += 1;
       } catch {
         storageFailed += 1;
       }
@@ -30,7 +33,9 @@ export class DisasterRecoveryService {
     const storage = { checked: backends.length, failed: storageFailed };
 
     const runtimeRestore = await this.runtimeRestore.reconcile();
-    const runtime = await this.runtime.reconcileBatch(10_000);
+    // A batch is silently capped at 500; recovery must inspect *every*
+    // deployed group, including failures beyond the first page.
+    const runtime = await this.runtime.reconcileAll();
     const ingress = await this.ingress.reconcileBatch();
 
     const healthy =

@@ -12,6 +12,9 @@ spec:
 
 function fixture() {
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ locked: true }]),
+    quota: { findUnique: vi.fn().mockResolvedValue(null) },
+    singleApp: { findMany: vi.fn().mockResolvedValue([]) },
     appGroup: {
       create: vi.fn().mockResolvedValue({
         id: "11111111-1111-4111-8111-111111111111",
@@ -98,5 +101,42 @@ describe("AppGroupManifestService", () => {
       imported: true,
       hasPendingChanges: false,
     });
+  });
+});
+
+
+describe("AppGroupManifestService quota concurrency (#253)", () => {
+  it("rechecks the quota while holding the tenant lock before any import write", async () => {
+    const { service, prisma, tx } = fixture();
+    // Preflight observes no quota. A concurrent operation persists a workload
+    // before the import transaction acquires the shared advisory lock.
+    tx.quota.findUnique.mockResolvedValue({
+      cpu: 1, memoryBytes: 1342177280n, gpu: 0, maxSingleApps: 1,
+    });
+    tx.singleApp.findMany.mockResolvedValue([{
+      cpu: 1, memoryBytes: 134217728n, gpu: 0, desiredReplicas: 1,
+    }]);
+    const manifest = `
+apiVersion: resourceportal.io/v1alpha1
+kind: AppGroup
+metadata:
+  name: demo
+spec:
+  apps:
+    - name: web
+      image: nginx:latest
+      resources:
+        cpu: 0.5
+        memoryBytes: 134217728
+`;
+    await expect(service.applyManifest(
+      "22222222-2222-4222-8222-222222222222", manifest,
+      ["appgroup.create", "singleapp.create"],
+      { id: "33333333-3333-4333-8333-333333333333", email: "user@example.com", displayName: "Example User", status: "Active" },
+    )).rejects.toThrow("App Group manifest quota changed before import");
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.quota.findUnique).toHaveBeenCalledOnce();
+    expect(tx.appGroup.create).not.toHaveBeenCalled();
   });
 });

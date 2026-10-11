@@ -9,6 +9,7 @@ import { DeploymentPhase, DeploymentStatus, Prisma } from "@prisma/client";
 import { stringify } from "yaml";
 import { CapacityDeploymentAdmissionService } from "../capacity/capacity-deployment-admission.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { isDomainPublishable } from "../domains/domain-publication";
 import { mapAppGroupDeployment } from "../app-groups/app-groups.view";
 import { getDockerImageHost } from "../registries/docker-image";
 import { EncryptionService } from "../security/encryption.service";
@@ -27,7 +28,7 @@ import {
 } from "./deployment-artifact";
 import { StackApplyService } from "./stack-apply.service";
 import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
-import { StackRegistryAuthService } from "./stack-registry-auth.service";
+import { StackRegistryAuthService, type RegistryLogin } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
 import {
@@ -381,7 +382,10 @@ export class DeploymentExecutionService {
     );
   }
 
-  private async provisionRegistryAuth(snapshot: StackConfigSnapshot) {
+  private async resolveRegistryLogins(snapshot: StackConfigSnapshot): Promise<
+    | { success: true; loginTargets: RegistryLogin[] }
+    | { success: false; message: string; details: string }
+  > {
     const registryIds = Array.from(
       new Set(
         snapshot.singleApps
@@ -393,8 +397,7 @@ export class DeploymentExecutionService {
     if (registryIds.length === 0) {
       return {
         success: true,
-        message: "Authenticated 0 registry(ies)",
-        details: "",
+        loginTargets: [],
       };
     }
 
@@ -414,7 +417,7 @@ export class DeploymentExecutionService {
     const registriesById = new Map(
       registries.map((registry) => [registry.id, registry]),
     );
-    const loginTargets = [];
+    const loginTargets: RegistryLogin[] = [];
 
     for (const registryId of registryIds) {
       const registry = registriesById.get(registryId);
@@ -435,7 +438,68 @@ export class DeploymentExecutionService {
       });
     }
 
-    return this.stackRegistryAuth.login(loginTargets);
+    return { success: true, loginTargets };
+  }
+
+  private async provisionRegistryAuth(snapshot: StackConfigSnapshot) {
+    const resolved = await this.resolveRegistryLogins(snapshot);
+    if (!resolved.success) return resolved;
+    // Preflight credentials without persisting them to the shared worker.
+    return this.stackRegistryAuth.login(resolved.loginTargets);
+  }
+
+  /** Restore or rollback an immutable deployment with the tenant's scoped
+   * registry credentials. Never read worker-global Docker auth.
+   */
+  async applyDeploymentArtifactWithRegistryAuth(
+    stackConfig: string | null,
+    params: {
+      stackName: string;
+      renderedStack: string;
+      artifactSha256: string;
+      appGroupId: string;
+    },
+  ) {
+    return this.applyWithScopedRegistryAuth(
+      this.parseStackConfig(stackConfig),
+      params,
+    );
+  }
+
+  private async applyWithScopedRegistryAuth(
+    snapshot: StackConfigSnapshot,
+    params: {
+      stackName: string;
+      renderedStack: string;
+      artifactSha256: string;
+      appGroupId: string;
+    },
+  ) {
+    const resolved = await this.resolveRegistryLogins(snapshot);
+    if (!resolved.success) {
+      return {
+        command: "resolve tenant registry credentials",
+        stackName: params.stackName,
+        exitCode: 1,
+        stdout: "",
+        stderr: resolved.details,
+      };
+    }
+    const { auth, result } = await this.stackRegistryAuth.withScopedLogin(
+      resolved.loginTargets,
+      (dockerConfigPath) =>
+        this.stackApplyService.applyStack({ ...params, dockerConfigPath }),
+    );
+    if (!auth.success || !result) {
+      return {
+        command: "authenticate tenant registry",
+        stackName: params.stackName,
+        exitCode: 1,
+        stdout: "",
+        stderr: auth.details || auth.message,
+      };
+    }
+    return result;
   }
 
   private async provisionSecrets(snapshot: StackConfigSnapshot) {
@@ -777,6 +841,17 @@ export class DeploymentExecutionService {
       );
     }
 
+    const invalidCpu = snapshot.singleApps.find((singleApp) => {
+      const cpu = Number(singleApp.resources.cpu);
+      return !Number.isFinite(cpu) || cpu < 0.01 || cpu > 128;
+    });
+    if (invalidCpu) {
+      return this.validationFailure(
+        "InvalidCpuAllocation",
+        `SingleApp ${invalidCpu.name} must reserve between 0.01 and 128 CPUs`,
+      );
+    }
+
     const gpuAllocation = snapshot.singleApps.find(
       (singleApp) => singleApp.resources.gpu > 0,
     );
@@ -797,7 +872,7 @@ export class DeploymentExecutionService {
       return volumeFailure;
     }
 
-    const domainFailure = this.validateDomains(snapshot);
+    const domainFailure = await this.validateDomains(snapshot);
     if (domainFailure) {
       return domainFailure;
     }
@@ -918,7 +993,27 @@ export class DeploymentExecutionService {
     return null;
   }
 
-  private validateDomains(snapshot: StackConfigSnapshot) {
+  private async validateDomains(snapshot: StackConfigSnapshot) {
+    // Never rely on the old snapshot's DNS status alone. The root may have
+    // been revoked/transferred after the deployment was originally created.
+    const ids = [...new Set(snapshot.singleApps.flatMap((singleApp) =>
+      singleApp.httpEndpoints.flatMap((endpoint) => endpoint.domains.map((domain) => domain.id))
+    ))];
+    if (ids.length === 0) return null;
+    const currentDomains = await this.prisma.domain.findMany({
+      where: { id: { in: ids }, tenantId: snapshot.appGroup.tenantId },
+      include: { customRootDomain: true },
+    });
+    const byId = new Map(currentDomains.map((domain) => [domain.id, domain]));
+    for (const id of ids) {
+      const domain = byId.get(id);
+      if (!domain || !isDomainPublishable(domain, snapshot.appGroup.tenantId)) {
+        return this.validationFailure(
+          "DomainOwnershipNotVerified",
+          `Domain ${id} is not currently verified for the tenant`,
+        );
+      }
+    }
     for (const singleApp of snapshot.singleApps) {
       for (const endpoint of singleApp.httpEndpoints) {
         if (endpoint.containerPort < 1 || endpoint.containerPort > 65535) {
@@ -929,6 +1024,12 @@ export class DeploymentExecutionService {
         }
 
         for (const domain of endpoint.domains) {
+          if (byId.get(domain.id)?.hostname !== domain.hostname) {
+            return this.validationFailure(
+              "DomainOwnershipNotVerified",
+              `Domain ${domain.id} hostname no longer matches its tenant record`,
+            );
+          }
           if (domain.dnsStatus !== "Valid") {
             return this.validationFailure(
               "DomainUnavailable",
@@ -1236,7 +1337,8 @@ export class DeploymentExecutionService {
 
     const artifact = await this.ensureDeploymentArtifact(deployment.id);
     const stackName = this.stackName(deployment.appGroupId);
-    const result = await this.stackApplyService.applyStack({
+    const result = await this.applyWithScopedRegistryAuth(
+      this.parseStackConfig(deployment.stackConfig), {
       stackName,
       renderedStack: artifact.renderedStack,
       artifactSha256: artifact.sha256,
@@ -1465,7 +1567,7 @@ export class DeploymentExecutionService {
     const rollbackArtifact = await this.ensureDeploymentArtifact(
       rollbackTarget.id,
     );
-    const applyResult = await this.stackApplyService.applyStack({
+    const applyResult = await this.applyWithScopedRegistryAuth(rollbackSnapshot, {
       stackName,
       renderedStack: rollbackArtifact.renderedStack,
       artifactSha256: rollbackArtifact.sha256,

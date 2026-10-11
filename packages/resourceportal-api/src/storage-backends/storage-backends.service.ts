@@ -131,6 +131,16 @@ export class StorageBackendsService {
     };
   }
 
+  async recoverVolumeReservation(
+    volumeId: string,
+    storagePath: string,
+    projectId: number,
+  ): Promise<StorageBackendReservation> {
+    const backend = await this.store.requireForVolume(volumeId);
+    this.assertPersistedWritable(backend);
+    return { backend, storagePath, projectId };
+  }
+
   async provisionVolume(
     reservation: StorageBackendReservation,
     input: { tenantId: string; volumeId: string; sizeBytes: bigint },

@@ -10,6 +10,7 @@ import {
   GateAgentController,
 } from "../networking/networking.controller";
 import { AuthSessionService } from "./auth-session.service";
+import { AuthController } from "./auth.controller";
 import { DevAuthGuard } from "./dev-auth.guard";
 import { MachineBearerAuth } from "./machine-bearer-auth.decorator";
 import { OidcAuthService } from "./oidc-auth.service";
@@ -53,6 +54,7 @@ describe("opaque machine bearer endpoints (OIDC mode)", () => {
     ["Site VPN heartbeat", GateAgentController, GateAgentController.prototype.heartbeat],
     ["Site VPN agent config", GateAgentController, GateAgentController.prototype.config],
     ["Device VPN runtime heartbeat", DeviceVpnRuntimeController, DeviceVpnRuntimeController.prototype.heartbeat],
+    ["ZITADEL external IDP attestation", AuthController, AuthController.prototype.attestFederation],
   ] as const)("lets %s reach its own machine-token validator", async (_label, controller, handler) => {
     const { guard, oidc } = fixture();
     await expect(guard.canActivate(context(controller, handler))).resolves.toBe(true);

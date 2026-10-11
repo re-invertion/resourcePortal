@@ -581,7 +581,7 @@ describe("DomainsService manual custom DNS validation", () => {
     expect(result.dnsStatus).toBe(DnsStatus.Invalid);
   });
 
-  it("accepts a custom hostname CNAME that targets ResourcePortal ingress", async () => {
+  it("rejects an unowned legacy custom hostname even when its CNAME targets ResourcePortal", async () => {
     const f = fixture("app.example.net");
     resolveCnameMock.mockResolvedValue(["resource-portal.pl."]);
 
@@ -591,7 +591,19 @@ describe("DomainsService manual custom DNS validation", () => {
       actor,
     );
 
-    expect(resolveCnameMock).toHaveBeenCalledWith("app.example.net");
-    expect(result.dnsStatus).toBe(DnsStatus.Valid);
+    expect(resolveCnameMock).not.toHaveBeenCalled();
+    expect(result.dnsStatus).toBe(DnsStatus.Invalid);
+  });
+});
+
+describe("DomainsService custom hostname ownership enforcement (#204)", () => {
+  it("rejects unverified bare hostname creation before touching the database", async () => {
+    const { service, tx } = domainServiceFor({});
+    await expect(service.createDomain(
+      "33333333-3333-4333-8333-333333333333",
+      { type: DomainType.Custom, hostname: "victim.example.org" },
+      actor,
+    )).rejects.toThrow("verified customRootDomainId");
+    expect(tx.domain.create).not.toHaveBeenCalled();
   });
 });

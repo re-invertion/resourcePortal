@@ -15,6 +15,19 @@ describe("production auth entrypoints", () => {
     expect(api).not.toContain("AUTH_MODE: dev");
   });
 
+  it("installs and reconciles the external-IDP attestation Action using the Swarm encryption secret", () => {
+    const stack = read("config/production/stack.yml.tpl");
+    const identity = read("scripts/installer/identity.sh");
+    const bootstrap = read("packages/resourceportal-api/scripts/bootstrap-zitadel.ts");
+    const proof = read("packages/resourceportal-api/src/auth/federation-proof.service.ts");
+    expect(stack).toContain("RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key");
+    expect(identity).toContain("--secret source=rp_encryption_key,target=rp_encryption_key");
+    expect(identity).toContain("FEDERATION_ATTESTATION_MASTER_FILE=/run/secrets/rp_encryption_key");
+    expect(identity).toContain("FEDERATION_ATTESTATION_CALLBACK_URL=http://api:3000/api/auth/federation/attest");
+    expect(bootstrap).toContain("await reconcileFederationAttestationAction(");
+    expect(proof).toContain("deriveFederationAttestationSecret(readFileSync(masterPath))");
+  });
+
   it("keeps production migration jobs free from dev auth overrides", () => {
     const controlPlane = read("scripts/installer/control-plane.sh");
     expect(controlPlane).toContain("--env NODE_ENV=production");
