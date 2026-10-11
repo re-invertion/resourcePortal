@@ -23,6 +23,10 @@ let storagePath: string | undefined;
 let physicalStoragePath: string | undefined;
 
 async function main() {
+  if (process.argv.includes("--reconcile-usage-once")) {
+    await reconcileVolumeUsageLocally();
+    return;
+  }
   const tenant = await api<JsonObject>("/tenants", {
     method: "POST",
     body: {
@@ -186,11 +190,45 @@ async function writeUsageFixture(path: string) {
 }
 
 async function reconcileVolumeUsageOnce() {
+  if (
+    process.env.STORAGE_SMOKE_PRIVILEGED_WORKER === "true" &&
+    typeof process.getuid === "function" &&
+    process.getuid() !== 0
+  ) {
+    const npmExecPath = process.env.npm_execpath;
+    if (!npmExecPath) {
+      throw new Error("Privileged storage usage smoke requires npm_execpath");
+    }
+    // The volume usage reconciler calls the same secure, root-owned storage
+    // adapter as the production worker. Never weaken adapter permissions for
+    // an E2E smoke running from the unprivileged CI job.
+    const result = await command("sudo", [
+      "-E", process.execPath, npmExecPath,
+      "run", "smoke:volume-lifecycle", "--", "--reconcile-usage-once",
+    ]);
+    const output = [result.stdout.trim(), result.stderr.trim()]
+      .filter(Boolean).join("\n");
+    if (output) console.log(output);
+    if (result.exitCode !== 0) {
+      throw new Error(output || "Privileged volume usage reconciliation failed");
+    }
+    return;
+  }
+  await reconcileVolumeUsageLocally();
+}
+
+async function reconcileVolumeUsageLocally() {
   const app = await NestFactory.createApplicationContext(WorkerModule, {
     logger: false,
   });
   try {
-    await app.get(VolumeUsageReconcilerService).reconcileBatch();
+    const result = await app.get(VolumeUsageReconcilerService).reconcileBatch();
+    console.log(`Volume usage reconciliation: ${JSON.stringify(result)}`);
+    if (result.scanned === 0 || result.failed !== 0) {
+      throw new Error(
+        `Volume usage reconciliation did not complete: ${JSON.stringify(result)}`,
+      );
+    }
   } finally {
     await app.close();
   }
