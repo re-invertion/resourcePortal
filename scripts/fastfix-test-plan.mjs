@@ -9,6 +9,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  "upgrade-recovery": [
+    ["node", "--test", "test/installer/test-target-upgrade.test.mjs", "test/installer/test-upgrade-preflight.test.mjs", "test/installer/test-upgrade-recovery.test.mjs"],
+    ["bash", "-n", "scripts/installer/target-upgrade.sh", "scripts/installer/recovery.sh", "scripts/upgrade-recovery-from-0.2.78.sh"],
+  ],
   "billing-correctness": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/billing"],
   ],
@@ -144,6 +148,9 @@ const commands = {
 };
 
 const classifiers = [
+  [/^scripts\/installer\/(target-upgrade|recovery)\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
+  [/^scripts\/upgrade-recovery-from-0\.2\.78\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
+  [/^test\/installer\/test-(target-upgrade|upgrade-preflight|upgrade-recovery)\.test\.mjs$/, ["upgrade-recovery"]],
   [/^packages\/resourceportal-web\/src\/App\.test\.tsx$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing-preflight\.guard(?:\.spec)?|billing-worker\.service|deployed-compute-allocation(?:\.spec)?)\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],

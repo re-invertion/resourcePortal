@@ -83,13 +83,7 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     const image = this.required("RESOURCEPORTAL_RUNTIME_IMAGE");
     const storageBase = this.required("RESOURCE_STORAGE_BASE_PATH");
     const storageDevice = this.required("RESOURCE_STORAGE_QUOTA_DEVICE");
-    const script = [
-      "set -euo pipefail",
-      "manifest=/tmp/resourceportal-release-manifest.json",
-      'curl --fail --silent --show-error --location --proto "=https" "${RP_TARGET_MANIFEST_URL}" -o "$manifest"',
-      "export RP_NON_INTERACTIVE=true RP_UI_MODE=text RP_UPGRADE_SKIP_HOST_FIREWALL=true",
-      'exec /bin/bash /app/resourceportal-installer/resourceportal-install.sh --mode upgrade --manifest "$manifest" --non-interactive',
-    ].join("\n");
+    const script = "exec /bin/bash /app/resourceportal-installer/scripts/installer/target-upgrade.sh";
 
     const args = [
       "run",
@@ -108,6 +102,12 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
       `RP_TARGET_VERSION=${targetVersion}`,
       "-e",
       `RP_TARGET_MANIFEST_URL=${manifestUrl}`,
+      "-e",
+      `RP_TARGET_CONTAINER=${name}-target`,
+      "-e",
+      `RP_UPDATER_STORAGE_BASE=${storageBase}`,
+      "-e",
+      `RP_UPDATER_STORAGE_DEVICE=${storageDevice}`,
       "-v",
       "/var/run/docker.sock:/var/run/docker.sock",
       "-v",

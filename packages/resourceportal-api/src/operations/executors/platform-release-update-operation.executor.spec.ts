@@ -71,6 +71,13 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
       "-v",
       "/var/lib/resourceportal:/var/lib/resourceportal",
     ]));
+    expect(dockerRun?.[1]).toEqual(expect.arrayContaining([
+      "RP_TARGET_CONTAINER=resourceportal-updater-11111111-1111-4111-8111-111111111111-target",
+      "RP_UPDATER_STORAGE_BASE=/srv/resource-portal/storage",
+      "RP_UPDATER_STORAGE_DEVICE=/dev/vdb",
+    ]));
+    expect((dockerRun?.[1] as string[]).at(-1)).toContain("scripts/installer/target-upgrade.sh");
+    expect((dockerRun?.[1] as string[]).at(-1)).not.toContain("resourceportal-install.sh --mode upgrade");
     expect(run).toHaveBeenLastCalledWith(
       "docker",
       ["wait", "resourceportal-updater-11111111-1111-4111-8111-111111111111"],
