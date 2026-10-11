@@ -1,7 +1,6 @@
 import { DeploymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { DeploymentExecutionService } from "../internal/deployment-execution.service";
-import { StackApplyService } from "../internal/stack-apply.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformMaintenanceService } from "../platform-maintenance/platform-maintenance.service";
 import { RuntimeRestoreService } from "./runtime-restore.service";
@@ -42,8 +41,7 @@ describe("RuntimeRestoreService exact artifact recovery", () => {
 
     const service = new RuntimeRestoreService(
       { appGroup: { findMany } } as unknown as PrismaService,
-      { applyStack } as unknown as StackApplyService,
-      { ensureDeploymentArtifact } as unknown as DeploymentExecutionService,
+      { ensureDeploymentArtifact, applyDeploymentArtifactWithRegistryAuth: applyStack } as unknown as DeploymentExecutionService,
       { getState: vi.fn().mockResolvedValue({ enabled: false }) } as unknown as PlatformMaintenanceService,
     );
 
@@ -54,7 +52,7 @@ describe("RuntimeRestoreService exact artifact recovery", () => {
       skipped: 0,
     });
     expect(ensureDeploymentArtifact).toHaveBeenCalledWith("deployment-4");
-    expect(applyStack).toHaveBeenCalledWith({
+    expect(applyStack).toHaveBeenCalledWith(snapshot, {
       stackName: "rp_app_group_1",
       renderedStack,
       artifactSha256,
@@ -93,8 +91,7 @@ describe("RuntimeRestoreService exact artifact recovery", () => {
           ]),
         },
       } as unknown as PrismaService,
-      { applyStack } as unknown as StackApplyService,
-      { ensureDeploymentArtifact } as unknown as DeploymentExecutionService,
+      { ensureDeploymentArtifact, applyDeploymentArtifactWithRegistryAuth: applyStack } as unknown as DeploymentExecutionService,
       { getState: vi.fn().mockResolvedValue({ enabled: false }) } as unknown as PlatformMaintenanceService,
     );
 
