@@ -8,6 +8,8 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { deriveFederationAttestationSecret } from "./federation-attestation-secret";
 import { PrismaService } from "../prisma/prisma.service";
 
 // A login hint is a correlation handle, not evidence. ZITADEL alone can
@@ -27,7 +29,7 @@ export class FederationProofService {
     authorization: string | undefined,
     body: { nonce?: unknown; providerId?: unknown } | undefined,
   ) {
-    const secret = this.config.get<string>("FEDERATION_ATTESTATION_SECRET");
+    const secret = this.attestationSecret();
     if (!secret || secret.length < 32) {
       throw new ServiceUnavailableException("Federation attestation is not configured");
     }
@@ -66,6 +68,19 @@ export class FederationProofService {
    * reuse. The caller must validate the callback OIDC state, code+PKCE and
    * issuer-signed ID token BEFORE consuming this attestation.
    */
+  private attestationSecret(): string | undefined {
+    const explicit = this.config.get<string>("FEDERATION_ATTESTATION_SECRET");
+    if (explicit) return explicit;
+    const masterPath = this.config.get<string>("RESOURCE_ENCRYPTION_KEY_FILE");
+    if (!masterPath) return undefined;
+    try {
+      return deriveFederationAttestationSecret(readFileSync(masterPath));
+    } catch {
+      // An unreadable or invalid secret must never enable unauthenticated proof.
+      return undefined;
+    }
+  }
+
   async consume(nonce: string, expectedProviderId: string): Promise<boolean> {
     if (!noncePattern.test(nonce) || !idpPattern.test(expectedProviderId)) return false;
     const result = await this.prisma.federationLoginProof.updateMany({
