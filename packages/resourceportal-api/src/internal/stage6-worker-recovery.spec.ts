@@ -60,14 +60,12 @@ function deployment(
 function recoveryService(
   prisma: object,
   worker: object = {},
-  stackApply: object = {},
   stackRollout: object = {},
   stackRuntime: object = {},
 ) {
   return Reflect.construct(DeploymentRecoveryService, [
     prisma,
     worker,
-    stackApply,
     stackRollout,
     stackRuntime,
   ]) as DeploymentRecoveryService;
@@ -172,7 +170,6 @@ describe("Stage 6 unified Worker deployment recovery", () => {
       prisma,
       { applyRenderedStack },
       {},
-      {},
       { inspectStackServices },
     );
 
@@ -227,7 +224,6 @@ describe("Stage 6 unified Worker deployment recovery", () => {
     const recovery = recoveryService(
       prisma,
       { applyRenderedStack },
-      {},
       {},
       { inspectStackServices },
     );
@@ -328,8 +324,7 @@ describe("Stage 6 unified Worker deployment recovery", () => {
     };
     const recovery = recoveryService(
       prisma,
-      {},
-      { applyStack },
+      { applyDeploymentArtifactWithRegistryAuth: applyStack },
       { waitForRollout },
       { inspectStackServices },
     );
@@ -420,8 +415,7 @@ describe("Stage 6 unified Worker deployment recovery", () => {
     };
     const recovery = recoveryService(
       prisma,
-      { ensureDeploymentArtifact, renderStack },
-      { applyStack },
+      { ensureDeploymentArtifact, renderStack, applyDeploymentArtifactWithRegistryAuth: applyStack },
       { waitForRollout },
       { inspectStackServices },
     );
@@ -433,7 +427,7 @@ describe("Stage 6 unified Worker deployment recovery", () => {
 
     expect(ensureDeploymentArtifact).toHaveBeenCalledWith(target.id);
     expect(renderStack).not.toHaveBeenCalled();
-    expect(applyStack).toHaveBeenCalledWith({
+    expect(applyStack).toHaveBeenCalledWith(target.stackConfig, {
       stackName: "rp_app_group_1",
       renderedStack: artifact.renderedStack,
       artifactSha256: artifact.sha256,
