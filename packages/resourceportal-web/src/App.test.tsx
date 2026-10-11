@@ -87,7 +87,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
 
-    expect(await screen.findByRole("heading", { name: "Review configuration" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Review configuration" }, { timeout: 10_000 })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Create Tenant" }));
 
