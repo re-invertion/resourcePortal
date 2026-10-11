@@ -44,7 +44,36 @@ rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
   rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_identity_preflight || return 1
   rp_upgrade_check_temporary_files
+}
+
+# Validate everything the target OAuth bootstrap needs before quiescing clients.
+# Inspect only secret references; never export key material into argv or logs.
+rp_upgrade_identity_preflight() {
+  local pat="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
+  if ! declare -F rp_zitadel_management_state_ready >/dev/null || ! rp_zitadel_management_state_ready; then
+    printf 'Upgrade identity preflight: organization/project/management metadata is unavailable.\n' >&2
+    return 1
+  fi
+  [[ -s "$pat" && -r "$pat" ]] || {
+    printf 'Upgrade identity preflight: management PAT file is missing or empty.\n' >&2; return 1;
+  }
+  [[ -n "${RP_CFG_ZITADEL_DOMAIN:-}" ]] || {
+    printf 'Upgrade identity preflight: ZITADEL instance hostname is missing.\n' >&2; return 1;
+  }
+  docker secret inspect rp_encryption_key >/dev/null 2>&1 || {
+    printf 'Upgrade identity preflight: rp_encryption_key Swarm secret is unavailable.\n' >&2; return 1;
+  }
+}
+
+rp_upgrade_checkpoint_stage() {
+  local stage="$1" dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" tmp
+  [[ -n "$dir" ]] || return 0
+  tmp="$(mktemp "$dir/.stage.XXXXXX")" || return 1
+  jq --arg stage "$stage" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.runtimeStage=$stage | .updatedAt=$at' "$dir/state.json" >"$tmp" &&
+    chmod 0600 "$tmp" && mv -f "$tmp" "$dir/state.json" || { rm -f "$tmp"; return 1; }
 }
 
 rp_pull_release_images() {
@@ -416,7 +445,7 @@ rp_upgrade_checkpoint_phase() {
   [[ -r "$dir/state.json" ]] || return 1
   tmp="$(mktemp "$dir/.state.XXXXXX")" || return 1
   if ! jq --arg phase "$phase" --arg step "$step" \
-    '.phase=$phase | .lastStep=$step' "$dir/state.json" > "$tmp" ||
+    '.phase=$phase | .lastStep=$step | .errorCode=(if $phase == "manual-recovery-required" or $phase == "rollback-failed" then "UpgradeStepFailed" else null end)' "$dir/state.json" > "$tmp" ||
     ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$dir/state.json"; then
     rm -f "$tmp"
     return 1
@@ -496,6 +525,8 @@ rp_upgrade_apply() {
   # Keep this guard even when the apply function is invoked directly.
   rp_upgrade_check_temporary_files || return 1
   rp_config_apply_defaults || return 1
+  rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_identity_preflight || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_checkpoint_prepare "$manifest" "$previous_stack" "$source_version" || return 1
@@ -506,18 +537,24 @@ rp_upgrade_apply() {
   rp_upgrade_refresh_firewall || {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "host firewall refresh"; return 1;
   }
+  rp_upgrade_checkpoint_stage quiescing-clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint quiescing-clients"; return 1; }
   rp_upgrade_quiesce_database_clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database quiesce"; return 1; }
+  rp_upgrade_checkpoint_stage postgres-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint postgres-rollout"; return 1; }
   rp_upgrade_prepare_postgres_services || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "PostgreSQL preparation"; return 1; }
+  rp_upgrade_checkpoint_stage zitadel-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint zitadel-rollout"; return 1; }
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "ZITADEL preparation"; return 1; }
+  rp_upgrade_checkpoint_stage mcp-oauth-reconciliation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint mcp-oauth-reconciliation"; return 1; }
   rp_run_zitadel_mcp_oauth_reconcile || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "MCP OAuth reconciliation"; return 1; }
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1
     rp_prepare_oidc_staging_ca "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "OIDC staging CA"; return 1; }
   fi
+  rp_upgrade_checkpoint_stage resourceportal-migrations-started || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint resourceportal-migrations-started"; return 1; }
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
     return 1
   fi
+  rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }
   if ! rp_upgrade_refresh_enrollment_listener; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "enrollment listener"
     return 1
@@ -534,5 +571,5 @@ rp_upgrade_apply() {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "stack file persistence"
     return 1
   }
-  rp_upgrade_checkpoint_phase completed "target-stack-healthy" || return 1
+  rp_upgrade_checkpoint_phase completed "target-stack-healthy" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint completed"; return 1; }
 }
