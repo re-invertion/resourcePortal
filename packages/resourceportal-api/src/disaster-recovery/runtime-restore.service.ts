@@ -1,7 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { DeploymentStatus } from "@prisma/client";
 import { DeploymentExecutionService } from "../internal/deployment-execution.service";
-import { StackApplyService } from "../internal/stack-apply.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlatformMaintenanceService } from "../platform-maintenance/platform-maintenance.service";
 import { runtimeSafeRestoreArtifact } from "./runtime-restore-policy";
@@ -10,7 +9,6 @@ import { runtimeSafeRestoreArtifact } from "./runtime-restore-policy";
 export class RuntimeRestoreService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly stackApply: StackApplyService,
     private readonly deploymentExecution: DeploymentExecutionService,
     private readonly maintenance: PlatformMaintenanceService,
   ) {}
@@ -81,12 +79,15 @@ export class RuntimeRestoreService {
         continue;
       }
 
-      const result = await this.stackApply.applyStack({
-        stackName: this.stackName(appGroup.id),
-        renderedStack: safeArtifact.renderedStack,
-        artifactSha256: safeArtifact.sha256,
-        appGroupId: appGroup.id,
-      });
+      const result = await this.deploymentExecution.applyDeploymentArtifactWithRegistryAuth(
+        deployment.stackConfig,
+        {
+          stackName: this.stackName(appGroup.id),
+          renderedStack: safeArtifact.renderedStack,
+          artifactSha256: safeArtifact.sha256,
+          appGroupId: appGroup.id,
+        },
+      );
 
       if (result.exitCode === 0) {
         applied += 1;
