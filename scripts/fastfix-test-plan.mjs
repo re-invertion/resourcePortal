@@ -147,6 +147,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/App\.test\.tsx$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing-preflight\.guard(?:\.spec)?|billing-worker\.service|deployed-compute-allocation(?:\.spec)?)\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/(deployment-recovery\.service|stage6-worker-recovery\.spec)\.ts$/, ["recovery-safety", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-volume-provisioner\.service(?:\.spec)?\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/(?:nfs-remote-access-validator\.service(?:\.spec)?|shared-nfs-probe(?:\.spec)?|storage-backends\.service)\.ts$/, ["cross-node-storage"]],
