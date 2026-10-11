@@ -1,4 +1,5 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Optional, UnauthorizedException } from "@nestjs/common";
+import { FederationProofService } from "./federation-proof.service";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import type { JWTPayload, JWTVerifyOptions } from "jose";
@@ -53,6 +54,7 @@ export class OidcAuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly federationProof?: FederationProofService,
   ) {}
 
   async authenticateBearerToken(
@@ -67,16 +69,31 @@ export class OidcAuthService {
     idToken: string,
     accessToken: string,
     identityProviderId?: string,
+    loginNonce?: string,
   ): Promise<AuthenticatedUser> {
     const idTokenClaims = await this.verifyToken(idToken);
-    const authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
+    let authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
     if (identityProviderId) {
       const selected = await this.prisma.identityProvider.findUnique({
         where: { id: identityProviderId },
         select: { enabled: true, zitadelIdentityProviderId: true },
       });
-      if (!selected?.enabled || !authenticatedIdpId ||
-          selected.zitadelIdentityProviderId !== authenticatedIdpId) {
+      if (!selected?.enabled || !selected.zitadelIdentityProviderId) {
+        throw new UnauthorizedException("Selected external identity provider was not verified");
+      }
+      if (!authenticatedIdpId) {
+        // The ZITADEL External Authentication action attests the *actual*
+        // provider through a shared-secret server-to-server call. RP's
+        // freshly generated OAuth state binds that evidence to this callback.
+        // It is atomically consumed and cannot be a browser-provided assertion.
+        const verified = loginNonce && await this.federationProof?.consume(
+          loginNonce, selected.zitadelIdentityProviderId,
+        );
+        if (!verified) {
+          throw new UnauthorizedException("Selected external identity provider was not verified");
+        }
+        authenticatedIdpId = selected.zitadelIdentityProviderId;
+      } else if (authenticatedIdpId !== selected.zitadelIdentityProviderId) {
         throw new UnauthorizedException("Selected external identity provider was not verified");
       }
     }
