@@ -95,18 +95,6 @@ jobs:
           npm run build
           npm run test:installer
           npm run test:cli-release
-      - name: Require verified automatic rollback before allowing merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
-          node scripts/release-rollback-policy.mjs \
-            --previous-tag "$previous_tag" \
-            --head HEAD \
-            --mode "${{ steps.release-mode.outputs.mode }}" \
-            --require-automatic
       - name: Dry-run actual installable CLI packaging
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,10 +124,25 @@ jobs:
       - name: Verify automatic rollback of published and candidate ResourcePortal images
         env:
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
         shell: bash
         run: |
           set -euo pipefail
           bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
+
+      - name: Require verified automatic rollback before allowing merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$previous_tag" \
+            --head HEAD \
+            --mode "${{ steps.release-mode.outputs.mode }}" \
+            --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
+            --require-automatic
 
   swarm:
     name: Real Swarm gate
