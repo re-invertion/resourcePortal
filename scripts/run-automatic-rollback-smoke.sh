@@ -108,6 +108,15 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
       email:"rollback-"+process.env.RP_ROLLBACK_PROBE+"@example.invalid",
       displayName:"Rollback test user",status:"Active"
     }});
+    await p.portalSession.create({data:{
+      id:"rollback-session-"+process.env.RP_ROLLBACK_PROBE,
+      userId:user.id,
+      accessToken:"synthetic-rollback-access",
+      refreshToken:"synthetic-rollback-refresh",
+      idToken:"synthetic-rollback-id",
+      accessTokenExpiresAt:new Date(Date.now()+3600000),
+      expiresAt:new Date(Date.now()+86400000)
+    }});
     await p.oAuthApplication.create({data:{
       tenantId:tenant.id,name:"Legacy RP client",type:"Web",
       redirectUris:["https://rollback.example.invalid/callback"],postLogoutRedirectUris:[],
@@ -344,6 +353,18 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
       where:{id:tenant.id},data:{displayName:"Rollback compatibility verified"}
     });
     if(updated.displayName!=="Rollback compatibility verified")throw new Error("Old Prisma client cannot write after rollback");
+    const oldSession=await p.portalSession.findUniqueOrThrow({
+      where:{id:"rollback-session-"+process.env.RP_ROLLBACK_PROBE}
+    });
+    if(oldSession.userId!==user.id || oldSession.revokedAt!==null ||
+       oldSession.refreshToken!=="synthetic-rollback-refresh" ||
+       oldSession.expiresAt.getTime()<=Date.now()) {
+      throw new Error("Previous release session was lost or corrupted");
+    }
+    await p.portalSession.update({
+      where:{id:oldSession.id},
+      data:{lastSeenAt:new Date()}
+    });
     const legacyClient=await p.oAuthApplication.findUniqueOrThrow({
       where:{clientId:"client-"+process.env.RP_ROLLBACK_PROBE}
     });
