@@ -114,6 +114,19 @@ jobs:
         shell: bash
         run: |
           printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+      - name: Require verified automatic rollback before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$PREVIOUS_TAG" \
+            --head HEAD \
+            --mode "$VALIDATION_MODE" \
+            --require-automatic
+          bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -241,7 +254,11 @@ jobs:
           ROLLBACK_REASON="${{ steps.rollback-assessment.outputs.rollback_reason }}"
           ROLLBACK_SOURCE_VERSION="${{ steps.rollback-assessment.outputs.rollback_source_version }}"
           ROLLBACK_TARGET_COMMIT="${{ steps.rollback-assessment.outputs.rollback_target_commit }}"
-          [[ "$ROLLBACK_POLICY" == image-only || "$ROLLBACK_POLICY" == none ]] || exit 1
+          # Never publish a release manifest without automatic rollback.
+          [[ "$ROLLBACK_POLICY" == image-only ]] || {
+            echo "Release blocked: rollbackPolicy=$ROLLBACK_POLICY" >&2
+            exit 1
+          }
           mapfile -t ancestor_versions < <(
             git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
               | sed 's/^v//' \
