@@ -38,6 +38,8 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run api:prisma:generate
+      - name: Install isolated Chromium for real OIDC PKCE login
+        run: npx playwright install --with-deps chromium
       - name: Test isolated HTTPS tenant OIDC against real pinned ZITADEL
         shell: bash
         run: bash scripts/run-tenant-oidc-https-e2e.sh
