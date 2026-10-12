@@ -28,11 +28,12 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     ["packages/resourceportal-api/prisma/migrations/20261012_new/migration.sql"],
     "fastfix", "v0.2.86", hash,
   );
+  const currentRunId = Number(process.env.GITHUB_RUN_ID || 12345);
   const evidence = {
     kind: "real-upgrade-and-restore",
     sourceVersion: "0.2.86",
     targetCommit: hash,
-    workflowRunId: 12345,
+    workflowRunId: currentRunId,
     actualDatabaseMigration: true,
     previousApiReadWriteAfterRollback: true,
     injectedHealthFailure: true,
@@ -43,12 +44,13 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
   assert.equal(confirmed.policy, "tested");
   assert.equal(confirmed.reason, "verified-recovery-test");
   assert.deepEqual(confirmed.rollbackEvidence, {
-    kind: "real-upgrade-and-restore", workflowRunId: 12345, sourceVersion: "0.2.86",
+    kind: "real-upgrade-and-restore", workflowRunId: currentRunId, sourceVersion: "0.2.86",
   });
   for (const malformed of [
     { ...evidence, targetCommit: "b".repeat(40) },
     { ...evidence, sourceVersion: "0.2.85" },
     { ...evidence, workflowRunId: 0 },
+    { ...evidence, workflowRunId: currentRunId + 1 },
     { ...evidence, workflowRunId: "12345" },
     { ...evidence, previousApiReadWriteAfterRollback: false },
     { ...evidence, previousImagesRestored: false },
@@ -63,7 +65,7 @@ test("milestone releases never bypass live rollback certification", () => {
   assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
   const certified = requireAutomaticRollback(result, {
     kind: "real-upgrade-and-restore", sourceVersion: "0.2.86", targetCommit: hash,
-    workflowRunId: 12345, actualDatabaseMigration: true,
+    workflowRunId: Number(process.env.GITHUB_RUN_ID || 12345), actualDatabaseMigration: true,
     previousApiReadWriteAfterRollback: true, injectedHealthFailure: true,
     previousImagesRestored: true,
   });
