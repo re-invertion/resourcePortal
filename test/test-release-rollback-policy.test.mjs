@@ -23,6 +23,53 @@ test("release is blocked when automatic rollback is not eligible", () => {
   ]) assert.throws(() => requireAutomaticRollback(invalid), /Release blocked/);
 });
 
+test("schema-changing rollback requires exact run-bound live evidence", () => {
+  const result = rollbackAssessment(
+    ["packages/resourceportal-api/prisma/migrations/20261012_new/migration.sql"],
+    "fastfix", "v0.2.86", hash,
+  );
+  const evidence = {
+    kind: "real-upgrade-and-restore",
+    sourceVersion: "0.2.86",
+    targetCommit: hash,
+    workflowRunId: 12345,
+    actualDatabaseMigration: true,
+    previousApiReadWriteAfterRollback: true,
+    injectedHealthFailure: true,
+    previousImagesRestored: true,
+  };
+  assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
+  const confirmed = requireAutomaticRollback(result, evidence);
+  assert.equal(confirmed.policy, "tested");
+  assert.equal(confirmed.reason, "verified-recovery-test");
+  assert.deepEqual(confirmed.rollbackEvidence, {
+    kind: "real-upgrade-and-restore", workflowRunId: 12345, sourceVersion: "0.2.86",
+  });
+  for (const malformed of [
+    { ...evidence, targetCommit: "b".repeat(40) },
+    { ...evidence, sourceVersion: "0.2.85" },
+    { ...evidence, workflowRunId: 0 },
+    { ...evidence, workflowRunId: "12345" },
+    { ...evidence, previousApiReadWriteAfterRollback: false },
+    { ...evidence, previousImagesRestored: false },
+    { ...evidence, actualDatabaseMigration: false },
+    { ...evidence, injectedHealthFailure: false },
+    { ...evidence, kind: "static-schema-heuristic" },
+  ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
+});
+
+test("milestone releases never bypass live rollback certification", () => {
+  const result = rollbackAssessment([], "milestone", "v0.2.86", hash);
+  assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
+  const certified = requireAutomaticRollback(result, {
+    kind: "real-upgrade-and-restore", sourceVersion: "0.2.86", targetCommit: hash,
+    workflowRunId: 12345, actualDatabaseMigration: true,
+    previousApiReadWriteAfterRollback: true, injectedHealthFailure: true,
+    previousImagesRestored: true,
+  });
+  assert.equal(certified.policy, "tested");
+});
+
 test("SQL or Prisma schema edits can never claim tested without a real compatibility gate", () => {
   for (const path of [
     "packages/resourceportal-api/prisma/migrations/20261010_demo/migration.sql",
