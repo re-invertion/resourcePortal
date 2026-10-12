@@ -107,7 +107,6 @@ jobs:
             --head HEAD \
             --mode "${{ steps.release-mode.outputs.mode }}" \
             --require-automatic
-          bash scripts/run-automatic-rollback-smoke.sh "${previous_tag#v}"
       - name: Dry-run actual installable CLI packaging
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,6 +132,13 @@ jobs:
           docker run --rm --entrypoint /bin/bash resourceportal-postgres-candidate \
             -ec 'command -v flock && test -x /usr/local/bin/resourceportal-postgres-fence'
           test "$(docker run --rm --entrypoint /usr/bin/id resourceportal-api-candidate -u)" != "0"
+
+      - name: Verify automatic rollback of published and candidate ResourcePortal images
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          bash scripts/run-automatic-rollback-smoke.sh "${previous_tag#v}"
 
   swarm:
     name: Real Swarm gate
