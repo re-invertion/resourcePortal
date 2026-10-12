@@ -92,6 +92,7 @@ export function requireAutomaticRollback(result, evidence = null) {
     Number.isSafeInteger(evidence.workflowRunId) && evidence.workflowRunId > 0 &&
     evidence.actualDatabaseMigration === true &&
     evidence.previousApiReadWriteAfterRollback === true &&
+    evidence.previousApiRuntimeReadyAfterRollback === true &&
     evidence.injectedHealthFailure === true &&
     evidence.previousImagesRestored === true &&
     // A PR must not reuse evidence issued in a different workflow run.
