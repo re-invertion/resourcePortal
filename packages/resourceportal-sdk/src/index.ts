@@ -1,3 +1,26 @@
+export type TenantOidcProvider = {
+  tenantId: string;
+  status: string;
+  enabled: boolean;
+  issuer?: string | null;
+  projectId?: string | null;
+  grantCount?: number;
+  grantsReconciledAt?: string | null;
+  lastErrorCode?: string | null;
+};
+
+export type FederationRetirementPreflight = {
+  mode: "NativeOnly" | "LegacyCompatible";
+  enabledProviders: number;
+  mandatoryTenantPolicies: number;
+  externalSessions: number;
+  federatedUsers: number;
+  usersWithoutNativeLink: number;
+  needsNativeLoginVerification: number;
+  safeToCutoverAutomatically: false;
+  blockers: string[];
+};
+
 export type ResourcePortalClientOptions = {
   apiUrl: string;
   devUserId?: string;
@@ -265,6 +288,26 @@ export class ResourcePortalClient {
       this.request("/invitations/accept", { method: "POST", body }),
   };
 
+  /**
+   * Outbound tenant OAuth/OIDC IdP provisioning. The issuer is shared by
+   * ZITADEL; individual tenant projects enforce roles and client isolation.
+   */
+  readonly tenantOidc = {
+    get: (tenantId: string) =>
+      this.request<TenantOidcProvider>(`/tenants/${encode(tenantId)}/oidc-provider`),
+    provision: (tenantId: string) =>
+      this.request<TenantOidcProvider>(`/tenants/${encode(tenantId)}/oidc-provider/provision`, { method: "POST" }),
+    reconcileGrants: (tenantId: string) =>
+      this.request<TenantOidcProvider>(`/tenants/${encode(tenantId)}/oidc-provider/reconcile-grants`, { method: "POST" }),
+    activate: (tenantId: string) =>
+      this.request<TenantOidcProvider>(`/tenants/${encode(tenantId)}/oidc-provider/activate`, { method: "POST" }),
+    disable: (tenantId: string) =>
+      this.request<TenantOidcProvider>(`/tenants/${encode(tenantId)}/oidc-provider/disable`, { method: "POST" }),
+    delete: (tenantId: string) =>
+      this.request<{ deleted: boolean }>(`/tenants/${encode(tenantId)}/oidc-provider`, { method: "DELETE" }),
+  };
+
+  /** @deprecated Incoming IdP federation for RP is retired in native-only mode. */
   readonly identityProviders = {
     list: (tenantId: string) =>
       this.request(`/tenants/${encode(tenantId)}/identity-providers`),

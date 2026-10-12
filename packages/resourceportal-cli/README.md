@@ -107,6 +107,28 @@ rp deployment create TENANT_ID APP_GROUP_ID --note "initial deploy"
 rp deployment events TENANT_ID APP_GROUP_ID DEPLOYMENT_ID
 ```
 
+## Tenant OIDC (candidate feature)
+
+These commands manage the tenant's *outbound* OIDC provider and clients. They do
+not configure an external IdP for signing in to ResourcePortal. Provisioning
+does not enable the provider: platform certification and rollout approval are
+required before `activate` succeeds.
+
+```bash
+rp tenant-oidc show TENANT_ID
+rp tenant-oidc provision TENANT_ID
+rp tenant-oidc reconcile TENANT_ID
+rp tenant-oidc activate TENANT_ID
+rp tenant-oidc disable TENANT_ID
+rp tenant-oidc delete TENANT_ID
+# Platform Admin only; read-only, never changes login policies:
+rp native-login-migration preflight
+```
+
+The `identity-provider` and `platform-identity-provider` command groups are
+legacy inbound-federation commands and cannot create or update providers once
+native-only login is enabled. See `docs/tenant-oidc-operator-guide.md`.
+
 ## Command Groups
 
 Existing command groups remain supported:

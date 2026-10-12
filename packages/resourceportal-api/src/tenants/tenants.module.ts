@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { BillingModule } from "../billing/billing.module";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { PrismaModule } from "../prisma/prisma.module";
+import { TenantOidcModule } from "../tenant-oidc/tenant-oidc.module";
 import { EmailModule } from "../email/email.module";
 import {
   TenantInvitationsController,
@@ -11,7 +12,7 @@ import { PlatformTenantsController } from "./platform-tenants.controller";
 import { TenantsService } from "./tenants.service";
 
 @Module({
-  imports: [PrismaModule, BillingModule, EmailModule],
+  imports: [PrismaModule, BillingModule, EmailModule, TenantOidcModule],
   controllers: [TenantsController, TenantInvitationsController, PlatformTenantsController],
   providers: [TenantsService, PlatformAdminGuard],
 })

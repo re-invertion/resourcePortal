@@ -1,8 +1,10 @@
+import { ConfigService } from "@nestjs/config";
 import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Optional,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { IdentityProviderScope, MembershipStatus } from "@prisma/client";
@@ -16,6 +18,7 @@ export class TenantContextGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -90,7 +93,7 @@ export class TenantContextGuard implements CanActivate {
     const policy = await this.prisma.tenantAuthPolicy.findUnique({
       where: { tenantId }, select: { requireTenantIdentityProvider: true },
     });
-    if (policy?.requireTenantIdentityProvider) {
+    if (policy?.requireTenantIdentityProvider && this.config?.get<string>("RP_NATIVE_LOGIN_ONLY") !== "true") {
       const authenticatedIdpId = request.user.authenticatedIdpId;
       if (!authenticatedIdpId) {
         throw new ForbiddenException("This tenant requires a verified tenant identity provider");

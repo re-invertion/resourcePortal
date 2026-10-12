@@ -19,13 +19,13 @@ type JsonObject = Record<string, unknown>;
 export class ZitadelOAuthApplicationService {
   constructor(private readonly config: ConfigService) {}
 
-  async provision(configuration: ZitadelOAuthApplicationConfiguration) {
+  async provision(configuration: ZitadelOAuthApplicationConfiguration, projectId?: string) {
     if (configuration.type === "Machine") {
       const response = await this.request<{
         appId?: string;
         clientId?: string;
         clientSecret?: string;
-      }>("POST", `${this.projectPath()}/apps/api`, {
+      }>("POST", `${this.projectPath(projectId)}/apps/api`, {
         name: configuration.name,
         authMethodType: "API_AUTH_METHOD_TYPE_BASIC",
       });
@@ -36,31 +36,31 @@ export class ZitadelOAuthApplicationService {
       appId?: string;
       clientId?: string;
       clientSecret?: string;
-    }>("POST", `${this.projectPath()}/apps/oidc`, this.oidcBody(configuration, true));
+    }>("POST", `${this.projectPath(projectId)}/apps/oidc`, this.oidcBody(configuration, true, Boolean(projectId)));
     return this.assertCreated(response);
   }
 
-  async update(applicationId: string, configuration: ZitadelOAuthApplicationConfiguration) {
-    await this.request("PUT", `${this.projectPath()}/apps/${encodeURIComponent(applicationId)}`, {
+  async update(applicationId: string, configuration: ZitadelOAuthApplicationConfiguration, projectId?: string) {
+    await this.request("PUT", `${this.projectPath(projectId)}/apps/${encodeURIComponent(applicationId)}`, {
       name: configuration.name,
     });
 
     if (configuration.type !== "Machine") {
       await this.request(
         "PUT",
-        `${this.projectPath()}/apps/${encodeURIComponent(applicationId)}/oidc_config`,
-        this.oidcBody(configuration, false),
+        `${this.projectPath(projectId)}/apps/${encodeURIComponent(applicationId)}/oidc_config`,
+        this.oidcBody(configuration, false, Boolean(projectId)),
       );
     }
   }
 
-  async rotateSecret(applicationId: string) {
+  async rotateSecret(applicationId: string, projectId?: string) {
     const response = await this.request<{ clientSecret?: string }>(
       "POST",
       "/zitadel.application.v2.ApplicationService/GenerateClientSecret",
       {
         applicationId,
-        projectId: this.projectId(),
+        projectId: this.projectId(projectId),
       },
       [],
       { "Connect-Protocol-Version": "1" },
@@ -71,16 +71,16 @@ export class ZitadelOAuthApplicationService {
     return response.clientSecret;
   }
 
-  delete(applicationId: string) {
+  delete(applicationId: string, projectId?: string) {
     return this.request(
       "DELETE",
-      `${this.projectPath()}/apps/${encodeURIComponent(applicationId)}`,
+      `${this.projectPath(projectId)}/apps/${encodeURIComponent(applicationId)}`,
       undefined,
       [404],
     );
   }
 
-  private oidcBody(configuration: ZitadelOAuthApplicationConfiguration, includeName: boolean) {
+  private oidcBody(configuration: ZitadelOAuthApplicationConfiguration, includeName: boolean, tenantClient = false) {
     const appType =
       configuration.type === "Web"
         ? "OIDC_APP_TYPE_WEB"
@@ -103,7 +103,9 @@ export class ZitadelOAuthApplicationService {
       version: "OIDC_VERSION_1_0",
       devMode: this.config.get<string>("NODE_ENV", "development") !== "production",
       accessTokenType: "OIDC_TOKEN_TYPE_JWT",
-      idTokenUserinfoAssertion: true,
+      // Tenant IdP does not force extra PII into ID tokens.
+      idTokenUserinfoAssertion: !tenantClient,
+      ...(tenantClient ? { idTokenRoleAssertion: true, accessTokenRoleAssertion: true } : {}),
     };
   }
 
@@ -118,12 +120,12 @@ export class ZitadelOAuthApplicationService {
     };
   }
 
-  private projectPath() {
-    return `/management/v1/projects/${encodeURIComponent(this.projectId())}`;
+  private projectPath(projectId?: string) {
+    return `/management/v1/projects/${encodeURIComponent(this.projectId(projectId))}`;
   }
 
-  private projectId() {
-    const value = this.config.get<string>("ZITADEL_PROJECT_ID");
+  private projectId(projectId?: string) {
+    const value = projectId ?? this.config.get<string>("ZITADEL_PROJECT_ID");
     if (!value) {
       throw new ServiceUnavailableException("ZITADEL_PROJECT_ID is required for OAuth application provisioning");
     }

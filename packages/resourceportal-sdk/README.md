@@ -42,6 +42,28 @@ await client.request("/auth/me", {
 
 `RESOURCE_PORTAL_CORRELATION_ID` and `RESOURCE_PORTAL_REQUEST_ID` are also supported as process environment defaults.
 
+## Tenant OIDC and native ResourcePortal login
+
+The tenant OIDC service is a candidate feature and is **not active by default**.
+Its issuer is the actual, shared ZITADEL issuer, with one dedicated project and
+explicit RP-membership-backed grants per tenant.
+
+```ts
+const state = await client.tenantOidc.get(tenantId);
+await client.tenantOidc.provision(tenantId);
+await client.tenantOidc.reconcileGrants(tenantId);
+// Only after platform certification and explicit operator approval:
+await client.tenantOidc.activate(tenantId);
+await client.tenantOidc.disable(tenantId);
+
+const migration = await client.nativeLoginMigration.preflight(); // Platform Admin only
+```
+
+The legacy `identityProviders` and `platformIdentityProviders` API families
+are deprecated for incoming OIDC/SAML federation; writes are rejected in
+`RP_NATIVE_LOGIN_ONLY=true` mode. See
+`docs/tenant-oidc-operator-guide.md` and `docs/tenant-oidc-e2e-certification.md`.
+
 ## Public resource surface
 
 Existing resources remain backward-compatible:

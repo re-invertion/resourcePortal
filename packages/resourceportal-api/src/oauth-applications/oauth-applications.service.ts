@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -14,6 +15,7 @@ import {
   OAuthApplicationType,
 } from "./dto/create-oauth-application.dto";
 import { UpdateOAuthApplicationDto } from "./dto/update-oauth-application.dto";
+import { validateOAuthRedirectUris } from "./redirect-uri";
 import {
   ZitadelOAuthApplicationConfiguration,
   ZitadelOAuthApplicationService,
@@ -27,6 +29,7 @@ type OAuthApplicationRecord = {
   redirectUris: string[];
   postLogoutRedirectUris: string[];
   zitadelApplicationId: string;
+  zitadelProjectId: string | null;
   clientId: string;
   clientSecretCiphertext: string | null;
   createdBy: string;
@@ -60,7 +63,15 @@ export class OAuthApplicationsService {
     const tenant = await this.ensureTenant(tenantId);
     const configuration = this.configuration(dto.name, dto.type, dto.redirectUris ?? [], dto.postLogoutRedirectUris ?? []);
     this.validate(configuration);
-    const remote = await this.zitadel.provision(configuration);
+    const provider = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
+    if (!provider?.enabled || provider.status !== "Active" ||
+        !provider.zitadelProjectId || !provider.grantsReconciledAt) {
+      throw new ServiceUnavailableException("Tenant OIDC provider is not activated or grants are stale");
+    }
+    if (configuration.type === "Machine") {
+      throw new BadRequestException("Machine OIDC clients require a dedicated service identity");
+    }
+    const remote = await this.zitadel.provision(configuration, provider.zitadelProjectId);
     const id = randomUUID();
 
     try {
@@ -74,6 +85,7 @@ export class OAuthApplicationsService {
             redirectUris: configuration.redirectUris,
             postLogoutRedirectUris: configuration.postLogoutRedirectUris,
             zitadelApplicationId: remote.applicationId,
+            zitadelProjectId: provider.zitadelProjectId,
             clientId: remote.clientId,
             clientSecretCiphertext: remote.clientSecret
               ? this.encryption.encrypt(remote.clientSecret)
@@ -104,7 +116,7 @@ export class OAuthApplicationsService {
         });
       });
     } catch (error) {
-      await this.deleteRemoteIgnoringFailure(remote.applicationId);
+      await this.deleteRemoteIgnoringFailure(remote.applicationId, provider.zitadelProjectId);
       this.rethrowConflict(error);
     }
 
@@ -130,7 +142,7 @@ export class OAuthApplicationsService {
       dto.postLogoutRedirectUris ?? current.postLogoutRedirectUris,
     );
     this.validate(configuration);
-    await this.zitadel.update(current.zitadelApplicationId, configuration);
+    await this.zitadel.update(current.zitadelApplicationId, configuration, current.zitadelProjectId ?? undefined);
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -171,7 +183,7 @@ export class OAuthApplicationsService {
   async delete(tenantId: string, applicationId: string, actor: AuthenticatedUser) {
     const tenant = await this.ensureTenant(tenantId);
     const current = await this.getRecord(tenantId, applicationId);
-    await this.zitadel.delete(current.zitadelApplicationId);
+    await this.zitadel.delete(current.zitadelApplicationId, current.zitadelProjectId ?? undefined);
     await this.prisma.$transaction(async (tx) => {
       await tx.oAuthApplication.deleteMany({
         where: { id: applicationId, tenantId },
@@ -205,22 +217,12 @@ export class OAuthApplicationsService {
   }
 
   private validate(configuration: ZitadelOAuthApplicationConfiguration) {
-    if (configuration.type === "Machine") {
-      if (configuration.redirectUris.length || configuration.postLogoutRedirectUris.length) {
-        throw new BadRequestException("Machine applications do not accept redirect URIs");
-      }
-      return;
-    }
-    if (configuration.redirectUris.length === 0) {
-      throw new BadRequestException(`${configuration.type} applications require at least one redirect URI`);
-    }
-    for (const uri of [...configuration.redirectUris, ...configuration.postLogoutRedirectUris]) {
-      try {
-        new URL(uri);
-      } catch {
-        throw new BadRequestException(`Invalid application URI: ${uri}`);
-      }
-    }
+    validateOAuthRedirectUris(
+      configuration.type,
+      configuration.redirectUris,
+      configuration.postLogoutRedirectUris,
+      process.env.NODE_ENV === "production",
+    );
   }
 
   private async getRecord(tenantId: string, applicationId: string) {
@@ -262,6 +264,7 @@ export class OAuthApplicationsService {
       redirectUris: record.redirectUris,
       postLogoutRedirectUris: record.postLogoutRedirectUris,
       clientId: record.clientId,
+      zitadelProjectId: record.zitadelProjectId,
       hasClientSecret: Boolean(record.clientSecretCiphertext),
       provisioned: Boolean(record.zitadelApplicationId),
       createdAt: record.createdAt,
@@ -269,9 +272,9 @@ export class OAuthApplicationsService {
     };
   }
 
-  private async deleteRemoteIgnoringFailure(applicationId: string) {
+  private async deleteRemoteIgnoringFailure(applicationId: string, projectId?: string) {
     try {
-      await this.zitadel.delete(applicationId);
+      await this.zitadel.delete(applicationId, projectId);
     } catch {
       // Preserve the database error; reconciliation can remove the orphan application.
     }

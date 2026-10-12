@@ -995,6 +995,18 @@ export class AdminMcpProtocolService {
       ),
 
       read(
+        "resourceportal_admin_native_login_preflight",
+        "Assess native login cutover",
+        "Read-only assessment of upstream federation, unresolved sessions, policies and account-lockout risks. Never authorizes an automatic cutover.",
+        "/api/platform/identity-providers/retirement-preflight",
+      ),
+      read(
+        "resourceportal_admin_list_tenant_oidc_providers",
+        "List tenant OIDC rollout state",
+        "Read-only statuses of tenant OIDC projects. Does not reveal tenant grants or users.",
+        "/api/platform/tenant-oidc",
+      ),
+      read(
         "resourceportal_admin_list_identity_providers",
         "List platform identity providers",
         "List platform-scoped external identity providers.",

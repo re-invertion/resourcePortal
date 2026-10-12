@@ -446,6 +446,12 @@ export class TenantMcpProtocolService {
       case "access:add_group_role": method = "POST"; path = `/groups/${encodeURIComponent(uuid("groupId"))}/roles`; break;
       case "access:remove_group_role": method = "DELETE"; path = `/groups/${encodeURIComponent(uuid("groupId"))}/roles/${encodeURIComponent(uuid("roleId"))}`; break;
 
+      case "identity:get_tenant_oidc": path = "/oidc-provider"; break;
+      case "identity:provision_tenant_oidc": method = "POST"; path = "/oidc-provider/provision"; break;
+      case "identity:reconcile_tenant_oidc": method = "POST"; path = "/oidc-provider/reconcile-grants"; break;
+      case "identity:activate_tenant_oidc": method = "POST"; path = "/oidc-provider/activate"; break;
+      case "identity:disable_tenant_oidc": method = "POST"; path = "/oidc-provider/disable"; break;
+      case "identity:delete_tenant_oidc": method = "DELETE"; path = "/oidc-provider"; break;
       case "identity:list_identity_providers": path = "/identity-providers"; break;
       case "identity:get_identity_provider": path = `/identity-providers/${encodeURIComponent(uuid("resourceId"))}`; break;
       case "identity:create_identity_provider": method = "POST"; path = "/identity-providers"; break;
@@ -1063,8 +1069,8 @@ export class TenantMcpProtocolService {
       managedTool(
         "resourceportal_manage_identity",
         "Manage tenant identity",
-        "Manage tenant identity providers, OAuth applications and service identities including credential rotation.",
-        ["list_identity_providers", "get_identity_provider", "create_identity_provider", "update_identity_provider", "delete_identity_provider", "list_oauth_applications", "get_oauth_application", "create_oauth_application", "update_oauth_application", "rotate_oauth_application", "delete_oauth_application", "list_service_identities", "get_service_identity", "create_service_identity", "update_service_identity", "rotate_service_identity", "delete_service_identity"],
+        "Manage the tenant OIDC provider, OAuth clients and service identities; legacy inbound identity-provider commands are deprecated.",
+        ["get_tenant_oidc", "provision_tenant_oidc", "reconcile_tenant_oidc", "activate_tenant_oidc", "disable_tenant_oidc", "delete_tenant_oidc", "list_identity_providers", "get_identity_provider", "create_identity_provider", "update_identity_provider", "delete_identity_provider", "list_oauth_applications", "get_oauth_application", "create_oauth_application", "update_oauth_application", "rotate_oauth_application", "delete_oauth_application", "list_service_identities", "get_service_identity", "create_service_identity", "update_service_identity", "rotate_service_identity", "delete_service_identity"],
       ),
       managedTool(
         "resourceportal_manage_resource_bot",

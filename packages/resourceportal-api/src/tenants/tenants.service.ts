@@ -3,12 +3,14 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Optional,
   NotFoundException,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
 import { PlatformEmailService } from "../email/platform-email.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
@@ -41,6 +43,7 @@ export class TenantsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: PlatformEmailService,
+    @Optional() private readonly tenantOidc?: TenantOidcService,
   ) {}
 
   listTenants(userId: string) {
@@ -1153,6 +1156,10 @@ export class TenantsService {
         return created;
       });
 
+      // Newly added users must not inherit any previously reconciled snapshot.
+      // Existing grants remain bounded by the tenant project; activation requires
+      // an explicit reconciliation of the updated membership set.
+      await this.tenantOidc?.markStale(tenantId);
       return mapMembership(membership);
     } catch (error) {
       if (
@@ -1184,6 +1191,9 @@ export class TenantsService {
       [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
     );
 
+    if (dto.status === MembershipStatus.Suspended) {
+      await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, existing.userId);
+    }
     const membership = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
       const lockedMembership = await tx.tenantMembership.findFirst({
@@ -1233,6 +1243,7 @@ export class TenantsService {
       return updated;
     });
 
+    await this.tenantOidc?.markStale(tenantId);
     return mapMembership(membership);
   }
 
@@ -1249,6 +1260,7 @@ export class TenantsService {
       actor,
       existing.roles.map(({ role }) => role.id),
     );
+    await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, existing.userId);
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
       const lockedMembership = await tx.tenantMembership.findFirst({
@@ -1282,6 +1294,7 @@ export class TenantsService {
       });
     });
 
+    await this.tenantOidc?.markStale(tenantId);
     return { deleted: true };
   }
 

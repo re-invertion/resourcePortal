@@ -60,7 +60,7 @@ export function AccessTabs({
   active,
 }: {
   tenantId: string;
-  active: "overview" | "administration" | "credentials";
+  active: "overview" | "administration" | "credentials" | "identity-sso";
 }) {
   return (
     <Tabs
@@ -80,6 +80,11 @@ export function AccessTabs({
           label: "Credentials",
           href: tenantHref(tenantId, "credentials"),
           active: active === "credentials",
+        },
+        {
+          label: "Identity & SSO",
+          href: tenantHref(tenantId, "identity-sso"),
+          active: active === "identity-sso",
         },
       ]}
     />

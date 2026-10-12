@@ -6,6 +6,7 @@ import { AppGroupRoute } from "./app-group/route";
 import { TenantAccess, TenantBilling } from "./tenant-resources";
 import { TenantVolumesPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
+import { TenantIdentitySsoPage } from "./tenant-identity-sso";
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
 import { TenantHelpPage } from "./help";
 import { TenantSettingsPage } from "./tenant-settings";
@@ -45,6 +46,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;
   if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} section={segments[0]} />;
   if (section === "credentials") return <TenantCredentialsPage tenantId={tenantId} />;
+  if (section === "identity-sso") return <TenantIdentitySsoPage tenantId={tenantId} />;
   if (section === "audit") return <TenantAuditPage tenantId={tenantId} />;
   if (section === "operations") return <TenantOperationsPage tenantId={tenantId} operationId={resourceId} />;
   return <main><h1>Tenant page not found</h1><p>Unknown section: {section}</p></main>;

@@ -27,6 +27,8 @@ import {
 } from "../mcp/admin-mcp.controller";
 import { OAuthApplicationsController } from "../oauth-applications/oauth-applications.controller";
 import { PlatformOAuthApplicationsController } from "../oauth-applications/platform-oauth-applications.controller";
+import { TenantOidcController } from "../tenant-oidc/tenant-oidc.controller";
+import { PlatformTenantOidcController } from "../tenant-oidc/platform-tenant-oidc.controller";
 import { PlatformOperationsController } from "../operations/platform-operations.controller";
 import { PlatformInfrastructureController } from "../platform-infrastructure/platform-infrastructure.controller";
 import { RegistriesController } from "../registries/registries.controller";
@@ -61,6 +63,8 @@ const controllers = [
   ObservabilityController,
   ObservabilityDiagnosticsController,
   OAuthApplicationsController,
+  TenantOidcController,
+  PlatformTenantOidcController,
   PlatformEmailController,
   PlatformIdentityProvidersController,
   PlatformInfrastructureController,

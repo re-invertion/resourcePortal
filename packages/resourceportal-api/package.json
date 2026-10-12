@@ -9,6 +9,7 @@
     "start:dev": "nest start --watch",
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "test": "vitest run",
+    "test:tenant-oidc-live-preflight": "node scripts/tenant-oidc-live-preflight.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",

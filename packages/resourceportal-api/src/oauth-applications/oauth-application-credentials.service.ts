@@ -11,6 +11,7 @@ type OAuthApplicationCredentialRecord = {
   name: string;
   type: string;
   zitadelApplicationId: string;
+  zitadelProjectId: string | null;
   clientId: string;
   clientSecretCiphertext: string | null;
 };
@@ -57,6 +58,7 @@ export class OAuthApplicationCredentialsService {
 
     const clientSecret = await this.zitadel.rotateSecret(
       application.zitadelApplicationId,
+      application.zitadelProjectId ?? undefined,
     );
 
     try {
@@ -132,7 +134,8 @@ export class OAuthApplicationCredentialsService {
       where: { id: applicationId, tenantId },
       select: {
         id: true, tenantId: true, name: true, type: true,
-        zitadelApplicationId: true, clientId: true, clientSecretCiphertext: true,
+        zitadelApplicationId: true, zitadelProjectId: true,
+        clientId: true, clientSecretCiphertext: true,
       },
     });
     if (!row) throw new NotFoundException("OAuth application not found");
@@ -144,7 +147,8 @@ export class OAuthApplicationCredentialsService {
       where: { id: applicationId, tenantId: null },
       select: {
         id: true, tenantId: true, name: true, type: true,
-        zitadelApplicationId: true, clientId: true, clientSecretCiphertext: true,
+        zitadelApplicationId: true, zitadelProjectId: true,
+        clientId: true, clientSecretCiphertext: true,
       },
     });
     if (!row) throw new NotFoundException("Platform OAuth application not found");

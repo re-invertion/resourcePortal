@@ -13,9 +13,27 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
 });
 
 test("documentation-only change does not trigger unrelated tests", () => {
-  const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md"]);
+  const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md", "packages/resourceportal-api/README.md"]);
   assert.deepEqual(plan.profiles, []);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC and native-login changes select the dedicated identity/federation gate", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.ts",
+    "packages/resourceportal-api/src/oauth-applications/tenant-oauth-project.spec.ts",
+    "packages/resourceportal-api/src/api.module.ts",
+    "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs",
+    "packages/resourceportal-web/src/pages/tenant-identity-sso.tsx",
+    "packages/resourceportal-web/src/pages/platform-identity-pages.tsx",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("identity rollout cannot silently bypass patch validation when package manifest changes", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/package.json"]);
+  assert.deepEqual(plan.profiles, ["identity", "workflow"]);
 });
 
 test("security runtime changes select security tests (never silently skipped)", () => {

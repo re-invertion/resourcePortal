@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, GoneException, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
@@ -8,7 +9,10 @@ import { IdentityProvidersService } from "./identity-providers.service";
 
 @Controller("tenants/:tenantId/identity-providers")
 export class IdentityProvidersController {
-  constructor(private readonly identityProvidersService: IdentityProvidersService) {}
+  constructor(
+    private readonly identityProvidersService: IdentityProvidersService,
+    private readonly config: ConfigService,
+  ) {}
 
   @RequirePermissions("identity_provider.read")
   @Get()
@@ -35,6 +39,7 @@ export class IdentityProvidersController {
     @Body() dto: CreateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
+    this.assertFederationAvailable();
     return this.identityProvidersService.createTenantIdentityProvider(
       tenantId,
       dto,
@@ -50,6 +55,7 @@ export class IdentityProvidersController {
     @Body() dto: UpdateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
+    this.assertFederationAvailable();
     return this.identityProvidersService.updateTenantIdentityProvider(
       tenantId,
       identityProviderId,
@@ -71,4 +77,11 @@ export class IdentityProvidersController {
       actor,
     );
   }
+
+  private assertFederationAvailable() {
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+      throw new GoneException("Incoming identity provider configuration has been retired");
+    }
+  }
+
 }

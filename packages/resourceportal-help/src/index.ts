@@ -6,7 +6,7 @@ export type HelpCorpusSection = {
   body: string;
 };
 
-export const HELP_CORPUS_REVISION = "aed02679fb12486c98423260bb3803a8039d23239bc9d1d787a0335af655f3bd";
+export const HELP_CORPUS_REVISION = "ba67aa512e11dfd0f934f7f13f7ce24ee88bfa7c05b72bdd4b40f81452db5d92";
 
 export const HELP_SECTIONS: readonly HelpCorpusSection[] = [
   {
@@ -106,6 +106,13 @@ export const HELP_SECTIONS: readonly HelpCorpusSection[] = [
     "title": "Credits, usage and vouchers",
     "description": "Billing shows the tenant balance, resource quota, account transactions and workload usage that contributes to billing.",
     "body": "Balance and quota The balance is the amount of tenant credit currently available. Quota cards show the resource limits assigned to the tenant, such as CPU, memory and persistent storage. Quota describes what the tenant is allowed to allocate; usage describes what workloads are actually consuming or being billed for over time. Usage charts Billing uses one interactive usage chart above the transaction list. Choose 24 hours, 7 days, 30 days or the full history, then switch between Credits and Replicas. Credits compares the amount actually charged with theoretical cost; Replicas compares average billed replicas with desired replicas. You can hide either series to focus on one signal. Longer periods are aggregated into larger time buckets so the chart remains readable without dropping the selected history. Transactions Transactions record changes to the balance, for example voucher redemption or an operator correction. They are account events, while Usage represents workload consumption over time. Redeem a voucher Open Billing and locate Redeem voucher. Enter the complete RPV voucher code you received. Redeem it once. A successful redemption adds its value to the tenant balance and appears in Transactions. If redemption fails, verify the code and do not assume that repeatedly submitting it will create additional credit. Tenant users cannot arbitrarily create credit. The normal tenant-facing funding method is a voucher issued by the platform operator. Open Billing"
+  },
+  {
+    "id": "identity-sso",
+    "label": "Identity & SSO",
+    "title": "Use ResourcePortal as an OIDC provider for your applications",
+    "description": "Tenant-managed OpenID Connect applications use a dedicated ZITADEL project and tenant-scoped roles.",
+    "body": "Identity & SSO is intended for applications in your tenant that need to sign users in. Open Access, then Identity & SSO. An administrator can request provisioning of a tenant project, synchronize membership grants, register an OAuth client and configure allowed redirect URIs. The platform uses one verified ZITADEL issuer with a separate project per tenant: your tenant is not given a separate issuer hostname or unrestricted administrator privileges in ZITADEL. Use the exact issuer and OpenID Connect discovery URL shown in the tenant panel. Each application must validate the token signature through JWKS, issuer, audience, expiry and required project roles. Standard Authorization Code with PKCE is the supported interactive flow. Register the exact HTTPS callback URL used by your application; public SPA and native clients do not receive a client secret. Save confidential client secrets when issued because they may be shown only once. If provider status says PendingGrants, Disabled, or another non-Active status, creating new OAuth clients is blocked. Tenant OIDC activation is restricted until the platform has passed live certification: provisioning alone is not proof of availability. If you remove or suspend a membership, RP must revoke its upstream project grant; newly issued tokens must no longer authorize that user, while the lifetime of already issued JWTs depends on relying-party validation. This functionality makes RP an outbound IdP for your applications. It does not allow using your custom external SAML or OIDC provider to sign in to ResourcePortal itself. Existing incoming federation is subject to a separate, operator-controlled native-login migration. For integration help consult docs/tenant-oidc-operator-guide.md and ask your platform administrator if live SSO is not yet certified."
   },
   {
     "id": "troubleshooting",

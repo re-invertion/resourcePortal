@@ -3,27 +3,39 @@ import {
   Controller,
   Delete,
   Get,
+  GoneException,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   UseGuards,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
 import { CreateIdentityProviderDto } from "./dto/create-identity-provider.dto";
 import { UpdateIdentityProviderDto } from "./dto/update-identity-provider.dto";
 import { PlatformIdentityProvidersService } from "./platform-identity-providers.service";
+import { FederationRetirementService } from "./federation-retirement.service";
 
 @Controller("platform/identity-providers")
 @UseGuards(PlatformAdminGuard)
 export class PlatformIdentityProvidersController {
-  constructor(private readonly service: PlatformIdentityProvidersService) {}
+  constructor(
+    private readonly service: PlatformIdentityProvidersService,
+    private readonly retirement: FederationRetirementService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Get()
   list() {
     return this.service.list();
+  }
+
+  @Get("retirement-preflight")
+  retirementPreflight() {
+    return this.retirement.preflight();
   }
 
   @Get(":identityProviderId")
@@ -33,6 +45,7 @@ export class PlatformIdentityProvidersController {
 
   @Post()
   create(@Body() dto: CreateIdentityProviderDto, @CurrentUser() actor: AuthenticatedUser) {
+    this.assertFederationAvailable();
     return this.service.create(dto, actor);
   }
 
@@ -42,6 +55,7 @@ export class PlatformIdentityProvidersController {
     @Body() dto: UpdateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
+    this.assertFederationAvailable();
     return this.service.update(identityProviderId, dto, actor);
   }
 
@@ -52,4 +66,11 @@ export class PlatformIdentityProvidersController {
   ) {
     return this.service.delete(identityProviderId, actor);
   }
+
+  private assertFederationAvailable() {
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+      throw new GoneException("Incoming identity provider configuration has been retired");
+    }
+  }
+
 }

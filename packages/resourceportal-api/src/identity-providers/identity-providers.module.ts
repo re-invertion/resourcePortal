@@ -4,6 +4,7 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { SecurityModule } from "../security/security.module";
 import { IdentityProvidersController } from "./identity-providers.controller";
 import { IdentityProvidersService } from "./identity-providers.service";
+import { FederationRetirementService } from "./federation-retirement.service";
 import { PlatformIdentityProvidersController } from "./platform-identity-providers.controller";
 import { PlatformIdentityProvidersService } from "./platform-identity-providers.service";
 import { ZitadelIdentityProviderService } from "./zitadel-identity-provider.service";
@@ -13,6 +14,7 @@ import { ZitadelIdentityProviderService } from "./zitadel-identity-provider.serv
   controllers: [IdentityProvidersController, PlatformIdentityProvidersController],
   providers: [
     IdentityProvidersService,
+    FederationRetirementService,
     PlatformIdentityProvidersService,
     ZitadelIdentityProviderService,
     PlatformAdminGuard,

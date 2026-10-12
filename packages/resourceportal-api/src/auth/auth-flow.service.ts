@@ -94,6 +94,9 @@ export class AuthFlowService {
       throw new UnauthorizedException("OIDC code verifier is missing");
     }
 
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true" && identityProviderId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     const tokenResponse = await this.exchangeCode(code, codeVerifier);
     const user = await this.oidcAuth.authenticateBrowserTokens(
       tokenResponse.id_token,
@@ -113,6 +116,9 @@ export class AuthFlowService {
   }
 
   async listLoginOptions(tenantId?: string) {
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+      return [];
+    }
     if (!tenantId) {
       return this.prisma.identityProvider.findMany({
         where: {
@@ -161,6 +167,14 @@ export class AuthFlowService {
 
     if (organizationId) {
       scopes.push(`urn:zitadel:iam:org:id:${organizationId}`);
+    }
+
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+      if (options.identityProviderId) {
+        throw new ForbiddenException("External identity provider login is disabled");
+      }
+      if (options.tenantId) await this.getTenantLoginPolicy(options.tenantId);
+      return { scopes: [...new Set(scopes)] };
     }
 
     if (!options.tenantId && !options.identityProviderId) {
