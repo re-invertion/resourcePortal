@@ -95,6 +95,19 @@ jobs:
           npm run build
           npm run test:installer
           npm run test:cli-release
+      - name: Require verified automatic rollback before allowing merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$previous_tag" \
+            --head HEAD \
+            --mode "${{ steps.release-mode.outputs.mode }}" \
+            --require-automatic
+          bash scripts/run-automatic-rollback-smoke.sh "${previous_tag#v}"
       - name: Dry-run actual installable CLI packaging
         env:
           GH_TOKEN: ${{ github.token }}
