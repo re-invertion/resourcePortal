@@ -154,8 +154,31 @@ export async function runOidcAuthorizationE2E(input: {
       rotated.payload["urn:zitadel:iam:org:project:roles"];
     assert.ok(rotatedRole && JSON.stringify(rotatedRole).includes("rp.tenant.member"),
       "A valid grant was lost during refresh before revocation");
+    // RP-initiated sign-out must terminate the user-agent session and return
+    // to a strictly preregistered post-logout URI. No raw ID token in the URL.
+    const logout = new URL(input.issuer + "/oidc/v1/end_session");
+    logout.searchParams.set("client_id", input.clientId);
+    logout.searchParams.set("post_logout_redirect_uri", input.issuer + "/logout");
+    logout.searchParams.set("state", randomBytes(12).toString("base64url"));
+    await page.goto(logout.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+    let didLogout = false;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (new URL(page.url()).pathname === "/logout") {
+        didLogout = true;
+        break;
+      }
+      const confirm = page.locator(
+        'button[name="logout"], button[type="submit"]:has-text("Logout"), button:has-text("Sign out")',
+      ).first();
+      if (await confirm.isVisible().catch(() => false)) {
+        await confirm.click();
+        continue;
+      }
+      await page.waitForTimeout(250);
+    }
+    assert.ok(didLogout, "ZITADEL did not complete RP-initiated logout to registered URI");
     console.log("PASS: real HTTPS Authorization Code + PKCE, state/nonce, signed ID/access JWT,");
-    console.log("  native user, audience, tenant roles and live refresh (tokens not logged).");
+    console.log("  native user, tenant roles, live refresh and RP-initiated logout (tokens not logged).");
     return { refreshToken: refreshed.refresh_token ?? tokens.refresh_token!,
       clientId: input.clientId, clientSecret: input.clientSecret,
       issuer: input.issuer, projectId: input.projectId };
