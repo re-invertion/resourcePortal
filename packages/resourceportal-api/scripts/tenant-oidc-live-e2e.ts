@@ -196,8 +196,8 @@ async function main() {
     assert.equal(stillB.userGrant.projectId, projectB, "Tenant A revocation harmed Tenant B");
     console.log("PASS: real HTTPS issuer/discovery/JWKS, two independent projects and client types,");
     console.log("  membership-backed grants, cross-tenant denial and live grant revocation.");
-    console.log("PENDING: interactive authorization+PKCE signed token roles, consent, refresh/logout,");
-    console.log("  native login recovery and token-expiry revocation E2E are NOT certified by this suite.");
+    console.log("PENDING: safe migration of all actual RP login accounts, production MFA/recovery,");
+    console.log("  formal consent coverage and already-issued token expiry are not certified by this suite.");
   } finally {
     for (const app of ownedApps.reverse()) {
       await clients.delete(app.id, app.projectId).catch(() => undefined);
