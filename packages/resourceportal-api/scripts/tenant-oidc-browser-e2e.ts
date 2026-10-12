@@ -120,7 +120,8 @@ export async function runOidcAuthorizationE2E(input: {
     });
     if (!tokenResponse.ok) throw new Error("ZITADEL code exchange denied HTTP " + tokenResponse.status);
     const tokens = await tokenResponse.json() as { id_token?: string; access_token?: string; refresh_token?: string };
-    assert.ok(tokens.id_token && tokens.access_token, "OIDC exchange returned incomplete tokens");
+    assert.ok(tokens.id_token && tokens.access_token && tokens.refresh_token,
+      "OIDC exchange returned incomplete tokens (including offline refresh)");
     const jwks = createRemoteJWKSet(new URL(discovery.jwks_uri));
     const id = await jwtVerify(tokens.id_token, jwks, { issuer: input.issuer, audience: input.clientId });
     assert.equal(id.payload.sub, input.userId, "Unexpected native ZITADEL identity");
@@ -134,6 +135,8 @@ export async function runOidcAuthorizationE2E(input: {
       "Real token omitted the tenant's membership role");
     console.log("PASS: real HTTPS Authorization Code + PKCE, state/nonce, signed ID/access JWT,");
     console.log("  native user, audience and tenant-scoped role claims (tokens not logged).");
+    return { refreshToken: tokens.refresh_token!, clientId: input.clientId,
+      clientSecret: input.clientSecret, issuer: input.issuer, projectId: input.projectId };
   } catch (error) {
     // Never include page content, cookies, tokens or credentials in diagnostics.
     throw error;
@@ -142,4 +145,42 @@ export async function runOidcAuthorizationE2E(input: {
     await browser.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+}
+
+/**
+ * A revoked tenant project grant must never be reasserted by a refresh token.
+ * The authorization server may reject the refresh completely, or return a
+ * new token without the role. Existing old JWTs live until their expiry.
+ */
+export async function assertRevokedRefreshCannotAuthorizeTenant(session: {
+  refreshToken: string; clientId: string; clientSecret: string;
+  issuer: string; projectId: string;
+}) {
+  const discovery = await (await fetch(session.issuer + "/.well-known/openid-configuration")).json() as {
+    token_endpoint: string; jwks_uri: string;
+  };
+  const response = await fetch(discovery.token_endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: "Basic " + Buffer.from(session.clientId + ":" + session.clientSecret).toString("base64"),
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token", refresh_token: session.refreshToken,
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) {
+    console.log("PASS: ZITADEL denied refresh after user project grant revocation");
+    return;
+  }
+  const responseBody = await response.json() as { access_token?: string };
+  assert.ok(responseBody.access_token, "Refresh did not return an access token");
+  const { payload } = await jwtVerify(responseBody.access_token,
+    createRemoteJWKSet(new URL(discovery.jwks_uri)), { issuer: session.issuer });
+  const roles = payload["urn:zitadel:iam:org:project:" + session.projectId + ":roles"] ??
+    payload["urn:zitadel:iam:org:project:roles"];
+  assert.ok(!JSON.stringify(roles ?? {}).includes("rp.tenant.member"),
+    "SECURITY: revoked project role was still present in newly refreshed JWT");
+  console.log("PASS: refreshed signed JWT omits revoked tenant role");
 }
