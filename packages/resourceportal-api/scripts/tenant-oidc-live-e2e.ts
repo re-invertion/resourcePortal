@@ -12,7 +12,7 @@ import type { PrismaService } from "../src/prisma/prisma.service";
 import { TenantOidcService } from "../src/tenant-oidc/tenant-oidc.service";
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
-import { runOidcAuthorizationE2E } from "./tenant-oidc-browser-e2e";
+import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -164,7 +164,7 @@ async function main() {
     }, projectA);
     assert.ok(web.clientId && web.clientSecret, "Confidential Web client missing its credentials");
     ownedApps.push({ id: web.applicationId, projectId: projectA });
-    await runOidcAuthorizationE2E({
+    const liveLogin = await runOidcAuthorizationE2E({
       issuer, projectId: projectA, clientId: web.clientId,
       clientSecret: web.clientSecret!, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
@@ -182,6 +182,7 @@ async function main() {
       where: { userId_tenantId: { userId: userA.id, tenantId: tenantA.id } },
       data: { status: MembershipStatus.Suspended },
     });
+    await assertRevokedRefreshCannotAuthorizeTenant(liveLogin);
     assert.equal((await tenants.get(tenantA.id)).enabled, false,
       "Tenant IdP must fail closed after revocation");
     const revoked = await fetch(issuer + "/management/v1/users/" + userAId +
