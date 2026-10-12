@@ -7,3 +7,5 @@
 - See `docs/release-validation-policy.md` for classification, workflows, tagging and exceptions.
 
 - Main delivery: require approved PR, protected GitHub Ruleset and Merge Queue with `Required release readiness` (no bypass). Every main merge automatically builds and publishes exactly one SHA-pinned GitHub Release after all gates; no manual tag/dispatch. Do not merge until the previous main SHA is published. See `docs/automatic-main-releases.md`.
+
+- Release rollback is mandatory: require validated image-only automatic rollback from the immediate published source, plus passing real isolated Swarm fault-injection **before both merge and publication**. Never publish `rollbackPolicy: none`. Schema-changing and milestone releases fail closed until a verified database restore protocol is implemented.
