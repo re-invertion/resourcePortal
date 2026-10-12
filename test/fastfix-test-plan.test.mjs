@@ -39,7 +39,7 @@ test("live HTTPS tenant OIDC integration scripts and fixtures are release-gated"
     "test/tenant-oidc/docker-compose.yml",
   ]);
   assert.deepEqual(plan.profiles, ["identity", "workflow"]);
-  assert.equal(plan.federationRequired, true);
+  assert.equal(plan.vpnSmoke, false);
 });
 
 test("identity rollout cannot silently bypass patch validation when package manifest changes", () => {
