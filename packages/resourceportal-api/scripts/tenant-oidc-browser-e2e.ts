@@ -11,6 +11,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 export async function runOidcAuthorizationE2E(input: {
   issuer: string;
   projectId: string;
+  foreignProjectId: string;
   clientId: string;
   clientSecret: string;
   userId: string;
@@ -129,6 +130,10 @@ export async function runOidcAuthorizationE2E(input: {
     const access = await jwtVerify(tokens.access_token, jwks, { issuer: input.issuer });
     const audiences = Array.isArray(access.payload.aud) ? access.payload.aud : [access.payload.aud];
     assert.ok(audiences.includes(input.projectId), "Tenant project missing from JWT audience");
+    assert.ok(!audiences.includes(input.foreignProjectId), "Security: foreign tenant project appeared in token audience");
+    assert.ok(!Object.keys(access.payload).some(key =>
+      key.includes(input.foreignProjectId) && key.endsWith(":roles")),
+    "Security: JWT leaks role claims from unrelated tenant");
     const ownRoles = access.payload["urn:zitadel:iam:org:project:" + input.projectId + ":roles"] ??
       access.payload["urn:zitadel:iam:org:project:roles"];
     assert.ok(ownRoles && JSON.stringify(ownRoles).includes("rp.tenant.member"),
