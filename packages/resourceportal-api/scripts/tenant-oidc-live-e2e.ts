@@ -12,6 +12,7 @@ import type { PrismaService } from "../src/prisma/prisma.service";
 import { TenantOidcService } from "../src/tenant-oidc/tenant-oidc.service";
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
+import { runOidcAuthorizationE2E } from "./tenant-oidc-browser-e2e";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -158,11 +159,16 @@ async function main() {
     assert.equal(active.enabled, true);
     const web = await clients.provision({
       name: "Isolated Web " + suffix, type: "Web",
-      redirectUris: ["https://localhost:8443/callback"],
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
       postLogoutRedirectUris: ["https://localhost:8443/logout"],
     }, projectA);
     assert.ok(web.clientId && web.clientSecret, "Confidential Web client missing its credentials");
     ownedApps.push({ id: web.applicationId, projectId: projectA });
+    await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, clientId: web.clientId,
+      clientSecret: web.clientSecret!, userId: userAId,
+      userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
+    });
     const spa = await clients.provision({
       name: "Isolated SPA " + suffix, type: "SPA",
       redirectUris: ["https://localhost:8443/callback"],
