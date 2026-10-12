@@ -56,6 +56,7 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     workflowRunId: currentRunId,
     actualDatabaseMigration: true,
     previousApiReadWriteAfterRollback: true,
+    previousApiRuntimeReadyAfterRollback: true,
     injectedHealthFailure: true,
     previousImagesRestored: true,
   };
@@ -73,6 +74,7 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, workflowRunId: currentRunId + 1 },
     { ...evidence, workflowRunId: "12345" },
     { ...evidence, previousApiReadWriteAfterRollback: false },
+    { ...evidence, previousApiRuntimeReadyAfterRollback: false },
     { ...evidence, previousImagesRestored: false },
     { ...evidence, actualDatabaseMigration: false },
     { ...evidence, injectedHealthFailure: false },
@@ -86,7 +88,8 @@ test("milestone releases never bypass live rollback certification", () => {
   const certified = requireAutomaticRollback(result, {
     kind: "real-upgrade-and-restore", sourceVersion: "0.2.86", targetCommit: hash,
     workflowRunId: Number(process.env.GITHUB_RUN_ID || 12345), actualDatabaseMigration: true,
-    previousApiReadWriteAfterRollback: true, injectedHealthFailure: true,
+    previousApiReadWriteAfterRollback: true,
+    previousApiRuntimeReadyAfterRollback: true, injectedHealthFailure: true,
     previousImagesRestored: true,
   });
   assert.equal(certified.policy, "tested");
