@@ -53,6 +53,8 @@ it("shows successful SMTP delivery and keeps a copyable invitation link", async 
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "alice@example.com" } });
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "tenant-admin" } });
   fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+  expect(screen.getByText("Confirm invitation")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
 
   expect(await screen.findByText("Invitation sent")).toBeTruthy();
   expect(screen.getByText(/sent an invitation email to/)).toBeTruthy();

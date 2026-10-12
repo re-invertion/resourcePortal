@@ -31,12 +31,12 @@ describe("AppGroupRoute", () => {
   });
 
 
-it("routes legacy App Group networking URLs to the application list", async () => {
+it("routes App Group networking URLs to the HTTP endpoints panel", async () => {
   render(<AppGroupRoute tenantId="t1" segments={["ag1", "networking"]} />);
-  expect(await screen.findByRole("heading", { name: "Apps" })).toBeTruthy();
+  expect(await screen.findByRole("heading", { name: "Networking" })).toBeTruthy();
   const navigation = screen.getByRole("navigation", { name: "App Group sections" });
-  expect(within(navigation).queryByRole("link", { name: "Networking" })).toBeNull();
-  expect(within(navigation).getByRole("link", { name: "Apps" }).getAttribute("aria-current")).toBe("page");
+  expect(within(navigation).getByRole("link", { name: "Networking" }).getAttribute("aria-current")).toBe("page");
+  expect(within(navigation).getByRole("link", { name: "Apps" }).getAttribute("aria-current")).toBeNull();
 });
 
 it("renders the five-step create application wizard on apps/new", async () => {
@@ -63,7 +63,7 @@ it("matches the Penpot application edit details hierarchy", async () => {
   expect(screen.getByRole("button", { name: "Stop application" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Restart application" })).toBeTruthy();
   const navigation = screen.getByRole("navigation", { name: "Application sections" });
-  expect(within(navigation).getByRole("link", { name: "Runtime" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/compute");
+  expect(within(navigation).getByRole("link", { name: "Resources & scaling" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/compute");
   expect(within(navigation).getByRole("link", { name: "Configuration" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/configuration");
   expect(screen.getByTestId("application-edit-details-grid").className).toContain("md:grid-cols-2");
   expect(screen.getByLabelText("Description")).toBeTruthy();
@@ -76,7 +76,7 @@ it("keeps the application navigation active across nested application routes", a
   render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1", "edit", "compute"]} />);
   await screen.findByRole("heading", { name: "checkout" });
   const navigation = screen.getByRole("navigation", { name: "Application sections" });
-  expect(within(navigation).getByRole("link", { name: "Runtime" }).getAttribute("aria-current")).toBe("page");
+  expect(within(navigation).getByRole("link", { name: "Resources & scaling" }).getAttribute("aria-current")).toBe("page");
   expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1");
 });
 

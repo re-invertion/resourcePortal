@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
+import { formatCreditAmount, formatPlnAmount } from "../lib/billing-display";
 import {
   ActivityIcon,
   BillingIcon,
@@ -116,8 +117,8 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
       <h2 className="mb-3 text-sm font-semibold text-[#42526B]">Quick actions</h2>
       <div className="flex flex-wrap gap-3">
         <LinkButton variant="primary" href={`${tenantHref(tenantId, "applications")}/new`}><GridIcon size={16}/>Create App Group</LinkButton>
-        <LinkButton href={tenantHref(tenantId, "volumes")}><VolumeIcon size={16}/>Create Volume</LinkButton>
-        <LinkButton href={tenantHref(tenantId, "domains")}><GlobeIcon size={16}/>Add Domain</LinkButton>
+        <LinkButton href={tenantHref(tenantId, "volumes")}><VolumeIcon size={16}/>Volumes</LinkButton>
+        <LinkButton href={tenantHref(tenantId, "domains")}><GlobeIcon size={16}/>Domains</LinkButton>
       </div>
     </section>
 
@@ -125,7 +126,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
       <div data-testid="metric-applications"><MetricCard label="Applications" icon={<GridIcon/>} value={String(appCount)} detail={`Across ${appGroups.length} App Group${appGroups.length === 1 ? "" : "s"}`} loading={appGroupsState.loading} error={appGroupsState.error}/></div>
       <div data-testid="metric-runtime"><MetricCard label="Running workloads" icon={<ServerIcon/>} value={String(running)} detail={`${Math.max(appGroups.length - running, 0)} App Group${appGroups.length - running === 1 ? "" : "s"} not running`} loading={appGroupsState.loading} error={appGroupsState.error} tone={running === appGroups.length && appGroups.length ? "success" : "info"}/></div>
       <div data-testid="metric-storage"><MetricCard label="Storage usage" icon={<VolumeIcon/>} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} loading={volumesState.loading} error={volumesState.error}/></div>
-      <div data-testid="metric-balance"><MetricCard label="Current balance" icon={<BillingIcon/>} value={`${balancePln} PLN`} detail={`${balanceCredits} credits`} loading={billing.loading} error={billing.error} tone={billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/></div>
+      <div data-testid="metric-balance"><MetricCard label="Current balance" icon={<BillingIcon/>} value={<span className="flex min-w-0 items-baseline gap-1"><span className="min-w-0 truncate" title={formatPlnAmount(balancePln)}>{formatPlnAmount(balancePln)}</span><span className="shrink-0 text-sm">PLN</span></span>} detail={`${formatCreditAmount(balanceCredits)} credits`} loading={billing.loading} error={billing.error} tone={billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/></div>
     </section>
 
     <div className="mt-6 grid gap-6 xl:grid-cols-2">

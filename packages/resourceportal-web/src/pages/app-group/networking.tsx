@@ -131,6 +131,7 @@ export function AppGroupNetworking({
           >
             Open tenant Networking
           </a>
+          <a className="ml-4 inline-block text-sm font-semibold text-[#0F56A7] hover:underline" href={`/tenants/${encodeURIComponent(tenantId)}/domains`}>Add or assign domain</a>
         </div>
         <Button variant="primary" disabled={!apps.length} onClick={() => begin()}>
           <PlusIcon size={15} /> Add endpoint

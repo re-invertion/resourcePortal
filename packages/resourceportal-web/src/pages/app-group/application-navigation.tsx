@@ -7,6 +7,7 @@ export type ApplicationSection =
   | "configuration"
   | "storage"
   | "networking"
+  | "logs"
   | "health"
   | "advanced";
 
@@ -31,7 +32,7 @@ export function ApplicationNavigation({
           active: active === "overview",
         },
         {
-          label: "Runtime",
+          label: "Resources & scaling",
           href: applicationHref(tenantId, appGroupId, appId, "edit/compute"),
           active: active === "runtime",
         },
@@ -54,6 +55,11 @@ export function ApplicationNavigation({
           label: "Networking",
           href: applicationHref(tenantId, appGroupId, appId, "edit/networking"),
           active: active === "networking",
+        },
+        {
+          label: "Logs",
+          href: applicationHref(tenantId, appGroupId, appId, "logs"),
+          active: active === "logs",
         },
         {
           label: "Health",

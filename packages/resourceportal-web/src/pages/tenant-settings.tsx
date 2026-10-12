@@ -5,6 +5,7 @@ import {
   Callout,
   Card,
   Checkbox,
+  ConfirmActionButton,
   Field,
   HelpIcon,
   LockIcon,
@@ -13,6 +14,7 @@ import {
   SettingsIcon,
   StatusText,
   Tabs,
+  TextInput,
   Toggle,
   UsersIcon,
 } from "../components/design-system";
@@ -54,8 +56,9 @@ function memberEmail(member: R) {
 }
 
 export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { tenantId: string; section?: string }) {
-  const activeSection = section === "mcp" ? "mcp" : "resource-bot";
+  const activeSection = section === "mcp" ? "mcp" : section === "branding" ? "branding" : "resource-bot";
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
+  const branding = useApi<{ displayName: string; logoDataUrl?: string | null }>(`${root}`);
   const settings = useApi<McpSettings>(`${root}/mcp-settings`);
   const catalog = useApi<{ items: Array<{ name: string; title: string; description: string }> }>(activeSection === "mcp" ? `${root}/mcp-settings/catalog` : undefined);
   const resourceBotSettings = useApi<ResourceBotSettings>(`${root}/resource-bot/settings`);
@@ -65,6 +68,48 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
   const [accessMode, setAccessMode] = useState<AccessMode>("SelectedMembers");
   const [selected, setSelected] = useState<string[]>([]);
   const [working, setWorking] = useState(false);
+  const [tenantDisplayName, setTenantDisplayName] = useState("");
+  const [tenantLogo, setTenantLogo] = useState<string | null>(null);
+  const [brandingDirty, setBrandingDirty] = useState(false);
+
+  useEffect(() => {
+    if (!branding.data || typeof branding.data.displayName !== "string") return;
+    setTenantDisplayName(branding.data.displayName);
+    setTenantLogo(branding.data.logoDataUrl ?? null);
+    setBrandingDirty(false);
+  }, [branding.data]);
+
+  function selectLogo(file: File | undefined) {
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 128 * 1024) {
+      toast.error("Choose a PNG, JPEG or WebP logo up to 128 KiB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setTenantLogo(reader.result);
+        setBrandingDirty(true);
+      }
+    };
+    reader.onerror = () => toast.error("Tenant logo could not be read.");
+    reader.readAsDataURL(file);
+  }
+
+  async function saveBranding() {
+    setWorking(true);
+    try {
+      await apiRequest(`${root}/branding`, { method: "PATCH", body: {
+        displayName: tenantDisplayName.trim(), logoDataUrl: tenantLogo,
+      } });
+      await branding.reload();
+      toast.success("Tenant branding saved.");
+    } catch (cause) {
+      toast.errorFrom(cause, "Tenant branding could not be saved.");
+    } finally {
+      setWorking(false);
+    }
+  }
 
   useEffect(() => {
     if (!settings.data) return;
@@ -138,7 +183,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
         title="Tenant settings"
         description="Tenant-wide features and integration settings controlled by tenant administrators."
       />
-      <Tabs label="Settings sections" items={[{ label: "ResourceBot", href: tenantHref(tenantId, "settings", "resource-bot"), active: activeSection === "resource-bot" }, { label: "MCP", href: tenantHref(tenantId, "settings", "mcp"), active: activeSection === "mcp" }]} />
+      <Tabs label="Settings sections" items={[{ label: "Branding", href: tenantHref(tenantId, "settings", "branding"), active: activeSection === "branding" }, { label: "ResourceBot", href: tenantHref(tenantId, "settings", "resource-bot"), active: activeSection === "resource-bot" }, { label: "MCP", href: tenantHref(tenantId, "settings", "mcp"), active: activeSection === "mcp" }]} />
       {settings.error ? (
         <div className="mb-4">
           <Callout tone="danger" title="Tenant settings unavailable">
@@ -147,6 +192,32 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
         </div>
       ) : null}
 
+      {activeSection === "branding" ? <Card className="mb-5 p-5">
+        <h2 className="text-lg font-semibold">Tenant branding</h2>
+        <p className="mt-1 text-sm text-[#5B6678]">Change the visible tenant name and logo. The internal tenant identifier stays unchanged.</p>
+        <div className="mt-5 grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="space-y-4">
+            <Field label="Visible tenant name" required>
+              <TextInput value={tenantDisplayName} maxLength={160} onChange={e => { setTenantDisplayName(e.target.value); setBrandingDirty(true); }} />
+            </Field>
+            <Field label="Tenant logo" hint="PNG, JPEG or WebP, up to 128 KiB.">
+              <input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload tenant logo" onChange={e => selectLogo(e.target.files?.[0])} />
+            </Field>
+            {tenantLogo ? <Button size="sm" onClick={() => { setTenantLogo(null); setBrandingDirty(true); }}>Remove tenant logo</Button> : null}
+          </div>
+          <div className="flex items-start">
+            {tenantLogo ? <img src={tenantLogo} alt="Tenant logo preview" className="h-20 w-20 rounded-xl object-contain" /> :
+              <span className="flex h-20 w-20 items-center justify-center rounded-xl bg-[#E7F1FF] text-[#1769E0]">No logo</span>}
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end">
+          <ConfirmActionButton triggerVariant="primary" confirmVariant="primary"
+            confirmTitle="Confirm tenant branding changes"
+            confirmDescription="Apply the visible name and logo to this tenant? The new branding will be shown to its members."
+            confirmLabel="Apply tenant branding" disabled={working || !brandingDirty || !tenantDisplayName.trim() || tenantDisplayName.trim().length > 160}
+            onConfirm={saveBranding}>Save tenant branding</ConfirmActionButton>
+        </div>
+      </Card> : null}
       {activeSection === "resource-bot" ? <Card id="resource-bot" className="overflow-hidden">
         <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><HelpIcon size={18} /></span>

@@ -217,6 +217,7 @@ model Tenant {
   id                         String                        @id @default(uuid()) @db.Uuid
   name                       String                        @unique
   displayName                String
+  logoDataUrl                String?                       @db.Text
   description                String?
   status                     TenantStatus                  @default(Active)
   contactEmail               String

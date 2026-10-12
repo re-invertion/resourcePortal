@@ -131,6 +131,17 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx", "src/pages/app-group/create-app-wizard.test.tsx"],
   ],
+  "tenant-ux-patch": [
+    ["npm", "--workspace", "@resource-portal/web", "test", "--",
+      "src/pages/applications.test.tsx", "src/pages/app-group/route.test.tsx",
+      "src/pages/app-group/create-app-wizard.test.tsx", "src/pages/app-group/app-detail.test.tsx",
+      "src/pages/app-group/networking.test.tsx", "src/pages/tenant-access-pages.test.tsx",
+      "src/pages/tenant-dashboard.test.tsx", "src/pages/tenant-settings.test.tsx",
+      "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
+      "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
+      "src/pages/network-status-display.test.ts", "src/lib/billing-display.test.ts",
+      "src/lib/compute-estimate.test.ts", "src/lib/role-capabilities.test.ts"],
+  ],
   "bug-reports": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/bug-reports/bug-reports.service.spec.ts", "src/mcp/admin-mcp-protocol.service.spec.ts"],
   ],
@@ -150,6 +161,17 @@ const commands = {
 };
 
 const classifiers = [
+  // Shared App Group runtime blockers feed both standard views and topology;
+  // changes must run application AND networking regressions in Fast Fix.
+  [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.view\.ts$/, ["applications", "networking"]],
+  // Explicit coverage for the tenant usability patch: new files must not
+  // silently bypass fast-fix validation on non-milestone releases.
+  [/^packages\/resourceportal-api\/src\/billing\/(?:billing\.service|tenant-estimate-rates\.spec)\.ts$/, ["billing-correctness"]],
+  [/^packages\/resourceportal-web\/src\/(?:App\.tsx|components\/billing-usage-charts\.tsx)$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/lib\/(?:billing-display|compute-estimate|role-capabilities)(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/(?:applications|tenant-dashboard|tenant-access-pages|tenant-branding|tenant-operation-fixes|domain-assignment|network-status-display)(?:\.test)?\.tsx?$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant\.tsx$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:create-app-wizard\.tsx|(?:application-navigation|layout|networking|route)(?:\.test)?\.tsx)$/, ["tenant-ux-patch"]],
   [/^scripts\/installer\/(target-upgrade|recovery)\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^scripts\/upgrade-recovery-from-0\.2\.78\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^test\/installer\/test-(target-upgrade|upgrade-preflight|upgrade-recovery)\.test\.mjs$/, ["upgrade-recovery"]],

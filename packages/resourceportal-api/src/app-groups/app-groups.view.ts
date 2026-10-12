@@ -146,8 +146,10 @@ export function mapSecretAttachment(attachment: SecretAttachment) {
   return attachment;
 }
 
-function appGroupRuntimeBlockers(
-  appGroup: AppGroupWithRelations,
+export function appGroupRuntimeBlockers(
+  appGroup: Pick<AppGroup, "status" | "runtimeState" | "currentDeploymentVersion"> & {
+    tenant?: AppGroupWithRelations["tenant"];
+  },
   runtimeContext: AppGroupRuntimeContext,
 ) {
   return [
@@ -161,7 +163,9 @@ function appGroupRuntimeBlockers(
   ].filter((blocker): blocker is string => blocker !== undefined);
 }
 
-function singleAppRuntimeBlockers(singleApp: SingleApp) {
+export function singleAppRuntimeBlockers(
+  singleApp: Pick<SingleApp, "runtimeState" | "pendingDeletion">,
+) {
   return [
     singleApp.pendingDeletion ? "SingleAppPendingDeletion" : undefined,
     singleApp.runtimeState === "Stopped" ? "SingleAppStopped" : undefined,

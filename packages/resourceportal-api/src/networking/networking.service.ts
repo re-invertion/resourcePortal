@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/types";
 import { appGroupNetworkName } from "../internal/traefik-routing";
+import { appGroupRuntimeBlockers, singleAppRuntimeBlockers } from "../app-groups/app-groups.view";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import type { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
@@ -178,6 +179,9 @@ export class NetworkingService {
   }
 
   async topology(tenantId: string) {
+    const platformMaintenance = ["1", "true", "yes", "on"].includes(
+      (this.config.get<string>("PLATFORM_MAINTENANCE_MODE") ?? "").toLowerCase(),
+    );
     const [networks, gates, appGroups] = await Promise.all([
       this.prisma.network.findMany({
         where: { tenantId },
@@ -239,7 +243,15 @@ export class NetworkingService {
           id: true,
           name: true,
           hasPendingChanges: true,
+          status: true,
+          runtimeState: true,
           currentDeploymentVersion: true,
+          tenant: {
+            select: {
+              status: true,
+              billing: { select: { balance: true } },
+            },
+          },
           singleApps: {
             where: { pendingDeletion: false },
             orderBy: { name: "asc" },
@@ -248,6 +260,7 @@ export class NetworkingService {
               name: true,
               image: true,
               runtimeState: true,
+              pendingDeletion: true,
               httpEndpoints: {
                 select: {
                   id: true,
@@ -272,13 +285,36 @@ export class NetworkingService {
     return {
       networks,
       gates: gates.map((gate) => this.publicGate(gate)),
-      appGroups: appGroups.map((appGroup) => ({
-        ...appGroup,
-        appGroupNetwork:
-          appGroup.currentDeploymentVersion === null
-            ? null
-            : { name: appGroupNetworkName(appGroup.id) },
-      })),
+      appGroups: appGroups.map(({ tenant, ...appGroup }) => {
+        // Match the runtime blockers used by standard App Group views; never
+        // expose tenant billing details in the topology response.
+        const runtimeBlockers = appGroupRuntimeBlockers(
+          { ...appGroup, tenant },
+          { platformMaintenance },
+        );
+        return {
+          ...appGroup,
+          effectiveRuntimeState:
+            runtimeBlockers.length > 0 ? "Stopped" : appGroup.runtimeState,
+          runtimeBlockers,
+          singleApps: appGroup.singleApps.map((app) => {
+            const appBlockers = [
+              ...runtimeBlockers,
+              ...singleAppRuntimeBlockers(app),
+            ];
+            return {
+              ...app,
+              effectiveRuntimeState:
+                appBlockers.length > 0 ? "Stopped" : app.runtimeState,
+              runtimeBlockers: appBlockers,
+            };
+          }),
+          appGroupNetwork:
+            appGroup.currentDeploymentVersion === null
+              ? null
+              : { name: appGroupNetworkName(appGroup.id) },
+        };
+      }),
     };
   }
 

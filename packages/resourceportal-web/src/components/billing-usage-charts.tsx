@@ -378,8 +378,8 @@ export function BillingUsageCharts({
           </h3>
           <p className="mt-0.5 text-xs text-[#718096]">
             {metricGroup === "credits"
-              ? "Compare credits actually charged with the theoretical cost for the selected period."
-              : "Compare billed replicas with the workload's desired replica count for the selected period."}
+              ? "Charged = credits actually deducted. Theoretical = full estimated consumption before balance caps. Actual billed cost may be lower."
+              : "Billed replicas = running replicas counted for charging. Desired replicas = requested configuration, which may not yet be running."}
           </p>
         </div>
         {!compact ? <div className="flex flex-wrap items-center gap-3" aria-label="Visible chart series">
