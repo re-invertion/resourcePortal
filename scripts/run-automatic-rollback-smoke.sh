@@ -92,19 +92,26 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
 
 # The previous Prisma client creates real persistent tenant/user sentinels.
 # New fields/tables may be additive, but old client reads and writes must work.
-probe="${GITHUB_RUN_ID:-local}-$"
+probe="${GITHUB_RUN_ID:-local}-${RANDOM}"
 docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
   -e RP_ROLLBACK_PROBE="$probe" --entrypoint node "$source_api" -e '
   const { PrismaClient } = require("@prisma/client");
   const p = new PrismaClient();
   (async () => {
-    await p.tenant.create({data:{
+    const tenant=await p.tenant.create({data:{
       name:"rollback-probe-"+process.env.RP_ROLLBACK_PROBE,
       displayName:"Rollback test",contactEmail:"rollback@example.invalid"
     }});
-    await p.user.create({data:{
+    const user=await p.user.create({data:{
       email:"rollback-"+process.env.RP_ROLLBACK_PROBE+"@example.invalid",
       displayName:"Rollback test user",status:"Active"
+    }});
+    await p.oAuthApplication.create({data:{
+      tenantId:tenant.id,name:"Legacy RP client",type:"Web",
+      redirectUris:["https://rollback.example.invalid/callback"],postLogoutRedirectUris:[],
+      zitadelApplicationId:"app-"+process.env.RP_ROLLBACK_PROBE,
+      clientId:"client-"+process.env.RP_ROLLBACK_PROBE,
+      createdBy:user.id,updatedBy:user.id
     }});
   })().then(()=>p.$disconnect(),e=>{console.error(e);process.exitCode=1;p.$disconnect()});
 '
@@ -284,9 +291,19 @@ cmp -s "$root/previous-stack.yml" "$RP_UPGRADE_STACK_FILE"
 # This certifies expand-only source/target compatibility, NOT SQL down-migrate.
 docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
   -e RP_ROLLBACK_PROBE="$probe" --entrypoint node "$source_api" -e '
-  const { PrismaClient } = require("@prisma/client");
+  const { PrismaClient, Prisma } = require("@prisma/client");
   const p = new PrismaClient();
   (async () => {
+    // Query every model from the *previous published* Prisma client. This
+    // checks every old relation/table/column, not just a selected happy path.
+    for (const model of Prisma.dmmf.datamodel.models) {
+      const accessor=model.name[0].toLowerCase()+model.name.slice(1);
+      if (typeof p[accessor]?.findFirst !== "function") {
+        throw new Error("Previous Prisma model unavailable: "+model.name);
+      }
+      try { await p[accessor].findFirst(); }
+      catch(e) { throw new Error("Previous Prisma schema incompatible: "+model.name+" / "+e.message); }
+    }
     const tenant = await p.tenant.findUniqueOrThrow({
       where:{name:"rollback-probe-"+process.env.RP_ROLLBACK_PROBE}
     });
@@ -299,7 +316,16 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
       where:{id:tenant.id},data:{displayName:"Rollback compatibility verified"}
     });
     if(updated.displayName!=="Rollback compatibility verified")throw new Error("Old Prisma client cannot write after rollback");
-    await p.oAuthApplication.count();
+    const legacyClient=await p.oAuthApplication.findUniqueOrThrow({
+      where:{clientId:"client-"+process.env.RP_ROLLBACK_PROBE}
+    });
+    if (legacyClient.name!=="Legacy RP client" ||
+        JSON.stringify(legacyClient.redirectUris)!==JSON.stringify(["https://rollback.example.invalid/callback"])) {
+      throw new Error("Previous release OAuth client data was corrupted");
+    }
+    await p.oAuthApplication.update({
+      where:{id:legacyClient.id},data:{name:"Legacy client restored"}
+    });
     await p.identityProvider.count();
   })().then(()=>p.$disconnect(),e=>{console.error(e);process.exitCode=1;p.$disconnect()});
 '
