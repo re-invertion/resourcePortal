@@ -184,7 +184,7 @@ export async function runOidcAuthorizationE2E(input: {
     assert.ok(didLogout, "ZITADEL did not complete RP-initiated logout to registered URI");
     console.log("PASS: real HTTPS Authorization Code + PKCE, state/nonce, signed ID/access JWT,");
     console.log("  native user, tenant roles, live refresh and RP-initiated logout (tokens not logged).");
-    return { refreshToken: refreshed.refresh_token ?? tokens.refresh_token!,
+    return { refreshToken: refreshed.refresh_token ?? tokens.refresh_token,
       clientId: input.clientId, clientSecret: input.clientSecret,
       issuer: input.issuer, projectId: input.projectId };
   } finally {
