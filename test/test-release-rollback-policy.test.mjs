@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rollbackAssessment, requireAutomaticRollback } from "../scripts/release-rollback-policy.mjs";
+import { rollbackAssessment, requireAutomaticRollback, assertExpandOnlyMigrationSql } from "../scripts/release-rollback-policy.mjs";
 
 const hash = "a".repeat(40);
 test("non-schema patch permits only image-only rollback", () => {
@@ -21,6 +21,26 @@ test("release is blocked when automatic rollback is not eligible", () => {
     { ...allowed, sourceVersion: "*" },
     { ...allowed, targetCommit: "invalid" },
   ]) assert.throws(() => requireAutomaticRollback(invalid), /Release blocked/);
+});
+
+test("only immutable expand-only database migrations can qualify for tested rollback", () => {
+  assert.doesNotThrow(() => assertExpandOnlyMigrationSql(`
+    -- New isolated IDP provider and optional legacy-client linkage
+    CREATE TABLE "TenantOidcProvider" ("tenantId" UUID NOT NULL);
+    ALTER TABLE "OAuthApplication" ADD COLUMN "zitadelProjectId" TEXT;
+    CREATE UNIQUE INDEX "TenantOidcProvider_id_idx" ON "TenantOidcProvider"("tenantId");
+    ALTER TABLE "TenantOidcProvider" ADD CONSTRAINT "tenant_fk"
+      FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id");
+  `));
+  for (const bad of [
+    'ALTER TABLE "User" DROP COLUMN "email";',
+    'DROP TABLE "User";',
+    'DELETE FROM "OAuthApplication";',
+    'ALTER TABLE "User" ADD COLUMN "password" TEXT NOT NULL;',
+    'CREATE UNIQUE INDEX "User_email_key_new" ON "User"("email");',
+    'ALTER TABLE "User" ADD CONSTRAINT "fk" FOREIGN KEY ("id") REFERENCES "Tenant"("id");',
+    '-- only comments',
+  ]) assert.throws(() => assertExpandOnlyMigrationSql(bad), /Release blocked|Empty migration/);
 });
 
 test("schema-changing rollback requires exact run-bound live evidence", () => {
