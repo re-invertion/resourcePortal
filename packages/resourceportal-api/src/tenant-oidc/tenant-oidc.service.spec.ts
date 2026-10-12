@@ -187,6 +187,21 @@ describe("Tenant OIDC management fails closed", () => {
     expect(f.project.assignMember).not.toHaveBeenCalled();
   });
 
+  it("rejects non-native providerType even if issuer and missing IdP link appear valid", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{
+      userId: "forged",
+      user: { identities: [{
+        providerType: "external-oidc",
+        issuer: nativeIssuer,
+        externalSubject: "zitadel-u1",
+        identityProviderId: null,
+      }] },
+    }]);
+    await expect(f.service.reconcileGrants(tenantId)).rejects.toThrow("lacks verified native");
+    expect(f.project.assignMember).not.toHaveBeenCalled();
+  });
+
   it("never queries grants or members without tenant scope", async () => {
     const f = fixture();
     const tenantB = "tenant-b";
@@ -195,7 +210,7 @@ describe("Tenant OIDC management fails closed", () => {
     });
     f.prisma.tenantMembership.findMany.mockResolvedValue([{
       userId: "user-b", status: MembershipStatus.Active,
-      user: { identities: [{ issuer: nativeIssuer, externalSubject: "zitadel-user-b", identityProviderId: null }] },
+      user: { identities: [{ providerType: "zitadel", issuer: nativeIssuer, externalSubject: "zitadel-user-b", identityProviderId: null }] },
     }]);
     await f.service.reconcileGrants(tenantB);
     expect(f.prisma.tenantOidcGrant.findMany).toHaveBeenCalledWith({ where: { tenantId: tenantB } });
@@ -236,7 +251,7 @@ describe("Tenant OIDC management fails closed", () => {
     f.prisma.tenantMembership.findMany.mockResolvedValue([{
       userId: "u1",
       user: { status: UserStatus.Active, identities: [{
-        issuer: nativeIssuer, externalSubject: "zitadel-u1", identityProviderId: null,
+        providerType: "zitadel", issuer: nativeIssuer, externalSubject: "zitadel-u1", identityProviderId: null,
       }] },
       status: MembershipStatus.Active,
     }]);
