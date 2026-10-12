@@ -28,6 +28,24 @@ export function rollbackAssessment(changedPaths, mode, previousVersion, targetCo
   };
 }
 
+// Static diff eligibility is a prerequisite, not a substitute for a real
+// rollback smoke. Non-schema Fast Fix only; schema/milestone fail closed
+// until a separate tested database restore protocol exists.
+export function requireAutomaticRollback(result) {
+  if (
+    result.policy !== "image-only" ||
+    result.reason !== "no-resourceportal-database-schema-changes" ||
+    !/^\d+\.\d+\.\d+$/.test(result.sourceVersion) ||
+    !/^[a-f0-9]{40}$/.test(result.targetCommit)
+  ) {
+    throw new Error(
+      "Release blocked: automatic rollback is not verified for this source/target. " +
+      "Schema-changing or milestone releases require a separately tested restore protocol.",
+    );
+  }
+  return result;
+}
+
 function option(flag) {
   const i = process.argv.indexOf(flag);
   return i < 0 ? null : process.argv[i + 1];
@@ -49,6 +67,7 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
   }).trim();
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("Invalid target commit");
   const result = rollbackAssessment(paths, mode, previous, commit);
+  if (process.argv.includes("--require-automatic")) requireAutomaticRollback(result);
   console.log(JSON.stringify(result));
   const output = option("--github-output");
   if (output) {

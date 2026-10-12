@@ -114,6 +114,18 @@ jobs:
         shell: bash
         run: |
           printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+      - name: Require verified automatic rollback before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$PREVIOUS_TAG" \
+            --head HEAD \
+            --mode "$VALIDATION_MODE" \
+            --require-automatic
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -183,6 +195,16 @@ jobs:
           npm install --global --prefix "$verify_prefix" "./cli-release/resource-portal-cli-${VERSION}.tgz" >/dev/null
           "$verify_prefix/bin/rp" --help >/dev/null
           "$verify_prefix/bin/resourceportal" --help >/dev/null
+      - name: Validate actual RP release images recover before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t resourceportal-api-candidate .
+          docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
+          docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
+          bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
       - name: Build and publish API image
         id: api
         uses: docker/build-push-action@v6
@@ -241,7 +263,11 @@ jobs:
           ROLLBACK_REASON="${{ steps.rollback-assessment.outputs.rollback_reason }}"
           ROLLBACK_SOURCE_VERSION="${{ steps.rollback-assessment.outputs.rollback_source_version }}"
           ROLLBACK_TARGET_COMMIT="${{ steps.rollback-assessment.outputs.rollback_target_commit }}"
-          [[ "$ROLLBACK_POLICY" == image-only || "$ROLLBACK_POLICY" == none ]] || exit 1
+          # Never publish a release manifest without automatic rollback.
+          [[ "$ROLLBACK_POLICY" == image-only ]] || {
+            echo "Release blocked: rollbackPolicy=$ROLLBACK_POLICY" >&2
+            exit 1
+          }
           mapfile -t ancestor_versions < <(
             git tag --merged HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' \
               | sed 's/^v//' \

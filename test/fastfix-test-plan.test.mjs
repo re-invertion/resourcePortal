@@ -274,3 +274,8 @@ test("unclassified changes still fail closed despite cross-cutting profiles", ()
     /Fastfix has unclassified changes/,
   );
 });
+
+test("release rollback guard and Swarm smoke cannot be omitted from Fast Fix selection", () => {
+  const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh"]);
+  assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
+});

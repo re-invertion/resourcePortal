@@ -33,6 +33,13 @@ workflow fails closed. This prevents an unsuccessful tagged build from being
 advertised as a valid rollback source for a later release. Release tags are
 never rewritten.
 
+## Mandatory automatic rollback
+
+- A release is **blocked** before Merge Queue and independently before publication if its source-to-target rollback policy is `none` or not verified. The immediate published source version is mandatory.
+- Only schema-neutral **image-only** Fast Fix releases are eligible today. Database migrations, Prisma schema changes and milestones stay blocked until a separately proven database rollback/restore method exists; this rule has no manual override.
+- Both gates use `scripts/run-automatic-rollback-smoke.sh` **after building the candidate API/Web/Postgres images**. The smoke downloads the immediately preceding official release manifest and its signed provenance, starts the actual previous image digests and locally built candidate images in an isolated Docker Swarm, and injects a health-check failure into the production `rp_upgrade_apply` entry point. The automatic handler must restore previous image digests, running services, manifest, stack/config files and checkpoint. Existing installer tests cover tampering and wrong source versions.
+- The gate validates this workflow under isolated CI conditions. It cannot prove survival of external data corruption, database changes outside the migration diff, hardware loss, or other disaster scenarios.
+
 ## Protected main delivery
 
 An enforced GitHub Ruleset requires PR and Merge Queue (one PR per group), together with `Required release readiness`. Direct pushes, administrator bypass and force pushes are forbidden. Each merged main revision starts publication of an immutable-SHA release plus images, CLI and manifest. The next merge is blocked until the prior main SHA has been published. See `docs/automatic-main-releases.md`.

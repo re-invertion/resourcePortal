@@ -77,6 +77,54 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Build and publish API image')));
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
+test('automatic rollback is mandatory before merge and any release artifacts',()=>{
+  const readiness=load('release-readiness.yml');
+  const release=load('release.yml');
+  const prerelease=readiness.jobs.candidate.steps.find(s=>s.name?.startsWith('Require verified automatic rollback'));
+  const publish=release.jobs.publish.steps;
+  const prepublish=publish.find(s=>s.name?.startsWith('Require verified automatic rollback'));
+  assert.ok(prerelease && prepublish);
+  for(const step of [prerelease,prepublish]){
+    assert.match(step.run,/release-rollback-policy\.mjs/);
+    assert.match(step.run,/--require-automatic/);
+  }
+  const candidateSteps=readiness.jobs.candidate.steps;
+  const premergeSmoke=candidateSteps.find(s=>s.name?.startsWith('Verify automatic rollback of published'));
+  const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
+  const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
+  assert.ok(premergeSmoke && prereleaseBuild && prepublishSmoke);
+  assert.ok(candidateSteps.indexOf(prerelease) < candidateSteps.indexOf(prereleaseBuild));
+  assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
+  assert.ok(publish.indexOf(prepublish) < publish.indexOf(prepublishSmoke));
+  assert.ok(publish.indexOf(prepublishSmoke) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  for (const smoke of [premergeSmoke,prepublishSmoke]){
+    assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
+  }
+  for(const image of ['api','web','postgres']){
+    assert.match(prereleaseBuild.run,new RegExp('resourceportal-'+image+'-candidate'));
+    assert.match(prepublishSmoke.run,new RegExp('resourceportal-'+image+'-candidate'));
+  }
+
+  const manifest=publish.find(s=>s.name?.startsWith('Create release manifest'));
+  assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
+  assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
+});
+
+test('automatic rollback smoke uses official release digests and the production upgrade entry point',()=>{
+  const source=readFileSync(new URL('../scripts/run-automatic-rollback-smoke.sh',import.meta.url),'utf8');
+  assert.match(source,/resourceportal-release-manifest\.json/);
+  assert.match(source,/gh attestation verify/);
+  assert.match(source,/resourceportal-api-candidate/);
+  assert.match(source,/resourceportal-web-candidate/);
+  assert.match(source,/resourceportal-postgres-candidate/);
+  assert.match(source,/rp_upgrade_apply/);
+  assert.doesNotMatch(source,/^rp_upgrade_restore_after_failure\s*\(/m);
+  assert.doesNotMatch(source,/^\s*if rp_upgrade_restore_after_failure/m);
+  assert.match(source,/health_checks/);
+  assert.match(source,/rolled-back/);
+  assert.match(source,/service_images_match/);
+});
+
 test('Merge Queue requires full regression and applicable Fast Fix integration gates',()=>{
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
