@@ -21,8 +21,15 @@ current_sha="$(git rev-parse HEAD)"
 root="$(mktemp -d /tmp/resourceportal-rollback-gate.XXXXXX)"
 stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
+db_network="${stack}-db-net"
+db_container="${stack}-db"
+db_created=false
 swarm_started=false
 cleanup() {
+  if [[ "$db_created" == true ]]; then
+    docker rm -f "$db_container" >/dev/null 2>&1 || true
+    docker network rm "$db_network" >/dev/null 2>&1 || true
+  fi
   docker stack rm "$stack" >/dev/null 2>&1 || true
   if [[ "$swarm_started" == true ]]; then docker swarm leave --force >/dev/null 2>&1 || true; fi
   rm -rf -- "$root"
@@ -54,6 +61,53 @@ done
 source_api="$(jq -er .images.api "$root/previous-release.json")"
 source_web="$(jq -er .images.web "$root/previous-release.json")"
 source_postgres="$(jq -er .images.postgres "$root/previous-release.json")"
+
+# Test real database compatibility, not merely old/new images running "sleep".
+# A schema-changing release can preserve the expanded schema during rollback
+# ONLY when the old, immutable API binary can still read and write real data.
+# Use the exact signed previous-release Postgres and API images and the actual
+# candidate image's Prisma migrations. Never rewrite or roll back live data.
+docker network create "$db_network" >/dev/null
+db_created=true
+docker run -d --name "$db_container" --network "$db_network" \
+  --network-alias migration-db \
+  -e POSTGRES_DB=resource_portal -e POSTGRES_USER=resource_portal \
+  -e POSTGRES_PASSWORD=rollback-smoke-only \
+  "$source_postgres" >/dev/null
+compat_url="postgresql://resource_portal:rollback-smoke-only@migration-db:5432/resource_portal?schema=public"
+db_ready=false
+for ((attempt=0;attempt<60;attempt++)); do
+  if docker exec "$db_container" pg_isready -U resource_portal -d resource_portal >/dev/null 2>&1; then
+    db_ready=true
+    break
+  fi
+  sleep 2
+done
+[[ "$db_ready" == true ]] || { echo "Real compatibility database never became ready" >&2; exit 1; }
+
+# Execute the *published* historical migrations first, using the pinned old
+# API container, before introducing any candidate migration/schema changes.
+docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
+  "$source_api" /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+
+# The previous Prisma client creates real persistent tenant/user sentinels.
+# New fields/tables may be additive, but old client reads and writes must work.
+probe="${GITHUB_RUN_ID:-local}-$"
+docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
+  -e RP_ROLLBACK_PROBE="$probe" --entrypoint node "$source_api" -e '
+  const { PrismaClient } = require("@prisma/client");
+  const p = new PrismaClient();
+  (async () => {
+    await p.tenant.create({data:{
+      name:"rollback-probe-"+process.env.RP_ROLLBACK_PROBE,
+      displayName:"Rollback test",contactEmail:"rollback@example.invalid"
+    }});
+    await p.user.create({data:{
+      email:"rollback-"+process.env.RP_ROLLBACK_PROBE+"@example.invalid",
+      displayName:"Rollback test user",status:"Active"
+    }});
+  })().then(()=>p.$disconnect(),e=>{console.error(e);process.exitCode=1;p.$disconnect()});
+'
 
 cat >"$root/previous-stack.yml" <<YAML
 services:
@@ -103,10 +157,15 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
   | .images.api=("ghcr.io/re-invertion/resourceportal-api@" + $api)
   | .images.web=("ghcr.io/re-invertion/resourceportal-web@" + $web)
   | .images.postgres=("ghcr.io/re-invertion/resourceportal-postgres@" + $postgres)
-  | .migrations.rollbackPolicy="image-only"
+  | .migrations.rollbackPolicy="tested"
   | .migrations.rollbackAssessment={
-      reason:"no-resourceportal-database-schema-changes",
+      reason:"verified-recovery-test",
       sourceVersion:$source,targetCommit:$commit
+    }
+  | .migrations.rollbackEvidence={
+      kind:"real-upgrade-and-restore",
+      workflowRunId:1,
+      sourceVersion:$source
     }' "$root/previous-release.json" >"$root/target-release.json"
 rp_validate_release_manifest "$root/target-release.json"
 docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
@@ -173,7 +232,15 @@ rp_upgrade_quiesce_database_clients() { return 0; }
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
-rp_run_migrations() { return 0; }
+rp_run_migrations() {
+  docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
+    resourceportal-api-candidate /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+  # Assert the *new* relational schema was actually installed.
+  local present
+  present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+    "SELECT (to_regclass('public.\"TenantOidcProvider\"') IS NOT NULL AND to_regclass('public.\"TenantOidcGrant\"') IS NOT NULL)::text")"
+  [[ "$present" == true ]]
+}
 rp_deploy_control_plane() {
   docker stack deploy --resolve-image never --compose-file "$root/target-stack.yml" \
     --with-registry-auth --prune "$stack" >/dev/null || return 1
@@ -211,4 +278,40 @@ wait_services previous
 cmp -s "$root/previous-release.json" "$RP_INSTALLER_STATE_DIR/release.json"
 cmp -s "$root/previous-stack.yml" "$RP_UPGRADE_STACK_FILE"
 [[ "$(cat "$RP_UPGRADE_INSTALLER_CONFIG_FILE")" == "previous config" ]]
-echo "PASS: automatic upgrade failure handler restored previous published RP images and checkpoint."
+
+# Check *after* the injected failure and actual image rollback: the old API
+# Prisma client must still read/update the rows created before migration.
+# This certifies expand-only source/target compatibility, NOT SQL down-migrate.
+docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
+  -e RP_ROLLBACK_PROBE="$probe" --entrypoint node "$source_api" -e '
+  const { PrismaClient } = require("@prisma/client");
+  const p = new PrismaClient();
+  (async () => {
+    const tenant = await p.tenant.findUniqueOrThrow({
+      where:{name:"rollback-probe-"+process.env.RP_ROLLBACK_PROBE}
+    });
+    const user = await p.user.findUniqueOrThrow({
+      where:{email:"rollback-"+process.env.RP_ROLLBACK_PROBE+"@example.invalid"}
+    });
+    if(tenant.displayName!=="Rollback test" || user.displayName!=="Rollback test user")
+      throw new Error("Post-rollback data changed or disappeared");
+    const updated=await p.tenant.update({
+      where:{id:tenant.id},data:{displayName:"Rollback compatibility verified"}
+    });
+    if(updated.displayName!=="Rollback compatibility verified")throw new Error("Old Prisma client cannot write after rollback");
+    await p.oAuthApplication.count();
+    await p.identityProvider.count();
+  })().then(()=>p.$disconnect(),e=>{console.error(e);process.exitCode=1;p.$disconnect()});
+'
+
+# Only after every real test passes may a separate policy step consider proof
+# bound to the exact SHA/version. Merely writing this file is never accepted
+# without the current job having exited successfully.
+if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
+  jq -n --arg src "$source_version" --arg sha "$current_sha" \
+    --argjson run "${GITHUB_RUN_ID:-0}" \
+    '{kind:"real-upgrade-and-restore",sourceVersion:$src,targetCommit:$sha,workflowRunId:$run,
+      actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
+      injectedHealthFailure:true,previousImagesRestored:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
+fi
+echo "PASS: real Prisma migrations, previous API DB compatibility, injected rollback and previous images restored."
