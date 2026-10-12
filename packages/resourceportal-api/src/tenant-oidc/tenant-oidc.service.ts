@@ -117,7 +117,8 @@ export class TenantOidcService {
 
       for (const member of members) {
         const identity = member.user.identities.find(
-          (row) => row.issuer.replace(/\/$/, "") === this.zitadel.issuer &&
+          (row) => row.providerType === "zitadel" &&
+            row.issuer.replace(/\/$/, "") === this.zitadel.issuer &&
             row.identityProviderId === null,
         );
         if (!identity) {
