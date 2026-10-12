@@ -11,21 +11,33 @@ function countApps(group: Group) { return Array.isArray(group.singleApps) ? grou
 function relative(value: unknown) { if (typeof value !== "string") return "—"; const time = Date.parse(value); if (!Number.isFinite(time)) return value; const delta = Date.now() - time; const min = Math.max(0, Math.floor(delta / 60000)); if (min < 1) return "Just now"; if (min < 60) return `${min} min ago`; const h = Math.floor(min / 60); if (h < 24) return `${h} h ago`; const d = Math.floor(h / 24); return d === 1 ? "Yesterday" : `${d} d ago`; }
 
 export function ApplicationsPage({ tenantId }: { tenantId: string }) {
-  const [groups, setGroups] = useState<Group[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<unknown>(); const [search, setSearch] = useState(""); const [state, setState] = useState("all"); const [health, setHealth] = useState("all"); const [chooseAppGroup, setChooseAppGroup] = useState(false);
+  const [groups, setGroups] = useState<Group[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<unknown>(); const [refreshError, setRefreshError] = useState(false); const [search, setSearch] = useState(""); const [state, setState] = useState("all"); const [health, setHealth] = useState("all"); const [chooseAppGroup, setChooseAppGroup] = useState(false);
   useEffect(() => {
     let active = true;
     let inFlight = false;
+    let hasLoaded = false;
+    setGroups([]);
     setLoading(true);
     setError(undefined);
+    setRefreshError(false);
     // Refresh the inventory after external deployments without disrupting filters.
     const refresh = async () => {
       if (!active || inFlight || (typeof document !== "undefined" && document.visibilityState === "hidden")) return;
       inFlight = true;
       try {
         const value = await apiRequest(`/api/tenants/${encodeURIComponent(tenantId)}/app-groups`);
-        if (active) { setGroups(list(value)); setError(undefined); }
+        if (active) {
+          hasLoaded = true;
+          setGroups(list(value));
+          setError(undefined);
+          setRefreshError(false);
+        }
       } catch (cause) {
-        if (active) setError(cause);
+        if (active) {
+          // A failed background refresh must not hide a usable cached list.
+          if (hasLoaded) setRefreshError(true);
+          else setError(cause);
+        }
       } finally {
         inFlight = false;
         if (active) setLoading(false);
@@ -52,6 +64,7 @@ export function ApplicationsPage({ tenantId }: { tenantId: string }) {
     </Card> : null}
     <section className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Application summary"><MetricCard label="App Groups" value={groups.length} detail={`${appCount} apps configured`} loading={loading} error={error}/><MetricCard label="Running" value={running} detail={`${Math.max(0, groups.length-running)} not running`} tone="success" loading={loading} error={error}/><MetricCard label="Apps configured" value={appCount} detail={`Across ${groups.length} App Groups`} loading={loading} error={error}/><MetricCard label="Needs attention" value={attention} detail="Review runtime blockers" tone={attention ? "warning" : "success"} loading={loading} error={error}/></section>
     <Card className="overflow-hidden"><div className="px-5 py-4"><h2 className="text-base font-semibold text-[#172033]">App Groups</h2><p className="mt-0.5 text-[13px] text-[#5B6678]">An App Group is a group of applications deployed together. Create or open a group to add an application.</p></div><div className="flex flex-col gap-2 border-y border-[#E1E7F0] px-5 py-3 sm:flex-row sm:items-center"><SearchField value={search} onChange={setSearch} placeholder="Search App Groups" ariaLabel="Search App Groups"/><Select aria-label="Filter by state" value={state} onChange={e => setState(e.target.value)} className="sm:w-[150px]"><option value="all">State: All</option><option value="running">Running</option><option value="stopped">Stopped</option></Select><Select aria-label="Filter by health" value={health} onChange={e => setHealth(e.target.value)} className="sm:w-[160px]"><option value="all">Health: All</option><option value="healthy">Healthy</option><option value="warning">Warning</option><option value="unhealthy">Unhealthy</option><option value="unknown">Unknown</option></Select><span className="ml-auto whitespace-nowrap text-xs text-[#5B6678]">{filtered.length} App Group{filtered.length === 1 ? "" : "s"}</span></div>
+    {refreshError ? <div role="status" className="mx-5 my-3 rounded-md border border-[#E7C775] bg-[#FFF9E8] px-4 py-3 text-sm text-[#825800]">Applications could not be refreshed. Showing the last loaded data; retrying automatically.</div> : null}
     {error ? <div className="p-5 text-sm text-[#C42B1C]">Applications could not be loaded. Refresh the page to retry.</div> : <DataTable embedded className="rounded-none border-0" loading={loading} columns={[{key:"name",label:"App Group"},{key:"apps",label:"Apps"},{key:"runtime",label:"Runtime"},{key:"health",label:"Health"},{key:"deployment",label:"Deployment"},{key:"changes",label:"Changes"},{key:"updated",label:"Updated"},{key:"action",label:""}]} rows={rows} empty={<EmptyState icon={<GridIcon/>} title="No App Groups match these filters" description="Clear filters or create an App Group to start deploying applications." action={<LinkButton variant="primary" href={tenantHref(tenantId,"applications","new")}><PlusIcon/>Create App Group</LinkButton>}/>} footer={filtered.length ? `1–${filtered.length} of ${filtered.length}` : undefined}/>}</Card>
   </main>;
 }

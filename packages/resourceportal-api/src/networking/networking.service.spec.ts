@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion, @typescript-eslint/unbound-method, @typescript-eslint/require-await */
 import { ConfigService } from "@nestjs/config";
 import { ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
@@ -16,7 +17,7 @@ const actor: AuthenticatedUser = {
   status: "Active" as any,
 };
 
-function fixture(overrides: Record<string, any> = {}) {
+function fixture(overrides: Record<string, any> = {}, maintenance = false) {
   const tx = {
     network: {
       create: vi.fn(),
@@ -111,6 +112,7 @@ function fixture(overrides: Record<string, any> = {}) {
   } as unknown as PrismaService;
   const config = {
     get: vi.fn((key: string, fallback?: string) => {
+      if (key === "PLATFORM_MAINTENANCE_MODE") return maintenance ? "true" : undefined;
       if (key === "RESOURCEPORTAL_GATE_ENDPOINT_HOST") return "10.0.0.10";
       if (key === "RESOURCEPORTAL_DEVICE_VPN_ENDPOINT_HOST") return "vpn.example.test";
       if (key === "RESOURCEPORTAL_DEVICE_VPN_PORT") return "51820";
@@ -181,6 +183,64 @@ describe("NetworkingService control plane", () => {
         { id: "33333333-3333-4333-8333-333333333333" },
         { id: "44444444-4444-4444-8444-444444444444" },
       ],
+    });
+  });
+
+
+  it.each([
+    { name: "undeployed App Group", group: { currentDeploymentVersion: null }, blocker: "AppGroupNotDeployed" },
+    { name: "deleting App Group", group: { status: "Deleting" }, blocker: "AppGroupDeleting" },
+    { name: "errored App Group", group: { status: "Error" }, blocker: "AppGroupError" },
+    { name: "stopped App Group", group: { runtimeState: "Stopped" }, blocker: "AppGroupStopped" },
+    { name: "suspended tenant", tenant: { status: "Suspended" }, blocker: "TenantSuspended" },
+    { name: "tenant with no credit", tenant: { billing: { balance: new Prisma.Decimal("0") } }, blocker: "BillingSuspended" },
+    { name: "platform maintenance", maintenance: true, blocker: "PlatformMaintenance" },
+  ])("does not report a running workload when blocked by $name", async ({ group, tenant, maintenance, blocker }) => {
+    const { service, prisma } = fixture({}, maintenance ?? false);
+    (prisma.appGroup.findMany as any).mockResolvedValue([{
+      id: "group-1", name: "production", status: "Active",
+      runtimeState: "Running", currentDeploymentVersion: 1,
+      hasPendingChanges: false,
+      tenant: { status: "Active", billing: { balance: new Prisma.Decimal("10") }, ...tenant },
+      singleApps: [{
+        id: "app-1", name: "frontend", image: "frontend:1",
+        runtimeState: "Running", pendingDeletion: false,
+        networkAttachments: [], httpEndpoints: [],
+      }],
+      ...group,
+    }]);
+
+    const result = await service.topology("tenant-1");
+    expect(result.appGroups[0]).toMatchObject({
+      effectiveRuntimeState: "Stopped",
+      runtimeBlockers: expect.arrayContaining([blocker]),
+      singleApps: [{
+        effectiveRuntimeState: "Stopped",
+        runtimeBlockers: expect.arrayContaining([blocker]),
+      }],
+    });
+    expect(result.appGroups[0]).not.toHaveProperty("tenant");
+  });
+
+  it("keeps a healthy group's state and applies per-application blockers independently", async () => {
+    const { service, prisma } = fixture();
+    (prisma.appGroup.findMany as any).mockResolvedValue([{
+      id: "group-1", name: "production", status: "Active",
+      runtimeState: "Running", currentDeploymentVersion: 1,
+      hasPendingChanges: false,
+      tenant: { status: "Active", billing: { balance: new Prisma.Decimal("10") } },
+      singleApps: [
+        { id: "app-running", name: "running", runtimeState: "Running", pendingDeletion: false, networkAttachments: [], httpEndpoints: [] },
+        { id: "app-stopped", name: "stopped", runtimeState: "Stopped", pendingDeletion: false, networkAttachments: [], httpEndpoints: [] },
+      ],
+    }]);
+    const result = await service.topology("tenant-1");
+    expect(result.appGroups[0].effectiveRuntimeState).toBe("Running");
+    expect(result.appGroups[0].runtimeBlockers).toEqual([]);
+    expect(result.appGroups[0].singleApps[0].effectiveRuntimeState).toBe("Running");
+    expect(result.appGroups[0].singleApps[1]).toMatchObject({
+      effectiveRuntimeState: "Stopped",
+      runtimeBlockers: ["SingleAppStopped"],
     });
   });
 

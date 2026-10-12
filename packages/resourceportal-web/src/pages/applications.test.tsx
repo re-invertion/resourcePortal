@@ -31,6 +31,45 @@ describe("ApplicationsPage", () => {
     expect(screen.queryByText("commerce-prod")).toBeNull();
     expect(screen.getByText("sandbox")).toBeTruthy();
   });
+
+  it("keeps cached App Groups visible during a failed background poll and recovers on retry", async () => {
+    const updated = [{ ...groups[0], name: "commerce-recovered" }, groups[1]];
+    const fetchMock = vi.fn().mockResolvedValueOnce(json(groups))
+      .mockRejectedValueOnce(new Error("temporary network outage"))
+      .mockResolvedValueOnce(json(updated));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    const view = render(<ApplicationsPage tenantId="t1" />);
+    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(screen.getByText("commerce-prod")).toBeTruthy();
+      fireEvent.change(screen.getByRole("textbox", { name: "Search App Groups" }), { target: { value: "commerce" } });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.getByText("commerce-prod")).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toMatch(/last loaded data/i);
+      expect(screen.queryByText(/Applications could not be loaded/)).toBeNull();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.getByText("commerce-recovered")).toBeTruthy();
+      expect(screen.queryByText("commerce-prod")).toBeNull();
+      expect(screen.queryByText(/Showing the last loaded data/)).toBeNull();
+      expect(screen.queryByText("sandbox")).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the initial loading error blocking until the first successful response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    render(<ApplicationsPage tenantId="t1" />);
+    expect(await screen.findByText(/Applications could not be loaded/)).toBeTruthy();
+    expect(screen.queryByText("commerce-prod")).toBeNull();
+    expect(screen.queryByText(/Showing the last loaded data/)).toBeNull();
+  });
+
   it("refreshes the visible app inventory without dropping the search filter", async () => {
     const newer = [{ ...groups[0], name: "commerce-next" }, groups[1]];
     const fetchMock = vi.fn().mockImplementationOnce(async () => json(groups))
