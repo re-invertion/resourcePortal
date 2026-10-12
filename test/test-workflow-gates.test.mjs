@@ -87,10 +87,24 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   for(const step of [prerelease,prepublish]){
     assert.match(step.run,/release-rollback-policy\.mjs/);
     assert.match(step.run,/--require-automatic/);
-    assert.match(step.run,/run-automatic-rollback-smoke\.sh/);
   }
-  assert.ok(readiness.jobs.candidate.steps.indexOf(prerelease) < readiness.jobs.candidate.steps.findIndex(s=>s.name?.startsWith('Build the three production')));
-  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  const candidateSteps=readiness.jobs.candidate.steps;
+  const premergeSmoke=candidateSteps.find(s=>s.name?.startsWith('Verify automatic rollback of published'));
+  const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
+  const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
+  assert.ok(premergeSmoke && prereleaseBuild && prepublishSmoke);
+  assert.ok(candidateSteps.indexOf(prerelease) < candidateSteps.indexOf(prereleaseBuild));
+  assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
+  assert.ok(publish.indexOf(prepublish) < publish.indexOf(prepublishSmoke));
+  assert.ok(publish.indexOf(prepublishSmoke) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  for (const smoke of [premergeSmoke,prepublishSmoke]){
+    assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
+  }
+  for(const image of ['api','web','postgres']){
+    assert.match(prereleaseBuild.run,new RegExp('resourceportal-'+image+'-candidate'));
+    assert.match(prepublishSmoke.run,new RegExp('resourceportal-'+image+'-candidate'));
+  }
+
   const manifest=publish.find(s=>s.name?.startsWith('Create release manifest'));
   assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
   assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
