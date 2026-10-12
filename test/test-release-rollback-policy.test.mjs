@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rollbackAssessment } from "../scripts/release-rollback-policy.mjs";
+import { rollbackAssessment, requireAutomaticRollback } from "../scripts/release-rollback-policy.mjs";
 
 const hash = "a".repeat(40);
 test("non-schema patch permits only image-only rollback", () => {
@@ -11,6 +11,18 @@ test("non-schema patch permits only image-only rollback", () => {
     targetCommit: hash,
   });
 });
+test("release is blocked when automatic rollback is not eligible", () => {
+  const allowed = rollbackAssessment(["docs/release-validation-policy.md"], "fastfix", "v0.2.85", hash);
+  assert.equal(requireAutomaticRollback(allowed).policy, "image-only");
+  for (const invalid of [
+    rollbackAssessment(["packages/resourceportal-api/prisma/migrations/new/migration.sql"], "fastfix", "v0.2.85", hash),
+    rollbackAssessment([], "milestone", "v0.2.85", hash),
+    { ...allowed, policy: "tested", reason: "verified-recovery-test" },
+    { ...allowed, sourceVersion: "*" },
+    { ...allowed, targetCommit: "invalid" },
+  ]) assert.throws(() => requireAutomaticRollback(invalid), /Release blocked/);
+});
+
 test("SQL or Prisma schema edits can never claim tested without a real compatibility gate", () => {
   for (const path of [
     "packages/resourceportal-api/prisma/migrations/20261010_demo/migration.sql",
@@ -48,6 +60,8 @@ test("release CLI compares both tag and target commit in a real Git history", as
     const first = spawnSync(process.execPath, args, { cwd: work, encoding: "utf8" });
     assert.equal(first.status, 0, first.stderr);
     assert.equal(JSON.parse(first.stdout).policy, "image-only");
+    const safe = spawnSync(process.execPath, [...args, "--require-automatic"], { cwd: work, encoding: "utf8" });
+    assert.equal(safe.status, 0, safe.stderr);
     mkdirSync(join(work, "packages/resourceportal-api/prisma/migrations"), { recursive: true });
     writeFileSync(join(work, "packages/resourceportal-api/prisma/migrations/new.sql"), "ALTER TABLE demo ADD COLUMN a INT;\n");
     command(["add", "."]);
@@ -55,6 +69,9 @@ test("release CLI compares both tag and target commit in a real Git history", as
     const second = spawnSync(process.execPath, args, { cwd: work, encoding: "utf8" });
     assert.equal(second.status, 0, second.stderr);
     assert.equal(JSON.parse(second.stdout).policy, "none");
+    const unsafe = spawnSync(process.execPath, [...args, "--require-automatic"], { cwd: work, encoding: "utf8" });
+    assert.notEqual(unsafe.status, 0);
+    assert.match(unsafe.stderr, /Release blocked/);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
