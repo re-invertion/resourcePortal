@@ -165,7 +165,7 @@ async function main() {
     assert.ok(web.clientId && web.clientSecret, "Confidential Web client missing its credentials");
     ownedApps.push({ id: web.applicationId, projectId: projectA });
     const liveLogin = await runOidcAuthorizationE2E({
-      issuer, projectId: projectA, clientId: web.clientId,
+      issuer, projectId: projectA, foreignProjectId: projectB, clientId: web.clientId,
       clientSecret: web.clientSecret!, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
     });
