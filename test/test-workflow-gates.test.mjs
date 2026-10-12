@@ -93,10 +93,16 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
   const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
   assert.ok(premergeSmoke && prereleaseBuild && prepublishSmoke);
-  assert.ok(candidateSteps.indexOf(prerelease) < candidateSteps.indexOf(prereleaseBuild));
+  // Schema-changing releases need the *real* rollback smoke to produce
+  // run-bound evidence before the rollback policy is allowed to certify them.
   assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
-  assert.ok(publish.indexOf(prepublish) < publish.indexOf(prepublishSmoke));
-  assert.ok(publish.indexOf(prepublishSmoke) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(prerelease));
+  assert.ok(publish.indexOf(prepublishSmoke) < publish.indexOf(prepublish));
+  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.match(prerelease.run,/--verified-evidence-file/);
+  assert.match(prepublish.run,/--verified-evidence-file/);
+  assert.match(premergeSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
+  assert.match(prepublishSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
   for (const smoke of [premergeSmoke,prepublishSmoke]){
     assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
   }
@@ -107,6 +113,8 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
 
   const manifest=publish.find(s=>s.name?.startsWith('Create release manifest'));
   assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
+  assert.match(manifest.run,/ROLLBACK_POLICY.*tested/);
+  assert.match(manifest.run,/rollbackEvidence/);
   assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
 });
 
