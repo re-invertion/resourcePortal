@@ -110,6 +110,21 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
 });
 
+test('automatic rollback smoke uses official release digests and the production upgrade entry point',()=>{
+  const source=readFileSync(new URL('../scripts/run-automatic-rollback-smoke.sh',import.meta.url),'utf8');
+  assert.match(source,/resourceportal-release-manifest\.json/);
+  assert.match(source,/gh attestation verify/);
+  assert.match(source,/resourceportal-api-candidate/);
+  assert.match(source,/resourceportal-web-candidate/);
+  assert.match(source,/resourceportal-postgres-candidate/);
+  assert.match(source,/rp_upgrade_apply/);
+  assert.doesNotMatch(source,/^rp_upgrade_restore_after_failure\s*\(/m);
+  assert.doesNotMatch(source,/^\s*if rp_upgrade_restore_after_failure/m);
+  assert.match(source,/health_checks/);
+  assert.match(source,/rolled-back/);
+  assert.match(source,/service_images_match/);
+});
+
 test('Merge Queue requires full regression and applicable Fast Fix integration gates',()=>{
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
