@@ -161,6 +161,9 @@ const commands = {
 };
 
 const classifiers = [
+  // Shared App Group runtime blockers feed both standard views and topology;
+  // changes must run application AND networking regressions in Fast Fix.
+  [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.view\.ts$/, ["applications", "networking"]],
   // Explicit coverage for the tenant usability patch: new files must not
   // silently bypass fast-fix validation on non-milestone releases.
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing\.service|tenant-estimate-rates\.spec)\.ts$/, ["billing-correctness"]],
