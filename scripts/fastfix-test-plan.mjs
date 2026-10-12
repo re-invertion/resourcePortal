@@ -72,6 +72,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
+    ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
   ],
   "web-proxy": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "proxy-target.test.mjs"],
@@ -171,6 +172,9 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],
   [/^packages\/resourceportal-api\/package\.json$/, ["identity", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-live-preflight\.mjs$/, ["identity"]],
+  [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:live|browser)-e2e\.ts$/, ["identity"]],
+  [/^scripts\/run-tenant-oidc-https-e2e\.sh$/, ["identity", "workflow"]],
+  [/^test\/tenant-oidc\/.*\.ya?ml$/, ["identity", "workflow"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-identity-sso(?:\.test)?\.tsx$/, ["identity"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-identity-pages\.tsx$/, ["identity"]],
   // Shared App Group runtime blockers feed both standard views and topology;
