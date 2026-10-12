@@ -31,6 +31,17 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
   assert.equal(plan.vpnSmoke, false);
 });
 
+test("live HTTPS tenant OIDC integration scripts and fixtures are release-gated", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts",
+    "packages/resourceportal-api/scripts/tenant-oidc-browser-e2e.ts",
+    "scripts/run-tenant-oidc-https-e2e.sh",
+    "test/tenant-oidc/docker-compose.yml",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "workflow"]);
+  assert.equal(plan.federationRequired, true);
+});
+
 test("identity rollout cannot silently bypass patch validation when package manifest changes", () => {
   const plan = selectProfiles(["packages/resourceportal-api/package.json"]);
   assert.deepEqual(plan.profiles, ["identity", "workflow"]);
