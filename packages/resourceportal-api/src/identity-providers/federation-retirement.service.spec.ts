@@ -43,6 +43,16 @@ describe("Inbound federation retirement preflight", () => {
     });
     expect(result.blockers).toContain("Federated users lack native identity links");
     expect(f.prisma.userIdentity.findMany).toHaveBeenCalledTimes(2);
+    expect(f.prisma.userIdentity.findMany).toHaveBeenLastCalledWith({
+      where: {
+        userId: { in: ["user-a", "user-b"] },
+        issuer: "https://login.example.com",
+        providerType: "zitadel",
+        identityProviderId: null,
+      },
+      select: { userId: true },
+      distinct: ["userId"],
+    });
   });
   it("reports manual verification even when all database blockers are gone", async () => {
     const f = fixture();
