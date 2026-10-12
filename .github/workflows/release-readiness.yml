@@ -160,6 +160,12 @@ jobs:
     with:
       force_gate: true
 
+  tenant-oidc:
+    name: Real HTTPS tenant OIDC gate
+    needs: candidate
+    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.federation_required == 'true'
+    uses: ./.github/workflows/tenant-oidc-live.yml
+
   installer:
     name: Production installer gate
     needs: candidate
@@ -172,7 +178,7 @@ jobs:
     name: Required release readiness
     runs-on: ubuntu-latest
     if: always()
-    needs: [candidate, swarm, federation, installer]
+    needs: [candidate, swarm, federation, installer, tenant-oidc]
     steps:
       - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
@@ -184,6 +190,7 @@ jobs:
           SWARM: ${{ needs.swarm.result }}
           FEDERATION: ${{ needs.federation.result }}
           INSTALLER: ${{ needs.installer.result }}
+          TENANT_OIDC: ${{ needs.tenant-oidc.result }}
         shell: bash
         run: |
           set -euo pipefail
@@ -207,8 +214,10 @@ jobs:
           fi
           if [[ "$MODE" == milestone || "$FEDERATION_REQUIRED" == true ]]; then
             verify_gate federation "$FEDERATION" true
+            verify_gate tenant-oidc "$TENANT_OIDC" true
           else
             verify_gate federation "$FEDERATION" false
+            verify_gate tenant-oidc "$TENANT_OIDC" false
           fi
           if [[ "$MODE" == milestone || "$INSTALLER_REQUIRED" == true ]]; then
             verify_gate installer "$INSTALLER" true
