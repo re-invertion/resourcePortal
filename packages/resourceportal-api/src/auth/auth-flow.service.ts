@@ -104,6 +104,13 @@ export class AuthFlowService {
       identityProviderId,
       state,
     );
+    // A hosted ZITADEL login may select an upstream IdP even without an RP
+    // identityProviderId query argument. Reject positively attested external
+    // logins after native-only cutover before any RP session is issued.
+    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true" &&
+        user.authenticatedIdpId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     if (user.status !== UserStatus.Active) {
       throw new UnauthorizedException("Email verification is required before login");
     }
