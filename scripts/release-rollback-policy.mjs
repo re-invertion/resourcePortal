@@ -29,21 +29,44 @@ export function rollbackAssessment(changedPaths, mode, previousVersion, targetCo
 }
 
 // Static diff eligibility is a prerequisite, not a substitute for a real
-// rollback smoke. Non-schema Fast Fix only; schema/milestone fail closed
-// until a separate tested database restore protocol exists.
-export function requireAutomaticRollback(result) {
-  if (
-    result.policy !== "image-only" ||
-    result.reason !== "no-resourceportal-database-schema-changes" ||
-    !/^\d+\.\d+\.\d+$/.test(result.sourceVersion) ||
-    !/^[a-f0-9]{40}$/.test(result.targetCommit)
-  ) {
-    throw new Error(
-      "Release blocked: automatic rollback is not verified for this source/target. " +
-      "Schema-changing or milestone releases require a separately tested restore protocol.",
-    );
+// rollback smoke. Schema/milestone can only claim "tested" if independent
+// runtime evidence proves old images and old DB client survive the upgrade.
+// Do NOT assume a down-migration exists: an expanded DB schema remains.
+export function requireAutomaticRollback(result, evidence = null) {
+  const validTarget = /^\d+\.\d+\.\d+$/.test(result.sourceVersion) &&
+    /^[a-f0-9]{40}$/.test(result.targetCommit);
+  if (validTarget && result.policy === "image-only" &&
+      result.reason === "no-resourceportal-database-schema-changes") return result;
+
+  const verified = validTarget &&
+    result.policy === "none" &&
+    ["database-compatibility-not-verified", "milestone-requires-verified-recovery"].includes(result.reason) &&
+    evidence?.kind === "real-upgrade-and-restore" &&
+    evidence.sourceVersion === result.sourceVersion &&
+    evidence.targetCommit === result.targetCommit &&
+    Number.isSafeInteger(evidence.workflowRunId) && evidence.workflowRunId > 0 &&
+    evidence.actualDatabaseMigration === true &&
+    evidence.previousApiReadWriteAfterRollback === true &&
+    evidence.injectedHealthFailure === true &&
+    evidence.previousImagesRestored === true &&
+    // A PR must not reuse evidence issued in a different workflow run.
+    (!process.env.GITHUB_RUN_ID || evidence.workflowRunId === Number(process.env.GITHUB_RUN_ID));
+  if (verified) {
+    return {
+      ...result,
+      policy: "tested",
+      reason: "verified-recovery-test",
+      rollbackEvidence: {
+        kind: evidence.kind,
+        workflowRunId: evidence.workflowRunId,
+        sourceVersion: evidence.sourceVersion,
+      },
+    };
   }
-  return result;
+  throw new Error(
+    "Release blocked: automatic rollback is not verified for this source/target. " +
+    "Schema-changing or milestone releases require a separately tested restore protocol.",
+  );
 }
 
 function option(flag) {
@@ -66,8 +89,24 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
     encoding: "utf8",
   }).trim();
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("Invalid target commit");
-  const result = rollbackAssessment(paths, mode, previous, commit);
-  if (process.argv.includes("--require-automatic")) requireAutomaticRollback(result);
+  const assessment = rollbackAssessment(paths, mode, previous, commit);
+  const evidenceFile = option("--verified-evidence-file");
+  // Evidence is generated only after real CI upgrade/rollback, never from a
+  // checked-in fixture or static SQL heuristic. Without it, fail closed.
+  let evidence = null;
+  if (evidenceFile) {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const trustedRoot = process.env.RUNNER_TEMP;
+    if (process.env.GITHUB_ACTIONS === "true" &&
+        (!trustedRoot || !resolve(evidenceFile).startsWith(resolve(trustedRoot) + "/"))) {
+      throw new Error("Rollback evidence must reside in RUNNER_TEMP");
+    }
+    evidence = JSON.parse(readFileSync(evidenceFile, "utf8"));
+  }
+  const result = process.argv.includes("--require-automatic")
+    ? requireAutomaticRollback(assessment, evidence)
+    : assessment;
   console.log(JSON.stringify(result));
   const output = option("--github-output");
   if (output) {
