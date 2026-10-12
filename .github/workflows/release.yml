@@ -9,6 +9,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: write
   packages: write
   pull-requests: write
@@ -79,6 +80,32 @@ jobs:
         run: npm ci
       - name: Verify test inventory and taxonomy
         run: npm run test:catalog
+      - name: Require successful post-merge full CI for this exact main commit
+        timeout-minutes: 35
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Separate main CI may finish after this release workflow starts.
+          # Match the exact SHA and fail closed on failure, skip, cancellation or timeout.
+          for attempt in $(seq 1 105); do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=20")"
+            state="$(jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push")][0].status // "missing"' <<<"$runs")"
+            conclusion="$(jq -r --arg sha "$GITHUB_SHA" '[.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main" and .event == "push")][0].conclusion // ""' <<<"$runs")"
+            case "$state:$conclusion" in
+              completed:success)
+                echo "Full ResourcePortal CI + Installer succeeded for $GITHUB_SHA"
+                exit 0 ;;
+              completed:*)
+                echo "Full CI on $GITHUB_SHA failed or was not successful: $conclusion" >&2
+                exit 1 ;;
+            esac
+            echo "Waiting for complete main CI on $GITHUB_SHA (attempt $attempt, state: $state)"
+            sleep 15
+          done
+          echo "Timed out waiting for main CI success on $GITHUB_SHA" >&2
+          exit 1
       - name: Use validated release mode for this immutable revision
         id: release-mode
         env:
@@ -96,6 +123,16 @@ jobs:
           RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
         run: node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run
+      - name: Recheck complete patch test and installer suites before publication
+        if: steps.release-mode.outputs.mode == 'fastfix'
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
+          AUTH_MODE: dev
+          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+        run: |
+          npm run test
+          npm run test:installer
       - name: Full lint, test and build gates for milestone release
         if: steps.release-mode.outputs.mode == 'milestone'
         env:
