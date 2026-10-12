@@ -31,6 +31,7 @@ import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
 import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
+import { UpdateTenantBrandingDto } from "./dto/update-tenant-branding.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
 import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import { TenantsService } from "./tenants.service";
@@ -54,6 +55,16 @@ export class TenantsController {
     return this.tenantsService.getTenant(tenantId);
   }
 
+  @RequirePermissions("tenant.settings.update")
+  @Patch(":tenantId/branding")
+  updateBranding(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Body() dto: UpdateTenantBrandingDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.tenantsService.updateBranding(tenantId, dto, actor);
+  }
+
   @Post()
   createTenant(
     @Body() dto: CreateTenantDto,
@@ -64,6 +75,13 @@ export class TenantsController {
     }
 
     return this.tenantsService.createTenant(dto, user);
+  }
+
+  @RequirePermissions("tenant.read")
+  @Get(":tenantId/billing/estimate-rates")
+  estimateRates() {
+    // Public to tenant members: active unit pricing, never billing balances or ledgers.
+    return this.billingService.getTenantEstimateRates();
   }
 
   @RequirePermissions("billing.read")

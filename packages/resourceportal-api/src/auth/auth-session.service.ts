@@ -236,8 +236,13 @@ export class AuthSessionService {
   }
 
   async invalidateRequestSession(request: FastifyRequest, reply: FastifyReply) {
-    await this.revokeSession(this.getSessionIdFromRequest(request));
-    this.clearSessionCookies(reply);
+    // A revoked/invalid session must never strand stale browser cookies when
+    // revocation or its audit trail fails. Clear them even on DB errors.
+    try {
+      await this.revokeSession(this.getSessionIdFromRequest(request));
+    } finally {
+      this.clearSessionCookies(reply);
+    }
   }
 
   async pruneExpiredSessions(now = new Date()) {

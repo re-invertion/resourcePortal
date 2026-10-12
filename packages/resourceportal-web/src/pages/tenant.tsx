@@ -40,10 +40,10 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "billing") return <TenantBilling tenantId={tenantId} />;
   if (section === "help") return <TenantHelpPage tenantId={tenantId} />;
   if (section === "settings") return <TenantSettingsPage tenantId={tenantId} section={segments[0]} />;
-  if (section === "volumes") return <TenantVolumesPage tenantId={tenantId} />;
+  if (section === "volumes") return <TenantVolumesPage tenantId={tenantId} createImmediately={segments[0] === "new" || resourceId === "new"} />;
   if (section === "registries") return resourceId ? <TenantRegistryDetailPage tenantId={tenantId} registryId={resourceId} /> : <TenantRegistriesPage tenantId={tenantId} />;
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;
-  if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} />;
+  if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} section={segments[0]} />;
   if (section === "credentials") return <TenantCredentialsPage tenantId={tenantId} />;
   if (section === "audit") return <TenantAuditPage tenantId={tenantId} />;
   if (section === "operations") return <TenantOperationsPage tenantId={tenantId} operationId={resourceId} />;

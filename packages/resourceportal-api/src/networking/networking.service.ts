@@ -239,6 +239,7 @@ export class NetworkingService {
           id: true,
           name: true,
           hasPendingChanges: true,
+          runtimeState: true,
           currentDeploymentVersion: true,
           singleApps: {
             where: { pendingDeletion: false },
@@ -274,6 +275,12 @@ export class NetworkingService {
       gates: gates.map((gate) => this.publicGate(gate)),
       appGroups: appGroups.map((appGroup) => ({
         ...appGroup,
+        // A stopped App Group overrides individual apps' desired Running state.
+        effectiveRuntimeState: appGroup.runtimeState,
+        singleApps: appGroup.singleApps.map(app => ({
+          ...app,
+          effectiveRuntimeState: appGroup.runtimeState === "Stopped" ? "Stopped" : app.runtimeState,
+        })),
         appGroupNetwork:
           appGroup.currentDeploymentVersion === null
             ? null

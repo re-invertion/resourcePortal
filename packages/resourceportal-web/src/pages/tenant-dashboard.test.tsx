@@ -54,8 +54,8 @@ describe("TenantDashboard", () => {
 
     const quickActions = screen.getByRole("region", { name: "Quick actions" });
     expect(within(quickActions).getByRole("link", { name: /create app group/i }).getAttribute("href")).toBe("/tenants/t1/applications/new");
-    expect(within(quickActions).getByRole("link", { name: /create volume/i }).getAttribute("href")).toBe("/tenants/t1/volumes");
-    expect(within(quickActions).getByRole("link", { name: /add domain/i }).getAttribute("href")).toBe("/tenants/t1/domains");
+    expect(within(quickActions).getByRole("link", { name: /^volumes$/i }).getAttribute("href")).toBe("/tenants/t1/volumes");
+    expect(within(quickActions).getByRole("link", { name: /^domains$/i }).getAttribute("href")).toBe("/tenants/t1/domains");
 
     const applications = screen.getByTestId("metric-applications");
     expect(within(applications).getByText("3")).toBeTruthy();

@@ -19,6 +19,8 @@ import { CreateTenantGroupDto } from "./dto/create-tenant-group.dto";
 import { CreateTenantInvitationDto } from "./dto/create-tenant-invitation.dto";
 import { UpdateMembershipDto } from "./dto/update-membership.dto";
 import { UpdateQuotaDto } from "./dto/update-quota.dto";
+import { validatedTenantLogo } from "./tenant-logo";
+import { UpdateTenantBrandingDto } from "./dto/update-tenant-branding.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
 import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import {
@@ -121,6 +123,36 @@ export class TenantsService {
       ...tenant,
       quota: tenant.quota ? mapQuota(tenant.quota) : null,
     };
+  }
+
+  async updateBranding(tenantId: string, dto: UpdateTenantBrandingDto, actor: AuthenticatedUser) {
+    const displayName = dto.displayName?.trim();
+    if (dto.displayName !== undefined && !displayName) {
+      throw new BadRequestException("Tenant display name cannot be empty");
+    }
+    const logoDataUrl = validatedTenantLogo(dto.logoDataUrl);
+    if (displayName === undefined && logoDataUrl === undefined) {
+      throw new BadRequestException("No tenant branding changes supplied");
+    }
+    const tenant = await this.ensureTenantExists(tenantId);
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.tenant.update({
+        where: { id: tenantId },
+        data: {
+          ...(displayName !== undefined ? { displayName } : {}),
+          ...(logoDataUrl !== undefined ? { logoDataUrl } : {}),
+        },
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId, tenantName: tenant.name, actor: actor.id, actorName: actor.displayName,
+          action: "tenant.branding.update", resourceType: "Tenant", resourceId: tenantId,
+          result: "Success", correlationId: randomUUID(),
+          changes: { displayNameChanged: displayName !== undefined, logoChanged: logoDataUrl !== undefined },
+        },
+      });
+      return updated;
+    });
   }
 
   async createTenant(dto: CreateTenantDto, actor: AuthenticatedUser) {

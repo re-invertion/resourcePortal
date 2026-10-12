@@ -7,6 +7,7 @@ import { AppGroupApps } from "./apps";
 import { AppGroupConfig } from "./config";
 import { CreateApplicationWizard } from "./create-app-wizard";
 import { AppGroupDeployments } from "./deployments";
+import { AppGroupNetworking } from "./networking";
 import { AppGroupLayout } from "./layout";
 import { AppGroupOverview } from "./overview";
 import { AppGroupSettings } from "./settings";
@@ -33,6 +34,9 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
     if (sub[2] === "edit") {
       return <ApplicationEdit tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} subsection={sub[3]} />;
     }
+    if (sub[2] === "logs") {
+      return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section="logs" />;
+    }
     if (sub[2] === "health") {
       return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section="health" />;
     }
@@ -45,7 +49,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
   else if (section === "apps" && sub[1] === "new") content = <CreateApplicationWizard tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} />;
   else if (section === "apps") content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "config") content = <AppGroupConfig tenantId={tenantId} appGroupId={appGroupId} />;
-  else if (section === "networking") { activeSection = "apps"; content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />; }
+  else if (section === "networking") content = <AppGroupNetworking tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "deployments") content = <AppGroupDeployments tenantId={tenantId} appGroupId={appGroupId} onReload={group.reload} />;
   else if (section === "activity") content = <AppGroupActivity tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "settings" || section === "advanced") {

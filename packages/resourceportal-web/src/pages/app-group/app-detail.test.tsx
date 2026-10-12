@@ -30,7 +30,7 @@ it("shows attached storage and network IP addresses from the application payload
  expect(screen.getByText("10.20.0.12")).toBeTruthy();
 });
 
-it("shows domain assignments and fetches container logs only after clicking View logs", async () => {
+it("shows domain assignments and loads container logs only on the dedicated Logs tab", async () => {
  const fetchMock=vi.fn(async(input:RequestInfo|URL)=>{
   const path=String(input);
   if(path.endsWith("/single-apps"))return json([{id:"app1",name:"checkout",runtimeState:"Running",effectiveRuntimeState:"Running",health:"Healthy",volumeAttachments:[{id:"v1",mode:"ReadOnly",mountPath:"/config",volume:{name:"configuration"}}]}]);
@@ -44,7 +44,8 @@ it("shows domain assignments and fetches container logs only after clicking View
  expect(await screen.findByText("app.example.test")).toBeTruthy();
  expect(screen.getByText("ReadOnly")).toBeTruthy();
  expect(fetchMock.mock.calls.some(([path])=>String(path).endsWith("/logs"))).toBe(false);
- fireEvent.click(screen.getByRole("button",{name:"View logs"}));
- expect(await screen.findByText(/2026-10-10T09:10:00Z started/)).toBeTruthy();
- expect(fetchMock.mock.calls.some(([path])=>String(path).endsWith("/logs"))).toBe(true);
+
+ expect(screen.getByRole("link",{name:"Logs"}).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/logs");
+ expect(screen.queryByText(/2026-10-10T09:10:00Z started/)).toBeNull();
+ expect(fetchMock.mock.calls.some(([path])=>String(path).endsWith("/logs"))).toBe(false);
 });

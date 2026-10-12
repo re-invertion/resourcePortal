@@ -167,7 +167,7 @@ describe("CreateApplicationWizard", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         let body: unknown;
         if (typeof init?.body === "string") body = JSON.parse(init.body);
-        mutations.push({ path, method, body });
+        if (method !== "GET") mutations.push({ path, method, body });
         if (path.endsWith("/single-apps") && method === "POST") return json({ id: "app-new", name: "web-api" });
         if (path.endsWith("/single-apps/app-new/variable-attachments") && method === "POST") return json({ id: "va-1" });
         if (path.endsWith("/single-apps/app-new/config-attachments") && method === "POST") {

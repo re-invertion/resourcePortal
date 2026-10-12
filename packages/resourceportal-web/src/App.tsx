@@ -13,7 +13,7 @@ import { AppRoute, parseRoute, tenantHref } from "./router/router";
 import { providerLogoutTarget } from "./auth/provider-logout";
 
 type User = { id: string; email?: string; displayName?: string; status?: string };
-type Tenant = { id: string; name?: string; displayName?: string; status?: string };
+type Tenant = { id: string; name?: string; displayName?: string; logoDataUrl?: string | null; status?: string };
 type AppProps = { initialPath?: string };
 
 function browserPath() { return typeof window === "undefined" ? "/" : window.location.pathname; }
@@ -97,7 +97,7 @@ function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant
             {filtered.length ? filtered.map((tenant) => {
               const name = tenant.displayName ?? tenant.name ?? tenant.id;
               return <a className="group flex min-w-0 items-center gap-3 border-b border-[#E1E7F0] px-4 py-4 last:border-b-0 hover:bg-[#F8FAFD] sm:gap-4" key={tenant.id} href={tenantHref(tenant.id, "overview")}>
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><GridIcon size={18}/></span>
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]">{tenant.logoDataUrl ? <img src={tenant.logoDataUrl} alt="" className="h-full w-full rounded-lg object-contain" /> : <GridIcon size={18}/>}</span>
                 <div className="min-w-0 flex-1">
                   <strong className="block truncate text-sm text-[#172033]" title={name}>{name}</strong>
                   <div className="mt-1"><StatusBadge tone="success">{tenant.status ?? "Active"}</StatusBadge></div>

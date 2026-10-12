@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationsPage } from "./applications";
 
@@ -18,7 +18,10 @@ describe("ApplicationsPage", () => {
     expect(screen.getByText("Pending changes")).toBeTruthy();
     expect(screen.getByRole("link", { name: /create app group/i }).getAttribute("href")).toBe("/tenants/t1/applications/new");
     expect(screen.getByRole("link", { name: /import yaml/i }).getAttribute("href")).toBe("/tenants/t1/applications/import");
-    const row = screen.getByText("commerce-prod").closest("tr") as HTMLElement;
+    fireEvent.click(screen.getByRole("button", { name: /create application/i }));
+    expect(screen.getByRole("link", { name: "commerce-prod" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/new");
+    expect(screen.getByRole("link", { name: /create new app group/i }).getAttribute("href")).toBe("/tenants/t1/applications/new");
+    const row = screen.getAllByText("commerce-prod").find(node => node.closest("tr"))?.closest("tr") as HTMLElement;
     expect(within(row).getByText("2 apps")).toBeTruthy();
   });
   it("filters inventory without changing backend truth", async () => {
@@ -27,5 +30,27 @@ describe("ApplicationsPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search App Groups" }), { target: { value: "sand" } });
     expect(screen.queryByText("commerce-prod")).toBeNull();
     expect(screen.getByText("sandbox")).toBeTruthy();
+  });
+  it("refreshes the visible app inventory without dropping the search filter", async () => {
+    const newer = [{ ...groups[0], name: "commerce-next" }, groups[1]];
+    const fetchMock = vi.fn().mockImplementationOnce(async () => json(groups))
+      .mockImplementation(async () => json(newer));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+    const view = render(<ApplicationsPage tenantId="t1" />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("commerce-prod")).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search App Groups" }), { target: { value: "commerce" } });
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.getByText("commerce-next")).toBeTruthy();
+      expect(screen.queryByText("commerce-prod")).toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      view.unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

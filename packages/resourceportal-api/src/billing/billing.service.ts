@@ -177,6 +177,20 @@ export class BillingService {
     });
   }
 
+  async getTenantEstimateRates() {
+    const price = await this.getActivePriceList();
+    if (!price) return { available: false as const };
+    return {
+      available: true as const,
+      version: price.version,
+      effectiveFrom: price.effectiveFrom,
+      cpuCreditsPerVcpuHour: price.cpuCreditsPerVcpuHour.toString(),
+      memoryCreditsPerGbHour: price.memoryCreditsPerGbHour.toString(),
+      gpuCreditsPerGpuHour: price.gpuCreditsPerGpuHour.toString(),
+      plnPerCredit: "0.01",
+    };
+  }
+
   async assertActivePriceList(at = new Date()) {
     const priceList = await this.getActivePriceList(at);
     if (!priceList) {

@@ -3,6 +3,7 @@ import { apiRequest } from "../api/client";
 import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
 import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
+import { formatCreditAmount, formatPlnAmount, quotaBytesDisplay, quotaDisplay } from "../lib/billing-display";
 import { AccessTabs } from "../components/tenant-section-tabs";
 import { formatBytes, formatDate, idOf, items, text, useApi } from "../hooks/use-api";
 import { tenantHref } from "../router/router";
@@ -32,7 +33,7 @@ function BillingMetricCard({
     </div>
     <div className="mt-5 min-w-0">
       <p className="text-xs font-medium text-[#718096]">{label}</p>
-      <strong className="mt-1.5 block truncate text-2xl font-semibold tracking-[-0.015em] text-[#172033]">{value}</strong>
+      <strong className="mt-1.5 block break-words text-2xl font-semibold tracking-[-0.015em] text-[#172033]">{value}</strong>
       {detail ? <span className="mt-1 block truncate text-xs text-[#718096]">{detail}</span> : null}
     </div>
   </Card>;
@@ -78,7 +79,7 @@ export const TenantStorageNetworking = TenantStoragePage;
 export function TenantAccess({tenantId}:{tenantId:string}) {
   const root=`/api/tenants/${encodeURIComponent(tenantId)}`; const memberships=useApi<unknown>(`${root}/memberships`); const invitations=useApi<unknown>(`${root}/invitations`); const roles=useApi<unknown>(`${root}/roles`); const groups=useApi<unknown>(`${root}/groups`); const idps=useApi<unknown>(`${root}/identity-providers`); const oauth=useApi<unknown>(`${root}/oauth-applications`); const identities=useApi<unknown>(`${root}/service-identities`);
   const memberRows=items<R>(memberships.data); const inviteRows=items<R>(invitations.data); const roleRows=items<R>(roles.data); const groupRows=items<R>(groups.data); const idpRows=items<R>(idps.data); const oauthRows=items<R>(oauth.data); const identityRows=items<R>(identities.data);
-  return <main><PageHeader eyebrow="Tenant security" title="Access" description="People, roles, groups, identity providers and machine identities for this tenant." actions={<LinkButton variant="primary" href={tenantHref(tenantId,"administration")}>Manage access</LinkButton>}/><AccessTabs tenantId={tenantId} active="overview"/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><ResourceSummary title="Members" description="Users with tenant access." href={tenantHref(tenantId,"administration")} count={memberRows.length} icon={<UsersIcon/>} loading={memberships.loading} error={memberships.error}/><ResourceSummary title="Invitations" description="Pending access invitations." href={tenantHref(tenantId,"administration")} count={inviteRows.length} icon={<ActivityIcon/>} loading={invitations.loading} error={invitations.error}/><ResourceSummary title="Identity providers" description="Tenant federation and SSO." href={tenantHref(tenantId,"administration")} count={idpRows.length} icon={<KeyIcon/>} loading={idps.loading} error={idps.error}/><ResourceSummary title="Machine identities" description="OAuth apps and service identities." href={tenantHref(tenantId,"credentials")} count={oauthRows.length+identityRows.length} icon={<ServerIcon/>} loading={oauth.loading||identities.loading} error={oauth.error||identities.error}/></div><div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><Card className="overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Memberships</h2><p className="mt-0.5 text-xs text-[#718096]">Existing human access to this tenant.</p></div><DataTable embedded loading={memberships.loading} columns={[{key:"member",label:"Member"},{key:"status",label:"Status"},{key:"roles",label:"Roles"}]} rows={memberRows.map(m=>({key:idOf(m),cells:{member:<strong>{text(m.displayName,text(m.email,text((m.user as R|undefined)?.email,"Member")))}</strong>,status:<StatusText tone={statusTone(m.status)}>{text(m.status,"Active")}</StatusText>,roles:Array.isArray(m.roles)?(m.roles as R[]).map(r=>text(r.name)).join(", "):text(m.roleName,"—")}}))} empty={<EmptyState icon={<UsersIcon/>} title="No memberships" description="Invite a user to grant tenant access."/>}/></Card><div className="space-y-6"><Card className="p-5"><h2 className="font-semibold">Access model</h2><dl className="mt-4 grid grid-cols-2 gap-4 text-sm"><div><dt className="text-[#718096]">Roles</dt><dd className="mt-1 text-xl font-semibold">{roleRows.length}</dd></div><div><dt className="text-[#718096]">Groups</dt><dd className="mt-1 text-xl font-semibold">{groupRows.length}</dd></div><div><dt className="text-[#718096]">OAuth apps</dt><dd className="mt-1 text-xl font-semibold">{oauthRows.length}</dd></div><div><dt className="text-[#718096]">Service identities</dt><dd className="mt-1 text-xl font-semibold">{identityRows.length}</dd></div></dl><div className="mt-5 flex flex-wrap gap-2"><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"administration")}>Roles & groups</LinkButton><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"credentials")}>Machine credentials</LinkButton></div></Card><Card className="p-5"><h2 className="font-semibold">Federation</h2><p className="mt-1 text-sm text-[#5B6678]">{idpRows.length?`${idpRows.length} identity provider${idpRows.length===1?"":"s"} configured.`:"No tenant identity providers configured."}</p><LinkButton className="mt-4 h-8 px-3 text-xs" href={tenantHref(tenantId,"administration")}>Manage identity providers</LinkButton></Card></div></div></main>;
+  return <main><PageHeader eyebrow="Tenant security" title="Access" description="People, roles, groups, identity providers and machine identities for this tenant." actions={<div className="flex flex-wrap gap-2"><LinkButton variant="primary" href={tenantHref(tenantId,"administration","invite")}>Invite user</LinkButton><LinkButton href={tenantHref(tenantId,"administration")}>Manage access</LinkButton></div>}/><AccessTabs tenantId={tenantId} active="overview"/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><ResourceSummary title="Members" description="Users with tenant access." href={tenantHref(tenantId,"administration")} count={memberRows.length} icon={<UsersIcon/>} loading={memberships.loading} error={memberships.error}/><ResourceSummary title="Invitations" description="Pending access invitations." href={tenantHref(tenantId,"administration")} count={inviteRows.length} icon={<ActivityIcon/>} loading={invitations.loading} error={invitations.error}/><ResourceSummary title="Identity providers" description="Tenant federation and SSO." href={tenantHref(tenantId,"administration")} count={idpRows.length} icon={<KeyIcon/>} loading={idps.loading} error={idps.error}/><ResourceSummary title="Machine identities" description="OAuth apps and service identities." href={tenantHref(tenantId,"credentials")} count={oauthRows.length+identityRows.length} icon={<ServerIcon/>} loading={oauth.loading||identities.loading} error={oauth.error||identities.error}/></div><div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_.8fr]"><Card className="overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Memberships</h2><p className="mt-0.5 text-xs text-[#718096]">Existing human access to this tenant.</p></div><DataTable embedded loading={memberships.loading} columns={[{key:"member",label:"Member"},{key:"status",label:"Status"},{key:"roles",label:"Roles"}]} rows={memberRows.map(m=>({key:idOf(m),cells:{member:<strong>{text(m.displayName,text(m.email,text((m.user as R|undefined)?.email,"Member")))}</strong>,status:<StatusText tone={statusTone(m.status)}>{text(m.status,"Active")}</StatusText>,roles:Array.isArray(m.roles)?(m.roles as R[]).map(r=>text(r.name)).join(", "):text(m.roleName,"—")}}))} empty={<EmptyState icon={<UsersIcon/>} title="No memberships" description="Invite a user to grant tenant access."/>}/></Card><div className="space-y-6"><Card className="p-5"><h2 className="font-semibold">Access model</h2><dl className="mt-4 grid grid-cols-2 gap-4 text-sm"><div><dt className="text-[#718096]">Roles</dt><dd className="mt-1 text-xl font-semibold">{roleRows.length}</dd></div><div><dt className="text-[#718096]">Groups</dt><dd className="mt-1 text-xl font-semibold">{groupRows.length}</dd></div><div><dt className="text-[#718096]">OAuth apps</dt><dd className="mt-1 text-xl font-semibold">{oauthRows.length}</dd></div><div><dt className="text-[#718096]">Service identities</dt><dd className="mt-1 text-xl font-semibold">{identityRows.length}</dd></div></dl><div className="mt-5 flex flex-wrap gap-2"><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"administration")}>Roles & groups</LinkButton><LinkButton className="h-8 px-3 text-xs" href={tenantHref(tenantId,"credentials")}>Machine credentials</LinkButton></div></Card><Card className="p-5"><h2 className="font-semibold">Federation</h2><p className="mt-1 text-sm text-[#5B6678]">{idpRows.length?`${idpRows.length} identity provider${idpRows.length===1?"":"s"} configured.`:"No tenant identity providers configured."}</p><LinkButton className="mt-4 h-8 px-3 text-xs" href={tenantHref(tenantId,"administration")}>Manage identity providers</LinkButton></Card></div></div></main>;
 }
 
 export function TenantActivity({tenantId}:{tenantId:string}) {
@@ -119,14 +120,16 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
 
   const usageRows=items<R>(usage.data);
   const state=text(billing.data?.billingState,text(billing.data?.state,"Unknown"));
+  const showQuota = (value: unknown, unit = "") => quota.loading ? "Loading…" : quota.error ? "Unavailable" : quotaDisplay(value, unit);
+  const showQuotaBytes = (value: unknown) => quota.loading ? "Loading…" : quota.error ? "Unavailable" : quotaBytesDisplay(value);
 
   return <main>
     <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota and usage over time."/>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={`${text(billing.data?.balanceCredits,text(billing.data?.balance,"0"))} credits`} detail={<>≈ {text(billing.data?.balancePln,"0")} PLN</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
-      <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={text(quota.data?.cpu,"—")} detail="cores"/>
-      <BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={formatBytes(quota.data?.memoryBytes)} detail="memory"/>
-      <BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={formatBytes(quota.data?.storageBytes)} detail="persistent storage"/>
+      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={<>{formatPlnAmount(billing.data?.balancePln ?? "0")} PLN</>} detail={<>{formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance ?? "0")} credits</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
+      <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={showQuota(quota.data?.cpu, "cores")} detail="CPU limit"/>
+      <BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={showQuotaBytes(quota.data?.memoryBytes)} detail="memory limit"/>
+      <BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={showQuotaBytes(quota.data?.storageBytes)} detail="storage limit"/>
     </div>
 
     <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_.8fr]">
@@ -135,12 +138,12 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
         <p className="mt-1 text-sm text-[#5B6678]">Allocated by Platform Admin. Quotas are read-only for tenant members; contact your platform administrator to request changes.</p>
         <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {([
-            ["CPU cores", text(quota.data?.cpu)],
-            ["Memory", formatBytes(quota.data?.memoryBytes)],
-            ["GPU", text(quota.data?.gpu)],
-            ["Storage", formatBytes(quota.data?.storageBytes)],
-            ["Max applications", text(quota.data?.maxSingleApps)],
-            ["Max volumes", text(quota.data?.maxVolumes)],
+            ["CPU cores", showQuota(quota.data?.cpu, "cores")],
+            ["Memory", showQuotaBytes(quota.data?.memoryBytes)],
+            ["GPU", showQuota(quota.data?.gpu)],
+            ["Storage", showQuotaBytes(quota.data?.storageBytes)],
+            ["Max applications", showQuota(quota.data?.maxSingleApps)],
+            ["Max volumes", showQuota(quota.data?.maxVolumes)],
           ] as const).map(([label,value]) => (
             <div key={label}><dt className="text-xs text-[#718096]">{label}</dt><dd className="mt-1 font-semibold">{value}</dd></div>
           ))}
@@ -149,7 +152,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
 
       <Card className="p-5">
         <h2 className="font-semibold">Redeem voucher</h2>
-        <p className="mt-1 text-sm text-[#5B6678]">Tenant balances can only be funded with a platform-issued voucher. Manual credit adjustments are restricted to Platform Admin.</p>
+        <p className="mt-1 text-sm text-[#5B6678]">To add funds, request a voucher from your platform administrator, then enter the issued RPV code below. Only Platform Admin can issue vouchers or adjust balances.</p>
         <div className="mt-5 space-y-4">
           <Field label="Voucher code" required hint="Enter the RPV-… code issued by the platform administrator.">
             <TextInput autoComplete="off" value={voucherCode} onChange={e=>setVoucherCode(e.target.value)} placeholder="RPV-…" />

@@ -47,6 +47,7 @@ export type Application = {
   name: string;
   image?: string;
   runtimeState?: string;
+  effectiveRuntimeState?: string;
   networkAttachments: ApplicationAttachment[];
   httpEndpoints?: Array<{ id: string; protocolMode: string; domains: Array<{ hostname: string; tlsEnabled: boolean; dnsStatus?: string }> }>;
 };
@@ -55,6 +56,7 @@ export type AppGroup = {
   id: string;
   name: string;
   hasPendingChanges: boolean;
+  effectiveRuntimeState?: string;
   currentDeploymentVersion?: number | null;
   appGroupNetwork?: {
     name: string;
@@ -165,6 +167,7 @@ type ApplicationNodeData = {
   label: string;
   groupName: string;
   runtimeState?: string;
+  desiredRuntimeState?: string;
   pending: boolean;
   attachmentCount: number;
   addresses: string[];
@@ -204,7 +207,7 @@ export type TopologyNodeData =
   | GateNodeData;
 
 export type TopologyEdgeData =
-  | { kind: "internet-route"; appId: string; hostname: string; protocol: string; label: string }
+  | { kind: "internet-route"; appId: string; hostname: string; protocol: string; label: string; labelOffset?: number }
   | {
       kind: "application-network";
       networkId: string;
@@ -431,7 +434,7 @@ function ApplicationNode(props: NodeProps) {
             isHealthyStatus(data.runtimeState) ? "bg-[#20A464]" : "bg-[#D18B00]",
           )} />
           <span className="truncate text-[11px] text-[#718096]">
-            {data.runtimeState || "Unknown"} · {data.attachmentCount} network{data.attachmentCount === 1 ? "" : "s"}
+            {data.runtimeState || "Unknown"} effective{data.desiredRuntimeState && data.desiredRuntimeState !== data.runtimeState ? ` · ${data.desiredRuntimeState} configured` : ""} · {data.attachmentCount} network{data.attachmentCount === 1 ? "" : "s"}
           </span>
         </div>
         <code className={cx("mt-1 block truncate text-[10px]", data.addresses.length ? "text-[#0F56A7]" : "text-[#8A96A8]")} title={data.addresses.join(", ") || ipLabel}>
@@ -576,7 +579,7 @@ function RelationshipEdge(props: EdgeProps) {
               gate ? "border-[#C9EBD9] text-[#137A4A]" : "border-[#CADDF7] text-[#135FBB]",
               props.selected && "ring-2 ring-[#1769E0]/10",
             )}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY - (internet ? (data?.labelOffset ?? 24) : 12)}px)`, zIndex: 10 }}
           >
             {data.label}
           </div>
@@ -748,7 +751,8 @@ export function buildTopologyGraph(
           appGroupId: item.group.id,
           label: app.name,
           groupName: item.group.name,
-          runtimeState: app.runtimeState,
+          runtimeState: app.effectiveRuntimeState ?? (item.group.effectiveRuntimeState === "Stopped" ? "Stopped" : app.runtimeState),
+          desiredRuntimeState: app.runtimeState,
           pending: item.group.hasPendingChanges,
           attachmentCount: app.networkAttachments.length,
           addresses: app.networkAttachments.map((attachment) => attachment.address).filter(Boolean),
@@ -886,8 +890,8 @@ export function buildTopologyGraph(
   ));
   if(publicRoutes.length){
     nodes.push({id:"internet:public",type:"internet",position:{x:1460,y:Math.max(80,groupLayout.length*90)},data:{kind:"internet",label:"Internet",domainCount:publicRoutes.length} satisfies InternetNodeData,style:{width:130,height:130},ariaLabel:"Internet, public application routes"});
-    for(const route of publicRoutes){
-      edges.push({id:`internet-edge:${route.endpointId}:${route.hostname}`,source:`app:${route.appId}`,sourceHandle:"network-out",target:"internet:public",targetHandle:"ingress",type:"relationship",data:{kind:"internet-route",appId:route.appId,hostname:route.hostname,protocol:route.protocol,label:`${route.protocol} · ${route.hostname}`} satisfies TopologyEdgeData,ariaLabel:`${route.protocol} public domain ${route.hostname}`});
+    for(const [index,route] of publicRoutes.entries()){
+      edges.push({id:`internet-edge:${route.endpointId}:${route.hostname}`,source:`app:${route.appId}`,sourceHandle:"network-out",target:"internet:public",targetHandle:"ingress",type:"relationship",data:{kind:"internet-route",appId:route.appId,hostname:route.hostname,protocol:route.protocol,label:`${route.protocol} · ${route.hostname}`,labelOffset:24+(index%3)*22} satisfies TopologyEdgeData,ariaLabel:`${route.protocol} public domain ${route.hostname}`});
     }
   }
   return { nodes, edges };
@@ -1052,6 +1056,8 @@ function GraphInspector({
         <dl>
           <DetailRow label="App Group">{data.groupName}</DetailRow>
           <DetailRow label="Image">{app?.image || "—"}</DetailRow>
+          <DetailRow label="Configured runtime">{data.desiredRuntimeState ?? "Unknown"}</DetailRow>
+          <DetailRow label="Effective runtime">{data.runtimeState ?? "Unknown"}</DetailRow>
           <DetailRow label="Networks">{app?.networkAttachments.length ?? 0}</DetailRow>
           <DetailRow label="Deploy state">{data.pending ? "Pending changes" : "In sync"}</DetailRow>
         </dl>
@@ -1142,7 +1148,9 @@ export function TenantNetworkingGraph({
 }) {
   const [filters, setFilters] = useState<TopologyGraphFilters>({
     query: "",
-    focusNetworkId: "",
+    // Avoid fitting a dense network onto an unreadably small canvas.
+    focusNetworkId: topology.appGroups.reduce((total, group) => total + group.singleApps.length, 0) > 15
+      ? (topology.networks.find(network => network.attachments.length > 0)?.id ?? topology.networks[0]?.id ?? "") : "",
     showApplications: true,
     showGates: true,
     status: "all",
@@ -1205,7 +1213,6 @@ export function TenantNetworkingGraph({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-semibold text-[#172033]">Network Control Center</h2>
-              {onAddVpn ? <div className="relative"><Button size="sm" variant="primary" onClick={()=>setVpnMenuOpen(open=>!open)}>Add VPN</Button>{vpnMenuOpen?<div role="menu" aria-label="VPN type" className="absolute left-0 top-full z-30 mt-1 min-w-[170px] rounded-lg border border-[#D7E0EC] bg-white p-1 shadow-lg"><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("site");}}>Site VPN</button><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("device");}}>Device VPN</button></div>:null}</div> : null}
               {filters.focusNetworkId ? <StatusBadge tone="info">Focused</StatusBadge> : null}
               {working ? <StatusBadge tone="warning">Applying change…</StatusBadge> : null}
             </div>
@@ -1247,6 +1254,7 @@ export function TenantNetworkingGraph({
               <option value="all">All states</option>
               <option value="attention">Needs attention</option>
             </Select>
+              {onAddVpn ? <div className="relative shrink-0"><Button size="sm" variant="primary" onClick={()=>setVpnMenuOpen(open=>!open)}>Add VPN</Button>{vpnMenuOpen?<div role="menu" aria-label="VPN type" className="absolute right-0 top-full z-30 mt-1 min-w-[170px] rounded-lg border border-[#D7E0EC] bg-white p-1 shadow-lg"><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("site");}}>Site VPN</button><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("device");}}>Device VPN</button></div>:null}</div> : null}
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
@@ -1342,7 +1350,7 @@ export function TenantNetworkingGraph({
               elementsSelectable
               fitView
               fitViewOptions={{ padding: 0.16, maxZoom: 1.15 }}
-              minZoom={0.28}
+              minZoom={0.4}
               maxZoom={1.65}
               deleteKeyCode={null}
               proOptions={{ hideAttribution: true }}

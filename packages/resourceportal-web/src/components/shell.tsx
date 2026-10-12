@@ -8,7 +8,7 @@ import { applicationHref, appGroupHref, platformHref, tenantHref } from "../rout
 import { ActivityIcon, BillingIcon, BugIcon, ChevronDownIcon, GlobeIcon, GridIcon, HelpIcon, HomeIcon, IconButton, KeyIcon, MenuIcon, NetworkIcon, ResourcePortalLogo, SearchIcon, SettingsIcon, UsersIcon, XIcon } from "./design-system";
 
 type User = { id: string; email?: string; displayName?: string };
-type TenantSummary = { id: string; name?: string; displayName?: string; status?: string };
+type TenantSummary = { id: string; name?: string; displayName?: string; logoDataUrl?: string | null; status?: string };
 type NavItem = { label: string; href: string; icon: ReactNode; active: boolean };
 type SearchItem = { id: string; label: string; description: string; href: string; category: string; keywords?: string };
 
@@ -353,7 +353,7 @@ export function AppShell({ user, route, tenants = [], showPlatformAdmin = false,
       {route.kind === "tenant" ? <div className="mb-4 px-1">
         <label htmlFor="rp-tenant-switcher" className="mb-1.5 block px-1 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8A96A8]">Tenant workspace</label>
         <div className="relative">
-          <GridIcon size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#1769E0]" />
+          {switchableTenants.find(tenant => tenant.id === route.tenantId)?.logoDataUrl ? <img src={switchableTenants.find(tenant => tenant.id === route.tenantId)?.logoDataUrl ?? ""} alt="" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 object-contain" /> : <GridIcon size={16} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#1769E0]" />}
           <select id="rp-tenant-switcher" aria-label="Switch tenant" value={route.tenantId} onChange={(event) => switchTenant(event.target.value)} className="h-10 w-full truncate rounded-md border border-[#C9D4E2] bg-white pl-8 pr-7 text-[13px] font-semibold text-[#172033] outline-none transition hover:border-[#A9B8CC] focus:border-[#1769E0] focus:ring-2 focus:ring-[#1769E0]/15">
             {switchableTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.displayName ?? tenant.name ?? tenant.id}</option>)}
           </select>
