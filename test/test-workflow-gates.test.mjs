@@ -77,6 +77,25 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Build and publish API image')));
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
+test('automatic rollback is mandatory before merge and any release artifacts',()=>{
+  const readiness=load('release-readiness.yml');
+  const release=load('release.yml');
+  const prerelease=readiness.jobs.candidate.steps.find(s=>s.name?.startsWith('Require verified automatic rollback'));
+  const publish=release.jobs.publish.steps;
+  const prepublish=publish.find(s=>s.name?.startsWith('Require verified automatic rollback'));
+  assert.ok(prerelease && prepublish);
+  for(const step of [prerelease,prepublish]){
+    assert.match(step.run,/release-rollback-policy\.mjs/);
+    assert.match(step.run,/--require-automatic/);
+    assert.match(step.run,/run-automatic-rollback-smoke\.sh/);
+  }
+  assert.ok(readiness.jobs.candidate.steps.indexOf(prerelease) < readiness.jobs.candidate.steps.findIndex(s=>s.name?.startsWith('Build the three production')));
+  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  const manifest=publish.find(s=>s.name?.startsWith('Create release manifest'));
+  assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
+  assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
+});
+
 test('Merge Queue requires full regression and applicable Fast Fix integration gates',()=>{
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
