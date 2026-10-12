@@ -6,7 +6,7 @@ import YAML from 'yaml';
 const load=(name)=>YAML.parse(readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8'));
 
 test('all RP GitHub workflow definitions parse as YAML with jobs',()=>{
-  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml']){
+  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml','tenant-oidc-live.yml']){
     const workflow=load(name);
     assert.ok(workflow.on,name);
     assert.ok(Object.keys(workflow.jobs).length>0,name);
@@ -137,7 +137,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -152,6 +152,13 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   assert.ok(gate.jobs['release-ready'].needs.includes('candidate'));
   assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate/);
   assert.match(gate.jobs['release-ready'].steps[0].run,/\$CANDIDATE.*success/);
+  assert.equal(gate.jobs['tenant-oidc'].needs,'candidate');
+  assert.match(gate.jobs['tenant-oidc'].uses,/tenant-oidc-live\.yml$/);
+  assert.match(gate.jobs['tenant-oidc'].if,/federation_required/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate tenant-oidc/);
+  const live=load('tenant-oidc-live.yml');
+  assert.ok(live.on.workflow_call);
+  assert.match(live.jobs['real-https-project-grants'].steps.find(s=>s.name?.includes('real pinned ZITADEL')).run,/run-tenant-oidc-https-e2e/);
   const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
   for(const name of ['swarm','federation','installer']){
     assert.equal(gate.jobs[name].with.force_gate,true);
