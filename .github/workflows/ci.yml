@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   validate:
-    if: (github.event_name != 'pull_request' || !startsWith(github.head_ref, 'fastfix/')) && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[fastfix]'))
+    # Always run complete CI on main, including Fast Fix merges.
+    # Fast Fix pull requests still use scoped validation until merge.
+    if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'fastfix/')
     name: Installer + application validation
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -81,6 +81,20 @@ jobs:
           set -euo pipefail
           previous_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
           node scripts/fastfix-test-plan.mjs --base "$previous_tag" --head HEAD --run
+      - name: Require complete regression suite for every Fast Fix before merge
+        if: steps.release-mode.outputs.mode == 'fastfix'
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
+          AUTH_MODE: dev
+          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+        run: |
+          # Targeted tests above are useful but never substitute for the full suite.
+          npm run lint
+          npm run test
+          npm run build
+          npm run test:installer
+          npm run test:cli-release
       - name: Dry-run actual installable CLI packaging
         env:
           GH_TOKEN: ${{ github.token }}

@@ -12,12 +12,14 @@ test('all RP GitHub workflow definitions parse as YAML with jobs',()=>{
     assert.ok(Object.keys(workflow.jobs).length>0,name);
   }
 });
-test('fastfix main push uses scoped validator when normal CI skips [fastfix]',()=>{
+test('Fast Fix PR uses scoped validation while all main pushes run full CI',()=>{
   const fastfix=load('fastfix.yml'),ci=load('ci.yml');
   assert.ok(fastfix.on.push.branches.includes('main'));
   assert.match(fastfix.jobs['targeted-hotfix'].if,/github.event_name == 'push'/);
   assert.match(fastfix.jobs['targeted-hotfix'].if,/\[fastfix\]/);
-  assert.match(ci.jobs.validate.if,/\[fastfix\]/);
+  assert.match(ci.jobs.validate.if,/github.event_name != 'pull_request'/);
+  assert.doesNotMatch(ci.jobs.validate.if,/\[fastfix\]/);
+  assert.ok(ci.on.push.branches.includes('main'));
 });
 test('milestone publishing must wait for Swarm, federation and installer gates',()=>{
   const release=load('release.yml');
@@ -59,8 +61,23 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   const publish=release.jobs.publish.steps.find(s=>s.name?.includes('Publish GitHub Release assets'));
   assert.match(publish.run,/--target "\$GITHUB_SHA"/);
   assert.doesNotMatch(publish.run,/--clobber/);
+  assert.equal(release.permissions.actions,'read');
+  const steps=release.jobs.publish.steps;
+  const ciProof=steps.find(s=>s.name?.startsWith('Require successful post-merge full CI'));
+  assert.ok(ciProof);
+  assert.match(ciProof.run,/actions\/workflows\/ci\.yml\/runs/);
+  assert.match(ciProof.run,/GITHUB_SHA/);
+  assert.match(ciProof.run,/completed:success/);
+  assert.match(ciProof.run,/completed:\*/);
+  const patchFull=steps.find(s=>s.name?.startsWith('Recheck complete patch test'));
+  assert.equal(patchFull.if,"steps.release-mode.outputs.mode == 'fastfix'");
+  assert.match(patchFull.run,/npm run test/);
+  assert.match(patchFull.run,/npm run test:installer/);
+  assert.ok(steps.indexOf(ciProof) < steps.indexOf(patchFull));
+  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
-test('Merge Queue requires pre-merge validation and only applicable Fast Fix integration gates',()=>{
+test('Merge Queue requires full regression and applicable Fast Fix integration gates',()=>{
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
@@ -70,6 +87,13 @@ test('Merge Queue requires pre-merge validation and only applicable Fast Fix int
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
   assert.match(scoped.if,/fastfix/);
   assert.match(scoped.run,/fastfix-test-plan\.mjs.*--run/);
+  const complete=candidate.steps.find(s=>s.name?.startsWith('Require complete regression suite'));
+  assert.equal(complete.if,"steps.release-mode.outputs.mode == 'fastfix'");
+  for(const command of ['npm run lint','npm run test','npm run build','npm run test:installer','npm run test:cli-release']){
+    assert.ok(complete.run.includes(command),command);
+  }
+  assert.ok(candidate.steps.indexOf(complete) < candidate.steps.findIndex(s=>s.name?.startsWith('Build the three production')));
+  assert.ok(gate.jobs['release-ready'].needs.includes('candidate'));
   assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate/);
   assert.match(gate.jobs['release-ready'].steps[0].run,/\$CANDIDATE.*success/);
   const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
