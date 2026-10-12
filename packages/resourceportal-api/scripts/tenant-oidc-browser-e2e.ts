@@ -28,10 +28,8 @@ export async function runOidcAuthorizationE2E(input: {
   const nonce = randomBytes(24).toString("base64url");
   const callback = "http://127.0.0.1:8765/oidc/callback";
   let resolveCallback!: (url: URL) => void;
-  let rejectCallback!: (error: Error) => void;
-  const result = new Promise<URL>((resolve, reject) => {
+  const result = new Promise<URL>((resolve) => {
     resolveCallback = resolve;
-    rejectCallback = reject;
   });
   const server = createServer((req, response) => {
     const parsed = new URL(req.url ?? "/", callback);
@@ -138,7 +136,6 @@ export async function runOidcAuthorizationE2E(input: {
     console.log("  native user, audience and tenant-scoped role claims (tokens not logged).");
   } catch (error) {
     // Never include page content, cookies, tokens or credentials in diagnostics.
-    rejectCallback(error instanceof Error ? error : new Error("OIDC auth failure"));
     throw error;
   } finally {
     await context.close();
