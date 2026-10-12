@@ -114,18 +114,6 @@ jobs:
         shell: bash
         run: |
           printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
-      - name: Require verified automatic rollback before publishing
-        env:
-          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
-          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/release-rollback-policy.mjs \
-            --previous-tag "$PREVIOUS_TAG" \
-            --head HEAD \
-            --mode "$VALIDATION_MODE" \
-            --require-automatic
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -198,6 +186,7 @@ jobs:
       - name: Validate actual RP release images recover before publishing
         env:
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
         shell: bash
         run: |
           set -euo pipefail
@@ -205,6 +194,20 @@ jobs:
           docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
           docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
           bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
+
+      - name: Require verified automatic rollback before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$PREVIOUS_TAG" \
+            --head HEAD \
+            --mode "$VALIDATION_MODE" \
+            --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
+            --require-automatic
       - name: Build and publish API image
         id: api
         uses: docker/build-push-action@v6
@@ -246,6 +249,8 @@ jobs:
             --previous-tag "$PREVIOUS_TAG" \
             --head HEAD \
             --mode "$VALIDATION_MODE" \
+            --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
+            --require-automatic \
             --github-output "$GITHUB_OUTPUT"
       - name: Create release manifest
         env:
@@ -264,7 +269,7 @@ jobs:
           ROLLBACK_SOURCE_VERSION="${{ steps.rollback-assessment.outputs.rollback_source_version }}"
           ROLLBACK_TARGET_COMMIT="${{ steps.rollback-assessment.outputs.rollback_target_commit }}"
           # Never publish a release manifest without automatic rollback.
-          [[ "$ROLLBACK_POLICY" == image-only ]] || {
+          [[ "$ROLLBACK_POLICY" == image-only || "$ROLLBACK_POLICY" == tested ]] || {
             echo "Release blocked: rollbackPolicy=$ROLLBACK_POLICY" >&2
             exit 1
           }
@@ -296,8 +301,12 @@ jobs:
             --arg rollback_reason "$ROLLBACK_REASON" \
             --arg rollback_source_version "$ROLLBACK_SOURCE_VERSION" \
             --arg rollback_target_commit "$ROLLBACK_TARGET_COMMIT" \
+            --argjson rollback_run_id "$GITHUB_RUN_ID" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
-            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}' \
+            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
+             | if $rollback_policy == "tested" then
+                 .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version}
+               else . end' \
             > resourceportal-release-manifest.json
       - name: Attest release manifest with GitHub Actions OIDC provenance
         id: manifest-attestation
