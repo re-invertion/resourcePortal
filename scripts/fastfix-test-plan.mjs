@@ -207,6 +207,7 @@ const classifiers = [
 
   [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
   [/^scripts\/release-rollback-policy\.mjs$/, ["platform-release", "workflow"]],
+  [/^scripts\/run-automatic-rollback-smoke\.sh$/, ["platform-release", "workflow"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],
