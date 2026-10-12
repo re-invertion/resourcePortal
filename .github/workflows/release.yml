@@ -126,7 +126,6 @@ jobs:
             --head HEAD \
             --mode "$VALIDATION_MODE" \
             --require-automatic
-          bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -196,6 +195,16 @@ jobs:
           npm install --global --prefix "$verify_prefix" "./cli-release/resource-portal-cli-${VERSION}.tgz" >/dev/null
           "$verify_prefix/bin/rp" --help >/dev/null
           "$verify_prefix/bin/resourceportal" --help >/dev/null
+      - name: Validate actual RP release images recover before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t resourceportal-api-candidate .
+          docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
+          docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
+          bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
       - name: Build and publish API image
         id: api
         uses: docker/build-push-action@v6
