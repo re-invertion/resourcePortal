@@ -23,9 +23,11 @@ stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
 db_network="${stack}-db-net"
 db_container="${stack}-db"
+old_api_probe="${stack}-previous-api-probe"
 db_created=false
 swarm_started=false
 cleanup() {
+  docker rm -f "$old_api_probe" >/dev/null 2>&1 || true
   if [[ "$db_created" == true ]]; then
     docker rm -f "$db_container" >/dev/null 2>&1 || true
     docker network rm "$db_network" >/dev/null 2>&1 || true
@@ -286,6 +288,32 @@ cmp -s "$root/previous-release.json" "$RP_INSTALLER_STATE_DIR/release.json"
 cmp -s "$root/previous-stack.yml" "$RP_UPGRADE_STACK_FILE"
 [[ "$(cat "$RP_UPGRADE_INSTALLER_CONFIG_FILE")" == "previous config" ]]
 
+# Start the exact previous API image against the already migrated
+# database, not just an inert "sleep" container. The readiness endpoint performs
+# a real Prisma query and catches runtime bootstrap/dependency regressions that
+# direct model access alone cannot detect.
+docker run -d --name "$old_api_probe" --network "$db_network" \
+  -e DATABASE_URL="$compat_url" -e NODE_ENV=test -e AUTH_MODE=dev \
+  -e PORT=3000 -e PUBLIC_API_URL=http://127.0.0.1:3000 \
+  -e RESOURCE_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+  -e INTERNAL_WORKER_TOKEN=rollback-smoke-test-only \
+  "$source_api" >/dev/null
+old_api_healthy=false
+for ((attempt=0;attempt<60;attempt++)); do
+  if docker exec "$old_api_probe" curl --fail --silent --show-error \
+    --max-time 3 http://127.0.0.1:3000/api/health/ready >/dev/null 2>&1; then
+    old_api_healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$old_api_healthy" != true ]]; then
+  docker logs "$old_api_probe" --tail 90 >&2 || true
+  echo "Previous published API failed readiness against migrated database after rollback" >&2
+  exit 1
+fi
+docker rm -f "$old_api_probe" >/dev/null
+
 # Check *after* the injected failure and actual image rollback: the old API
 # Prisma client must still read/update the rows created before migration.
 # This certifies expand-only source/target compatibility, NOT SQL down-migrate.
@@ -338,6 +366,7 @@ if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
     --argjson run "${GITHUB_RUN_ID:-0}" \
     '{kind:"real-upgrade-and-restore",sourceVersion:$src,targetCommit:$sha,workflowRunId:$run,
       actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
+      previousApiRuntimeReadyAfterRollback:true,
       injectedHealthFailure:true,previousImagesRestored:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
 fi
 echo "PASS: real Prisma migrations, previous API DB compatibility, injected rollback and previous images restored."
