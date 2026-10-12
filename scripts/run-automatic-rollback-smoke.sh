@@ -118,7 +118,7 @@ service_images_match() {
     if [[ "$phase" == previous ]]; then
       expected="$(jq -er --arg role "$role" '.images[$role]' "$root/previous-release.json")"
     else
-      expected="resourceportal-${role}-candidate"
+      expected="resourceportal-${role}-candidate:latest"
     fi
     observed="$(docker service inspect "${stack}_${role}" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null)" || return 1
     [[ "$observed" == "$expected" ]] || {
