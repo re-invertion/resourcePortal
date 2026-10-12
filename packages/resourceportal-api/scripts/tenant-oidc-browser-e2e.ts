@@ -187,9 +187,6 @@ export async function runOidcAuthorizationE2E(input: {
     return { refreshToken: refreshed.refresh_token ?? tokens.refresh_token!,
       clientId: input.clientId, clientSecret: input.clientSecret,
       issuer: input.issuer, projectId: input.projectId };
-  } catch (error) {
-    // Never include page content, cookies, tokens or credentials in diagnostics.
-    throw error;
   } finally {
     await context.close();
     await browser.close();
