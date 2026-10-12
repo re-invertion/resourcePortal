@@ -46,6 +46,7 @@ export class FederationRetirementService {
         where: {
           userId: { in: users },
           issuer,
+          providerType: "zitadel",
           identityProviderId: null,
         },
         select: { userId: true },
