@@ -133,10 +133,32 @@ export async function runOidcAuthorizationE2E(input: {
       access.payload["urn:zitadel:iam:org:project:roles"];
     assert.ok(ownRoles && JSON.stringify(ownRoles).includes("rp.tenant.member"),
       "Real token omitted the tenant's membership role");
+    // Exercise an actual refresh while the grant is still active, not merely
+    // the presence of an unused refresh token in the initial response.
+    const refreshResponse = await fetch(discovery.token_endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: "Basic " + Buffer.from(input.clientId + ":" + input.clientSecret).toString("base64"),
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token", refresh_token: tokens.refresh_token,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!refreshResponse.ok) throw new Error("Live OIDC refresh denied HTTP " + refreshResponse.status);
+    const refreshed = await refreshResponse.json() as { access_token?: string; refresh_token?: string };
+    assert.ok(refreshed.access_token, "Refresh succeeded but no new access token was returned");
+    const rotated = await jwtVerify(refreshed.access_token, jwks, { issuer: input.issuer });
+    const rotatedRole = rotated.payload["urn:zitadel:iam:org:project:" + input.projectId + ":roles"] ??
+      rotated.payload["urn:zitadel:iam:org:project:roles"];
+    assert.ok(rotatedRole && JSON.stringify(rotatedRole).includes("rp.tenant.member"),
+      "A valid grant was lost during refresh before revocation");
     console.log("PASS: real HTTPS Authorization Code + PKCE, state/nonce, signed ID/access JWT,");
-    console.log("  native user, audience and tenant-scoped role claims (tokens not logged).");
-    return { refreshToken: tokens.refresh_token!, clientId: input.clientId,
-      clientSecret: input.clientSecret, issuer: input.issuer, projectId: input.projectId };
+    console.log("  native user, audience, tenant roles and live refresh (tokens not logged).");
+    return { refreshToken: refreshed.refresh_token ?? tokens.refresh_token!,
+      clientId: input.clientId, clientSecret: input.clientSecret,
+      issuer: input.issuer, projectId: input.projectId };
   } catch (error) {
     // Never include page content, cookies, tokens or credentials in diagnostics.
     throw error;
