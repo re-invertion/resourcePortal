@@ -28,6 +28,51 @@ export function rollbackAssessment(changedPaths, mode, previousVersion, targetCo
   };
 }
 
+// A live smoke is necessary but not sufficient for irreversible SQL changes.
+// Restrict the "tested" image rollback route to explicitly additive DDL:
+// create new tables, indexes on those tables, nullable columns, and FKs from
+// newly created tables. A destructive/data-writing statement fails closed.
+export function assertExpandOnlyMigrationSql(sql) {
+  const uncommented = sql.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
+  const statements = uncommented.split(";").map(x => x.trim()).filter(Boolean);
+  if (!statements.length) throw new Error("Empty migration cannot certify schema compatibility");
+  const newTables = new Set();
+  for (const statement of statements) {
+    const table = /^CREATE TABLE "([^"]+)"\s*\(/is.exec(statement);
+    if (table) {
+      newTables.add(table[1]);
+      continue;
+    }
+    const column = /^ALTER TABLE "([^"]+)"\s+ADD COLUMN "[^"]+"\s+([\s\S]+)$/i.exec(statement);
+    if (column && !/\bNOT NULL\b|\bDROP\b|\bREFERENCES\b/i.test(column[2])) continue;
+    const index = /^CREATE\s+(?:UNIQUE\s+)?INDEX "[^"]+"\s+ON "([^"]+)"\s*\(/is.exec(statement);
+    if (index && newTables.has(index[1])) continue;
+    const fk = /^ALTER TABLE "([^"]+)"\s+ADD CONSTRAINT "[^"]+" FOREIGN KEY\b/is.exec(statement);
+    if (fk && newTables.has(fk[1])) continue;
+    throw new Error("Release blocked: SQL migration is not an approved expand-only operation");
+  }
+}
+
+function verifyMigrationDiffIsExpandOnly(previous, head) {
+  const base = previous + "..." + head;
+  const raw = execFileSync("git", [
+    "diff", "--name-status", base, "--", "packages/resourceportal-api/prisma/migrations",
+  ], { encoding: "utf8" }).trim();
+  const changed = raw.split("\n").filter(Boolean);
+  if (!changed.length) {
+    throw new Error("Release blocked: schema was changed without a new migration");
+  }
+  for (const row of changed) {
+    const [status, path] = row.split("\t");
+    // Never alter an already-published migration: migration history is immutable.
+    if (status !== "A" || !/^packages\/resourceportal-api\/prisma\/migrations\/[^/]+\/migration\.sql$/.test(path)) {
+      throw new Error("Release blocked: existing Prisma migrations must remain immutable");
+    }
+    const sql = execFileSync("git", ["show", head + ":" + path], { encoding: "utf8" });
+    assertExpandOnlyMigrationSql(sql);
+  }
+}
+
 // Static diff eligibility is a prerequisite, not a substitute for a real
 // rollback smoke. Schema/milestone can only claim "tested" if independent
 // runtime evidence proves old images and old DB client survive the upgrade.
@@ -103,6 +148,9 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
       throw new Error("Rollback evidence must reside in RUNNER_TEMP");
     }
     evidence = JSON.parse(readFileSync(evidenceFile, "utf8"));
+  }
+  if (evidence && assessment.reason === "database-compatibility-not-verified") {
+    verifyMigrationDiffIsExpandOnly(previous, head);
   }
   const result = process.argv.includes("--require-automatic")
     ? requireAutomaticRollback(assessment, evidence)
