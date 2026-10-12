@@ -96,7 +96,12 @@ export class ZitadelOAuthApplicationService {
       ...(includeName ? { name: configuration.name } : {}),
       redirectUris: configuration.redirectUris,
       responseTypes: ["OIDC_RESPONSE_TYPE_CODE"],
-      grantTypes: ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+      grantTypes: [
+        "OIDC_GRANT_TYPE_AUTHORIZATION_CODE",
+        // Interactive tenant apps must be able to refresh with the same
+        // tenant-scoped authorization; ZITADEL requires an explicit grant.
+        ...(tenantClient ? ["OIDC_GRANT_TYPE_REFRESH_TOKEN"] : []),
+      ],
       appType,
       authMethodType,
       postLogoutRedirectUris: configuration.postLogoutRedirectUris,
