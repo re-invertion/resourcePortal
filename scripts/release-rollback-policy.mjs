@@ -47,7 +47,7 @@ export function assertExpandOnlyMigrationSql(sql) {
     if (column && !/\bNOT NULL\b|\bDROP\b|\bREFERENCES\b/i.test(column[2])) continue;
     const index = /^CREATE\s+(?:UNIQUE\s+)?INDEX "[^"]+"\s+ON "([^"]+)"\s*\(/is.exec(statement);
     if (index && newTables.has(index[1])) continue;
-    const fk = /^ALTER TABLE "([^"]+)"\s+ADD CONSTRAINT "[^"]+" FOREIGN KEY\b/is.exec(statement);
+    const fk = /^ALTER TABLE "([^"]+)"\s+ADD CONSTRAINT "[^"]+"\s+FOREIGN KEY\b/is.exec(statement);
     if (fk && newTables.has(fk[1])) continue;
     throw new Error("Release blocked: SQL migration is not an approved expand-only operation");
   }
