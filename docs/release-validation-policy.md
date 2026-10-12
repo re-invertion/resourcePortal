@@ -11,13 +11,15 @@ This file and `AGENTS.md` are the durable release rule for maintainers and agent
 
 ## Patch validation
 
-- Only execute tests related to files changed since the preceding tag (PR: diff against base branch). Selection is deterministic and auditable in `scripts/fastfix-test-plan.mjs`.
+- In addition to mandatory full regression, run focused tests for files changed since the preceding tag (PR: diff against base branch). Selection remains deterministic and auditable in `scripts/fastfix-test-plan.mjs`.
+- Every patch candidate must pass complete monorepo `npm run lint`, `npm run test`, `npm run build`, `npm run test:installer` and `npm run test:cli-release` before Merge Queue. This deliberately favors release correctness over patch CI speed: failing unrelated tests still block release.
+- Every `main` push must pass the complete `ResourcePortal CI + Installer` workflow. The release pipeline checks the exact triggering SHA, fails closed on failure, skip, cancellation, missing runs or timeout, and repeats the complete test and installer suites before publishing patch artifacts.
 - **Fail closed** for unclassified paths: register the new area and its relevant tests or promote to milestone/full CI. Do not claim coverage for tests that were not executed.
 - Keep changed-code static checks, compilation, database schema validation and packaging where relevant; these are release gates, not broad functional/E2E suites.
 - If patch changes Site/Device VPN routing, isolation, WireGuard or firewall, **real Device VPN Swarm dataplane smoke is mandatory** (allowed destination, denied destination, handshake, no full-tunnel). Do not skip a failed test by relabeling it.
 - API auth, RBAC, database, networking and installer changes require their dedicated regressions. Add a new scoped test profile for other risk domains rather than running all unrelated tests.
 - Existing `test:fastfix:mcp-oauth` is retained for legacy MCP/OAuth fixes, not used as the only patch-release test for every feature.
-- `[fastfix]` in a merge commit is a legacy marker for skipping broad CI on main; version and test plan remain authoritative for publishing tagged patches.
+- `[fastfix]` is a legacy patch marker and no longer suppresses full CI on `main`; the version and patch classifier determine additional focused tests.
 
 
 ### Published-source safety in recovery releases
