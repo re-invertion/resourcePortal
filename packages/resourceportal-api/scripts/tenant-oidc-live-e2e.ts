@@ -166,7 +166,7 @@ async function main() {
     ownedApps.push({ id: web.applicationId, projectId: projectA });
     const liveLogin = await runOidcAuthorizationE2E({
       issuer, projectId: projectA, foreignProjectId: projectB, clientId: web.clientId,
-      clientSecret: web.clientSecret!, userId: userAId,
+      clientSecret: web.clientSecret, userId: userAId,
       userName: "oidc-live-" + suffix + "-a", password: "E2e!Test-" + suffix + "-a",
     });
     const spa = await clients.provision({
