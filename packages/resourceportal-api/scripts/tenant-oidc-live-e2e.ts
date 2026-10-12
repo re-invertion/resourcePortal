@@ -66,8 +66,11 @@ async function main() {
     issuer?: string; jwks_uri?: string; authorization_endpoint?: string; token_endpoint?: string;
   };
   assert.equal(discovery.issuer, issuer, "Issuer must match the live HTTPS discovery document");
-  assert.ok(discovery.jwks_uri?.startsWith(issuer), "JWT keys must belong to actual HTTPS issuer");
-  const keys = await (await fetch(discovery.jwks_uri)).json() as { keys?: unknown[] };
+  const jwksUri = discovery.jwks_uri;
+  if (!jwksUri?.startsWith(issuer)) {
+    throw new Error("JWT keys must belong to actual HTTPS issuer");
+  }
+  const keys = await (await fetch(jwksUri)).json() as { keys?: unknown[] };
   assert.ok((keys.keys?.length ?? 0) > 0, "Actual HTTPS issuer did not advertise JWKS");
 
   const suffix = randomUUID().slice(0, 12);
