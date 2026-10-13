@@ -308,3 +308,20 @@ test("release rollback guard and Swarm smoke cannot be omitted from Fast Fix sel
   const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh"]);
   assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
 });
+
+test("API production build config is classified and retains narrow E2E-only exclusions", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const config = JSON.parse(readFileSync(new URL("../packages/resourceportal-api/tsconfig.build.json", import.meta.url), "utf8"));
+  const excludedScripts = config.exclude.filter((path) => path.startsWith("scripts/")).sort();
+  assert.deepEqual(excludedScripts, [
+    "scripts/tenant-oidc-browser-e2e.ts",
+    "scripts/tenant-oidc-live-e2e.ts",
+  ]);
+  assert.ok(!config.exclude.some((path) => path === "scripts" || path === "src" || path === "src/**"));
+  for (const path of excludedScripts) {
+    assert.ok(existsSync(fileURLToPath(new URL(`../packages/resourceportal-api/${path}`, import.meta.url))));
+  }
+  assert.deepEqual(selectProfiles(["packages/resourceportal-api/tsconfig.build.json"]).profiles, ["identity", "workflow"]);
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/tsconfig.unregistered.json"]), /unclassified changes/);
+});

@@ -171,6 +171,9 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],
   [/^packages\/resourceportal-api\/package\.json$/, ["identity", "workflow"]],
+  // Production TypeScript build config changes require identity and workflow
+  // regression coverage; release readiness separately runs the full API build.
+  [/^packages\/resourceportal-api\/tsconfig\.build\.json$/, ["identity", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-live-preflight\.mjs$/, ["identity"]],
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:live|browser)-e2e\.ts$/, ["identity"]],
   [/^scripts\/run-tenant-oidc-https-e2e\.sh$/, ["identity", "workflow"]],
