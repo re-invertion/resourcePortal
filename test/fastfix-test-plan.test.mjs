@@ -31,6 +31,16 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
   assert.equal(plan.vpnSmoke, false);
 });
 
+test("tenant OIDC readiness health files require identity and platform release regression", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/health/health.controller.ts",
+    "packages/resourceportal-api/src/health/health.controller.spec.ts",
+    "packages/resourceportal-api/src/health/health.module.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "platform-release"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
 test("live HTTPS tenant OIDC integration scripts and fixtures are release-gated", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts",
