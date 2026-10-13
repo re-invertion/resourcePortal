@@ -170,6 +170,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/tenant-oidc\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],
+  // Installer-facing tenant OIDC health readiness is identity and release-critical.
+  [/^packages\/resourceportal-api\/src\/health\/health\.(?:controller(?:\.spec)?|module)\.ts$/, ["identity", "platform-release"]],
   [/^packages\/resourceportal-api\/package\.json$/, ["identity", "workflow"]],
   // Production TypeScript build config changes require identity and workflow
   // regression coverage; release readiness separately runs the full API build.
