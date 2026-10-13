@@ -1,4 +1,11 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/*.spec.ts",
+    "scripts/tenant-oidc-browser-e2e.ts",
+    "scripts/tenant-oidc-live-e2e.ts"
+  ]
 }
