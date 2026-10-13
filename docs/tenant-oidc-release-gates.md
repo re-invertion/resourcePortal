@@ -1,6 +1,6 @@
 # Tenant Identity & SSO: release and activation gates
 
-**Current decision: NOT CERTIFIED FOR PRODUCTION.** The implementation can be reviewed as dark-release code, but feature activation and removal of inbound RP federation **must remain blocked** until an operator records full real-ZITADEL and upgrade/rollback evidence.
+**Current decision: NOT CERTIFIED FOR PRODUCTION.** The candidate now performs automatic tenant OIDC activation **after** its runtime preflight, so merging to `main` and releasing it would enable the feature. The implementation must not be published or merged until full real-ZITADEL and upgrade/rollback evidence is recorded for the exact candidate SHA. The installer fails closed on missing automatic rollback eligibility.
 
 ## Required separation of stages
 
@@ -8,11 +8,33 @@
 |---|---|---|---|
 | Source review | Unit, API, SDK, CLI, UI, static security and test catalog green | Review isolated Workspace v2 diff and code assumptions | Production activation or silent user migration |
 | PR validation | Review approval, destination feature branch, protected PR / Merge Queue | CI, release readiness, federation E2E, installer/Swarm checks | Unreviewed merge, bypassed checks |
-| Dark release (only if approved) | Official image builds, verified rollback artifact and disabled feature flags | Publish candidate with `TENANT_OIDC_ACTIVATION_ALLOWED=false`, `RP_NATIVE_LOGIN_ONLY=false` | Advertise tenant IdP production support |
-| Tenant SSO activation | Live multi-tenant OIDC claims/roles/token and revocation E2E, auditable operator certification | Enable gated activation for verified tenants | Enable after only Prisma/unit/mocked-provider tests |
-| RP native-only login cutover | Native sign-in and account recovery verified for **every affected user**, hosted ZITADEL upstream policy updated, session cleanup and break-glass tested | Change `RP_NATIVE_LOGIN_ONLY=true` with rollback window | Delete old identities by email match or lock out tenants |
+| One-click production upgrade (only after certification) | Official builds, real browser token E2E and tested rollback for source/target SHA | Automatically prepare and activate all eligible tenant OIDC with `TENANT_OIDC_AUTO_ROLLOUT=true`, `TENANT_OIDC_ACTIVATION_ALLOWED=auto` and conditional `RP_NATIVE_LOGIN_ONLY=auto`; require `/api/health/tenant-oidc` readiness | Treat API liveness or incomplete tenant grants as success |
+| Tenant SSO activation | Release already certified through protected CI for exact code and images | Automatically activate after each tenant has safe native identities, issuer/PKCE/JWKS/project/grants and no legacy blockers | Activate if one tenant fails, or allow arbitrary tenant admin to force `auto` activation |
+| RP native-only login cutover | No inbound provider/linked identity/policy/session; hosted ZITADEL native login and break-glass E2E certified | Resolve `RP_NATIVE_LOGIN_ONLY=auto` without user action, preserving existing accounts | Delete old identities by email match or silently retire any real external federation |
 
-The GitHub release pipeline automatically publishes a release on an accepted `main` merge; there is no harmless merge. Thus **do not merge** this candidate until the release owner decides dark-release publication is acceptable and real E2E requirements are enforced.
+The GitHub release pipeline automatically publishes on an accepted `main` merge. There is no harmless merge or dark release when the production stack sets `TENANT_OIDC_ACTIVATION_ALLOWED=auto`. **Do not merge** until exact-SHA real E2E, rollback, browser authentication/recovery and installer gates are green.
+
+## Automatic migration policy and actual evidence
+
+The automatic reconciler runs in the non-root API with its existing ZITADEL management
+credentials; never grant them to the privileged Swarm worker. It handles active
+tenants/new tenants, detects existing projects after interrupted creation, acquires a
+database migration lease and synchronizes grants. Inbound federation is left untouched
+when any inbound provider, linked identity, mandatory policy or session exists.
+Legacy OAuth clients are **blocked**, not silently moved between project IDs.
+
+The isolated Workspace v2 run validated the full API regression (977 tests),
+installer and CLI release suites; the new automatic rollout, runtime readiness, rollback-policy, recovery and native login
+tests passed. Full tenant HTTPS ZITADEL live E2E and failure-driven image rollback
+**cannot be attested locally** because this isolated workspace lacks Docker and
+the required published-image test environment. The isolated live scenario in
+`packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts` now requires that
+both temporary tenant projects are automatically activated via `auto`, without
+manual activation calls. The workflow itself has not yet been rerun on this SHA. Its GitHub CI
+result, source-version schema upgrade, browser login/recovery, federation gates and
+mandatory rollback evidence must all be checked on the exact proposed PR SHA.
+A green unit test or SQL "expand-only" classification never substitutes for this
+evidence.
 
 ## Specific acceptance evidence
 
@@ -42,4 +64,4 @@ The operational truth must be kept consistent with these repo documents. Do not 
 
 ## Rollback
 
-On a failed rollout, keep both flags **false**, return to existing platform-native RP authentication, and leave the old external IdP links/identity table rows untouched. Roll back images only by the verified official automated mechanism. Explicitly reconcile ZITADEL project and user grants after recovering any partially completed operation; out-of-band accounts or orphan grants are security incidents. Tenant login token/session TTL determines when an already-issued token becomes invalid, so a successful grant deletion is not proof of immediate JWT invalidation.
+On a failed rollout, explicitly set `TENANT_OIDC_ACTIVATION_ALLOWED=false` to disable further automatic activation and, if necessary for recovery, explicitly set `RP_NATIVE_LOGIN_ONLY=false` instead of its conditional `auto` production default. Preserve the existing native RP authentication path and leave old external identity links and table rows untouched. Roll back images only by the verified official automated mechanism. Explicitly reconcile ZITADEL project and user grants after recovering any partially completed operation; out-of-band accounts or orphan grants are security incidents. Tenant login token/session TTL determines when an already-issued token becomes invalid, so a successful grant deletion is not proof of immediate JWT invalidation.

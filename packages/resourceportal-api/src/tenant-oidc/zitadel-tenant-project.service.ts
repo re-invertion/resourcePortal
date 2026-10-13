@@ -17,6 +17,75 @@ export class ZitadelTenantProjectService {
     return issuer;
   }
 
+  /** Only enable tenant OIDC after the real issuer serves an RFC-compliant
+   * authorization-code flow and usable public signing keys over HTTPS.
+   * This check deliberately does not pretend to authenticate a human user;
+   * the full login/PKCE/revocation E2E belongs to the release certification.
+   */
+  async verifyIssuerSecurity(): Promise<void> {
+    const issuer = this.issuer;
+    const origin = new URL(issuer).origin;
+    const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
+    const discoveryResponse = await fetch(discoveryUrl, {
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!discoveryResponse.ok) {
+      throw new ServiceUnavailableException("ZITADEL issuer discovery is unavailable");
+    }
+    const document = await discoveryResponse.json() as {
+      issuer?: string;
+      jwks_uri?: string;
+      authorization_endpoint?: string;
+      token_endpoint?: string;
+      response_types_supported?: string[];
+      code_challenge_methods_supported?: string[];
+    };
+    const sameOriginHttps = (url: string | undefined) => {
+      if (!url) return false;
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "https:" && parsed.origin === origin &&
+          parsed.username === "" && parsed.password === "" && parsed.hash === "";
+      } catch { return false; }
+    };
+    if (document.issuer?.replace(/\/$/, "") !== issuer ||
+        !sameOriginHttps(document.jwks_uri) ||
+        !sameOriginHttps(document.authorization_endpoint) ||
+        !sameOriginHttps(document.token_endpoint) ||
+        !document.response_types_supported?.includes("code") ||
+        !document.code_challenge_methods_supported?.includes("S256")) {
+      throw new ServiceUnavailableException("ZITADEL OIDC issuer or PKCE metadata is invalid");
+    }
+    const jwksResponse = await fetch(document.jwks_uri!, {
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!jwksResponse.ok) {
+      throw new ServiceUnavailableException("ZITADEL signing keys are unavailable");
+    }
+    const jwks = await jwksResponse.json() as {
+      keys?: Array<{ kid?: string; kty?: string; use?: string; alg?: string }>;
+    };
+    if (!Array.isArray(jwks.keys) || !jwks.keys.some((key) =>
+      typeof key.kid === "string" && key.kid.length > 0 &&
+      ["RSA", "EC"].includes(key.kty ?? "") &&
+      (key.use === undefined || key.use === "sig") &&
+      key.alg !== "none")) {
+      throw new ServiceUnavailableException("ZITADEL issuer has no usable signing keys");
+    }
+  }
+
+  async verifyMemberGrant(userId: string, grantId: string, projectId: string): Promise<void> {
+    const response = await this.request<{
+      userGrant?: { projectId?: string; roleKeys?: string[] };
+    }>("GET", `/management/v1/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(grantId)}`);
+    if (response.userGrant?.projectId !== projectId ||
+        !response.userGrant.roleKeys?.includes("rp.tenant.member")) {
+      throw new ServiceUnavailableException("ZITADEL member grant does not match this tenant project");
+    }
+  }
+
   async createProject(tenantId: string): Promise<string> {
     const response = await this.request<ProjectResponse>("POST", "/management/v1/projects", {
       name: `rp-tenant-${tenantId}`,
@@ -29,6 +98,33 @@ export class ZitadelTenantProjectService {
       throw new BadGatewayException("ZITADEL did not return a valid tenant project ID");
     }
     return response.id;
+  }
+
+  /**
+   * Recover an already-created project after a crash between the ZITADEL
+   * create response and the local database write. Never create another project
+   * when the management search fails or finds multiple matching projects.
+   */
+  async findExistingProjectForTenant(tenantId: string): Promise<string | null> {
+    const name = `rp-tenant-${tenantId}`;
+    const response = await this.request<{
+      result?: Array<{ id?: string; name?: string }>;
+      details?: { totalResult?: string | number };
+    }>("POST", "/management/v1/projects/_search", {
+      query: { limit: 100 },
+      queries: [{ nameQuery: { name, method: "TEXT_QUERY_METHOD_EQUALS" } }],
+    });
+    const matches = (response.result ?? []).filter((project) => project.name === name);
+    if (matches.length > 1 || Number(response.details?.totalResult ?? matches.length) > 1) {
+      throw new ServiceUnavailableException("Ambiguous existing ZITADEL tenant project; manual recovery required");
+    }
+    if (matches.length === 0) return null;
+    const id = matches[0]?.id;
+    if (!id || !/^\d+$/.test(id)) {
+      throw new ServiceUnavailableException("Existing ZITADEL tenant project has an invalid identifier");
+    }
+    await this.readProject(id);
+    return id;
   }
 
   async ensureMemberRole(projectId: string) {

@@ -218,6 +218,9 @@ services:
       OIDC_CLI_CLIENT_ID: __OIDC_CLI_CLIENT_ID__
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
+      RP_NATIVE_LOGIN_ONLY: "auto" # only when there are no inbound IdPs, links, sessions or policies
+      TENANT_OIDC_AUTO_ROLLOUT: "true"
+      TENANT_OIDC_ACTIVATION_ALLOWED: "auto" # automatic, only after issuer + tenant checks
       RP_OIDC_EXTRA_CA_B64: "__OIDC_EXTRA_CA_B64__"
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback

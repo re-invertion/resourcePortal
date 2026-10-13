@@ -47,6 +47,17 @@ describe("HealthController", () => {
     });
     await expect(controller.getReadiness()).resolves.toMatchObject({ version: "0.2.26" });
   });
+  it("does not confuse API liveness with completed automatic tenant SSO activation", async () => {
+    const prisma = { $queryRaw: vi.fn() } as unknown as PrismaService;
+    const rollout = { readiness: vi.fn().mockResolvedValue({ status: "pending" }) };
+    const controller = new HealthController(prisma, undefined, undefined, rollout as never);
+    await expect(controller.getTenantOidcReadiness()).rejects.toThrow();
+    rollout.readiness.mockResolvedValue({ status: "ready" });
+    await expect(controller.getTenantOidcReadiness()).resolves.toEqual({
+      status: "ready", service: "resource-portal-tenant-oidc",
+    });
+  });
+
   it("returns an aggregate Worker health view without diagnostic payloads", async () => {
     const prisma = { $queryRaw: vi.fn() } as unknown as PrismaService;
     const workerObservability = {

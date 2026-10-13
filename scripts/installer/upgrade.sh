@@ -17,6 +17,33 @@ rp_upgrade_rollback_allowed() {
   return 0
 }
 
+# The installer must not complete while only /api/health/live works and
+# tenant OIDC is still migrating or blocked. Query the target API via the
+# trusted local ingress with the same TLS policy as ordinary readiness.
+rp_upgrade_validate_tenant_oidc_ready() {
+  local domain="$1" local_ingress="${RP_HTTPS_LOCAL_INGRESS_ADDRESS:-127.0.0.1}"
+  local -a args=(--fail --silent --show-error --proto '=https' --tlsv1.2
+    --connect-timeout 10 --max-time 20 --resolve "${domain}:443:${local_ingress}")
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    args+=(--insecure)
+  fi
+  curl "${args[@]}" "https://${domain}/api/health/tenant-oidc" >/dev/null 2>&1
+}
+
+rp_upgrade_wait_for_tenant_oidc_ready() {
+  local domain="$1" timeout="${2:-300}" elapsed=0
+  [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -ge 5 ]] || return 1
+  while (( elapsed < timeout )); do
+    if rp_upgrade_validate_tenant_oidc_ready "$domain"; then
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  printf 'Upgrade blocked: tenant OIDC activation did not become ready within %ss. Previous stack will be restored.\n' "$timeout" >&2
+  return 1
+}
+
 rp_upgrade_check_temporary_files() {
   # The updater runs in Alpine (BusyBox mktemp), not the host's GNU coreutils.
   # Fail before quiescing API/Worker/ZITADEL when /tmp cannot create files.
@@ -44,6 +71,10 @@ rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
   rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_rollback_allowed "$manifest" || {
+    printf 'Upgrade blocked: automatic rollback for this source release is not verified.\n' >&2
+    return 1
+  }
   rp_upgrade_identity_preflight || return 1
   rp_upgrade_check_temporary_files
 }
@@ -526,6 +557,10 @@ rp_upgrade_apply() {
   rp_upgrade_check_temporary_files || return 1
   rp_config_apply_defaults || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_rollback_allowed "$manifest" || {
+    printf 'Upgrade blocked: release manifest does not guarantee automatic rollback.\n' >&2
+    return 1
+  }
   rp_upgrade_identity_preflight || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
@@ -552,6 +587,11 @@ rp_upgrade_apply() {
   rp_upgrade_checkpoint_stage resourceportal-migrations-started || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint resourceportal-migrations-started"; return 1; }
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
+    return 1
+  fi
+  rp_upgrade_checkpoint_stage tenant-oidc-activation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint tenant-oidc-activation"; return 1; }
+  if ! rp_upgrade_wait_for_tenant_oidc_ready "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
     return 1
   fi
   rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }

@@ -11,10 +11,13 @@ function fixture() {
   const project = {
     issuer: nativeIssuer,
     createProject: vi.fn().mockResolvedValue("123"),
+    findExistingProjectForTenant: vi.fn().mockResolvedValue(null),
     readProject: vi.fn().mockResolvedValue({
       id: "123", projectRoleCheck: true, hasProjectCheck: true,
     }),
     ensureMemberRole: vi.fn().mockResolvedValue(undefined),
+    verifyIssuerSecurity: vi.fn().mockResolvedValue(undefined),
+    verifyMemberGrant: vi.fn().mockResolvedValue(undefined),
     assignMember: vi.fn().mockResolvedValue("grant-new"),
     revokeMember: vi.fn().mockResolvedValue(undefined),
   };
@@ -242,7 +245,7 @@ describe("Tenant OIDC management fails closed", () => {
 
   it("does not activate without a certified rollout gate", async () => {
     const f = fixture();
-    await expect(f.service.activate(tenantId)).rejects.toThrow("disabled until live E2E");
+    await expect(f.service.activate(tenantId)).rejects.toThrow("disabled until rollout verification");
     expect(f.project.assignMember).not.toHaveBeenCalled();
   });
 

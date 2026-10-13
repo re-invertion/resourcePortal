@@ -1,9 +1,10 @@
-import { Controller, Get, Optional } from "@nestjs/common";
+import { Controller, Get, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Public } from "../auth/public.decorator";
 import { WorkerRuntimeObservabilityService } from "../observability/worker-runtime-observability.service";
 import { AllowDuringPlatformMaintenance } from "../platform-maintenance/allow-during-platform-maintenance.decorator";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
 
 @Public()
 @AllowDuringPlatformMaintenance()
@@ -15,6 +16,8 @@ export class HealthController {
     private readonly workerObservability?: WorkerRuntimeObservabilityService,
     @Optional()
     private readonly config?: ConfigService,
+    @Optional()
+    private readonly tenantOidcRollout?: TenantOidcAutoRolloutService,
   ) {}
 
   @Get()
@@ -58,6 +61,19 @@ export class HealthController {
         postgres: "ok",
       },
     };
+  }
+
+  // Public minimal readiness for the installer. Never expose tenant IDs,
+  // membership information, management credentials or grant details.
+  @Get("tenant-oidc")
+  async getTenantOidcReadiness() {
+    const readiness = this.tenantOidcRollout
+      ? await this.tenantOidcRollout.readiness()
+      : { status: "pending" as const };
+    if (readiness.status !== "ready") {
+      throw new ServiceUnavailableException({ status: readiness.status });
+    }
+    return { status: "ready", service: "resource-portal-tenant-oidc" };
   }
 
   private releaseVersion() {

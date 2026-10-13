@@ -32,6 +32,33 @@ describe("ZITADEL tenant OIDC project security", () => {
     expect(init.headers).toMatchObject({ "x-zitadel-orgid": "global-org" });
   });
 
+  it("recovers the exact pre-existing project after interrupted provisioning", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        result: [{ id: "123", name: "rp-tenant-tenant-a" }],
+        details: { totalResult: "1" },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        project: { id: "123", projectRoleCheck: true, hasProjectCheck: true },
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(service().findExistingProjectForTenant("tenant-a")).resolves.toBe("123");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toContain("/projects/_search");
+  });
+
+  it("refuses ambiguous project ownership instead of creating duplicates", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      details: { totalResult: 2 },
+      result: [
+        { id: "123", name: "rp-tenant-tenant-a" },
+        { id: "124", name: "rp-tenant-tenant-a" },
+      ],
+    }), { status: 200 })));
+    await expect(service().findExistingProjectForTenant("tenant-a"))
+      .rejects.toThrow("Ambiguous existing ZITADEL tenant project");
+  });
+
   it("rejects projects with role checks disabled instead of silently enabling SSO", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       project: { id: "5", projectRoleCheck: false, hasProjectCheck: true },
@@ -63,5 +90,49 @@ describe("ZITADEL tenant OIDC project security", () => {
 
   it("uses the actual shared issuer, never fabricates per-tenant issuer", () => {
     expect(service().issuer).toBe("https://auth.example.com");
+  });
+  it("checks HTTPS issuer, PKCE discovery and signing JWKS before automatic activation", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        issuer: "https://auth.example.com",
+        jwks_uri: "https://auth.example.com/oauth/v2/keys",
+        authorization_endpoint: "https://auth.example.com/oauth/v2/authorize",
+        token_endpoint: "https://auth.example.com/oauth/v2/token",
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        keys: [{ kid: "signing-1", kty: "RSA", use: "sig", alg: "RS256" }],
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(service().verifyIssuerSecurity()).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls.map((call: [string]) => call[0])).toEqual([
+      "https://auth.example.com/.well-known/openid-configuration",
+      "https://auth.example.com/oauth/v2/keys",
+    ]);
+  });
+
+  it("refuses untrusted JWKS origins without making a credential-leaking request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      issuer: "https://auth.example.com",
+      jwks_uri: "https://malicious.example/keys",
+      authorization_endpoint: "https://auth.example.com/oauth/v2/authorize",
+      token_endpoint: "https://auth.example.com/oauth/v2/token",
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(service().verifyIssuerSecurity()).rejects.toThrow("issuer or PKCE metadata is invalid");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("cross-checks existing ZITADEL grants against the intended tenant project", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      userGrant: { projectId: "project-7", roleKeys: ["rp.tenant.member"] },
+    }), { status: 200 }))));
+    await expect(service().verifyMemberGrant("user-1", "grant-1", "project-7"))
+      .resolves.toBeUndefined();
+    await expect(service().verifyMemberGrant("user-1", "grant-1", "wrong-project"))
+      .rejects.toThrow("does not match this tenant");
   });
 });

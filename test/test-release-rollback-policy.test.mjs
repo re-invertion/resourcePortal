@@ -49,6 +49,10 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     "fastfix", "v0.2.86", hash,
   );
   const currentRunId = Number(process.env.GITHUB_RUN_ID || 12345);
+  const previousRunId = process.env.GITHUB_RUN_ID;
+  // Simulate the real GitHub Actions environment: evidence must belong to
+  // THIS workflow run, not merely carry a positive numeric run identifier.
+  process.env.GITHUB_RUN_ID = String(currentRunId);
   const evidence = {
     kind: "real-upgrade-and-restore",
     sourceVersion: "0.2.86",
@@ -80,6 +84,8 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, injectedHealthFailure: false },
     { ...evidence, kind: "static-schema-heuristic" },
   ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
+  if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
+  else process.env.GITHUB_RUN_ID = previousRunId;
 });
 
 test("milestone releases never bypass live rollback certification", () => {

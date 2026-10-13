@@ -12,6 +12,7 @@ import { FastifyRequest } from "fastify";
 import { isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { REQUIRED_PERMISSIONS_KEY } from "./auth.constants";
+import { NativeLoginModeService } from "./native-login-mode.service";
 
 @Injectable()
 export class TenantContextGuard implements CanActivate {
@@ -19,6 +20,7 @@ export class TenantContextGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
     @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -93,7 +95,12 @@ export class TenantContextGuard implements CanActivate {
     const policy = await this.prisma.tenantAuthPolicy.findUnique({
       where: { tenantId }, select: { requireTenantIdentityProvider: true },
     });
-    if (policy?.requireTenantIdentityProvider && this.config?.get<string>("RP_NATIVE_LOGIN_ONLY") !== "true") {
+    const nativeOnly = policy?.requireTenantIdentityProvider
+      ? this.nativeMode
+        ? await this.nativeMode.isNativeOnly()
+        : this.config?.get<string>("RP_NATIVE_LOGIN_ONLY") === "true"
+      : false;
+    if (policy?.requireTenantIdentityProvider && !nativeOnly) {
       const authenticatedIdpId = request.user.authenticatedIdpId;
       if (!authenticatedIdpId) {
         throw new ForbiddenException("This tenant requires a verified tenant identity provider");

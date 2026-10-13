@@ -10,6 +10,7 @@ import { ConfigService } from "@nestjs/config";
 import { MembershipStatus, PrismaClient, UserStatus } from "@prisma/client";
 import type { PrismaService } from "../src/prisma/prisma.service";
 import { TenantOidcService } from "../src/tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../src/tenant-oidc/tenant-oidc-auto-rollout.service";
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
@@ -48,6 +49,7 @@ const config = { get: (name: string) => process.env[name] } as unknown as Config
 const prisma = new PrismaClient();
 const projects = new ZitadelTenantProjectService(config);
 const tenants = new TenantOidcService(prisma as unknown as PrismaService, projects, config);
+const autoRollout = new TenantOidcAutoRolloutService(prisma as unknown as PrismaService, tenants, config);
 const clients = new ZitadelOAuthApplicationService(config);
 
 async function createZitadelHuman(suffix: string): Promise<string> {
@@ -104,11 +106,24 @@ async function main() {
   const ownedApps: Array<{ id: string; projectId: string }> = [];
   const createdTenants = [tenantA.id, tenantB.id];
   try {
+    process.env.TENANT_OIDC_AUTO_ROLLOUT = "true";
+    // Prove the same zero-touch activation mode used by the real installer.
+    process.env.TENANT_OIDC_ACTIVATION_ALLOWED = "auto";
+    const initialAutoRollout = await autoRollout.reconcile();
+    assert.notEqual(initialAutoRollout.state, "blocked-inbound-federation",
+      "Test RP users unexpectedly require incoming federation");
     const [providerA, providerB] = await Promise.all([
-      tenants.provision(tenantA.id), tenants.provision(tenantB.id),
+      tenants.get(tenantA.id), tenants.get(tenantB.id),
     ]);
-    assert.equal(providerA.enabled, false, "Provision must not auto-activate");
-    assert.equal(providerB.enabled, false, "Provision must not auto-activate");
+    assert.equal(providerA.status, "Active", "Automatic tenant A activation failed");
+    assert.equal(providerB.status, "Active", "Automatic tenant B activation failed");
+    assert.ok(typeof initialAutoRollout.prepared === "number" && initialAutoRollout.prepared >= 2,
+      "Automatic migration did not prepare both tenants");
+    assert.equal(initialAutoRollout.state, "active", "One-click rollout did not activate tenants");
+    assert.ok(initialAutoRollout.activated >= 2, "One-click rollout did not activate both tenants");
+    assert.equal(providerA.enabled, true, "Tenant A must auto-activate after preflight");
+    assert.equal(providerB.enabled, true, "Tenant B must auto-activate after preflight");
+    assert.deepEqual(await autoRollout.readiness(), { status: "ready" });
     assert.notEqual(providerA.projectId, providerB.projectId, "Tenants share ZITADEL project");
     assert.equal(providerA.issuer, issuer);
     assert.equal(providerB.issuer, issuer);
@@ -120,8 +135,6 @@ async function main() {
       assert.equal(state.projectRoleCheck, true);
     }
 
-    await tenants.reconcileGrants(tenantA.id);
-    await tenants.reconcileGrants(tenantB.id);
     const rowA = await prisma.tenantOidcGrant.findUniqueOrThrow({
       where: { tenantId_userId: { tenantId: tenantA.id, userId: userA.id } },
     });
@@ -152,10 +165,8 @@ async function main() {
     assert.ok(!list.result?.some(g => g.userId === userBId && g.projectId === projectA),
       "Tenant B user has a role grant in Tenant A project");
 
-    // This enablement exists ONLY in an isolated test subprocess. RP never
-    // exports this flag in production or the shared federation workflow.
-    process.env.TENANT_OIDC_ACTIVATION_ALLOWED = "true";
-    const active = await tenants.activate(tenantA.id);
+    // Tenant OIDC is active *without* manually invoking activate().
+    const active = await tenants.get(tenantA.id);
     assert.equal(active.enabled, true);
     const web = await clients.provision({
       name: "Isolated Web " + suffix, type: "Web",

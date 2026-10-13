@@ -484,6 +484,8 @@ upgrade_orders_dependencies_before_final_rollout() (
   RP_CFG_DOMAIN=rp.example.test
   export RP_CFG_RELEASE_VERSION RP_CFG_ACME_ENVIRONMENT RP_CFG_DOMAIN
   rp_verify_release_manifest_attestation(){ printf 'provenance-verified\n' >>"$log"; }
+  rp_upgrade_rollback_allowed(){ printf 'rollback-verified\n' >>"$log"; }
+  rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'tenant-sso-ready\n' >>"$log"; }
   rp_upgrade_identity_preflight(){ printf 'identity-verified\n' >>"$log"; }
   rp_config_apply_defaults(){ printf 'defaults\n' >>"$log"; }
   rp_pull_release_images(){ printf 'pull\n' >>"$log"; }

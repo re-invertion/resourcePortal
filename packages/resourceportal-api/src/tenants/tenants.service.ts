@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   Optional,
   NotFoundException,
@@ -9,6 +10,7 @@ import {
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
 import { PlatformEmailService } from "../email/platform-email.service";
@@ -44,6 +46,7 @@ export class TenantsService {
     private readonly prisma: PrismaService,
     private readonly email: PlatformEmailService,
     @Optional() private readonly tenantOidc?: TenantOidcService,
+    @Optional() private readonly nativeLoginMode?: NativeLoginModeService,
   ) {}
 
   listTenants(userId: string) {
@@ -260,6 +263,11 @@ export class TenantsService {
     dto: UpdateTenantAuthPolicyDto,
     actor: AuthenticatedUser,
   ) {
+    if (await this.nativeLoginMode?.isNativeOnly() &&
+        (dto.requireTenantIdentityProvider === true || dto.allowPlatformLogin === false ||
+         dto.allowTenantIdentityProviders === true)) {
+      throw new GoneException("Incoming tenant identity provider policies have been retired");
+    }
     const tenant = await this.ensureTenantExists(tenantId);
     const policy = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.tenantAuthPolicy.upsert({

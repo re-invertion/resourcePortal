@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, GoneException, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Optional } from "@nestjs/common";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
@@ -12,6 +14,7 @@ export class IdentityProvidersController {
   constructor(
     private readonly identityProvidersService: IdentityProvidersService,
     private readonly config: ConfigService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   @RequirePermissions("identity_provider.read")
@@ -34,12 +37,12 @@ export class IdentityProvidersController {
 
   @RequirePermissions("identity_provider.create")
   @Post()
-  create(
+  async create(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Body() dto: CreateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
-    this.assertFederationAvailable();
+    await this.assertFederationAvailable();
     return this.identityProvidersService.createTenantIdentityProvider(
       tenantId,
       dto,
@@ -49,13 +52,13 @@ export class IdentityProvidersController {
 
   @RequirePermissions("identity_provider.update")
   @Patch(":identityProviderId")
-  update(
+  async update(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @Param("identityProviderId", ParseUUIDPipe) identityProviderId: string,
     @Body() dto: UpdateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
-    this.assertFederationAvailable();
+    await this.assertFederationAvailable();
     return this.identityProvidersService.updateTenantIdentityProvider(
       tenantId,
       identityProviderId,
@@ -78,8 +81,11 @@ export class IdentityProvidersController {
     );
   }
 
-  private assertFederationAvailable() {
-    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+  private async assertFederationAvailable() {
+    const nativeOnly = this.nativeMode
+      ? await this.nativeMode.isNativeOnly()
+      : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true";
+    if (nativeOnly) {
       throw new GoneException("Incoming identity provider configuration has been retired");
     }
   }

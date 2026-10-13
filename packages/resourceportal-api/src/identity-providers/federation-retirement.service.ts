@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -12,6 +13,7 @@ export class FederationRetirementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   async preflight() {
@@ -65,7 +67,9 @@ export class FederationRetirementService {
     blockers.push("ZITADEL upstream login policy must be verified before cutover");
 
     return {
-      mode: this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true" ? "NativeOnly" : "LegacyCompatible",
+      mode: (this.nativeMode
+        ? await this.nativeMode.isNativeOnly()
+        : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") ? "NativeOnly" : "LegacyCompatible",
       enabledProviders,
       mandatoryTenantPolicies,
       externalSessions,

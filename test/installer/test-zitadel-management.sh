@@ -330,6 +330,10 @@ upgrade_preserves_management_state() (
   RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF='rp_zitadel_management_token_upgrade42'
   export RP_CFG_DOMAIN RP_CFG_RELEASE_VERSION RP_CFG_ZITADEL_ORGANIZATION_ID RP_CFG_ZITADEL_PROJECT_ID RP_CFG_ZITADEL_MANAGEMENT_SWARM_REF
   rp_verify_release_manifest_attestation(){ return 0; }
+  # This fixture represents a separately certified release; actual policy
+  # eligibility is enforced by rp_upgrade_rollback_allowed in production.
+  rp_upgrade_rollback_allowed(){ return 0; }
+  rp_upgrade_wait_for_tenant_oidc_ready(){ return 0; }
   rp_upgrade_identity_preflight(){ return 0; }
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }

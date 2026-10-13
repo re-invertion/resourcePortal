@@ -11,6 +11,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Optional } from "@nestjs/common";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
@@ -26,6 +28,7 @@ export class PlatformIdentityProvidersController {
     private readonly service: PlatformIdentityProvidersService,
     private readonly retirement: FederationRetirementService,
     private readonly config: ConfigService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   @Get()
@@ -44,18 +47,18 @@ export class PlatformIdentityProvidersController {
   }
 
   @Post()
-  create(@Body() dto: CreateIdentityProviderDto, @CurrentUser() actor: AuthenticatedUser) {
-    this.assertFederationAvailable();
+  async create(@Body() dto: CreateIdentityProviderDto, @CurrentUser() actor: AuthenticatedUser) {
+    await this.assertFederationAvailable();
     return this.service.create(dto, actor);
   }
 
   @Patch(":identityProviderId")
-  update(
+  async update(
     @Param("identityProviderId", ParseUUIDPipe) identityProviderId: string,
     @Body() dto: UpdateIdentityProviderDto,
     @CurrentUser() actor: AuthenticatedUser,
   ) {
-    this.assertFederationAvailable();
+    await this.assertFederationAvailable();
     return this.service.update(identityProviderId, dto, actor);
   }
 
@@ -67,8 +70,11 @@ export class PlatformIdentityProvidersController {
     return this.service.delete(identityProviderId, actor);
   }
 
-  private assertFederationAvailable() {
-    if (this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true") {
+  private async assertFederationAvailable() {
+    const nativeOnly = this.nativeMode
+      ? await this.nativeMode.isNativeOnly()
+      : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true";
+    if (nativeOnly) {
       throw new GoneException("Incoming identity provider configuration has been retired");
     }
   }

@@ -8,6 +8,8 @@ CREATE TABLE "TenantOidcProvider" (
     "enabled" BOOLEAN NOT NULL DEFAULT false,
     "grantsReconciledAt" TIMESTAMP(3),
     "lastErrorCode" TEXT,
+    "autoRolloutLeaseOwner" TEXT,
+    "autoRolloutLeaseUntil" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "TenantOidcProvider_pkey" PRIMARY KEY ("tenantId")

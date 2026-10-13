@@ -52,7 +52,8 @@ export class TenantOidcService {
     try {
       if (!provider.zitadelProjectId) {
         // A partially completed request must fail closed; never advertise the project here.
-        const projectId = await this.zitadel.createProject(tenantId);
+        const projectId = await this.zitadel.findExistingProjectForTenant(tenantId)
+          ?? await this.zitadel.createProject(tenantId);
         provider = await this.prisma.tenantOidcProvider.update({
           where: { tenantId },
           data: { zitadelProjectId: projectId, status: "Provisioning", lastErrorCode: null },
@@ -127,7 +128,10 @@ export class TenantOidcService {
           );
         }
         const grant = existing.find((row) => row.userId === member.userId);
-        if (grant?.zitadelGrantId && grant.zitadelUserId === identity.externalSubject) continue;
+        if (grant?.zitadelGrantId && grant.zitadelUserId === identity.externalSubject) {
+          await this.zitadel.verifyMemberGrant(identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId);
+          continue;
+        }
         if (grant) {
           throw new ServiceUnavailableException("Mismatched or incomplete ZITADEL grant requires recovery");
         }
@@ -165,12 +169,20 @@ export class TenantOidcService {
     }
   }
 
-  async activate(tenantId: string) {
-    // An explicit operator-controlled rollout gate: no tenant may opt into an
-    // unverified provider simply by sending an API request.
-    if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") !== "true") {
-      throw new ServiceUnavailableException("Tenant OIDC activation is disabled until live E2E certification");
+  async verifyIssuerSecurity() {
+    await this.zitadel.verifyIssuerSecurity();
+  }
+
+  async activate(tenantId: string, fromAutoRollout = false) {
+    // "auto" is allowed only in the built-in rollout path. An explicit "false"
+    // remains a kill switch; neither tenant API nor background bootstrap can
+    // turn on an unverified issuer or bypass the tenant/grant checks.
+    const mode = this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED");
+    if (mode !== "true" && !(mode === "auto" && fromAutoRollout &&
+        this.config?.get<string>("TENANT_OIDC_AUTO_ROLLOUT") === "true")) {
+      throw new ServiceUnavailableException("Tenant OIDC activation is disabled until rollout verification");
     }
+    await this.zitadel.verifyIssuerSecurity();
     const legacy = await this.prisma.oAuthApplication.count({
       where: { tenantId, zitadelProjectId: null },
     });
