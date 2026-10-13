@@ -63,6 +63,10 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     previousApiRuntimeReadyAfterRollback: true,
     injectedHealthFailure: true,
     previousImagesRestored: true,
+    databaseSnapshotVerified: true,
+    databaseSnapshotRestored: true,
+    restoredSourceSchema: true,
+    zitadelDatabaseRestored: true,
   };
   assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
   const confirmed = requireAutomaticRollback(result, evidence);
@@ -70,6 +74,7 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
   assert.equal(confirmed.reason, "verified-recovery-test");
   assert.deepEqual(confirmed.rollbackEvidence, {
     kind: "real-upgrade-and-restore", workflowRunId: currentRunId, sourceVersion: "0.2.86",
+    databaseSnapshotRestored: true, restoredSourceSchema: true, zitadelDatabaseRestored: true,
   });
   for (const malformed of [
     { ...evidence, targetCommit: "b".repeat(40) },
@@ -83,6 +88,10 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, actualDatabaseMigration: false },
     { ...evidence, injectedHealthFailure: false },
     { ...evidence, kind: "static-schema-heuristic" },
+    { ...evidence, databaseSnapshotVerified: false },
+    { ...evidence, databaseSnapshotRestored: false },
+    { ...evidence, restoredSourceSchema: false },
+    { ...evidence, zitadelDatabaseRestored: false },
   ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
   if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
   else process.env.GITHUB_RUN_ID = previousRunId;
@@ -97,6 +106,8 @@ test("milestone releases never bypass live rollback certification", () => {
     previousApiReadWriteAfterRollback: true,
     previousApiRuntimeReadyAfterRollback: true, injectedHealthFailure: true,
     previousImagesRestored: true,
+    databaseSnapshotVerified: true, databaseSnapshotRestored: true,
+    restoredSourceSchema: true, zitadelDatabaseRestored: true,
   });
   assert.equal(certified.policy, "tested");
 });

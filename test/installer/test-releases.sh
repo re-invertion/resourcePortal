@@ -229,6 +229,7 @@ upgrade_automatic_recovery_smoke() (
   log="$(mktemp /tmp/rp-rollback-smoke.XXXXXX)"
   trap 'rm -f "$log"' EXIT
   RP_CFG_DOMAIN=rp.example.test
+  rp_upgrade_database_restore(){ return 0; }
   docker(){ printf 'docker:%s\n' "$*" >>"$log"; return 0; }
   rp_wait_for_https_origin(){ printf 'healthy:%s\n' "$1" >>"$log"; return 0; }
   rp_upgrade_restore_after_failure "$safe_manifest" "$manifest" "injected upgrade failure" || true
@@ -484,6 +485,8 @@ upgrade_orders_dependencies_before_final_rollout() (
   RP_CFG_DOMAIN=rp.example.test
   export RP_CFG_RELEASE_VERSION RP_CFG_ACME_ENVIRONMENT RP_CFG_DOMAIN
   rp_verify_release_manifest_attestation(){ printf 'provenance-verified\n' >>"$log"; }
+  rp_upgrade_database_snapshot_prepare(){ printf 'database-snapshot-verified\n' >>"$log"; }
+  rp_upgrade_database_restore(){ return 0; }
   rp_upgrade_rollback_allowed(){ printf 'rollback-verified\n' >>"$log"; }
   rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'tenant-sso-ready\n' >>"$log"; }
   rp_upgrade_identity_preflight(){ printf 'identity-verified\n' >>"$log"; }

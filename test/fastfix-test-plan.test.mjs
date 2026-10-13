@@ -57,6 +57,15 @@ test("identity rollout cannot silently bypass patch validation when package mani
   assert.deepEqual(plan.profiles, ["identity", "workflow"]);
 });
 
+test("real database rollback smoke changes require the platform release regression gate", () => {
+  const plan = selectProfiles([
+    "scripts/release-rollback-policy.mjs",
+    "scripts/run-automatic-rollback-smoke.sh",
+    "test/test-upgrade-database-rollback.test.mjs",
+  ]);
+  assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
+});
+
 test("security runtime changes select security tests (never silently skipped)", () => {
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });

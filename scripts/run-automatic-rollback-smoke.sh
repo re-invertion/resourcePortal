@@ -2,7 +2,8 @@
 # Required publication safety test: run the *real* rp_upgrade_apply entry point
 # against the actual previously published RP image digests and current locally
 # built API/Web/Postgres release-candidate images, then inject a health failure.
-# This proves image-only rollback orchestration; never claims SQL/data recovery.
+# This proves the previous images, source RP/ZITADEL database snapshots,
+# source Prisma schema and persisted data are ACTUALLY restored after failure.
 set -euo pipefail
 
 source_version="${1:-}"
@@ -23,11 +24,12 @@ stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
 db_network="${stack}-db-net"
 db_container="${stack}-db"
+zitadel_db_container="${stack}-zitadel-db"
 old_api_probe="${stack}-previous-api-probe"
 db_created=false
 swarm_started=false
 cleanup() {
-  docker rm -f "$old_api_probe" >/dev/null 2>&1 || true
+  docker rm -f "$old_api_probe" "$zitadel_db_container" >/dev/null 2>&1 || true
   if [[ "$db_created" == true ]]; then
     docker rm -f "$db_container" >/dev/null 2>&1 || true
     docker network rm "$db_network" >/dev/null 2>&1 || true
@@ -64,16 +66,20 @@ source_api="$(jq -er .images.api "$root/previous-release.json")"
 source_web="$(jq -er .images.web "$root/previous-release.json")"
 source_postgres="$(jq -er .images.postgres "$root/previous-release.json")"
 
-# Test real database compatibility, not merely old/new images running "sleep".
-# A schema-changing release can preserve the expanded schema during rollback
-# ONLY when the old, immutable API binary can still read and write real data.
-# Use the exact signed previous-release Postgres and API images and the actual
-# candidate image's Prisma migrations. Never rewrite or roll back live data.
+# Test a real source PostgreSQL snapshot and restore, not merely old/new
+# images running "sleep" or an old Prisma client using expanded schema. The
+# exact signed previous-release Postgres/API images and candidate Prisma
+# migrations run against disposable test databases, never live data.
 docker network create "$db_network" >/dev/null
 db_created=true
 docker run -d --name "$db_container" --network "$db_network" \
   --network-alias migration-db \
   -e POSTGRES_DB=resource_portal -e POSTGRES_USER=resource_portal \
+  -e POSTGRES_PASSWORD=rollback-smoke-only \
+  "$source_postgres" >/dev/null
+# Separate ZITADEL PostgreSQL must be restored, not just the RP DB schema.
+docker run -d --name "$zitadel_db_container" --network "$db_network" \
+  -e POSTGRES_DB=zitadel -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=rollback-smoke-only \
   "$source_postgres" >/dev/null
 compat_url="postgresql://resource_portal:rollback-smoke-only@migration-db:5432/resource_portal?schema=public"
@@ -86,11 +92,27 @@ for ((attempt=0;attempt<60;attempt++)); do
   sleep 2
 done
 [[ "$db_ready" == true ]] || { echo "Real compatibility database never became ready" >&2; exit 1; }
+zitadel_ready=false
+for ((attempt=0;attempt<60;attempt++)); do
+  if docker exec "$zitadel_db_container" pg_isready -U postgres -d zitadel >/dev/null 2>&1; then
+    zitadel_ready=true; break
+  fi
+  sleep 2
+done
+[[ "$zitadel_ready" == true ]] || { echo "ZITADEL snapshot database never became ready" >&2; exit 1; }
+docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
+  -c "CREATE TABLE rollback_identity_probe (id integer PRIMARY KEY, marker text NOT NULL); INSERT INTO rollback_identity_probe VALUES (1, 'original');" >/dev/null
 
 # Execute the *published* historical migrations first, using the pinned old
 # API container, before introducing any candidate migration/schema changes.
 docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
   "$source_api" /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+
+# Capture the actual *source* schema inventory before candidate migration,
+# not an assumption that a particular future release always adds the same tables.
+source_schema_inventory="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+  "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
+[[ -n "$source_schema_inventory" ]] || { echo "Missing source schema inventory" >&2; exit 1; }
 
 # The previous Prisma client creates real persistent tenant/user sentinels.
 # New fields/tables may be additive, but old client reads and writes must work.
@@ -181,9 +203,8 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
       sourceVersion:$source,targetCommit:$commit
     }
   | .migrations.rollbackEvidence={
-      kind:"real-upgrade-and-restore",
-      workflowRunId:1,
-      sourceVersion:$source
+      kind:"real-upgrade-and-restore", workflowRunId:1, sourceVersion:$source,
+      databaseSnapshotRestored:true, restoredSourceSchema:true, zitadelDatabaseRestored:true
     }' "$root/previous-release.json" >"$root/target-release.json"
 rp_validate_release_manifest "$root/target-release.json"
 docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
@@ -247,6 +268,15 @@ rp_apply_release_manifest_images() { return 0; }
 rp_upgrade_ensure_v020_node_labels() { return 0; }
 rp_upgrade_refresh_firewall() { return 0; }
 rp_upgrade_quiesce_database_clients() { return 0; }
+# Only fixture lookup is supplied here: production snapshot and restore code,
+# including real pg_dump, pg_restore and journal checks, is never mocked.
+rp_upgrade_database_task() {
+  case "$1" in
+    postgres-rp) printf '%s\n' "$db_container" ;;
+    postgres-zitadel) printf '%s\n' "$zitadel_db_container" ;;
+    *) return 1 ;;
+  esac
+}
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
@@ -257,7 +287,9 @@ rp_run_migrations() {
   local present
   present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
     "SELECT (to_regclass('public.\"TenantOidcProvider\"') IS NOT NULL AND to_regclass('public.\"TenantOidcGrant\"') IS NOT NULL)::text")"
-  [[ "$present" == true ]]
+  [[ "$present" == true ]] || return 1
+  docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
+    -c "UPDATE rollback_identity_probe SET marker = 'mutated'; CREATE TABLE candidate_zitadel_probe (id integer);" >/dev/null
 }
 rp_deploy_control_plane() {
   docker stack deploy --resolve-image never --compose-file "$root/target-stack.yml" \
@@ -291,14 +323,27 @@ fi
   echo "Upgrade entry point did not automatically invoke rollback health verification" >&2
   exit 1
 }
+[[ "$(jq -er .databaseSnapshotState "$RP_UPGRADE_STATE_DIR/state.json")" == "restored" ]] || {
+  echo "Installer did not restore both database snapshots" >&2; exit 1;
+}
+# The candidate's schema and ZITADEL side effects MUST be absent after restore.
+source_schema_restored="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+  "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
+[[ "$source_schema_restored" == "$source_schema_inventory" ]] || { echo "Exact source schema inventory was NOT restored" >&2; exit 1; }
+zitadel_restored="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
+  "SELECT marker FROM rollback_identity_probe WHERE id = 1")"
+[[ "$zitadel_restored" == original ]] || { echo "ZITADEL identity data was NOT restored" >&2; exit 1; }
+zitadel_candidate_table="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
+  "SELECT to_regclass('public.candidate_zitadel_probe') IS NULL")"
+[[ "$zitadel_candidate_table" == t ]] || { echo "ZITADEL candidate schema was NOT removed" >&2; exit 1; }
 [[ "$(jq -er .phase "$RP_UPGRADE_STATE_DIR/state.json")" == "rolled-back" ]]
 wait_services previous
 cmp -s "$root/previous-release.json" "$RP_INSTALLER_STATE_DIR/release.json"
 cmp -s "$root/previous-stack.yml" "$RP_UPGRADE_STACK_FILE"
 [[ "$(cat "$RP_UPGRADE_INSTALLER_CONFIG_FILE")" == "previous config" ]]
 
-# Start the exact previous API image against the already migrated
-# database, not just an inert "sleep" container. The readiness endpoint performs
+# Start the exact previous API image against the RESTORED source database,
+# not just an inert "sleep" container. The readiness endpoint performs
 # a real Prisma query and catches runtime bootstrap/dependency regressions that
 # direct model access alone cannot detect.
 docker run -d --name "$old_api_probe" --network "$db_network" \
@@ -388,6 +433,8 @@ if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
     '{kind:"real-upgrade-and-restore",sourceVersion:$src,targetCommit:$sha,workflowRunId:$run,
       actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
       previousApiRuntimeReadyAfterRollback:true,
-      injectedHealthFailure:true,previousImagesRestored:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
+      injectedHealthFailure:true,previousImagesRestored:true,
+      databaseSnapshotVerified:true,databaseSnapshotRestored:true,
+      restoredSourceSchema:true,zitadelDatabaseRestored:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
 fi
-echo "PASS: real Prisma migrations, previous API DB compatibility, injected rollback and previous images restored."
+echo "PASS: source RP/ZITADEL databases and schemas restored, prior images healthy, previous Prisma read/write verified after injected failure."
