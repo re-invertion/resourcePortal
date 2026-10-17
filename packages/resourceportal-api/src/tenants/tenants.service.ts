@@ -1149,6 +1149,12 @@ export class TenantsService {
           include: this.membershipIncludes(),
         });
 
+        // A failure invalidating IdP readiness aborts membership creation.
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+
         await tx.auditLogEntry.create({
           data: {
             tenantId,
@@ -1171,10 +1177,6 @@ export class TenantsService {
         return created;
       });
 
-      // Newly added users must not inherit any previously reconciled snapshot.
-      // Existing grants remain bounded by the tenant project; activation requires
-      // an explicit reconciliation of the updated membership set.
-      await this.tenantOidc?.markStale(tenantId);
       return mapMembership(membership);
     } catch (error) {
       if (
@@ -1234,6 +1236,13 @@ export class TenantsService {
         include: this.membershipIncludes(),
       });
 
+      // A failed IdP invalidation must abort the membership and audit commit.
+      // Previously markStale() ran post-commit and left ungranted members Active.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+      });
+
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -1258,7 +1267,6 @@ export class TenantsService {
       return updated;
     });
 
-    await this.tenantOidc?.markStale(tenantId);
     return mapMembership(membership);
   }
 
@@ -1289,6 +1297,13 @@ export class TenantsService {
         where: { id: membershipId },
       });
 
+      // A failed IdP invalidation must abort the membership and audit commit.
+      // Previously markStale() ran post-commit and left ungranted members Active.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+      });
+
       await tx.auditLogEntry.create({
         data: {
           tenantId,
@@ -1309,7 +1324,6 @@ export class TenantsService {
       });
     });
 
-    await this.tenantOidc?.markStale(tenantId);
     return { deleted: true };
   }
 

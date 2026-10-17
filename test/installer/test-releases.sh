@@ -264,8 +264,12 @@ contains "$workflow" 'branches: [main]' 'release workflow automatically publishe
 contains "$workflow" '--target "$GITHUB_SHA"' 'release workflow pins tag to the validated main revision'
 not_contains "$workflow" 'workflow_dispatch:' 'release workflow cannot be manually dispatched'
 contains "$workflow" 'steps.version.outputs.tag' 'release workflow uses validated release tag for image publication'
-contains "$workflow" 'docker/build-push-action' 'release workflow builds immutable images'
-contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}' 'release workflow publishes fenced PostgreSQL image'
+contains "$workflow" 'scripts/publish-tested-release-image.sh api "$RELEASE_TAG"' 'release publishes rollback-tested API without rebuilding'
+contains "$workflow" 'scripts/publish-tested-release-image.sh web "$RELEASE_TAG"' 'release publishes rollback-tested Web without rebuilding'
+contains "$workflow" 'scripts/publish-tested-release-image.sh postgres "$RELEASE_TAG"' 'release publishes rollback-tested fenced PostgreSQL without rebuilding'
+not_contains "$workflow" 'docker/build-push-action' 'release refuses to rebuild untested images after rollback certification'
+contains "$(cat "$repo_root/scripts/publish-tested-release-image.sh")" 'docker push "$published"' 'release pushes exact local tested images'
+contains "$(cat "$repo_root/scripts/publish-tested-release-image.sh")" 'tested_id' 'release rejects source/published image ID mismatch'
 for dockerfile in "$repo_root/Dockerfile" "$repo_root/packages/resourceportal-web/Dockerfile" "$repo_root/packages/resourceportal-postgres/Dockerfile"; do
   contains "$(cat "$dockerfile")" 'org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"' "release image links to public source repository: ${dockerfile#$repo_root/}"
 done

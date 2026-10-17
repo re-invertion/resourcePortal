@@ -55,7 +55,12 @@ does not certify identity-server rollback. The signed release requires run- and
 SHA-bound zitadelSourceRuntimeReadyAfterRollback,
 zitadelSourceEventstoreVerified and
 candidateZitadelRuntimeReadyBeforeRollback evidence. Any missing check must
-fail closed without merge or release.
+fail closed without merge or release. The exact digest of the candidate
+ZITADEL image must be copied from the real runtime proof to the attested
+manifest, and any tag/digest mismatch is fatal. Both PostgreSQL source
+GRANT/REVOKE records and object owners must survive the recovery. Original
+ZITADEL events are verified by per-record payload fingerprints so that
+harmless source reboots adding new events do not cause false failures.
 
 7. Require all applicable GitHub checks on the exact candidate SHA: ResourcePortal CI + Installer, Federation and browser, required Swarm gates, release readiness and Merge Queue. Examine failure/skips, don't relabel a release as Fast Fix to bypass gates.
 8. Record evidence in the PR: test identity, project IDs and sanitized claims; exact issuer and image versions, result of upgrading/rolling back, CI run links and user-migration consent. **No tokens, passwords, secrets or raw PII.**

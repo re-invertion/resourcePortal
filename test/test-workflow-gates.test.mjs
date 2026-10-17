@@ -74,7 +74,7 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.match(patchFull.run,/npm run test/);
   assert.match(patchFull.run,/npm run test:installer/);
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(patchFull));
-  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
 test('automatic rollback is mandatory before merge and any release artifacts',()=>{
@@ -98,7 +98,7 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
   assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(prerelease));
   assert.ok(publish.indexOf(prepublishSmoke) < publish.indexOf(prepublish));
-  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
   assert.match(prerelease.run,/--verified-evidence-file/);
   assert.match(prepublish.run,/--verified-evidence-file/);
   assert.match(premergeSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);

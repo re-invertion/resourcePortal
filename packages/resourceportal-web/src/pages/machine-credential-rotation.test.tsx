@@ -34,3 +34,20 @@ describe("one-time rotated credentials persistence and audit status (#261)", () 
     });
   }
 });
+
+describe("machine credentials use service identities, not unsupported OAuth Machine apps", () => {
+  it("does not offer Machine in OAuth application creation, while keeping service identity creation available", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/roles")) return Promise.resolve(json([{ id: "tenant-viewer", name: "Viewer" }]));
+      return Promise.resolve(json([]));
+    }));
+    render(<TenantCredentialsPage tenantId="t1" />);
+    expect(screen.getByRole("button", { name: "Create service identity" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Create OAuth application" }));
+    expect(screen.getByRole("option", { name: "Web" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "SPA" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Native" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Machine" })).toBeNull();
+  });
+});
