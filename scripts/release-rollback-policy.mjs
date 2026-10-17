@@ -100,6 +100,11 @@ export function requireAutomaticRollback(result, evidence = null) {
     evidence.databaseSnapshotRestored === true &&
     evidence.restoredSourceSchema === true &&
     evidence.zitadelDatabaseRestored === true &&
+    evidence.zitadelSourceRuntimeReadyAfterRollback === true &&
+    evidence.zitadelSourceEventstoreVerified === true &&
+    evidence.candidateZitadelRuntimeReadyBeforeRollback === true &&
+    /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/.test(evidence.candidateZitadelImage) &&
+    /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/.test(evidence.sourceZitadelImage) &&
     // A PR must not reuse evidence issued in a different workflow run.
     (!process.env.GITHUB_RUN_ID || evidence.workflowRunId === Number(process.env.GITHUB_RUN_ID));
   if (verified) {
@@ -114,6 +119,11 @@ export function requireAutomaticRollback(result, evidence = null) {
         databaseSnapshotRestored: true,
         restoredSourceSchema: true,
         zitadelDatabaseRestored: true,
+        zitadelSourceRuntimeReadyAfterRollback: true,
+        zitadelSourceEventstoreVerified: true,
+        candidateZitadelRuntimeReadyBeforeRollback: true,
+        candidateZitadelImage: evidence.candidateZitadelImage,
+        sourceZitadelImage: evidence.sourceZitadelImage,
       },
     };
   }

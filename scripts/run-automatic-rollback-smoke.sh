@@ -23,18 +23,32 @@ root="$(mktemp -d /tmp/resourceportal-rollback-gate.XXXXXX)"
 stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
 db_network="${stack}-db-net"
-db_container="${stack}-db"
-zitadel_db_container="${stack}-zitadel-db"
+db_service_rp="${stack}_postgres-rp"
+db_service_zitadel="${stack}_postgres-zitadel"
+db_volume_rp="${stack}-rp-postgres-data"
+db_volume_zitadel="${stack}-zitadel-postgres-data"
+db_container=""
+zitadel_db_container=""
+zitadel_runtime_container="${stack}-zitadel-runtime"
 old_api_probe="${stack}-previous-api-probe"
 db_created=false
 swarm_started=false
 cleanup() {
-  docker rm -f "$old_api_probe" "$zitadel_db_container" >/dev/null 2>&1 || true
-  if [[ "$db_created" == true ]]; then
-    docker rm -f "$db_container" >/dev/null 2>&1 || true
-    docker network rm "$db_network" >/dev/null 2>&1 || true
-  fi
+  docker rm -f "$old_api_probe" "$zitadel_runtime_container" >/dev/null 2>&1 || true
+  # Actual Swarm services are removed BEFORE detaching their volumes/network.
+  docker service rm "$db_service_rp" "$db_service_zitadel" >/dev/null 2>&1 || true
   docker stack rm "$stack" >/dev/null 2>&1 || true
+  for ((cleanup_try=0;cleanup_try<20;cleanup_try++)); do
+    if ! docker ps -q --filter "label=com.docker.swarm.service.name=$db_service_rp" --filter status=running | grep -q . &&
+       ! docker ps -q --filter "label=com.docker.swarm.service.name=$db_service_zitadel" --filter status=running | grep -q .; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$db_created" == true ]]; then
+    docker network rm "$db_network" >/dev/null 2>&1 || true
+    docker volume rm "$db_volume_rp" "$db_volume_zitadel" >/dev/null 2>&1 || true
+  fi
   if [[ "$swarm_started" == true ]]; then docker swarm leave --force >/dev/null 2>&1 || true; fi
   rm -rf -- "$root"
 }
@@ -65,43 +79,63 @@ done
 source_api="$(jq -er .images.api "$root/previous-release.json")"
 source_web="$(jq -er .images.web "$root/previous-release.json")"
 source_postgres="$(jq -er .images.postgres "$root/previous-release.json")"
+source_zitadel="$(jq -er .images.zitadel "$root/previous-release.json")"
+[[ "$source_zitadel" =~ @sha256:[a-f0-9]{64}$ ]] || exit 1
+docker pull "$source_zitadel" >/dev/null
+source "$repo_root/scripts/rollback-zitadel-runtime.sh"
+rp_rollback_zitadel_prepare
+
 
 # Test a real source PostgreSQL snapshot and restore, not merely old/new
 # images running "sleep" or an old Prisma client using expanded schema. The
 # exact signed previous-release Postgres/API images and candidate Prisma
 # migrations run against disposable test databases, never live data.
-docker network create "$db_network" >/dev/null
+# Exercise the REAL production task locator. Both PostgreSQL instances
+# must be local, healthy Swarm tasks, not standalone "docker run" fixtures.
+docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
+swarm_started=true
+export RP_CFG_STACK_NAME="$stack"
+docker network create --driver overlay --attachable "$db_network" >/dev/null
 db_created=true
-docker run -d --name "$db_container" --network "$db_network" \
-  --network-alias migration-db \
-  -e POSTGRES_DB=resource_portal -e POSTGRES_USER=resource_portal \
-  -e POSTGRES_PASSWORD=rollback-smoke-only \
-  "$source_postgres" >/dev/null
-# Separate ZITADEL PostgreSQL must be restored, not just the RP DB schema.
-docker run -d --name "$zitadel_db_container" --network "$db_network" \
-  -e POSTGRES_DB=zitadel -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=rollback-smoke-only \
-  "$source_postgres" >/dev/null
-compat_url="postgresql://resource_portal:rollback-smoke-only@migration-db:5432/resource_portal?schema=public"
+docker service create --name "$db_service_rp"   --network "$db_network"   --mount "type=volume,source=$db_volume_rp,target=/var/lib/postgresql/data"   --env POSTGRES_DB=resource_portal --env POSTGRES_USER=resource_portal   --env POSTGRES_PASSWORD=rollback-smoke-only   --health-cmd 'pg_isready -U resource_portal -d resource_portal'   --health-interval 2s --health-retries 30 --health-timeout 3s   "$source_postgres" >/dev/null
+docker service create --name "$db_service_zitadel"   --network "$db_network"   --mount "type=volume,source=$db_volume_zitadel,target=/var/lib/postgresql/data"   --env POSTGRES_DB=zitadel --env POSTGRES_USER=postgres   --env POSTGRES_PASSWORD=rollback-smoke-only   --health-cmd 'pg_isready -U postgres -d zitadel'   --health-interval 2s --health-retries 30 --health-timeout 3s   "$source_postgres" >/dev/null
+
 db_ready=false
-for ((attempt=0;attempt<60;attempt++)); do
-  if docker exec "$db_container" pg_isready -U resource_portal -d resource_portal >/dev/null 2>&1; then
-    db_ready=true
-    break
+for ((attempt=0;attempt<90;attempt++)); do
+  # No override: rp_upgrade_database_task checks exactly one local Swarm
+  # container and requires its actual Docker health state to be "healthy".
+  if db_container="$(rp_upgrade_database_task postgres-rp 2>/dev/null)"; then
+    db_ready=true; break
   fi
   sleep 2
 done
-[[ "$db_ready" == true ]] || { echo "Real compatibility database never became ready" >&2; exit 1; }
+[[ "$db_ready" == true ]] || { docker service ps --no-trunc "$db_service_rp" >&2 || true; echo "Real RP Swarm database task failed health/discovery" >&2; exit 1; }
 zitadel_ready=false
-for ((attempt=0;attempt<60;attempt++)); do
-  if docker exec "$zitadel_db_container" pg_isready -U postgres -d zitadel >/dev/null 2>&1; then
+for ((attempt=0;attempt<90;attempt++)); do
+  if zitadel_db_container="$(rp_upgrade_database_task postgres-zitadel 2>/dev/null)"; then
     zitadel_ready=true; break
   fi
   sleep 2
 done
-[[ "$zitadel_ready" == true ]] || { echo "ZITADEL snapshot database never became ready" >&2; exit 1; }
+[[ "$zitadel_ready" == true ]] || { docker service ps --no-trunc "$db_service_zitadel" >&2 || true; echo "Real ZITADEL Swarm database task failed health/discovery" >&2; exit 1; }
+# Containers use the attachable production-style Swarm overlay for migrations.
+compat_url="postgresql://resource_portal:rollback-smoke-only@$db_service_rp:5432/resource_portal?schema=public"
+rp_rollback_zitadel_start "$source_zitadel" "published source" || exit 1
+rp_rollback_zitadel_stop
+# Supplemental marker confirms non-eventstore candidate-only objects disappear.
 docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE rollback_identity_probe (id integer PRIMARY KEY, marker text NOT NULL); INSERT INTO rollback_identity_probe VALUES (1, 'original');" >/dev/null
+# Capture the source inventory only AFTER the marker is persisted and BEFORE
+# the installer takes its snapshots: comparisons must use the SAME baseline.
+rp_rollback_zitadel_capture_source || exit 1
+# The source ZITADEL user/object ACLs are part of the actual recovery proof.
+docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
+  -c 'CREATE ROLE rollback_zitadel_reader;
+      GRANT USAGE ON SCHEMA eventstore TO rollback_zitadel_reader;
+      GRANT SELECT ON eventstore.events2 TO rollback_zitadel_reader;' >/dev/null
+zitadel_source_table_owner="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='eventstore.events2'::regclass")"
+[[ -n "$zitadel_source_table_owner" ]] || exit 1
 
 # Execute the *published* historical migrations first, using the pinned old
 # API container, before introducing any candidate migration/schema changes.
@@ -113,6 +147,15 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
 source_schema_inventory="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
   "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
 [[ -n "$source_schema_inventory" ]] || { echo "Missing source schema inventory" >&2; exit 1; }
+# An actual source GRANT and table owner are required to survive restore.
+docker exec "$db_container" psql -U resource_portal -d resource_portal -v ON_ERROR_STOP=1 \
+  -c 'CREATE ROLE rollback_rp_reader;
+      GRANT USAGE ON SCHEMA public TO rollback_rp_reader;
+      GRANT SELECT ON public."Tenant" TO rollback_rp_reader;' >/dev/null
+rp_source_table_owner="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.\"Tenant\"'::regclass")"
+[[ -n "$rp_source_table_owner" ]] || exit 1
+
 
 # The previous Prisma client creates real persistent tenant/user sentinels.
 # New fields/tables may be additive, but old client reads and writes must work.
@@ -192,11 +235,13 @@ candidate_api="$(docker image inspect --format '{{.Id}}' resourceportal-api-cand
 candidate_web="$(docker image inspect --format '{{.Id}}' resourceportal-web-candidate)"
 candidate_postgres="$(docker image inspect --format '{{.Id}}' resourceportal-postgres-candidate)"
 jq --arg commit "$current_sha" --arg source "$source_version" \
-   --arg api "$candidate_api" --arg web "$candidate_web" --arg postgres "$candidate_postgres" '
+   --arg api "$candidate_api" --arg web "$candidate_web" --arg postgres "$candidate_postgres" \
+   --arg zitadel "$candidate_zitadel" '
   .version="99.99.99"
   | .images.api=("ghcr.io/re-invertion/resourceportal-api@" + $api)
   | .images.web=("ghcr.io/re-invertion/resourceportal-web@" + $web)
   | .images.postgres=("ghcr.io/re-invertion/resourceportal-postgres@" + $postgres)
+  | .images.zitadel=$zitadel
   | .migrations.rollbackPolicy="tested"
   | .migrations.rollbackAssessment={
       reason:"verified-recovery-test",
@@ -204,12 +249,13 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
     }
   | .migrations.rollbackEvidence={
       kind:"real-upgrade-and-restore", workflowRunId:1, sourceVersion:$source,
-      databaseSnapshotRestored:true, restoredSourceSchema:true, zitadelDatabaseRestored:true
+      databaseSnapshotRestored:true, restoredSourceSchema:true, zitadelDatabaseRestored:true,
+      zitadelSourceRuntimeReadyAfterRollback:true,
+      zitadelSourceEventstoreVerified:true,
+      candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:$zitadel
     }' "$root/previous-release.json" >"$root/target-release.json"
 rp_validate_release_manifest "$root/target-release.json"
-docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
-swarm_started=true
-
 service_images_match() {
   local phase="$1" role expected observed
   for role in api web postgres; do
@@ -231,7 +277,7 @@ wait_services() {
   for ((attempt=0;attempt<90;attempt++)); do
     ready=true
     for role in api web postgres; do
-      [[ "$(docker service ls --filter "name=${stack}_${role}" --format '{{.Replicas}}')" == "1/1" ]] || ready=false
+      rp_rollback_swarm_service_ready "${stack}_${role}" || ready=false
     done
     if [[ "$ready" == true ]] && service_images_match "$phase"; then return 0; fi
     sleep 2
@@ -267,16 +313,11 @@ rp_pull_release_images() { return 0; }
 rp_apply_release_manifest_images() { return 0; }
 rp_upgrade_ensure_v020_node_labels() { return 0; }
 rp_upgrade_refresh_firewall() { return 0; }
-rp_upgrade_quiesce_database_clients() { return 0; }
-# Only fixture lookup is supplied here: production snapshot and restore code,
-# including real pg_dump, pg_restore and journal checks, is never mocked.
-rp_upgrade_database_task() {
-  case "$1" in
-    postgres-rp) printf '%s\n' "$db_container" ;;
-    postgres-zitadel) printf '%s\n' "$zitadel_db_container" ;;
-    *) return 1 ;;
-  esac
+rp_upgrade_quiesce_database_clients() {
+  rp_rollback_zitadel_stop
 }
+# rp_upgrade_database_task is intentionally NOT overridden. Its production
+# local-Swarm-placement/health/uniqueness checks gate every snapshot/restore.
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
@@ -288,6 +329,8 @@ rp_run_migrations() {
   present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
     "SELECT (to_regclass('public.\"TenantOidcProvider\"') IS NOT NULL AND to_regclass('public.\"TenantOidcGrant\"') IS NOT NULL)::text")"
   [[ "$present" == true ]] || return 1
+  # Run ACTUAL candidate Zitadel binary and migrations on restored-source DB.
+  rp_rollback_zitadel_start "$candidate_zitadel" "release candidate" || return 1
   docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
     -c "UPDATE rollback_identity_probe SET marker = 'mutated'; CREATE TABLE candidate_zitadel_probe (id integer);" >/dev/null
 }
@@ -330,12 +373,25 @@ fi
 source_schema_restored="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
   "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
 [[ "$source_schema_restored" == "$source_schema_inventory" ]] || { echo "Exact source schema inventory was NOT restored" >&2; exit 1; }
+rp_restored_acl="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -At -v ON_ERROR_STOP=1 \
+  -c "SELECT has_table_privilege('rollback_rp_reader','public.\"Tenant\"','SELECT') AND
+     pg_get_userbyid(c.relowner) = '$rp_source_table_owner'
+     FROM pg_class c WHERE c.oid='public.\"Tenant\"'::regclass")"
+[[ "$rp_restored_acl" == t ]] || { echo "ResourcePortal table owner or original GRANT lost after restore" >&2; exit 1; }
+zitadel_restored_acl="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -At -v ON_ERROR_STOP=1 \
+  -c "SELECT has_table_privilege('rollback_zitadel_reader','eventstore.events2','SELECT') AND
+     pg_get_userbyid(c.relowner) = '$zitadel_source_table_owner'
+     FROM pg_class c WHERE c.oid='eventstore.events2'::regclass")"
+[[ "$zitadel_restored_acl" == t ]] || { echo "ZITADEL eventstore owner or original GRANT lost after restore" >&2; exit 1; }
+
 zitadel_restored="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
   "SELECT marker FROM rollback_identity_probe WHERE id = 1")"
 [[ "$zitadel_restored" == original ]] || { echo "ZITADEL identity data was NOT restored" >&2; exit 1; }
 zitadel_candidate_table="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
   "SELECT to_regclass('public.candidate_zitadel_probe') IS NULL")"
 [[ "$zitadel_candidate_table" == t ]] || { echo "ZITADEL candidate schema was NOT removed" >&2; exit 1; }
+# Published ZITADEL must RESTART against the real restored eventstore.
+rp_rollback_zitadel_verify_restored_source || exit 1
 [[ "$(jq -er .phase "$RP_UPGRADE_STATE_DIR/state.json")" == "rolled-back" ]]
 wait_services previous
 cmp -s "$root/previous-release.json" "$RP_INSTALLER_STATE_DIR/release.json"
@@ -429,12 +485,18 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
 # without the current job having exited successfully.
 if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
   jq -n --arg src "$source_version" --arg sha "$current_sha" \
+    --arg zitadel_candidate "$candidate_zitadel" --arg zitadel_source "$source_zitadel" \
     --argjson run "${GITHUB_RUN_ID:-0}" \
     '{kind:"real-upgrade-and-restore",sourceVersion:$src,targetCommit:$sha,workflowRunId:$run,
       actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
       previousApiRuntimeReadyAfterRollback:true,
       injectedHealthFailure:true,previousImagesRestored:true,
       databaseSnapshotVerified:true,databaseSnapshotRestored:true,
-      restoredSourceSchema:true,zitadelDatabaseRestored:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
+      restoredSourceSchema:true,zitadelDatabaseRestored:true,
+      zitadelSourceRuntimeReadyAfterRollback:true,
+      zitadelSourceEventstoreVerified:true,
+      candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:$zitadel_candidate,
+      sourceZitadelImage:$zitadel_source}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
 fi
-echo "PASS: source RP/ZITADEL databases and schemas restored, prior images healthy, previous Prisma read/write verified after injected failure."
+echo "PASS: real published/candidate ZITADEL eventstore, source DB restores, source ZITADEL/API startup and previous Prisma read/write verified."
