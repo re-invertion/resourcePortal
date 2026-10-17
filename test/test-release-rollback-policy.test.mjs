@@ -67,6 +67,9 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     databaseSnapshotRestored: true,
     restoredSourceSchema: true,
     zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
   };
   assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
   const confirmed = requireAutomaticRollback(result, evidence);
@@ -75,6 +78,9 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
   assert.deepEqual(confirmed.rollbackEvidence, {
     kind: "real-upgrade-and-restore", workflowRunId: currentRunId, sourceVersion: "0.2.86",
     databaseSnapshotRestored: true, restoredSourceSchema: true, zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
   });
   for (const malformed of [
     { ...evidence, targetCommit: "b".repeat(40) },
@@ -92,6 +98,12 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, databaseSnapshotRestored: false },
     { ...evidence, restoredSourceSchema: false },
     { ...evidence, zitadelDatabaseRestored: false },
+    { ...evidence, zitadelSourceRuntimeReadyAfterRollback: false },
+    { ...evidence, zitadelSourceEventstoreVerified: false },
+    { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: false },
+    { ...evidence, zitadelSourceRuntimeReadyAfterRollback: "true" },
+    { ...evidence, zitadelSourceEventstoreVerified: 1 },
+    { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: null },
   ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
   if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
   else process.env.GITHUB_RUN_ID = previousRunId;
@@ -108,6 +120,9 @@ test("milestone releases never bypass live rollback certification", () => {
     previousImagesRestored: true,
     databaseSnapshotVerified: true, databaseSnapshotRestored: true,
     restoredSourceSchema: true, zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
   });
   assert.equal(certified.policy, "tested");
 });

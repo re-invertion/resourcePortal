@@ -44,6 +44,19 @@ evidence.
 4. Validate native ResourcePortal browser, CLI device flow and both MCP connectors before/after deprecating inbound federation.
 5. Verify upgrade from the last published release with real, previous-version PostgreSQL schema/data and existing platform-project OAuth clients. Roll forward without destructive data loss; test failure recovery for interrupted provisioning.
 6. Validate a real source RP **and ZITADEL database snapshot/restore** using the exact published source and candidate Postgres/API images, the actual candidate Prisma migration and a failure injected into `rp_upgrade_apply`. A schema-changing or milestone release requires exact-SHA `databaseSnapshotVerified`, `databaseSnapshotRestored`, `restoredSourceSchema` and `zitadelDatabaseRestored` evidence, a source-version-bound signed `tested` manifest and a successful restore of both databases before prior images are redeployed. Image-only/expand-only compatibility alone cannot qualify. Missing or non-local healthy database tasks block upgrade without bypass.
+**Mandatory real identity-server recovery (Codex P1):** The release smoke
+uses the published manifest's immutable ZITADEL image digest, boots the actual
+source identity-server and eventstore.events2 schema, then boots the candidate
+ZITADEL after a real candidate Prisma migration. After injecting a deployment
+failure, the installer restores both databases. The smoke MUST restart the
+published source ZITADEL, confirm its OIDC discovery, eventstore schema and
+pre-upgrade event count, and verify previous API reads/writes. A synthetic table
+does not certify identity-server rollback. The signed release requires run- and
+SHA-bound zitadelSourceRuntimeReadyAfterRollback,
+zitadelSourceEventstoreVerified and
+candidateZitadelRuntimeReadyBeforeRollback evidence. Any missing check must
+fail closed without merge or release.
+
 7. Require all applicable GitHub checks on the exact candidate SHA: ResourcePortal CI + Installer, Federation and browser, required Swarm gates, release readiness and Merge Queue. Examine failure/skips, don't relabel a release as Fast Fix to bypass gates.
 8. Record evidence in the PR: test identity, project IDs and sanitized claims; exact issuer and image versions, result of upgrading/rolling back, CI run links and user-migration consent. **No tokens, passwords, secrets or raw PII.**
 

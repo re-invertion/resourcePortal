@@ -212,6 +212,16 @@ checksum, SQL restore error or failed post-restore health check leaves the
 checkpoint at `rollback-failed` and requires explicit recovery; it must not
 claim rollback success. Existing completed upgrade checkpoints and snapshots
 should be retained or retired according to the operator backup retention policy.
+ZITADEL restoration preserves the original table and eventstore ownership,
+rather than silently reassigning all objects to the administrative PostgreSQL
+user. Release certification starts the exact published ZITADEL image with the
+real eventstore.events2 schema and OIDC discovery, then runs the candidate image
+and upgrades the database. After an injected failure it must restart the
+published image against the restored database, validate its schema and original
+events, and verify the previous API still reads and writes. A synthetic SQL
+probe or database checksum alone cannot certify the identity-server rollback.
+The three run-bound identity-runtime proofs are mandatory for a tested release.
+
 These per-upgrade snapshots do not replace ongoing independent backups.
 
 The admin update dialog reports why automatic rollback is unavailable:

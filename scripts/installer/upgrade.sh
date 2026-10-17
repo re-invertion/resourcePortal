@@ -8,7 +8,10 @@ rp_upgrade_rollback_allowed() {
   if [[ "$policy" == tested ]]; then
     jq -e '.migrations.rollbackEvidence.databaseSnapshotRestored == true and
       .migrations.rollbackEvidence.restoredSourceSchema == true and
-      .migrations.rollbackEvidence.zitadelDatabaseRestored == true' "$manifest" >/dev/null || return 1
+      .migrations.rollbackEvidence.zitadelDatabaseRestored == true and
+      .migrations.rollbackEvidence.zitadelSourceRuntimeReadyAfterRollback == true and
+      .migrations.rollbackEvidence.zitadelSourceEventstoreVerified == true and
+      .migrations.rollbackEvidence.candidateZitadelRuntimeReadyBeforeRollback == true' "$manifest" >/dev/null || return 1
   fi
   # New manifests attest compatibility with the immediately preceding
   # release only. Do not automatically roll back an older source even if the
@@ -58,14 +61,24 @@ rp_upgrade_database_snapshot_prepare() {
     # Dump through the local PostgreSQL service identity. A failed/partial dump
     # must never become authoritative rollback evidence.
     if ! (umask 077; docker exec --user postgres "$id" sh -ec \
-      'exec pg_dump --format=custom --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$tmp"); then
+      'exec pg_dump --format=custom -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$tmp"); then
       printf 'Database rollback refused: %s source dump failed.\n' "$role" >&2
       return 1
     fi
     [[ -s "$tmp" ]] || return 1
     docker exec -i --user postgres "$id" pg_restore --list < "$tmp" >/dev/null || return 1
+    # pg_dump archives do not restore database ownership when replayed into
+    # a newly created shadow DB. Preserve the real RP/ZITADEL database owner
+    # with the signed snapshot so source ZITADEL init retains CREATE rights.
+    local db_owner
+    db_owner="$(docker exec --user postgres "$id" sh -ec '
+      exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 \
+        -c "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()"
+    ')" || return 1
+    [[ "$db_owner" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    printf '%s\n' "$db_owner" >"$backup/$role.owner" || return 1
   done
-  (cd "$backup" && sha256sum postgres-rp.dump postgres-zitadel.dump > SHA256SUMS &&
+  (cd "$backup" && sha256sum postgres-rp.dump postgres-zitadel.dump postgres-rp.owner postgres-zitadel.owner > SHA256SUMS &&
     sha256sum -c SHA256SUMS >/dev/null) || return 1
   # Journal marker is written atomically only AFTER two complete verified dumps.
   tmp="$(mktemp "$dir/.database-checkpoint.XXXXXX")" || return 1
@@ -109,13 +122,30 @@ rp_upgrade_database_restore() {
     docker exec --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
       createdb -U "$POSTGRES_USER" -T template0 "$RP_RESTORE_STAGE"
     ' || return 1
-    if ! docker exec -i --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
-      exec pg_restore --no-owner --no-privileges --exit-on-error --single-transaction \
+    # Restore original Zitadel eventstore ownership. An unconditional
+    # --no-owner would reassign all zitadel_user objects to postgres.
+    local restore_no_owner=""
+    [[ "$role" == postgres-zitadel ]] || restore_no_owner="--no-owner"
+    if ! docker exec -i --user postgres --env "RP_RESTORE_STAGE=$staging" \
+      --env "RP_RESTORE_NO_OWNER=$restore_no_owner" "$id" sh -ec '
+      if [ -n "$RP_RESTORE_NO_OWNER" ]; then
+        exec pg_restore --no-owner --no-privileges --exit-on-error --single-transaction \
+          -U "$POSTGRES_USER" -d "$RP_RESTORE_STAGE"
+      fi
+      exec pg_restore --exit-on-error --single-transaction \
         -U "$POSTGRES_USER" -d "$RP_RESTORE_STAGE"
     ' < "$backup/$role.dump"; then
       printf 'Database staging restore FAILED (%s); candidate DB preserved for recovery.\n' "$role" >&2
       return 1
     fi
+    local restored_db_owner
+    restored_db_owner="$(cat "$backup/$role.owner")" || return 1
+    [[ "$restored_db_owner" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    docker exec --user postgres --env "RP_RESTORE_STAGE=$staging" \
+      --env "RP_RESTORE_OWNER=$restored_db_owner" "$id" sh -ec '
+      exec psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+        -c "ALTER DATABASE \"$RP_RESTORE_STAGE\" OWNER TO \"$RP_RESTORE_OWNER\""
+    ' || return 1
     # No application clients are running. Disconnect any stale external
     # connections, then quarantine the mutated database rather than deleting
     # it. Should a rename fail, do not redeploy old API: manual recovery is

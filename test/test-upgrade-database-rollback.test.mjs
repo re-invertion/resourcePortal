@@ -17,7 +17,7 @@ test("source DB snapshots are taken after quiesce but before RP/ZITADEL migratio
 });
 
 test("database snapshots are atomically journaled and both database restores are mandatory before prior image deploy", () => {
-  assert.match(upgrade, /sha256sum postgres-rp\.dump postgres-zitadel\.dump > SHA256SUMS/);
+  assert.match(upgrade, /sha256sum postgres-rp\.dump postgres-zitadel\.dump postgres-rp\.owner postgres-zitadel\.owner > SHA256SUMS/);
   assert.match(upgrade, /pg_restore --list/);
   assert.match(upgrade, /databaseSnapshotState="verified"/);
   assert.match(upgrade, /mktemp -d/);
@@ -75,4 +75,50 @@ test("the DB source backup fails closed when a local database task cannot be ide
     rp_upgrade_database_snapshot_prepare /tmp/manifest
   `], { encoding: "utf8" });
   assert.equal(run.status, 1);
+});
+
+test("live candidate and published ZITADEL must boot real eventstore before signed release evidence", () => {
+  const runtime = readFileSync("scripts/rollback-zitadel-runtime.sh", "utf8");
+  const readiness = readFileSync(".github/workflows/release-readiness.yml", "utf8");
+  const publication = readFileSync(".github/workflows/release.yml", "utf8");
+  assert.match(smoke, /docker pull "\$source_zitadel"/);
+  assert.match(smoke, /rp_rollback_zitadel_start "\$source_zitadel" "published source"/);
+  assert.match(smoke, /rp_rollback_zitadel_start "\$candidate_zitadel" "release candidate"/);
+  assert.match(smoke, /rp_rollback_zitadel_verify_restored_source \|\| exit 1/);
+  assert(smoke.indexOf("rp_rollback_zitadel_verify_restored_source || exit 1") <
+    smoke.indexOf("RP_ROLLBACK_EVIDENCE_OUTPUT"));
+  assert.match(runtime, /start-from-init/);
+  assert.match(runtime, /\.well-known\/openid-configuration/);
+  assert.match(runtime, /eventstore\.events2/);
+  assert.match(runtime, /zitadel_source_schema_inventory/);
+  assert.match(runtime, /zitadel_source_events/);
+  assert.match(runtime, /\.Config.Image/);
+  assert.match(readiness, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
+  assert.match(publication, /ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
+  assert.match(publication, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
+  assert.match(policy, /evidence\.zitadelSourceRuntimeReadyAfterRollback === true/);
+  assert.match(policy, /evidence\.zitadelSourceEventstoreVerified === true/);
+  assert.match(policy, /evidence\.candidateZitadelRuntimeReadyBeforeRollback === true/);
+  assert.match(smoke, /candidateZitadelRuntimeReadyBeforeRollback:true/);
+  assert.match(smoke, /zitadelSourceRuntimeReadyAfterRollback:true/);
+});
+test("ZITADEL shadow DB restore preserves original eventstore table owners", () => {
+  assert.match(upgrade, /role" == postgres-zitadel/);
+  assert.match(upgrade, /RP_RESTORE_NO_OWNER/);
+  assert.match(upgrade, /postgres-rp.owner postgres-zitadel.owner > SHA256SUMS/);
+  assert.match(upgrade, /RP_RESTORE_OWNER/);
+  assert.match(upgrade, /ALTER DATABASE/);
+  assert.match(upgrade, /exec pg_restore --exit-on-error --single-transaction/);
+});
+test("live ZITADEL rollback refuses non-ephemeral CI and missing pinned release image", () => {
+  const bad = spawnSync("bash", ["-c",
+    "source scripts/rollback-zitadel-runtime.sh; GITHUB_ACTIONS=false; RP_ROLLBACK_E2E_ISOLATED=false; rp_rollback_zitadel_prepare",
+  ], { encoding: "utf8" });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /Refusing ZITADEL rollback test/);
+  const missing = spawnSync("bash", ["-c",
+    "source scripts/rollback-zitadel-runtime.sh; GITHUB_ACTIONS=true; RP_ROLLBACK_E2E_ISOLATED=true; unset RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE; rp_rollback_zitadel_prepare",
+  ], { encoding: "utf8" });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /explicitly selected release tag/);
 });

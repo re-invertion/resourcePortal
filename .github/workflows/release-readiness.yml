@@ -125,6 +125,9 @@ jobs:
         env:
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
           RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
+          RP_ROLLBACK_E2E_ISOLATED: 'true'
+          # Must match immutable version resolved by the release workflow.
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
         shell: bash
         run: |
           set -euo pipefail
