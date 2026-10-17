@@ -1,5 +1,6 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { NativeLoginModeService } from "../auth/native-login-mode.service";
+import { activeFederatedSessionWhere } from "../auth/federated-session-where";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -34,7 +35,7 @@ export class FederationRetirementService {
         },
       }),
       this.prisma.portalSession.count({
-        where: { authenticatedIdpId: { not: null } },
+        where: activeFederatedSessionWhere(this.config),
       }),
       this.prisma.userIdentity.findMany({
         where: { identityProviderId: { not: null } },

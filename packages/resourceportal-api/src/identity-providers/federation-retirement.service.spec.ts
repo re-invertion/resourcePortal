@@ -42,6 +42,18 @@ describe("Inbound federation retirement preflight", () => {
       usersWithoutNativeLink: 1,
     });
     expect(result.blockers).toContain("Federated users lack native identity links");
+    const sessionQuery = f.prisma.portalSession.count.mock.calls[0]?.[0] as {
+      where: {
+        authenticatedIdpId: { not: null };
+        revokedAt: null;
+        expiresAt: { gt: Date };
+        lastSeenAt: { gt: Date };
+      };
+    };
+    expect(sessionQuery.where.authenticatedIdpId).toEqual({ not: null });
+    expect(sessionQuery.where.revokedAt).toBeNull();
+    expect(sessionQuery.where.expiresAt.gt.getTime()).toBeGreaterThan(Date.now() - 5000);
+    expect(sessionQuery.where.lastSeenAt.gt.getTime()).toBeLessThan(Date.now());
     expect(f.prisma.userIdentity.findMany).toHaveBeenCalledTimes(2);
     expect(f.prisma.userIdentity.findMany).toHaveBeenLastCalledWith({
       where: {
@@ -62,6 +74,8 @@ describe("Inbound federation retirement preflight", () => {
     f.prisma.userIdentity.findMany.mockReset().mockResolvedValue([]);
     const result = await f.service.preflight();
     expect(result.safeToCutoverAutomatically).toBe(false);
+    expect(result.externalSessions).toBe(0);
+    expect(result.blockers).not.toContain("Federated sessions require revocation");
     expect(result.blockers.some((value: string) => value.includes("Operator must verify"))).toBe(true);
   });
 });
