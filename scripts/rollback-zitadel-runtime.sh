@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 # CI-only published/candidate ZITADEL startup verification on disposable DBs.
+# Docker service-list name filters match PREFIXES. Selecting service
+# stack_postgres could also select stack_postgres-rp or stack_postgres-zitadel.
+# Use an exact object lookup and compare the full name, not the prefix.
+rp_rollback_swarm_service_ready() {
+  local expected="$1" replicas
+  [[ "$expected" =~ ^[a-zA-Z0-9_.-]+$ ]] || return 1
+  [[ "$(docker service inspect "$expected" --format '{{.Spec.Name}}' 2>/dev/null)" == "$expected" ]] || return 1
+  replicas="$(docker service ls --format '{{.Name}} {{.Replicas}}' |
+    awk -v expected="$expected" '$1 == expected { count++; replicas=$2 } END { if(count != 1) exit 1; print replicas }')" || return 1
+  [[ "$replicas" == "1/1" ]]
+}
+
 rp_rollback_zitadel_prepare() {
   [[ "${GITHUB_ACTIONS:-}" == true && "${RP_ROLLBACK_E2E_ISOLATED:-}" == true ]] || {
     echo "Refusing ZITADEL rollback test outside isolated GitHub CI" >&2

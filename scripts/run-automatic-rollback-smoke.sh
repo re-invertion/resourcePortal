@@ -277,7 +277,7 @@ wait_services() {
   for ((attempt=0;attempt<90;attempt++)); do
     ready=true
     for role in api web postgres; do
-      [[ "$(docker service ls --filter "name=${stack}_${role}" --format '{{.Replicas}}')" == "1/1" ]] || ready=false
+      rp_rollback_swarm_service_ready "${stack}_${role}" || ready=false
     done
     if [[ "$ready" == true ]] && service_images_match "$phase"; then return 0; fi
     sleep 2

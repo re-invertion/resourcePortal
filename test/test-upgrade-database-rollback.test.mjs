@@ -210,3 +210,36 @@ test("release rollback cannot bypass healthy local Swarm task discovery using st
   assert.match(upgrade, /com\.docker\.swarm\.service\.name=\$service/);
   assert.match(upgrade, /\.State\.Health\.Status/);
 });
+
+test("rollback Swarm convergence selects exact PostgreSQL service despite two prefix-sibling database services", () => {
+  const script = [
+    "source scripts/rollback-zitadel-runtime.sh",
+    "docker() {",
+    '  if [[ "$1 $2" == "service inspect" ]]; then',
+    '    printf "%s\\n" "$3"; return 0',
+    "  fi",
+    '  if [[ "$1 $2" == "service ls" ]]; then',
+    '    printf "%s\\n" "rp_postgres 1/1" "rp_postgres-rp 0/1" "rp_postgres-zitadel 1/1"; return 0',
+    "  fi",
+    "  return 1",
+    "}",
+    'rp_rollback_swarm_service_ready rp_postgres || exit 11',
+    'if rp_rollback_swarm_service_ready rp_postgres-rp; then exit 12; fi',
+    'rp_rollback_swarm_service_ready rp_postgres-zitadel || exit 13',
+  ].join("\n");
+  const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const src = readFileSync("scripts/run-automatic-rollback-smoke.sh", "utf8");
+  assert.match(src, /rp_rollback_swarm_service_ready "\$\{stack\}_\$\{role\}"/);
+  assert.doesNotMatch(src, /docker service ls --filter "name=/);
+});
+
+test("rollback service readiness fails closed when Docker service inspect reports a different exact name", () => {
+  const script = [
+    "source scripts/rollback-zitadel-runtime.sh",
+    'docker() { if [[ "$1 $2" == "service inspect" ]]; then printf "rp_postgres-rp\\n"; else printf "rp_postgres 1/1\\n"; fi; }',
+    'if rp_rollback_swarm_service_ready rp_postgres; then exit 1; fi',
+  ].join("\n");
+  const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+});
