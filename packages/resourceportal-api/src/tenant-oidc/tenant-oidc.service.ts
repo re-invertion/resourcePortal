@@ -165,8 +165,11 @@ export class TenantOidcService {
         }
       }
 
-      await this.prisma.tenantOidcProvider.update({
-        where: { tenantId },
+      // A membership/invitation transaction may have invalidated the grant
+      // snapshot while remote ZITADEL operations were in progress. Never
+      // overwrite NeedsReconciliation with an obsolete successful result.
+      const completed = await this.prisma.tenantOidcProvider.updateMany({
+        where: { tenantId, enabled: false, status: "Reconciling", grantsReconciledAt: null },
         data: {
           enabled: false,
           status: "GrantsReconciled",
@@ -174,10 +177,15 @@ export class TenantOidcService {
           lastErrorCode: null,
         },
       });
+      if (completed.count !== 1) {
+        throw new ConflictException("Tenant membership changed during grant reconciliation");
+      }
       return this.get(tenantId);
     } catch (error) {
-      await this.prisma.tenantOidcProvider.update({
-        where: { tenantId },
+      // A concurrent membership update can set NeedsReconciliation after the
+      // snapshot. Preserve that invalidation rather than marking it successful.
+      await this.prisma.tenantOidcProvider.updateMany({
+        where: { tenantId, status: "Reconciling" },
         data: { enabled: false, status: "ReconciliationFailed", lastErrorCode: "GRANT_SYNC_FAILED" },
       });
       throw error;
@@ -211,10 +219,22 @@ export class TenantOidcService {
       throw new ServiceUnavailableException("Tenant OIDC role reconciliation is incomplete");
     }
     await this.zitadel.readProject(provider.zitadelProjectId);
-    await this.prisma.tenantOidcProvider.update({
-      where: { tenantId },
+    // Compare-and-swap with the exact certified snapshot. Membership changes
+    // atomically clear grantsReconciledAt and set NeedsReconciliation; a
+    // late activation must never resurrect the stale grant snapshot.
+    const activated = await this.prisma.tenantOidcProvider.updateMany({
+      where: {
+        tenantId,
+        zitadelProjectId: provider.zitadelProjectId,
+        enabled: false,
+        status: "GrantsReconciled",
+        grantsReconciledAt: provider.grantsReconciledAt,
+      },
       data: { enabled: true, status: "Active", lastErrorCode: null },
     });
+    if (activated.count !== 1) {
+      throw new ConflictException("Tenant membership changed before OIDC activation; reconcile grants again");
+    }
     return this.get(tenantId);
   }
 

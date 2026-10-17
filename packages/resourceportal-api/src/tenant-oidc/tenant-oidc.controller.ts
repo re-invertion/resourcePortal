@@ -1,6 +1,7 @@
 import {
-  Controller, Delete, ForbiddenException, Get, Param, ParseUUIDPipe, Post,
+  Controller, Delete, ForbiddenException, Get, Param, ParseUUIDPipe, Post, Req,
 } from "@nestjs/common";
+import type { FastifyRequest } from "fastify";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import type { AuthenticatedUser } from "../auth/types";
@@ -16,7 +17,11 @@ export class TenantOidcController {
 
   @Get()
   @RequirePermissions("oauth_application.read")
-  get(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
+  get(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Req() request?: FastifyRequest,
+  ) {
+    this.requireHuman(request);
     return this.service.get(tenantId);
   }
 
@@ -25,8 +30,9 @@ export class TenantOidcController {
   provision(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request?: FastifyRequest,
   ) {
-    return this.mutate(tenantId, actor, "provision", () => this.service.provision(tenantId));
+    return this.mutate(tenantId, actor, "provision", () => this.service.provision(tenantId), request);
   }
 
   @Post("activate")
@@ -34,8 +40,9 @@ export class TenantOidcController {
   activate(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request?: FastifyRequest,
   ) {
-    return this.mutate(tenantId, actor, "activate", () => this.service.activate(tenantId));
+    return this.mutate(tenantId, actor, "activate", () => this.service.activate(tenantId), request);
   }
 
   @Post("disable")
@@ -43,8 +50,9 @@ export class TenantOidcController {
   disable(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request?: FastifyRequest,
   ) {
-    return this.mutate(tenantId, actor, "disable", () => this.service.disable(tenantId));
+    return this.mutate(tenantId, actor, "disable", () => this.service.disable(tenantId), request);
   }
 
   @Delete()
@@ -52,8 +60,9 @@ export class TenantOidcController {
   delete(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request?: FastifyRequest,
   ) {
-    return this.mutate(tenantId, actor, "delete", () => this.service.delete(tenantId));
+    return this.mutate(tenantId, actor, "delete", () => this.service.delete(tenantId), request);
   }
 
   @Post("reconcile-grants")
@@ -61,13 +70,23 @@ export class TenantOidcController {
   reconcileGrants(
     @Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser,
+    @Req() request?: FastifyRequest,
   ) {
     return this.mutate(
       tenantId,
       actor,
       "reconcile_grants",
       () => this.service.reconcileGrants(tenantId),
+      request,
     );
+  }
+
+  private requireHuman(request?: FastifyRequest) {
+    // DevAuthGuard puts service principal ID into request.user for downstream
+    // tenant permissions. Never mistake that mapped ID for a HUMAN identity.
+    if (request?.serviceIdentity || request?.tenantContext?.serviceIdentityId) {
+      throw new ForbiddenException("Human tenant administrator required");
+    }
   }
 
   private async mutate<T>(
@@ -75,8 +94,9 @@ export class TenantOidcController {
     actor: AuthenticatedUser | undefined,
     operation: string,
     work: () => Promise<T>,
+    request?: FastifyRequest,
   ): Promise<T> {
-    // Machine tokens are not authorized to administer provider infrastructure.
+    this.requireHuman(request);
     if (!actor?.id) throw new ForbiddenException("Human tenant administrator required");
     try {
       const result = await work();

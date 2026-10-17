@@ -38,6 +38,7 @@ function fixture() {
       upsert: vi.fn().mockResolvedValue({ ...provider, zitadelProjectId: null }),
       findUnique: vi.fn().mockResolvedValue(provider),
       update: vi.fn().mockResolvedValue(provider),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     tenantMembership: { findMany: vi.fn().mockResolvedValue([]) },
     oAuthApplication: { count: vi.fn().mockResolvedValue(0) },
@@ -86,10 +87,11 @@ describe("Tenant OIDC management fails closed", () => {
     expect(f.prisma.tenantOidcGrant.findMany).toHaveBeenCalledWith({ where: { tenantId } });
     expect(f.project.revokeMember).toHaveBeenCalledWith("zitadel-removed", "zgrant-removed");
     expect(f.prisma.tenantOidcGrant.delete).toHaveBeenCalledWith({ where: { id: "grant-row" } });
-    expect(f.prisma.tenantOidcProvider.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({
-        status: "GrantsReconciled", enabled: false,
-      }) as unknown as Record<string, unknown> }),
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId, enabled: false, status: "Reconciling", grantsReconciledAt: null },
+        data: expect.objectContaining({ status: "GrantsReconciled", enabled: false }) as Record<string, unknown>,
+      }),
     );
   });
 
@@ -101,10 +103,9 @@ describe("Tenant OIDC management fails closed", () => {
       status: MembershipStatus.Active,
     }]);
     await expect(f.service.reconcileGrants(tenantId)).rejects.toThrow("lacks verified native");
-    expect(f.prisma.tenantOidcProvider.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({
-        status: "ReconciliationFailed", enabled: false,
-      }) as unknown as Record<string, unknown> }),
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId, status: "Reconciling" },
+        data: expect.objectContaining({ status: "ReconciliationFailed", enabled: false }) as Record<string, unknown> }),
     );
     expect(f.project.assignMember).not.toHaveBeenCalled();
   });
@@ -243,8 +244,56 @@ describe("Tenant OIDC management fails closed", () => {
     f.project.revokeMember.mockRejectedValue(new Error("upstream timeout"));
     await expect(f.service.reconcileGrants(tenantId)).rejects.toThrow("upstream timeout");
     expect(f.prisma.tenantOidcGrant.delete).not.toHaveBeenCalled();
-    expect(f.prisma.tenantOidcProvider.update).toHaveBeenCalledWith(
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ enabled: false, status: "ReconciliationFailed" }) as Record<string, unknown> }),
+    );
+  });
+
+  it("refuses late reconciliation when membership invalidated the snapshot while remote grants were syncing", async () => {
+    const f = fixture();
+    // The concurrent membership transaction commits NeedsReconciliation;
+    // the conditional finalization cannot overwrite that state.
+    f.prisma.tenantOidcProvider.updateMany.mockResolvedValue({ count: 0 });
+    await expect(f.service.reconcileGrants(tenantId))
+      .rejects.toThrow("membership changed during grant reconciliation");
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId, enabled: false, status: "Reconciling", grantsReconciledAt: null },
+        data: expect.objectContaining({ status: "GrantsReconciled" }) as Record<string, unknown>,
+      }),
+    );
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tenantId, status: "Reconciling" } }),
+    );
+    expect(f.prisma.tenantOidcProvider.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "GrantsReconciled" }) as unknown as Record<string, unknown> }),
+    );
+  });
+
+  it("does not reactivate a tenant after membership changed between reconciliation and activation", async () => {
+    const f = fixture();
+    const snapshot = new Date("2026-10-17T12:00:00.000Z");
+    const reconciled = { ...f.provider, status: "GrantsReconciled", grantsReconciledAt: snapshot };
+    f.prisma.tenantOidcProvider.findUnique.mockResolvedValue(reconciled);
+    // Simulates a committed membership change that cleared snapshot timestamp
+    // during the final remote readProject await.
+    f.prisma.tenantOidcProvider.updateMany.mockResolvedValue({ count: 0 });
+    const enabledService = new TenantOidcService(
+      f.prisma as unknown as PrismaService,
+      f.project as unknown as ZitadelTenantProjectService,
+      { get: vi.fn().mockReturnValue("true") } as never,
+    );
+    vi.spyOn(enabledService, "reconcileGrants").mockResolvedValue(undefined as never);
+    await expect(enabledService.activate(tenantId)).rejects.toThrow("membership changed before OIDC activation");
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: {
+        tenantId, zitadelProjectId: reconciled.zitadelProjectId,
+        enabled: false, status: "GrantsReconciled", grantsReconciledAt: snapshot,
+      },
+      data: { enabled: true, status: "Active", lastErrorCode: null },
+    });
+    expect(f.prisma.tenantOidcProvider.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ enabled: true }) as unknown as Record<string, unknown> }),
     );
   });
 
@@ -292,7 +341,7 @@ describe("Tenant OIDC management fails closed", () => {
       f.project.assignMember.mock.invocationCallOrder[0],
     );
     expect(f.project.revokeMember).toHaveBeenCalledWith("native-u1", "grant-new");
-    const updates = f.prisma.tenantOidcProvider.update.mock.calls as unknown as Array<[
+    const updates = f.prisma.tenantOidcProvider.updateMany.mock.calls as unknown as Array<[
       { data: { enabled: boolean; status: string } },
     ]>;
     expect(updates.at(-1)?.[0].data).toMatchObject({ enabled: false, status: "ReconciliationFailed" });
