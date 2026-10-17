@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { rollbackAssessment, requireAutomaticRollback, assertExpandOnlyMigrationSql } from "../scripts/release-rollback-policy.mjs";
 
 const hash = "a".repeat(40);
+const candidateZitadelImage = "ghcr.io/zitadel/zitadel@sha256:" + "a".repeat(64);
+const sourceZitadelImage = "ghcr.io/zitadel/zitadel@sha256:" + "b".repeat(64);
 test("non-schema patch permits only image-only rollback", () => {
   assert.deepEqual(rollbackAssessment(["packages/resourceportal-web/src/app.tsx"], "fastfix", "v0.2.75", hash), {
     policy: "image-only",
@@ -70,6 +72,8 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     zitadelSourceRuntimeReadyAfterRollback: true,
     zitadelSourceEventstoreVerified: true,
     candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
   };
   assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
   const confirmed = requireAutomaticRollback(result, evidence);
@@ -81,6 +85,8 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     zitadelSourceRuntimeReadyAfterRollback: true,
     zitadelSourceEventstoreVerified: true,
     candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
   });
   for (const malformed of [
     { ...evidence, targetCommit: "b".repeat(40) },
@@ -104,6 +110,9 @@ test("schema-changing rollback requires exact run-bound live evidence", () => {
     { ...evidence, zitadelSourceRuntimeReadyAfterRollback: "true" },
     { ...evidence, zitadelSourceEventstoreVerified: 1 },
     { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: null },
+    { ...evidence, candidateZitadelImage: "ghcr.io/zitadel/zitadel:v4.17.0" },
+    { ...evidence, candidateZitadelImage: undefined },
+    { ...evidence, sourceZitadelImage: "ghcr.io/malicious/zitadel@sha256:" + "f".repeat(64) },
   ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
   if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
   else process.env.GITHUB_RUN_ID = previousRunId;
@@ -123,6 +132,8 @@ test("milestone releases never bypass live rollback certification", () => {
     zitadelSourceRuntimeReadyAfterRollback: true,
     zitadelSourceEventstoreVerified: true,
     candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
   });
   assert.equal(certified.policy, "tested");
 });

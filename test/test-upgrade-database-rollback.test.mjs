@@ -23,7 +23,8 @@ test("database snapshots are atomically journaled and both database restores are
   assert.match(upgrade, /mktemp -d/);
   assert.match(upgrade, /databaseSnapshotDirectory/);
   assert.match(upgrade, /createdb -U "\$POSTGRES_USER" -T template0/);
-  assert.match(upgrade, /pg_restore --no-owner --no-privileges --exit-on-error --single-transaction/);
+  assert.match(upgrade, /pg_restore --exit-on-error --single-transaction/);
+  assert.doesNotMatch(upgrade, /pg_restore --no-owner|pg_restore --no-privileges/);
   assert.match(upgrade, /ALTER DATABASE/);
   assert.match(upgrade, /RP_RESTORE_QUARANTINE/);
   const rollback = upgrade.slice(upgrade.indexOf("rp_upgrade_restore_after_failure()"));
@@ -92,6 +93,13 @@ test("live candidate and published ZITADEL must boot real eventstore before sign
   assert.match(runtime, /eventstore\.events2/);
   assert.match(runtime, /zitadel_source_schema_inventory/);
   assert.match(runtime, /zitadel_source_events/);
+  assert.match(runtime, /rp_rollback_zitadel_event_fingerprints/);
+  assert.match(runtime, /comm -23/);
+  assert.match(runtime, /row_to_json\(e\)/);
+  assert.match(smoke, /candidateZitadelImage:\$zitadel_candidate/);
+  assert.match(smoke, /candidateZitadelImage:\$zitadel/);
+  assert.match(publication, /ZITADEL_REF="\$\(jq -er '.candidateZitadelImage'/);
+  assert.match(publication, /docker pull "\$ZITADEL_REF"/);
   assert.match(runtime, /\.Config.Image/);
   assert.match(readiness, /RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
   assert.match(publication, /ghcr.io\/zitadel\/zitadel:v4\.17\.0/);
@@ -104,7 +112,11 @@ test("live candidate and published ZITADEL must boot real eventstore before sign
 });
 test("ZITADEL shadow DB restore preserves original eventstore table owners", () => {
   assert.match(upgrade, /role" == postgres-zitadel/);
-  assert.match(upgrade, /RP_RESTORE_NO_OWNER/);
+  assert.doesNotMatch(upgrade, /RP_RESTORE_NO_OWNER/);
+  assert.match(smoke, /GRANT SELECT ON public\."Tenant" TO rollback_rp_reader/);
+  assert.match(smoke, /GRANT SELECT ON eventstore\.events2 TO rollback_zitadel_reader/);
+  assert.match(smoke, /has_table_privilege\('rollback_rp_reader'/);
+  assert.match(smoke, /has_table_privilege\('rollback_zitadel_reader'/);
   assert.match(upgrade, /postgres-rp.owner postgres-zitadel.owner > SHA256SUMS/);
   assert.match(upgrade, /RP_RESTORE_OWNER/);
   assert.match(upgrade, /ALTER DATABASE/);
@@ -121,4 +133,49 @@ test("live ZITADEL rollback refuses non-ephemeral CI and missing pinned release 
   ], { encoding: "utf8" });
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /explicitly selected release tag/);
+});
+
+test("signed tested manifest rejects a ZITADEL digest different from the live rollback evidence", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = mkdtempSync(join(tmpdir(), "rp-zitadel-proof-"));
+  const img = (name, digest) => name + "@sha256:" + digest.repeat(64);
+  const candidate = img("ghcr.io/zitadel/zitadel", "d");
+  const manifest = {
+    schemaVersion: 1, version: "99.99.99",
+    installer: { minimumVersion: "0.1.0" },
+    docker: { minimumVersion: "27.0.0" },
+    configSchemaVersion: 1,
+    images: {
+      api: img("ghcr.io/re-invertion/resourceportal-api", "a"),
+      web: img("ghcr.io/re-invertion/resourceportal-web", "b"),
+      postgres: img("ghcr.io/re-invertion/resourceportal-postgres", "c"),
+      zitadel: candidate, traefik: img("traefik", "e"),
+    },
+    migrations: {
+      supportedFromVersions: ["0.2.86"], rollbackPolicy: "tested",
+      rollbackAssessment: { reason: "verified-recovery-test", sourceVersion: "0.2.86", targetCommit: "a".repeat(40) },
+      rollbackEvidence: {
+        kind: "real-upgrade-and-restore", sourceVersion: "0.2.86",
+        workflowRunId: 400, candidateZitadelImage: candidate,
+      },
+    },
+  };
+  const file = join(directory, "manifest.json");
+  const check = () => spawnSync("bash", ["-c",
+    'source scripts/installer/releases.sh; rp_validate_release_manifest "$1"', "validate", file,
+  ], { encoding: "utf8" }).status;
+  try {
+    writeFileSync(file, JSON.stringify(manifest));
+    assert.equal(check(), 0, "matching attested digest must be accepted");
+    manifest.migrations.rollbackEvidence.candidateZitadelImage = img("ghcr.io/zitadel/zitadel", "f");
+    writeFileSync(file, JSON.stringify(manifest));
+    assert.notEqual(check(), 0, "a different image MUST NOT be signed as tested");
+    delete manifest.migrations.rollbackEvidence.candidateZitadelImage;
+    writeFileSync(file, JSON.stringify(manifest));
+    assert.notEqual(check(), 0, "a missing image proof MUST NOT be accepted");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

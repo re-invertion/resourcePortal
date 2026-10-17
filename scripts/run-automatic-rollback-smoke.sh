@@ -116,6 +116,14 @@ docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP
 # Capture the source inventory only AFTER the marker is persisted and BEFORE
 # the installer takes its snapshots: comparisons must use the SAME baseline.
 rp_rollback_zitadel_capture_source || exit 1
+# The source ZITADEL user/object ACLs are part of the actual recovery proof.
+docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \
+  -c 'CREATE ROLE rollback_zitadel_reader;
+      GRANT USAGE ON SCHEMA eventstore TO rollback_zitadel_reader;
+      GRANT SELECT ON eventstore.events2 TO rollback_zitadel_reader;' >/dev/null
+zitadel_source_table_owner="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='eventstore.events2'::regclass")"
+[[ -n "$zitadel_source_table_owner" ]] || exit 1
 
 # Execute the *published* historical migrations first, using the pinned old
 # API container, before introducing any candidate migration/schema changes.
@@ -127,6 +135,15 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
 source_schema_inventory="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
   "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
 [[ -n "$source_schema_inventory" ]] || { echo "Missing source schema inventory" >&2; exit 1; }
+# An actual source GRANT and table owner are required to survive restore.
+docker exec "$db_container" psql -U resource_portal -d resource_portal -v ON_ERROR_STOP=1 \
+  -c 'CREATE ROLE rollback_rp_reader;
+      GRANT USAGE ON SCHEMA public TO rollback_rp_reader;
+      GRANT SELECT ON public."Tenant" TO rollback_rp_reader;' >/dev/null
+rp_source_table_owner="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+  "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.\"Tenant\"'::regclass")"
+[[ -n "$rp_source_table_owner" ]] || exit 1
+
 
 # The previous Prisma client creates real persistent tenant/user sentinels.
 # New fields/tables may be additive, but old client reads and writes must work.
@@ -223,7 +240,8 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
       databaseSnapshotRestored:true, restoredSourceSchema:true, zitadelDatabaseRestored:true,
       zitadelSourceRuntimeReadyAfterRollback:true,
       zitadelSourceEventstoreVerified:true,
-      candidateZitadelRuntimeReadyBeforeRollback:true
+      candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:$zitadel
     }' "$root/previous-release.json" >"$root/target-release.json"
 rp_validate_release_manifest "$root/target-release.json"
 docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
@@ -353,6 +371,17 @@ fi
 source_schema_restored="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
   "SELECT string_agg(table_schema || '.' || table_name, ',' ORDER BY table_schema, table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")"
 [[ "$source_schema_restored" == "$source_schema_inventory" ]] || { echo "Exact source schema inventory was NOT restored" >&2; exit 1; }
+rp_restored_acl="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -At -v ON_ERROR_STOP=1 \
+  -c "SELECT has_table_privilege('rollback_rp_reader','public.\"Tenant\"','SELECT') AND
+     pg_get_userbyid(c.relowner) = '$rp_source_table_owner'
+     FROM pg_class c WHERE c.oid='public.\"Tenant\"'::regclass")"
+[[ "$rp_restored_acl" == t ]] || { echo "ResourcePortal table owner or original GRANT lost after restore" >&2; exit 1; }
+zitadel_restored_acl="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -At -v ON_ERROR_STOP=1 \
+  -c "SELECT has_table_privilege('rollback_zitadel_reader','eventstore.events2','SELECT') AND
+     pg_get_userbyid(c.relowner) = '$zitadel_source_table_owner'
+     FROM pg_class c WHERE c.oid='eventstore.events2'::regclass")"
+[[ "$zitadel_restored_acl" == t ]] || { echo "ZITADEL eventstore owner or original GRANT lost after restore" >&2; exit 1; }
+
 zitadel_restored="$(docker exec "$zitadel_db_container" psql -U postgres -d zitadel -Atc \
   "SELECT marker FROM rollback_identity_probe WHERE id = 1")"
 [[ "$zitadel_restored" == original ]] || { echo "ZITADEL identity data was NOT restored" >&2; exit 1; }
@@ -454,6 +483,7 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
 # without the current job having exited successfully.
 if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
   jq -n --arg src "$source_version" --arg sha "$current_sha" \
+    --arg zitadel_candidate "$candidate_zitadel" --arg zitadel_source "$source_zitadel" \
     --argjson run "${GITHUB_RUN_ID:-0}" \
     '{kind:"real-upgrade-and-restore",sourceVersion:$src,targetCommit:$sha,workflowRunId:$run,
       actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
@@ -463,6 +493,8 @@ if [[ -n "${RP_ROLLBACK_EVIDENCE_OUTPUT:-}" ]]; then
       restoredSourceSchema:true,zitadelDatabaseRestored:true,
       zitadelSourceRuntimeReadyAfterRollback:true,
       zitadelSourceEventstoreVerified:true,
-      candidateZitadelRuntimeReadyBeforeRollback:true}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
+      candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:$zitadel_candidate,
+      sourceZitadelImage:$zitadel_source}' >"$RP_ROLLBACK_EVIDENCE_OUTPUT"
 fi
 echo "PASS: real published/candidate ZITADEL eventstore, source DB restores, source ZITADEL/API startup and previous Prisma read/write verified."

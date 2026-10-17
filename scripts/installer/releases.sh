@@ -58,7 +58,9 @@ rp_validate_release_manifest() {
        (.migrations.rollbackEvidence.kind == "real-upgrade-and-restore" and
         (.migrations.rollbackEvidence.workflowRunId | type == "number") and
         (.migrations.rollbackEvidence.sourceVersion | type == "string") and
-        .migrations.rollbackEvidence.sourceVersion == .migrations.rollbackAssessment.sourceVersion))
+        .migrations.rollbackEvidence.sourceVersion == .migrations.rollbackAssessment.sourceVersion and
+        .migrations.rollbackEvidence.candidateZitadelImage == .images.zitadel and
+        (.migrations.rollbackEvidence.candidateZitadelImage | type == "string")))
      else true end) and
     (if .migrations.rollbackAssessment != null and .migrations.rollbackPolicy == "image-only"
      then .migrations.rollbackAssessment.reason == "no-resourceportal-database-schema-changes"

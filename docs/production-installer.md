@@ -221,6 +221,15 @@ published image against the restored database, validate its schema and original
 events, and verify the previous API still reads and writes. A synthetic SQL
 probe or database checksum alone cannot certify the identity-server rollback.
 The three run-bound identity-runtime proofs are mandatory for a tested release.
+The candidate ZITADEL `ghcr.io/zitadel/zitadel@sha256:…` digest is read from
+that same runtime evidence and reused in the published attested manifest.
+Publication must not resolve the mutable release tag a second time. Both
+ResourcePortal and ZITADEL PostgreSQL snapshots restore the original table
+owners, database owner and GRANT/REVOKE state; the real rollback smoke asserts
+preservation of a dedicated read-only role and original table owner in both
+sources. ZITADEL may append ordinary startup events; a rollback is considered
+valid only if all original eventstore records (including payloads) remain
+identical, not simply when the total event count matches.
 
 These per-upgrade snapshots do not replace ongoing independent backups.
 

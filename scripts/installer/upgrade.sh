@@ -122,16 +122,11 @@ rp_upgrade_database_restore() {
     docker exec --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
       createdb -U "$POSTGRES_USER" -T template0 "$RP_RESTORE_STAGE"
     ' || return 1
-    # Restore original Zitadel eventstore ownership. An unconditional
-    # --no-owner would reassign all zitadel_user objects to postgres.
-    local restore_no_owner=""
-    [[ "$role" == postgres-zitadel ]] || restore_no_owner="--no-owner"
-    if ! docker exec -i --user postgres --env "RP_RESTORE_STAGE=$staging" \
-      --env "RP_RESTORE_NO_OWNER=$restore_no_owner" "$id" sh -ec '
-      if [ -n "$RP_RESTORE_NO_OWNER" ]; then
-        exec pg_restore --no-owner --no-privileges --exit-on-error --single-transaction \
-          -U "$POSTGRES_USER" -d "$RP_RESTORE_STAGE"
-      fi
+    # Both databases must retain original table/schema owners AND source
+    # ACL/GRANT state. pg_restore as a database superuser with default
+    # ownership/ACL replay; missing source roles fail --exit-on-error.
+    # Never use --no-owner or --no-privileges for either database.
+    if ! docker exec -i --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
       exec pg_restore --exit-on-error --single-transaction \
         -U "$POSTGRES_USER" -d "$RP_RESTORE_STAGE"
     ' < "$backup/$role.dump"; then

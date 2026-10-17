@@ -238,8 +238,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for image in ghcr.io/zitadel/zitadel:v4.17.0 traefik:v3.6.16; do docker pull "$image"; done
-          echo "ZITADEL_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/zitadel/zitadel:v4.17.0)" >> "$GITHUB_ENV"
+          # Resolve the candidate ZITADEL digest ONLY from the completed live
+          # restore evidence, not by pulling a mutable upstream tag again.
+          ZITADEL_REF="$(jq -er '.candidateZitadelImage' "$RUNNER_TEMP/rp-rollback-evidence.json")"
+          [[ "$ZITADEL_REF" =~ ^ghcr\.io/zitadel/zitadel@sha256:[a-f0-9]{64}$ ]] || {
+            echo "Release blocked: candidate ZITADEL image proof is missing" >&2; exit 1;
+          }
+          docker pull "$ZITADEL_REF"
+          [[ "$(docker image inspect --format='{{index .RepoDigests 0}}' "$ZITADEL_REF")" == "$ZITADEL_REF" ]] || exit 1
+          echo "ZITADEL_REF=$ZITADEL_REF" >> "$GITHUB_ENV"
+          docker pull traefik:v3.6.16
           echo "TRAEFIK_REF=$(docker inspect --format='{{index .RepoDigests 0}}' traefik:v3.6.16)" >> "$GITHUB_ENV"
       - name: Classify database rollback capability (fail closed)
         id: rollback-assessment
@@ -308,7 +316,7 @@ jobs:
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
             '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
              | if $rollback_policy == "tested" then
-                 .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version,databaseSnapshotRestored:true,restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true}
+                 .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version,databaseSnapshotRestored:true,restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,candidateZitadelImage:$zitadel}
                else . end' \
             > resourceportal-release-manifest.json
       - name: Attest release manifest with GitHub Actions OIDC provenance

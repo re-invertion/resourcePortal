@@ -144,6 +144,13 @@ rp_rollback_zitadel_events() {
   docker exec "$zitadel_db_container" psql -U postgres -d zitadel -At -v ON_ERROR_STOP=1 \
     -c 'SELECT count(*) FROM eventstore.events2;'
 }
+rp_rollback_zitadel_event_fingerprints() {
+  # Hash every immutable event including payload. Post-restart ZITADEL may
+  # append its own legitimate events, so a count-only comparison is invalid.
+  # A previously committed source event may NEVER disappear or change.
+  docker exec "$zitadel_db_container" psql -U postgres -d zitadel     -At -v ON_ERROR_STOP=1 -c     'SELECT md5(row_to_json(e)::text) FROM eventstore.events2 AS e ORDER BY 1;'
+}
+
 rp_rollback_zitadel_capture_source() {
   zitadel_source_schema_inventory="$(rp_rollback_zitadel_schema_inventory)" || return 1
   [[ "$zitadel_source_schema_inventory" == *"eventstore.events2"* ]] || {
@@ -155,6 +162,9 @@ rp_rollback_zitadel_capture_source() {
     echo "Published ZITADEL has no persisted source eventstore events" >&2
     return 1
   }
+  rp_rollback_zitadel_event_fingerprints >"$root/source-zitadel-events.sha256" || return 1
+  [[ -s "$root/source-zitadel-events.sha256" ]] || return 1
+  [[ "$(wc -l < "$root/source-zitadel-events.sha256")" -eq "$zitadel_source_events" ]] || return 1
 }
 rp_rollback_zitadel_verify_restored_source() {
   local schema restored_events
@@ -165,8 +175,15 @@ rp_rollback_zitadel_verify_restored_source() {
     return 1
   }
   restored_events="$(rp_rollback_zitadel_events)" || return 1
-  [[ "$restored_events" == "$zitadel_source_events" ]] || {
-    echo "Real ZITADEL source eventstore events changed after restore" >&2
+  [[ "$restored_events" =~ ^[0-9]+$ && "$restored_events" -ge "$zitadel_source_events" ]] || {
+    echo "Real ZITADEL lost source eventstore entries after restore" >&2
     return 1
   }
+  rp_rollback_zitadel_event_fingerprints >"$root/restored-zitadel-events.sha256" || return 1
+  # Ignore legitimately appended startup events but reject deleted or
+  # modified source events, including identity/authorization payloads.
+  if [[ -n "$(comm -23 "$root/source-zitadel-events.sha256" "$root/restored-zitadel-events.sha256")" ]]; then
+    echo "Restored ZITADEL lost or changed source eventstore event payloads" >&2
+    return 1
+  fi
 }
