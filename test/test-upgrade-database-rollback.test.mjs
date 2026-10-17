@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 const upgrade = readFileSync("scripts/installer/upgrade.sh", "utf8");
 const smoke = readFileSync("scripts/run-automatic-rollback-smoke.sh", "utf8");
 const policy = readFileSync("scripts/release-rollback-policy.mjs", "utf8");
+const testedImagePublication = readFileSync("scripts/publish-tested-release-image.sh", "utf8");
 
 test("source DB snapshots are taken after quiesce but before RP/ZITADEL migrations", () => {
   const q = upgrade.indexOf('rp_upgrade_quiesce_database_clients ||', upgrade.indexOf('rp_upgrade_apply()'));
@@ -178,4 +179,34 @@ test("signed tested manifest rejects a ZITADEL digest different from the live ro
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test("release publishes the exact previously tested local API/Web/Postgres image IDs, never rebuilding with Buildx", () => {
+  const publication = readFileSync(".github/workflows/release.yml", "utf8");
+  assert.doesNotMatch(publication, /docker\/build-push-action@/);
+  for (const role of ["api", "web", "postgres"]) {
+    assert.match(publication, new RegExp("scripts/publish-tested-release-image\\.sh " + role));
+  }
+  assert.match(testedImagePublication, /resourceportal-\$role-candidate/);
+  assert.match(testedImagePublication, /docker tag "\$candidate" "\$published"/);
+  assert.match(testedImagePublication, /docker push "\$published"/);
+  assert.match(testedImagePublication, /tested_id/);
+  assert.match(testedImagePublication, /docker image inspect --format '\{\{\.Id\}\}' "\$ref"/);
+  assert.doesNotMatch(testedImagePublication, /docker build|buildx build/);
+});
+
+test("release rollback cannot bypass healthy local Swarm task discovery using standalone database containers", () => {
+  assert.match(smoke, /docker swarm init --advertise-addr/);
+  assert.match(smoke, /docker network create --driver overlay --attachable/);
+  assert.match(smoke, /docker service create --name "\$db_service_rp"/);
+  assert.match(smoke, /docker service create --name "\$db_service_zitadel"/);
+  assert.match(smoke, /db_container="\$\(rp_upgrade_database_task postgres-rp/);
+  assert.match(smoke, /zitadel_db_container="\$\(rp_upgrade_database_task postgres-zitadel/);
+  assert.doesNotMatch(smoke, /^rp_upgrade_database_task\(\)\s*\{/m);
+  assert.doesNotMatch(smoke, /docker run -d --name "\$db_container"|docker run -d --name "\$zitadel_db_container"/);
+  assert.match(smoke, /--health-cmd 'pg_isready/);
+  assert.match(smoke, /docker service rm "\$db_service_rp" "\$db_service_zitadel"/);
+  assert.match(upgrade, /com\.docker\.swarm\.service\.name=\$service/);
+  assert.match(upgrade, /\.State\.Health\.Status/);
 });

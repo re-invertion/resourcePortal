@@ -211,29 +211,23 @@ jobs:
             --mode "$VALIDATION_MODE" \
             --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
             --require-automatic
-      - name: Build and publish API image
+      # Publishing MUST reuse the exact Docker local candidates already run
+      # by the real rollback gate. Independently rebuilding here breaks proof.
+      - name: Publish rollback-tested API image
         id: api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-api:${{ steps.version.outputs.tag }}
-      - name: Build and publish Web image
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh api "$RELEASE_TAG"
+      - name: Publish rollback-tested Web image
         id: web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/resourceportal-web/Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-web:${{ steps.version.outputs.tag }}
-      - name: Build and publish fenced PostgreSQL image
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh web "$RELEASE_TAG"
+      - name: Publish rollback-tested PostgreSQL image
         id: postgres
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/resourceportal-postgres/Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh postgres "$RELEASE_TAG"
       - name: Resolve immutable upstream images
         shell: bash
         run: |

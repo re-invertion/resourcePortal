@@ -231,6 +231,14 @@ sources. ZITADEL may append ordinary startup events; a rollback is considered
 valid only if all original eventstore records (including payloads) remain
 identical, not simply when the total event count matches.
 
+The real premerge/release recovery gate uses local healthy Docker Swarm
+PostgreSQL services for both source databases. It calls unmodified
+rp_upgrade_database_task to verify placement and health; standalone
+PostgreSQL containers cannot qualify. After a successful recovery proof,
+the release workflow must tag and publish the SAME locally built API/Web/
+Postgres image IDs already exercised by the rollback smoke. Rebuilding them
+after recovery testing would break signed release proof.
+
 These per-upgrade snapshots do not replace ongoing independent backups.
 
 The admin update dialog reports why automatic rollback is unavailable:

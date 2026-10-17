@@ -16,7 +16,7 @@ rp_rollback_zitadel_prepare() {
   zitadel_runtime_container="${stack}-zitadel-runtime"
   local config_dir="$root/zitadel-real-runtime"
   install -d -m 0700 "$config_dir" "$config_dir/bootstrap" || return 1
-  cat >"$config_dir/public.yaml" <<'YAML'
+  cat >"$config_dir/public.yaml" <<YAML
 Log:
   Level: warn
 Port: 8080
@@ -31,7 +31,7 @@ DefaultInstance:
       Required: false
 Database:
   postgres:
-    Host: zitadel-db
+    Host: $db_service_zitadel
     Port: 5432
     Database: zitadel
     User:

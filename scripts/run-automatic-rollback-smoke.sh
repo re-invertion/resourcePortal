@@ -23,19 +23,32 @@ root="$(mktemp -d /tmp/resourceportal-rollback-gate.XXXXXX)"
 stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
 db_network="${stack}-db-net"
-db_container="${stack}-db"
-zitadel_db_container="${stack}-zitadel-db"
+db_service_rp="${stack}_postgres-rp"
+db_service_zitadel="${stack}_postgres-zitadel"
+db_volume_rp="${stack}-rp-postgres-data"
+db_volume_zitadel="${stack}-zitadel-postgres-data"
+db_container=""
+zitadel_db_container=""
 zitadel_runtime_container="${stack}-zitadel-runtime"
 old_api_probe="${stack}-previous-api-probe"
 db_created=false
 swarm_started=false
 cleanup() {
-  docker rm -f "$old_api_probe" "$zitadel_runtime_container" "$zitadel_db_container" >/dev/null 2>&1 || true
-  if [[ "$db_created" == true ]]; then
-    docker rm -f "$db_container" >/dev/null 2>&1 || true
-    docker network rm "$db_network" >/dev/null 2>&1 || true
-  fi
+  docker rm -f "$old_api_probe" "$zitadel_runtime_container" >/dev/null 2>&1 || true
+  # Actual Swarm services are removed BEFORE detaching their volumes/network.
+  docker service rm "$db_service_rp" "$db_service_zitadel" >/dev/null 2>&1 || true
   docker stack rm "$stack" >/dev/null 2>&1 || true
+  for ((cleanup_try=0;cleanup_try<20;cleanup_try++)); do
+    if ! docker ps -q --filter "label=com.docker.swarm.service.name=$db_service_rp" --filter status=running | grep -q . &&
+       ! docker ps -q --filter "label=com.docker.swarm.service.name=$db_service_zitadel" --filter status=running | grep -q .; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$db_created" == true ]]; then
+    docker network rm "$db_network" >/dev/null 2>&1 || true
+    docker volume rm "$db_volume_rp" "$db_volume_zitadel" >/dev/null 2>&1 || true
+  fi
   if [[ "$swarm_started" == true ]]; then docker swarm leave --force >/dev/null 2>&1 || true; fi
   rm -rf -- "$root"
 }
@@ -77,37 +90,36 @@ rp_rollback_zitadel_prepare
 # images running "sleep" or an old Prisma client using expanded schema. The
 # exact signed previous-release Postgres/API images and candidate Prisma
 # migrations run against disposable test databases, never live data.
-docker network create "$db_network" >/dev/null
+# Exercise the REAL production task locator. Both PostgreSQL instances
+# must be local, healthy Swarm tasks, not standalone "docker run" fixtures.
+docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
+swarm_started=true
+export RP_CFG_STACK_NAME="$stack"
+docker network create --driver overlay --attachable "$db_network" >/dev/null
 db_created=true
-docker run -d --name "$db_container" --network "$db_network" \
-  --network-alias migration-db \
-  -e POSTGRES_DB=resource_portal -e POSTGRES_USER=resource_portal \
-  -e POSTGRES_PASSWORD=rollback-smoke-only \
-  "$source_postgres" >/dev/null
-# Separate ZITADEL PostgreSQL must be restored, not just the RP DB schema.
-docker run -d --name "$zitadel_db_container" --network "$db_network" \
-  --network-alias zitadel-db \
-  -e POSTGRES_DB=zitadel -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=rollback-smoke-only \
-  "$source_postgres" >/dev/null
-compat_url="postgresql://resource_portal:rollback-smoke-only@migration-db:5432/resource_portal?schema=public"
+docker service create --name "$db_service_rp"   --network "$db_network"   --mount "type=volume,source=$db_volume_rp,target=/var/lib/postgresql/data"   --env POSTGRES_DB=resource_portal --env POSTGRES_USER=resource_portal   --env POSTGRES_PASSWORD=rollback-smoke-only   --health-cmd 'pg_isready -U resource_portal -d resource_portal'   --health-interval 2s --health-retries 30 --health-timeout 3s   "$source_postgres" >/dev/null
+docker service create --name "$db_service_zitadel"   --network "$db_network"   --mount "type=volume,source=$db_volume_zitadel,target=/var/lib/postgresql/data"   --env POSTGRES_DB=zitadel --env POSTGRES_USER=postgres   --env POSTGRES_PASSWORD=rollback-smoke-only   --health-cmd 'pg_isready -U postgres -d zitadel'   --health-interval 2s --health-retries 30 --health-timeout 3s   "$source_postgres" >/dev/null
+
 db_ready=false
-for ((attempt=0;attempt<60;attempt++)); do
-  if docker exec "$db_container" pg_isready -U resource_portal -d resource_portal >/dev/null 2>&1; then
-    db_ready=true
-    break
+for ((attempt=0;attempt<90;attempt++)); do
+  # No override: rp_upgrade_database_task checks exactly one local Swarm
+  # container and requires its actual Docker health state to be "healthy".
+  if db_container="$(rp_upgrade_database_task postgres-rp 2>/dev/null)"; then
+    db_ready=true; break
   fi
   sleep 2
 done
-[[ "$db_ready" == true ]] || { echo "Real compatibility database never became ready" >&2; exit 1; }
+[[ "$db_ready" == true ]] || { docker service ps --no-trunc "$db_service_rp" >&2 || true; echo "Real RP Swarm database task failed health/discovery" >&2; exit 1; }
 zitadel_ready=false
-for ((attempt=0;attempt<60;attempt++)); do
-  if docker exec "$zitadel_db_container" pg_isready -U postgres -d zitadel >/dev/null 2>&1; then
+for ((attempt=0;attempt<90;attempt++)); do
+  if zitadel_db_container="$(rp_upgrade_database_task postgres-zitadel 2>/dev/null)"; then
     zitadel_ready=true; break
   fi
   sleep 2
 done
-[[ "$zitadel_ready" == true ]] || { echo "ZITADEL snapshot database never became ready" >&2; exit 1; }
+[[ "$zitadel_ready" == true ]] || { docker service ps --no-trunc "$db_service_zitadel" >&2 || true; echo "Real ZITADEL Swarm database task failed health/discovery" >&2; exit 1; }
+# Containers use the attachable production-style Swarm overlay for migrations.
+compat_url="postgresql://resource_portal:rollback-smoke-only@$db_service_rp:5432/resource_portal?schema=public"
 rp_rollback_zitadel_start "$source_zitadel" "published source" || exit 1
 rp_rollback_zitadel_stop
 # Supplemental marker confirms non-eventstore candidate-only objects disappear.
@@ -244,9 +256,6 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
       candidateZitadelImage:$zitadel
     }' "$root/previous-release.json" >"$root/target-release.json"
 rp_validate_release_manifest "$root/target-release.json"
-docker swarm init --advertise-addr "$(hostname -I | awk '{print $1}')" >/dev/null
-swarm_started=true
-
 service_images_match() {
   local phase="$1" role expected observed
   for role in api web postgres; do
@@ -307,15 +316,8 @@ rp_upgrade_refresh_firewall() { return 0; }
 rp_upgrade_quiesce_database_clients() {
   rp_rollback_zitadel_stop
 }
-# Only fixture lookup is supplied here: production snapshot and restore code,
-# including real pg_dump, pg_restore and journal checks, is never mocked.
-rp_upgrade_database_task() {
-  case "$1" in
-    postgres-rp) printf '%s\n' "$db_container" ;;
-    postgres-zitadel) printf '%s\n' "$zitadel_db_container" ;;
-    *) return 1 ;;
-  esac
-}
+# rp_upgrade_database_task is intentionally NOT overridden. Its production
+# local-Swarm-placement/health/uniqueness checks gate every snapshot/restore.
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
