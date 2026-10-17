@@ -112,6 +112,7 @@ export class AuthFlowService {
       tokenResponse.access_token,
       identityProviderId,
       state,
+      await this.nativeOnly(),
     );
     // A hosted ZITADEL login may select an upstream IdP even without an RP
     // identityProviderId query argument. Reject positively attested external

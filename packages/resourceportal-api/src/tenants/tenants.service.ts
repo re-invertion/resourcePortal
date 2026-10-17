@@ -732,7 +732,8 @@ export class TenantsService {
       // Atomically invalidate tenant SSO readiness with invitation acceptance;
       // otherwise a crash could persist active membership without its role grant.
       await tx.tenantOidcProvider.updateMany({
-        where: { tenantId: invitation.tenantId },
+        where: { tenantId: invitation.tenantId,
+          status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
         data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
 
@@ -1151,7 +1152,7 @@ export class TenantsService {
 
         // A failure invalidating IdP readiness aborts membership creation.
         await tx.tenantOidcProvider.updateMany({
-          where: { tenantId },
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
           data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
         });
 
@@ -1208,15 +1209,15 @@ export class TenantsService {
       [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
     );
 
-    if (dto.status === MembershipStatus.Suspended) {
-      await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, existing.userId);
-    }
     const membership = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
       const lockedMembership = await tx.tenantMembership.findFirst({
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      if (dto.status === MembershipStatus.Suspended) {
+        await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
+      }
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, dto, tx);
       if (dto.roleIds !== undefined) {
         await tx.membershipRole.deleteMany({
@@ -1239,7 +1240,7 @@ export class TenantsService {
       // A failed IdP invalidation must abort the membership and audit commit.
       // Previously markStale() ran post-commit and left ungranted members Active.
       await tx.tenantOidcProvider.updateMany({
-        where: { tenantId },
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
         data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
 
@@ -1283,13 +1284,13 @@ export class TenantsService {
       actor,
       existing.roles.map(({ role }) => role.id),
     );
-    await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, existing.userId);
     await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
       const lockedMembership = await tx.tenantMembership.findFirst({
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, {
         status: MembershipStatus.Suspended, roleIds: [],
       }, tx);
@@ -1300,7 +1301,7 @@ export class TenantsService {
       // A failed IdP invalidation must abort the membership and audit commit.
       // Previously markStale() ran post-commit and left ungranted members Active.
       await tx.tenantOidcProvider.updateMany({
-        where: { tenantId },
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
         data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
 

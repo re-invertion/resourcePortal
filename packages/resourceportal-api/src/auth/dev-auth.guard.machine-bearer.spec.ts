@@ -67,7 +67,7 @@ describe("opaque machine bearer endpoints (OIDC mode)", () => {
     await expect(guard.canActivate(
       context(GateAgentController, GateAgentController.prototype.enroll),
     )).rejects.toThrow("Invalid OIDC token");
-    expect(oidc.authenticatePrincipalToken).toHaveBeenCalledWith("opaque-gate-token");
+    expect(oidc.authenticatePrincipalToken).toHaveBeenCalledWith("opaque-gate-token", false);
   });
 
   it("never bypasses authentication on a non-public route even if accidentally marked", async () => {

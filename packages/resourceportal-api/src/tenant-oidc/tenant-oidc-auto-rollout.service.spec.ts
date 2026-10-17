@@ -87,7 +87,7 @@ describe("Tenant OIDC automatic rollout", () => {
     const f = fixture();
     const result = await f.service.reconcile();
     expect(result).toMatchObject({ state: "prepared", attempted: 1, prepared: 1, activated: 0 });
-    expect(f.oidc.provision).toHaveBeenCalledWith("t1");
+    expect(f.oidc.provision).toHaveBeenCalledWith("t1", true);
     expect(f.oidc.reconcileGrants).toHaveBeenCalledWith("t1");
     expect(f.oidc.activate).not.toHaveBeenCalled();
   });
@@ -119,6 +119,21 @@ describe("Tenant OIDC automatic rollout", () => {
     f.prisma.tenantOidcProvider.updateMany.mockResolvedValue({ count: 0 });
     expect(await f.service.reconcile()).toMatchObject({ attempted: 0 });
     expect(f.oidc.provision).not.toHaveBeenCalled();
+  });
+
+  it.each(["Disabling", "Disabled", "Deleted"])("never recreates or activates explicitly opted-out %s tenants", async (status) => {
+    const f = fixture({ TENANT_OIDC_ACTIVATION_ALLOWED: "auto" });
+    f.prisma.tenantOidcProvider.findUnique.mockResolvedValue({ enabled: false, status, zitadelProjectId: null });
+    expect(await f.service.reconcile()).toMatchObject({ state: "partial", attempted: 0, blocked: 1 });
+    expect(f.oidc.provision).not.toHaveBeenCalled();
+    expect(f.oidc.reconcileGrants).not.toHaveBeenCalled();
+    expect(f.oidc.activate).not.toHaveBeenCalled();
+  });
+
+  it("blocks installer readiness after explicit tenant opt-out", async () => {
+    const f = fixture({ TENANT_OIDC_ACTIVATION_ALLOWED: "auto" });
+    f.prisma.tenantOidcProvider.count.mockImplementation(({ where }: { where: { status?: unknown } }) => Promise.resolve(where.status ? 1 : 0));
+    await expect(f.service.readiness()).resolves.toEqual({ status: "blocked" });
   });
 
   it("skips already-active tenants on next reconciliation", async () => {
@@ -162,14 +177,14 @@ describe("Tenant OIDC automatic rollout", () => {
       .mockRejectedValueOnce(new Error("upstream unavailable"));
     const result = await f.service.reconcile();
     expect(result).toMatchObject({ state: "partial", blocked: 1, activated: 0 });
-    expect(f.oidc.disable).toHaveBeenCalledWith("t1");
+    expect(f.oidc.disable).toHaveBeenCalledWith("t1", false);
   });
 
   it("reports read-only readiness only after every active tenant has active SSO", async () => {
     const f = fixture({ TENANT_OIDC_ACTIVATION_ALLOWED: "auto" });
     expect(await f.service.readiness()).toEqual({ status: "pending" });
     expect(f.oidc.verifyIssuerSecurity).not.toHaveBeenCalled();
-    f.prisma.tenantOidcProvider.count.mockResolvedValue(1);
+    f.prisma.tenantOidcProvider.count.mockImplementation(({ where }: { where: { status?: unknown; enabled?: boolean } }) => Promise.resolve(where.enabled ? 1 : 0));
     expect(await f.service.readiness()).toEqual({ status: "ready" });
     expect(f.oidc.verifyIssuerSecurity).toHaveBeenCalledOnce();
     f.prisma.userIdentity.count.mockResolvedValue(1);

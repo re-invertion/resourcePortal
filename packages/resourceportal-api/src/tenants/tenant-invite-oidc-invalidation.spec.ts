@@ -41,7 +41,7 @@ describe("tenant invite activation invalidates OIDC grants transactionally", () 
     await f.svc.acceptInvitation({ token }, f.actor);
     expect(f.tx.tenantMembership.create).toHaveBeenCalledOnce();
     expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
-      where: { tenantId: "tenant-1" },
+      where: { tenantId: "tenant-1", status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
       data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
     });
     expect(f.tx.tenantInvitation.delete).toHaveBeenCalledOnce();

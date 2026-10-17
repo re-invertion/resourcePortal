@@ -78,6 +78,13 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
     if (federatedProviders || federatedAccounts || inboundPolicies || federatedSessions) {
       return { status: "blocked" };
     }
+    // An administrator's explicit opt-out cannot be treated as a successful
+    // one-click migration; the installer must fail closed rather than undo it.
+    const optedOut = await this.prisma.tenantOidcProvider.count({ where: {
+      status: { in: ["Disabling", "Disabled", "Deleted"] },
+      tenant: { status: TenantStatus.Active },
+    } });
+    if (optedOut) return { status: "blocked" };
     if (activeTenants !== enabledTenants) return { status: "pending" };
     try {
       await this.oidc.verifyIssuerSecurity();
@@ -137,6 +144,12 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
         if (legacyClients > 0) { blocked++; continue; }
         const active = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
         if (active?.enabled && active.status === "Active") continue;
+        // Explicit disable/delete is a durable local opt-out/tombstone. Never
+        // undo an administrator's decision on the next background pass.
+        if (["Disabling", "Disabled", "Deleted"].includes(active?.status ?? "")) {
+          blocked++;
+          continue;
+        }
         if (active?.status === "GrantsReconciled" && !activationPermitted) continue;
 
         const members = await this.prisma.tenantMembership.findMany({
@@ -157,7 +170,7 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
         const owner = randomUUID();
         const now = Date.now();
         const claimed = await this.prisma.tenantOidcProvider.updateMany({
-          where: { tenantId, enabled: false, OR: [
+          where: { tenantId, enabled: false, status: { notIn: ["Disabling", "Disabled", "Deleted"] }, OR: [
             { autoRolloutLeaseUntil: null },
             { autoRolloutLeaseUntil: { lt: new Date(now) } },
           ] },
@@ -171,7 +184,7 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
         attempted++;
         try {
           const existing = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
-          if (!existing?.zitadelProjectId) await this.oidc.provision(tenantId);
+          if (!existing?.zitadelProjectId) await this.oidc.provision(tenantId, true);
           await this.oidc.reconcileGrants(tenantId);
           prepared++;
           toActivate.push(tenantId);
@@ -200,7 +213,7 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
           // partially failed cohort even if RP declared the upgrade failed.
           for (const tenantId of enabledNow.reverse()) {
             try {
-              await this.oidc.disable(tenantId);
+              await this.oidc.disable(tenantId, false);
             } catch {
               // If upstream revocation is unavailable, keep the local state
               // blocked; the installer must not report successful activation.

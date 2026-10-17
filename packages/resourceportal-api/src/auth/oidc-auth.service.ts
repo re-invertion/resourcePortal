@@ -70,6 +70,7 @@ export class OidcAuthService {
     accessToken: string,
     identityProviderId?: string,
     loginNonce?: string,
+    rejectFederated = false,
   ): Promise<AuthenticatedUser> {
     const idTokenClaims = await this.verifyToken(idToken);
     let authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
@@ -97,25 +98,29 @@ export class OidcAuthService {
         throw new UnauthorizedException("Selected external identity provider was not verified");
       }
     }
+    if (rejectFederated && authenticatedIdpId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     const humanClaims = await this.resolveHumanClaims(accessToken, idTokenClaims);
     const user = await this.findOrProvisionUser(this.getIssuer(), humanClaims, identityProviderId);
     return { ...user, authenticatedIdpId };
   }
 
-  async authenticateMcpPrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
+  async authenticateMcpPrincipalToken(token: string, rejectFederated = false): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
     this.assertMcpTokenClaims(payload);
-    return this.authenticateVerifiedPrincipal(token, payload);
+    return this.authenticateVerifiedPrincipal(token, payload, rejectFederated);
   }
 
-  async authenticatePrincipalToken(token: string): Promise<AuthenticatedPrincipal> {
+  async authenticatePrincipalToken(token: string, rejectFederated = false): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
-    return this.authenticateVerifiedPrincipal(token, payload);
+    return this.authenticateVerifiedPrincipal(token, payload, rejectFederated);
   }
 
   private async authenticateVerifiedPrincipal(
     token: string,
     payload: JWTPayload,
+    rejectFederated: boolean,
   ): Promise<AuthenticatedPrincipal> {
     const subject = this.requireStringClaim(payload.sub, "sub");
     const serviceIdentity = await this.findServiceIdentity(subject);
@@ -130,12 +135,18 @@ export class OidcAuthService {
       };
     }
 
+    // The claim is signed and issuer-verified. Reject BEFORE UserInfo and
+    // findOrProvisionUser, which can create identities or mutate user records.
+    const authenticatedIdpId = this.verifiedAuthenticationIdpId(payload);
+    if (rejectFederated && authenticatedIdpId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     const humanClaims = await this.resolveHumanClaims(token, payload);
     return {
       type: "User",
       user: {
         ...await this.findOrProvisionUser(this.getIssuer(), humanClaims),
-        authenticatedIdpId: this.verifiedAuthenticationIdpId(payload),
+        authenticatedIdpId,
       },
     };
   }

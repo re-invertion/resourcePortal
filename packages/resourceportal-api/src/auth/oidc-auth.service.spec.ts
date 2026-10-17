@@ -285,6 +285,48 @@ describe("OidcAuthService", () => {
     );
   });
 
+  it.each(["new", "existing"])("rejects attested external bearer before %s user writes", async (scenario) => {
+    const fixture = await createTokenFixture(true, true, "external-zitadel-idp");
+    const prisma = {
+      serviceIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+      userIdentity: { findUnique: vi.fn().mockResolvedValue(scenario === "existing" ? { id: "existing-identity" } : null) },
+      user: {
+        findUnique: vi.fn(), create: vi.fn(), update: vi.fn(),
+      },
+    };
+    const fetchMock = installOidcFetch(fixture);
+    const service = new OidcAuthService(createConfig({
+      OIDC_ISSUER_URL: fixture.issuer,
+      OIDC_CLIENT_ID: fixture.audience,
+    }), prisma as unknown as PrismaService);
+    await expect(service.authenticatePrincipalToken(fixture.token, true))
+      .rejects.toThrow("External identity provider login is disabled");
+    expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/oidc/v1/userinfo")))
+      .toHaveLength(0);
+  });
+
+  it("rejects attested external browser callback before any user or identity mutation", async () => {
+    const fixture = await createTokenFixture(true, true, "external-zitadel-idp");
+    const prisma = {
+      userIdentity: { findUnique: vi.fn() },
+      user: { create: vi.fn(), update: vi.fn() },
+    };
+    installOidcFetch(fixture);
+    const service = new OidcAuthService(createConfig({
+      OIDC_ISSUER_URL: fixture.issuer,
+      OIDC_CLIENT_ID: fixture.audience,
+    }), prisma as unknown as PrismaService);
+    await expect(service.authenticateBrowserTokens(fixture.token, "access", undefined, undefined, true))
+      .rejects.toThrow("External identity provider login is disabled");
+    expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
   it("accepts an MCP token carrying the ResourcePortal project audience", async () => {
     const fixture = await createTokenFixture(true, false);
     const prisma = {
