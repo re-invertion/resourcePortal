@@ -229,6 +229,7 @@ upgrade_automatic_recovery_smoke() (
   log="$(mktemp /tmp/rp-rollback-smoke.XXXXXX)"
   trap 'rm -f "$log"' EXIT
   RP_CFG_DOMAIN=rp.example.test
+  rp_upgrade_database_restore(){ return 0; }
   docker(){ printf 'docker:%s\n' "$*" >>"$log"; return 0; }
   rp_wait_for_https_origin(){ printf 'healthy:%s\n' "$1" >>"$log"; return 0; }
   rp_upgrade_restore_after_failure "$safe_manifest" "$manifest" "injected upgrade failure" || true
@@ -263,8 +264,12 @@ contains "$workflow" 'branches: [main]' 'release workflow automatically publishe
 contains "$workflow" '--target "$GITHUB_SHA"' 'release workflow pins tag to the validated main revision'
 not_contains "$workflow" 'workflow_dispatch:' 'release workflow cannot be manually dispatched'
 contains "$workflow" 'steps.version.outputs.tag' 'release workflow uses validated release tag for image publication'
-contains "$workflow" 'docker/build-push-action' 'release workflow builds immutable images'
-contains "$workflow" 'ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}' 'release workflow publishes fenced PostgreSQL image'
+contains "$workflow" 'scripts/publish-tested-release-image.sh api "$RELEASE_TAG"' 'release publishes rollback-tested API without rebuilding'
+contains "$workflow" 'scripts/publish-tested-release-image.sh web "$RELEASE_TAG"' 'release publishes rollback-tested Web without rebuilding'
+contains "$workflow" 'scripts/publish-tested-release-image.sh postgres "$RELEASE_TAG"' 'release publishes rollback-tested fenced PostgreSQL without rebuilding'
+not_contains "$workflow" 'docker/build-push-action' 'release refuses to rebuild untested images after rollback certification'
+contains "$(cat "$repo_root/scripts/publish-tested-release-image.sh")" 'docker push "$published"' 'release pushes exact local tested images'
+contains "$(cat "$repo_root/scripts/publish-tested-release-image.sh")" 'tested_id' 'release rejects source/published image ID mismatch'
 for dockerfile in "$repo_root/Dockerfile" "$repo_root/packages/resourceportal-web/Dockerfile" "$repo_root/packages/resourceportal-postgres/Dockerfile"; do
   contains "$(cat "$dockerfile")" 'org.opencontainers.image.source="https://github.com/re-invertion/resourcePortal"' "release image links to public source repository: ${dockerfile#$repo_root/}"
 done
@@ -484,6 +489,10 @@ upgrade_orders_dependencies_before_final_rollout() (
   RP_CFG_DOMAIN=rp.example.test
   export RP_CFG_RELEASE_VERSION RP_CFG_ACME_ENVIRONMENT RP_CFG_DOMAIN
   rp_verify_release_manifest_attestation(){ printf 'provenance-verified\n' >>"$log"; }
+  rp_upgrade_database_snapshot_prepare(){ printf 'database-snapshot-verified\n' >>"$log"; }
+  rp_upgrade_database_restore(){ return 0; }
+  rp_upgrade_rollback_allowed(){ printf 'rollback-verified\n' >>"$log"; }
+  rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'tenant-sso-ready\n' >>"$log"; }
   rp_upgrade_identity_preflight(){ printf 'identity-verified\n' >>"$log"; }
   rp_config_apply_defaults(){ printf 'defaults\n' >>"$log"; }
   rp_pull_release_images(){ printf 'pull\n' >>"$log"; }

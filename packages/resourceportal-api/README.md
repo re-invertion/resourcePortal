@@ -42,7 +42,8 @@ Main public resource groups:
 /api/auth
 /api/tenants
 /api/tenants/:tenantId/auth-policy
-/api/tenants/:tenantId/identity-providers
+/api/tenants/:tenantId/identity-providers (legacy inbound federation)
+/api/tenants/:tenantId/oidc-provider (outbound tenant OIDC)
 /api/tenants/:tenantId/invitations
 /api/tenants/:tenantId/groups
 /api/tenants/:tenantId/app-groups
@@ -58,18 +59,20 @@ Main public resource groups:
 
 `AUTH_MODE=oidc` and `AUTH_MODE=zitadel` accept bearer JWTs and session cookies issued through the OIDC login flow.
 
-Tenant auth policy is available at `/api/tenants/:tenantId/auth-policy`. It controls whether platform login and tenant identity providers are allowed or required.
+Tenant authentication policy is available at `/api/tenants/:tenantId/auth-policy`. Its legacy incoming-provider options are retained only for a safe transition and account recovery. See `docs/tenant-oidc-operator-guide.md` and `docs/tenant-idp-native-only-cutover.md`.
 
-Tenant identity providers are provisioned in the shared Resource Portal ZITADEL organization through `/api/tenants/:tenantId/identity-providers`. OIDC providers require `issuer`, `clientId`, and `clientSecret`; SAML providers require `metadataUrl`. Client secrets are encrypted before storage and never returned by the API. Configure `ZITADEL_ORGANIZATION_ID`, `ZITADEL_MANAGEMENT_URL`, and a dedicated service-account PAT in `ZITADEL_MANAGEMENT_TOKEN` for provisioning. The organization's custom login policy must allow external identity providers (`allowExternalIdp=true`).
+**Legacy incoming OIDC/SAML federation** remains at `/api/tenants/:tenantId/identity-providers` only during migration. Those providers are NOT tenants' outbound ResourcePortal IdPs. The `RP_NATIVE_LOGIN_ONLY=true` flag disables explicit incoming provider selection and blocks new provider creation/updates. Production cutover also requires removing external IdPs from the actual ZITADEL hosted login policy after verifying that affected users have usable native login, MFA and recovery. Existing identity links are preserved for safety.
 
-Browser login discovery and direct provider selection are available through:
+**New outbound tenant OIDC** is managed under `/api/tenants/:tenantId/oidc-provider`. Each tenant has a dedicated ZITADEL project with the actual shared issuer and an explicit `rp.tenant.member` role derived from active memberships. Client registration and token use require project role checking. It is **disabled by default**: do not enable `TENANT_OIDC_ACTIVATION_ALLOWED=true` until actual multi-tenant, consent, refresh, role revocation, native RP login and automatic rollback E2E is certified. Configure `ZITADEL_ORGANIZATION_ID`, `ZITADEL_MANAGEMENT_TOKEN`, `OIDC_ISSUER_URL` and optionally `ZITADEL_MANAGEMENT_URL`. See `docs/tenant-oidc-e2e-certification.md`.
+
+During the migration, legacy inbound provider discovery and direct selection may still be available through:
 
 ```text
 GET /api/auth/providers?tenantId=TENANT_UUID
 GET /api/auth/login?tenantId=TENANT_UUID&identityProviderId=PROVIDER_UUID
 ```
 
-Direct selection adds the ZITADEL organization and identity-provider reserved scopes to the Authorization Code + PKCE request. Tenant auth policy is enforced before redirecting.
+Legacy provider selection adds ZITADEL scopes and enforces tenant policy until native-only mode is enabled. When `RP_NATIVE_LOGIN_ONLY=true`, explicit provider selection is rejected; the hosted ZITADEL login policy must be separately verified to disallow upstream providers.
 
 Tenant invitations are available at `/api/tenants/:tenantId/invitations`, with acceptance through `/api/invitations/accept`. The create/resend responses include the raw one-time token; stored invitations keep only a SHA-256 token hash.
 

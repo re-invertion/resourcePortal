@@ -1,0 +1,25 @@
+# CI-only override for the pinned ZITADEL v4 federation container.
+# Isolated HTTPS issuer, backed by a self-signed test-only certificate
+# trusted explicitly by NODE_EXTRA_CA_CERTS. No production endpoints.
+services:
+  zitadel:
+    environment:
+      ZITADEL_PORT: "8443"
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: "8443"
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_TLS_ENABLED: "true"
+      ZITADEL_TLS_CERTPATH: /bootstrap/tls/issuer.crt
+      ZITADEL_TLS_KEYPATH: /bootstrap/tls/issuer.key
+    command:
+      - start-from-init
+      - --config
+      - /zitadel-config.yaml
+      - --config
+      - /zitadel-secrets.yaml
+      - --steps
+      - /zitadel-init-steps.yaml
+      - --masterkey
+      - FederationMasterKey0123456789012
+      - --tlsMode
+      - enabled

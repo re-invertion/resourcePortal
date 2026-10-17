@@ -1,18 +1,21 @@
 import { Module } from "@nestjs/common";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { PrismaModule } from "../prisma/prisma.module";
+import { AuthModule } from "../auth/auth.module";
 import { SecurityModule } from "../security/security.module";
 import { IdentityProvidersController } from "./identity-providers.controller";
 import { IdentityProvidersService } from "./identity-providers.service";
+import { FederationRetirementService } from "./federation-retirement.service";
 import { PlatformIdentityProvidersController } from "./platform-identity-providers.controller";
 import { PlatformIdentityProvidersService } from "./platform-identity-providers.service";
 import { ZitadelIdentityProviderService } from "./zitadel-identity-provider.service";
 
 @Module({
-  imports: [PrismaModule, SecurityModule],
+  imports: [PrismaModule, SecurityModule, AuthModule],
   controllers: [IdentityProvidersController, PlatformIdentityProvidersController],
   providers: [
     IdentityProvidersService,
+    FederationRetirementService,
     PlatformIdentityProvidersService,
     ZitadelIdentityProviderService,
     PlatformAdminGuard,

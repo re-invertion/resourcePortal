@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -14,6 +13,7 @@ import {
   OAuthApplicationType,
 } from "./dto/create-oauth-application.dto";
 import { UpdateOAuthApplicationDto } from "./dto/update-oauth-application.dto";
+import { validateOAuthRedirectUris } from "./redirect-uri";
 import {
   ZitadelOAuthApplicationConfiguration,
   ZitadelOAuthApplicationService,
@@ -207,22 +207,12 @@ export class PlatformOAuthApplicationsService {
   }
 
   private validate(configuration: ZitadelOAuthApplicationConfiguration) {
-    if (configuration.type === "Machine") {
-      if (configuration.redirectUris.length || configuration.postLogoutRedirectUris.length) {
-        throw new BadRequestException("Machine applications do not accept redirect URIs");
-      }
-      return;
-    }
-    if (configuration.redirectUris.length === 0) {
-      throw new BadRequestException(`${configuration.type} applications require at least one redirect URI`);
-    }
-    for (const uri of [...configuration.redirectUris, ...configuration.postLogoutRedirectUris]) {
-      try {
-        new URL(uri);
-      } catch {
-        throw new BadRequestException(`Invalid application URI: ${uri}`);
-      }
-    }
+    validateOAuthRedirectUris(
+      configuration.type,
+      configuration.redirectUris,
+      configuration.postLogoutRedirectUris,
+      process.env.NODE_ENV === "production",
+    );
   }
 
   private async getRecord(applicationId: string) {

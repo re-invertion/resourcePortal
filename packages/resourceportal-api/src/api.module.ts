@@ -33,6 +33,7 @@ import { SearchModule } from "./search/search.module";
 import { ServiceIdentitiesModule } from "./service-identities/service-identities.module";
 import { StorageBackendsApiModule } from "./storage-backends/storage-backends-api.module";
 import { TenantsModule } from "./tenants/tenants.module";
+import { TenantOidcModule } from "./tenant-oidc/tenant-oidc.module";
 import { UsersModule } from "./users/users.module";
 import { ApiVolumesModule } from "./volumes/api-volumes.module";
 
@@ -53,6 +54,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     BillingModule,
     BugReportsModule,
     TenantsModule,
+    TenantOidcModule,
     IdentityProvidersModule,
     OAuthApplicationsModule,
     ServiceIdentitiesModule,

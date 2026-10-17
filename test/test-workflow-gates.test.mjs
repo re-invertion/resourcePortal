@@ -6,7 +6,7 @@ import YAML from 'yaml';
 const load=(name)=>YAML.parse(readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8'));
 
 test('all RP GitHub workflow definitions parse as YAML with jobs',()=>{
-  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml']){
+  for(const name of ['ci.yml','fastfix.yml','release.yml','swarm-integration.yml','federation-integration.yml','production-installer.yml','tenant-oidc-live.yml']){
     const workflow=load(name);
     assert.ok(workflow.on,name);
     assert.ok(Object.keys(workflow.jobs).length>0,name);
@@ -74,7 +74,7 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.match(patchFull.run,/npm run test/);
   assert.match(patchFull.run,/npm run test:installer/);
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(patchFull));
-  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
 test('automatic rollback is mandatory before merge and any release artifacts',()=>{
@@ -93,10 +93,16 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
   const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
   assert.ok(premergeSmoke && prereleaseBuild && prepublishSmoke);
-  assert.ok(candidateSteps.indexOf(prerelease) < candidateSteps.indexOf(prereleaseBuild));
+  // Schema-changing releases need the *real* rollback smoke to produce
+  // run-bound evidence before the rollback policy is allowed to certify them.
   assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
-  assert.ok(publish.indexOf(prepublish) < publish.indexOf(prepublishSmoke));
-  assert.ok(publish.indexOf(prepublishSmoke) < publish.findIndex(s=>s.name?.startsWith('Build and publish API image')));
+  assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(prerelease));
+  assert.ok(publish.indexOf(prepublishSmoke) < publish.indexOf(prepublish));
+  assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
+  assert.match(prerelease.run,/--verified-evidence-file/);
+  assert.match(prepublish.run,/--verified-evidence-file/);
+  assert.match(premergeSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
+  assert.match(prepublishSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
   for (const smoke of [premergeSmoke,prepublishSmoke]){
     assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
   }
@@ -107,6 +113,8 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
 
   const manifest=publish.find(s=>s.name?.startsWith('Create release manifest'));
   assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
+  assert.match(manifest.run,/ROLLBACK_POLICY.*tested/);
+  assert.match(manifest.run,/rollbackEvidence/);
   assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
 });
 
@@ -129,7 +137,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -144,6 +152,13 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   assert.ok(gate.jobs['release-ready'].needs.includes('candidate'));
   assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate/);
   assert.match(gate.jobs['release-ready'].steps[0].run,/\$CANDIDATE.*success/);
+  assert.equal(gate.jobs['tenant-oidc'].needs,'candidate');
+  assert.match(gate.jobs['tenant-oidc'].uses,/tenant-oidc-live\.yml$/);
+  assert.match(gate.jobs['tenant-oidc'].if,/federation_required/);
+  assert.match(gate.jobs['release-ready'].steps[0].run,/verify_gate tenant-oidc/);
+  const live=load('tenant-oidc-live.yml');
+  assert.ok(live.on.workflow_call);
+  assert.match(live.jobs['real-https-project-grants'].steps.find(s=>s.name?.includes('real pinned ZITADEL')).run,/run-tenant-oidc-https-e2e/);
   const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
   for(const name of ['swarm','federation','installer']){
     assert.equal(gate.jobs[name].with.force_gate,true);

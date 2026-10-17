@@ -5,6 +5,14 @@ rp_upgrade_rollback_allowed() {
   rp_validate_release_manifest "$manifest" || return 1
   policy="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
   case "$policy" in image-only|tested) ;; *) return 1 ;; esac
+  if [[ "$policy" == tested ]]; then
+    jq -e '.migrations.rollbackEvidence.databaseSnapshotRestored == true and
+      .migrations.rollbackEvidence.restoredSourceSchema == true and
+      .migrations.rollbackEvidence.zitadelDatabaseRestored == true and
+      .migrations.rollbackEvidence.zitadelSourceRuntimeReadyAfterRollback == true and
+      .migrations.rollbackEvidence.zitadelSourceEventstoreVerified == true and
+      .migrations.rollbackEvidence.candidateZitadelRuntimeReadyBeforeRollback == true' "$manifest" >/dev/null || return 1
+  fi
   # New manifests attest compatibility with the immediately preceding
   # release only. Do not automatically roll back an older source even if the
   # manifest advertises other supported *upgrade* source versions.
@@ -15,6 +23,177 @@ rp_upgrade_rollback_allowed() {
     [[ -n "$source_version" && "$source_version" == "$assessment_source" ]] || return 1
   fi
   return 0
+}
+
+# For schema-changing releases, the *real installer* takes permission-restricted
+# logical snapshots of BOTH databases before any migration or ZITADEL write. The same
+# functions are exercised against disposable PostgreSQL instances in release CI.
+# A compatibility probe of the previous Prisma client is NOT database restore.
+rp_upgrade_database_task() {
+  local role="$1" service="${RP_CFG_STACK_NAME:-resourceportal-control-plane}_$1" id
+  local -a ids=()
+  [[ "$role" == postgres-rp || "$role" == postgres-zitadel ]] || return 1
+  mapfile -t ids < <(docker ps --no-trunc -q --filter "label=com.docker.swarm.service.name=$service")
+  [[ "${#ids[@]}" == 1 ]] || {
+    printf 'Database rollback refused: %s must have exactly one local task.\n' "$service" >&2
+    return 1
+  }
+  id="${ids[0]}"
+  [[ "$(docker inspect "$id" --format '{{.State.Health.Status}}' 2>/dev/null)" == healthy ]] || {
+    printf 'Database rollback refused: %s local task is not healthy.\n' "$service" >&2
+    return 1
+  }
+  printf '%s\n' "$id"
+}
+
+rp_upgrade_database_snapshot_prepare() {
+  local dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" manifest="$1" policy backup role id tmp
+  policy="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
+  [[ "$policy" == tested ]] || return 0
+  [[ -n "$dir" && -r "$dir/state.json" && ! -L "$dir" ]] || return 1
+  # Unique per-attempt path: a previous completed upgrade may still have its
+  # own sealed audit snapshot in the same persistent checkpoint directory.
+  backup="$(umask 077; mktemp -d "$dir/database-snapshots.XXXXXX")" || return 1
+  [[ -d "$backup" && ! -L "$backup" ]] || return 1
+  for role in postgres-rp postgres-zitadel; do
+    id="$(rp_upgrade_database_task "$role")" || return 1
+    tmp="$backup/$role.dump"
+    # Dump through the local PostgreSQL service identity. A failed/partial dump
+    # must never become authoritative rollback evidence.
+    if ! (umask 077; docker exec --user postgres "$id" sh -ec \
+      'exec pg_dump --format=custom -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$tmp"); then
+      printf 'Database rollback refused: %s source dump failed.\n' "$role" >&2
+      return 1
+    fi
+    [[ -s "$tmp" ]] || return 1
+    docker exec -i --user postgres "$id" pg_restore --list < "$tmp" >/dev/null || return 1
+    # pg_dump archives do not restore database ownership when replayed into
+    # a newly created shadow DB. Preserve the real RP/ZITADEL database owner
+    # with the signed snapshot so source ZITADEL init retains CREATE rights.
+    local db_owner
+    db_owner="$(docker exec --user postgres "$id" sh -ec '
+      exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1 \
+        -c "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database()"
+    ')" || return 1
+    [[ "$db_owner" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    printf '%s\n' "$db_owner" >"$backup/$role.owner" || return 1
+  done
+  (cd "$backup" && sha256sum postgres-rp.dump postgres-zitadel.dump postgres-rp.owner postgres-zitadel.owner > SHA256SUMS &&
+    sha256sum -c SHA256SUMS >/dev/null) || return 1
+  # Journal marker is written atomically only AFTER two complete verified dumps.
+  tmp="$(mktemp "$dir/.database-checkpoint.XXXXXX")" || return 1
+  if ! jq --arg backup "${backup##*/}" \
+    '.databaseSnapshotState="verified" | .databaseSnapshotDirectory=$backup' "$dir/state.json" > "$tmp" ||
+     ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$dir/state.json"; then
+    rm -f "$tmp"; return 1
+  fi
+  return 0
+}
+
+rp_upgrade_database_restore() {
+  local dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" state backup role id tmp
+  [[ -n "$dir" && -r "$dir/state.json" && ! -L "$dir" ]] || return 1
+  state="$(jq -er '.databaseSnapshotState // "none"' "$dir/state.json")" || return 1
+  [[ "$state" == verified || "$state" == restored || "$state" == none ]] || return 1
+  [[ "$state" == none ]] && return 0
+  # A prior, fully verified restore is idempotent; do not replay a data restore
+  # from an older checkpoint after the database resumes serving requests.
+  [[ "$state" == restored ]] && return 0
+  local backup_name
+  backup_name="$(jq -er '.databaseSnapshotDirectory' "$dir/state.json")" || return 1
+  [[ "$backup_name" =~ ^database-snapshots\.[A-Za-z0-9]{6}$ ]] || return 1
+  backup="$dir/$backup_name"
+  [[ -d "$backup" && ! -L "$backup" && -f "$backup/SHA256SUMS" && ! -L "$backup/SHA256SUMS" ]] || return 1
+  (cd "$backup" && sha256sum -c SHA256SUMS >/dev/null) || return 1
+  # Stop every database writer before restoring, including after a target stack
+  # has been deployed and the previous quiesce state has been lost.
+  rp_upgrade_quiesce_database_clients || return 1
+  for role in postgres-rp postgres-zitadel; do
+    id="$(rp_upgrade_database_task "$role")" || return 1
+    [[ -s "$backup/$role.dump" && ! -L "$backup/$role.dump" ]] || return 1
+    # A normal pg_restore --clean only drops objects present in the SOURCE
+    # archive. Candidate-only tables would survive and poison the next upgrade.
+    # Instead, restore the entire source archive into a freshly created shadow
+    # DB first; switch database names only after pg_restore fully commits.
+    local staging failed_db
+    staging="rp_restore_$(date -u +%s)_${RANDOM}"
+    failed_db="${staging}_failed"
+    [[ "$staging" =~ ^[a-z0-9_]+$ && "$failed_db" =~ ^[a-z0-9_]+$ ]] || return 1
+    docker exec --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
+      createdb -U "$POSTGRES_USER" -T template0 "$RP_RESTORE_STAGE"
+    ' || return 1
+    # Both databases must retain original table/schema owners AND source
+    # ACL/GRANT state. pg_restore as a database superuser with default
+    # ownership/ACL replay; missing source roles fail --exit-on-error.
+    # Never use --no-owner or --no-privileges for either database.
+    if ! docker exec -i --user postgres --env "RP_RESTORE_STAGE=$staging" "$id" sh -ec '
+      exec pg_restore --exit-on-error --single-transaction \
+        -U "$POSTGRES_USER" -d "$RP_RESTORE_STAGE"
+    ' < "$backup/$role.dump"; then
+      printf 'Database staging restore FAILED (%s); candidate DB preserved for recovery.\n' "$role" >&2
+      return 1
+    fi
+    local restored_db_owner
+    restored_db_owner="$(cat "$backup/$role.owner")" || return 1
+    [[ "$restored_db_owner" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+    docker exec --user postgres --env "RP_RESTORE_STAGE=$staging" \
+      --env "RP_RESTORE_OWNER=$restored_db_owner" "$id" sh -ec '
+      exec psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+        -c "ALTER DATABASE \"$RP_RESTORE_STAGE\" OWNER TO \"$RP_RESTORE_OWNER\""
+    ' || return 1
+    # No application clients are running. Disconnect any stale external
+    # connections, then quarantine the mutated database rather than deleting
+    # it. Should a rename fail, do not redeploy old API: manual recovery is
+    # required and both original and restored databases remain on disk.
+    if ! docker exec --user postgres \
+      --env "RP_RESTORE_STAGE=$staging" --env "RP_RESTORE_QUARANTINE=$failed_db" \
+      "$id" sh -ec '
+        case "$POSTGRES_DB:$RP_RESTORE_STAGE:$RP_RESTORE_QUARANTINE" in
+          *[!a-zA-Z0-9_:]*|:*|*::*) exit 1 ;;
+        esac
+        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 \
+          -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid();" >/dev/null
+        psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+          -c "ALTER DATABASE \"$POSTGRES_DB\" RENAME TO \"$RP_RESTORE_QUARANTINE\"" >/dev/null
+        psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 \
+          -c "ALTER DATABASE \"$RP_RESTORE_STAGE\" RENAME TO \"$POSTGRES_DB\"" >/dev/null
+      '; then
+      printf 'Database swap FAILED (%s); manual recovery required.\n' "$role" >&2
+      return 1
+    fi
+  done
+  tmp="$(mktemp "$dir/.database-checkpoint.XXXXXX")" || return 1
+  if ! jq '.databaseSnapshotState="restored"' "$dir/state.json" > "$tmp" ||
+     ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$dir/state.json"; then
+    rm -f "$tmp"; return 1
+  fi
+}
+
+# The installer must not complete while only /api/health/live works and
+# tenant OIDC is still migrating or blocked. Query the target API via the
+# trusted local ingress with the same TLS policy as ordinary readiness.
+rp_upgrade_validate_tenant_oidc_ready() {
+  local domain="$1" local_ingress="${RP_HTTPS_LOCAL_INGRESS_ADDRESS:-127.0.0.1}"
+  local -a args=(--fail --silent --show-error --proto '=https' --tlsv1.2
+    --connect-timeout 10 --max-time 20 --resolve "${domain}:443:${local_ingress}")
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    args+=(--insecure)
+  fi
+  curl "${args[@]}" "https://${domain}/api/health/tenant-oidc" >/dev/null 2>&1
+}
+
+rp_upgrade_wait_for_tenant_oidc_ready() {
+  local domain="$1" timeout="${2:-300}" elapsed=0
+  [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -ge 5 ]] || return 1
+  while (( elapsed < timeout )); do
+    if rp_upgrade_validate_tenant_oidc_ready "$domain"; then
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  printf 'Upgrade blocked: tenant OIDC activation did not become ready within %ss. Previous stack will be restored.\n' "$timeout" >&2
+  return 1
 }
 
 rp_upgrade_check_temporary_files() {
@@ -44,6 +223,10 @@ rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
   rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_rollback_allowed "$manifest" || {
+    printf 'Upgrade blocked: automatic rollback for this source release is not verified.\n' >&2
+    return 1
+  }
   rp_upgrade_identity_preflight || return 1
   rp_upgrade_check_temporary_files
 }
@@ -488,6 +671,32 @@ rp_upgrade_restore_after_failure() {
     return 1
   fi
   rp_upgrade_checkpoint_phase rolling-back "$failed_step" || return 1
+  # A corrupted/missing snapshot marker is NEVER interpreted as image-only
+  # rollback after database mutations began. Before the postgres stage it is
+  # safe to restore only the stack, because no database has been changed yet.
+  local claim snapshot_stage
+  claim="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
+  if [[ "$claim" == tested ]]; then
+    snapshot_stage="$(jq -er '.databaseSnapshotState // "none"' "$RP_UPGRADE_ACTIVE_CHECKPOINT/state.json")" || return 1
+    if [[ "$snapshot_stage" == none ]]; then
+      local runtime_stage
+      runtime_stage="$(jq -r '.runtimeStage // "before-mutating-runtime"' "$RP_UPGRADE_ACTIVE_CHECKPOINT/state.json")" || return 1
+      case "$runtime_stage" in
+        before-mutating-runtime|quiescing-clients|database-snapshot) ;;
+        *)
+          rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+          printf 'Automatic rollback blocked: required database snapshot evidence is missing after mutation.\n' >&2
+          return 1 ;;
+      esac
+    fi
+  fi
+  # Do not start previous API/ZITADEL against a mutated database. Restore both
+  # source snapshots first; an incomplete restore MUST NOT become rolled-back.
+  if ! rp_upgrade_database_restore; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+    printf 'Automatic rollback cannot restore the source databases; leave services quiesced for recovery.\n' >&2
+    return 1
+  fi
   local rollback_stack="$previous_stack"
   if [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]]; then
     rp_upgrade_checkpoint_verify || {
@@ -526,6 +735,10 @@ rp_upgrade_apply() {
   rp_upgrade_check_temporary_files || return 1
   rp_config_apply_defaults || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
+  rp_upgrade_rollback_allowed "$manifest" || {
+    printf 'Upgrade blocked: release manifest does not guarantee automatic rollback.\n' >&2
+    return 1
+  }
   rp_upgrade_identity_preflight || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
@@ -539,6 +752,8 @@ rp_upgrade_apply() {
   }
   rp_upgrade_checkpoint_stage quiescing-clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint quiescing-clients"; return 1; }
   rp_upgrade_quiesce_database_clients || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database quiesce"; return 1; }
+  rp_upgrade_checkpoint_stage database-snapshot || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint database-snapshot"; return 1; }
+  rp_upgrade_database_snapshot_prepare "$manifest" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "database snapshot"; return 1; }
   rp_upgrade_checkpoint_stage postgres-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint postgres-rollout"; return 1; }
   rp_upgrade_prepare_postgres_services || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "PostgreSQL preparation"; return 1; }
   rp_upgrade_checkpoint_stage zitadel-rollout || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint zitadel-rollout"; return 1; }
@@ -552,6 +767,11 @@ rp_upgrade_apply() {
   rp_upgrade_checkpoint_stage resourceportal-migrations-started || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint resourceportal-migrations-started"; return 1; }
   if ! rp_run_migrations || ! rp_deploy_control_plane final || ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
+    return 1
+  fi
+  rp_upgrade_checkpoint_stage tenant-oidc-activation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint tenant-oidc-activation"; return 1; }
+  if ! rp_upgrade_wait_for_tenant_oidc_ready "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
     return 1
   fi
   rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }

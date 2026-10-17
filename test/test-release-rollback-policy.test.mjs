@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rollbackAssessment, requireAutomaticRollback } from "../scripts/release-rollback-policy.mjs";
+import { rollbackAssessment, requireAutomaticRollback, assertExpandOnlyMigrationSql } from "../scripts/release-rollback-policy.mjs";
 
 const hash = "a".repeat(40);
+const candidateZitadelImage = "ghcr.io/zitadel/zitadel@sha256:" + "a".repeat(64);
+const sourceZitadelImage = "ghcr.io/zitadel/zitadel@sha256:" + "b".repeat(64);
 test("non-schema patch permits only image-only rollback", () => {
   assert.deepEqual(rollbackAssessment(["packages/resourceportal-web/src/app.tsx"], "fastfix", "v0.2.75", hash), {
     policy: "image-only",
@@ -21,6 +23,119 @@ test("release is blocked when automatic rollback is not eligible", () => {
     { ...allowed, sourceVersion: "*" },
     { ...allowed, targetCommit: "invalid" },
   ]) assert.throws(() => requireAutomaticRollback(invalid), /Release blocked/);
+});
+
+test("only immutable expand-only database migrations can qualify for tested rollback", () => {
+  assert.doesNotThrow(() => assertExpandOnlyMigrationSql(`
+    -- New isolated IDP provider and optional legacy-client linkage
+    CREATE TABLE "TenantOidcProvider" ("tenantId" UUID NOT NULL);
+    ALTER TABLE "OAuthApplication" ADD COLUMN "zitadelProjectId" TEXT;
+    CREATE UNIQUE INDEX "TenantOidcProvider_id_idx" ON "TenantOidcProvider"("tenantId");
+    ALTER TABLE "TenantOidcProvider" ADD CONSTRAINT "tenant_fk"
+      FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id");
+  `));
+  for (const bad of [
+    'ALTER TABLE "User" DROP COLUMN "email";',
+    'DROP TABLE "User";',
+    'DELETE FROM "OAuthApplication";',
+    'ALTER TABLE "User" ADD COLUMN "password" TEXT NOT NULL;',
+    'CREATE UNIQUE INDEX "User_email_key_new" ON "User"("email");',
+    'ALTER TABLE "User" ADD CONSTRAINT "fk" FOREIGN KEY ("id") REFERENCES "Tenant"("id");',
+    '-- only comments',
+  ]) assert.throws(() => assertExpandOnlyMigrationSql(bad), /Release blocked|Empty migration/);
+});
+
+test("schema-changing rollback requires exact run-bound live evidence", () => {
+  const result = rollbackAssessment(
+    ["packages/resourceportal-api/prisma/migrations/20261012_new/migration.sql"],
+    "fastfix", "v0.2.86", hash,
+  );
+  const currentRunId = Number(process.env.GITHUB_RUN_ID || 12345);
+  const previousRunId = process.env.GITHUB_RUN_ID;
+  // Simulate the real GitHub Actions environment: evidence must belong to
+  // THIS workflow run, not merely carry a positive numeric run identifier.
+  process.env.GITHUB_RUN_ID = String(currentRunId);
+  const evidence = {
+    kind: "real-upgrade-and-restore",
+    sourceVersion: "0.2.86",
+    targetCommit: hash,
+    workflowRunId: currentRunId,
+    actualDatabaseMigration: true,
+    previousApiReadWriteAfterRollback: true,
+    previousApiRuntimeReadyAfterRollback: true,
+    injectedHealthFailure: true,
+    previousImagesRestored: true,
+    databaseSnapshotVerified: true,
+    databaseSnapshotRestored: true,
+    restoredSourceSchema: true,
+    zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
+  };
+  assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
+  const confirmed = requireAutomaticRollback(result, evidence);
+  assert.equal(confirmed.policy, "tested");
+  assert.equal(confirmed.reason, "verified-recovery-test");
+  assert.deepEqual(confirmed.rollbackEvidence, {
+    kind: "real-upgrade-and-restore", workflowRunId: currentRunId, sourceVersion: "0.2.86",
+    databaseSnapshotRestored: true, restoredSourceSchema: true, zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
+  });
+  for (const malformed of [
+    { ...evidence, targetCommit: "b".repeat(40) },
+    { ...evidence, sourceVersion: "0.2.85" },
+    { ...evidence, workflowRunId: 0 },
+    { ...evidence, workflowRunId: currentRunId + 1 },
+    { ...evidence, workflowRunId: "12345" },
+    { ...evidence, previousApiReadWriteAfterRollback: false },
+    { ...evidence, previousApiRuntimeReadyAfterRollback: false },
+    { ...evidence, previousImagesRestored: false },
+    { ...evidence, actualDatabaseMigration: false },
+    { ...evidence, injectedHealthFailure: false },
+    { ...evidence, kind: "static-schema-heuristic" },
+    { ...evidence, databaseSnapshotVerified: false },
+    { ...evidence, databaseSnapshotRestored: false },
+    { ...evidence, restoredSourceSchema: false },
+    { ...evidence, zitadelDatabaseRestored: false },
+    { ...evidence, zitadelSourceRuntimeReadyAfterRollback: false },
+    { ...evidence, zitadelSourceEventstoreVerified: false },
+    { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: false },
+    { ...evidence, zitadelSourceRuntimeReadyAfterRollback: "true" },
+    { ...evidence, zitadelSourceEventstoreVerified: 1 },
+    { ...evidence, candidateZitadelRuntimeReadyBeforeRollback: null },
+    { ...evidence, candidateZitadelImage: "ghcr.io/zitadel/zitadel:v4.17.0" },
+    { ...evidence, candidateZitadelImage: undefined },
+    { ...evidence, sourceZitadelImage: "ghcr.io/malicious/zitadel@sha256:" + "f".repeat(64) },
+  ]) assert.throws(() => requireAutomaticRollback(result, malformed), /Release blocked/);
+  if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
+  else process.env.GITHUB_RUN_ID = previousRunId;
+});
+
+test("milestone releases never bypass live rollback certification", () => {
+  const result = rollbackAssessment([], "milestone", "v0.2.86", hash);
+  assert.throws(() => requireAutomaticRollback(result), /Release blocked/);
+  const certified = requireAutomaticRollback(result, {
+    kind: "real-upgrade-and-restore", sourceVersion: "0.2.86", targetCommit: hash,
+    workflowRunId: Number(process.env.GITHUB_RUN_ID || 12345), actualDatabaseMigration: true,
+    previousApiReadWriteAfterRollback: true,
+    previousApiRuntimeReadyAfterRollback: true, injectedHealthFailure: true,
+    previousImagesRestored: true,
+    databaseSnapshotVerified: true, databaseSnapshotRestored: true,
+    restoredSourceSchema: true, zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
+  });
+  assert.equal(certified.policy, "tested");
 });
 
 test("SQL or Prisma schema edits can never claim tested without a real compatibility gate", () => {

@@ -46,13 +46,6 @@ type ProviderResponse = {
   zitadelIdentityProviderId: string;
 };
 
-type OAuthApplicationResponse = {
-  id: string;
-  type: "Web" | "SPA" | "Native" | "Machine";
-  clientId: string;
-  clientSecret?: string;
-};
-
 type ServiceIdentityResponse = {
   id: string;
   clientId: string;
@@ -164,23 +157,32 @@ async function main() {
     "Platform identity provider is not exposed by global login discovery",
   );
 
-  const oauthApplications = await provisionOAuthApplications(tenant.id, devUserId);
-  assert(
-    oauthApplications.find((application) => application.type === "Web")?.clientSecret,
-    "Web OAuth application did not return its initial client secret",
+  // This suite validates *incoming* Keycloak federation. Outbound OIDC clients
+  // require an independently certified and activated tenant project. A legacy
+  // login test must never silently provision new clients in the platform project.
+  const tenantOidc = await apiRequest<{ status: string; enabled: boolean }>(
+    "GET", `/tenants/${tenant.id}/oidc-provider`, devUserId,
   );
-  assert(
-    oauthApplications.find((application) => application.type === "Machine")?.clientSecret,
-    "Machine OAuth application did not return its initial client secret",
+  assert(tenantOidc.enabled === false, "Uncertified tenant IdP was unexpectedly enabled");
+  for (const input of [
+    { name: "Denied Web Client", type: "Web", redirectUris: ["http://localhost:4173/callback"] },
+    { name: "Denied SPA Client", type: "SPA", redirectUris: ["http://localhost:4174/callback"] },
+    { name: "Denied Native Client", type: "Native", redirectUris: ["rp-native://callback"] },
+  ]) {
+    const response = await fetch(`${apiUrl}/tenants/${tenant.id}/oauth-applications`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-dev-user-id": devUserId },
+      body: JSON.stringify(input),
+    });
+    assert(
+      response.status === 503,
+      `Inactive tenant OIDC accepted ${input.type} client registration (${response.status})`,
+    );
+  }
+  const oauthApplications = await apiRequest<Array<{ id: string }>>(
+    "GET", `/tenants/${tenant.id}/oauth-applications`, devUserId,
   );
-  assert(
-    !oauthApplications.find((application) => application.type === "SPA")?.clientSecret,
-    "SPA OAuth application unexpectedly returned a client secret",
-  );
-  assert(
-    !oauthApplications.find((application) => application.type === "Native")?.clientSecret,
-    "Native OAuth application unexpectedly returned a client secret",
-  );
+  assert(oauthApplications.length === 0, "Denied OIDC registrations left tenant OAuth applications");
 
   const serviceIdentity = await apiRequest<ServiceIdentityResponse>(
     "POST",
@@ -296,48 +298,6 @@ async function installFederationAttestationAction() {
     { actionIds: [action.id] },
   );
   console.log("ZITADEL External Authentication post-auth attestation action installed");
-}
-
-async function provisionOAuthApplications(tenantId: string, devUserId: string) {
-  const inputs = [
-    {
-      name: "Federation Web Client",
-      type: "Web",
-      redirectUris: ["http://localhost:4173/callback"],
-      postLogoutRedirectUris: ["http://localhost:4173/"],
-    },
-    {
-      name: "Federation SPA Client",
-      type: "SPA",
-      redirectUris: ["http://localhost:4174/callback"],
-      postLogoutRedirectUris: ["http://localhost:4174/"],
-    },
-    {
-      name: "Federation Native Client",
-      type: "Native",
-      redirectUris: ["rp-native://callback"],
-      postLogoutRedirectUris: [],
-    },
-    {
-      name: "Federation Machine Client",
-      type: "Machine",
-      redirectUris: [],
-      postLogoutRedirectUris: [],
-    },
-  ] as const;
-
-  const results: OAuthApplicationResponse[] = [];
-  for (const input of inputs) {
-    results.push(
-      await apiRequest<OAuthApplicationResponse>(
-        "POST",
-        `/tenants/${tenantId}/oauth-applications`,
-        devUserId,
-        { ...input },
-      ),
-    );
-  }
-  return results;
 }
 
 async function apiRequest<T = Record<string, unknown>>(

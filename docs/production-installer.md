@@ -185,14 +185,61 @@ requires explicit integration evidence of a real upgrade-and-restore run;
 an SQL allowlist or syntactic migration check **does not** constitute proof.
 Unverified migrations and milestone releases default to `none`.
 
-With `none`, a failed upgrade remains stopped for manual inspection, rather
-than deploying old binaries against a database that may have migrated. The
-installer will never silently downgrade PostgreSQL data. With an authorized
-rollback, it verifies the checkpoint digest, restores the previous stack,
-waits for HTTPS health, and restores the installed manifest and configuration.
-If restoring any of these fails, the journal reports `rollback-failed`.
-The checkpoint is **not** a database backup: operators must maintain
-separate database backup and restore procedures for irreversible migrations.
+With `none`, a failed upgrade remains stopped for manual inspection rather
+than deploying old binaries against a database that may have migrated. An
+`image-only` update may roll back the stack and manifest without changing
+PostgreSQL. A schema-changing or milestone release must have a `tested` policy
+and cryptographically bound CI evidence of **both** source database backups
+and an actual successful RP and ZITADEL PostgreSQL restore from an injected
+failed upgrade. Expand-only schema compatibility alone is not sufficient.
+
+For a `tested` update, after quiescing API, Worker and ZITADEL but **before
+any PostgreSQL/ZITADEL rollout or Prisma migration**, the installer takes
+`pg_dump -Fc` snapshots of both RP and ZITADEL databases using the sole healthy
+local Swarm database task. Archives are retained under permission-restricted,
+unique `database-snapshots.XXXXXX` directories inside the atomic upgrade
+checkpoint. Each archive is checked with `pg_restore --list` and SHA-256,
+and the journal is atomically marked `databaseSnapshotState=verified`. Missing,
+unhealthy, non-local or multiple database tasks, snapshot corruption or disk
+failure block the update. After a failed update the installer quiesces all
+writers again and restores **both** source databases into a clean staging database using `pg_restore --exit-on-error
+--single-transaction`. Only after the whole restore is committed does it
+quarantine the mutated database and rename the staged source database into the
+original database name. This removes candidate-only tables and preserves the
+failed database for forensic recovery. The swap happens before previous
+images are redeployed and checking HTTPS health. A missing snapshot after mutations, failed
+checksum, SQL restore error or failed post-restore health check leaves the
+checkpoint at `rollback-failed` and requires explicit recovery; it must not
+claim rollback success. Existing completed upgrade checkpoints and snapshots
+should be retained or retired according to the operator backup retention policy.
+ZITADEL restoration preserves the original table and eventstore ownership,
+rather than silently reassigning all objects to the administrative PostgreSQL
+user. Release certification starts the exact published ZITADEL image with the
+real eventstore.events2 schema and OIDC discovery, then runs the candidate image
+and upgrades the database. After an injected failure it must restart the
+published image against the restored database, validate its schema and original
+events, and verify the previous API still reads and writes. A synthetic SQL
+probe or database checksum alone cannot certify the identity-server rollback.
+The three run-bound identity-runtime proofs are mandatory for a tested release.
+The candidate ZITADEL `ghcr.io/zitadel/zitadel@sha256:…` digest is read from
+that same runtime evidence and reused in the published attested manifest.
+Publication must not resolve the mutable release tag a second time. Both
+ResourcePortal and ZITADEL PostgreSQL snapshots restore the original table
+owners, database owner and GRANT/REVOKE state; the real rollback smoke asserts
+preservation of a dedicated read-only role and original table owner in both
+sources. ZITADEL may append ordinary startup events; a rollback is considered
+valid only if all original eventstore records (including payloads) remain
+identical, not simply when the total event count matches.
+
+The real premerge/release recovery gate uses local healthy Docker Swarm
+PostgreSQL services for both source databases. It calls unmodified
+rp_upgrade_database_task to verify placement and health; standalone
+PostgreSQL containers cannot qualify. After a successful recovery proof,
+the release workflow must tag and publish the SAME locally built API/Web/
+Postgres image IDs already exercised by the rollback smoke. Rebuilding them
+after recovery testing would break signed release proof.
+
+These per-upgrade snapshots do not replace ongoing independent backups.
 
 The admin update dialog reports why automatic rollback is unavailable:
 missing/unreachable/invalid release manifest, incompatible source version,

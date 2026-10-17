@@ -34,6 +34,8 @@ const COMPATIBILITY_GROUPS = new Set([
   "operation",
   "platform-maintenance",
   "tenant-mcp",
+  "tenant-oidc",
+  "native-login-migration",
   "oauth-application",
   "platform-oauth-application",
   "service-identity",
@@ -216,6 +218,27 @@ async function runCompatibilityCommand(parsedArgs: ParsedArgs) {
         arg(parsedArgs, 0, "tenantId"),
         mutationBody(parsedArgs.flags),
       );
+      break;
+    case "tenant-oidc show":
+      result = await client.tenantOidc.get(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-oidc provision":
+      result = await client.tenantOidc.provision(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-oidc reconcile":
+      result = await client.tenantOidc.reconcileGrants(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-oidc activate":
+      result = await client.tenantOidc.activate(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-oidc disable":
+      result = await client.tenantOidc.disable(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "tenant-oidc delete":
+      result = await client.tenantOidc.delete(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "native-login-migration preflight":
+      result = await client.nativeLoginMigration.preflight();
       break;
     case "oauth-application list":
       result = await client.oauthApplications.list(arg(parsedArgs, 0, "tenantId"));
@@ -577,6 +600,13 @@ function printCompatibilityHelp(group?: string) {
     "platform-maintenance set --enabled true|false [--reason TEXT]",
     "tenant-mcp show <tenantId>",
     "tenant-mcp set <tenantId> --enabled true|false --access-mode AllMembers|SelectedMembers [--allowed-membership-ids ID]",
+    "tenant-oidc show <tenantId>",
+    "tenant-oidc provision <tenantId>",
+    "tenant-oidc reconcile <tenantId>",
+    "tenant-oidc activate <tenantId> (operator rollout gate required)",
+    "tenant-oidc disable <tenantId>",
+    "tenant-oidc delete <tenantId>",
+    "native-login-migration preflight",
     "oauth-application list <tenantId>",
     "oauth-application show <tenantId> <applicationId>",
     "oauth-application create <tenantId> --name NAME --type TYPE [flags]",

@@ -2,13 +2,17 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
+  Optional,
   NotFoundException,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
 import { PlatformEmailService } from "../email/platform-email.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
@@ -41,6 +45,8 @@ export class TenantsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: PlatformEmailService,
+    @Optional() private readonly tenantOidc?: TenantOidcService,
+    @Optional() private readonly nativeLoginMode?: NativeLoginModeService,
   ) {}
 
   listTenants(userId: string) {
@@ -257,6 +263,11 @@ export class TenantsService {
     dto: UpdateTenantAuthPolicyDto,
     actor: AuthenticatedUser,
   ) {
+    if (await this.nativeLoginMode?.isNativeOnly() &&
+        (dto.requireTenantIdentityProvider === true || dto.allowPlatformLogin === false ||
+         dto.allowTenantIdentityProviders === true)) {
+      throw new GoneException("Incoming tenant identity provider policies have been retired");
+    }
     const tenant = await this.ensureTenantExists(tenantId);
     const policy = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.tenantAuthPolicy.upsert({
@@ -718,6 +729,14 @@ export class TenantsService {
         include: this.membershipIncludes(),
       });
 
+      // Atomically invalidate tenant SSO readiness with invitation acceptance;
+      // otherwise a crash could persist active membership without its role grant.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId: invitation.tenantId,
+          status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+      });
+
       await tx.tenantInvitation.delete({
         where: { id: invitation.id },
       });
@@ -1131,6 +1150,12 @@ export class TenantsService {
           include: this.membershipIncludes(),
         });
 
+        // A failure invalidating IdP readiness aborts membership creation.
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+
         await tx.auditLogEntry.create({
           data: {
             tenantId,
@@ -1190,6 +1215,9 @@ export class TenantsService {
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      if (dto.status === MembershipStatus.Suspended) {
+        await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
+      }
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, dto, tx);
       if (dto.roleIds !== undefined) {
         await tx.membershipRole.deleteMany({
@@ -1207,6 +1235,13 @@ export class TenantsService {
           status: dto.status,
         },
         include: this.membershipIncludes(),
+      });
+
+      // A failed IdP invalidation must abort the membership and audit commit.
+      // Previously markStale() ran post-commit and left ungranted members Active.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
 
       await tx.auditLogEntry.create({
@@ -1255,11 +1290,19 @@ export class TenantsService {
         where: { id: membershipId, tenantId }, include: this.membershipIncludes(),
       });
       if (!lockedMembership) throw new NotFoundException("TenantMembership not found");
+      await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, {
         status: MembershipStatus.Suspended, roleIds: [],
       }, tx);
       await tx.tenantMembership.delete({
         where: { id: membershipId },
+      });
+
+      // A failed IdP invalidation must abort the membership and audit commit.
+      // Previously markStale() ran post-commit and left ungranted members Active.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
 
       await tx.auditLogEntry.create({

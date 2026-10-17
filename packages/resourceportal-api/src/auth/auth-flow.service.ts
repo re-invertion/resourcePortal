@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from "node:crypto";
 import {
   ForbiddenException,
+  Optional,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -12,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
 import { LoginQueryDto } from "./dto/login-query.dto";
+import { NativeLoginModeService } from "./native-login-mode.service";
 
 export type TokenResponse = {
   access_token: string;
@@ -29,7 +31,14 @@ export class AuthFlowService {
     private readonly oidcAuth: OidcAuthService,
     private readonly sessions: AuthSessionService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
+
+  private async nativeOnly() {
+    return this.nativeMode
+      ? this.nativeMode.isNativeOnly()
+      : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true";
+  }
 
   createLoginRequest(options: LoginQueryDto = {}) {
     return this.createAuthorizationRequest(options);
@@ -94,13 +103,24 @@ export class AuthFlowService {
       throw new UnauthorizedException("OIDC code verifier is missing");
     }
 
+    if (await this.nativeOnly() && identityProviderId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     const tokenResponse = await this.exchangeCode(code, codeVerifier);
     const user = await this.oidcAuth.authenticateBrowserTokens(
       tokenResponse.id_token,
       tokenResponse.access_token,
       identityProviderId,
       state,
+      await this.nativeOnly(),
     );
+    // A hosted ZITADEL login may select an upstream IdP even without an RP
+    // identityProviderId query argument. Reject positively attested external
+    // logins after native-only cutover before any RP session is issued.
+    if (await this.nativeOnly() &&
+        user.authenticatedIdpId) {
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
     if (user.status !== UserStatus.Active) {
       throw new UnauthorizedException("Email verification is required before login");
     }
@@ -113,6 +133,9 @@ export class AuthFlowService {
   }
 
   async listLoginOptions(tenantId?: string) {
+    if (await this.nativeOnly()) {
+      return [];
+    }
     if (!tenantId) {
       return this.prisma.identityProvider.findMany({
         where: {
@@ -161,6 +184,14 @@ export class AuthFlowService {
 
     if (organizationId) {
       scopes.push(`urn:zitadel:iam:org:id:${organizationId}`);
+    }
+
+    if (await this.nativeOnly()) {
+      if (options.identityProviderId) {
+        throw new ForbiddenException("External identity provider login is disabled");
+      }
+      if (options.tenantId) await this.getTenantLoginPolicy(options.tenantId);
+      return { scopes: [...new Set(scopes)] };
     }
 
     if (!options.tenantId && !options.identityProviderId) {

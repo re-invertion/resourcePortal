@@ -28,22 +28,109 @@ export function rollbackAssessment(changedPaths, mode, previousVersion, targetCo
   };
 }
 
-// Static diff eligibility is a prerequisite, not a substitute for a real
-// rollback smoke. Non-schema Fast Fix only; schema/milestone fail closed
-// until a separate tested database restore protocol exists.
-export function requireAutomaticRollback(result) {
-  if (
-    result.policy !== "image-only" ||
-    result.reason !== "no-resourceportal-database-schema-changes" ||
-    !/^\d+\.\d+\.\d+$/.test(result.sourceVersion) ||
-    !/^[a-f0-9]{40}$/.test(result.targetCommit)
-  ) {
-    throw new Error(
-      "Release blocked: automatic rollback is not verified for this source/target. " +
-      "Schema-changing or milestone releases require a separately tested restore protocol.",
-    );
+// A live smoke is necessary but not sufficient for irreversible SQL changes.
+// Restrict the "tested" image rollback route to explicitly additive DDL:
+// create new tables, indexes on those tables, nullable columns, and FKs from
+// newly created tables. A destructive/data-writing statement fails closed.
+export function assertExpandOnlyMigrationSql(sql) {
+  const uncommented = sql.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
+  const statements = uncommented.split(";").map(x => x.trim()).filter(Boolean);
+  if (!statements.length) throw new Error("Empty migration cannot certify schema compatibility");
+  const newTables = new Set();
+  for (const statement of statements) {
+    const table = /^CREATE TABLE "([^"]+)"\s*\(/is.exec(statement);
+    if (table) {
+      newTables.add(table[1]);
+      continue;
+    }
+    const column = /^ALTER TABLE "([^"]+)"\s+ADD COLUMN "[^"]+"\s+([\s\S]+)$/i.exec(statement);
+    if (column && !/\bNOT NULL\b|\bDROP\b|\bREFERENCES\b/i.test(column[2])) continue;
+    const index = /^CREATE\s+(?:UNIQUE\s+)?INDEX "[^"]+"\s+ON "([^"]+)"\s*\(/is.exec(statement);
+    if (index && newTables.has(index[1])) continue;
+    const fk = /^ALTER TABLE "([^"]+)"\s+ADD CONSTRAINT "[^"]+"\s+FOREIGN KEY\b/is.exec(statement);
+    if (fk && newTables.has(fk[1])) continue;
+    throw new Error("Release blocked: SQL migration is not an approved expand-only operation");
   }
-  return result;
+}
+
+function verifyMigrationDiffIsExpandOnly(previous, head) {
+  const base = previous + "..." + head;
+  const raw = execFileSync("git", [
+    "diff", "--name-status", base, "--", "packages/resourceportal-api/prisma/migrations",
+  ], { encoding: "utf8" }).trim();
+  const changed = raw.split("\n").filter(Boolean);
+  if (!changed.length) {
+    throw new Error("Release blocked: schema was changed without a new migration");
+  }
+  for (const row of changed) {
+    const [status, path] = row.split("\t");
+    // Never alter an already-published migration: migration history is immutable.
+    if (status !== "A" || !/^packages\/resourceportal-api\/prisma\/migrations\/[^/]+\/migration\.sql$/.test(path)) {
+      throw new Error("Release blocked: existing Prisma migrations must remain immutable");
+    }
+    const sql = execFileSync("git", ["show", head + ":" + path], { encoding: "utf8" });
+    assertExpandOnlyMigrationSql(sql);
+  }
+}
+
+// Static diff eligibility is a prerequisite, not a substitute for a real
+// rollback smoke. Schema/milestone can only claim "tested" if independent
+// runtime evidence proves old images AND the exact source database snapshots
+// can be restored after the upgrade. Old Prisma client compatibility alone is
+// never sufficient: no new migration is allowed to survive a failed upgrade.
+export function requireAutomaticRollback(result, evidence = null) {
+  const validTarget = /^\d+\.\d+\.\d+$/.test(result.sourceVersion) &&
+    /^[a-f0-9]{40}$/.test(result.targetCommit);
+  if (validTarget && result.policy === "image-only" &&
+      result.reason === "no-resourceportal-database-schema-changes") return result;
+
+  const verified = validTarget &&
+    result.policy === "none" &&
+    ["database-compatibility-not-verified", "milestone-requires-verified-recovery"].includes(result.reason) &&
+    evidence?.kind === "real-upgrade-and-restore" &&
+    evidence.sourceVersion === result.sourceVersion &&
+    evidence.targetCommit === result.targetCommit &&
+    Number.isSafeInteger(evidence.workflowRunId) && evidence.workflowRunId > 0 &&
+    evidence.actualDatabaseMigration === true &&
+    evidence.previousApiReadWriteAfterRollback === true &&
+    evidence.previousApiRuntimeReadyAfterRollback === true &&
+    evidence.injectedHealthFailure === true &&
+    evidence.previousImagesRestored === true &&
+    evidence.databaseSnapshotVerified === true &&
+    evidence.databaseSnapshotRestored === true &&
+    evidence.restoredSourceSchema === true &&
+    evidence.zitadelDatabaseRestored === true &&
+    evidence.zitadelSourceRuntimeReadyAfterRollback === true &&
+    evidence.zitadelSourceEventstoreVerified === true &&
+    evidence.candidateZitadelRuntimeReadyBeforeRollback === true &&
+    /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/.test(evidence.candidateZitadelImage) &&
+    /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/.test(evidence.sourceZitadelImage) &&
+    // A PR must not reuse evidence issued in a different workflow run.
+    (!process.env.GITHUB_RUN_ID || evidence.workflowRunId === Number(process.env.GITHUB_RUN_ID));
+  if (verified) {
+    return {
+      ...result,
+      policy: "tested",
+      reason: "verified-recovery-test",
+      rollbackEvidence: {
+        kind: evidence.kind,
+        workflowRunId: evidence.workflowRunId,
+        sourceVersion: evidence.sourceVersion,
+        databaseSnapshotRestored: true,
+        restoredSourceSchema: true,
+        zitadelDatabaseRestored: true,
+        zitadelSourceRuntimeReadyAfterRollback: true,
+        zitadelSourceEventstoreVerified: true,
+        candidateZitadelRuntimeReadyBeforeRollback: true,
+        candidateZitadelImage: evidence.candidateZitadelImage,
+        sourceZitadelImage: evidence.sourceZitadelImage,
+      },
+    };
+  }
+  throw new Error(
+    "Release blocked: automatic rollback is not verified for this source/target. " +
+    "Schema-changing or milestone releases require a separately tested restore protocol.",
+  );
 }
 
 function option(flag) {
@@ -66,8 +153,27 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
     encoding: "utf8",
   }).trim();
   if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error("Invalid target commit");
-  const result = rollbackAssessment(paths, mode, previous, commit);
-  if (process.argv.includes("--require-automatic")) requireAutomaticRollback(result);
+  const assessment = rollbackAssessment(paths, mode, previous, commit);
+  const evidenceFile = option("--verified-evidence-file");
+  // Evidence is generated only after real CI upgrade/rollback, never from a
+  // checked-in fixture or static SQL heuristic. Without it, fail closed.
+  let evidence = null;
+  if (evidenceFile) {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const trustedRoot = process.env.RUNNER_TEMP;
+    if (process.env.GITHUB_ACTIONS === "true" &&
+        (!trustedRoot || !resolve(evidenceFile).startsWith(resolve(trustedRoot) + "/"))) {
+      throw new Error("Rollback evidence must reside in RUNNER_TEMP");
+    }
+    evidence = JSON.parse(readFileSync(evidenceFile, "utf8"));
+  }
+  if (evidence && assessment.reason === "database-compatibility-not-verified") {
+    verifyMigrationDiffIsExpandOnly(previous, head);
+  }
+  const result = process.argv.includes("--require-automatic")
+    ? requireAutomaticRollback(assessment, evidence)
+    : assessment;
   console.log(JSON.stringify(result));
   const output = option("--github-output");
   if (output) {

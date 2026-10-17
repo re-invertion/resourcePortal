@@ -23,6 +23,23 @@ npm run api:smoke:deploy
 npm run cli -- --help
 ```
 
+## Tenant Identity & SSO (candidate, activation disabled)
+
+ResourcePortal can issue tenant-scoped OIDC authentication for tenant applications using
+dedicated ZITADEL projects, client registrations and membership-backed role grants.
+The actual issuer is the shared ZITADEL issuer; per-tenant issuer URLs and tenant
+SAML IdP are not provided. Separately, RP's own login can be migrated to
+native-only ZITADEL sign-in after existing external-federation users are verified.
+
+**Not production certified:** the feature flag `TENANT_OIDC_ACTIVATION_ALLOWED`
+defaults off and `RP_NATIVE_LOGIN_ONLY` stays off until the real-ZITADEL,
+two-tenant E2E, recovery and rollback certification has completed. Unit and
+mocked-provider tests alone do not authorize a rollout.
+
+See [tenant Identity & SSO guide](docs/tenant-oidc-operator-guide.md),
+[certification matrix](docs/tenant-oidc-e2e-certification.md), and
+[release and rollback gates](docs/tenant-oidc-release-gates.md).
+
 ## Local Infrastructure
 
 `docker-compose.yml` starts local PostgreSQL and ZITADEL dependencies. Root `.env` is used by Docker Compose. The API package also falls back to reading `../../.env` when it is run from `packages/resourceportal-api`.

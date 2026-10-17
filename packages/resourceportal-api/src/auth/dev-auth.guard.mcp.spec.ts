@@ -76,7 +76,7 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     );
 
     await expect(target.canActivate(executionContext)).resolves.toBe(true);
-    expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token");
+    expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token", false);
     expect(oidcAuth.authenticatePrincipalToken).not.toHaveBeenCalled();
     expect(request).toMatchObject({ user: userPrincipal.user });
   });
@@ -90,7 +90,7 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     const { request, executionContext } = context("/api/platform/mcp");
 
     await expect(target.canActivate(executionContext)).resolves.toBe(true);
-    expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token");
+    expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token", false);
     expect(oidcAuth.authenticatePrincipalToken).not.toHaveBeenCalled();
     expect(request).toMatchObject({ user: userPrincipal.user });
   });
@@ -104,7 +104,7 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     const { executionContext } = context("/api/tenants/tenant-1/applications");
 
     await expect(target.canActivate(executionContext)).resolves.toBe(true);
-    expect(oidcAuth.authenticatePrincipalToken).toHaveBeenCalledWith("mcp-token");
+    expect(oidcAuth.authenticatePrincipalToken).toHaveBeenCalledWith("mcp-token", false);
     expect(oidcAuth.authenticateMcpPrincipalToken).not.toHaveBeenCalled();
   });
 });

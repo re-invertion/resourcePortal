@@ -357,6 +357,14 @@ export class ResourcePortalClient extends BaseResourcePortalClient {
     "service-identities",
   );
 
+  /** Operator-only, read-only assessment; never automatically changes auth mode. */
+  readonly nativeLoginMigration = {
+    preflight: () => this.request<import("./index").FederationRetirementPreflight>(
+      "/platform/identity-providers/retirement-preflight",
+    ),
+  };
+
+  /** @deprecated Incoming platform federation is retired in native-only mode. */
   readonly platformIdentityProviders = {
     list: () => this.request("/platform/identity-providers"),
     get: (identityProviderId: string) =>

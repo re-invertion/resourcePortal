@@ -152,27 +152,23 @@ describe("guided access and routing", () => {
 });
 
 describe("tenant action feedback", () => {
-  it("reports authentication policy saves from the final policy control", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it("does not allow tenants to bypass the native-login migration from the UI", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
-      const method = init?.method ?? "GET";
-      if (url.endsWith("/memberships")) return json([]);
-      if (url.endsWith("/roles")) return json([]);
-      if (url.endsWith("/invitations")) return json([]);
-      if (url.endsWith("/groups")) return json([]);
-      if (url.endsWith("/identity-providers")) return json([]);
-      if (url.endsWith("/auth-policy") && method === "GET") return json({ allowPlatformLogin: true, allowTenantIdentityProviders: true, requireTenantIdentityProvider: false });
-      if (url.endsWith("/auth-policy") && method === "PATCH") return json({ allowPlatformLogin: true, allowTenantIdentityProviders: true, requireTenantIdentityProvider: false });
+      if (url.endsWith("/auth-policy")) {
+        return json({ allowPlatformLogin: true, allowTenantIdentityProviders: true, requireTenantIdentityProvider: true });
+      }
       return json([]);
     });
     vi.stubGlobal("fetch", fetchMock);
-
-    render(<><TenantPage tenantId="t" section="administration" userId="u" /><ToastViewport /></>);
-    await screen.findByRole("heading", { name: "Authentication policy" });
-    fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
-
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Authentication policy saved"));
-    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/auth-policy") && (init?.method ?? "GET") === "PATCH")).toBe(true);
+    render(<TenantPage tenantId="t" section="administration" userId="u" />);
+    expect(await screen.findByRole("heading", { name: "Native login migration" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open tenant Identity & SSO" }).getAttribute("href")).toBe("/tenants/t/identity-sso");
+    expect(screen.queryByRole("button", { name: "Save policy" })).toBeNull();
+    expect(screen.getByText(/must verify native login and recovery/)).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith("/auth-policy") && (init as RequestInit | undefined)?.method === "PATCH",
+    )).toBe(false);
   });
 
   it("offers audit export as direct backend downloads instead of inline raw output", async () => {

@@ -39,6 +39,9 @@ rp_validate_release_manifest() {
     (.migrations.rollbackPolicy == "none" or .migrations.rollbackPolicy == "image-only" or .migrations.rollbackPolicy == "tested") and
     ([.images.api,.images.web,.images.postgres,.images.zitadel,.images.traefik] | all(type == "string"))
   ' "$manifest" >/dev/null || return 1
+  # Backward compatibility: source manifests released before DB restore proof
+  # must remain readable for migration inspection. New automatic rollback is
+  # independently blocked by rp_upgrade_rollback_allowed without both DB flags.
   # Assessment fields are optional for old release manifests, but when
   # present must be coherent. A "tested" claim needs explicit integration
   # evidence. The release builder never generates such a claim by inference.
@@ -55,7 +58,9 @@ rp_validate_release_manifest() {
        (.migrations.rollbackEvidence.kind == "real-upgrade-and-restore" and
         (.migrations.rollbackEvidence.workflowRunId | type == "number") and
         (.migrations.rollbackEvidence.sourceVersion | type == "string") and
-        .migrations.rollbackEvidence.sourceVersion == .migrations.rollbackAssessment.sourceVersion))
+        .migrations.rollbackEvidence.sourceVersion == .migrations.rollbackAssessment.sourceVersion and
+        .migrations.rollbackEvidence.candidateZitadelImage == .images.zitadel and
+        (.migrations.rollbackEvidence.candidateZitadelImage | type == "string")))
      else true end) and
     (if .migrations.rollbackAssessment != null and .migrations.rollbackPolicy == "image-only"
      then .migrations.rollbackAssessment.reason == "no-resourceportal-database-schema-changes"

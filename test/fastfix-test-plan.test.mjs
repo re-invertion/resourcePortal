@@ -13,9 +13,57 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
 });
 
 test("documentation-only change does not trigger unrelated tests", () => {
-  const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md"]);
+  const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md", "packages/resourceportal-api/README.md"]);
   assert.deepEqual(plan.profiles, []);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC and native-login changes select the dedicated identity/federation gate", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.ts",
+    "packages/resourceportal-api/src/oauth-applications/tenant-oauth-project.spec.ts",
+    "packages/resourceportal-api/src/api.module.ts",
+    "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs",
+    "packages/resourceportal-web/src/pages/tenant-identity-sso.tsx",
+    "packages/resourceportal-web/src/pages/platform-identity-pages.tsx",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC readiness health files require identity and platform release regression", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/health/health.controller.ts",
+    "packages/resourceportal-api/src/health/health.controller.spec.ts",
+    "packages/resourceportal-api/src/health/health.module.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "platform-release"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("live HTTPS tenant OIDC integration scripts and fixtures are release-gated", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts",
+    "packages/resourceportal-api/scripts/tenant-oidc-browser-e2e.ts",
+    "scripts/run-tenant-oidc-https-e2e.sh",
+    "test/tenant-oidc/docker-compose.yml",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "workflow"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("identity rollout cannot silently bypass patch validation when package manifest changes", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/package.json"]);
+  assert.deepEqual(plan.profiles, ["identity", "workflow"]);
+});
+
+test("real database rollback smoke changes require the platform release regression gate", () => {
+  const plan = selectProfiles([
+    "scripts/release-rollback-policy.mjs",
+    "scripts/run-automatic-rollback-smoke.sh",
+    "test/test-upgrade-database-rollback.test.mjs",
+  ]);
+  assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
 });
 
 test("security runtime changes select security tests (never silently skipped)", () => {
@@ -276,6 +324,23 @@ test("unclassified changes still fail closed despite cross-cutting profiles", ()
 });
 
 test("release rollback guard and Swarm smoke cannot be omitted from Fast Fix selection", () => {
-  const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh"]);
+  const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh", "scripts/rollback-zitadel-runtime.sh", "scripts/publish-tested-release-image.sh"]);
   assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
+});
+
+test("API production build config is classified and retains narrow E2E-only exclusions", async () => {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const config = JSON.parse(readFileSync(new URL("../packages/resourceportal-api/tsconfig.build.json", import.meta.url), "utf8"));
+  const excludedScripts = config.exclude.filter((path) => path.startsWith("scripts/")).sort();
+  assert.deepEqual(excludedScripts, [
+    "scripts/tenant-oidc-browser-e2e.ts",
+    "scripts/tenant-oidc-live-e2e.ts",
+  ]);
+  assert.ok(!config.exclude.some((path) => path === "scripts" || path === "src" || path === "src/**"));
+  for (const path of excludedScripts) {
+    assert.ok(existsSync(fileURLToPath(new URL(`../packages/resourceportal-api/${path}`, import.meta.url))));
+  }
+  assert.deepEqual(selectProfiles(["packages/resourceportal-api/tsconfig.build.json"]).profiles, ["identity", "workflow"]);
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/tsconfig.unregistered.json"]), /unclassified changes/);
 });

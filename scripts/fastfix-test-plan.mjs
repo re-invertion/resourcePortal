@@ -69,7 +69,10 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
   "identity": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/auth/github-security-regressions.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
+    ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
+    ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
   ],
   "web-proxy": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "proxy-target.test.mjs"],
@@ -156,11 +159,29 @@ const commands = {
     ["bash", "test/installer/test-packaging.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
-    ["node", "--test", "test/test-release-rollback-policy.test.mjs"],
+    ["node", "--test", "test/test-release-rollback-policy.test.mjs", "test/test-upgrade-database-rollback.test.mjs"],
   ],
 };
 
 const classifiers = [
+  // Tenant IdP, OIDC clients and login migration are identity/security-critical.
+  // Explicitly classify every new surface, including new tests and the API
+  // package manifest, so patch selection cannot silently omit these gates.
+  [/^packages\/resourceportal-api\/src\/tenant-oidc\//, ["identity"]],
+  [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
+  [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],
+  // Installer-facing tenant OIDC health readiness is identity and release-critical.
+  [/^packages\/resourceportal-api\/src\/health\/health\.(?:controller(?:\.spec)?|module)\.ts$/, ["identity", "platform-release"]],
+  [/^packages\/resourceportal-api\/package\.json$/, ["identity", "workflow"]],
+  // Production TypeScript build config changes require identity and workflow
+  // regression coverage; release readiness separately runs the full API build.
+  [/^packages\/resourceportal-api\/tsconfig\.build\.json$/, ["identity", "workflow"]],
+  [/^packages\/resourceportal-api\/scripts\/tenant-oidc-live-preflight\.mjs$/, ["identity"]],
+  [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:live|browser)-e2e\.ts$/, ["identity"]],
+  [/^scripts\/run-tenant-oidc-https-e2e\.sh$/, ["identity", "workflow"]],
+  [/^test\/tenant-oidc\/.*\.ya?ml$/, ["identity", "workflow"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-identity-sso(?:\.test)?\.tsx$/, ["identity"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-identity-pages\.tsx$/, ["identity"]],
   // Shared App Group runtime blockers feed both standard views and topology;
   // changes must run application AND networking regressions in Fast Fix.
   [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.view\.ts$/, ["applications", "networking"]],
@@ -199,6 +220,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-execution\.service\.ts|deployment-cpu-validation\.spec\.ts)$/, ["quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],
+  [/^packages\/resourceportal-api\/README\.md$/, []],
   [/^README\.md$/, ["workflow"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-(deploy|stage11-quota-concurrency|stage15-capacity|stage16-operations|volume-lifecycle)\.ts$/, ["release-fixtures", "tenant-access", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
@@ -208,6 +230,8 @@ const classifiers = [
   [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
   [/^scripts\/release-rollback-policy\.mjs$/, ["platform-release", "workflow"]],
   [/^scripts\/run-automatic-rollback-smoke\.sh$/, ["platform-release", "workflow"]],
+  [/^scripts\/rollback-zitadel-runtime\.sh$/, ["platform-release", "workflow"]],
+  [/^scripts\/publish-tested-release-image\.sh$/, ["platform-release", "workflow"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],

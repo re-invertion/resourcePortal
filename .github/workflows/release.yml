@@ -114,18 +114,6 @@ jobs:
         shell: bash
         run: |
           printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
-      - name: Require verified automatic rollback before publishing
-        env:
-          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
-          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/release-rollback-policy.mjs \
-            --previous-tag "$PREVIOUS_TAG" \
-            --head HEAD \
-            --mode "$VALIDATION_MODE" \
-            --require-automatic
       - name: Validate only changed scope for patch release
         if: steps.release-mode.outputs.mode == 'fastfix'
         env:
@@ -198,6 +186,10 @@ jobs:
       - name: Validate actual RP release images recover before publishing
         env:
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
+          RP_ROLLBACK_E2E_ISOLATED: 'true'
+          # Keep aligned with the signed published manifest image.
+          RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
         shell: bash
         run: |
           set -euo pipefail
@@ -205,35 +197,51 @@ jobs:
           docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
           docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
           bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
-      - name: Build and publish API image
+
+      - name: Require verified automatic rollback before publishing
+        env:
+          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-rollback-policy.mjs \
+            --previous-tag "$PREVIOUS_TAG" \
+            --head HEAD \
+            --mode "$VALIDATION_MODE" \
+            --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
+            --require-automatic
+      # Publishing MUST reuse the exact Docker local candidates already run
+      # by the real rollback gate. Independently rebuilding here breaks proof.
+      - name: Publish rollback-tested API image
         id: api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-api:${{ steps.version.outputs.tag }}
-      - name: Build and publish Web image
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh api "$RELEASE_TAG"
+      - name: Publish rollback-tested Web image
         id: web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/resourceportal-web/Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-web:${{ steps.version.outputs.tag }}
-      - name: Build and publish fenced PostgreSQL image
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh web "$RELEASE_TAG"
+      - name: Publish rollback-tested PostgreSQL image
         id: postgres
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packages/resourceportal-postgres/Dockerfile
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/resourceportal-postgres:${{ steps.version.outputs.tag }}
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: bash scripts/publish-tested-release-image.sh postgres "$RELEASE_TAG"
       - name: Resolve immutable upstream images
         shell: bash
         run: |
           set -euo pipefail
-          for image in ghcr.io/zitadel/zitadel:v4.17.0 traefik:v3.6.16; do docker pull "$image"; done
-          echo "ZITADEL_REF=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/zitadel/zitadel:v4.17.0)" >> "$GITHUB_ENV"
+          # Resolve the candidate ZITADEL digest ONLY from the completed live
+          # restore evidence, not by pulling a mutable upstream tag again.
+          ZITADEL_REF="$(jq -er '.candidateZitadelImage' "$RUNNER_TEMP/rp-rollback-evidence.json")"
+          [[ "$ZITADEL_REF" =~ ^ghcr\.io/zitadel/zitadel@sha256:[a-f0-9]{64}$ ]] || {
+            echo "Release blocked: candidate ZITADEL image proof is missing" >&2; exit 1;
+          }
+          docker pull "$ZITADEL_REF"
+          [[ "$(docker image inspect --format='{{index .RepoDigests 0}}' "$ZITADEL_REF")" == "$ZITADEL_REF" ]] || exit 1
+          echo "ZITADEL_REF=$ZITADEL_REF" >> "$GITHUB_ENV"
+          docker pull traefik:v3.6.16
           echo "TRAEFIK_REF=$(docker inspect --format='{{index .RepoDigests 0}}' traefik:v3.6.16)" >> "$GITHUB_ENV"
       - name: Classify database rollback capability (fail closed)
         id: rollback-assessment
@@ -246,6 +254,8 @@ jobs:
             --previous-tag "$PREVIOUS_TAG" \
             --head HEAD \
             --mode "$VALIDATION_MODE" \
+            --verified-evidence-file "$RUNNER_TEMP/rp-rollback-evidence.json" \
+            --require-automatic \
             --github-output "$GITHUB_OUTPUT"
       - name: Create release manifest
         env:
@@ -264,7 +274,7 @@ jobs:
           ROLLBACK_SOURCE_VERSION="${{ steps.rollback-assessment.outputs.rollback_source_version }}"
           ROLLBACK_TARGET_COMMIT="${{ steps.rollback-assessment.outputs.rollback_target_commit }}"
           # Never publish a release manifest without automatic rollback.
-          [[ "$ROLLBACK_POLICY" == image-only ]] || {
+          [[ "$ROLLBACK_POLICY" == image-only || "$ROLLBACK_POLICY" == tested ]] || {
             echo "Release blocked: rollbackPolicy=$ROLLBACK_POLICY" >&2
             exit 1
           }
@@ -296,8 +306,12 @@ jobs:
             --arg rollback_reason "$ROLLBACK_REASON" \
             --arg rollback_source_version "$ROLLBACK_SOURCE_VERSION" \
             --arg rollback_target_commit "$ROLLBACK_TARGET_COMMIT" \
+            --argjson rollback_run_id "$GITHUB_RUN_ID" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
-            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}' \
+            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
+             | if $rollback_policy == "tested" then
+                 .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version,databaseSnapshotRestored:true,restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,candidateZitadelImage:$zitadel}
+               else . end' \
             > resourceportal-release-manifest.json
       - name: Attest release manifest with GitHub Actions OIDC provenance
         id: manifest-attestation
