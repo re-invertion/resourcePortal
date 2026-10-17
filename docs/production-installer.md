@@ -185,14 +185,34 @@ requires explicit integration evidence of a real upgrade-and-restore run;
 an SQL allowlist or syntactic migration check **does not** constitute proof.
 Unverified migrations and milestone releases default to `none`.
 
-With `none`, a failed upgrade remains stopped for manual inspection, rather
-than deploying old binaries against a database that may have migrated. The
-installer will never silently downgrade PostgreSQL data. With an authorized
-rollback, it verifies the checkpoint digest, restores the previous stack,
-waits for HTTPS health, and restores the installed manifest and configuration.
-If restoring any of these fails, the journal reports `rollback-failed`.
-The checkpoint is **not** a database backup: operators must maintain
-separate database backup and restore procedures for irreversible migrations.
+With `none`, a failed upgrade remains stopped for manual inspection rather
+than deploying old binaries against a database that may have migrated. An
+`image-only` update may roll back the stack and manifest without changing
+PostgreSQL. A schema-changing or milestone release must have a `tested` policy
+and cryptographically bound CI evidence of **both** source database backups
+and an actual successful RP and ZITADEL PostgreSQL restore from an injected
+failed upgrade. Expand-only schema compatibility alone is not sufficient.
+
+For a `tested` update, after quiescing API, Worker and ZITADEL but **before
+any PostgreSQL/ZITADEL rollout or Prisma migration**, the installer takes
+`pg_dump -Fc` snapshots of both RP and ZITADEL databases using the sole healthy
+local Swarm database task. Archives are retained under permission-restricted,
+unique `database-snapshots.XXXXXX` directories inside the atomic upgrade
+checkpoint. Each archive is checked with `pg_restore --list` and SHA-256,
+and the journal is atomically marked `databaseSnapshotState=verified`. Missing,
+unhealthy, non-local or multiple database tasks, snapshot corruption or disk
+failure block the update. After a failed update the installer quiesces all
+writers again and restores **both** source databases into a clean staging database using `pg_restore --exit-on-error
+--single-transaction`. Only after the whole restore is committed does it
+quarantine the mutated database and rename the staged source database into the
+original database name. This removes candidate-only tables and preserves the
+failed database for forensic recovery. The swap happens before previous
+images are redeployed and checking HTTPS health. A missing snapshot after mutations, failed
+checksum, SQL restore error or failed post-restore health check leaves the
+checkpoint at `rollback-failed` and requires explicit recovery; it must not
+claim rollback success. Existing completed upgrade checkpoints and snapshots
+should be retained or retired according to the operator backup retention policy.
+These per-upgrade snapshots do not replace ongoing independent backups.
 
 The admin update dialog reports why automatic rollback is unavailable:
 missing/unreachable/invalid release manifest, incompatible source version,

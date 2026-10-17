@@ -135,4 +135,27 @@ describe("ZITADEL tenant OIDC project security", () => {
     await expect(service().verifyMemberGrant("user-1", "grant-1", "wrong-project"))
       .rejects.toThrow("does not match this tenant");
   });
+  it("retrieves a previously assigned tenant grant via the documented global ZITADEL search endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      details: { totalResult: 2 }, result: [
+        { id: "foreign", userId: "user-1", projectId: "other", roleKeys: ["rp.tenant.member"] },
+        { id: "existing", userId: "user-1", projectId: "project-7", roleKeys: ["rp.tenant.member"] },
+      ],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(service().findExistingMemberGrant("user-1", "project-7")).resolves.toBe("existing");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.com/management/v1/users/grants/_search");
+    const requestBody: unknown = JSON.parse(init.body as string);
+    expect(requestBody).toMatchObject({ queries: [{ userIdQuery: { userId: "user-1" } }] });
+  });
+
+  it("fails closed on an ambiguous or truncated ZITADEL membership grant search", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      details: { totalResult: 200 }, result: [{ id: "first", userId: "user-1", projectId: "project-7", roleKeys: ["rp.tenant.member"] }],
+    }), { status: 200 })));
+    await expect(service().findExistingMemberGrant("user-1", "project-7"))
+      .rejects.toThrow("search is incomplete");
+  });
+
 });

@@ -729,6 +729,13 @@ export class TenantsService {
         include: this.membershipIncludes(),
       });
 
+      // Atomically invalidate tenant SSO readiness with invitation acceptance;
+      // otherwise a crash could persist active membership without its role grant.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId: invitation.tenantId },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+      });
+
       await tx.tenantInvitation.delete({
         where: { id: invitation.id },
       });

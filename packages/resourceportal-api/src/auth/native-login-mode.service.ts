@@ -1,3 +1,4 @@
+import { activeFederatedSessionWhere } from "./federated-session-where";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
@@ -40,7 +41,7 @@ export class NativeLoginModeService {
           },
         }),
         this.prisma.portalSession.count({
-          where: { authenticatedIdpId: { not: null } },
+          where: activeFederatedSessionWhere(this.config),
         }),
       ]);
     return configuredProviders === 0 && linkedAccounts === 0 &&

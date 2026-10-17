@@ -159,7 +159,7 @@ const commands = {
     ["bash", "test/installer/test-packaging.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
-    ["node", "--test", "test/test-release-rollback-policy.test.mjs"],
+    ["node", "--test", "test/test-release-rollback-policy.test.mjs", "test/test-upgrade-database-rollback.test.mjs"],
   ],
 };
 

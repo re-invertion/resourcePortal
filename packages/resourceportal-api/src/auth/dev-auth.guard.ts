@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   Injectable,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -16,6 +17,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY, MACHINE_BEARER_AUTH_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
+import { NativeLoginModeService } from "./native-login-mode.service";
 
 @Injectable()
 export class DevAuthGuard implements CanActivate {
@@ -25,6 +27,7 @@ export class DevAuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
     private readonly oidcAuth: OidcAuthService,
     private readonly sessions: AuthSessionService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -116,6 +119,10 @@ export class DevAuthGuard implements CanActivate {
         return true;
       }
 
+      if (principal.user.authenticatedIdpId && await this.nativeOnly()) {
+        if (isMcpRequest(request)) applyMcpBearerChallenge(request, reply);
+        throw new UnauthorizedException("External identity provider login is disabled");
+      }
       if (principal.user.status !== UserStatus.Active) {
         throw new UnauthorizedException("Active user is required");
       }
@@ -127,7 +134,11 @@ export class DevAuthGuard implements CanActivate {
     const sessionId = this.sessions.getSessionIdFromRequest(request);
     if (sessionId) {
       try {
-        request.user = await this.sessions.authenticateSession(sessionId);
+        const user = await this.sessions.authenticateSession(sessionId);
+        if (user.authenticatedIdpId && await this.nativeOnly()) {
+          throw new UnauthorizedException("External identity provider login is disabled");
+        }
+        request.user = user;
         return true;
       } catch (error) {
         // Provider outages, rate limits and interrupted refreshes do not
@@ -150,6 +161,12 @@ export class DevAuthGuard implements CanActivate {
     throw new UnauthorizedException(
       "Authorization bearer token or session cookie is required",
     );
+  }
+
+  private async nativeOnly(): Promise<boolean> {
+    return this.nativeMode
+      ? this.nativeMode.isNativeOnly()
+      : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true";
   }
 
   private extractBearerToken(header: string | undefined) {

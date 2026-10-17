@@ -1,3 +1,4 @@
+import { activeFederatedSessionWhere } from "../auth/federated-session-where";
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
@@ -68,7 +69,7 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
       this.prisma.tenantAuthPolicy.count({ where: { OR: [
         { requireTenantIdentityProvider: true }, { allowPlatformLogin: false },
       ] } }),
-      this.prisma.portalSession.count({ where: { authenticatedIdpId: { not: null } } }),
+      this.prisma.portalSession.count({ where: activeFederatedSessionWhere(this.config) }),
       this.prisma.tenant.count({ where: { status: TenantStatus.Active } }),
       this.prisma.tenantOidcProvider.count({ where: {
         enabled: true, status: "Active", tenant: { status: TenantStatus.Active },
@@ -98,7 +99,7 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
         this.prisma.tenantAuthPolicy.count({ where: { OR: [
           { requireTenantIdentityProvider: true }, { allowPlatformLogin: false },
         ] } }),
-        this.prisma.portalSession.count({ where: { authenticatedIdpId: { not: null } } }),
+        this.prisma.portalSession.count({ where: activeFederatedSessionWhere(this.config) }),
       ]);
     if (externalProviders || externalAccounts || inboundPolicies || externalSessions) {
       return {

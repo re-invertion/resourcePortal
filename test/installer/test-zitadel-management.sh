@@ -333,6 +333,10 @@ upgrade_preserves_management_state() (
   # This fixture represents a separately certified release; actual policy
   # eligibility is enforced by rp_upgrade_rollback_allowed in production.
   rp_upgrade_rollback_allowed(){ return 0; }
+  # Mock certified local database snapshot only in this management-state fixture.
+  # Production snapshot/restore is exercised by dedicated rollback smoke.
+  rp_upgrade_database_snapshot_prepare(){ return 0; }
+  rp_upgrade_database_restore(){ return 0; }
   rp_upgrade_wait_for_tenant_oidc_ready(){ return 0; }
   rp_upgrade_identity_preflight(){ return 0; }
   rp_pull_release_images(){ return 0; }

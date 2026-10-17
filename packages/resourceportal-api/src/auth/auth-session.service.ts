@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Injectable, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
@@ -8,6 +8,7 @@ import { EncryptionService } from "../security/encryption.service";
 import { AuthenticatedUser } from "./types";
 import { TokenResponse } from "./auth-flow.service";
 import { OidcAuthService } from "./oidc-auth.service";
+import { NativeLoginModeService } from "./native-login-mode.service";
 
 type RefreshTokenResponse = {
   access_token: string;
@@ -29,6 +30,7 @@ export class AuthSessionService {
     private readonly prisma: PrismaService,
     private readonly oidcAuth: OidcAuthService,
     private readonly encryption: EncryptionService,
+    @Optional() private readonly nativeMode?: NativeLoginModeService,
   ) {}
 
   async createSession(userId: string, tokens: TokenResponse, authenticatedIdpId?: string | null) {
@@ -89,6 +91,13 @@ export class AuthSessionService {
       throw new UnauthorizedException("Session is invalid");
     }
 
+    // Enforce cutover BEFORE refreshing the upstream token or extending a cookie.
+    // A historical session must never survive the switch to native-only login.
+    if (session.authenticatedIdpId && await this.isNativeOnly()) {
+      await this.revokeSession(session.id);
+      throw new UnauthorizedException("External identity provider login is disabled");
+    }
+
     if (session.accessTokenExpiresAt.getTime() <= now) {
       await this.refreshSessionTokens(session);
     }
@@ -109,6 +118,12 @@ export class AuthSessionService {
       status: session.user.status,
       ...(session.authenticatedIdpId ? { authenticatedIdpId: session.authenticatedIdpId } : {}),
     };
+  }
+
+  private async isNativeOnly(): Promise<boolean> {
+    return this.nativeMode
+      ? this.nativeMode.isNativeOnly()
+      : this.config.get<string>("RP_NATIVE_LOGIN_ONLY") === "true";
   }
 
   async listActiveSessions(userId: string, currentSessionId?: string) {

@@ -19,6 +19,7 @@ function fixture() {
     verifyIssuerSecurity: vi.fn().mockResolvedValue(undefined),
     verifyMemberGrant: vi.fn().mockResolvedValue(undefined),
     assignMember: vi.fn().mockResolvedValue("grant-new"),
+    findExistingMemberGrant: vi.fn().mockResolvedValue(null),
     revokeMember: vi.fn().mockResolvedValue(undefined),
   };
   const provider = {
@@ -42,7 +43,8 @@ function fixture() {
     oAuthApplication: { count: vi.fn().mockResolvedValue(0) },
     tenantOidcGrant: {
       findMany: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue({}),
+      create: vi.fn().mockResolvedValue({ id: "pending-row" }),
+      update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
     },
   };
@@ -222,7 +224,10 @@ describe("Tenant OIDC management fails closed", () => {
     );
     expect(f.project.assignMember).toHaveBeenCalledWith("zitadel-user-b", "987");
     expect(f.prisma.tenantOidcGrant.create).toHaveBeenCalledWith({
-      data: { tenantId: tenantB, userId: "user-b", zitadelUserId: "zitadel-user-b", zitadelGrantId: "grant-new", status: "Active" },
+      data: { tenantId: tenantB, userId: "user-b", zitadelUserId: "zitadel-user-b", status: "Pending" },
+    });
+    expect(f.prisma.tenantOidcGrant.update).toHaveBeenCalledWith({
+      where: { id: "pending-row" }, data: { zitadelGrantId: "grant-new", status: "Active" },
     });
     expect(f.prisma.tenantOidcGrant.create).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ tenantId }) as Record<string, unknown> }),
@@ -267,9 +272,56 @@ describe("Tenant OIDC management fails closed", () => {
     expect(f.project.assignMember).toHaveBeenCalledWith("zitadel-u1", "123");
     expect(f.prisma.tenantOidcGrant.create).toHaveBeenCalledWith({
       data: {
-        tenantId, userId: "u1", zitadelUserId: "zitadel-u1", zitadelGrantId: "grant-new",
-        status: "Active",
+        tenantId, userId: "u1", zitadelUserId: "zitadel-u1",
+        status: "Pending",
       },
     });
   });
+  it("persists a Pending intent before assigning external permissions and compensates failed DB persistence", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{ userId: "u1", status: MembershipStatus.Active,
+      user: { identities: [{ issuer: nativeIssuer, providerType: "zitadel", externalSubject: "native-u1", identityProviderId: null }] },
+    }]);
+    f.prisma.tenantOidcGrant.update.mockRejectedValue(new Error("postgres write unavailable"));
+    await expect(f.service.reconcileGrants(tenantId)).rejects.toThrow("postgres write unavailable");
+    expect(f.prisma.tenantOidcGrant.create).toHaveBeenCalledWith({
+      data: { tenantId, userId: "u1", zitadelUserId: "native-u1", status: "Pending" },
+    });
+    expect(f.project.findExistingMemberGrant).toHaveBeenCalledWith("native-u1", "123");
+    expect(f.prisma.tenantOidcGrant.create.mock.invocationCallOrder[0]).toBeLessThan(
+      f.project.assignMember.mock.invocationCallOrder[0],
+    );
+    expect(f.project.revokeMember).toHaveBeenCalledWith("native-u1", "grant-new");
+    const updates = f.prisma.tenantOidcProvider.update.mock.calls as unknown as Array<[
+      { data: { enabled: boolean; status: string } },
+    ]>;
+    expect(updates.at(-1)?.[0].data).toMatchObject({ enabled: false, status: "ReconciliationFailed" });
+  });
+
+  it("recovers a remote grant using its persisted Pending intent after process interruption", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{ userId: "u1", status: MembershipStatus.Active,
+      user: { identities: [{ issuer: nativeIssuer, providerType: "zitadel", externalSubject: "native-u1", identityProviderId: null }] },
+    }]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{ id: "pending-row", tenantId, userId: "u1",
+      zitadelUserId: "native-u1", zitadelGrantId: null, status: "Pending" }]);
+    f.project.findExistingMemberGrant.mockResolvedValue("upstream-existing-grant");
+    await f.service.reconcileGrants(tenantId);
+    expect(f.project.assignMember).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcGrant.create).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcGrant.update).toHaveBeenCalledWith({
+      where: { id: "pending-row" }, data: { zitadelGrantId: "upstream-existing-grant", status: "Active" },
+    });
+  });
+
+  it("finds an orphaned pending grant during disable and revokes it before deleting its local intent", async () => {
+    const f = fixture();
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{ id: "pending-row", tenantId, userId: "u1",
+      zitadelUserId: "native-u1", zitadelGrantId: null, status: "Pending" }]);
+    f.project.findExistingMemberGrant.mockResolvedValue("orphan-remote");
+    await f.service.disable(tenantId);
+    expect(f.project.revokeMember).toHaveBeenCalledWith("native-u1", "orphan-remote");
+    expect(f.prisma.tenantOidcGrant.delete).toHaveBeenCalledWith({ where: { id: "pending-row" } });
+  });
+
 });

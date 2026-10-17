@@ -141,6 +141,31 @@ export class ZitadelTenantProjectService {
     );
   }
 
+  /** Recover a grant created before a crash or persistence failure. ZITADEL
+   * is the source of truth for upstream grants; never create a duplicate on
+   * retry and never guess when multiple matching role grants are returned.
+   */
+  async findExistingMemberGrant(userId: string, projectId: string): Promise<string | null> {
+    const response = await this.request<{
+      result?: Array<{ id?: string; userId?: string; projectId?: string; roleKeys?: string[] }>;
+      details?: { totalResult?: string | number };
+    }>("POST", "/management/v1/users/grants/_search", {
+      query: { limit: 100 },
+      queries: [{ userIdQuery: { userId } }],
+    });
+    if (Number(response.details?.totalResult ?? 0) > (response.result?.length ?? 0)) {
+      throw new ServiceUnavailableException("ZITADEL grant search is incomplete; manual recovery required");
+    }
+    const found = (response.result ?? []).filter((row) =>
+      row.userId === userId && row.projectId === projectId &&
+      row.roleKeys?.includes("rp.tenant.member"),
+    );
+    if (found.length > 1 || found.some((row) => !row.id)) {
+      throw new ServiceUnavailableException("Ambiguous existing ZITADEL tenant membership grant");
+    }
+    return found[0]?.id ?? null;
+  }
+
   async assignMember(userId: string, projectId: string): Promise<string> {
     const response = await this.request<GrantResponse>(
       "POST",

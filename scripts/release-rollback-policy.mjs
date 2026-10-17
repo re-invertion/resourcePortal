@@ -75,8 +75,9 @@ function verifyMigrationDiffIsExpandOnly(previous, head) {
 
 // Static diff eligibility is a prerequisite, not a substitute for a real
 // rollback smoke. Schema/milestone can only claim "tested" if independent
-// runtime evidence proves old images and old DB client survive the upgrade.
-// Do NOT assume a down-migration exists: an expanded DB schema remains.
+// runtime evidence proves old images AND the exact source database snapshots
+// can be restored after the upgrade. Old Prisma client compatibility alone is
+// never sufficient: no new migration is allowed to survive a failed upgrade.
 export function requireAutomaticRollback(result, evidence = null) {
   const validTarget = /^\d+\.\d+\.\d+$/.test(result.sourceVersion) &&
     /^[a-f0-9]{40}$/.test(result.targetCommit);
@@ -95,6 +96,10 @@ export function requireAutomaticRollback(result, evidence = null) {
     evidence.previousApiRuntimeReadyAfterRollback === true &&
     evidence.injectedHealthFailure === true &&
     evidence.previousImagesRestored === true &&
+    evidence.databaseSnapshotVerified === true &&
+    evidence.databaseSnapshotRestored === true &&
+    evidence.restoredSourceSchema === true &&
+    evidence.zitadelDatabaseRestored === true &&
     // A PR must not reuse evidence issued in a different workflow run.
     (!process.env.GITHUB_RUN_ID || evidence.workflowRunId === Number(process.env.GITHUB_RUN_ID));
   if (verified) {
@@ -106,6 +111,9 @@ export function requireAutomaticRollback(result, evidence = null) {
         kind: evidence.kind,
         workflowRunId: evidence.workflowRunId,
         sourceVersion: evidence.sourceVersion,
+        databaseSnapshotRestored: true,
+        restoredSourceSchema: true,
+        zitadelDatabaseRestored: true,
       },
     };
   }
