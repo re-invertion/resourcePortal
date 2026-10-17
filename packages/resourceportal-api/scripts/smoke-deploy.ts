@@ -636,21 +636,29 @@ async function expectServiceReplicas(
   serviceName: string,
   expected: string,
 ) {
-  const result = await docker([
-    "service",
-    "ls",
-    "--filter",
-    `name=${stackName}_${serviceName}`,
-    "--format",
-    "{{.Replicas}}",
-  ]);
-  const replicas = result.stdout.trim();
+  // Swarm reports a successful service update when its desired replica
+  // count changes, but existing tasks may still be shutting down or starting.
+  // Check for actual convergence instead of sampling the asynchronous state once.
+  const service = `${stackName}_${serviceName}`;
+  const deadline = Date.now() + 60_000;
+  let replicas = "not observed";
+  do {
+    const result = await docker([
+      "service", "ls", "--filter", `name=${service}`,
+      "--format", "{{.Replicas}}",
+    ]);
+    replicas = result.stdout.trim();
+    if (replicas === expected) return;
+    await wait(1000);
+  } while (Date.now() < deadline);
 
-  if (replicas !== expected) {
-    throw new Error(
-      `Expected ${stackName}_${serviceName} replicas ${expected}, got ${replicas}`,
-    );
-  }
+  const tasks = await docker([
+    "service", "ps", service, "--no-trunc",
+    "--format", "{{.CurrentState}} | {{.DesiredState}} | {{.Error}}",
+  ], true);
+  throw new Error(
+    `Timed out waiting for ${service} replicas ${expected}, got ${replicas} after 60s; tasks: ${tasks.stdout.trim() || tasks.stderr.trim() || "unavailable"}`,
+  );
 }
 
 async function waitForStackRemoval(stackName: string) {
