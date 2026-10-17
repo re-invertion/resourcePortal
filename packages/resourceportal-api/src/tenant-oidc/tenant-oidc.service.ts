@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { MembershipStatus, TenantStatus, UserStatus } from "@prisma/client";
+import { MembershipStatus, TenantStatus, UserStatus, Prisma } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZitadelTenantProjectService } from "./zitadel-tenant-project.service";
@@ -24,7 +24,9 @@ export class TenantOidcService {
       where: { tenantId },
       include: { _count: { select: { grants: true } } },
     });
-    if (!provider) return { tenantId, status: "NotProvisioned", enabled: false };
+    if (!provider || provider.status === "Deleted") {
+      return { tenantId, status: "NotProvisioned", enabled: false };
+    }
     return {
       tenantId,
       status: provider.status,
@@ -37,7 +39,7 @@ export class TenantOidcService {
     };
   }
 
-  async provision(tenantId: string) {
+  async provision(tenantId: string, fromAutoRollout = false) {
     await this.requireActiveTenant(tenantId);
     // The service never enables a tenant IdP based on an unverified project alone.
     let provider = await this.prisma.tenantOidcProvider.upsert({
@@ -47,6 +49,16 @@ export class TenantOidcService {
     });
     if (provider.enabled) {
       throw new ConflictException("Disable the tenant IdP before changing its security configuration");
+    }
+    if (["Disabling", "Disabled", "Deleted"].includes(provider.status)) {
+      if (fromAutoRollout) {
+        throw new ConflictException("Tenant administrator explicitly disabled automatic OIDC provisioning");
+      }
+      // Explicit human provisioning is the supported re-enrolment path.
+      provider = await this.prisma.tenantOidcProvider.update({
+        where: { tenantId },
+        data: { status: "Pending", lastErrorCode: null },
+      });
     }
 
     try {
@@ -83,107 +95,121 @@ export class TenantOidcService {
 
   async reconcileGrants(tenantId: string) {
     await this.requireActiveTenant(tenantId);
-    const provider = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
-    if (!provider?.zitadelProjectId) {
-      throw new NotFoundException("Tenant OIDC project is not provisioned");
-    }
-
-    // No client can be activated while any membership has not been reconciled.
-    await this.prisma.tenantOidcProvider.update({
-      where: { tenantId },
+    // Commit fail-closed state before making any upstream grants. In-transaction
+    // disabling would roll back on remote errors and could leave an enabled IdP.
+    const claimed = await this.prisma.tenantOidcProvider.updateMany({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
       data: { enabled: false, status: "Reconciling", grantsReconciledAt: null },
     });
+    if (claimed.count !== 1) {
+      throw new ConflictException("Tenant OIDC has been explicitly disabled");
+    }
     try {
-      await this.zitadel.readProject(provider.zitadelProjectId);
-      const members = await this.prisma.tenantMembership.findMany({
-        where: {
-          tenantId,
-          status: MembershipStatus.Active,
-          user: { status: UserStatus.Active },
-        },
-        include: { user: { include: { identities: true } } },
-      });
-      const allowed = new Set(members.map((member) => member.userId));
-      const existing = await this.prisma.tenantOidcGrant.findMany({ where: { tenantId } });
-
-      // Revocation FIRST: stale grants must not survive removal/suspension of membership.
-      for (const grant of existing) {
-        if (allowed.has(grant.userId)) continue;
-        const revokeId = grant.zitadelGrantId ??
-          await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId);
-        if (revokeId) await this.zitadel.revokeMember(grant.zitadelUserId, revokeId);
-        await this.prisma.tenantOidcGrant.delete({ where: { id: grant.id } });
+      // All membership removal paths acquire this same Tenant row lock BEFORE
+      // upstream revocation. A reconciliation cannot grant a user whose
+      // suspension/deletion is concurrently being committed.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+      const provider = await tx.tenantOidcProvider.findUnique({ where: { tenantId } });
+      if (!provider?.zitadelProjectId) {
+        throw new NotFoundException("Tenant OIDC project is not provisioned");
+      }
+      if (["Disabling", "Disabled", "Deleted"].includes(provider.status)) {
+        throw new ConflictException("Tenant administrator explicitly disabled OIDC");
       }
 
-      for (const member of members) {
-        const identity = member.user.identities.find(
-          (row) => row.providerType === "zitadel" &&
-            row.issuer.replace(/\/$/, "") === this.zitadel.issuer &&
-            row.identityProviderId === null,
-        );
-        if (!identity) {
-          throw new ServiceUnavailableException(
-            "Tenant member lacks verified native ZITADEL identity; reconciliation blocked",
-          );
-        }
-        const grant = existing.find((row) => row.userId === member.userId);
-        if (grant?.zitadelUserId !== undefined && grant.zitadelUserId !== identity.externalSubject) {
-          throw new ServiceUnavailableException("Mismatched ZITADEL user grant requires recovery");
-        }
-        if (grant?.zitadelGrantId) {
-          await this.zitadel.verifyMemberGrant(identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId);
-          continue;
-        }
-
-        // Persist a recoverable intent BEFORE creating upstream authorization.
-        // If the process dies after ZITADEL succeeds, next reconciliation finds
-        // the remote assignment and fills its existing row instead of duplicating.
-        const pending = grant ?? await this.prisma.tenantOidcGrant.create({
-          data: { tenantId, userId: member.userId,
-            zitadelUserId: identity.externalSubject, status: "Pending" },
+      // The disabled Reconciling marker has already committed above.
+        await this.zitadel.readProject(provider.zitadelProjectId);
+        const members = await tx.tenantMembership.findMany({
+          where: {
+            tenantId,
+            status: MembershipStatus.Active,
+            user: { status: UserStatus.Active },
+          },
+          include: { user: { include: { identities: true } } },
         });
-        const alreadyAssigned = await this.zitadel.findExistingMemberGrant(
-          identity.externalSubject, provider.zitadelProjectId,
-        );
-        const grantId = alreadyAssigned ?? await this.zitadel.assignMember(
-          identity.externalSubject, provider.zitadelProjectId,
-        );
-        try {
-          await this.prisma.tenantOidcGrant.update({
-            where: { id: pending.id },
-            data: { zitadelGrantId: grantId, status: "Active" },
-          });
-        } catch (error) {
-          // No successful RP authorization until local state is committed.
-          // For new grants try immediate compensation; if it fails, the durable
-          // Pending intent and upstream search make a later retry safe.
-          if (!alreadyAssigned) {
-            try { await this.zitadel.revokeMember(identity.externalSubject, grantId); }
-            catch { /* Fail-closed: Pending intent survives for recovery. */ }
-          }
-          throw error;
-        }
-      }
+        const allowed = new Set(members.map((member) => member.userId));
+        const existing = await tx.tenantOidcGrant.findMany({ where: { tenantId } });
 
-      // A membership/invitation transaction may have invalidated the grant
-      // snapshot while remote ZITADEL operations were in progress. Never
-      // overwrite NeedsReconciliation with an obsolete successful result.
-      const completed = await this.prisma.tenantOidcProvider.updateMany({
-        where: { tenantId, enabled: false, status: "Reconciling", grantsReconciledAt: null },
-        data: {
-          enabled: false,
-          status: "GrantsReconciled",
-          grantsReconciledAt: new Date(),
-          lastErrorCode: null,
-        },
-      });
-      if (completed.count !== 1) {
-        throw new ConflictException("Tenant membership changed during grant reconciliation");
-      }
+        // Revocation FIRST: stale grants must not survive removal/suspension of membership.
+        for (const grant of existing) {
+          if (allowed.has(grant.userId)) continue;
+          const revokeId = grant.zitadelGrantId ??
+            await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId);
+          if (revokeId) await this.zitadel.revokeMember(grant.zitadelUserId, revokeId);
+          await tx.tenantOidcGrant.delete({ where: { id: grant.id } });
+        }
+
+        for (const member of members) {
+          const identity = member.user.identities.find(
+            (row) => row.providerType === "zitadel" &&
+              row.issuer.replace(/\/$/, "") === this.zitadel.issuer &&
+              row.identityProviderId === null,
+          );
+          if (!identity) {
+            throw new ServiceUnavailableException(
+              "Tenant member lacks verified native ZITADEL identity; reconciliation blocked",
+            );
+          }
+          const grant = existing.find((row) => row.userId === member.userId);
+          if (grant?.zitadelUserId !== undefined && grant.zitadelUserId !== identity.externalSubject) {
+            throw new ServiceUnavailableException("Mismatched ZITADEL user grant requires recovery");
+          }
+          if (grant?.zitadelGrantId) {
+            await this.zitadel.verifyMemberGrant(identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId);
+            continue;
+          }
+
+          // Persist a recoverable intent BEFORE creating upstream authorization.
+          // If the process dies after ZITADEL succeeds, next reconciliation finds
+          // the remote assignment and fills its existing row instead of duplicating.
+          const pending = grant ?? await this.prisma.tenantOidcGrant.create({
+            data: { tenantId, userId: member.userId,
+              zitadelUserId: identity.externalSubject, status: "Pending" },
+          });
+          const alreadyAssigned = await this.zitadel.findExistingMemberGrant(
+            identity.externalSubject, provider.zitadelProjectId,
+          );
+          const grantId = alreadyAssigned ?? await this.zitadel.assignMember(
+            identity.externalSubject, provider.zitadelProjectId,
+          );
+          try {
+            await tx.tenantOidcGrant.update({
+              where: { id: pending.id },
+              data: { zitadelGrantId: grantId, status: "Active" },
+            });
+          } catch (error) {
+            // No successful RP authorization until local state is committed.
+            // For new grants try immediate compensation; if it fails, the durable
+            // Pending intent and upstream search make a later retry safe.
+            if (!alreadyAssigned) {
+              try { await this.zitadel.revokeMember(identity.externalSubject, grantId); }
+              catch { /* Fail-closed: Pending intent survives for recovery. */ }
+            }
+            throw error;
+          }
+        }
+
+        // A membership/invitation transaction may have invalidated the grant
+        // snapshot while remote ZITADEL operations were in progress. Never
+        // overwrite NeedsReconciliation with an obsolete successful result.
+        const completed = await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, enabled: false, status: "Reconciling", grantsReconciledAt: null },
+          data: {
+            enabled: false,
+            status: "GrantsReconciled",
+            grantsReconciledAt: new Date(),
+            lastErrorCode: null,
+          },
+        });
+        if (completed.count !== 1) {
+          throw new ConflictException("Tenant membership changed during grant reconciliation");
+        }
+      }, { maxWait: 30_000, timeout: 120_000 });
       return this.get(tenantId);
     } catch (error) {
-      // A concurrent membership update can set NeedsReconciliation after the
-      // snapshot. Preserve that invalidation rather than marking it successful.
+      // Failed transactions release their lock; preserve a concurrent
+      // administrator's Disabled state or membership invalidation.
       await this.prisma.tenantOidcProvider.updateMany({
         where: { tenantId, status: "Reconciling" },
         data: { enabled: false, status: "ReconciliationFailed", lastErrorCode: "GRANT_SYNC_FAILED" },
@@ -238,7 +264,7 @@ export class TenantOidcService {
     return this.get(tenantId);
   }
 
-  async disable(tenantId: string) {
+  async disable(tenantId: string, manualOptOut = true) {
     const provider = await this.prisma.tenantOidcProvider.findUnique({
       where: { tenantId },
     });
@@ -247,20 +273,28 @@ export class TenantOidcService {
     // Disable state first: this prevents RP from reporting ready during revocation.
     await this.prisma.tenantOidcProvider.update({
       where: { tenantId },
-      data: { enabled: false, status: "Disabling", grantsReconciledAt: null },
+      data: { enabled: false, status: "Disabling", grantsReconciledAt: null,
+        autoRolloutLeaseOwner: null, autoRolloutLeaseUntil: null },
     });
 
-    const grants = await this.prisma.tenantOidcGrant.findMany({ where: { tenantId } });
-    for (const grant of grants) {
-      const revocationId = grant.zitadelGrantId ??
-        await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId!);
-      if (revocationId) await this.zitadel.revokeMember(grant.zitadelUserId, revocationId);
-      await this.prisma.tenantOidcGrant.delete({ where: { id: grant.id } });
-    }
-    await this.prisma.tenantOidcProvider.update({
-      where: { tenantId },
-      data: { enabled: false, status: "Disabled", lastErrorCode: null },
-    });
+    // Wait for in-flight reconciliation under the same Tenant row lock.
+    // Otherwise a previously selected member could be granted again after
+    // disable already enumerated (and revoked) the old grant rows.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+      const grants = await tx.tenantOidcGrant.findMany({ where: { tenantId } });
+      for (const grant of grants) {
+        const revocationId = grant.zitadelGrantId ??
+          await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId!);
+        if (revocationId) await this.zitadel.revokeMember(grant.zitadelUserId, revocationId);
+        await tx.tenantOidcGrant.delete({ where: { id: grant.id } });
+      }
+      await tx.tenantOidcProvider.update({
+        where: { tenantId },
+        data: { enabled: false,
+          status: manualOptOut ? "Disabled" : "ActivationFailed", lastErrorCode: null },
+      });
+    }, { maxWait: 30_000, timeout: 120_000 });
     return this.get(tenantId);
   }
 
@@ -280,7 +314,13 @@ export class TenantOidcService {
     }
     await this.disable(tenantId);
     if (provider.zitadelProjectId) await this.zitadel.deleteProject(provider.zitadelProjectId);
-    await this.prisma.tenantOidcProvider.delete({ where: { tenantId } });
+    // Keep a durable tombstone: deleting the row would cause automatic
+    // migration to recreate the project on its next periodic pass.
+    await this.prisma.tenantOidcProvider.update({
+      where: { tenantId },
+      data: { zitadelProjectId: null, issuer: null, enabled: false,
+        status: "Deleted", grantsReconciledAt: null, lastErrorCode: null },
+    });
     return { deleted: true };
   }
 
@@ -289,12 +329,14 @@ export class TenantOidcService {
    * Remote revocation is required to succeed before RP changes authorization state.
    * If RP's subsequent transaction fails, access remains revoked (safe recovery).
    */
-  async revokeGrantBeforeMembershipRemoval(tenantId: string, userId: string) {
-    const provider = await this.prisma.tenantOidcProvider.findUnique({
+  async revokeGrantBeforeMembershipRemoval(
+    tenantId: string, userId: string, tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const provider = await tx.tenantOidcProvider.findUnique({
       where: { tenantId },
     });
     if (!provider?.zitadelProjectId) return;
-    const grant = await this.prisma.tenantOidcGrant.findUnique({
+    const grant = await tx.tenantOidcGrant.findUnique({
       where: { tenantId_userId: { tenantId, userId } },
     });
     if (!grant) {
@@ -308,13 +350,16 @@ export class TenantOidcService {
     const revocationId = grant.zitadelGrantId ??
       await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId);
     if (revocationId) await this.zitadel.revokeMember(grant.zitadelUserId, revocationId);
-    await this.prisma.tenantOidcGrant.delete({ where: { id: grant.id } });
-    await this.markStale(tenantId);
+    await tx.tenantOidcGrant.delete({ where: { id: grant.id } });
+    await tx.tenantOidcProvider.updateMany({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
   }
 
   async markStale(tenantId: string) {
     await this.prisma.tenantOidcProvider.updateMany({
-      where: { tenantId },
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
       data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
     });
   }

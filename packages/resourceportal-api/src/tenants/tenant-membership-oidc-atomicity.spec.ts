@@ -15,7 +15,7 @@ const member = {
   groupMemberships: [], createdBy: actor.id, createdAt: new Date(),
 };
 const expectedInvalidation = {
-  where: { tenantId },
+  where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
   data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
 };
 
@@ -81,6 +81,32 @@ describe("tenant membership OIDC invalidation is atomic with membership writes",
     await expect(f.service.updateMembership(tenantId, membershipId, { status: MembershipStatus.Active }, actor))
       .rejects.toThrow("cannot invalidate grants");
     expect(f.tx.auditLogEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("revokes suspended membership while holding the tenant lock, before changing its status", async () => {
+    const f = setup();
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    const svc = new TenantsService(f.prisma as never, {} as never,
+      { revokeGrantBeforeMembershipRemoval: revoke } as never);
+    await svc.updateMembership(tenantId, membershipId, { status: MembershipStatus.Suspended }, actor);
+    expect(revoke).toHaveBeenCalledWith(tenantId, userId, f.tx);
+    expect(f.tx.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(revoke.mock.invocationCallOrder[0]);
+    expect(revoke.mock.invocationCallOrder[0])
+      .toBeLessThan(f.tx.tenantMembership.update.mock.invocationCallOrder[0]);
+  });
+
+  it("revokes deleted membership while holding the tenant lock, before deleting membership", async () => {
+    const f = setup();
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    const svc = new TenantsService(f.prisma as never, {} as never,
+      { revokeGrantBeforeMembershipRemoval: revoke } as never);
+    await svc.deleteMembership(tenantId, membershipId, actor);
+    expect(revoke).toHaveBeenCalledWith(tenantId, userId, f.tx);
+    expect(f.tx.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(revoke.mock.invocationCallOrder[0]);
+    expect(revoke.mock.invocationCallOrder[0])
+      .toBeLessThan(f.tx.tenantMembership.delete.mock.invocationCallOrder[0]);
   });
 
   it("invalidates readiness inside deletion transaction", async () => {

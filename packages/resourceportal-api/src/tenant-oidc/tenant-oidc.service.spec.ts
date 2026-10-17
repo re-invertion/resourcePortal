@@ -33,6 +33,8 @@ function fixture() {
     _count: { grants: 0 },
   };
   const prisma = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    $transaction: vi.fn(),
     tenant: { findUnique: vi.fn().mockResolvedValue({ status: TenantStatus.Active }) },
     tenantOidcProvider: {
       upsert: vi.fn().mockResolvedValue({ ...provider, zitadelProjectId: null }),
@@ -49,6 +51,7 @@ function fixture() {
       delete: vi.fn().mockResolvedValue({}),
     },
   };
+  prisma.$transaction.mockImplementation(async (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma));
   const service = new TenantOidcService(
     prisma as unknown as PrismaService,
     project as unknown as ZitadelTenantProjectService,
@@ -75,6 +78,20 @@ describe("Tenant OIDC management fails closed", () => {
     f.prisma.tenant.findUnique.mockResolvedValue({ status: TenantStatus.Suspended });
     await expect(f.service.provision(tenantId)).rejects.toThrow("not active");
     expect(f.project.createProject).not.toHaveBeenCalled();
+  });
+
+  it("locks tenant before upstream grant issuance and holds the lock through persistence", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{ userId: "u1", status: MembershipStatus.Active,
+      user: { identities: [{ issuer: nativeIssuer, providerType: "zitadel", externalSubject: "native-u1", identityProviderId: null }] },
+    }]);
+    await f.service.reconcileGrants(tenantId);
+    expect(f.prisma.$queryRaw).toHaveBeenCalledOnce();
+    expect(f.prisma.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(f.project.assignMember.mock.invocationCallOrder[0]);
+    expect(f.prisma.tenantOidcProvider.updateMany.mock.invocationCallOrder[0])
+      .toBeLessThan(f.project.assignMember.mock.invocationCallOrder[0]);
+    expect(f.prisma.$transaction).toHaveBeenCalledOnce();
   });
 
   it("revokes grants when membership is no longer active", async () => {
@@ -119,7 +136,7 @@ describe("Tenant OIDC management fails closed", () => {
     await f.service.revokeGrantBeforeMembershipRemoval(tenantId, "u1");
     expect(f.project.revokeMember).toHaveBeenCalledWith("native-u1", "remote-1");
     expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
-      where: { tenantId },
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
       data: {
         enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null,
       },
@@ -146,6 +163,8 @@ describe("Tenant OIDC management fails closed", () => {
     expect(result.enabled).toBe(false);
     expect(f.project.revokeMember).toHaveBeenCalledWith("zitadel-1", "grant-1");
     expect(f.prisma.tenantOidcGrant.delete).toHaveBeenCalledTimes(1);
+    expect(f.prisma.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(f.project.revokeMember.mock.invocationCallOrder[0]);
     expect(f.prisma.tenantOidcProvider.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: "Disabled", enabled: false }) as unknown as Record<string, unknown> }),
     );
@@ -253,7 +272,8 @@ describe("Tenant OIDC management fails closed", () => {
     const f = fixture();
     // The concurrent membership transaction commits NeedsReconciliation;
     // the conditional finalization cannot overwrite that state.
-    f.prisma.tenantOidcProvider.updateMany.mockResolvedValue({ count: 0 });
+    f.prisma.tenantOidcProvider.updateMany.mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
     await expect(f.service.reconcileGrants(tenantId))
       .rejects.toThrow("membership changed during grant reconciliation");
     expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(

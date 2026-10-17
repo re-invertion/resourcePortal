@@ -470,6 +470,7 @@ describe("AuthController cookie flow", () => {
       "access-token",
       identityProviderId,
       loginLocation.searchParams.get("state"),
+      false,
     );
   });
 

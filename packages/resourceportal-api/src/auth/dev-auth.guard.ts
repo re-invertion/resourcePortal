@@ -95,9 +95,12 @@ export class DevAuthGuard implements CanActivate {
     if (token) {
       let principal;
       try {
+        // The verifier MUST check signed authentication provenance before
+        // any user/identity provisioning or profile updates can occur.
+        const rejectFederated = await this.nativeOnly();
         principal = isMcpRequest(request)
-          ? await this.oidcAuth.authenticateMcpPrincipalToken(token)
-          : await this.oidcAuth.authenticatePrincipalToken(token);
+          ? await this.oidcAuth.authenticateMcpPrincipalToken(token, rejectFederated)
+          : await this.oidcAuth.authenticatePrincipalToken(token, rejectFederated);
       } catch (error) {
         if (isMcpRequest(request)) applyMcpBearerChallenge(request, reply);
         throw error;
