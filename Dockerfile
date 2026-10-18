@@ -58,6 +58,7 @@ RUN apk add --no-cache \
     docker-cli \
     iptables \
     iproute2 \
+    util-linux \
     wireguard-tools \
     e2fsprogs-extra \
     findmnt \
