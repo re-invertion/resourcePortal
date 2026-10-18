@@ -282,13 +282,40 @@ APP_PID="$(docker inspect "$APP_CONTAINER" --format '{{.State.Pid}}')"
 sudo -n nsenter --target "$APP_PID" --net \
   ip route replace "$LAN_CLIENT_IP/32" via "$GATE_OVERLAY_IP"
 
-if ! docker exec "$APP_CONTAINER" node -e '
-  const http=require("http");
-  const req=http.get("http://10.77.250.2:8090/",res=>process.exit(res.statusCode===200?0:2));
-  req.on("error",()=>process.exit(3));
-  req.setTimeout(5000,()=>{req.destroy();process.exit(4)});
-' >/dev/null 2>&1; then
+# Swarm DNS task records and Gate firewall reconciliation converge asynchronously
+# after a service update. Give only the explicitly permitted connection time
+# to converge; do not suppress a persistent dataplane failure.
+authorized=false
+for attempt in $(seq 1 15); do
+  if docker exec "$APP_CONTAINER" node -e '
+    const http=require("http");
+    const req=http.get("http://"+process.argv[1]+":8090/",res=>process.exit(res.statusCode===200?0:2));
+    req.on("error",()=>process.exit(3));
+    req.setTimeout(2000,()=>{req.destroy();process.exit(4)});
+  ' "$LAN_CLIENT_IP" >/dev/null 2>&1; then
+    authorized=true
+    break
+  fi
+  sleep 2
+done
+if [ "$authorized" != true ]; then
   docker service logs --tail 120 "$GATE_SERVICE" || true
+  docker exec "$GATE_CONTAINER" sh -c '
+    echo "--- Gate peer task DNS ---"
+    getent ahostsv4 "tasks.$1" || true
+    echo "--- Gate overlay addresses / LAN route ---"
+    ip -4 addr show || true
+    ip -4 route get "$2" || true
+    echo "--- Gate RP forwarding rules ---"
+    iptables -S RP-GATE-FWD || true
+    echo "--- Gate RP SNAT rules ---"
+    iptables -t nat -S RP-GATE-SNAT || true
+    echo "--- WireGuard state ---"
+    wg show wg0 || true
+  ' sh "$APP_SERVICE" "$LAN_CLIENT_IP" || true
+  sudo -n ip netns exec "$ROUTER_NS" iptables -S RP-GATE-LAN || true
+  sudo -n ip netns exec "$ROUTER_NS" wg show rp-gate || true
+  sudo -n nsenter --target "$APP_PID" --net ip route get "$LAN_CLIENT_IP" || true
   fail "authorized SingleApp -> LAN TCP 8090 through WireGuard failed"
 fi
 pass "authorized SingleApp-to-LAN traffic passes through Gate"
