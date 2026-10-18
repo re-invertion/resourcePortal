@@ -894,7 +894,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           {discoveryRules.map((rule,index) => (
             <div key={index} className="flex items-center justify-between gap-2 rounded-lg border border-[#D7E0EC] p-3 text-xs">
               <span>{rule.attachmentId} · {rule.protocol.toUpperCase()}</span>
-              <Button size="sm" variant="ghost" onClick={() => setDiscoveryRules(rules => rules.filter((_, i) => i !== index))}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setDiscoveryRules(rules => rules.filter((_, i) => i !== index))}>
                 Remove
               </Button>
             </div>
@@ -952,7 +952,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
                 <div className="font-medium">{rule.attachmentId}</div>
                 <code>{rule.protocol.toUpperCase()} {rule.destinationCidr}:{rule.port}</code>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setAccessRules(rules => rules.filter((_, i) => i !== index))}>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAccessRules(rules => rules.filter((_, i) => i !== index))}>
                 Remove
               </Button>
             </div>
