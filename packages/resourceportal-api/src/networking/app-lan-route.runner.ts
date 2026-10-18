@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { Logger } from "@nestjs/common";
+import { managedRouteFlushArgs, managedTenantRoutePids } from "./app-lan-route-shutdown";
 import {
   APP_LAN_ROUTE_PROTOCOL, desiredRoutesForContainer,
   validateLanRoutePolicy, type ApplicationLanRoute,
@@ -7,8 +8,7 @@ import {
 
 const logger = new Logger("ApplicationLanRouteAgent");
 let stopping = false;
-process.on("SIGTERM", () => { stopping = true; });
-process.on("SIGINT", () => { stopping = true; });
+let cleanupStarted = false;
 
 function run(program: string, args: string[], allowFailure = false) {
   const result = spawnSync(program, args, { encoding: "utf8", timeout: 10000 });
@@ -97,10 +97,45 @@ function currentPolicy(): ApplicationLanRoute[] {
     return [];
   }
 }
+// Gracefully revoke routes from still-running SingleApp network namespaces
+// before the node-local agent disappears during platform image rollback.
+function shutdownAndRevokeRoutes() {
+  if (cleanupStarted) return;
+  cleanupStarted = true;
+  stopping = true;
+  let failures = 0;
+  try {
+    const ids = run("docker", ["ps", "-q", "--filter", "label=resourceportal.workload=tenant"])
+      .stdout.split(/\s+/).filter(Boolean);
+    if (ids.length) {
+      const containers = jsonRun("docker", ["inspect", ...ids]);
+      const pids = managedTenantRoutePids(containers);
+      for (const pid of pids) {
+        try {
+          nsenter(pid, managedRouteFlushArgs());
+        } catch (error) {
+          failures++;
+          logger.error("Unable to revoke RP-owned routes in namespace " + pid + ": " + String(error));
+        }
+      }
+      logger.log("Shutdown revoked RP-owned routes in " + (pids.length - failures) +
+        "/" + pids.length + " active tenant namespaces");
+    }
+  } catch (error) {
+    failures++;
+    logger.error("Site VPN route cleanup failed: " + String(error));
+  }
+  if (failures) process.exitCode = 1;
+}
+
+process.once("SIGTERM", shutdownAndRevokeRoutes);
+process.once("SIGINT", shutdownAndRevokeRoutes);
+
 async function main() {
-  while (!stopping) {
-    try {
-      const ids = run("docker", [
+  try {
+    while (!stopping) {
+      try {
+        const ids = run("docker", [
         "ps", "-q", "--filter", "label=resourceportal.workload=tenant",
       ]).stdout.split(/\s+/).filter(Boolean);
       const containers = ids.length ? jsonRun("docker", ["inspect", ...ids]) : [];
@@ -110,10 +145,13 @@ async function main() {
         if (!container || typeof container !== "object" || Array.isArray(container)) continue;
         reconcileContainer(container as DockerWorkloadInspect, policy);
       }
-    } catch (error) {
-      logger.error("Route reconciliation failed: " + String(error));
+      } catch (error) {
+        logger.error("Route reconciliation failed: " + String(error));
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
-    await new Promise(resolve => setTimeout(resolve, 5000));
+  } finally {
+    shutdownAndRevokeRoutes();
   }
 }
 void main().catch(error => { logger.error(String(error)); process.exitCode = 1; });

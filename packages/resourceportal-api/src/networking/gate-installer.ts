@@ -549,7 +549,11 @@ while true; do
   # Missing features and disconnected tunnels always disable the relay.
   DISCOVERY_ENABLED="$(printf '%s' "$CONFIG" | jq -r '.discoveryEnabled // false')"
   if [ "$DISCOVERY_ENABLED" = "true" ] && [ "$(printf '%s' "$ALLOWED_IPS" | jq 'length')" -gt 0 ]; then
-    jq -cn --arg serverTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.serverTunnelAddress')"       --arg clientTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.tunnelAddress')"       --arg lanAddress "$(printf '%s' "$LAN_ADDRESSES" | jq -r '.[0] // ""')"       --argjson lanCidrs "$LAN_CIDRS"       '{enabled:true,serverTunnelAddress:$serverTunnelAddress,clientTunnelAddress:$clientTunnelAddress,lanAddress:$lanAddress,lanCidrs:$lanCidrs}'       > "$STATE_DIR/discovery.json.tmp"
+    jq -cn --arg serverTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.serverTunnelAddress')" \
+      --arg clientTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.tunnelAddress')" \
+      --argjson lanAddresses "$LAN_ADDRESSES" --argjson lanCidrs "$LAN_CIDRS" \
+      '{enabled:true,serverTunnelAddress:$serverTunnelAddress,clientTunnelAddress:$clientTunnelAddress,lanAddresses:$lanAddresses,lanCidrs:$lanCidrs}' \
+      > "$STATE_DIR/discovery.json.tmp"
   else
     printf '%s
 ' '{"enabled":false}' > "$STATE_DIR/discovery.json.tmp"

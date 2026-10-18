@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -772,4 +773,10 @@ it("does not enable RP to LAN while a Gate uses the legacy agent", async () => {
   fireEvent.click(within(dialog).getAllByRole("checkbox")[1]!);
   expect(within(dialog).getByText("Site VPN agent upgrade required")).toBeTruthy();
   expect((within(dialog).getByRole("button", { name: "Save firewall" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+it("removing a discovery or LAN access rule never submits its form", () => {
+  const page = readFileSync("src/pages/tenant-networking.tsx", "utf8");
+  expect(page).toMatch(/<Button type="button" size="sm" variant="ghost" onClick=\{\(\) => setDiscoveryRules/);
+  expect(page).toMatch(/<Button type="button" size="sm" variant="ghost" onClick=\{\(\) => setAccessRules/);
 });

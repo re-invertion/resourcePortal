@@ -180,11 +180,13 @@ describe("v0.2 tenant placement and App Group network rendering", () => {
     expect(stack.services.public_web.labels).toEqual({
       "resourceportal.workload": "tenant",
       "resourceportal.app-group-id": appGroupId,
+      "resourceportal.single-app-id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "resourceportal.tenant-id": "22222222-2222-4222-8222-222222222222",
     });
     expect(stack.services.private_api.labels).toEqual({
       "resourceportal.workload": "tenant",
       "resourceportal.app-group-id": appGroupId,
+      "resourceportal.single-app-id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "resourceportal.tenant-id": "22222222-2222-4222-8222-222222222222",
     });
     expect(stack.services.public_web.deploy.placement.constraints).toEqual([

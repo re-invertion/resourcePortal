@@ -31,7 +31,9 @@ export function rollbackAssessment(changedPaths, mode, previousVersion, targetCo
 // A live smoke is necessary but not sufficient for irreversible SQL changes.
 // Restrict the "tested" image rollback route to explicitly additive DDL:
 // create new tables, indexes on those tables, nullable columns, and FKs from
-// newly created tables. A destructive/data-writing statement fails closed.
+// newly created tables. Newly added NOT NULL columns are only compatible when
+// a safe constant default keeps writes from pre-upgrade runtimes valid.
+// A destructive/data-writing statement or computed default fails closed.
 export function assertExpandOnlyMigrationSql(sql) {
   const uncommented = sql.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*--.*$/gm, "");
   const statements = uncommented.split(";").map(x => x.trim()).filter(Boolean);
@@ -43,8 +45,22 @@ export function assertExpandOnlyMigrationSql(sql) {
       newTables.add(table[1]);
       continue;
     }
-    const column = /^ALTER TABLE "([^"]+)"\s+ADD COLUMN "[^"]+"\s+([\s\S]+)$/i.exec(statement);
-    if (column && !/\bNOT NULL\b|\bDROP\b|\bREFERENCES\b/i.test(column[2])) continue;
+    const alter = /^ALTER TABLE "([^"]+)"\s+([\s\S]+)$/i.exec(statement);
+    if (alter) {
+      // Only ADD COLUMN clauses may occur. Each clause is parsed independently
+      // so a multi-column ALTER cannot conceal a destructive ALTER/DROP.
+      // Commas inside expressions are unsupported and conservatively rejected.
+      const clauses = alter[2].split(",").map(x => x.trim());
+      if (clauses.every(clause => {
+        const column = /^ADD COLUMN "[^"]+"\s+([\s\S]+)$/i.exec(clause);
+        if (!column || /\bDROP\b|\bREFERENCES\b/i.test(column[1])) return false;
+        if (!/\bNOT NULL\b/i.test(column[1])) return true;
+        // PostgreSQL adds these with a constant default for both existing and
+        // future rows; source-version services can continue inserting rows.
+        // SQL functions, volatile defaults and unrecognized types fail closed.
+        return /^(?:TEXT NOT NULL DEFAULT '(?:[^']|'')*'|JSONB NOT NULL DEFAULT '(?:[^']|'')*'::jsonb|INTEGER NOT NULL DEFAULT (?:0|[1-9][0-9]*))$/i.test(column[1].trim());
+      })) continue;
+    }
     const index = /^CREATE\s+(?:UNIQUE\s+)?INDEX "[^"]+"\s+ON "([^"]+)"\s*\(/is.exec(statement);
     if (index && newTables.has(index[1])) continue;
     const fk = /^ALTER TABLE "([^"]+)"\s+ADD CONSTRAINT "[^"]+"\s+FOREIGN KEY\b/is.exec(statement);

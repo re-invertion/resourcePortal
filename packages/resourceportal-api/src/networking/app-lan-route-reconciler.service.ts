@@ -35,7 +35,7 @@ export class AppLanRouteReconcilerService {
     const tasks = this.docker([
       "service", "ps", "-q", "--no-trunc",
       "--filter", "desired-state=running", name,
-    ]).split(/\\s+/).filter(Boolean);
+    ]).split(/\s+/).filter(Boolean);
     const cidr = parseIpv4Cidr(overlayCidr);
     if (!cidr) throw new Error("Invalid Gate overlay CIDR");
     for (const id of tasks) {
@@ -72,11 +72,30 @@ export class AppLanRouteReconcilerService {
     for (const gate of gates) {
       if (gate.agentVersion !== "gate-shell-v3") continue;
       const attachments = gate.networks.flatMap(link => link.network.attachments);
-      const approved = validateApplicationLanRules(
-        gate.applicationLanPolicies,
-        gate.lanCidrs,
-        new Set(attachments.map(attachment => attachment.id)),
-      );
+      const allowedAttachmentIds = new Set(attachments.map(attachment => attachment.id));
+      // Persisted grants may outlive an attachment or a LAN prefix. Never
+      // leave the previously published route snapshot active in that case.
+      // Retain valid grants; malformed policy fails closed for this Gate.
+      let approved: ReturnType<typeof validateApplicationLanRules> = [];
+      try {
+        const ranges = gate.lanCidrs.map(parseIpv4Cidr);
+        const saved = Array.isArray(gate.applicationLanPolicies)
+          ? gate.applicationLanPolicies.filter((candidate) => {
+              if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return true;
+              const rule = candidate as { attachmentId?: unknown; destinationCidr?: unknown };
+              if (typeof rule.attachmentId === "string" && !allowedAttachmentIds.has(rule.attachmentId)) return false;
+              if (typeof rule.destinationCidr === "string") {
+                const cidr = parseIpv4Cidr(rule.destinationCidr);
+                if (cidr && !ranges.some(range => range &&
+                  cidr.network >= range.network && cidr.broadcast <= range.broadcast)) return false;
+              }
+              return true;
+            })
+          : [];
+        approved = validateApplicationLanRules(saved, gate.lanCidrs, allowedAttachmentIds);
+      } catch {
+        approved = [];
+      }
       const gatewayByNetwork = new Map<string, string>();
       for (const rule of approved) {
         const link = gate.networks.find(item =>
@@ -121,10 +140,14 @@ export class AppLanRouteReconcilerService {
     }
     const policy = { version: 1, routes: validateLanRoutePolicy({ version: 1, routes }) };
     const encoded = Buffer.from(JSON.stringify(policy)).toString("base64");
-    const serviceName = this.config.get<string>(
-      "APP_LAN_ROUTER_SERVICE_NAME",
-      "resourceportal-control-plane_app-lan-router",
+    const stack = this.config.get<string>(
+      "RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME", "resourceportal-control-plane",
     );
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(stack)) {
+      throw new Error("Invalid RP control-plane Swarm stack name");
+    }
+    const serviceName = this.config.get<string>("APP_LAN_ROUTER_SERVICE_NAME") ||
+      stack + "_app-lan-router";
     const existing = JSON.parse(this.docker([
       "service", "inspect", serviceName, "--format", "{{json .Spec.TaskTemplate.ContainerSpec.Env}}",
     ]) || "[]") as string[];

@@ -233,6 +233,27 @@ test("rollback release paths require explicit scoped tests, including legacy ins
   assert.equal(plan.vpnSmoke, true);
 });
 
+test("SingleApp placement-networking assertions require release and VPN integration gates", async () => {
+  const path = "packages/resourceportal-api/src/internal/v020-placement-networking.spec.ts";
+  const plan = selectProfiles([path]);
+  assert.deepEqual(plan.profiles, ["networking", "platform-release"]);
+  assert.equal(plan.vpnSmoke, true);
+  const { readFileSync } = await import("node:fs");
+  const planner = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(planner, /"src\/networking", "src\/internal\/v020-placement-networking\.spec\.ts"/);
+});
+
+test("multi-LAN discovery fixture selects real Python regression and rollback gates", async () => {
+  const path = "test/installer/test-gate-discovery-multilan.py";
+  const plan = selectProfiles([path]);
+  assert.deepEqual(plan.profiles, ["networking", "platform-release"]);
+  assert.equal(plan.vpnSmoke, true);
+  const { readFileSync } = await import("node:fs");
+  const planner = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(planner, /\["python3", "test\/installer\/test-gate-discovery-multilan\.py"\]/);
+  assert.throws(() => selectProfiles(["test/installer/test-unregistered-multilan.py"]), /unclassified changes/);
+});
+
 test("placement-networking fixture must select live VPN dataplane coverage", () => {
   const plan = selectProfiles(["test/installer/test-v020-placement-networking.sh"]);
   assert.ok(plan.profiles.includes("networking"));

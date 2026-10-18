@@ -280,6 +280,7 @@ services:
       RESOURCEPORTAL_DEVICE_VPN_POOL: 100.64.0.0/11
       RESOURCEPORTAL_DEVICE_VPN_SERVER_ADDRESS: 100.64.0.1/11
       RESOURCEPORTAL_RUNTIME_IMAGE: __API_IMAGE__
+      RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME: __STACK_NAME__
       RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: __CLUSTER_CIDR__
       TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
       TRAEFIK_SERVICE_NAME: resourceportal-control-plane_traefik
@@ -429,6 +430,9 @@ services:
       - NET_ADMIN
       - SYS_ADMIN
     command: ["node", "dist/src/networking/app-lan-route.runner.js"]
+    # Rollback removes the global router only after it has revoked RP-owned
+    # proto-201 routes from persistent tenant namespaces.
+    stop_grace_period: 120s
     environment:
       NODE_ENV: production
     volumes:

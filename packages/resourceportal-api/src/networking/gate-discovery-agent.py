@@ -34,11 +34,20 @@ def read_config():
         return None
     local = str(ipaddress.IPv4Interface(config["clientTunnelAddress"]).ip)
     remote = str(ipaddress.IPv4Interface(config["serverTunnelAddress"]).ip)
-    lan = str(ipaddress.IPv4Address(config["lanAddress"]))
-    allowed = [ipaddress.IPv4Network(cidr, strict=False) for cidr in config["lanCidrs"]]
-    if not allowed or not any(ipaddress.IPv4Address(lan) in subnet for subnet in allowed):
-        raise ValueError("LAN address is outside reported LAN networks")
-    return local, remote, lan, allowed
+    raw_lans = config.get("lanAddresses", [])
+    raw_cidrs = config.get("lanCidrs", [])
+    if not isinstance(raw_lans, list) or not isinstance(raw_cidrs, list):
+        raise ValueError("Discovery LAN configuration must contain arrays")
+    if not (1 <= len(raw_lans) <= 16 and 1 <= len(raw_cidrs) <= 32):
+        raise ValueError("Discovery requires a bounded list of LAN interfaces")
+    lans = tuple(sorted({str(ipaddress.IPv4Address(ip)) for ip in raw_lans}))
+    cidrs = tuple(sorted({
+        ipaddress.IPv4Network(cidr, strict=False) for cidr in raw_cidrs
+    }))
+    for lan in lans:
+        if not any(ipaddress.IPv4Address(lan) in cidr for cidr in cidrs):
+            raise ValueError("Discovery LAN address is outside reported LAN networks")
+    return local, remote, lans, cidrs
 
 
 def socket_for_lan(port, group, lan):
@@ -92,15 +101,20 @@ def valid_reply(protocol, data):
 
 
 def serve(config):
-    local, remote, lan, cidrs = config
+    local, remote, lans, cidrs = config
     control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    control.bind((local, PORT))
-    mdns = socket_for_lan(5353, "224.0.0.251", lan)
-    ssdp = socket_for_lan(0, None, lan)
-    sessions = {}
-    print("[ResourcePortalGate Discovery] relay active", flush=True)
-    sockets = {control: None, mdns: "mdns", ssdp: "ssdp"}
+    sockets = {}
     try:
+        control.bind((local, PORT))
+        sockets[control] = (None, None)
+        # Socket membership and multicast interface are selected independently
+        # for every authorized physical LAN, never only the first interface.
+        for lan in lans:
+            sockets[socket_for_lan(5353, "224.0.0.251", lan)] = ("mdns", lan)
+            sockets[socket_for_lan(0, None, lan)] = ("ssdp", lan)
+        sessions = {}
+        print("[ResourcePortalGate Discovery] relay active on " +
+              str(len(lans)) + " physical LANs", flush=True)
         while True:
             try:
                 if read_config() != config:
@@ -128,14 +142,19 @@ def serve(config):
                         "responses": 0,
                     }
                     target = ("224.0.0.251", 5353) if protocol == "mdns" else ("239.255.255.250", 1900)
-                    (mdns if protocol == "mdns" else ssdp).sendto(payload, target)
+                    for outbound, (outbound_proto, _) in sockets.items():
+                        if outbound_proto == protocol:
+                            outbound.sendto(payload, target)
                 else:
-                    proto = sockets[receiver]
+                    proto, lan = sockets[receiver]
                     try:
                         sender_ip = ipaddress.IPv4Address(sender[0])
                     except ValueError:
                         continue
-                    if not any(sender_ip in cidr for cidr in cidrs):
+                    # A reply must belong to the same physical LAN as its
+                    # receiving socket, not merely any other attached LAN.
+                    lan_ip = ipaddress.IPv4Address(lan)
+                    if not any(sender_ip in cidr and lan_ip in cidr for cidr in cidrs):
                         continue
                     if len(data) > MAX_PAYLOAD or not valid_reply(proto, data):
                         continue
@@ -151,6 +170,8 @@ def serve(config):
     finally:
         for item in sockets:
             item.close()
+        if control not in sockets:
+            control.close()
 
 
 def main():
