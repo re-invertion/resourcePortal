@@ -5,6 +5,9 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  IsInt,
+  Min,
+  Max,
 } from "class-validator";
 
 export class GateHeartbeatDto {
@@ -23,4 +26,10 @@ export class GateHeartbeatDto {
   @IsString()
   @MaxLength(64)
   agentVersion?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1)
+  discoveryRelayVersion?: number;
 }

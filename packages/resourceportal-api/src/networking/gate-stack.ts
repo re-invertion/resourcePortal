@@ -15,6 +15,7 @@ export type GateStackNetwork = {
   attachments: Array<{
     id: string;
     address: string;
+    serviceName?: string;
   }>;
 };
 
@@ -29,6 +30,9 @@ export type GateStackInput = {
   allowLanToRp?: boolean;
   allowRpToLan?: boolean;
   privateSecretName: string;
+  applicationAccessMode?: "Legacy" | "PerApplication";
+  applicationLanRules?: GateRuntimeConfig["applicationLanRules"];
+  discoveryRules?: GateRuntimeConfig["discoveryRules"];
   networks: GateStackNetwork[];
 };
 
@@ -42,6 +46,9 @@ export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
     peerLanCidrs: input.peerLanCidrs,
     allowLanToRp: input.allowLanToRp ?? true,
     allowRpToLan: input.allowRpToLan ?? false,
+    applicationAccessMode: input.applicationAccessMode ?? "Legacy",
+    applicationLanRules: input.applicationLanRules ?? [],
+    discoveryRules: input.discoveryRules ?? [],
     rpOverlayCidrs: input.networks.map((network) => network.overlayCidr),
     privateKeyPath: "/run/secrets/gate-private-key",
     mappings: input.networks.flatMap((network) =>
@@ -49,6 +56,7 @@ export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
         stableAddress: attachment.address,
         overlayCidr: network.overlayCidr,
         attachmentAlias: networkAttachmentAlias(attachment.id),
+        ...(attachment.serviceName ? { serviceName: attachment.serviceName } : {}),
       })),
     ),
   };

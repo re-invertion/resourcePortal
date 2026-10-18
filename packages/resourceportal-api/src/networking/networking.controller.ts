@@ -29,6 +29,8 @@ import { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-heartbeat
 import { CreateNetworkDto } from "./dto/create-network.dto";
 import { GateEnrollDto } from "./dto/gate-enroll.dto";
 import { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import { UpdateGateDiscoveryDto } from "./dto/update-gate-discovery.dto";
+import { UpdateGateApplicationAccessDto } from "./dto/update-gate-application-access.dto";
 import { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
 import { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import { UpdateNetworkDto } from "./dto/update-network.dto";
@@ -187,6 +189,28 @@ export class NetworkingController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.networking.updateGateFirewall(tenantId, gateId, dto, actor);
+  }
+
+  @RequirePermissions("gate.manage")
+  @Patch("gates/:gateId/discovery")
+  updateGateDiscovery(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("gateId", ParseUUIDPipe) gateId: string,
+    @Body() dto: UpdateGateDiscoveryDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.updateGateDiscovery(tenantId, gateId, dto, actor);
+  }
+
+  @RequirePermissions("gate.manage")
+  @Patch("gates/:gateId/application-access")
+  updateGateApplicationAccess(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("gateId", ParseUUIDPipe) gateId: string,
+    @Body() dto: UpdateGateApplicationAccessDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.networking.updateGateApplicationAccess(tenantId, gateId, dto, actor);
   }
 
   @RequirePermissions("gate.manage")

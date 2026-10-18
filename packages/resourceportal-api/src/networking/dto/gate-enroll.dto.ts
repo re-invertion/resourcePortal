@@ -5,6 +5,9 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  IsInt,
+  Min,
+  Max,
 } from "class-validator";
 
 export class GateEnrollDto {
@@ -31,4 +34,10 @@ export class GateEnrollDto {
   @IsString()
   @MaxLength(64)
   agentVersion?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1)
+  discoveryRelayVersion?: number;
 }

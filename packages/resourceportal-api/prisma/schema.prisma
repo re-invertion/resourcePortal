@@ -1082,6 +1082,10 @@ model ResourcePortalGate {
   configRevision             Int                            @default(1)
   allowLanToRp               Boolean                        @default(true)
   allowRpToLan               Boolean                        @default(false)
+  applicationAccessMode      String                         @default("Legacy")
+  applicationLanPolicies     Json                           @default("[]")
+  discoveryRelayVersion      Int                            @default(0)
+  discoveryPolicies          Json                           @default("[]")
   lanAddresses               String[]                       @default([])
   lanCidrs                   String[]                       @default([])
   agentVersion               String?

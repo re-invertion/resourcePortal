@@ -45,6 +45,33 @@ test("only immutable expand-only database migrations can qualify for tested roll
   ]) assert.throws(() => assertExpandOnlyMigrationSql(bad), /Release blocked|Empty migration/);
 });
 
+test("Gate additive NOT NULL constant defaults pass only with real rollback evidence", async () => {
+  const { readFileSync } = await import("node:fs");
+  const sql = readFileSync(
+    new URL("../packages/resourceportal-api/prisma/migrations/20261018000100_generic_application_lan_policy/migration.sql", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotThrow(() => assertExpandOnlyMigrationSql(sql));
+  assert.doesNotThrow(() => assertExpandOnlyMigrationSql(`
+    ALTER TABLE "ResourcePortalGate"
+      ADD COLUMN "mode" TEXT NOT NULL DEFAULT 'Legacy',
+      ADD COLUMN "policies" JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0;
+  `));
+  for (const unsafe of [
+    'ALTER TABLE "User" ADD COLUMN "token" TEXT NOT NULL;',
+    'ALTER TABLE "User" ADD COLUMN "token" TEXT NOT NULL DEFAULT now();',
+    'ALTER TABLE "User" ADD COLUMN "token" TEXT NOT NULL DEFAULT (SELECT secret FROM "User");',
+    'ALTER TABLE "User" ADD COLUMN "token" TEXT NOT NULL DEFAULT current_user;',
+    'ALTER TABLE "User" ADD COLUMN "token" TEXT NOT NULL DEFAULT NULL;',
+    'ALTER TABLE "User" ADD COLUMN "token" BOOLEAN NOT NULL DEFAULT true;',
+    "ALTER TABLE \"User\" ADD COLUMN \"token\" TEXT NOT NULL DEFAULT 'ok', DROP COLUMN \"email\";",
+    "ALTER TABLE \"User\" ADD COLUMN \"token\" TEXT NOT NULL DEFAULT 'ok', ALTER COLUMN \"email\" DROP NOT NULL;",
+    "ALTER TABLE \"User\" ALTER COLUMN \"token\" SET DEFAULT 'ok';",
+    "ALTER TABLE \"User\" ADD COLUMN \"token\" TEXT NOT NULL DEFAULT 'ok' REFERENCES \"Tenant\"(\"id\");",
+  ]) assert.throws(() => assertExpandOnlyMigrationSql(unsafe), /Release blocked/);
+});
+
 test("schema-changing rollback requires exact run-bound live evidence", () => {
   const result = rollbackAssessment(
     ["packages/resourceportal-api/prisma/migrations/20261012_new/migration.sql"],

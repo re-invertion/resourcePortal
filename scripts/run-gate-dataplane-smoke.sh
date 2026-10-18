@@ -238,6 +238,103 @@ if docker exec "$APP_CONTAINER" node -e '
 fi
 pass "RP application has no automatic route to LAN"
 
+# Opt-in per-application dataplane: only TCP 8090 may reach this LAN host.
+# Route injection is local to this smoke; production uses the node route agent.
+STRICT_INPUT="$(printf '%s' "$INPUT_JSON" | jq -c \
+  --arg appService "$APP_SERVICE" \
+  --arg attachment "$ALIAS" \
+  --arg dst "$LAN_CLIENT_IP/32" \
+  '.allowRpToLan = true |
+   .applicationAccessMode = "PerApplication" |
+   .applicationLanRules = [{
+     attachmentAlias:$attachment,destinationCidr:$dst,protocol:"tcp",port:8090
+   }] |
+   .networks[0].attachments[0].serviceName = $appService')"
+STRICT_INPUT_B64="$(printf '%s' "$STRICT_INPUT" | base64 -w0)"
+docker run --rm -e "RP_GATE_INPUT_B64=$STRICT_INPUT_B64" "$IMAGE" \
+  node -e '
+    const {renderGateStack}=require("./dist/src/networking/gate-stack.js");
+    const input=JSON.parse(Buffer.from(process.env.RP_GATE_INPUT_B64,"base64").toString("utf8"));
+    process.stdout.write(renderGateStack(input));
+  ' > "$STACK_YAML"
+docker stack deploy --resolve-image never -c "$STACK_YAML" "$STACK" >/dev/null
+wait_service "$GATE_SERVICE" || fail "strict Site VPN gateway not running"
+sleep 6
+
+SERVER_TUNNEL_HOST="$(printf %s "$SERVER_TUNNEL" | cut -d/ -f1)"
+# The Swarm UDP ingress flow can remain pinned to the previous Gate task.
+# Re-create the client interface to force a new UDP source port/flow mapping
+# before testing access to the freshly rolled Gate.
+client_tunnel_up
+sudo -n ip netns exec "$ROUTER_NS" wg set rp-gate peer "$SERVER_PUB" \
+  allowed-ips "$STABLE_CIDR,$SERVER_TUNNEL_HOST/32" persistent-keepalive 5
+sudo -n ip netns exec "$ROUTER_NS" ip route replace "$SERVER_TUNNEL_HOST/32" dev rp-gate
+sudo -n ip netns exec "$ROUTER_NS" iptables -I RP-GATE-LAN 2 \
+  -i rp-gate -s "$SERVER_TUNNEL_HOST/32" -d "$LAN_CIDR" \
+  -m conntrack --ctstate NEW -j ACCEPT
+sudo -n ip netns exec "$ROUTER_NS" iptables -t nat -A POSTROUTING \
+  -s "$SERVER_TUNNEL_HOST/32" -d "$LAN_CIDR" -j MASQUERADE
+
+GATE_CONTAINER="$(docker ps --filter "label=com.docker.swarm.service.name=$GATE_SERVICE" --format '{{.ID}}' | head -1)"
+[ -n "$GATE_CONTAINER" ] || fail "strict Site VPN task container missing"
+GATE_OVERLAY_IP="$(docker inspect "$GATE_CONTAINER" \
+  --format "{{(index .NetworkSettings.Networks \"$NETWORK\").IPAddress}}")"
+APP_PID="$(docker inspect "$APP_CONTAINER" --format '{{.State.Pid}}')"
+[ -n "$GATE_OVERLAY_IP" ] && [ "$APP_PID" -gt 2 ] || fail "missing dataplane route endpoints"
+sudo -n nsenter --target "$APP_PID" --net \
+  ip route replace "$LAN_CLIENT_IP/32" via "$GATE_OVERLAY_IP"
+
+# Swarm DNS task records and Gate firewall reconciliation converge asynchronously
+# after a service update. Give only the explicitly permitted connection time
+# to converge; do not suppress a persistent dataplane failure.
+authorized=false
+for attempt in $(seq 1 15); do
+  if docker exec "$APP_CONTAINER" node -e '
+    const http=require("http");
+    const req=http.get("http://"+process.argv[1]+":8090/",res=>process.exit(res.statusCode===200?0:2));
+    req.on("error",()=>process.exit(3));
+    req.setTimeout(2000,()=>{req.destroy();process.exit(4)});
+  ' "$LAN_CLIENT_IP" >/dev/null 2>&1; then
+    authorized=true
+    break
+  fi
+  sleep 2
+done
+if [ "$authorized" != true ]; then
+  docker service logs --tail 120 "$GATE_SERVICE" || true
+  docker exec "$GATE_CONTAINER" sh -c '
+    echo "--- Gate peer task DNS ---"
+    getent ahostsv4 "tasks.$1" || true
+    echo "--- Gate overlay addresses / LAN route ---"
+    ip -4 addr show || true
+    ip -4 route get "$2" || true
+    echo "--- Gate RP forwarding rules ---"
+    iptables -S RP-GATE-FWD || true
+    echo "--- Gate RP SNAT rules ---"
+    iptables -t nat -S RP-GATE-SNAT || true
+    echo "--- WireGuard state ---"
+    wg show wg0 || true
+  ' sh "$APP_SERVICE" "$LAN_CLIENT_IP" || true
+  sudo -n ip netns exec "$ROUTER_NS" iptables -S RP-GATE-LAN || true
+  sudo -n ip netns exec "$ROUTER_NS" wg show rp-gate || true
+  sudo -n nsenter --target "$APP_PID" --net ip route get "$LAN_CLIENT_IP" || true
+  fail "authorized SingleApp -> LAN TCP 8090 through WireGuard failed"
+fi
+pass "authorized SingleApp-to-LAN traffic passes through Gate"
+
+sudo -n ip netns exec "$CLIENT_NS" python3 -m http.server 8091 --bind "$LAN_CLIENT_IP" \
+  > "$KEYDIR/blocked-http.log" 2>&1 &
+sleep 2
+if docker exec "$APP_CONTAINER" node -e '
+  const http=require("http");
+  const req=http.get("http://10.77.250.2:8091/",()=>process.exit(0));
+  req.on("error",()=>process.exit(2));
+  req.setTimeout(3000,()=>{req.destroy();process.exit(3)});
+' >/dev/null 2>&1; then
+  fail "unauthorized LAN port was accessible from SingleApp"
+fi
+pass "unauthorized app-to-LAN port denied by Gate ACL"
+
 docker service update --force "$GATE_SERVICE" >/dev/null
 wait_service "$GATE_SERVICE" || fail "Gate service failed after restart"
 # Swarm ingress may keep the previous UDP flow pinned briefly after a task restart.

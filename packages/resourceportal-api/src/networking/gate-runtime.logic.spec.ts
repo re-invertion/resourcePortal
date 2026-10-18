@@ -158,3 +158,57 @@ describe("Site VPN directional firewall", () => {
     expect(rules.forward.some((r) => r.includes("0.0.0.0/0"))).toBe(false);
   });
 });
+
+describe("strict per-application RP-to-LAN firewall", () => {
+  const resolved = new Map([["rp-att-attachment-1", "10.200.12.21"]]);
+  const rule = {
+    attachmentAlias: "rp-att-attachment-1",
+    destinationCidr: "192.168.50.21/32",
+    protocol: "tcp" as const,
+    port: 1883,
+  };
+  it("limits NEW forwarding and SNAT to one resolved application's destination/port", () => {
+    const result = firewallRules({
+      ...config,
+      allowRpToLan: true,
+      applicationAccessMode: "PerApplication",
+      applicationLanRules: [rule],
+    }, resolved, "wg0", new Map([["10.200.12.0/24", "eth2"]]),
+      new Map([["rp-att-attachment-1", ["10.200.12.21"]]]));
+    expect(result.forward.filter((args) => args.includes("NEW") && args.includes("-o") && args.includes("wg0"))).toEqual([[
+      "-A", "RP-GATE-FWD", "-i", "eth2", "-o", "wg0", "-s", "10.200.12.21",
+      "-d", "192.168.50.21/32", "-p", "tcp", "--dport", "1883",
+      "-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT",
+    ]]);
+    expect(result.snat).toContainEqual([
+      "-A", "RP-GATE-SNAT", "-o", "wg0", "-s", "10.200.12.21",
+      "-d", "192.168.50.21/32", "-p", "tcp", "--dport", "1883",
+      "-j", "SNAT", "--to-source", "10.253.0.1",
+    ]);
+  });
+  it("fails closed for empty, unresolved or disabled policies", () => {
+    for (const testcase of [
+      { enabled:true, rules: [], targets: resolved },
+      { enabled:true, rules:[rule], targets: new Map<string, string>() },
+      { enabled:false, rules:[rule], targets: resolved },
+    ]) {
+      const result = firewallRules({
+        ...config, allowRpToLan: testcase.enabled,
+        applicationAccessMode: "PerApplication",
+        applicationLanRules: testcase.rules,
+      }, testcase.targets);
+      expect(result.forward.filter((args) => args.includes("NEW") && args.includes("-o") && args.includes("wg0"))).toEqual([]);
+    }
+  });
+  it("rejects unrecognized attachment or outside network", () => {
+    for(const bad of [
+      {...rule,attachmentAlias:"foreign"},
+      {...rule,destinationCidr:"0.0.0.0/0"},
+    ]) {
+      expect(() => firewallRules({
+        ...config, allowRpToLan: true, applicationAccessMode: "PerApplication",
+        applicationLanRules: [bad],
+      },resolved)).toThrow();
+    }
+  });
+});

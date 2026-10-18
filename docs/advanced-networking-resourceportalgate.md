@@ -1,3 +1,5 @@
+For opt-in SingleApp LAN routing, per-application firewall and mDNS/SSDP discovery, see [Application LAN access](gate-application-lan-access.md).
+
 # Advanced Networking: Site VPN and Device VPN
 
 Status: implemented.

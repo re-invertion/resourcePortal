@@ -102,6 +102,18 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
   const [firewallGate, setFirewallGate] = useState<GateResource>();
   const [firewallOpen, setFirewallOpen] = useState(false);
   const [firewallForm, setFirewallForm] = useState({ allowLanToRp: true, allowRpToLan: false });
+  const [discoveryGate, setDiscoveryGate] = useState<GateResource>();
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [discoveryRules, setDiscoveryRules] = useState<NonNullable<GateResource["discoveryPolicies"]>>([]);
+  const [discoveryNew, setDiscoveryNew] = useState({
+    attachmentId: "", protocol: "mdns" as "mdns" | "ssdp",
+  });
+  const [accessGate, setAccessGate] = useState<GateResource>();
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessRules, setAccessRules] = useState<NonNullable<GateResource["applicationLanPolicies"]>>([]);
+  const [accessNew, setAccessNew] = useState({
+    attachmentId: "", destinationCidr: "", protocol: "tcp" as "tcp" | "udp", port: "1883",
+  });
   const [routingGate, setRoutingGate] = useState<GateResource>();
   const [routingOpen, setRoutingOpen] = useState(false);
   const [routingForm, setRoutingForm] = useState({
@@ -320,6 +332,60 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
     }
   }
 
+  function editGateDiscovery(gate: GateResource) {
+    setDiscoveryGate(gate);
+    setDiscoveryRules(gate.discoveryPolicies ?? []);
+    setDiscoveryNew({ attachmentId: "", protocol: "mdns" });
+    setDiscoveryOpen(true);
+  }
+
+  async function saveGateDiscovery(event: FormEvent) {
+    event.preventDefault();
+    if (!discoveryGate) return;
+    setWorking(true);
+    try {
+      await apiRequest(
+        root + "/gates/" + encodeURIComponent(discoveryGate.id) + "/discovery",
+        { method: "PATCH", body: { rules: discoveryRules, expectedRevision: discoveryGate.configRevision } },
+      );
+      setDiscoveryOpen(false);
+      setDiscoveryGate(undefined);
+      await topology.reload();
+      toast.success("Application discovery policy updated.");
+    } catch (error) {
+      toast.errorFrom(error, "Unable to update application discovery policy.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function editApplicationAccess(gate: GateResource) {
+    setAccessGate(gate);
+    setAccessRules(gate.applicationLanPolicies ?? []);
+    setAccessNew({ attachmentId: "", destinationCidr: "", protocol: "tcp", port: "1883" });
+    setAccessOpen(true);
+  }
+
+  async function saveApplicationAccess(event: FormEvent) {
+    event.preventDefault();
+    if (!accessGate) return;
+    setWorking(true);
+    try {
+      await apiRequest(
+        root + "/gates/" + encodeURIComponent(accessGate.id) + "/application-access",
+        { method: "PATCH", body: { rules: accessRules, expectedRevision: accessGate.configRevision } },
+      );
+      setAccessOpen(false);
+      setAccessGate(undefined);
+      await topology.reload();
+      toast.success("Application LAN access rules updated.");
+    } catch (error) {
+      toast.errorFrom(error, "Unable to save application LAN access rules.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   function editGateRouting(gate: GateResource) {
     setRoutingGate(gate);
     setRoutingForm({
@@ -462,6 +528,12 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         <div className="flex flex-wrap gap-1">
           <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateFirewall(gate)}>
             Firewall
+          </Button>
+          <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editApplicationAccess(gate)}>
+            App access
+          </Button>
+          <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateDiscovery(gate)}>
+            Discovery
           </Button>
           <Button size="sm" variant="ghost" disabled={working || Boolean(gate.revokedAt)} onClick={() => editGateRouting(gate)}>
             Routing
@@ -792,6 +864,134 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
           <Callout title="Routing prerequisite">
             Site VPN policy controls tunnel forwarding, not application routing. RP → LAN also needs a valid route from each RP application to the Gate gateway and the Gate LAN host must be able to reach destination devices. No mDNS or discovery relay is enabled.
           </Callout>
+        </form>
+      </Dialog>
+
+      <Dialog
+        open={discoveryOpen}
+        onClose={() => { if (!working) { setDiscoveryOpen(false); setDiscoveryGate(undefined); } }}
+        title={discoveryGate ? "Discovery relay · " + discoveryGate.name : "Discovery relay"}
+        description="Opt in individual applications to mDNS or SSDP. No general L2 bridge or unrestricted multicast is enabled."
+        actions={
+          <>
+            <Button disabled={working} onClick={() => { setDiscoveryOpen(false); setDiscoveryGate(undefined); }}>Cancel</Button>
+            <Button variant="primary" type="submit" form="gate-discovery-form"
+              disabled={working || !discoveryGate || (discoveryRules.length > 0 && discoveryGate.discoveryRelayVersion !== 1)}>
+              {working ? "Saving…" : "Save discovery"}
+            </Button>
+          </>
+        }
+      >
+        <form id="gate-discovery-form" className="space-y-4" onSubmit={(event) => void saveGateDiscovery(event)}>
+          {discoveryGate?.discoveryRelayVersion !== 1 ? (
+            <Callout tone="warning" title="Updated Site VPN agent required">
+              Re-enroll and reinstall the Site VPN agent before enabling discovery. Existing VPN routing continues to work without discovery.
+            </Callout>
+          ) : null}
+          <Callout title="Discovery scope">
+            Only applications on an RP Network attached to this Site VPN are eligible. Automatic detection depends on multicast delivery within the application overlay and must be verified in a real Swarm network.
+          </Callout>
+          {discoveryRules.map((rule,index) => (
+            <div key={index} className="flex items-center justify-between gap-2 rounded-lg border border-[#D7E0EC] p-3 text-xs">
+              <span>{rule.attachmentId} · {rule.protocol.toUpperCase()}</span>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setDiscoveryRules(rules => rules.filter((_, i) => i !== index))}>
+                Remove
+              </Button>
+            </div>
+          ))}
+          <Field label="Application">
+            <Select value={discoveryNew.attachmentId} onChange={event => setDiscoveryNew(v => ({ ...v, attachmentId: event.target.value }))}>
+              <option value="">Choose an application</option>
+              {(topology.data?.networks ?? [])
+                .filter(network => discoveryGate?.networks.some(link => link.network.id === network.id))
+                .flatMap(network => network.attachments ?? [])
+                .map(attachment => (
+                  <option key={attachment.id} value={attachment.id}>
+                    {attachment.singleApp?.name ?? attachment.singleAppId} — {attachment.address}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <Field label="Discovery protocol">
+            <Select value={discoveryNew.protocol} onChange={event => setDiscoveryNew(v => ({
+              ...v, protocol: event.target.value as "mdns" | "ssdp",
+            }))}>
+              <option value="mdns">mDNS (UDP 5353)</option>
+              <option value="ssdp">SSDP (UDP 1900)</option>
+            </Select>
+          </Field>
+          <Button type="button" disabled={!discoveryNew.attachmentId || discoveryRules.some(rule =>
+            rule.attachmentId === discoveryNew.attachmentId && rule.protocol === discoveryNew.protocol
+          )} onClick={() => setDiscoveryRules(rules => [...rules, { ...discoveryNew }])}>
+            Add discovery access
+          </Button>
+        </form>
+      </Dialog>
+
+      <Dialog
+        open={accessOpen}
+        onClose={() => { if (!working) { setAccessOpen(false); setAccessGate(undefined); } }}
+        title={accessGate ? "Application LAN access · " + accessGate.name : "Application LAN access"}
+        description="Permit selected applications to reach only approved LAN addresses, protocols and ports. Empty rules deny access."
+        actions={
+          <>
+            <Button disabled={working} onClick={() => { setAccessOpen(false); setAccessGate(undefined); }}>Cancel</Button>
+            <Button variant="primary" type="submit" form="gate-application-access-form" disabled={working || !accessGate}>
+              {working ? "Saving…" : "Save rules"}
+            </Button>
+          </>
+        }
+      >
+        <form id="gate-application-access-form" className="space-y-4" onSubmit={(event) => void saveApplicationAccess(event)}>
+          <Callout tone="warning" title="Routing prerequisite">
+            Gate ACLs alone cannot create a network route from a container. Verify routing before enabling RP → LAN.
+          </Callout>
+          {accessRules.map((rule, index) => (
+            <div key={index} className="flex items-center justify-between gap-2 rounded-lg border border-[#D7E0EC] p-3">
+              <div className="min-w-0 text-xs">
+                <div className="font-medium">{rule.attachmentId}</div>
+                <code>{rule.protocol.toUpperCase()} {rule.destinationCidr}:{rule.port}</code>
+              </div>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setAccessRules(rules => rules.filter((_, i) => i !== index))}>
+                Remove
+              </Button>
+            </div>
+          ))}
+          <Field label="Application network attachment">
+            <Select value={accessNew.attachmentId} onChange={(event) => setAccessNew(v => ({ ...v, attachmentId: event.target.value }))}>
+              <option value="">Choose an application</option>
+              {(topology.data?.networks ?? [])
+                .filter(network => accessGate?.networks.some(link => link.network.id === network.id))
+                .flatMap(network => network.attachments ?? [])
+                .map(attachment => (
+                  <option key={attachment.id} value={attachment.id}>
+                    {attachment.singleApp?.name ?? attachment.singleAppId} — {attachment.address}
+                  </option>
+                ))}
+            </Select>
+          </Field>
+          <Field label="LAN IPv4 address or CIDR">
+            <TextInput value={accessNew.destinationCidr} placeholder="192.168.100.50/32" onChange={event => setAccessNew(v => ({ ...v, destinationCidr: event.target.value }))} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Protocol">
+              <Select value={accessNew.protocol} onChange={event => setAccessNew(v => ({ ...v, protocol: event.target.value as "tcp" | "udp" }))}>
+                <option value="tcp">TCP</option><option value="udp">UDP</option>
+              </Select>
+            </Field>
+            <Field label="Port">
+              <TextInput type="number" min={1} max={65535} value={accessNew.port} onChange={event => setAccessNew(v => ({ ...v, port: event.target.value }))}/>
+            </Field>
+          </div>
+          <Button type="button" disabled={!accessNew.attachmentId || !accessNew.destinationCidr || !Number.isInteger(Number(accessNew.port)) || Number(accessNew.port) < 1 || Number(accessNew.port) > 65535} onClick={() => {
+            setAccessRules(rules => [...rules, {
+              attachmentId: accessNew.attachmentId,
+              destinationCidr: accessNew.destinationCidr,
+              protocol: accessNew.protocol,
+              port: Number(accessNew.port),
+            }]);
+            setAccessNew(v => ({ ...v, destinationCidr: "" }));
+          }}>Add rule</Button>
         </form>
       </Dialog>
 

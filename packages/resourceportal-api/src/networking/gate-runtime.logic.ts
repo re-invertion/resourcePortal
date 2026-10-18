@@ -1,3 +1,4 @@
+import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 import type { GateRuntimeConfig } from "./gate-runtime.types";
 
 export const GATE_FORWARD_CHAIN = "RP-GATE-FWD";
@@ -58,6 +59,8 @@ export function firewallRules(
   config: GateRuntimeConfig,
   resolved: Map<string, string>,
   interfaceName = "wg0",
+  sourceInterfaces: Map<string, string> = new Map(),
+  taskAddresses: Map<string, string[]> = new Map(),
 ) {
   const forward: string[][] = [
     ["-A", GATE_FORWARD_CHAIN, "-i", interfaceName, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
@@ -105,9 +108,45 @@ export function firewallRules(
     }
   }
 
+  // Per-application egress never authorizes an entire overlay CIDR.
+  if (config.allowRpToLan === true && config.applicationAccessMode === "PerApplication") {
+    const knownAliases = new Set(config.mappings.map((mapping) => mapping.attachmentAlias));
+    for (const policy of config.applicationLanRules ?? []) {
+      if (!knownAliases.has(policy.attachmentAlias)) throw new Error("Unknown Gate application attachment");
+      const destination = parseIpv4Cidr(policy.destinationCidr);
+      if (!destination || !config.peerLanCidrs.some((lan) => {
+        const range = parseIpv4Cidr(lan);
+        return range && destination.network >= range.network && destination.broadcast <= range.broadcast;
+      }) || !["tcp", "udp"].includes(policy.protocol) ||
+        !Number.isInteger(policy.port) || policy.port < 1 || policy.port > 65535) {
+        throw new Error("Invalid application LAN policy");
+      }
+      const mapping = config.mappings.find(item => item.attachmentAlias === policy.attachmentAlias);
+      const inInterface = mapping ? sourceInterfaces.get(mapping.overlayCidr) : undefined;
+      const overlay = mapping ? parseIpv4Cidr(mapping.overlayCidr) : undefined;
+      if (!inInterface || !overlay) continue;
+      if (!/^[a-zA-Z0-9_.-]{1,15}$/.test(inInterface)) throw new Error("Invalid network interface");
+      const serverSource = hostAddressCidr(config.serverTunnelAddress).split("/")[0];
+      for (const source of taskAddresses.get(policy.attachmentAlias) ?? []) {
+        if (!containsIpv4(overlay, source)) continue;
+        const match = [
+          "-s", source, "-d", destination.normalized,
+          "-p", policy.protocol, "--dport", String(policy.port),
+        ];
+        forward.push([
+          "-A", GATE_FORWARD_CHAIN, "-i", inInterface, "-o", interfaceName, ...match,
+          "-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT",
+        ]);
+        snat.push([
+          "-A", GATE_SNAT_CHAIN, "-o", interfaceName, ...match,
+          "-j", "SNAT", "--to-source", serverSource,
+        ]);
+      }
+    }
+  }
   // RP-to-LAN is opt-in. Source addresses are restricted to attached
   // RP overlays, destinations to Gate-reported LAN CIDRs.
-  if (config.allowRpToLan === true) {
+  if (config.allowRpToLan === true && config.applicationAccessMode !== "PerApplication") {
     const overlays = new Set(config.rpOverlayCidrs ?? config.mappings.map((m) => m.overlayCidr));
     const serverTunnelSource = hostAddressCidr(config.serverTunnelAddress).split("/")[0];
     for (const overlay of overlays) {

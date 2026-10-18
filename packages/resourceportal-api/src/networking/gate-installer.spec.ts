@@ -9,6 +9,12 @@ describe("ResourcePortalGate installer", () => {
     expect(script).toContain('ENROLLMENT_TOKEN="${2:-}"');
     expect(script).not.toContain('\\${2:-}');
     expect(script).toContain("wireguard-tools");
+    expect(script).toContain("resourceportal-gate-discovery.service");
+    expect(script).toContain("discoveryRelayVersion:1");
+    expect(script).toContain("RP-GATE-DISC");
+    expect(script).toContain("DISCOVERY_ENABLED");
+    expect(script).toContain("#!/usr/bin/env python3");
+
     expect(script).toContain("Installing FRR for BGP route advertisement");
     expect(script).toContain("apt-get install -y frr");
     expect(script).toContain("systemctl enable resourceportal-gate.service");
