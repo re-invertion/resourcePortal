@@ -35,7 +35,7 @@ export class AppLanRouteReconcilerService {
     const tasks = this.docker([
       "service", "ps", "-q", "--no-trunc",
       "--filter", "desired-state=running", name,
-    ]).split(/\\s+/).filter(Boolean);
+    ]).split(/\s+/).filter(Boolean);
     const cidr = parseIpv4Cidr(overlayCidr);
     if (!cidr) throw new Error("Invalid Gate overlay CIDR");
     for (const id of tasks) {
@@ -121,10 +121,14 @@ export class AppLanRouteReconcilerService {
     }
     const policy = { version: 1, routes: validateLanRoutePolicy({ version: 1, routes }) };
     const encoded = Buffer.from(JSON.stringify(policy)).toString("base64");
-    const serviceName = this.config.get<string>(
-      "APP_LAN_ROUTER_SERVICE_NAME",
-      "resourceportal-control-plane_app-lan-router",
+    const stack = this.config.get<string>(
+      "RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME", "resourceportal-control-plane",
     );
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(stack)) {
+      throw new Error("Invalid RP control-plane Swarm stack name");
+    }
+    const serviceName = this.config.get<string>("APP_LAN_ROUTER_SERVICE_NAME") ||
+      stack + "_app-lan-router";
     const existing = JSON.parse(this.docker([
       "service", "inspect", serviceName, "--format", "{{json .Spec.TaskTemplate.ContainerSpec.Env}}",
     ]) || "[]") as string[];
