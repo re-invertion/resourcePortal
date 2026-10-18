@@ -1,5 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { spawnSync } from "node:child_process";
+import { networkInterfaces } from "node:os";
+import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 import { atomicVpnFirewallRestore } from "./atomic-vpn-firewall";
 import { applyVpnFirewallIfChanged, type VpnFirewallRevision } from "./vpn-firewall-revision";
 import {
@@ -9,6 +11,7 @@ import {
   GATE_SNAT_CHAIN,
   wireGuardSetupCommands,
 } from "./gate-runtime.logic";
+import { startGateDiscoveryRelay } from "./gate-discovery-runtime";
 import type { GateRuntimeConfig } from "./gate-runtime.types";
 
 const logger = new Logger("ResourcePortalGateRuntime");
@@ -103,6 +106,29 @@ function resolveAlias(alias: string) {
   return first;
 }
 
+function resolveTaskAddresses(serviceName: string): string[] {
+  // Docker embedded DNS resolves tasks.<service> to concrete task addresses
+  // even when the service itself uses a virtual IP endpoint.
+  if (!/^rp_[a-zA-Z0-9_]+$/.test(serviceName)) return [];
+  const output = run("getent", ["ahostsv4", "tasks." + serviceName], true);
+  if (output.status !== 0) return [];
+  return [...new Set(output.stdout.split("\n").map(line => line.trim().split(/\s+/)[0])
+    .filter((address): address is string =>
+      Boolean(address && /^\d+\.\d+\.\d+\.\d+$/.test(address))))];
+}
+
+function resolveRuntimeTasks(runtime: GateRuntimeConfig) {
+  const tasks = new Map<string, string[]>();
+  for (const mapping of runtime.mappings) {
+    if (!mapping.serviceName) continue;
+    const cidr = parseIpv4Cidr(mapping.overlayCidr);
+    if (!cidr) continue;
+    tasks.set(mapping.attachmentAlias, resolveTaskAddresses(mapping.serviceName)
+      .filter(address => containsIpv4(cidr, address)));
+  }
+  return tasks;
+}
+
 function reconcileFirewall(runtime: GateRuntimeConfig) {
   const resolved = new Map<string, string>();
   for (const mapping of runtime.mappings) {
@@ -110,7 +136,21 @@ function reconcileFirewall(runtime: GateRuntimeConfig) {
     if (address) resolved.set(mapping.attachmentAlias, address);
   }
 
-  const rules = firewallRules(runtime, resolved, interfaceName);
+  const overlayInterfaces = new Map<string, string>();
+  const interfaces = networkInterfaces();
+  for (const cidr of runtime.rpOverlayCidrs ?? []) {
+    const overlay = parseIpv4Cidr(cidr);
+    if (!overlay) continue;
+    for (const [name, addresses] of Object.entries(interfaces)) {
+      if (addresses?.some(address => address.family === "IPv4" &&
+        containsIpv4(overlay, address.address))) {
+        overlayInterfaces.set(cidr, name);
+        break;
+      }
+    }
+  }
+  const tasks = resolveRuntimeTasks(runtime);
+  const rules = firewallRules(runtime, resolved, interfaceName, overlayInterfaces, tasks);
   const script = atomicVpnFirewallRestore({
     forwardChain: GATE_FORWARD_CHAIN,
     dnatChain: GATE_DNAT_CHAIN,
@@ -140,6 +180,11 @@ async function main() {
     throw new Error(
       "ResourcePortalGate requires net.ipv4.ip_forward=1 in its network namespace",
     );
+  }
+  try {
+    await startGateDiscoveryRelay(runtime, (alias) => resolveRuntimeTasks(runtime).get(alias) ?? []);
+  } catch (error) {
+    logger.error("Discovery relay disabled: " + String(error));
   }
   logger.log(
     `Gate ${runtime.gateId} listening UDP/${runtime.listenPort} mappings=${runtime.mappings.length}`,

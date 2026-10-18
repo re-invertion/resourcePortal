@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 export function resourcePortalGateInstallerScript() {
+  const discoveryAgent = readFileSync(join(__dirname, "gate-discovery-agent.py"), "utf8");
   return String.raw`#!/usr/bin/env bash
 set -euo pipefail
 
@@ -37,13 +40,13 @@ install_dependencies() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y curl jq wireguard-tools iproute2 iptables ca-certificates
+    apt-get install -y curl jq wireguard-tools iproute2 iptables python3 ca-certificates
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y curl jq wireguard-tools iproute iptables ca-certificates
+    dnf install -y curl jq wireguard-tools iproute iptables python3 ca-certificates
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y curl jq wireguard-tools iproute iptables ca-certificates
+    yum install -y curl jq wireguard-tools iproute iptables python3 ca-certificates
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache curl jq wireguard-tools iproute2 iptables ca-certificates
+    apk add --no-cache curl jq wireguard-tools iproute2 iptables python3 ca-certificates
   else
     die "Unsupported package manager. Install curl, jq, wireguard-tools, iproute2 and iptables manually."
   fi
@@ -495,7 +498,7 @@ while true; do
     --arg agentVersion "$AGENT_VERSION" \
     --argjson lanAddresses "$LAN_ADDRESSES" \
     --argjson lanCidrs "$LAN_CIDRS" \
-    '{lanAddresses:$lanAddresses,lanCidrs:$lanCidrs,agentVersion:$agentVersion}')"
+    '{lanAddresses:$lanAddresses,lanCidrs:$lanCidrs,agentVersion:$agentVersion,discoveryRelayVersion:1}')"
 
   RESPONSE_FILE="$(mktemp)"
   HTTP_CODE="$(curl -sS -o "$RESPONSE_FILE" -w '%{http_code}' \
@@ -509,6 +512,8 @@ while true; do
     log "Gate token was revoked or rejected; tunnel and BGP advertisements disabled"
     down_tunnel
     disable_bgp
+    printf '%s
+' '{"enabled":false}' > "$STATE_DIR/discovery.json"
     rm -f "$RESPONSE_FILE"
     sleep "$INTERVAL"
     continue
@@ -529,6 +534,8 @@ while true; do
 
   if [ "$(printf '%s' "$ALLOWED_IPS" | jq 'length')" -eq 0 ]; then
     down_tunnel
+    printf '%s
+' '{"enabled":false}' > "$STATE_DIR/discovery.json"
   else
     write_wireguard_config "$CONFIG"
     ALLOW_LAN_TO_RP="$(printf '%s' "$CONFIG" | jq -r '.allowLanToRp // true')"
@@ -538,11 +545,79 @@ while true; do
   fi
   sync_bgp "$CONFIG" "$LAN_ADDRESSES"
 
+  # Atomic, durable and opt-in session routing for local discovery traffic.
+  # Missing features and disconnected tunnels always disable the relay.
+  DISCOVERY_ENABLED="$(printf '%s' "$CONFIG" | jq -r '.discoveryEnabled // false')"
+  if [ "$DISCOVERY_ENABLED" = "true" ] && [ "$(printf '%s' "$ALLOWED_IPS" | jq 'length')" -gt 0 ]; then
+    jq -cn --arg serverTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.serverTunnelAddress')"       --arg clientTunnelAddress "$(printf '%s' "$CONFIG" | jq -r '.tunnelAddress')"       --arg lanAddress "$(printf '%s' "$LAN_ADDRESSES" | jq -r '.[0] // ""')"       --argjson lanCidrs "$LAN_CIDRS"       '{enabled:true,serverTunnelAddress:$serverTunnelAddress,clientTunnelAddress:$clientTunnelAddress,lanAddress:$lanAddress,lanCidrs:$lanCidrs}'       > "$STATE_DIR/discovery.json.tmp"
+  else
+    printf '%s
+' '{"enabled":false}' > "$STATE_DIR/discovery.json.tmp"
+  fi
+  chmod 0600 "$STATE_DIR/discovery.json.tmp"
+  if [ ! -f "$STATE_DIR/discovery.json" ] || ! cmp -s "$STATE_DIR/discovery.json.tmp" "$STATE_DIR/discovery.json"; then
+    mv "$STATE_DIR/discovery.json.tmp" "$STATE_DIR/discovery.json"
+  else
+    rm -f "$STATE_DIR/discovery.json.tmp"
+  fi
+
+  # A dedicated INPUT chain permits only authenticated WireGuard tunnel traffic
+  # to the local discovery relay and rejects every other source on that port.
+  iptables -N RP-GATE-DISC 2>/dev/null || true
+  if ! iptables -C INPUT -j RP-GATE-DISC 2>/dev/null; then
+    iptables -I INPUT 1 -j RP-GATE-DISC
+  fi
+  DISCOVERY_RULES="$(mktemp)"
+  {
+    printf '*filter
+'
+    printf -- '-F RP-GATE-DISC
+'
+    if [ "$DISCOVERY_ENABLED" = "true" ] && [ -n "$SERVER_TUNNEL_SOURCE" ]; then
+      printf -- '-A RP-GATE-DISC -i %s -s %s -p udp --dport 53540 -j ACCEPT
+' "$WG_INTERFACE" "$SERVER_TUNNEL_SOURCE"
+    fi
+    printf -- '-A RP-GATE-DISC -i %s -p udp --dport 53540 -j REJECT
+' "$WG_INTERFACE"
+    printf -- '-A RP-GATE-DISC -j RETURN
+'
+    printf 'COMMIT
+'
+  } > "$DISCOVERY_RULES"
+  if ! iptables-restore -w 5 --noflush < "$DISCOVERY_RULES"; then
+    printf '%s
+' '{"enabled":false}' > "$STATE_DIR/discovery.json"
+    log "Discovery policy failed closed"
+  fi
+  rm -f "$DISCOVERY_RULES"
+
   sleep "$INTERVAL"
 done
 RP_GATE_AGENT
 
 chmod 0755 "$AGENT_BIN"
+
+# The only LAN-side multicast relay is bound to this enrolled WireGuard peer.
+cat > /usr/local/sbin/resourceportal-gate-discovery.py <<'RP_GATE_DISCOVERY_AGENT'
+__RP_GATE_DISCOVERY_PYTHON__
+RP_GATE_DISCOVERY_AGENT
+chmod 0755 /usr/local/sbin/resourceportal-gate-discovery.py
+
+cat > /etc/systemd/system/resourceportal-gate-discovery.service <<'EOF'
+[Unit]
+Description=ResourcePortalGate Discovery Relay
+After=network-online.target resourceportal-gate.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/resourceportal-gate-discovery.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 cat > /etc/sysctl.d/99-resourceportal-gate.conf <<'EOF'
 net.ipv4.ip_forward=1
@@ -570,9 +645,11 @@ systemctl enable resourceportal-gate.service
 # A re-enrollment replaces the agent binary and machine token. An already
 # running service must be restarted to use them (enable --now is not enough).
 systemctl restart resourceportal-gate.service
+systemctl enable resourceportal-gate-discovery.service
+systemctl restart resourceportal-gate-discovery.service
 
 log "ResourcePortalGate enrolled as $GATE_ID"
 log "The Gate will automatically receive RP Network routes."
 log "If this host is not the LAN default gateway, add static routes on your LAN router for RP Network CIDRs via this Gate host."
-`.replaceAll("__RP_SHELL_EXPAND__", "${");
+`.replace("__RP_GATE_DISCOVERY_PYTHON__", discoveryAgent).replaceAll("__RP_SHELL_EXPAND__", "${");
 }

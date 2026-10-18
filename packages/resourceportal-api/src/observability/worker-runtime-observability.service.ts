@@ -10,6 +10,7 @@ export type WorkerReconcileKey =
   | "volumeUsage"
   | "legacySecrets"
   | "egressPolicy"
+  | "appLanRoutes"
   | "gateRuntime"
   | "deviceVpnRuntime";
 

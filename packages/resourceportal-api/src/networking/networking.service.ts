@@ -22,6 +22,10 @@ import type { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-hear
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import { validateGateDiscoveryRules } from "./gate-discovery-policy";
+import type { UpdateGateDiscoveryDto } from "./dto/update-gate-discovery.dto";
+import { validateApplicationLanRules } from "./gate-application-access";
+import type { UpdateGateApplicationAccessDto } from "./dto/update-gate-application-access.dto";
 import type { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
 import type { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
@@ -750,6 +754,7 @@ export class NetworkingService {
           publicKey: null,
           agentTokenHash: null,
           agentVersion: null,
+          discoveryRelayVersion: 0,
           lastSeenAt: null,
           lastError: null,
           lanAddresses: [],
@@ -818,6 +823,112 @@ export class NetworkingService {
       return tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } });
     });
     return this.publicGate(updated);
+  }
+
+  async updateGateDiscovery(
+    tenantId: string,
+    gateId: string,
+    dto: UpdateGateDiscoveryDto,
+    actor: AuthenticatedUser,
+  ) {
+    const gate = await this.gateOrThrow(tenantId, gateId);
+    if (gate.revokedAt) throw new ConflictException("Site VPN is revoked");
+    if (dto.rules.length > 0 && gate.discoveryRelayVersion !== 1) {
+      throw new BadRequestException("Discovery requires an enrolled Site VPN agent with discovery relay capability");
+    }
+    const attachments = await this.prisma.networkAttachment.findMany({
+      where: {
+        network: {
+          tenantId,
+          gateAttachments: { some: { gateId, enabled: true } },
+        },
+        singleApp: { pendingDeletion: false, appGroup: { tenantId } },
+      },
+      select: { id: true },
+    });
+    let rules;
+    try {
+      rules = validateGateDiscoveryRules(
+        dto.rules, new Set(attachments.map(item => item.id)),
+      );
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : "Invalid discovery rule");
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.resourcePortalGate.updateMany({
+        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
+        data: {
+          discoveryPolicies: rules,
+          configRevision: { increment: 1 },
+          updatedBy: actor.id,
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException("Site VPN settings changed; refresh before saving");
+      }
+      await this.audit(tx, tenantId, actor, {
+        action: "gate.discovery.update",
+        resourceType: "ResourcePortalGate",
+        resourceId: gateId,
+        resourceName: gate.name,
+        changes: { previous: gate.discoveryPolicies, current: rules },
+      });
+      return this.publicGate(await tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } }));
+    });
+  }
+
+  async updateGateApplicationAccess(
+    tenantId: string,
+    gateId: string,
+    dto: UpdateGateApplicationAccessDto,
+    actor: AuthenticatedUser,
+  ) {
+    const gate = await this.gateOrThrow(tenantId, gateId);
+    if (gate.revokedAt) throw new ConflictException("Site VPN is revoked");
+    const attachments = await this.prisma.networkAttachment.findMany({
+      where: {
+        network: {
+          tenantId,
+          gateAttachments: { some: { gateId, enabled: true } },
+        },
+        singleApp: { pendingDeletion: false, appGroup: { tenantId } },
+      },
+      select: { id: true },
+    });
+    let rules;
+    try {
+      rules = validateApplicationLanRules(
+        dto.rules, gate.lanCidrs, new Set(attachments.map((attachment) => attachment.id)),
+      );
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : "Invalid application policy");
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const claim = await tx.resourcePortalGate.updateMany({
+        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
+        data: {
+          applicationAccessMode: "PerApplication",
+          applicationLanPolicies: rules,
+          configRevision: { increment: 1 },
+          updatedBy: actor.id,
+        },
+      });
+      if (claim.count !== 1) {
+        throw new ConflictException("Site VPN settings changed; refresh before saving");
+      }
+      await this.audit(tx, tenantId, actor, {
+        action: "gate.application-access.update",
+        resourceType: "ResourcePortalGate",
+        resourceId: gateId,
+        resourceName: gate.name,
+        changes: {
+          previous: { mode: gate.applicationAccessMode, rules: gate.applicationLanPolicies },
+          current: { mode: "PerApplication", rules },
+        },
+      });
+      const updated = await tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } });
+      return this.publicGate(updated);
+    });
   }
 
   async updateGateRouting(
@@ -1379,6 +1490,7 @@ export class NetworkingService {
           lanAddresses,
           lanCidrs,
           agentVersion: dto.agentVersion?.trim() || null,
+          discoveryRelayVersion: dto.discoveryRelayVersion === 1 ? 1 : 0,
           lastSeenAt: now,
           status: "Ready",
           lastError: null,
@@ -1419,6 +1531,7 @@ export class NetworkingService {
         lanAddresses,
         lanCidrs,
         agentVersion: dto.agentVersion?.trim() || gate.agentVersion,
+        discoveryRelayVersion: dto.discoveryRelayVersion === 1 ? 1 : 0,
         lastSeenAt: new Date(),
       },
       include: {
@@ -1456,6 +1569,8 @@ export class NetworkingService {
     routeAdvertisementMode: string;
     allowLanToRp: boolean;
     allowRpToLan: boolean;
+    discoveryRelayVersion: number;
+    discoveryPolicies: unknown;
     bgpLocalAsn: bigint | null;
     bgpRouterAddress: string | null;
     bgpRouterAsn: bigint | null;
@@ -1484,6 +1599,9 @@ export class NetworkingService {
       serverTunnelAddress: gate.serverTunnelAddress,
       allowLanToRp: gate.allowLanToRp,
       allowRpToLan: gate.allowRpToLan,
+      discoveryEnabled: gate.allowRpToLan &&
+        gate.discoveryRelayVersion === 1 &&
+        Array.isArray(gate.discoveryPolicies) && gate.discoveryPolicies.length > 0,
       networks: gate.networks.map((link) => ({
         id: link.network.id,
         name: link.network.name,

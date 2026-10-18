@@ -1752,6 +1752,7 @@ export class DeploymentExecutionService {
       "resourceportal.workload": "tenant",
       "resourceportal.app-group-id": snapshot.appGroup.id,
       "resourceportal.tenant-id": snapshot.appGroup.tenantId,
+      "resourceportal.single-app-id": singleApp.id,
       "resourceportal.network-ids":
         (singleApp.networkAttachments?.length ?? 0) > 0
           ? singleApp.networkAttachments

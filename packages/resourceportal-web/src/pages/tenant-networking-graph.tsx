@@ -123,6 +123,12 @@ export type GateResource = {
   configRevision: number;
   allowLanToRp?: boolean;
   allowRpToLan?: boolean;
+  discoveryRelayVersion?: number;
+  discoveryPolicies?: Array<{ attachmentId: string; protocol: "mdns" | "ssdp" }>;
+  applicationAccessMode?: "Legacy" | "PerApplication";
+  applicationLanPolicies?: Array<{
+    attachmentId: string; destinationCidr: string; protocol: "tcp" | "udp"; port: number;
+  }>;
   serverListenPort?: number | null;
   clientTunnelAddress?: string | null;
   serverTunnelAddress?: string | null;

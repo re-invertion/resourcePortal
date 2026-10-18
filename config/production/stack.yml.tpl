@@ -422,6 +422,26 @@ services:
       restart_policy:
         condition: any
 
+  app-lan-router:
+    image: __API_IMAGE__
+    user: "0"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: ["node", "dist/src/networking/app-lan-route.runner.js"]
+    environment:
+      NODE_ENV: production
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+    networks:
+      - host
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 2s
+
   egress-guard:
     image: __API_IMAGE__
     user: "0"

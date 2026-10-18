@@ -9,6 +9,8 @@ import {
   gatePrivateSecretName,
   gateStackName,
 } from "./network-runtime-names";
+import { runtimeGateDiscoveryRules, validateGateDiscoveryRules } from "./gate-discovery-policy";
+import { runtimeApplicationLanRules, validateApplicationLanRules } from "./gate-application-access";
 import { gateStackDigest, renderGateStack } from "./gate-stack";
 
 type DockerResult = {
@@ -37,7 +39,10 @@ export class GateRuntimeReconcilerService {
             include: {
               network: {
                 include: {
-                  attachments: { orderBy: { createdAt: "asc" } },
+                  attachments: {
+                    orderBy: { createdAt: "asc" },
+                    include: { singleApp: { select: { name: true, appGroupId: true } } },
+                  },
                 },
               },
             },
@@ -137,7 +142,50 @@ export class GateRuntimeReconcilerService {
         }
 
         const image = this.runtimeImage();
+        const allowedAttachmentIds = new Set(
+          gate.networks.flatMap((link) =>
+            link.network.attachments.map((attachment) => attachment.id),
+          ),
+        );
+        let applicationLanRules: ReturnType<typeof runtimeApplicationLanRules> = [];
+        if (gate.applicationAccessMode === "PerApplication") {
+          // Detached apps or removed LAN prefixes cannot retain stale firewall grants.
+          // On invalid saved state, deny every new application-to-LAN connection.
+          try {
+            const raw = Array.isArray(gate.applicationLanPolicies)
+              ? gate.applicationLanPolicies.filter((rule) =>
+                  Boolean(rule && typeof rule === "object" && !Array.isArray(rule) &&
+                    allowedAttachmentIds.has((rule as { attachmentId?: string }).attachmentId ?? "")),
+                )
+              : [];
+            applicationLanRules = runtimeApplicationLanRules(validateApplicationLanRules(
+              raw, gate.lanCidrs, allowedAttachmentIds,
+            ));
+          } catch {
+            applicationLanRules = [];
+          }
+        }
+        let discoveryRules: ReturnType<typeof runtimeGateDiscoveryRules> = [];
+        if (gate.discoveryRelayVersion === 1) {
+          try {
+            const saved = Array.isArray(gate.discoveryPolicies)
+              ? gate.discoveryPolicies.filter(item => Boolean(item && typeof item === "object" &&
+                  !Array.isArray(item) && allowedAttachmentIds.has(
+                    (item as { attachmentId?: string }).attachmentId ?? "",
+                  )))
+              : [];
+            discoveryRules = runtimeGateDiscoveryRules(validateGateDiscoveryRules(
+              saved, allowedAttachmentIds,
+            ));
+          } catch {
+            discoveryRules = [];
+          }
+        }
         const stackInput = {
+          discoveryRules,
+          applicationAccessMode: gate.applicationAccessMode === "PerApplication"
+            ? "PerApplication" as const : "Legacy" as const,
+          applicationLanRules,
           gateId: gate.id,
           image,
           publishedPort: gate.serverListenPort,
@@ -155,6 +203,10 @@ export class GateRuntimeReconcilerService {
             attachments: link.network.attachments.map((attachment) => ({
               id: attachment.id,
               address: attachment.address,
+              ...(attachment.singleApp ? {
+                serviceName: "rp_" + attachment.singleApp.appGroupId.replaceAll("-", "_") + "_" +
+                  attachment.singleApp.name.replaceAll("-", "_"),
+              } : {}),
             })),
           })),
         };
