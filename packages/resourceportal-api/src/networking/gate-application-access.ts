@@ -49,6 +49,39 @@ export function validateApplicationLanRules(
   });
 }
 
+
+/** Restore safe desired state after a detached app or withdrawn Gate LAN.
+ * An outdated rule must never block cleanup of previously installed routes.
+ * Invalid active policy fails closed to zero grants rather than publishing
+ * a partially authorized snapshot.
+ */
+export function reconcileApplicationLanRules(
+  saved: unknown,
+  gateLanCidrs: string[],
+  allowedAttachmentIds: ReadonlySet<string>,
+): ApplicationLanRule[] {
+  if (!Array.isArray(saved)) return [];
+  const active = saved.filter((candidate: unknown) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    const rule = candidate as Record<string, unknown>;
+    if (typeof rule.attachmentId !== "string" ||
+      !allowedAttachmentIds.has(rule.attachmentId) ||
+      typeof rule.destinationCidr !== "string") return false;
+    const destination = parseIpv4Cidr(rule.destinationCidr);
+    if (!destination) return false;
+    return gateLanCidrs.some(lan => {
+      const range = parseIpv4Cidr(lan);
+      return range && destination.network >= range.network &&
+        destination.broadcast <= range.broadcast;
+    });
+  });
+  try {
+    return validateApplicationLanRules(active, gateLanCidrs, allowedAttachmentIds);
+  } catch {
+    return []; // Fail closed for malformed remaining rules.
+  }
+}
+
 export function runtimeApplicationLanRules(rules: ApplicationLanRule[]) {
   return rules.map((rule) => ({
     attachmentAlias: networkAttachmentAlias(rule.attachmentId),
