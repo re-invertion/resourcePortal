@@ -82,7 +82,8 @@ const commands = {
     ["docker", "compose", "-f", "docker-compose.yml", "config", "--no-interpolate"],
   ],
   "networking": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/networking"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--",
+      "src/networking", "src/internal/v020-placement-networking.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
     ["bash", "test/installer/test-host-runtime.sh"],
   ],
@@ -201,6 +202,10 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-recovery\.service|stage6-worker-recovery\.spec)\.ts$/, ["recovery-safety", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
+  // Deployment placement labels drive SingleApp-to-Gate routing isolation.
+  // Include the actual renderer assertion in targeted networking verification,
+  // and retain release/rollback smoke for changes to this contract.
+  [/^packages\/resourceportal-api\/src\/internal\/v020-placement-networking\.spec\.ts$/, ["networking", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-volume-provisioner\.service(?:\.spec)?\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/(?:nfs-remote-access-validator\.service(?:\.spec)?|shared-nfs-probe(?:\.spec)?|storage-backends\.service)\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/operations\/executors\/volume-operation\.executors(?:\.spec)?\.ts$/, ["volume-operations"]],
