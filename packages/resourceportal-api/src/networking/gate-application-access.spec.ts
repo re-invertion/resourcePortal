@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateApplicationLanRules, runtimeApplicationLanRules } from "./gate-application-access";
+import { validateApplicationLanRules, runtimeApplicationLanRules, reconcileApplicationLanRules } from "./gate-application-access";
 const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const cidrs = ["192.168.50.0/24"];
 const allowed = new Set([id]);
@@ -35,5 +35,24 @@ describe("generic per-application LAN policy", () => {
   it("rejects duplicates and oversized configurations", () => {
     expect(() => validateApplicationLanRules([rule,rule],cidrs,allowed)).toThrow();
     expect(() => validateApplicationLanRules(Array(257).fill(rule),cidrs,allowed)).toThrow();
+  });
+});
+
+describe("Gate route desired-state revocation", () => {
+  it("drops deleted app grants without suppressing live app routes", () => {
+    expect(reconcileApplicationLanRules([
+      { ...rule, attachmentId: "ffffffff-ffff-4fff-8fff-ffffffffffff" },
+      rule,
+    ], cidrs, allowed)).toEqual([rule]);
+  });
+  it("drops destinations withdrawn from Gate LAN instead of keeping stale routes", () => {
+    expect(reconcileApplicationLanRules([
+      { ...rule, destinationCidr: "10.10.10.20/32" }, rule,
+    ], cidrs, allowed)).toEqual([rule]);
+    expect(reconcileApplicationLanRules([rule], ["172.16.20.0/24"], allowed)).toEqual([]);
+  });
+  it("fails closed when an active saved rule is corrupt", () => {
+    expect(reconcileApplicationLanRules([{ ...rule, port: 0 }], cidrs, allowed)).toEqual([]);
+    expect(reconcileApplicationLanRules(null, cidrs, allowed)).toEqual([]);
   });
 });
