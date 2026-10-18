@@ -86,6 +86,7 @@ const commands = {
       "src/networking", "src/internal/v020-placement-networking.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
     ["bash", "test/installer/test-host-runtime.sh"],
+    ["python3", "test/installer/test-gate-discovery-multilan.py"],
   ],
   "web-console": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
@@ -237,6 +238,7 @@ const classifiers = [
   [/^scripts\/run-automatic-rollback-smoke\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/rollback-zitadel-runtime\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/publish-tested-release-image\.sh$/, ["platform-release", "workflow"]],
+  [/^test\/installer\/test-gate-discovery-multilan\.py$/, ["networking", "platform-release"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],
