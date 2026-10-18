@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { spawnSync } from "node:child_process";
 import { PrismaService } from "../prisma/prisma.service";
 import { gateStackName } from "./network-runtime-names";
-import { validateApplicationLanRules } from "./gate-application-access";
+import { reconcileApplicationLanRules } from "./gate-application-access";
 import { validateLanRoutePolicy, type ApplicationLanRoute } from "./app-lan-routes";
 import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 
@@ -72,7 +72,7 @@ export class AppLanRouteReconcilerService {
     for (const gate of gates) {
       if (gate.agentVersion !== "gate-shell-v3") continue;
       const attachments = gate.networks.flatMap(link => link.network.attachments);
-      const approved = validateApplicationLanRules(
+      const approved = reconcileApplicationLanRules(
         gate.applicationLanPolicies,
         gate.lanCidrs,
         new Set(attachments.map(attachment => attachment.id)),
