@@ -5,7 +5,7 @@ import { SingleAppLogsService } from "./single-app-logs.service";
 afterEach(() => vi.unstubAllGlobals());
 function fixture(name: string | null = "my-app", token = "worker-secret") {
   const findFirst = vi.fn().mockResolvedValue(name ? { name } : null);
-  const get = vi.fn().mockReturnValue(token);
+  const get = vi.fn((key: string) => key === "INTERNAL_WORKER_TOKEN" ? token : undefined);
   const service = new SingleAppLogsService({ singleApp: { findFirst } } as never, { get } as never);
   return { findFirst, get, service };
 }
@@ -20,7 +20,7 @@ describe("SingleAppLogsService", () => {
       id: "app", appGroupId: "aabbccdd-0000-0000-0000-000000000000", appGroup: { tenantId: "tenant" },
     }, select: { name: true } });
     const call = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string>; body: string }];
-    expect(call[0]).toBe("http://worker:3101/internal/single-app-logs");
+    expect(call[0]).toBe("http://127.0.0.1:3101/internal/single-app-logs");
     expect(call[1].headers["x-internal-token"]).toBe("worker-secret");
     expect(JSON.parse(call[1].body) as unknown).toEqual({ service: "rp_aabbccdd_0000_0000_0000_000000000000_my_app" });
     expect(logs.lines).toEqual(["2026-10-10 started"]);
