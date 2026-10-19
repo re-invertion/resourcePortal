@@ -97,10 +97,6 @@ async function main() {
     }
     })();
   });
-  if (!readBool(config, "WORKER_ONCE")) await new Promise<void>((resolve, reject) => {
-    logsServer.once("error", reject);
-    logsServer.listen(3101, "0.0.0.0", () => { logsServer.off("error", reject); resolve(); });
-  });
   const operations = app.get(OperationsWorkerService);
   const artifactSecurity = app.get(DeploymentArtifactSecurityMigrationService);
   const legacySecrets = app.get(LegacySecretMigrationService);
@@ -317,6 +313,12 @@ async function main() {
   }
 
   try {
+    // Start after initialization, inside the worker's cleanup scope.
+    // Failed database startup must not strand an idle HTTP listener.
+    if (!readBool(config, "WORKER_ONCE")) await new Promise<void>((resolve, reject) => {
+      logsServer.once("error", reject);
+      logsServer.listen(3101, "0.0.0.0", () => { logsServer.off("error", reject); resolve(); });
+    });
     structuredLog(logger, "log", serviceName, "worker.started", {
       workerId,
       leaseSeconds,
