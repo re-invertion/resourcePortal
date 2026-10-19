@@ -67,17 +67,17 @@ export function AccessTabs({
       label="Access sections"
       items={[
         {
-          label: "Overview",
+          label: "Members & invitations",
           href: tenantHref(tenantId, "access"),
           active: active === "overview",
         },
         {
-          label: "Administration",
+          label: "Roles & groups",
           href: tenantHref(tenantId, "administration"),
           active: active === "administration",
         },
         {
-          label: "Credentials",
+          label: "Integrations",
           href: tenantHref(tenantId, "credentials"),
           active: active === "credentials",
         },
