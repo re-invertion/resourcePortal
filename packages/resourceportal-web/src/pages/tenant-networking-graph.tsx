@@ -589,7 +589,7 @@ function RelationshipEdge(props: EdgeProps) {
             style={{
               // Public domains belong beside the originating application rather
               // than in the middle of multiple crossing network routes.
-              transform: `translate(-50%, -50%) translate(${internet ? props.sourceX + 110 + (data?.labelOffset ?? 0) * 200 : labelX}px,${internet ? props.sourceY - 26 : labelY - 12}px)`,
+              transform: `translate(-50%, -50%) translate(${internet ? props.sourceX + 110 : labelX}px,${internet ? props.sourceY - 28 + (data?.labelOffset ?? 0) * 22 : labelY - 12}px)`,
               zIndex: 10,
             }}
           >
