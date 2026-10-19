@@ -20,10 +20,12 @@ export class SingleAppLogsService {
     const service = `rp_${appGroupId.replaceAll("-", "_")}_${singleApp.name.replaceAll("-", "_")}`;
     const token = this.config.get<string>("INTERNAL_WORKER_TOKEN");
     if (!token) throw new ServiceUnavailableException("Container logs are currently unavailable");
+    const workerOrigin = this.config.get<string>("INTERNAL_LOG_WORKER_URL") ??
+      (process.env.NODE_ENV === "production" ? "http://worker:3101" : "http://127.0.0.1:3101");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch("http://worker:3101/internal/single-app-logs", {
+      const response = await fetch(`${workerOrigin}/internal/single-app-logs`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-internal-token": token },
         body: JSON.stringify({ service }),
