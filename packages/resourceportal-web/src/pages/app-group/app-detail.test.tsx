@@ -49,3 +49,17 @@ it("shows domain assignments and loads container logs only on the dedicated Logs
  expect(screen.queryByText(/2026-10-10T09:10:00Z started/)).toBeNull();
  expect(fetchMock.mock.calls.some(([path])=>String(path).endsWith("/logs"))).toBe(false);
 });
+
+it("distinguishes infrastructure unavailability from missing log permissions", async () => {
+ const fetchMock = vi.fn(async(input: RequestInfo | URL) => {
+  const path = String(input);
+  if (path.endsWith("/single-apps")) return json([{id:"app1",name:"checkout",runtimeState:"Running",health:"Healthy"}]);
+  if (path.endsWith("/runtime-config")) return json({environment:{},secrets:[]});
+  if (path.endsWith("/http-endpoints")) return json([]);
+  if (path.endsWith("/logs")) return new Response(JSON.stringify({message:"Container logs are currently unavailable"}),{status:503,headers:{"content-type":"application/json"}});
+  return json([]);
+ });
+ vi.stubGlobal("fetch", fetchMock);
+ render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1" section="logs"/>);
+ expect(await screen.findByText(/Your tenant permissions are not the cause/)).toBeTruthy();
+});

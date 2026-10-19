@@ -1,47 +1,53 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { SingleAppLogsService } from "./single-app-logs.service";
 
+afterEach(() => vi.unstubAllGlobals());
+function fixture(name: string | null = "my-app", token = "worker-secret") {
+  const findFirst = vi.fn().mockResolvedValue(name ? { name } : null);
+  const get = vi.fn().mockReturnValue(token);
+  const service = new SingleAppLogsService({ singleApp: { findFirst } } as never, { get } as never);
+  return { findFirst, get, service };
+}
+
 describe("SingleAppLogsService", () => {
-  it("resolves the service from the tenant-scoped application instead of caller input", async () => {
-    const findFirst = vi.fn().mockResolvedValue({ name: "my-app" });
-    const run = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "2026-10-10T09:00:00Z first\nsecond", stderr: "" });
-    const service = new SingleAppLogsService(
-      { singleApp: { findFirst } } as never,
-      { run } as never,
-    );
-    const result = await service.list("tenant-id", "ab-cd", "app-id");
-    expect(findFirst).toHaveBeenCalledWith({
-      where: { id: "app-id", appGroupId: "ab-cd", appGroup: { tenantId: "tenant-id" } },
-      select: { name: true },
-    });
-    expect(run).toHaveBeenCalledWith("docker", ["service", "logs", "--timestamps", "--tail", "100", "rp_ab_cd_my_app"], 15_000);
-    expect(result.lines).toEqual(["2026-10-10T09:00:00Z first", "second"]);
+  it("checks tenant ownership and forwards only the derived Docker service name", async () => {
+    const { service, findFirst } = fixture();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["2026-10-10 started"] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const logs = await service.list("tenant", "aabbccdd-0000-0000-0000-000000000000", "app");
+    expect(findFirst).toHaveBeenCalledWith({ where: {
+      id: "app", appGroupId: "aabbccdd-0000-0000-0000-000000000000", appGroup: { tenantId: "tenant" },
+    }, select: { name: true } });
+    const call = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string>; body: string }];
+    expect(call[0]).toBe("http://worker:3101/internal/single-app-logs");
+    expect(call[1].headers["x-internal-token"]).toBe("worker-secret");
+    expect(JSON.parse(call[1].body) as unknown).toEqual({ service: "rp_aabbccdd_0000_0000_0000_000000000000_my_app" });
+    expect(logs.lines).toEqual(["2026-10-10 started"]);
   });
 
-  it("does not reveal a service or query Docker when the app is outside the tenant", async () => {
-    const run = vi.fn();
-    const service = new SingleAppLogsService(
-      { singleApp: { findFirst: vi.fn().mockResolvedValue(null) } } as never,
-      { run } as never,
-    );
-    await expect(service.list("other-tenant", "ag", "app")).rejects.toBeInstanceOf(NotFoundException);
-    expect(run).not.toHaveBeenCalled();
+  it("rejects foreign tenant before any worker request", async () => {
+    const { service } = fixture(null);
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(service.list("foreign", "group", "app")).rejects.toBeInstanceOf(NotFoundException);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not expose raw Docker error details to the API client", async () => {
-    const service = new SingleAppLogsService(
-      { singleApp: { findFirst: vi.fn().mockResolvedValue({ name: "checkout" }) } } as never,
-      { run: vi.fn().mockResolvedValue({ exitCode: 1, stdout: "", stderr: "sensitive host info" }) } as never,
-    );
+  it("maps worker failure to sanitized 503 without exposing details", async () => {
+    const { service } = fixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
     await expect(service.list("tenant", "group", "app")).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it("caps the response even if the Docker command returns too much log text", async () => {
-    const service = new SingleAppLogsService(
-      { singleApp: { findFirst: vi.fn().mockResolvedValue({ name: "checkout" }) } } as never,
-      { run: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "x".repeat(100000), stderr: "" }) } as never,
-    );
+  it("rejects malformed worker payload", async () => {
+    const { service } = fixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: [42] }) }));
+    await expect(service.list("tenant", "group", "app")).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("caps the response to 64KiB", async () => {
+    const { service } = fixture();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve ({ lines: ["x".repeat(100000)] }) }));
     const result = await service.list("tenant", "group", "app");
     expect(result.lines.join("\n").length).toBeLessThanOrEqual(65536);
   });
