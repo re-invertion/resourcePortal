@@ -289,12 +289,14 @@ services:
       INSTALLER_VERSION: __RELEASE_VERSION__
       INSTALLER_SWARM_ADVERTISE_ADDR: __SWARM_ADVERTISE_ADDR__
       INSTALLER_CLUSTER_CIDR: __CLUSTER_CIDR__
+      INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       WORKER_ID: production-worker
       WORKER_HEARTBEAT_INTERVAL_MS: "10000"
       WORKER_HEALTH_STALE_SECONDS: "30"
     secrets:
       - rp_database_url
       - rp_encryption_key
+      - rp_internal_worker_token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - __STORAGE_QUOTA_DEVICE__:__STORAGE_QUOTA_DEVICE__

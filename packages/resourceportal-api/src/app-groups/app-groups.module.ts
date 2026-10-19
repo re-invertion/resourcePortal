@@ -11,7 +11,6 @@ import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations
 import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
 import { SingleAppLogsService } from "./single-app-logs.service";
-import { StorageCommandRunnerService } from "../storage-backends/storage-command-runner.service";
 import { Stage15AppGroupsService } from "./stage15-app-groups.service";
 
 @Module({
@@ -28,7 +27,6 @@ import { Stage15AppGroupsService } from "./stage15-app-groups.service";
   providers: [
     AppGroupRuntimeOperationsService,
     AppGroupManifestService,
-    StorageCommandRunnerService,
     SingleAppLogsService,
     {
       provide: AppGroupsService,

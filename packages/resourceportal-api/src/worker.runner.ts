@@ -1,4 +1,8 @@
 import { Logger } from "@nestjs/common";
+import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+import { spawn } from "node:child_process";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { DomainCertificateReconcilerService } from "./internal/domain-certificate-reconciler.service";
@@ -53,6 +57,46 @@ async function main() {
     logger: ["error", "warn", "log"],
   });
   const config = app.get(ConfigService);
+  // Separate internal-only listener; tenant authorization and service name resolution occur in API.
+  // The worker alone holds access to Docker. No published port or ingress route.
+  const tokenPath = config.get<string>("INTERNAL_WORKER_TOKEN_FILE");
+  const internalToken = tokenPath ? readFileSync(tokenPath, "utf8").trim() : config.get<string>("INTERNAL_WORKER_TOKEN");
+  if (!internalToken && process.env.NODE_ENV === "production") throw new Error("Worker log authentication token missing");
+  const logsServer = createServer((request, reply) => {
+    void (async () => {
+    const deny = (status: number) => { reply.writeHead(status); reply.end(); };
+    if (request.method !== "POST" || request.url !== "/internal/single-app-logs") return deny(404);
+    const supplied = request.headers["x-internal-token"];
+    const candidate = typeof supplied === "string" ? supplied : "";
+    const correct = Buffer.from(internalToken ?? "");
+    const received = Buffer.from(candidate);
+    if (!correct.length || received.length !== correct.length || !timingSafeEqual(correct, received)) return deny(403);
+    let body = "";
+    try {
+      for await (const chunk of request) {
+        body += String(chunk);
+        if (body.length > 1024) return deny(413);
+      }
+      const payload: unknown = JSON.parse(body);
+      const service = payload && typeof payload === "object" && "service" in payload ? payload.service : null;
+      if (typeof service !== "string" || !/^rp_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}_[a-zA-Z0-9_]+$/.test(service)) return deny(400);
+      const result = await new Promise<{ code: number; output: string }>((resolve) => {
+        const child = spawn("docker", ["service", "logs", "--timestamps", "--tail", "100", service], { stdio: ["ignore", "pipe", "pipe"] });
+        let output = "";
+        const timer = setTimeout(() => child.kill("SIGTERM"), 10_000);
+        child.stdout.on("data", (data: Buffer) => { output = (output + data.toString()).slice(-65536); });
+        child.stderr.on("data", (data: Buffer) => { output = (output + data.toString()).slice(-65536); });
+        child.on("error", () => { clearTimeout(timer); resolve({ code: 1, output: "" }); });
+        child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, output }); });
+      });
+      if (result.code !== 0) return deny(503);
+      reply.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      reply.end(JSON.stringify({ lines: result.output.split("\n").filter(Boolean) }));
+    } catch {
+      if (!reply.writableEnded) deny(503);
+    }
+    })();
+  });
   const operations = app.get(OperationsWorkerService);
   const artifactSecurity = app.get(DeploymentArtifactSecurityMigrationService);
   const legacySecrets = app.get(LegacySecretMigrationService);
@@ -269,6 +313,12 @@ async function main() {
   }
 
   try {
+    // Start after initialization, inside the worker's cleanup scope.
+    // Failed database startup must not strand an idle HTTP listener.
+    if (!readBool(config, "WORKER_ONCE")) await new Promise<void>((resolve, reject) => {
+      logsServer.once("error", reject);
+      logsServer.listen(3101, "0.0.0.0", () => { logsServer.off("error", reject); resolve(); });
+    });
     structuredLog(logger, "log", serviceName, "worker.started", {
       workerId,
       leaseSeconds,
@@ -378,6 +428,7 @@ async function main() {
         "worker.stop.persist_failed",
       );
     }
+    await new Promise<void>((resolve) => { if (!logsServer.listening) resolve(); else logsServer.close(() => resolve()); });
     await app.close();
   }
 }
