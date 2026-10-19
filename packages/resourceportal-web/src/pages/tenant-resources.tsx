@@ -135,7 +135,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
     <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_.8fr]">
       <Card className="p-5">
         <h2 className="font-semibold">Quota</h2>
-        <p className="mt-1 text-sm text-[#5B6678]">Allocated by Platform Admin. Quotas are read-only for tenant members; contact your platform administrator to request changes.</p>
+        <p className="mt-1 text-sm text-[#5B6678]">Allocated by Platform Admin. Quotas are read-only for tenant members; contact your platform administrator to request changes. Memory and storage limits are displayed in GiB. Not configured means no quota was assigned; 0 (no capacity) means an enforced zero limit, not unlimited access.</p>
         <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {([
             ["CPU cores", showQuota(quota.data?.cpu, "cores")],

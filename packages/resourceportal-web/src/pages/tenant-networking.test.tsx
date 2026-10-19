@@ -85,6 +85,7 @@ import { TenantNetworkingPage } from "./tenant-networking";
 import { ToastViewport } from "../components/toast";
 import {
   buildTopologyGraph,
+  TenantNetworkingGraph,
   type Topology,
   type TopologyGraphFilters,
 } from "./tenant-networking-graph";
@@ -726,6 +727,36 @@ it("renders a circular Internet node with a separate HTTP/HTTPS edge per assigne
     "HTTPS · secure.example.test",
   ]);
   expect(routes.every(edge=>edge.target==="internet:public" && edge.source===`app:${appId}`)).toBe(true);
+  expect(routes.map(edge => (edge.data as {labelOffset: number}).labelOffset)).toEqual([0, 1]);
+});
+
+it("shows the complete topology by default even with more than 15 apps and keeps Add VPN at the right", () => {
+  const crowded: Topology = {
+    ...topology,
+    appGroups: topology.appGroups.map(group => ({
+      ...group,
+      singleApps: Array.from({ length: 16 }, (_, index) => ({
+        ...group.singleApps[0],
+        id: `busy-app-${index}`,
+        name: `busy-app-${index}`,
+        networkAttachments: [],
+      })),
+    })),
+  };
+  render(
+    <TenantNetworkingGraph
+      topology={crowded}
+      working={false}
+      onConnect={() => {}}
+      onDisconnect={() => {}}
+      onDeleteGate={() => {}}
+      onAddVpn={() => {}}
+    />,
+  );
+  expect((screen.getByRole("combobox", { name: "Focus Network" }) as HTMLSelectElement).value).toBe("");
+  expect(screen.getByTestId("react-flow").textContent).toContain("19 nodes");
+  const addVpn = screen.getByRole("button", { name: "Add VPN" });
+  expect(addVpn.parentElement?.className).toContain("ml-auto");
 });
 
 it("saves independent Site VPN firewall directions with optimistic revision", async () => {

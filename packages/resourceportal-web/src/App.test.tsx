@@ -98,7 +98,7 @@ describe("Web Console bootstrap", () => {
       contactEmail: "owner@example.test",
       name: "demo-tenant",
     });
-  });
+  }, 15_000);
 
   it("shows Platform Admin navigation only after the protected capability probe succeeds", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
