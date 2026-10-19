@@ -111,3 +111,17 @@ it("can clear optional application string settings without dropping PATCH fields
   await waitFor(() => expect(patches).toHaveLength(1));
   expect(patches[0]).toMatchObject({ entrypoint: null, workingDir: null, user: null });
 });
+
+it("shows a persistent draft deployment banner with the whole App Group scope", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/single-apps")) {
+      return json([{ id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running" }]);
+    }
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" appGroupName="commerce" subsection="basics" hasPendingChanges />);
+  expect(await screen.findByText("Changes saved, not yet deployed")).toBeTruthy();
+  expect(screen.getByText(/all applications in App Group/).textContent).toContain("commerce");
+  expect(screen.getByRole("link", { name: "Review and deploy" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/deployments");
+  expect(screen.getByText(/Start, Stop and Restart actions apply immediately/)).toBeTruthy();
+});
