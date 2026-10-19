@@ -581,11 +581,17 @@ function RelationshipEdge(props: EdgeProps) {
         <EdgeLabelRenderer>
           <div
             className={cx(
-              "pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-white/95 px-2 py-1 text-[10px] font-medium shadow-sm",
+              "pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 max-w-[190px] overflow-hidden text-ellipsis whitespace-nowrap rounded-full border bg-white/95 px-2 py-1 text-[10px] font-medium shadow-sm",
               gate ? "border-[#C9EBD9] text-[#137A4A]" : "border-[#CADDF7] text-[#135FBB]",
               props.selected && "ring-2 ring-[#1769E0]/10",
             )}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY - (internet ? (data?.labelOffset ?? 24) : 12)}px)`, zIndex: 10 }}
+            title={data.label}
+            style={{
+              // Public domains belong beside the originating application rather
+              // than in the middle of multiple crossing network routes.
+              transform: `translate(-50%, -50%) translate(${internet ? props.sourceX + 110 + (data?.labelOffset ?? 0) * 200 : labelX}px,${internet ? props.sourceY - 26 : labelY - 12}px)`,
+              zIndex: 10,
+            }}
           >
             {data.label}
           </div>
@@ -896,8 +902,11 @@ export function buildTopologyGraph(
   ));
   if(publicRoutes.length){
     nodes.push({id:"internet:public",type:"internet",position:{x:1460,y:Math.max(80,groupLayout.length*90)},data:{kind:"internet",label:"Internet",domainCount:publicRoutes.length} satisfies InternetNodeData,style:{width:130,height:130},ariaLabel:"Internet, public application routes"});
-    for(const [index,route] of publicRoutes.entries()){
-      edges.push({id:`internet-edge:${route.endpointId}:${route.hostname}`,source:`app:${route.appId}`,sourceHandle:"network-out",target:"internet:public",targetHandle:"ingress",type:"relationship",data:{kind:"internet-route",appId:route.appId,hostname:route.hostname,protocol:route.protocol,label:`${route.protocol} · ${route.hostname}`,labelOffset:24+(index%3)*22} satisfies TopologyEdgeData,ariaLabel:`${route.protocol} public domain ${route.hostname}`});
+    const domainSlotByApp = new Map<string, number>();
+    for (const route of publicRoutes) {
+      const slot = domainSlotByApp.get(route.appId) ?? 0;
+      domainSlotByApp.set(route.appId, slot + 1);
+      edges.push({id:`internet-edge:${route.endpointId}:${route.hostname}`,source:`app:${route.appId}`,sourceHandle:"network-out",target:"internet:public",targetHandle:"ingress",type:"relationship",data:{kind:"internet-route",appId:route.appId,hostname:route.hostname,protocol:route.protocol,label:`${route.protocol} · ${route.hostname}`,labelOffset:slot} satisfies TopologyEdgeData,ariaLabel:`${route.protocol} public domain ${route.hostname}`});
     }
   }
   return { nodes, edges };
@@ -1154,9 +1163,8 @@ export function TenantNetworkingGraph({
 }) {
   const [filters, setFilters] = useState<TopologyGraphFilters>({
     query: "",
-    // Avoid fitting a dense network onto an unreadably small canvas.
-    focusNetworkId: topology.appGroups.reduce((total, group) => total + group.singleApps.length, 0) > 15
-      ? (topology.networks.find(network => network.attachments.length > 0)?.id ?? topology.networks[0]?.id ?? "") : "",
+    // Show the full topology on first visit. Filtering/focus is opt-in, never automatic.
+    focusNetworkId: "",
     showApplications: true,
     showGates: true,
     status: "all",
@@ -1260,7 +1268,7 @@ export function TenantNetworkingGraph({
               <option value="all">All states</option>
               <option value="attention">Needs attention</option>
             </Select>
-              {onAddVpn ? <div className="relative shrink-0"><Button size="sm" variant="primary" onClick={()=>setVpnMenuOpen(open=>!open)}>Add VPN</Button>{vpnMenuOpen?<div role="menu" aria-label="VPN type" className="absolute right-0 top-full z-30 mt-1 min-w-[170px] rounded-lg border border-[#D7E0EC] bg-white p-1 shadow-lg"><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("site");}}>Site VPN</button><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("device");}}>Device VPN</button></div>:null}</div> : null}
+              {onAddVpn ? <div className="relative order-last ml-auto shrink-0"><Button size="sm" variant="primary" onClick={()=>setVpnMenuOpen(open=>!open)}>Add VPN</Button>{vpnMenuOpen?<div role="menu" aria-label="VPN type" className="absolute right-0 top-full z-30 mt-1 min-w-[170px] rounded-lg border border-[#D7E0EC] bg-white p-1 shadow-lg"><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("site");}}>Site VPN</button><button role="menuitem" type="button" className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-[#F3F6FA]" onClick={()=>{setVpnMenuOpen(false);onAddVpn("device");}}>Device VPN</button></div>:null}</div> : null}
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
