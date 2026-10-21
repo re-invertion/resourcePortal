@@ -204,7 +204,7 @@ rp_wait_control_plane_converged() {
 # Enforce and verify the minimum kernel capabilities on the effective task spec.
 # This is idempotent, supports redeploy/rollback, and fails closed.
 rp_ensure_swarm_service_capabilities() {
-  local service="$1" actual cap
+  local service="$1" actual cap expected
   shift
   local -a missing=() update_args=()
   actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || {
@@ -212,7 +212,8 @@ rp_ensure_swarm_service_capabilities() {
     return 1
   }
   for cap in "$@"; do
-    if [[ "$actual" != *""$cap""* ]]; then
+    expected="\"$cap\""
+    if [[ "$actual" != *"$expected"* ]]; then
       missing+=("$cap")
       update_args+=(--cap-add "$cap")
     fi
@@ -222,7 +223,8 @@ rp_ensure_swarm_service_capabilities() {
     docker service update --detach=false "${update_args[@]}" "$service" || return 1
     actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || return 1
     for cap in "$@"; do
-      if [[ "$actual" != *""$cap""* ]]; then
+      expected="\"$cap\""
+      if [[ "$actual" != *"$expected"* ]]; then
         printf 'Swarm service %s lacks required capability %s after update\n' "$service" "$cap" >&2
         return 1
       fi
