@@ -214,6 +214,7 @@ const classifiers = [
   // and retain release/rollback smoke for changes to this contract.
   [/^packages\/resourceportal-api\/src\/internal\/v020-placement-networking\.spec\.ts$/, ["networking", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/internal\/(?:stack-rollout\.service(?:\.spec)?|deployment-mount-paths\.spec)\.ts$/, ["deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/stack-apply\.service(?:\.spec)?\.ts$/, ["deployment-rollout", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-volume-provisioner\.service(?:\.spec)?\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/(?:nfs-remote-access-validator\.service(?:\.spec)?|shared-nfs-probe(?:\.spec)?|storage-backends\.service)\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/operations\/executors\/volume-operation\.executors(?:\.spec)?\.ts$/, ["volume-operations"]],
@@ -231,7 +232,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
-  [/^packages\/resourceportal-api\/src\/internal\/(deployment-execution\.service\.ts|deployment-cpu-validation\.spec\.ts)$/, ["quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-cpu-validation\.spec\.ts$/, ["quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],
   [/^packages\/resourceportal-api\/README\.md$/, []],
   [/^README\.md$/, ["workflow"]],

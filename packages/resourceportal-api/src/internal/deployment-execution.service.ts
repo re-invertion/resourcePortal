@@ -956,7 +956,15 @@ export class DeploymentExecutionService {
       const mounts = [
         ...app.volumes.map((v) => ({ path: v.mountPath, kind: "Volume" })),
         ...app.configs.map((c) => ({ path: c.targetPath, kind: "Config" })),
-        ...app.secrets.map((s) => ({ path: s.targetName ?? s.name ?? "", kind: "Secret" })).filter((m) => m.path.startsWith("/")),
+        ...app.secrets.map((s) => {
+          // Docker Swarm short secret targets are filenames under /run/secrets.
+          // An explicit absolute target is already a runtime path.
+          const target = s.targetName ?? s.name ?? s.id;
+          return {
+            path: target.startsWith("/") ? target : `/run/secrets/${target}`,
+            kind: "Secret",
+          };
+        }),
       ];
       for (let i = 0; i < mounts.length; i += 1) {
         const current = mounts[i];

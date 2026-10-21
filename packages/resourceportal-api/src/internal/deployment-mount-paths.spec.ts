@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DeploymentExecutionService } from "./deployment-execution.service";
 
 describe("deployment mount path safety", () => {
-  const validate = (volumes: string[], configs: string[]) => {
+  const validate = (volumes: string[], configs: string[], secrets: string[] = []) => {
     const service = Object.create(DeploymentExecutionService.prototype) as {
       validateMountPaths(snapshot: unknown): { success: boolean; errorCode: string } | null;
       validationFailure(errorCode: string, message: string): { success: boolean; errorCode: string; message: string };
@@ -13,7 +13,7 @@ describe("deployment mount path safety", () => {
         name: "demo",
         volumes: volumes.map((mountPath) => ({ mountPath })),
         configs: configs.map((targetPath) => ({ targetPath })),
-        secrets: [],
+        secrets: secrets.map((targetName) => ({ targetName, id: targetName })),
       }],
     });
   };
@@ -23,6 +23,15 @@ describe("deployment mount path safety", () => {
   });
   it("rejects equal targets", () => {
     expect(validate(["/data"], ["/data"])?.errorCode).toBe("OverlappingMountPaths");
+  });
+  it("rejects volume hiding secrets mounted by filename", () => {
+    expect(validate(["/run/secrets"], [], ["db_password"])?.errorCode).toBe("OverlappingMountPaths");
+  });
+  it("rejects a volume at the exact effective secret path", () => {
+    expect(validate(["/run/secrets/db_password"], [], ["db_password"])?.errorCode).toBe("OverlappingMountPaths");
+  });
+  it("accepts unrelated volumes with secrets", () => {
+    expect(validate(["/data"], [], ["db_password"])).toBeNull();
   });
   it("accepts distinct mounts", () => {
     expect(validate(["/data"], ["/etc/app/config.yaml"])).toBeNull();

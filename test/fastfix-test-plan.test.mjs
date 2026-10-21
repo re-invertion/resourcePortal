@@ -269,7 +269,7 @@ test("security issue patches cannot skip quota, worker or registry SSRF regressi
     "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/deployment-cpu-validation.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "quota-security", "registry-auth", "registry-validation", "worker"]);
   assert.equal(plan.vpnSmoke, false);
 });
 
@@ -300,7 +300,7 @@ test("per-deployment registry authentication has its own mandatory patch regress
     "packages/resourceportal-api/src/internal/stack-apply.service.ts",
     "packages/resourceportal-api/src/internal/deployment-registry-isolation.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["registry-auth"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "registry-auth"]);
 });
 
 
@@ -371,4 +371,16 @@ test("deployment runtime patch selects targeted rollout and mount regressions", 
     "packages/resourceportal-api/src/internal/deployment-mount-paths.spec.ts",
   ]);
   assert.deepEqual(plan.profiles, ["deployment-rollout"]);
+});
+
+
+test("deployment execution changes always run mount overlap regressions", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/src/internal/deployment-execution.service.ts"]);
+  assert.ok(plan.profiles.includes("deployment-rollout"));
+});
+
+test("stack apply changes always run deployment rollout and auth regressions", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/src/internal/stack-apply.service.ts"]);
+  assert.ok(plan.profiles.includes("deployment-rollout"));
+  assert.ok(plan.profiles.includes("registry-auth"));
 });
