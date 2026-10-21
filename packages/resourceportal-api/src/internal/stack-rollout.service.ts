@@ -25,6 +25,7 @@ export class StackRolloutService {
   async waitForRollout(params: {
     stackName: string;
     expectedServices: ExpectedService[];
+    readinessStabilityChecks?: number;
   }): Promise<RolloutResult> {
     const timeoutMs = this.positiveIntegerConfig(
       "DOCKER_ROLLOUT_TIMEOUT_MS",
@@ -36,6 +37,8 @@ export class StackRolloutService {
     );
     const deadline = Date.now() + timeoutMs;
     let lastDetails = "";
+    let consecutiveReady = 0;
+    const stabilityChecks = Math.max(1, Math.min(10, params.readinessStabilityChecks ?? 1));
 
     while (Date.now() <= deadline) {
       const result = await this.inspectStackServices(params.stackName);
@@ -53,7 +56,8 @@ export class StackRolloutService {
       const status = this.evaluateServices(rows, params.expectedServices);
       lastDetails = status.details;
 
-      if (status.success) {
+      consecutiveReady = status.success ? consecutiveReady + 1 : 0;
+      if (consecutiveReady >= stabilityChecks) {
         return {
           success: true,
           message: "Rollout completed",
@@ -161,45 +165,52 @@ export class StackRolloutService {
     expectedServices: ExpectedService[],
   ) {
     const servicesByName = new Map(rows.map((row) => [row.Name, row]));
+    const expectedNames = new Set(expectedServices.map((service) => service.name));
     const details: string[] = [];
+    let allReady = true;
 
     for (const expected of expectedServices) {
       const service = servicesByName.get(expected.name);
 
       if (!service) {
         details.push(`${expected.name}: missing`);
+        allReady = false;
         continue;
       }
 
       const replicas = this.parseReplicas(service.Replicas);
+      if (!replicas) {
+        details.push(`${expected.name}: invalid replicas (${service.Replicas ?? "unknown"})`);
+        allReady = false;
+        continue;
+      }
+
       details.push(
         `${expected.name}: ${replicas.running}/${replicas.desired} replicas`,
       );
-
       if (
         replicas.running !== expected.desiredReplicas ||
         replicas.desired !== expected.desiredReplicas
       ) {
-        return {
-          success: false,
-          details: details.join("\n"),
-        };
+        allReady = false;
       }
     }
 
-    return {
-      success: true,
-      details: details.join("\n"),
-    };
+    for (const row of rows) {
+      if (!row.Name || !expectedNames.has(row.Name)) {
+        details.push(`${row.Name ?? "unknown"}: unexpected service`);
+        allReady = false;
+      }
+    }
+
+    return { success: allReady, details: details.join("\n") };
   }
 
   private parseReplicas(value: string | undefined) {
-    const [running = "0", desired = "0"] = (value ?? "0/0").split("/");
-
-    return {
-      running: Number(running),
-      desired: Number(desired),
-    };
+    if (!value || !/^[0-9]+\/[0-9]+$/.test(value.trim())) return null;
+    const [running, desired] = value.trim().split("/").map(Number);
+    if (!Number.isSafeInteger(running) || !Number.isSafeInteger(desired)) return null;
+    return { running, desired };
   }
 
   private positiveIntegerConfig(key: string, fallback: number) {
