@@ -225,6 +225,9 @@ export class GateRuntimeReconcilerService {
               `Unable to deploy Gate runtime ${gate.id}`,
           );
         }
+        // The Compose cap_add declaration is not a reliable source of
+        // effective Swarm capabilities. Ensure the actual Gate task spec.
+        await this.ensureGatewayCapabilities(gate.id);
 
         const observedAt = new Date();
         await this.prisma.$transaction([
@@ -295,6 +298,49 @@ export class GateRuntimeReconcilerService {
       networksDeleted,
       networkDeleteFailures,
     };
+  }
+
+  private async ensureGatewayCapabilities(gateId: string) {
+    const name = `${gateStackName(gateId)}_gateway`;
+    const required = ["NET_ADMIN", "NET_RAW"];
+    const inspectArgs = [
+      "service", "inspect", name,
+      "--format", "{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}",
+    ];
+    const before = await this.runDocker(inspectArgs);
+    if (before.exitCode !== 0) {
+      throw new Error(`Cannot inspect Site VPN gateway capabilities: ${before.stderr}`);
+    }
+    let enabled: unknown;
+    try {
+      enabled = JSON.parse(before.stdout || "null") as unknown;
+    } catch {
+      throw new Error("Malformed Site VPN gateway capability inspection");
+    }
+    if (enabled !== null && !Array.isArray(enabled)) {
+      throw new Error("Malformed Site VPN gateway capability inspection");
+    }
+    const current = Array.isArray(enabled) ? enabled : [];
+    const missing = required.filter(cap => !current.includes(cap));
+    if (missing.length === 0) return;
+    const update = await this.runDocker([
+      "service", "update", "--detach=false",
+      ...missing.flatMap(cap => ["--cap-add", cap]), name,
+    ]);
+    if (update.exitCode !== 0) {
+      throw new Error(`Cannot grant Site VPN gateway capabilities: ${update.stderr || update.stdout}`);
+    }
+    const after = await this.runDocker(inspectArgs);
+    if (after.exitCode !== 0) throw new Error("Cannot verify Site VPN gateway capabilities");
+    let actual: unknown;
+    try {
+      actual = JSON.parse(after.stdout || "null") as unknown;
+    } catch {
+      throw new Error("Malformed Site VPN gateway capability verification");
+    }
+    if (!Array.isArray(actual) || !required.every(cap => actual.includes(cap))) {
+      throw new Error("Site VPN gateway capabilities were not applied to Swarm service");
+    }
   }
 
   private async currentGateDigest(gateId: string) {

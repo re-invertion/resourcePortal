@@ -184,8 +184,8 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
     "test/installer/test-releases.sh",
     "test/installer/test-control-plane.sh",
   ]);
-  assert.equal(plan.vpnSmoke, false);
-  assert.deepEqual(plan.profiles, ["installer", "platform-release"]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.deepEqual(plan.profiles, ["installer", "networking", "platform-release"]);
 });
 test("installer configuration fixes select the core safety suite", () => {
   assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles, ["installer", "platform-release"]);
@@ -383,4 +383,16 @@ test("stack apply changes always run deployment rollout and auth regressions", (
   const plan = selectProfiles(["packages/resourceportal-api/src/internal/stack-apply.service.ts"]);
   assert.ok(plan.profiles.includes("deployment-rollout"));
   assert.ok(plan.profiles.includes("registry-auth"));
+});
+
+
+test("Site VPN route agent smoke and capability helper select security regression gates", () => {
+  const plan = selectProfiles([
+    "scripts/run-app-lan-route-agent-smoke.sh",
+    "test/installer/test-swarm-required-capabilities.sh",
+  ]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.ok(plan.profiles.includes("networking"));
+  assert.ok(plan.profiles.includes("installer"));
+  assert.ok(plan.profiles.includes("platform-release"));
 });

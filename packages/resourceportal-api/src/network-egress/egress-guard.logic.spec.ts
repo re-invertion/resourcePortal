@@ -88,6 +88,24 @@ describe("egress guard logic", () => {
     ]);
   });
 
+  it("denies private egress even when docker_gwbridge network inspect omits a newly attached task", () => {
+    const workloads = tenantWorkloads([{
+      Id: "new-ha-task",
+      Config: { Labels: { "resourceportal.app-group-id": appGroupA } },
+      NetworkSettings: { Networks: {
+        docker_gwbridge: { IPAddress: "172.19.0.30", GlobalIPv6Address: "" },
+        "rp-network-overlay": { IPAddress: "10.200.2.23" },
+      } },
+    }], { Containers: {} });
+    expect(workloads).toEqual([{
+      containerId: "new-ha-task", appGroupId: appGroupA,
+      ipv4: "172.19.0.30", ipv6: undefined,
+    }]);
+    expect(firewallRulesForWorkloads(DEFAULT_EGRESS_POLICY, workloads, 4)).toContainEqual([
+      "-s", "172.19.0.30/32", "-d", "192.168.0.0/16", "-j", "REJECT",
+    ]);
+  });
+
   it("preserves only a fully linked mandatory firewall state", () => {
     expect(
       shouldPreserveExistingFirewallState({

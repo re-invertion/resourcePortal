@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
-import { AppLanRouteReconcilerService } from "./app-lan-route-reconciler.service";
+import { AppLanRouteReconcilerService, routeAgentTasksConverged } from "./app-lan-route-reconciler.service";
 
 class Harness extends AppLanRouteReconcilerService {
   readonly commands: string[][] = [];
@@ -37,5 +37,14 @@ describe("application route worker for custom-named control plane", () => {
     const runner = fixture("../escape");
     await expect(runner.reconcile()).rejects.toThrow("Invalid RP control-plane Swarm stack name");
     expect(runner.commands).toHaveLength(0);
+  });
+});
+
+describe("app LAN route agent readiness", () => {
+  it("requires every desired task to be running", () => {
+    expect(routeAgentTasksConverged("Running 7 seconds ago\nRunning 9 seconds ago")).toBe(true);
+    expect(routeAgentTasksConverged("Running 7 seconds ago\nPending 1 second ago")).toBe(false);
+    expect(routeAgentTasksConverged("")).toBe(false);
+    expect(routeAgentTasksConverged("Rejected 2 seconds ago")).toBe(false);
   });
 });

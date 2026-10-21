@@ -1,3 +1,5 @@
+import { effectiveLanRouteMatches } from "./app-lan-route-verification";
+import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import { spawnSync } from "node:child_process";
 import { Logger } from "@nestjs/common";
 import { managedRouteFlushArgs, managedTenantRoutePids } from "./app-lan-route-shutdown";
@@ -44,13 +46,13 @@ type DockerWorkloadInspect = {
   };
 };
 
-function reconcileContainer(container: DockerWorkloadInspect, policies: ApplicationLanRoute[]) {
+function reconcileContainer(container: DockerWorkloadInspect, policies: ApplicationLanRoute[]): number {
   const id = container.Id;
   const pid = container.State?.Pid;
   const labels = container.Config?.Labels ?? {};
   const networks = container.NetworkSettings?.Networks ?? {};
   if (typeof id !== "string" || container.State?.Running !== true || typeof pid !== "number" ||
-    !Number.isSafeInteger(pid)) return;
+    !Number.isSafeInteger(pid)) return 0;
   const desired = desiredRoutesForContainer(policies, labels, networks);
   const existing = JSON.parse(nsenter(pid, ["-j", "-4", "route", "show", "proto", APP_LAN_ROUTE_PROTOCOL]).stdout || "[]") as Array<{
     dst?: string; gateway?: string; dev?: string;
@@ -84,6 +86,18 @@ function reconcileContainer(container: DockerWorkloadInspect, policies: Applicat
       ]);
     }
   }
+  for (const [destination, target] of desiredMap) {
+    // The RP-managed proto 201 entry must actually win the container's
+    // FIB lookup; otherwise traffic can silently escape via Docker gwbridge.
+    const probeAddress = destination.split("/")[0];
+    const routeGet = JSON.parse(nsenter(pid, ["-j", "-4", "route", "get", probeAddress]).stdout || "[]") as unknown;
+    if (!effectiveLanRouteMatches(routeGet, target.via, target.dev)) {
+      throw new Error(
+        `Application ${id.slice(0, 12)} cannot route ${destination} via Site VPN ${target.via} dev ${target.dev}`,
+      );
+    }
+  }
+  return desiredMap.size;
 }
 
 function currentPolicy(): ApplicationLanRoute[] {
@@ -132,6 +146,9 @@ process.once("SIGTERM", shutdownAndRevokeRoutes);
 process.once("SIGINT", shutdownAndRevokeRoutes);
 
 async function main() {
+  requireEffectiveCapabilities("Application LAN route agent", ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"]);
+  let consecutiveFailures = 0;
+  let completedCycles = 0;
   try {
     while (!stopping) {
       try {
@@ -141,12 +158,22 @@ async function main() {
       const containers = ids.length ? jsonRun("docker", ["inspect", ...ids]) : [];
       if (!Array.isArray(containers)) throw new Error("Unexpected Docker inspect result");
       const policy = currentPolicy();
+      let verifiedRoutes = 0;
       for (const container of containers) {
         if (!container || typeof container !== "object" || Array.isArray(container)) continue;
-        reconcileContainer(container as DockerWorkloadInspect, policy);
+        verifiedRoutes += reconcileContainer(container as DockerWorkloadInspect, policy);
+      }
+      consecutiveFailures = 0;
+      completedCycles++;
+      if (completedCycles === 1 || completedCycles % 12 === 0) {
+        logger.log(`Site VPN dataplane verified_routes=${verifiedRoutes} policy_routes=${policy.length} containers=${containers.length}`);
       }
       } catch (error) {
+        consecutiveFailures++;
         logger.error("Route reconciliation failed: " + String(error));
+        if (consecutiveFailures >= 3) {
+          throw new Error("Site VPN route dataplane failed three consecutive reconciliations");
+        }
       }
       await new Promise(resolve => setTimeout(resolve, 5000));
     }

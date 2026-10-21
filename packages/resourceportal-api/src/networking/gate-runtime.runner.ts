@@ -1,3 +1,4 @@
+import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import { Logger } from "@nestjs/common";
 import { spawnSync } from "node:child_process";
 import { networkInterfaces } from "node:os";
@@ -164,6 +165,7 @@ function reconcileFirewall(runtime: GateRuntimeConfig) {
 }
 
 async function main() {
+  requireEffectiveCapabilities("Site VPN gateway", ["NET_ADMIN", "NET_RAW"]);
   const runtime = config();
   // Load the deny-by-default policy before bringing up WireGuard.
   // Otherwise first startup can briefly forward unauthorized tunnel traffic.

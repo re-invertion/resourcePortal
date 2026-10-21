@@ -9,6 +9,12 @@ import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 
 const POLICY_ENV = "RESOURCEPORTAL_APP_LAN_ROUTES_B64";
 
+export function routeAgentTasksConverged(output: string): boolean {
+  const states = output.split("\n").map(line => line.trim()).filter(Boolean);
+  return states.length > 0 && states.every(state => /^Running(?:\s|$)/.test(state));
+}
+
+
 /**
  * Reconciles a routing snapshot independently of tenant service images.
  * No route is created until the Gate, network, firewall and app attachment
@@ -133,12 +139,30 @@ export class AppLanRouteReconcilerService {
       "service", "inspect", serviceName, "--format", "{{json .Spec.TaskTemplate.ContainerSpec.Env}}",
     ]) || "[]") as string[];
     const previous = existing.find(item => item.startsWith(POLICY_ENV + "="));
-    if (previous === POLICY_ENV + "=" + encoded) return { changed: false, routes: policy.routes.length };
-    this.docker([
-      "service", "update",
-      ...(previous ? ["--env-rm", POLICY_ENV] : []),
-      "--env-add", POLICY_ENV + "=" + encoded, serviceName,
-    ]);
-    return { changed: true, routes: policy.routes.length };
+    const changed = previous !== POLICY_ENV + "=" + encoded;
+    if (changed) {
+      this.docker([
+        "service", "update", "--detach=false",
+        ...(previous ? ["--env-rm", POLICY_ENV] : []),
+        "--env-add", POLICY_ENV + "=" + encoded, serviceName,
+      ]);
+    }
+    // The previously reported routes count was only the desired policy.
+    // A stopped/crash-looping node-local router cannot be reported as ready.
+    let agentTasks = 0;
+    if (policy.routes.length) {
+      const states = this.docker([
+        "service", "ps", "--filter", "desired-state=running",
+        "--format", "{{.CurrentState}}", serviceName,
+      ]);
+      if (!routeAgentTasksConverged(states)) {
+        throw new Error("Site VPN application route agent is not converged on all eligible Swarm nodes");
+      }
+      agentTasks = states.split("\n").filter(line => line.trim().length > 0).length;
+    }
+    return policy.routes.length
+      ? { changed, routes: policy.routes.length, agentTasks,
+        dataplaneProof: "Verified by node-local route agent; see agent logs" }
+      : { changed, routes: 0 };
   }
 }

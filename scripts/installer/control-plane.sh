@@ -200,6 +200,46 @@ rp_wait_control_plane_converged() {
   return 1
 }
 
+# docker stack deploy can discard Compose cap_add for Swarm services.
+# Enforce and verify the minimum kernel capabilities on the effective task spec.
+# This is idempotent, supports redeploy/rollback, and fails closed.
+rp_ensure_swarm_service_capabilities() {
+  local service="$1" actual cap expected
+  shift
+  local -a missing=() update_args=()
+  actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || {
+    printf 'Cannot inspect required Swarm capabilities: %s\n' "$service" >&2
+    return 1
+  }
+  for cap in "$@"; do
+    expected="\"$cap\""
+    if [[ "$actual" != *"$expected"* ]]; then
+      missing+=("$cap")
+      update_args+=(--cap-add "$cap")
+    fi
+  done
+  if (( ${#missing[@]} )); then
+    printf 'Repairing %s required capabilities: %s\n' "$service" "${missing[*]}"
+    docker service update --detach=false "${update_args[@]}" "$service" || return 1
+    actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || return 1
+    for cap in "$@"; do
+      expected="\"$cap\""
+      if [[ "$actual" != *"$expected"* ]]; then
+        printf 'Swarm service %s lacks required capability %s after update\n' "$service" "$cap" >&2
+        return 1
+      fi
+    done
+  fi
+}
+
+rp_ensure_control_plane_capabilities() {
+  local stack_name="$1"
+  # The worker can be running the upgrade itself. Never restart it as a
+  # side effect of this networking-only repair.
+  rp_ensure_swarm_service_capabilities "${stack_name}_app-lan-router" NET_ADMIN SYS_ADMIN SYS_PTRACE || return 1
+  rp_ensure_swarm_service_capabilities "${stack_name}_egress-guard" NET_ADMIN NET_RAW || return 1
+}
+
 rp_deploy_control_plane() {
   local state="$1" stack_name="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" stack_file
   declare -F rp_prepare_zitadel_public_config >/dev/null || { printf 'ZITADEL public config helper is unavailable.\n' >&2; return 1; }
@@ -237,6 +277,9 @@ rp_deploy_control_plane() {
     return 1
   fi
   rm -f "$stack_file"
+  if [[ "$state" == final ]]; then
+    rp_ensure_control_plane_capabilities "$stack_name" || return 1
+  fi
   rp_wait_control_plane_converged "$stack_name" || return 1
 }
 

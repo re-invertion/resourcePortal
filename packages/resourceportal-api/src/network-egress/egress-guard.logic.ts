@@ -9,6 +9,9 @@ import type { NetworkEgressPolicySnapshot } from "./network-egress.types";
 export type DockerContainerInspect = {
   Id?: string;
   Config?: { Labels?: Record<string, string> | null } | null;
+  NetworkSettings?: {
+    Networks?: Record<string, { IPAddress?: string; GlobalIPv6Address?: string }>;
+  };
 };
 
 export type DockerGatewayNetworkInspect = {
@@ -114,9 +117,12 @@ export function tenantWorkloads(
     const appGroupId = appGroupIdFromLabels(container.Config?.Labels ?? {});
     if (!appGroupId) continue;
     const gatewayEntry = gatewayContainers[containerId];
-    if (!gatewayEntry) continue;
-    const ipv4 = stripPrefix(gatewayEntry.IPv4Address);
-    const ipv6 = stripPrefix(gatewayEntry.IPv6Address);
+    // docker network inspect may omit a task temporarily even though docker
+    // container inspect has already attached it to docker_gwbridge. Do not
+    // silently leave that tenant source unprotected during service churn.
+    const attachedBridge = container.NetworkSettings?.Networks?.docker_gwbridge;
+    const ipv4 = stripPrefix(gatewayEntry?.IPv4Address ?? attachedBridge?.IPAddress);
+    const ipv6 = stripPrefix(gatewayEntry?.IPv6Address ?? attachedBridge?.GlobalIPv6Address);
     if (!ipv4 && !ipv6) continue;
     workloads.push({ containerId, appGroupId, ipv4, ipv6 });
   }
