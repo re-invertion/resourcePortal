@@ -867,6 +867,11 @@ export class DeploymentExecutionService {
       return registryFailure;
     }
 
+    const mountFailure = this.validateMountPaths(snapshot);
+    if (mountFailure) {
+      return mountFailure;
+    }
+
     const volumeFailure = await this.validateVolumes(snapshot);
     if (volumeFailure) {
       return volumeFailure;
@@ -943,6 +948,34 @@ export class DeploymentExecutionService {
       }
     }
 
+    return null;
+  }
+
+  private validateMountPaths(snapshot: StackConfigSnapshot) {
+    for (const app of snapshot.singleApps) {
+      const mounts = [
+        ...app.volumes.map((v) => ({ path: v.mountPath, kind: "Volume" })),
+        ...app.configs.map((c) => ({ path: c.targetPath, kind: "Config" })),
+        ...app.secrets.map((s) => ({ path: s.targetName ?? s.name ?? "", kind: "Secret" })).filter((m) => m.path.startsWith("/")),
+      ];
+      for (let i = 0; i < mounts.length; i += 1) {
+        const current = mounts[i];
+        if (!current.path.startsWith("/") || current.path.includes("/../") || current.path.endsWith("/..")) {
+          return this.validationFailure("InvalidMountPath", `Invalid mount target ${current.path} in ${app.name}`);
+        }
+        for (let j = i + 1; j < mounts.length; j += 1) {
+          const other = mounts[j];
+          const a = current.path.replace(/\/+$/, "") || "/";
+          const b = other.path.replace(/\/+$/, "") || "/";
+          if (a === b || a.startsWith(b + "/") || b.startsWith(a + "/")) {
+            return this.validationFailure(
+              "OverlappingMountPaths",
+              `SingleApp ${app.name} has overlapping ${current.kind} ${current.path} and ${other.kind} ${other.path}. Separate file configuration from mounted persistent directories.`,
+            );
+          }
+        }
+      }
+    }
     return null;
   }
 
@@ -1414,6 +1447,12 @@ export class DeploymentExecutionService {
         name: `${stackName}_${this.serviceName(singleApp.name)}`,
         desiredReplicas: this.effectiveReplicas(snapshot, singleApp),
       })),
+      // Services with an explicit Docker application healthcheck must stay
+      // converged across multiple polls before we call rollout successful.
+      // This is opt-in; existing services without a healthcheck retain behavior.
+      readinessStabilityChecks: snapshot.singleApps.some(
+        (singleApp) => this.renderHealthCheck(singleApp.healthCheck) !== undefined,
+      ) ? 3 : 1,
     });
 
     if (!result.success) {
