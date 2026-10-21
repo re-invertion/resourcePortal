@@ -57,8 +57,9 @@ overlays depends on the environment and integration.
 
 Starting with this fix, privileged Swarm network agents are checked against
 their **effective** capabilities (not their Compose YAML). The control-plane
-installer ensures the node-local `app-lan-router` has `NET_ADMIN` and
-`SYS_ADMIN`, and `egress-guard` has `NET_ADMIN` and `NET_RAW`;
+installer ensures the node-local `app-lan-router` has `NET_ADMIN`,
+`SYS_ADMIN`, and `SYS_PTRACE` (required to inspect another process's
+`/proc/<pid>/ns/net` link), and `egress-guard` has `NET_ADMIN` and `NET_RAW`;
 the Gate reconciler ensures the same for its isolated gateway. Missing
 capabilities fail closed instead of reporting a healthy agent.
 
