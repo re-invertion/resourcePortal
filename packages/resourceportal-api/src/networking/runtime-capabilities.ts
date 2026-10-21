@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 
 // Linux capability numbers: CAP_NET_ADMIN=12, CAP_NET_RAW=13,
-// CAP_SYS_ADMIN=21. Validate the effective set, not UID or a Compose file.
+// CAP_SYS_ADMIN=21, CAP_SYS_PTRACE=19. Validate the effective set, not UID or a Compose file.
 const CAPABILITY_NUMBERS = {
   NET_ADMIN: 12n,
   NET_RAW: 13n,
   SYS_ADMIN: 21n,
+  SYS_PTRACE: 19n,
 } as const;
 export type RuntimeCapability = keyof typeof CAPABILITY_NUMBERS;
 
