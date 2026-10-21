@@ -431,6 +431,7 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
+      - SYS_PTRACE
     command: ["node", "dist/src/networking/app-lan-route.runner.js"]
     # Rollback removes the global router only after it has revoked RP-owned
     # proto-201 routes from persistent tenant namespaces.
