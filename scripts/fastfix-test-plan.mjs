@@ -38,6 +38,12 @@ const commands = {
   "registry-auth": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/internal/stack-registry-auth.service.spec.ts", "src/internal/stack-apply.service.spec.ts", "src/internal/deployment-registry-isolation.spec.ts", "src/internal/isolated-docker-context.spec.ts"],
   ],
+  "deployment-rollout": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--",
+      "src/internal/stack-rollout.service.spec.ts",
+      "src/internal/deployment-mount-paths.spec.ts",
+      "src/internal/stack-runtime-observed.spec.ts"],
+  ],
   "volume-safety": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/volumes/stage7-volume-lifecycle.spec.ts", "src/volumes/deployed-volume-reference.spec.ts", "src/volumes/stage14-volume-backend.spec.ts", "src/app-groups/volume-attachment-race.spec.ts"],
   ],
@@ -207,6 +213,7 @@ const classifiers = [
   // Include the actual renderer assertion in targeted networking verification,
   // and retain release/rollback smoke for changes to this contract.
   [/^packages\/resourceportal-api\/src\/internal\/v020-placement-networking\.spec\.ts$/, ["networking", "platform-release"]],
+  [/^packages\/resourceportal-api\/src\/internal\/(?:stack-rollout\.service(?:\.spec)?|deployment-mount-paths\.spec)\.ts$/, ["deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-volume-provisioner\.service(?:\.spec)?\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/(?:nfs-remote-access-validator\.service(?:\.spec)?|shared-nfs-probe(?:\.spec)?|storage-backends\.service)\.ts$/, ["cross-node-storage"]],
   [/^packages\/resourceportal-api\/src\/operations\/executors\/volume-operation\.executors(?:\.spec)?\.ts$/, ["volume-operations"]],
