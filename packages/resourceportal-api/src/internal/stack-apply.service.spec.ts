@@ -156,6 +156,30 @@ describe("StackApplyService exact deployment artifact", () => {
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
+  it("prunes services omitted by both forward deployment and rollback", async () => {
+    spawnMock.mockImplementation(() => dockerProcess("stack updated"));
+    const { service } = fixture();
+
+    // A rollback uses the same applyStack API with an older, smaller artifact.
+    for (const renderedStack of [publicStack(), privateStack()]) {
+      const result = await service.applyStack({
+        stackName: "rp_11111111_1111_4111_8111_111111111111",
+        renderedStack,
+        artifactSha256: deploymentArtifactSha256(renderedStack),
+        appGroupId,
+      });
+      expect(result.exitCode).toBe(0);
+    }
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    for (const call of spawnMock.mock.calls) {
+      const args = call[1] as string[];
+      expect(args).toContain("--prune");
+      expect(args).toContain("--with-registry-auth");
+      expect(args.slice(-3)).toEqual(["-c", "-", "rp_11111111_1111_4111_8111_111111111111"]);
+    }
+  });
+
   it("prepares first-class tenant networks before deploying the stack", async () => {
     const renderedStack = advancedNetworkStack();
     spawnMock.mockImplementationOnce(() => dockerProcess("stack updated"));

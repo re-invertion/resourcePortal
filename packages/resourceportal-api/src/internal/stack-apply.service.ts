@@ -146,6 +146,9 @@ export class StackApplyService {
       "deploy",
       "--detach=true",
       "--with-registry-auth",
+      // Rollouts reject unexpected services. Prune services deleted from
+      // the desired stack during normal deploy AND rollback convergence.
+      "--prune",
       "-c",
       "-",
       params.stackName,
