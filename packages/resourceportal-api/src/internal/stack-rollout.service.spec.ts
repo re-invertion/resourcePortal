@@ -97,3 +97,65 @@ describe("StackRolloutService docker command timeout", () => {
     expect(spawnMock.mock.calls.length).toBeGreaterThan(1);
   });
 });
+
+describe("StackRolloutService strict service convergence", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const config = {
+    get: (_key: string, fallback?: unknown) =>
+      _key === "DOCKER_ROLLOUT_TIMEOUT_MS" ? 20 :
+      _key === "DOCKER_ROLLOUT_POLL_INTERVAL_MS" ? 5 : fallback,
+  };
+
+  it.each([
+    ["missing service", "", "missing"],
+    ["unexpected service", '{"Name":"rp_test_web","Replicas":"1/1"}\n{"Name":"rp_test_orphan","Replicas":"1/1"}\n', "unexpected service"],
+    ["malformed replicas", '{"Name":"rp_test_web","Replicas":"garbage"}\n', "invalid replicas"],
+    ["missing one expected service", '{"Name":"rp_test_web","Replicas":"1/1"}\n', "rp_test_api: missing"],
+  ])("rejects %s", async (_caseName, dockerOutput, expectedText) => {
+    spawnMock.mockImplementation(() => dockerProcess(dockerOutput));
+    const service = new StackRolloutService(config as unknown as ConfigService);
+    const expectedServices = [
+      { name: "rp_test_web", desiredReplicas: 1 },
+      ...(_caseName === "missing one expected service" ? [{ name: "rp_test_api", desiredReplicas: 1 }] : []),
+    ];
+    const resultPromise = service.waitForRollout({ stackName: "rp_test", expectedServices });
+    await vi.advanceTimersByTimeAsync(60);
+    const result = await resultPromise;
+    expect(result.success).toBe(false);
+    expect(result.details).toContain(expectedText);
+  });
+});
+
+describe("StackRolloutService healthcheck stability gate", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("requires three consecutive matching polls when explicitly requested", async () => {
+    spawnMock.mockImplementation(() =>
+      dockerProcess('{"Name":"rp_test_web","Replicas":"1/1"}\n'),
+    );
+    const config = {
+      get: (key: string, fallback?: unknown) =>
+        key === "DOCKER_ROLLOUT_TIMEOUT_MS" ? 100 :
+        key === "DOCKER_ROLLOUT_POLL_INTERVAL_MS" ? 5 : fallback,
+    };
+    const service = new StackRolloutService(config as unknown as ConfigService);
+    const resultPromise = service.waitForRollout({
+      stackName: "rp_test",
+      expectedServices: [{ name: "rp_test_web", desiredReplicas: 1 }],
+      readinessStabilityChecks: 3,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await resultPromise;
+    expect(result.success).toBe(true);
+    expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+});
