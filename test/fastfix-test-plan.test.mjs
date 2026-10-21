@@ -363,3 +363,12 @@ test("API production build config is classified and retains narrow E2E-only excl
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/tsconfig.build.json"]).profiles, ["identity", "workflow"]);
   assert.throws(() => selectProfiles(["packages/resourceportal-api/tsconfig.unregistered.json"]), /unclassified changes/);
 });
+
+test("deployment runtime patch selects targeted rollout and mount regressions", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
+    "packages/resourceportal-api/src/internal/stack-rollout.service.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-mount-paths.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout"]);
+});
