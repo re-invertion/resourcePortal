@@ -146,7 +146,7 @@ process.once("SIGTERM", shutdownAndRevokeRoutes);
 process.once("SIGINT", shutdownAndRevokeRoutes);
 
 async function main() {
-  requireEffectiveCapabilities("Application LAN route agent", ["NET_ADMIN", "SYS_ADMIN"]);
+  requireEffectiveCapabilities("Application LAN route agent", ["NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"]);
   let consecutiveFailures = 0;
   let completedCycles = 0;
   try {
