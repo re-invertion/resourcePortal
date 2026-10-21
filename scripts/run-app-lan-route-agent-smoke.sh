@@ -59,7 +59,7 @@ POLICY_JSON="$(jq -cn \
 ENCODED="$(printf '%s' "$POLICY_JSON" | base64 -w0)"
 
 docker service create -q --name "$ROUTER_SERVICE" --mode global \
-  --network host --user 0 --cap-add NET_ADMIN --cap-add SYS_ADMIN \
+  --network host --user 0 --cap-add NET_ADMIN --cap-add SYS_ADMIN --cap-add SYS_PTRACE \
   --mount type=bind,src=/proc,dst=/host/proc,readonly \
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock,readonly \
   --env "RESOURCEPORTAL_APP_LAN_ROUTES_B64=$ENCODED" \
