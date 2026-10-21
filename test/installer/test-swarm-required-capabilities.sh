@@ -10,14 +10,14 @@ docker() {
     'service inspect') printf '%s\n' "$capabilities";;
     'service update')
       calls+=("$*")
-      capabilities='["NET_ADMIN","SYS_ADMIN"]'
+      capabilities='["NET_ADMIN","SYS_ADMIN","SYS_PTRACE"]'
       ;;
     *) printf 'unexpected docker call: %s\n' "$*" >&2; return 9 ;;
   esac
 }
-rp_ensure_swarm_service_capabilities test_router NET_ADMIN SYS_ADMIN
+rp_ensure_swarm_service_capabilities test_router NET_ADMIN SYS_ADMIN SYS_PTRACE
 [[ "${#calls[@]}" -eq 1 ]] || { echo 'expected one capability update' >&2; exit 1; }
-[[ "${calls[0]}" == *'--cap-add NET_ADMIN'* && "${calls[0]}" == *'--cap-add SYS_ADMIN'* ]] || exit 1
+[[ "${calls[0]}" == *'--cap-add NET_ADMIN'* && "${calls[0]}" == *'--cap-add SYS_ADMIN'* && "${calls[0]}" == *'--cap-add SYS_PTRACE'* ]] || exit 1
 rp_ensure_swarm_service_capabilities test_router NET_ADMIN SYS_ADMIN
 [[ "${#calls[@]}" -eq 1 ]] || { echo 'unexpected second update' >&2; exit 1; }
 capabilities='["NET_ADMIN"]'
