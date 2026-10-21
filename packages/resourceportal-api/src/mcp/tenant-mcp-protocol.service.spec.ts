@@ -164,6 +164,16 @@ describe("TenantMcpProtocolService", () => {
       expect(result.tools.some((tool) => tool.name === "resourceportal_stop_app_group")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_tenant_api")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_single_apps")).toBe(true);
+      const logs = result.tools.find((tool) => tool.name === "resourceportal_get_single_app_logs");
+      expect(logs?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
+      expect(logs?.inputSchema).toMatchObject({
+        required: ["appGroupId", "singleAppId"],
+      });
+      expect(JSON.stringify(result.tools.find((tool) => tool.name === "resourceportal_manage_single_apps")?.inputSchema))
+        .toContain('"get_logs"');
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_networking")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_domains")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_access")).toBe(true);
@@ -275,6 +285,103 @@ describe("TenantMcpProtocolService", () => {
           success: true,
         }),
       );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("reads container logs using the connected tenant and actor, without accepting a service name", async () => {
+    const { service, settings } = fixture();
+    const appGroupId = "44444444-4444-4444-8444-444444444444";
+    const singleAppId = "55555555-5555-4555-8555-555555555555";
+    const expectedPath = `/app-groups/${appGroupId}/single-apps/${singleAppId}/logs`;
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      expect(request.url).toBe(`http://127.0.0.1:3000/api/tenants/${tenantId}${expectedPath}`);
+      expect(request.method).toBe("GET");
+      expect(request.headers.get("authorization")).toBe("Bearer logs-token");
+      return Promise.resolve(new Response(JSON.stringify({ lines: ["2026-10-21T10:00:00Z 400 proxy"], serviceAvailable: true }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = await connectClient({
+      service,
+      request: mcpRequest({ authorization: "Bearer logs-token" }),
+      authenticated: true,
+    });
+    try {
+      const args = { appGroupId, singleAppId };
+      const focused = await connection.client.callTool({
+        name: "resourceportal_get_single_app_logs", arguments: args,
+      });
+      expect(focused.structuredContent).toEqual({
+        status: 200, ok: true, data: { lines: ["2026-10-21T10:00:00Z 400 proxy"], serviceAvailable: true },
+      });
+      const managed = await connection.client.callTool({
+        name: "resourceportal_manage_single_apps",
+        arguments: { operation: "get_logs", ...args },
+      });
+      expect(managed.structuredContent).toEqual(focused.structuredContent);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      for (const toolName of ["resourceportal_get_single_app_logs", "resourceportal_manage_single_apps"]) {
+        expect(settings.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+          toolName, method: "GET", path: expectedPath, success: true,
+        }));
+      }
+      const catalog = await connection.client.callTool({ name: "resourceportal_tenant_endpoints", arguments: {} });
+      const endpoints = catalog.structuredContent?.common as Array<{ path: string; methods: string[] }> | undefined;
+      expect(endpoints?.some((entry) =>
+        entry.path === "/app-groups/{appGroupId}/single-apps/{singleAppId}/logs"
+        && entry.methods.includes("GET"),
+      )).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it.each([403, 404, 503])("does not bypass tenant API rejection (%i) for container logs", async (status) => {
+    const { service, settings } = fixture();
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ message: "Unavailable" }), {
+      status, headers: { "content-type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = await connectClient({
+      service, request: mcpRequest({ authorization: "Bearer restricted-token" }), authenticated: true,
+    });
+    try {
+      const result = await connection.client.callTool({
+        name: "resourceportal_get_single_app_logs",
+        arguments: {
+          appGroupId: "44444444-4444-4444-8444-444444444444",
+          singleAppId: "55555555-5555-4555-8555-555555555555",
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ status, ok: false });
+      expect(settings.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "resourceportal_get_single_app_logs", statusCode: status, success: false,
+      }));
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("requires an interactive credential before reading container logs", async () => {
+    const { service } = fixture();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = await connectClient({ service, request: mcpRequest() });
+    try {
+      const result = await connection.client.callTool({
+        name: "resourceportal_get_single_app_logs",
+        arguments: {
+          appGroupId: "44444444-4444-4444-8444-444444444444",
+          singleAppId: "55555555-5555-4555-8555-555555555555",
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       await connection.close();
     }

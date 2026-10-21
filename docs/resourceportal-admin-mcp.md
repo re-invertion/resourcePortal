@@ -106,4 +106,6 @@ This removes the previous need to reach the platform Bug Report endpoints throug
 
 Use Admin MCP for platform operations only. Use Tenant MCP when the intended action belongs to a tenant and should be evaluated through that tenant's membership/role/group permissions.
 
+For tenant application diagnostics, use the read-only Tenant MCP tool `resourceportal_get_single_app_logs` with `appGroupId` and `singleAppId`, or `resourceportal_manage_single_apps` with `operation: get_logs`. Both call the existing tenant API endpoint `GET /app-groups/{appGroupId}/single-apps/{singleAppId}/logs` using the connected user's OAuth credential and tenant RBAC (`singleapp.read` and `appgroup.deployment.read`). Output is limited to the latest 100 Docker Swarm service log lines and 64 KiB. Logs can contain application secrets; do not paste them into public issues or audits. Platform Admin MCP intentionally does not expose tenant container logs.
+
 If a desired operation is not represented by an explicit Admin MCP tool, treat that as an intentional boundary until the ResourcePortal platform API itself defines an appropriate Platform Admin capability.
