@@ -147,6 +147,13 @@ export class TenantMcpProtocolService {
           "GET",
           `/app-groups/${encodeURIComponent(this.uuid(args.appGroupId, "appGroupId"))}`,
         );
+      case "resourceportal_get_single_app_logs":
+        return this.callFocusedTool(
+          context,
+          name,
+          "GET",
+          `/app-groups/${encodeURIComponent(this.uuid(args.appGroupId, "appGroupId"))}/single-apps/${encodeURIComponent(this.uuid(args.singleAppId, "singleAppId"))}/logs`,
+        );
       case "resourceportal_deploy_app_group":
         return this.callFocusedTool(
           context,
@@ -349,6 +356,7 @@ export class TenantMcpProtocolService {
       case "single-apps:start": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime/start`; break;
       case "single-apps:stop": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime/stop`; break;
       case "single-apps:restart": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime/restart`; break;
+      case "single-apps:get_logs": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/logs`; break;
       case "single-apps:get_runtime_config": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime-config`; break;
       case "single-apps:update_runtime_config": method = "PATCH"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime-config`; break;
       case "single-apps:list_http_endpoints": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/http-endpoints`; break;
@@ -804,6 +812,21 @@ export class TenantMcpProtocolService {
       },
       ["appGroupId"],
     );
+    const singleAppLogsInput = this.objectSchema(
+      {
+        appGroupId: {
+          type: "string",
+          format: "uuid",
+          description: "App Group containing the application.",
+        },
+        singleAppId: {
+          type: "string",
+          format: "uuid",
+          description: "Application whose Docker Swarm service logs should be read.",
+        },
+      },
+      ["appGroupId", "singleAppId"],
+    );
     const apiOutput = this.apiOutputSchema();
 
     const readTool = (
@@ -949,6 +972,12 @@ export class TenantMcpProtocolService {
         "Get one ResourcePortal App Group by UUID, including its current configuration and runtime state.",
         appGroupInput,
       ),
+      readTool(
+        "resourceportal_get_single_app_logs",
+        "Get container logs",
+        "Read the latest 100 timestamped Docker Swarm service log lines (up to 64 KiB) for one application. Requires singleapp.read and appgroup.deployment.read. Uses the connected tenant's RBAC; log output can contain sensitive application data.",
+        singleAppLogsInput,
+      ),
       actionTool(
         "resourceportal_deploy_app_group",
         "Deploy App Group",
@@ -1033,8 +1062,8 @@ export class TenantMcpProtocolService {
       managedTool(
         "resourceportal_manage_single_apps",
         "Manage applications",
-        "Create, update, delete and control Single Apps, runtime config, HTTP endpoints and resource attachments inside an App Group.",
-        ["list", "create", "update", "delete", "start", "stop", "restart", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
+        "Create, update, delete and control Single Apps, read bounded service logs, runtime config, HTTP endpoints and resource attachments inside an App Group.",
+        ["list", "create", "update", "delete", "start", "stop", "restart", "get_logs", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
       ),
       managedTool(
         "resourceportal_manage_volumes",
@@ -1273,6 +1302,11 @@ export class TenantMcpProtocolService {
           path: "/app-groups/{appGroupId}",
           methods: ["GET", "DELETE"],
           purpose: "App Group detail",
+        },
+        {
+          path: "/app-groups/{appGroupId}/single-apps/{singleAppId}/logs",
+          methods: ["GET"],
+          purpose: "Read bounded Docker Swarm service logs (requires singleapp.read and appgroup.deployment.read)",
         },
         {
           path: "/app-groups/{appGroupId}/deploy",
