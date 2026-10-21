@@ -236,7 +236,7 @@ rp_ensure_control_plane_capabilities() {
   local stack_name="$1"
   # The worker can be running the upgrade itself. Never restart it as a
   # side effect of this networking-only repair.
-  rp_ensure_swarm_service_capabilities "${stack_name}_app-lan-router" NET_ADMIN SYS_ADMIN || return 1
+  rp_ensure_swarm_service_capabilities "${stack_name}_app-lan-router" NET_ADMIN SYS_ADMIN SYS_PTRACE || return 1
   rp_ensure_swarm_service_capabilities "${stack_name}_egress-guard" NET_ADMIN NET_RAW || return 1
 }
 
