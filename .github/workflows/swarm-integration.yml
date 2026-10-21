@@ -341,6 +341,12 @@ jobs:
           RP_GATE_E2E_IMAGE: resourceportal-vpn-e2e:current
         run: bash scripts/run-gate-dataplane-smoke.sh
 
+      - name: Verify Site VPN route agent automatically installs and revokes routes
+        timeout-minutes: 8
+        env:
+          RP_GATE_E2E_IMAGE: resourceportal-vpn-e2e:current
+        run: bash scripts/run-app-lan-route-agent-smoke.sh
+
       - name: Run Device VPN real dataplane isolation smoke
         timeout-minutes: 8
         env:

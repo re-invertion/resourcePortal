@@ -84,6 +84,7 @@ busybox_stack_template_test() (
   rp_require_stack_config() { :; }
   rp_render_stack() { printf 'version: "3.9"\nservices: {}\n'; }
   rp_wait_control_plane_converged() { :; }
+  rp_ensure_control_plane_capabilities() { :; } # covered by test-swarm-required-capabilities.sh
   docker() { [[ "$1 $2" == 'stack config' || "$1 $2" == 'stack deploy' ]]; }
   rp_deploy_control_plane final
 )

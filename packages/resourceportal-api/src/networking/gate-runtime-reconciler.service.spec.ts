@@ -10,9 +10,15 @@ import { GateRuntimeReconcilerService } from "./gate-runtime-reconciler.service"
 class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
   readonly dockerCalls: Array<{ args: string[]; stdin?: string }> = [];
   readonly dockerResults: Array<{ exitCode: number; stdout: string; stderr: string }> = [];
+  readonly capabilityResults: string[] = [];
 
   protected override runDocker(args: string[], stdin?: string) {
     this.dockerCalls.push({ args, stdin });
+    // The test's fake Swarm implements the effective capability inspection.
+    if (args[0] === "service" && args[1] === "inspect" &&
+        args.at(-1)?.includes("CapabilityAdd")) {
+      return Promise.resolve({ exitCode: 0, stdout: this.capabilityResults.shift() ?? '["NET_ADMIN","NET_RAW"]', stderr: "" });
+    }
     return Promise.resolve(
       this.dockerResults.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
     );
@@ -108,6 +114,26 @@ const readyGate = {
     },
   ],
 };
+
+describe("Gate capability reconciliation", () => {
+  it("repairs missing effective capabilities and verifies the updated Swarm spec", async () => {
+    const { service } = fixture([]);
+    service.capabilityResults.push('["NET_ADMIN"]', '["NET_ADMIN","NET_RAW"]');
+    const invoke = service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).resolves.toBeUndefined();
+    expect(service.dockerCalls).toContainEqual({
+      args: ["service", "update", "--detach=false", "--cap-add", "NET_RAW",
+        "rp_gate_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa_gateway"],
+      stdin: undefined,
+    });
+  });
+  it("fails closed if the capability never appears in the active Swarm spec", async () => {
+    const { service } = fixture([]);
+    service.capabilityResults.push('["NET_ADMIN"]', '["NET_ADMIN"]');
+    const invoke = service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).rejects.toThrow("not applied");
+  });
+});
 
 describe("GateRuntimeReconcilerService", () => {
   it("prepares networks, provisions the versioned key and deploys one Gate stack", async () => {

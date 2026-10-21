@@ -1,3 +1,4 @@
+import { requireEffectiveCapabilities } from "../networking/runtime-capabilities";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Logger } from "@nestjs/common";
 import {
@@ -40,6 +41,7 @@ process.once("SIGINT", () => {
 });
 
 async function main() {
+  requireEffectiveCapabilities("Network egress guard", ["NET_ADMIN", "NET_RAW"]);
   logger.log(
     `Starting egress guard reconciliation every ${reconcileMs}ms with Docker event wakeups`,
   );

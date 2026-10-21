@@ -53,6 +53,40 @@ and the mDNS/SSDP paths still require end-to-end staging tests before
 being declared production proven. Multicast transport inside Docker Swarm
 overlays depends on the environment and integration.
 
+## Runtime verification and diagnosis
+
+Starting with this fix, privileged Swarm network agents are checked against
+their **effective** capabilities (not their Compose YAML). The control-plane
+installer ensures the node-local `app-lan-router` has `NET_ADMIN` and
+`SYS_ADMIN`, and `egress-guard` has `NET_ADMIN` and `NET_RAW`;
+the Gate reconciler ensures the same for its isolated gateway. Missing
+capabilities fail closed instead of reporting a healthy agent.
+
+The node-local route agent verifies each RP-owned route by running
+`ip -j -4 route get <destination>` inside the tenant network namespace,
+then checking that the kernel chose the expected overlay interface and Gate
+next-hop. Every twelfth loop it logs a `verified_routes` count; repeated
+failures cause the agent to restart, and the worker refuses to report route
+agent convergence while a task is not Running. This is **separate** from
+the Gate's control-plane `Ready` state. Do not infer effective
+application reachability from the mere presence of an ACL.
+
+For an operator on a Swarm manager, inspect:
+
+```bash
+docker service inspect resourceportal-control-plane_app-lan-router   --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}'
+docker service logs --since 10m resourceportal-control-plane_app-lan-router
+docker service ps --no-trunc resourceportal-control-plane_app-lan-router
+```
+
+The real Swarm regression now runs
+`scripts/run-app-lan-route-agent-smoke.sh`: it creates an isolated
+tenant task, waits for the global agent to install the route **without
+manually adding it**, and confirms that revoking policy removes it again.
+Production Site VPN availability remains dependent on the actual connected
+Gate's WireGuard handshake, the permitted application-to-LAN port,
+and the local router/device accepting traffic.
+
 ## Failure handling and rollback
 
 Every new rule is opt-in. The additive database migration starts with
