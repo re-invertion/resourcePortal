@@ -36,16 +36,29 @@ export function TenantVolumeDetailPage({tenantId,volumeId}:{tenantId:string;volu
  const [working,setWorking]=useState(false);
  const [sizeMiB,setSizeMiB]=useState(0);
  const [resizing,setResizing]=useState(false);
+ const [lastOperation,setLastOperation]=useState<VolumeOperationState>();
  const row=volume.data;
+ async function trackVolumeOperation(accepted:unknown,completed:string) {
+  setLastOperation({id:"",status:"Pending"});
+  const state=await waitForVolumeOperation(tenantId,accepted,(path)=>apiRequest<R>(path),()=>new Promise(resolve=>setTimeout(resolve,1000)));
+  setLastOperation(state);
+  if(state.status==="Succeeded"){toast.success(completed);return true;}
+  await volume.reload();
+  if(state.status==="Pending"||state.status==="Running"){
+   toast.error("Volume operation is still running. Check its status in Operations.");
+   return false;
+  }
+  throw new Error(state.errorMessage||`Volume operation failed: ${state.status}`);
+ }
  async function grow(){
   setWorking(true);
-  try { await apiRequest(`${root}/resize`,{method:"PATCH",body:{sizeBytes:Math.round(sizeMiB*1048576)}});
-   setResizing(false);await volume.reload();toast.success("Volume resize requested.");
+  try { const accepted=await apiRequest(`${root}/resize`,{method:"PATCH",body:{sizeBytes:Math.round(sizeMiB*1048576)}});
+   if(await trackVolumeOperation(accepted,"Volume resized.")){setResizing(false);await volume.reload();}
   }catch(c){toast.errorFrom(c,"Volume could not be resized.");}finally{setWorking(false);}
  }
  async function remove(){
   setWorking(true);
-  try {await apiRequest(root,{method:"DELETE"});window.location.assign(tenantHref(tenantId,"volumes"));}
+  try {const accepted=await apiRequest(root,{method:"DELETE"});if(await trackVolumeOperation(accepted,"Volume deleted."))window.location.assign(tenantHref(tenantId,"volumes"));}
   catch(c){toast.errorFrom(c,"Volume could not be deleted.");}finally{setWorking(false);}
  }
  if(volume.loading) return <Card className="p-5">Loading volume details…</Card>;
@@ -53,6 +66,7 @@ export function TenantVolumeDetailPage({tenantId,volumeId}:{tenantId:string;volu
  const attachments=items<R>(row.attachments);
  return <main className="space-y-5"><PageHeader eyebrow="Storage / Volume" title={text(row.name,"Volume details")} description={text(row.description,"Persistent tenant volume")} actions={<a href={tenantHref(tenantId,"volumes")} className="text-sm font-semibold text-[#0F56A7] underline">Back to volumes</a>}/>
  <StorageTabs tenantId={tenantId} active="volumes"/>
+ {lastOperation?<Callout title="Volume operation status" tone={lastOperation.status==="Failed"||lastOperation.status==="RollbackFailed"?"warning":"info"}><span>Status: {lastOperation.status}. </span>{lastOperation.errorMessage?lastOperation.errorMessage:null}{lastOperation.id?<a className="underline" href={tenantHref(tenantId,"operations",lastOperation.id)}>View operation</a>:null}</Callout>:null}
  <Card className="p-5"><h2 className="mb-4 font-semibold">Overview</h2><DetailList items={[{label:"Status",value:text(row.status,"Unknown")},{label:"Capacity",value:formatBytes(row.sizeBytes)},{label:"Used",value:formatBytes(row.usedSizeBytes)},{label:"Applications attached",value:String(Number(row.attachmentCount??attachments.length))},{label:"Updated",value:formatDate(row.updatedAt??row.createdAt)}]}/></Card>
  <Card className="p-5"><h2 className="mb-3 font-semibold">Attached applications</h2>{attachments.length?<ul className="space-y-2">{attachments.map(item=><li key={idOf(item)} className="rounded-lg border p-3"><a className="font-semibold text-[#0F56A7] underline" href={applicationHref(tenantId,text(((item.singleApp as R|undefined)?.appGroup as R|undefined)?.id),text(item.singleAppId))}>{text((item.singleApp as R|undefined)?.name,text(item.singleAppId,"Application"))}</a><span className="block text-xs text-[#5B6678]">{text(item.mountPath,"—")} · {text(item.mode,"ReadWrite")}</span></li>)}</ul>:<p className="text-sm text-[#5B6678]">No applications attached.</p>}</Card>
  <Card className="p-5"><h2 className="mb-3 font-semibold">Manage volume</h2><div className="flex flex-wrap gap-3"><Button onClick={()=>{setSizeMiB(Math.ceil(Number(row.sizeBytes??0)/1048576));setResizing(true);}}>Grow volume</Button><ConfirmActionButton triggerVariant="ghost" ariaLabel={`Delete ${text(row.name)}`} confirmTitle={`Delete volume ${text(row.name)}?`} confirmDescription="This permanently removes the volume when backend deletion rules allow it." confirmLabel="Delete volume" onConfirm={()=>remove()} disabled={working}><TrashIcon size={15}/>Delete volume</ConfirmActionButton></div>
