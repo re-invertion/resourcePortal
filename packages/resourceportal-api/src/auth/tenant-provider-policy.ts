@@ -22,15 +22,43 @@ export async function assertTenantProviderPolicy(
     select: {
       requireTenantIdentityProvider: true,
       allowPlatformLogin: true,
+      allowTenantIdentityProviders: true,
     },
   });
-  if (!policy || (!policy.requireTenantIdentityProvider && policy.allowPlatformLogin !== false)) {
-    return;
-  }
+  if (!policy) return;
+  const tenantOnly = policy.requireTenantIdentityProvider || policy.allowPlatformLogin === false;
+  if (!tenantOnly && policy.allowTenantIdentityProviders !== false) return;
   if (await isNativeOnly()) return;
 
+  // An internally contradictory legacy policy must fail closed. During
+  // native-only cutover old inbound policy settings are intentionally retired.
+  if (tenantOnly && policy.allowTenantIdentityProviders === false) {
+    throw new ForbiddenException("Tenant identity provider login is disabled");
+  }
   if (!authenticatedIdpId) {
-    throw new ForbiddenException("This tenant requires a verified tenant identity provider");
+    if (tenantOnly) {
+      throw new ForbiddenException("This tenant requires a verified tenant identity provider");
+    }
+    return; // Native platform login remains permitted.
+  }
+
+  if (policy.allowTenantIdentityProviders === false) {
+    // Only a VERIFIED platform IdP may access a tenant that disables incoming
+    // tenant IdPs but allows platform login. An IdP from another tenant is not
+    // interchangeable with the platform IdP.
+    const platformProvider = await prisma.identityProvider.findFirst({
+      where: {
+        scope: IdentityProviderScope.Platform,
+        tenantId: null,
+        enabled: true,
+        zitadelIdentityProviderId: authenticatedIdpId,
+      },
+      select: { id: true },
+    });
+    if (!platformProvider) {
+      throw new ForbiddenException("Tenant identity provider login is disabled");
+    }
+    return;
   }
   const enabledProvider = await prisma.identityProvider.findFirst({
     where: {
