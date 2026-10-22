@@ -57,6 +57,8 @@ jobs:
             allowed_diff="$(printf '%s\n' \
               '.github/workflows/release-readiness.yml' \
               'packages/resourceportal-api/src/billing/billing-voucher-codes.spec.ts' \
+              'scripts/fastfix-test-plan.mjs' \
+              'test/fastfix-test-plan.test.mjs' \
               'test/test-workflow-gates.test.mjs' | LC_ALL=C sort)"
             if [[ "$recovery_diff" != "$allowed_diff" ]]; then
               echo "Release recovery accepts only the explicitly reviewed #318 changes." >&2
