@@ -18,7 +18,9 @@ export class VolumeReadService {
   async getVolume(tenantId: string, volumeId: string) {
     const volume = await this.prisma.volume.findFirst({
       where: { id: volumeId, tenantId },
-      include: { attachments: true },
+      include: { attachments: { include: { singleApp: { select: {
+        id: true, name: true, appGroup: { select: { id: true, name: true } },
+      } } } } },
     });
     if (!volume) throw new NotFoundException("Volume not found");
     return mapVolume(volume);

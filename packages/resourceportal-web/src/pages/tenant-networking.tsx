@@ -672,7 +672,7 @@ export function TenantNetworkingPage({ tenantId }: { tenantId: string }) {
         )}
       </Card>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <div className="mt-6 grid gap-6">
         <Card className="overflow-hidden">
           <div className="border-b border-[#E1E7F0] px-5 py-4">
             <h2 className="font-semibold text-[#172033]">Networks</h2>

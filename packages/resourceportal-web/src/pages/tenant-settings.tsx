@@ -129,6 +129,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
   );
 
   const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const tenantMcpTools=(catalog.data?.items??[]).filter(tool=>tool.name.startsWith("resourceportal_")&&!tool.name.startsWith("resourceportal_admin_")&&!tool.name.startsWith("resourceportal_platform_"));
   const mcpUrl = origin ? `${origin}/api/tenants/${encodeURIComponent(tenantId)}/mcp` : `/api/tenants/${tenantId}/mcp`;
 
   function toggleMember(membershipId: string, checked: boolean) {
@@ -331,16 +332,18 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
             <p className="text-xs font-medium text-[#718096]">MCP server URL</p>
             <code className="mt-1 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{mcpUrl}</code>
           </div>
-          <dl className="grid gap-3 text-sm sm:grid-cols-2">
-            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Transport</dt><dd className="mt-1 font-medium">{oauth?.transport ?? "Streamable HTTP"}</dd></div>
-            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Protocol</dt><dd className="mt-1 font-medium">{oauth?.protocol ?? "MCP"}</dd></div>
-            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">OAuth discovery</dt><dd className="mt-1 font-medium">{oauth?.discoveryAvailable ? "Available" : "Unavailable"}</dd></div>
-            <div className="rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-3"><dt className="text-xs text-[#718096]">Dynamic client registration / PKCE S256</dt><dd className="mt-1 font-medium">{oauth?.dynamicClientRegistrationAvailable && oauth?.pkceS256Available ? "Available" : "Unavailable"}</dd></div>
+          <details><summary className="cursor-pointer text-sm font-medium">Details</summary>
+          <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+            <div className="flex justify-between gap-2 py-1"><dt className="text-[#718096]">Transport</dt><dd className="font-medium">{oauth?.transport ?? "Streamable HTTP"}</dd></div>
+            <div className="flex justify-between gap-2 py-1"><dt className="text-[#718096]">Protocol</dt><dd className="font-medium">{oauth?.protocol ?? "MCP"}</dd></div>
+            <div className="flex justify-between gap-2 py-1"><dt className="text-[#718096]">OAuth discovery</dt><dd className="font-medium">{oauth?.discoveryAvailable ? "Available" : "Unavailable"}</dd></div>
+            <div className="flex justify-between gap-2 py-1"><dt className="text-[#718096]">Dynamic client registration / PKCE S256</dt><dd className="font-medium">{oauth?.dynamicClientRegistrationAvailable && oauth?.pkceS256Available ? "Available" : "Unavailable"}</dd></div>
           </dl>
+          </details>
           {!oauth?.openAiReady ? <Callout tone="warning" title="OAuth setup incomplete">Dynamic Client Registration and PKCE S256 must be available before compatible MCP clients can complete OAuth authorization. Run the current ResourcePortal upgrade or platform repair.</Callout> : null}
         </div>
       </Card>
-      <Card className="mt-6 overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Available Tenant MCP tools</h2><p className="mt-1 text-xs text-[#718096]">Current tenant-scoped tool catalog. {catalog.data?.items?.length ?? 0} tools.</p></div>{catalog.loading?<p className="p-5 text-sm">Loading tools…</p>:catalog.error?<p className="p-5 text-sm text-[#B42318]">Tool catalog unavailable.</p>:<div className="max-h-[480px] divide-y divide-[#E1E7F0] overflow-y-auto">{catalog.data?.items?.map(tool=><div key={tool.name} className="px-5 py-3"><strong className="block break-all text-[13px]">{tool.name}</strong><p className="mt-1 text-xs text-[#526070]">{tool.description}</p></div>)}</div>}</Card>
+      <Card className="mt-6 overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Available Tenant MCP tools</h2><p className="mt-1 text-xs text-[#718096]">Current tenant-scoped tool catalog. {tenantMcpTools.length} tools.</p></div>{catalog.loading?<p className="p-5 text-sm">Loading tools…</p>:catalog.error?<p className="p-5 text-sm text-[#B42318]">Tool catalog unavailable.</p>:<div className="max-h-[480px] divide-y divide-[#E1E7F0] overflow-y-auto">{tenantMcpTools.map(tool=><div key={tool.name} className="px-5 py-3"><strong className="block break-all text-[13px]">{tool.name}</strong><p className="mt-1 text-xs text-[#526070]">{tool.description}</p></div>)}</div>}</Card>
       </>}
     </main>
   );

@@ -61,6 +61,33 @@ export class GateRuntimeReconcilerService {
     let pending = 0;
     let removed = 0;
     let failed = 0;
+    // Tenant Networks are first-class resources, not dependent on Site VPN
+    // attachments. Provision them even before the first application deployment.
+    const pendingNetworks = await this.prisma.network.findMany({
+      where: { status: { in: ["Provisioning", "Error"] } },
+      orderBy: { createdAt: "asc" },
+    });
+    for (const network of pendingNetworks) {
+      try {
+        const result = await this.runtime.reconcileTenantNetwork({
+          networkName: network.swarmNetworkName,
+          subnet: network.overlayCidr,
+          networkId: network.id,
+          tenantId: network.tenantId,
+        });
+        await this.prisma.network.update({
+          where: { id: network.id },
+          data: result.success
+            ? { status: "Ready", lastObservedAt: new Date(), lastError: null }
+            : { status: "Error", lastError: ("error" in result ? String(result.error) : "Network provision failed").slice(0, 1024) },
+        });
+      } catch (error) {
+        await this.prisma.network.update({
+          where: { id: network.id },
+          data: { status: "Error", lastError: String(error instanceof Error ? error.message : error).slice(0, 1024) },
+        });
+      }
+    }
     for (const gate of gates) {
       try {
         if (gate.revokedAt || gate.status === "Revoked" || gate.status === "Deleting") {

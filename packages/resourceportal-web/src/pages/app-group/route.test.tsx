@@ -27,7 +27,7 @@ describe("AppGroupRoute", () => {
     expect(screen.getByRole("link", { name: /edit application/i }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit");
     const navigation = screen.getByRole("navigation", { name: "Application sections" });
     expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
-    expect(within(navigation).getByRole("link", { name: "Health" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/health");
+    expect(within(navigation).queryByRole("link", { name: "Health" })).toBeNull();
   });
 
 
@@ -80,9 +80,10 @@ it("keeps the application navigation active across nested application routes", a
   expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1");
 });
 
-it("routes Health separately and keeps the Health tab active", async () => {
+it("keeps legacy Health URLs functional through the canonical application Overview", async () => {
   render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1", "health"]} />);
   await screen.findByRole("heading", { name: "checkout" });
   const navigation = screen.getByRole("navigation", { name: "Application sections" });
-  expect(within(navigation).getByRole("link", { name: "Health" }).getAttribute("aria-current")).toBe("page");
+  expect(within(navigation).queryByRole("link", { name: "Health" })).toBeNull();
+  expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
 });

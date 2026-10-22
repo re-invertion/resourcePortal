@@ -84,15 +84,12 @@ it("regenerates a pending invitation link and therefore rotates its token", asyn
   expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/invitations/inv1/resend") && (init as RequestInit | undefined)?.method === "POST")).toBe(true);
 });
 
-it("groups daily Access navigation and keeps legacy login policy in an advanced section", async () => {
+it("groups daily Access navigation and hides legacy login migration policy", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => json([])));
   render(<TenantAdministrationPage tenantId="t1" />);
   expect(await screen.findByRole("link", { name: "Members & invitations" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "Roles & groups" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "Integrations" })).toBeTruthy();
-  const advanced = screen.getByText("Advanced: native login migration policy");
-  const details = advanced.closest("details") as HTMLDetailsElement;
-  expect(details.open).toBe(false);
-  fireEvent.click(advanced);
-  expect(details.open).toBe(true);
+  expect(screen.queryByText("Advanced: native login migration policy")).toBeNull();
+  expect(screen.getByRole("link", { name: "Open tenant Identity & SSO" })).toBeTruthy();
 });

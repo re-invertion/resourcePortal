@@ -142,3 +142,23 @@ describe("TenantSettingsPage", () => {
     expect(screen.queryByText(/offline_access/)).toBeNull();
   });
 });
+
+it("only shows tenant MCP tools and keeps protocol metadata under compact Details", async () => {
+  vi.stubGlobal("fetch",vi.fn(async (input:RequestInfo|URL)=>{
+    const url=String(input);
+    if(url.endsWith("/mcp-settings/catalog")) return json({items:[
+      {name:"resourceportal_list_app_groups",title:"List groups",description:"Tenant resources"},
+      {name:"resourceportal_admin_list_tenants",title:"Admin",description:"Platform only"},
+      {name:"resourceportal_platform_diagnostics",title:"Platform",description:"Platform only"},
+    ]});
+    if(url.endsWith("/mcp-settings")) return json({enabled:false,accessMode:"SelectedMembers",allowedMembershipIds:[],oauth:{transport:"Streamable HTTP",protocol:"MCP",openAiReady:true}});
+    return json([]);
+  }));
+  render(<TenantSettingsPage tenantId="t" section="mcp" />);
+  expect(await screen.findByText("resourceportal_list_app_groups")).toBeTruthy();
+  expect(screen.queryByText("resourceportal_admin_list_tenants")).toBeNull();
+  expect(screen.queryByText("resourceportal_platform_diagnostics")).toBeNull();
+  expect(screen.getByText("Current tenant-scoped tool catalog. 1 tools.")).toBeTruthy();
+  const details=screen.getByText("Details").closest("details");
+  expect(details?.open).toBe(false);
+});

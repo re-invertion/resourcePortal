@@ -125,3 +125,20 @@ it("shows a persistent draft deployment banner with the whole App Group scope", 
   expect(screen.getByRole("link", { name: "Review and deploy" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/deployments");
   expect(screen.getByText(/Start, Stop and Restart actions apply immediately/)).toBeTruthy();
 });
+
+it("opens attachment forms only when requested on Storage and Configuration", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith("/single-apps")) return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    return json([]);
+  }));
+  const { rerender }=render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="storage" />);
+  const storageAction=await screen.findByRole("button",{name:"Attach volume"});
+  expect(screen.queryByRole("dialog",{name:"Attach volume"})).toBeNull();
+  fireEvent.click(storageAction);
+  expect(screen.getByRole("dialog",{name:"Attach volume"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Close dialog"}));
+  expect(screen.queryByRole("dialog",{name:"Attach volume"})).toBeNull();
+  rerender(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="configuration" />);
+  fireEvent.click(screen.getByRole("button",{name:"Attach configuration"}));
+  expect(screen.getByRole("dialog",{name:"Attach configuration"})).toBeTruthy();
+});

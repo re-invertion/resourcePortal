@@ -67,7 +67,9 @@ describe("VolumeReadService", () => {
         id: "11111111-1111-4111-8111-111111111111",
         tenantId: "22222222-2222-4222-8222-222222222222",
       },
-      include: { attachments: true },
+      include: { attachments: { include: { singleApp: { select: {
+        id: true, name: true, appGroup: { select: { id: true, name: true } },
+      } } } } },
     });
   });
 });

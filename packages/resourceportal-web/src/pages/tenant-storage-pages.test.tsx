@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { TenantDomainsPage, TenantRegistriesPage, TenantVolumesPage } from "./tenant-storage-pages";
+import { TenantDomainsPage, TenantRegistriesPage, TenantVolumesPage, TenantVolumeDetailPage } from "./tenant-storage-pages";
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
@@ -97,13 +97,13 @@ it("confirms in-app before deleting a tenant volume", async () => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/tenants/t1/quota")) return Promise.resolve(json({ storageBytes: "4294967296" }));
-    if (url.includes("/api/tenants/t1/volumes")) return Promise.resolve(json([{ id: "v2", name: "legacy-data", sizeBytes: "536870912", usedSizeBytes: "268435456", status: "Ready", attachmentCount: 0 }]));
+    if (url.includes("/api/tenants/t1/volumes")) return Promise.resolve(json({ id: "v2", name: "legacy-data", sizeBytes: "536870912", usedSizeBytes: "268435456", status: "Ready", attachmentCount: 0, attachments: [] }));
     return Promise.resolve(json({}));
   });
   vi.stubGlobal("fetch", fetchMock);
   const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-  render(<TenantVolumesPage tenantId="t1" />);
+  render(<TenantVolumeDetailPage tenantId="t1" volumeId="v2" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Delete legacy-data" }));
   expect(screen.getByRole("dialog", { name: "Delete volume legacy-data?" })).toBeTruthy();

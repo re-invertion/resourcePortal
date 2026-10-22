@@ -4,7 +4,7 @@ import { CreateAppGroupPage } from "./app-group-create";
 import { ImportAppGroupPage } from "./app-group-import";
 import { AppGroupRoute } from "./app-group/route";
 import { TenantAccess, TenantBilling } from "./tenant-resources";
-import { TenantVolumesPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
+import { TenantVolumesPage, TenantVolumeDetailPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 import { TenantIdentitySsoPage } from "./tenant-identity-sso";
 import { TenantOperationsPage, TenantAuditPage } from "./tenant-activity-pages";
@@ -41,7 +41,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "billing") return <TenantBilling tenantId={tenantId} />;
   if (section === "help") return <TenantHelpPage tenantId={tenantId} />;
   if (section === "settings") return <TenantSettingsPage tenantId={tenantId} section={segments[0]} />;
-  if (section === "volumes") return <TenantVolumesPage tenantId={tenantId} createImmediately={segments[0] === "new" || resourceId === "new"} />;
+  if (section === "volumes") return resourceId && resourceId !== "new" ? <TenantVolumeDetailPage tenantId={tenantId} volumeId={resourceId} /> : <TenantVolumesPage tenantId={tenantId} createImmediately={segments[0] === "new" || resourceId === "new"} />;
   if (section === "registries") return resourceId ? <TenantRegistryDetailPage tenantId={tenantId} registryId={resourceId} /> : <TenantRegistriesPage tenantId={tenantId} />;
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;
   if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} section={segments[0]} />;
