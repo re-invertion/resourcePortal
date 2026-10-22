@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { TenantDomainsPage, TenantRegistriesPage, TenantVolumesPage } from "./tenant-storage-pages";
+import { TenantDomainsPage, TenantRegistriesPage, TenantVolumesPage, TenantVolumeDetailPage } from "./tenant-storage-pages";
 
 function json(value: unknown) {
   return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
@@ -97,13 +97,13 @@ it("confirms in-app before deleting a tenant volume", async () => {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/tenants/t1/quota")) return Promise.resolve(json({ storageBytes: "4294967296" }));
-    if (url.includes("/api/tenants/t1/volumes")) return Promise.resolve(json([{ id: "v2", name: "legacy-data", sizeBytes: "536870912", usedSizeBytes: "268435456", status: "Ready", attachmentCount: 0 }]));
+    if (url.includes("/api/tenants/t1/volumes")) return Promise.resolve(json({ id: "v2", name: "legacy-data", sizeBytes: "536870912", usedSizeBytes: "268435456", status: "Ready", attachmentCount: 0, attachments: [] }));
     return Promise.resolve(json({}));
   });
   vi.stubGlobal("fetch", fetchMock);
   const nativeConfirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-  render(<TenantVolumesPage tenantId="t1" />);
+  render(<TenantVolumeDetailPage tenantId="t1" volumeId="v2" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Delete legacy-data" }));
   expect(screen.getByRole("dialog", { name: "Delete volume legacy-data?" })).toBeTruthy();
@@ -112,6 +112,44 @@ it("confirms in-app before deleting a tenant volume", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "Delete volume" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/api/tenants/t1/volumes/v2") && (init as RequestInit | undefined)?.method === "DELETE")).toBe(true));
+});
+
+it("does not leave volume details when asynchronous deletion fails and exposes the operation", async () => {
+  const fetchMock=vi.fn((input:RequestInfo|URL,init?:RequestInit)=>{
+    const url=String(input);
+    if(url.endsWith("/api/tenants/t1/volumes/v2")&&init?.method==="DELETE")return Promise.resolve(json({id:"op-del-1",status:"Pending"}));
+    if(url.endsWith("/api/tenants/t1/operations/op-del-1"))return Promise.resolve(json({id:"op-del-1",status:"Failed",errorMessage:"Volume is still attached"}));
+    if(url.endsWith("/api/tenants/t1/volumes/v2"))return Promise.resolve(json({id:"v2",name:"legacy-data",sizeBytes:"536870912",status:"Ready",attachmentCount:0,attachments:[]}));
+    return Promise.resolve(json([]));
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantVolumeDetailPage tenantId="t1" volumeId="v2" />);
+  fireEvent.click(await screen.findByRole("button",{name:"Delete legacy-data"}));
+  fireEvent.click(screen.getByRole("button",{name:"Delete volume"}));
+  const operation=await screen.findByRole("link",{name:"View operation"});
+  expect(operation.getAttribute("href")).toBe("/tenants/t1/operations/op-del-1");
+  expect(screen.getByText("Volume is still attached")).toBeTruthy();
+  expect(screen.getByRole("heading",{name:"legacy-data"})).toBeTruthy();
+  expect(fetchMock.mock.calls.some(([input])=>String(input).endsWith("/api/tenants/t1/operations/op-del-1"))).toBe(true);
+});
+
+it("retains the detail page and reports asynchronous volume-grow failure", async () => {
+  const fetchMock=vi.fn((input:RequestInfo|URL,init?:RequestInit)=>{
+    const url=String(input);
+    if(url.endsWith("/api/tenants/t1/volumes/v2/resize")&&init?.method==="PATCH")return Promise.resolve(json({id:"op-resize-1",status:"Pending"}));
+    if(url.endsWith("/api/tenants/t1/operations/op-resize-1"))return Promise.resolve(json({id:"op-resize-1",status:"Failed",errorMessage:"Storage quota exceeded"}));
+    if(url.endsWith("/api/tenants/t1/volumes/v2"))return Promise.resolve(json({id:"v2",name:"legacy-data",sizeBytes:"536870912",status:"Ready",attachmentCount:0,attachments:[]}));
+    return Promise.resolve(json([]));
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantVolumeDetailPage tenantId="t1" volumeId="v2" />);
+  fireEvent.click(await screen.findByRole("button",{name:"Grow volume"}));
+  fireEvent.change(screen.getByLabelText("New size (MiB)"),{target:{value:"1024"}});
+  fireEvent.click(screen.getByRole("button",{name:"Confirm grow"}));
+  const operation=await screen.findByRole("link",{name:"View operation"});
+  expect(operation.getAttribute("href")).toBe("/tenants/t1/operations/op-resize-1");
+  expect(screen.getByText("Storage quota exceeded")).toBeTruthy();
+  expect(screen.getByRole("heading",{name:"legacy-data"})).toBeTruthy();
 });
 
 it("confirms in-app before deleting a tenant registry", async () => {

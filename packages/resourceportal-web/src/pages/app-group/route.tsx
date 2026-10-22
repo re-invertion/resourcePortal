@@ -38,7 +38,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
       return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section="logs" />;
     }
     if (sub[2] === "health") {
-      return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section="health" />;
+      return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} />;
     }
     return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} />;
   }

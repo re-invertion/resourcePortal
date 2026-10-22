@@ -36,7 +36,7 @@ function fixture(gates: any[], deletingNetworks: any[] = []) {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     network: {
-      findMany: vi.fn().mockResolvedValue(deletingNetworks),
+      findMany: vi.fn().mockImplementation(({where}: any) => Promise.resolve(where.status === "Deleting" ? deletingNetworks : [])),
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
     },
@@ -324,4 +324,19 @@ describe("GateRuntimeReconcilerService", () => {
     });
   });
 
+});
+describe("Tenant Network provisioning without a Site VPN", () => {
+  it("advances a standalone Network to Ready after a successful Swarm reconcile", async () => {
+    const f = fixture([]);
+    (f.prisma.network.findMany as any).mockImplementation(({ where }: any) => Promise.resolve(
+      where.status === "Deleting" ? [] : [{ id: "n1", tenantId: "tenant", swarmNetworkName: "rp-network-n1", overlayCidr: "10.90.0.0/24" }],
+    ));
+    await f.service.reconcile();
+    expect(f.runtime.reconcileTenantNetwork).toHaveBeenCalledWith({
+      networkName: "rp-network-n1", subnet: "10.90.0.0/24", networkId: "n1", tenantId: "tenant",
+    });
+    expect(f.prisma.network.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "n1" }, data: expect.objectContaining({ status: "Ready", lastError: null }),
+    }));
+  });
 });

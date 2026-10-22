@@ -61,11 +61,7 @@ export function ApplicationNavigation({
           href: applicationHref(tenantId, appGroupId, appId, "logs"),
           active: active === "logs",
         },
-        {
-          label: "Health",
-          href: applicationHref(tenantId, appGroupId, appId, "health"),
-          active: active === "health",
-        },
+
         {
           label: "Settings / Advanced",
           href: applicationHref(tenantId, appGroupId, appId, "edit/advanced"),

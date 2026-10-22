@@ -248,8 +248,8 @@ const FRAME_PADDING_BOTTOM = 18;
 const APP_NODE_WIDTH = FRAME_WIDTH - FRAME_PADDING_X * 2;
 const APP_NODE_HEIGHT = 84;
 const APP_NODE_GAP = 12;
-const NETWORK_WIDTH = 292;
-const NETWORK_HEIGHT = 126;
+const NETWORK_WIDTH = 196;
+const NETWORK_HEIGHT = 72;
 const GATE_WIDTH = 270;
 const GATE_HEIGHT = 108;
 const NETWORK_X = 650;
@@ -463,38 +463,20 @@ function NetworkNode(props: NodeProps) {
   return (
     <article
       className={cx(
-        "relative h-[126px] w-[292px] rounded-2xl border-2 bg-white px-4 py-4 shadow-[0_10px_30px_rgba(23,105,224,.10)] transition",
-        props.selected ? "border-[#1769E0] ring-4 ring-[#1769E0]/10" : "border-[#8BB7ED]",
+        "relative flex h-[72px] w-[196px] items-center gap-2 rounded-full border-2 bg-[#F2E8FF] px-4 shadow-sm transition",
+        props.selected ? "border-[#7838BA] ring-4 ring-[#7838BA]/15" : "border-[#AC78DE]",
       )}
       aria-label={`Network ${data.label}`}
+      title={`${data.label} · ${data.cidr} · ${data.attachmentCount} apps · ${data.gateCount} gates`}
     >
-      <Handle
-        id="applications"
-        type="target"
-        position={Position.Left}
-        className="!h-3.5 !w-3.5 !border-2 !border-white !bg-[#1769E0]"
-      />
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#DDEEFF] text-[#1769E0]">
-          <NetworkIcon size={19} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center justify-between gap-2">
-            <strong className="truncate text-[14px] text-[#172033]">{data.label}</strong>
-            <StatusBadge tone={statusTone(data.status)}>{data.status}</StatusBadge>
-          </div>
-          <code className="mt-1 block truncate text-[11px] text-[#526070]">{data.cidr}</code>
-          <p className="mt-2 text-[11px] text-[#718096]">
-            {data.attachmentCount} apps · {data.gateCount} gates · rev {data.revision}
-          </p>
-        </div>
+      <Handle id="applications" type="target" position={Position.Left} className="!h-3.5 !w-3.5 !border-2 !border-white !bg-[#7838BA]" />
+      <NetworkIcon size={18} className="shrink-0 text-[#7838BA]"/>
+      <div className="min-w-0 flex-1">
+        <strong className="block truncate text-xs text-[#602A96]">{data.label}</strong>
+        <code className="block truncate text-[11px] text-[#602A96]">{data.cidr}</code>
       </div>
-      <Handle
-        id="gates"
-        type="target"
-        position={Position.Right}
-        className="!h-3.5 !w-3.5 !border-2 !border-white !bg-[#137A4A]"
-      />
+      <span className={cx("h-2 w-2 shrink-0 rounded-full",isHealthyStatus(data.status)?"bg-[#20A464]":"bg-[#D18B00]")} title={data.status}/>
+      <Handle id="gates" type="target" position={Position.Right} className="!h-3.5 !w-3.5 !border-2 !border-white !bg-[#7838BA]" />
     </article>
   );
 }
@@ -964,7 +946,7 @@ function GraphInspector({
   }
 
   if(edgeData?.kind === "internet-route"){
-    return <aside className="min-w-0 p-5"><h3 className="font-semibold">Public Internet route</h3><dl className="mt-3"><DetailRow label="Domain">{edgeData.hostname}</DetailRow><DetailRow label="Protocol">{edgeData.protocol}</DetailRow><DetailRow label="Connection">Read-only routing visualization</DetailRow></dl></aside>;
+    return <aside className="min-w-0 p-5"><h3 className="font-semibold">Public Internet route</h3><dl className="mt-3"><DetailRow label="Domain">{edgeData.hostname}</DetailRow><DetailRow label="Protocol">{edgeData.protocol}</DetailRow></dl></aside>;
   }
   if (edgeData) {
     const applicationLink = edgeData.kind === "application-network";

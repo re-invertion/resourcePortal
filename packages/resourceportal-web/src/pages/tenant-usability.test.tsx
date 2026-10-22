@@ -50,6 +50,7 @@ describe("AppGroup task-oriented selection", () => {
     expect(await screen.findByRole("heading", { name: "web" })).toBeTruthy();
 
     expect(screen.queryByLabelText("Attachment ID")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Attach configuration" }));
     const kind = screen.getByLabelText("Resource type") as HTMLSelectElement;
     await waitFor(() => expect(kind.value).toBe("variable"));
     const resource = screen.getByLabelText("Resource") as HTMLSelectElement;
@@ -162,10 +163,10 @@ describe("tenant action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<TenantPage tenantId="t" section="administration" userId="u" />);
-    expect(await screen.findByRole("heading", { name: "Native login migration" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Native login migration" })).toBeNull();
     expect(screen.getByRole("link", { name: "Open tenant Identity & SSO" }).getAttribute("href")).toBe("/tenants/t/identity-sso");
     expect(screen.queryByRole("button", { name: "Save policy" })).toBeNull();
-    expect(screen.getByText(/must verify native login and recovery/)).toBeTruthy();
+    expect(screen.queryByText(/must verify native login and recovery/)).toBeNull();
     expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url).endsWith("/auth-policy") && (init as RequestInit | undefined)?.method === "PATCH",
     )).toBe(false);
