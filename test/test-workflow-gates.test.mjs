@@ -175,3 +175,25 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
     assert.match(Object.values(called.jobs)[0].if,/inputs\.force_gate == true/);
   }
 });
+
+
+test('one-time unpublished main recovery for #318 remains SHA- and file-scoped', () => {
+  const gate = load('release-readiness.yml');
+  const guard = gate.jobs.candidate.steps.find((step) =>
+    step.name?.startsWith('Block merges while the previous main release is unpublished'));
+  assert.ok(guard);
+  for (const exact of [
+    'v0.2.97',
+    'c98d22f68771c11e09843f4b87f0e25e65aee3df',
+    '0f2918dd86cdbadedf2e5178e09bc7e9d2979956',
+    'f2dfc5a72dc4ba981a6e2cb4b33d6d9a3ca9f86a',
+    '.github/workflows/release-readiness.yml',
+    'packages/resourceportal-api/src/billing/billing-voucher-codes.spec.ts',
+    'test/test-workflow-gates.test.mjs',
+  ]) assert.ok(guard.run.includes(exact), `missing exact recovery pin: ${exact}`);
+  assert.match(guard.run, /git diff --name-only "\$main_sha" HEAD/);
+  assert.match(guard.run, /recovery_diff.*allowed_diff/);
+  assert.match(guard.run, /fixture_blob.*f2dfc5a72dc4ba981a6e2cb4b33d6d9a3ca9f86a/);
+  assert.match(guard.run, /exit 1/);
+  assert.match(guard.run, /node scripts\/next-main-release\.mjs --github-output/);
+});
