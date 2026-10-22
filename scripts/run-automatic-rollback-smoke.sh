@@ -20,7 +20,10 @@ docker info >/dev/null
 current_sha="$(git rev-parse HEAD)"
 [[ "$current_sha" =~ ^[a-f0-9]{40}$ ]] || exit 1
 root="$(mktemp -d /tmp/resourceportal-rollback-gate.XXXXXX)"
-stack="rp-rollback-gate-${GITHUB_RUN_ID:-$$}"
+# A release checks several signed source versions in one GitHub run. Give
+# each source distinct Swarm services/networks/volumes even if detached
+# cleanup from the previous source has not finished.
+stack="rp-rollback-gate-${GITHUB_RUN_ID:-$}-${source_version//./-}"
 stack="${stack//[^a-zA-Z0-9_-]/-}"
 db_network="${stack}-db-net"
 db_service_rp="${stack}_postgres-rp"
