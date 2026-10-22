@@ -8,6 +8,31 @@ const smoke = readFileSync("scripts/run-automatic-rollback-smoke.sh", "utf8");
 const policy = readFileSync("scripts/release-rollback-policy.mjs", "utf8");
 const testedImagePublication = readFileSync("scripts/publish-tested-release-image.sh", "utf8");
 
+test("each rollback source has an isolated Swarm stack and database volumes", () => {
+  const declaration = smoke.split("\n").find((line) => line.startsWith('stack="rp-rollback-gate-'));
+  assert.ok(declaration);
+  const probe = spawnSync("bash", ["-c", [
+    "set -euo pipefail",
+    "GITHUB_RUN_ID=1234567",
+    'source_version="0.2.92"',
+    declaration,
+    'printf "%s\\n" "$stack"',
+    'source_version="0.2.93"',
+    declaration,
+    'printf "%s\\n" "$stack"',
+    'source_version="0.2.94"',
+    declaration,
+    'printf "%s\\n" "$stack"',
+  ].join("\n")], { encoding: "utf8" });
+  assert.equal(probe.status, 0, probe.stderr);
+  const names = probe.stdout.trim().split("\n");
+  assert.equal(names.length, 3);
+  assert.equal(new Set(names).size, 3, "each source must have isolated service, network and volume names");
+  assert.ok(names.every((name) => /^rp-rollback-gate-1234567-0-2-9[234]$/.test(name)));
+  assert.match(smoke, /db_volume_rp="\$\{stack\}-rp-postgres-data"/);
+  assert.match(smoke, /db_volume_zitadel="\$\{stack\}-zitadel-postgres-data"/);
+});
+
 test("source DB snapshots are taken after quiesce but before RP/ZITADEL migrations", () => {
   const q = upgrade.indexOf('rp_upgrade_quiesce_database_clients ||', upgrade.indexOf('rp_upgrade_apply()'));
   const snapshot = upgrade.indexOf('rp_upgrade_database_snapshot_prepare "$manifest" ||', q);
