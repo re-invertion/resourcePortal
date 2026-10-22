@@ -250,6 +250,7 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
   | .images.web=("ghcr.io/re-invertion/resourceportal-web@" + $web)
   | .images.postgres=("ghcr.io/re-invertion/resourceportal-postgres@" + $postgres)
   | .images.zitadel=$zitadel
+  | del(.migrations.rollbackCertifiedSources)
   | .migrations.rollbackPolicy="tested"
   | .migrations.rollbackAssessment={
       reason:"verified-recovery-test",
@@ -263,6 +264,11 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
       candidateZitadelRuntimeReadyBeforeRollback:true,
       candidateZitadelImage:$zitadel
     }' "$root/previous-release.json" >"$root/target-release.json"
+# Source manifest was validated against its signed provenance above.
+# The unsigned candidate fixture MUST NOT reuse source-release-specific proof
+# bound to an older target SHA. The release workflow independently certifies
+# each source only after the real smoke and database recovery complete.
+jq -e '(.migrations | has("rollbackCertifiedSources") | not)' "$root/target-release.json" >/dev/null
 rp_validate_release_manifest "$root/target-release.json"
 service_images_match() {
   local phase="$1" role expected observed
