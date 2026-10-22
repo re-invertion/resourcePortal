@@ -4,7 +4,10 @@
 # built API/Web/Postgres release-candidate images, then inject a health failure.
 # This proves the previous images, source RP/ZITADEL database snapshots,
 # source Prisma schema and persisted data are ACTUALLY restored after failure.
-set -euo pipefail
+set -Eeuo pipefail
+# CI must not silently fail when a fail-closed rollback proof guard trips.
+# Print only line/source/exit code, never command arguments or credentials.
+trap 'rc=$?; printf "Rollback proof failed: source=%s line=%s exit=%s\n" "${source_version:-unknown}" "$LINENO" "$rc" >&2' ERR
 
 source_version="${1:-}"
 [[ "$source_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -159,7 +162,7 @@ docker exec "$db_container" psql -U resource_portal -d resource_portal -v ON_ERR
       GRANT SELECT ON public."Tenant" TO rollback_rp_reader;' >/dev/null
 rp_source_table_owner="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
   "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.\"Tenant\"'::regclass")"
-[[ -n "$rp_source_table_owner" ]] || exit 1
+[[ -n "$rp_source_table_owner" ]] || { echo "Rollback proof failed: published source Tenant table owner unavailable" >&2; exit 1; }
 
 
 # The previous Prisma client creates real persistent tenant/user sentinels.
