@@ -114,6 +114,63 @@ describe("tenant IDP requirement is enforced on every tenant API request (#238)"
     await expect(nativeOnlyGuard.canActivate(f.context)).resolves.toBe(true);
     expect(f.prisma.identityProvider.findFirst).not.toHaveBeenCalled();
   });
+  it("rejects tenant IdP provenance when the tenant disables incoming tenant providers", async () => {
+    const f = fixture("zitadel-tenant-idp");
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: false,
+      allowPlatformLogin: true,
+      allowTenantIdentityProviders: false,
+    });
+    f.prisma.identityProvider.findFirst.mockResolvedValue(null);
+    await expect(f.guard.canActivate(f.context)).rejects.toThrow(
+      "Tenant identity provider login is disabled",
+    );
+    expect(f.prisma.identityProvider.findFirst).toHaveBeenCalledWith({
+      where: {
+        scope: "Platform", tenantId: null, enabled: true,
+        zitadelIdentityProviderId: "zitadel-tenant-idp",
+      },
+      select: { id: true },
+    });
+  });
+  it("permits a verified platform provider while tenant IdPs are disabled", async () => {
+    const f = fixture("zitadel-platform-idp");
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: false,
+      allowPlatformLogin: true,
+      allowTenantIdentityProviders: false,
+    });
+    await expect(f.guard.canActivate(f.context)).resolves.toBe(true);
+    expect(f.prisma.identityProvider.findFirst).toHaveBeenCalledWith({
+      where: {
+        scope: "Platform", tenantId: null, enabled: true,
+        zitadelIdentityProviderId: "zitadel-platform-idp",
+      },
+      select: { id: true },
+    });
+  });
+  it("permits native platform login when tenant IdPs are disabled but platform login is allowed", async () => {
+    const f = fixture(null);
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: false,
+      allowPlatformLogin: true,
+      allowTenantIdentityProviders: false,
+    });
+    await expect(f.guard.canActivate(f.context)).resolves.toBe(true);
+    expect(f.prisma.identityProvider.findFirst).not.toHaveBeenCalled();
+  });
+  it("fails closed for contradictory provider policy flags", async () => {
+    const f = fixture("zitadel-tenant-idp");
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: true,
+      allowPlatformLogin: false,
+      allowTenantIdentityProviders: false,
+    });
+    await expect(f.guard.canActivate(f.context)).rejects.toThrow(
+      "Tenant identity provider login is disabled",
+    );
+    expect(f.prisma.identityProvider.findFirst).not.toHaveBeenCalled();
+  });
   it("remains compatible with tenants that do not require their own provider", async () => {
     const f = fixture();
     f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
