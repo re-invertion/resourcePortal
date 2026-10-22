@@ -196,6 +196,7 @@ const classifiers = [
   // Explicit coverage for the tenant usability patch: new files must not
   // silently bypass fast-fix validation on non-milestone releases.
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing\.service|tenant-estimate-rates\.spec)\.ts$/, ["billing-correctness"]],
+  [/^packages\/resourceportal-api\/src\/billing\/billing-voucher-codes\.spec\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-web\/src\/(?:App\.tsx|components\/billing-usage-charts\.tsx)$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/lib\/(?:billing-display|compute-estimate|role-capabilities)(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/(?:applications|tenant-dashboard|tenant-access-pages|tenant-branding|tenant-operation-fixes|domain-assignment|network-status-display)(?:\.test)?\.tsx?$/, ["tenant-ux-patch"]],
