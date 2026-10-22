@@ -624,7 +624,7 @@ rp_upgrade_reconcile_failed_rollback() {
   rp_swarm_stack_deploy_retry "$dir/previous-stack.yml" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   # Older signed Compose snapshots may omit privileged agent capabilities;
   # restore only the known RP system-agent requirements before readiness.
-  rp_ensure_control_plane_capabilities "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
+  rp_ensure_rollback_agent_capabilities "$dir/previous-stack.yml" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   rp_wait_control_plane_converged "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300 || return 1
   RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
@@ -801,7 +801,7 @@ rp_upgrade_restore_after_failure() {
   # in-flight service update from the failed rollout. Reapply the immutable
   # previous compose spec, never skip checks or accept an arbitrary error.
   if ! rp_swarm_stack_deploy_retry "$rollback_stack" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" ||
-     ! rp_ensure_control_plane_capabilities "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
+     ! rp_ensure_rollback_agent_capabilities "$rollback_stack" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
     rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     printf "Automatic rollback failed: previous stack or privileged agents could not be restored.\n" >&2
     return 1
