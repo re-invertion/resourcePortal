@@ -295,6 +295,19 @@ rp_ensure_swarm_service_capabilities() {
   done
 }
 
+# Restore capabilities only for agents declared by the verified previous
+# stack. A declared but missing Swarm service still fails closed.
+rp_ensure_rollback_agent_capabilities() {
+  local previous_stack="$1" stack_name="$2"
+  [[ -f "$previous_stack" && ! -L "$previous_stack" ]] || return 1
+  if grep -Eq '^  app-lan-router:' "$previous_stack"; then
+    rp_ensure_swarm_service_capabilities "${stack_name}_app-lan-router" NET_ADMIN SYS_ADMIN SYS_PTRACE || return 1
+  fi
+  if grep -Eq '^  egress-guard:' "$previous_stack"; then
+    rp_ensure_swarm_service_capabilities "${stack_name}_egress-guard" NET_ADMIN NET_RAW || return 1
+  fi
+}
+
 rp_ensure_control_plane_capabilities() {
   local stack_name="$1"
   # The worker can be running the upgrade itself. Never restart it as a
