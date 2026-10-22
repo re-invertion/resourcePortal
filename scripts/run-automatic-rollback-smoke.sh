@@ -482,6 +482,59 @@ docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
   })().then(()=>p.$disconnect(),e=>{console.error(e);process.exitCode=1;p.$disconnect()});
 '
 
+# Regression for the real October 2026 production incident. Reconstruct the
+# previous v0.2.92 -> v0.2.93 rollback-failed journal with no DB snapshot,
+# based ONLY on a downloaded and Sigstore-verified published target manifest.
+# Run on CI's disposable Swarm, never on the production checkpoint.
+if [[ "$source_version" == "0.2.92" ]]; then
+  prior_target="$root/failed-target-v0.2.93.json"
+  prior_bundle="$root/failed-target-v0.2.93.bundle.json"
+  curl --fail --silent --show-error --location --proto '=https' \
+    "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.93/resourceportal-release-manifest.json" \
+    -o "$prior_target"
+  curl --fail --silent --show-error --location --proto '=https' \
+    "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.93/resourceportal-release-manifest.bundle.json" \
+    -o "$prior_bundle"
+  GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh attestation verify "$prior_target" \
+    --bundle "$prior_bundle" --repo re-invertion/resourcePortal \
+    --signer-workflow re-invertion/resourcePortal/.github/workflows/release.yml \
+    --source-ref refs/heads/main >/dev/null
+  [[ "$(jq -er .version "$prior_target")" == "0.2.93" ]] || exit 1
+  [[ "$(jq -er .migrations.rollbackPolicy "$prior_target")" == "image-only" ]] || exit 1
+  # Preserve the source manifest, stack and installer config as they existed
+  # before the failed target deployment, reproducing the retained journal.
+  cp "$root/previous-release.json" "$RP_UPGRADE_STATE_DIR/previous-release.json"
+  cp "$root/previous-stack.yml" "$RP_UPGRADE_STATE_DIR/previous-stack.yml"
+  cp "$root/previous-stack.yml" "$RP_UPGRADE_STATE_DIR/previous-installed-stack.yml"
+  cp "$RP_UPGRADE_INSTALLER_CONFIG_FILE" "$RP_UPGRADE_STATE_DIR/previous-installer.conf"
+  prior_stack_sha="$(sha256sum "$RP_UPGRADE_STATE_DIR/previous-stack.yml" | cut -d' ' -f1)"
+  prior_target_sha="$(sha256sum "$prior_target" | cut -d' ' -f1)"
+  # Exact targetManifestSha256 found in the retained production checkpoint.
+  # This also detects accidental replacement of the supposedly immutable v0.2.93 asset.
+  [[ "$prior_target_sha" == "a1b8b73b7b6e3c7841f7806d5ecb89d2667553062f088daf979575a67fc019a8" ]] || {
+    echo "Published v0.2.93 manifest no longer matches retained production checkpoint" >&2
+    exit 1
+  }
+  jq -n --arg stackSha "$prior_stack_sha" --arg targetSha "$prior_target_sha" '
+    {phase:"rollback-failed",sourceVersion:"0.2.92",targetVersion:"0.2.93",
+     previousStackSha256:$stackSha,targetManifestSha256:$targetSha,
+     configExists:true,manifestExists:true,runtimeStage:"resourceportal-migrations-started",
+     lastStep:"migration/deployment health",errorCode:"UpgradeStepFailed"}
+  ' > "$RP_UPGRADE_STATE_DIR/state.json"
+  # Keep real Swarm service checks. The isolated smoke stack deliberately
+  # has only api/web/postgres, so map production-wide convergence to those
+  # actual healthy services, never to an unconditional success.
+  rp_wait_control_plane_converged() { wait_services previous; }
+  # The signed v0.2.93 manifest was verified above. No unsigned fixture can
+  # satisfy this checkpoint's target hash because its raw bytes are compared.
+  rp_upgrade_checkpoint_prepare "$root/target-release.json" "$root/previous-stack.yml" "$source_version"
+  [[ "$(jq -er .phase "$RP_UPGRADE_STATE_DIR/state.json")" == "prepared" ]] || exit 1
+  [[ "$(jq -er .phase "$RP_UPGRADE_STATE_DIR/previous-failed-upgrade-recovered.json")" == "rollback-failed" ]] || exit 1
+  [[ "$(jq -er .targetManifestSha256 "$RP_UPGRADE_STATE_DIR/previous-failed-upgrade-recovered.json")" == "$prior_target_sha" ]] || exit 1
+  rp_upgrade_checkpoint_phase completed "verified regression checkpoint recovery"
+  echo "PASS: exact v0.2.92 -> v0.2.93 signed image-only rollback-failed checkpoint safely recovered on real Swarm."
+fi
+
 # Only after every real test passes may a separate policy step consider proof
 # bound to the exact SHA/version. Merely writing this file is never accepted
 # without the current job having exited successfully.

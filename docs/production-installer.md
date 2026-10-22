@@ -229,6 +229,30 @@ requires explicit integration evidence of a real upgrade-and-restore run;
 an SQL allowlist or syntactic migration check **does not** constitute proof.
 Unverified migrations and milestone releases default to `none`.
 
+New releases may carry a signed `migrations.rollbackCertifiedSources` array.
+Each source entry is bound to the exact target Git commit and GitHub Actions
+run and records the results of the **real published-source-image, RP and
+ZITADEL database snapshot, injected-failure and restore test** for that
+specific source version. Upgrade compatibility (`supportedFromVersions`)
+**never implies** automatic rollback compatibility; the installer selects
+one certified entry matching the installed source version or refuses the
+upgrade before changing the stack. The selected entry's `tested` policy
+causes RP and ZITADEL database snapshots to be taken for that source; an
+`image-only` entry is generated only after verifying no Prisma/migration
+changes over the entire source-to-target Git range. Older manifests retain
+single-source semantics. Missing, duplicate or malformed certificates fail
+closed and the signed manifest and Sigstore provenance remain mandatory.
+
+The CI release gate certifies the immediately preceding release and the
+v0.2.92/v0.2.93 incident-recovery source versions separately on disposable
+Docker Swarm. The v0.2.92 path additionally reproduces the retained
+`rollback-failed` checkpoint for the signed v0.2.93 manifest, checking the
+exact published SHA-256 and replaying controlled source-stack recovery.
+A release cannot claim that an earlier source is rollback-safe unless the
+same real test and certification gate covers that source. Additional legacy
+sources require extending the release test matrix, not relaxing preflight or
+changing a signed manifest after publication.
+
 With `none`, a failed upgrade remains stopped for manual inspection rather
 than deploying old binaries against a database that may have migrated. An
 `image-only` update may roll back the stack and manifest without changing

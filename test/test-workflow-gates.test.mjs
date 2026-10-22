@@ -102,7 +102,13 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.match(prerelease.run,/--verified-evidence-file/);
   assert.match(prepublish.run,/--verified-evidence-file/);
   assert.match(premergeSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
-  assert.match(prepublishSmoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence\.json/);
+  // Each supported rollback source must produce fresh CI evidence; the
+  // previous-source compatibility file is retained for older consumers.
+  assert.match(prepublishSmoke.run,/RP_ROLLBACK_EVIDENCE_OUTPUT="\$source_file"/);
+  assert.match(prepublishSmoke.run,/rollback-source-evidence/);
+  assert.match(prepublishSmoke.run,/rp-rollback-evidence\.json/);
+  assert.match(prepublishSmoke.run,/0\.2\.92/);
+  assert.match(publish.find(s=>s.name?.startsWith('Create release manifest')).run,/rollbackCertifiedSources/);
   for (const smoke of [premergeSmoke,prepublishSmoke]){
     assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
   }

@@ -9,9 +9,33 @@ type GithubRelease = {
   assets?: Array<{ name?: string; browser_download_url?: string }>;
 };
 
+type RollbackCertificate = {
+  sourceVersion?: string;
+  policy?: string;
+  reason?: string;
+  targetCommit?: string;
+  workflowRunId?: number;
+  kind?: string;
+  candidateZitadelImage?: string;
+  sourceZitadelImage?: string;
+  actualDatabaseMigration?: boolean;
+  previousImagesRestored?: boolean;
+  injectedHealthFailure?: boolean;
+  databaseSnapshotVerified?: boolean;
+  databaseSnapshotRestored?: boolean;
+  restoredSourceSchema?: boolean;
+  previousApiReadWriteAfterRollback?: boolean;
+  previousApiRuntimeReadyAfterRollback?: boolean;
+  zitadelDatabaseRestored?: boolean;
+  zitadelSourceRuntimeReadyAfterRollback?: boolean;
+  zitadelSourceEventstoreVerified?: boolean;
+  candidateZitadelRuntimeReadyBeforeRollback?: boolean;
+};
 type ReleaseManifest = {
   version?: string;
+  images?: { zitadel?: string };
   migrations?: {
+    rollbackCertifiedSources?: RollbackCertificate[];
     rollbackPolicy?: string;
     rollbackAssessment?: { reason?: string; sourceVersion?: string; targetCommit?: string };
     rollbackEvidence?: { kind?: string; sourceVersion?: string; workflowRunId?: number };
@@ -42,6 +66,38 @@ export function classifyReleaseRollback(
     return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "policy-disallows-rollback" };
   }
   const assessment = manifest.migrations?.rollbackAssessment;
+  const certificates = manifest.migrations?.rollbackCertifiedSources;
+  if (certificates !== undefined) {
+    if (!Array.isArray(certificates) || certificates.length === 0 ||
+        !assessment || !/^[a-f0-9]{40}$/.test(assessment.targetCommit ?? "") ||
+        new Set(certificates.map((certificate) => certificate.sourceVersion)).size !== certificates.length) {
+      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "manifest-invalid" };
+    }
+    const certificate = certificates.find((item) => item.sourceVersion === currentVersion);
+    if (!certificate) {
+      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified" };
+    }
+    const requiredProofFlags: (keyof RollbackCertificate)[] = [
+      "actualDatabaseMigration", "previousImagesRestored", "injectedHealthFailure", "databaseSnapshotVerified",
+      "databaseSnapshotRestored", "restoredSourceSchema", "previousApiReadWriteAfterRollback",
+      "previousApiRuntimeReadyAfterRollback", "zitadelDatabaseRestored",
+      "zitadelSourceRuntimeReadyAfterRollback", "zitadelSourceEventstoreVerified",
+      "candidateZitadelRuntimeReadyBeforeRollback",
+    ];
+    const verified = certificate.targetCommit === assessment.targetCommit &&
+      certificate.kind === "real-upgrade-and-restore" &&
+      Number.isSafeInteger(certificate.workflowRunId) && (certificate.workflowRunId ?? 0) > 0 &&
+      certificate.candidateZitadelImage === manifest.images?.zitadel &&
+      /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/.test(certificate.sourceZitadelImage ?? "") &&
+      requiredProofFlags.every((key) => certificate[key] === true);
+    if (!verified ||
+        (certificate.policy === "image-only" && certificate.reason !== "no-resourceportal-database-schema-changes") ||
+        (certificate.policy === "tested" && certificate.reason !== "verified-recovery-test") ||
+        !["tested", "image-only"].includes(certificate.policy ?? "")) {
+      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "tested-evidence-missing" };
+    }
+    return { rollbackPolicy: certificate.policy ?? null, automaticRollbackAvailable: true, rollbackReason: "available" };
+  }
   if (assessment && (assessment.sourceVersion !== currentVersion ||
       !/^[a-f0-9]{40}$/.test(assessment.targetCommit ?? ""))) {
     return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified" };

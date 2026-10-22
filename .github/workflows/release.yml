@@ -186,7 +186,8 @@ jobs:
       - name: Validate actual RP release images recover before publishing
         env:
           PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
-          RP_ROLLBACK_EVIDENCE_OUTPUT: ${{ runner.temp }}/rp-rollback-evidence.json
+          VERSION: ${{ steps.version.outputs.version }}
+          VALIDATION_MODE: ${{ steps.release-mode.outputs.mode }}
           RP_ROLLBACK_E2E_ISOLATED: 'true'
           # Keep aligned with the signed published manifest image.
           RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
@@ -196,7 +197,55 @@ jobs:
           docker build -t resourceportal-api-candidate .
           docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
           docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
-          bash scripts/run-automatic-rollback-smoke.sh "${PREVIOUS_TAG#v}"
+          # Certify each source independently with immutable official images.
+          # Keep a bounded recovery window including the incident source 0.2.92.
+          # Unsupported/uncertified sources will fail closed during preflight.
+          mkdir -p "$RUNNER_TEMP/rollback-source-evidence"
+          source_versions=("${PREVIOUS_TAG#v}" "0.2.93" "0.2.92")
+          certified=()
+          for source_version in "${source_versions[@]}"; do
+            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
+            # A source not earlier than the target release cannot be certified.
+            [[ "$(printf '%s\n%s\n' "$source_version" "$VERSION" | sort -V | head -n 1)" == "$source_version" ]] || continue
+            if [[ " ${certified[*]} " == *" $source_version "* ]]; then continue; fi
+            certified+=("$source_version")
+            source_file="$RUNNER_TEMP/rollback-source-evidence/$source_version.json"
+            rm -f "$source_file"
+            RP_ROLLBACK_EVIDENCE_OUTPUT="$source_file" bash scripts/run-automatic-rollback-smoke.sh "$source_version"
+            test -s "$source_file"
+            # Classify *this exact source*, refusing schema changes without
+            # tested source DB restore and expand-only migration proof.
+            policy_json="$(node scripts/release-rollback-policy.mjs \
+              --previous-tag "v$source_version" --head HEAD --mode "$VALIDATION_MODE" \
+              --verified-evidence-file "$source_file" --require-automatic)"
+            jq -e --arg src "$source_version" --arg sha "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID" '
+              .sourceVersion == $src and .targetCommit == $sha and
+              .workflowRunId == $run and .kind == "real-upgrade-and-restore" and
+              .actualDatabaseMigration == true and
+              .previousImagesRestored == true and .injectedHealthFailure == true and
+              .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+              .restoredSourceSchema == true and .previousApiReadWriteAfterRollback == true and
+              .previousApiRuntimeReadyAfterRollback == true and
+              .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+              .zitadelSourceEventstoreVerified == true and
+              .candidateZitadelRuntimeReadyBeforeRollback == true and
+              (.candidateZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$")) and
+              (.sourceZitadelImage | test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$"))
+            ' "$source_file"
+            jq -n --slurpfile proof "$source_file" --argjson classification "$policy_json" '
+              $proof[0] + {policy:$classification.policy,reason:$classification.reason}
+            ' > "$RUNNER_TEMP/rollback-source-evidence/$source_version.certified.json"
+          done
+          # Keep original immediately-preceding-source proof for legacy fields.
+          cp "$RUNNER_TEMP/rollback-source-evidence/${PREVIOUS_TAG#v}.json" "$RUNNER_TEMP/rp-rollback-evidence.json"
+          certificate_files=()
+          for source_version in "${certified[@]}"; do
+            certificate_files+=("$RUNNER_TEMP/rollback-source-evidence/$source_version.certified.json")
+          done
+          jq -s '.' "${certificate_files[@]}" > "$RUNNER_TEMP/rp-rollback-certifications.json"
+          jq -e --arg source "0.2.92" '
+            any(.[]; .sourceVersion == $source)
+          ' "$RUNNER_TEMP/rp-rollback-certifications.json"
 
       - name: Require verified automatic rollback before publishing
         env:
@@ -308,7 +357,9 @@ jobs:
             --arg rollback_target_commit "$ROLLBACK_TARGET_COMMIT" \
             --argjson rollback_run_id "$GITHUB_RUN_ID" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
+            --slurpfile rollback_certificates "$RUNNER_TEMP/rp-rollback-certifications.json" \
             '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
+             | .migrations.rollbackCertifiedSources=$rollback_certificates[0]
              | if $rollback_policy == "tested" then
                  .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version,databaseSnapshotRestored:true,restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,candidateZitadelImage:$zitadel}
                else . end' \

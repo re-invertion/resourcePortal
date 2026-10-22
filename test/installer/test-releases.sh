@@ -463,6 +463,63 @@ upgrade_policy_blocks_cross_version_automatic_rollback() (
 )
 status 0 'assessment restricts automatic rollback to tested source version' upgrade_policy_blocks_cross_version_automatic_rollback
 
+# Verified multi-source manifest: the sourceVersion claim of the legacy
+# assessment does NOT authorize 0.2.92; only this exact signed source-specific
+# certificate may do so. The older source must still pass the real smoke CI.
+multi_source="$(mktemp /tmp/rp-certified-sources.XXXXXX.json)"
+trap 'rm -f "$multi_source"' EXIT
+jq '
+  .migrations.supportedFromVersions=["0.2.92","0.2.94"] |
+  .migrations.rollbackPolicy="image-only" |
+  .migrations.rollbackAssessment={reason:"no-resourceportal-database-schema-changes",sourceVersion:"0.2.94",targetCommit:("a"*40)} |
+  .migrations.rollbackCertifiedSources=([
+    "0.2.92","0.2.94" | {
+      sourceVersion:.,policy:"image-only",reason:"no-resourceportal-database-schema-changes",
+      targetCommit:("a"*40),workflowRunId:100,kind:"real-upgrade-and-restore",
+      actualDatabaseMigration:true,previousImagesRestored:true,injectedHealthFailure:true,
+      databaseSnapshotVerified:true,databaseSnapshotRestored:true,
+      restoredSourceSchema:true,previousApiReadWriteAfterRollback:true,
+      previousApiRuntimeReadyAfterRollback:true,zitadelDatabaseRestored:true,
+      zitadelSourceRuntimeReadyAfterRollback:true,
+      zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:"placeholder",sourceZitadelImage:"placeholder"
+    }
+  ])
+' "$manifest" > "$multi_source"
+# jq's inner object context must use the outer image ref; use this
+# normalization to make the fixture explicit without weakening validation.
+jq --arg zitadel "$(jq -er .images.zitadel "$manifest")" '
+  .migrations.rollbackCertifiedSources |= map(.candidateZitadelImage=$zitadel | .sourceZitadelImage=$zitadel)
+' "$multi_source" > "$multi_source.tmp" && mv "$multi_source.tmp" "$multi_source"
+status 0 'verified multi-source release manifest accepted' rp_validate_release_manifest "$multi_source"
+status 0 '0.2.92 certified source can roll back' env RP_UPGRADE_SOURCE_VERSION=0.2.92 bash -c '
+  source "$1/scripts/installer/common.sh"
+  source "$1/scripts/installer/releases.sh"
+  source "$1/scripts/installer/upgrade.sh"
+  rp_upgrade_rollback_allowed "$2"
+' _ "$repo_root" "$multi_source"
+status 0 'certified source version uses image-only policy' bash -c '
+  source "$1/scripts/installer/common.sh"
+  source "$1/scripts/installer/releases.sh"
+  source "$1/scripts/installer/upgrade.sh"
+  RP_UPGRADE_SOURCE_VERSION=0.2.92
+  [[ "$(rp_upgrade_source_rollback_policy "$2")" == image-only ]]
+' _ "$repo_root" "$multi_source"
+status 1 'uncertified 0.2.93 is rejected despite broad upgrade support' env RP_UPGRADE_SOURCE_VERSION=0.2.93 bash -c '
+  source "$1/scripts/installer/common.sh"
+  source "$1/scripts/installer/releases.sh"
+  source "$1/scripts/installer/upgrade.sh"
+  rp_upgrade_rollback_allowed "$2"
+' _ "$repo_root" "$multi_source"
+tampered_cert="$(mktemp /tmp/rp-tampered-cert.XXXXXX.json)"
+jq '.migrations.rollbackCertifiedSources[0].previousImagesRestored=false' "$multi_source" > "$tampered_cert"
+status 1 'unverified real image restore claim fails closed' rp_validate_release_manifest "$tampered_cert"
+jq '.migrations.rollbackCertifiedSources[0].targetCommit=("b"*40)' "$multi_source" > "$tampered_cert"
+status 1 'unbound source certificate commit fails closed' rp_validate_release_manifest "$tampered_cert"
+jq '.migrations.rollbackCertifiedSources += [.migrations.rollbackCertifiedSources[0]]' "$multi_source" > "$tampered_cert"
+status 1 'duplicate source certifications fail closed' rp_validate_release_manifest "$tampered_cert"
+rm -f "$tampered_cert" "$multi_source"
+
 upgrade_policy_rejects_unsupported_tested_claim() (
   local forged
   forged="$(mktemp /tmp/rp-forged-tested.XXXXXX)"
