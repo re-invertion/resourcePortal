@@ -7,12 +7,13 @@ import {
   Optional,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { IdentityProviderScope, MembershipStatus } from "@prisma/client";
+import { MembershipStatus } from "@prisma/client";
 import { FastifyRequest } from "fastify";
 import { isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { PrismaService } from "../prisma/prisma.service";
 import { REQUIRED_PERMISSIONS_KEY } from "./auth.constants";
 import { NativeLoginModeService } from "./native-login-mode.service";
+import { assertTenantProviderPolicy } from "./tenant-provider-policy";
 
 @Injectable()
 export class TenantContextGuard implements CanActivate {
@@ -89,35 +90,17 @@ export class TenantContextGuard implements CanActivate {
       throw new ForbiddenException("Active tenant membership is required");
     }
 
-    // Enforce the tenant policy on EVERY user request, not only during login.
-    // The provider ID must come from a signed OIDC assertion bound to this
-    // specific bearer token/browser session, never from UserIdentity links.
-    const policy = await this.prisma.tenantAuthPolicy.findUnique({
-      where: { tenantId }, select: { requireTenantIdentityProvider: true },
-    });
-    const nativeOnly = policy?.requireTenantIdentityProvider
-      ? this.nativeMode
-        ? await this.nativeMode.isNativeOnly()
-        : this.config?.get<string>("RP_NATIVE_LOGIN_ONLY") === "true"
-      : false;
-    if (policy?.requireTenantIdentityProvider && !nativeOnly) {
-      const authenticatedIdpId = request.user.authenticatedIdpId;
-      if (!authenticatedIdpId) {
-        throw new ForbiddenException("This tenant requires a verified tenant identity provider");
-      }
-      const allowedProvider = await this.prisma.identityProvider.findFirst({
-        where: {
-          scope: IdentityProviderScope.Tenant,
-          tenantId,
-          enabled: true,
-          zitadelIdentityProviderId: authenticatedIdpId,
-        },
-        select: { id: true },
-      });
-      if (!allowedProvider) {
-        throw new ForbiddenException("Login did not use an enabled identity provider for this tenant");
-      }
-    }
+    // Membership does not bypass an incoming IdP requirement. All user
+    // credentials (browser sessions and signed bearer tokens) must carry
+    // verified provider provenance, including allowPlatformLogin=false.
+    await assertTenantProviderPolicy(
+      this.prisma,
+      tenantId,
+      request.user.authenticatedIdpId,
+      () => this.nativeMode
+        ? this.nativeMode.isNativeOnly()
+        : Promise.resolve(this.config?.get<string>("RP_NATIVE_LOGIN_ONLY") === "true"),
+    );
 
     const permissions = [
       ...new Set([
