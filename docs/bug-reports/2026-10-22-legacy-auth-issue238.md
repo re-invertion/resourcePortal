@@ -30,14 +30,29 @@ Enforce both allowPlatformLogin=false and requireTenantIdentityProvider=true
 on tenant HTTP session, signed user bearer and interactive tenant MCP requests
 unless native-only cutover is active. The provider must be enabled, scoped to
 the requested tenant and match verified authentication provenance.
-Anonymous MCP discovery and service-identity authorization remain intact.
-Tests cover denial, tenant provider acceptance, disabled/wrong provider, native
-cutover and MCP.
+
+The additional allowTenantIdentityProviders=false policy must also be enforced
+at the resource boundary. When native/platform login is allowed, a native
+principal or verified enabled platform IdP is permitted, but a tenant IdP from
+any tenant is not. Contradictory configurations (requireTenantIdentityProvider
+plus disallowing tenant IdPs) fail closed. Native-only cutover still permits
+verified native login. Anonymous MCP discovery and service-identity
+authorization remain intact.
+
+Local evidence at HEAD 71953b: 30 focused HTTP/MCP/native authentication
+tests pass, targeted lint and API build pass, and the test catalog passes.
+The security review P1 finding on this flag was addressed and resolved.
 
 ## Destructive retirement decision required from owner
 
 Read-only preflight must establish counts of configured incoming IdPs, linked
 identities, active federated sessions and restrictive tenant policies.
+Platform Admin currently lists zero platform-scoped incoming IdPs, and the
+connected tenant p4 lists zero incoming tenant IdPs and has no restrictive
+incoming policy. Three tenants exist (p4, zuzia, szymonapps); tenant-scoped
+incoming IdP state for the other two, linked external accounts and live
+federated sessions has NOT been certified, so these partial read-only results
+do not authorize a destructive cutover.
 If all counts are zero and native login/recovery are certified, final cutover
 can proceed without deleting user or tenant records. Otherwise the owner must
 choose how users with external-only credentials receive verified native
