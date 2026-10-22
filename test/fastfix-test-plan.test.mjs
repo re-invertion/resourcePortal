@@ -396,3 +396,11 @@ test("Site VPN route agent smoke and capability helper select security regressio
   assert.ok(plan.profiles.includes("installer"));
   assert.ok(plan.profiles.includes("platform-release"));
 });
+
+test("voucher expiry fixture changes require full billing correctness profile", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/billing/billing-voucher-codes.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["billing-correctness"]);
+  assert.equal(plan.vpnSmoke, false);
+});
