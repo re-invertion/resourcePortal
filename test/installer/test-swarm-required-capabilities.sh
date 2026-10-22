@@ -122,14 +122,17 @@ fi
   rp_ensure_rollback_agent_capabilities "$tmp/minimal.yml" teststack
   printf 'version: "3.9"\nservices:\n  app-lan-router: {}\n  egress-guard: {}\n' > "$tmp/agents.yml"
   caps='["CAP_NET_ADMIN","CAP_SYS_ADMIN","CAP_SYS_PTRACE","CAP_NET_RAW"]'
-  inspected=0
+  : > "$tmp/inspects"
   docker() {
     [[ "$1 $2" == 'service inspect' ]] || return 1
-    inspected=$((inspected + 1))
+    printf '%s\n' "$3" >> "$tmp/inspects"
     printf '%s\n' "$caps"
   }
   rp_ensure_rollback_agent_capabilities "$tmp/agents.yml" teststack
-  [[ "$inspected" == 2 ]] || exit 1
+  [[ "$(wc -l < "$tmp/inspects")" -eq 2 ]] || {
+    echo "expected two capability inspections for declared rollback agents" >&2
+    exit 1
+  }
   docker() { return 1; }
   if rp_ensure_rollback_agent_capabilities "$tmp/agents.yml" teststack 2>/dev/null; then
     echo "declared but missing privileged agent was ignored" >&2
