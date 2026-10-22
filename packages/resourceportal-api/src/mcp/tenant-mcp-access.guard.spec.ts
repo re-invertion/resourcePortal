@@ -110,6 +110,37 @@ describe("TenantMcpAccessGuard", () => {
     );
   });
 
+  it("blocks tenant-sourced MCP tokens when tenant providers are disabled", async () => {
+    const f = fixture();
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: false, allowPlatformLogin: true,
+      allowTenantIdentityProviders: false,
+    });
+    f.prisma.identityProvider.findFirst.mockResolvedValue(null);
+    const req = {
+      params: { tenantId: "tenant-id" },
+      headers: { authorization: "Bearer verified-user-token" },
+      user: { id: "user-id", authenticatedIdpId: "zitadel-tenant-idp" },
+    };
+    await expect(f.guard.canActivate(contextFor(req, { header: vi.fn() }))).rejects.toThrow(
+      "Tenant identity provider login is disabled",
+    );
+  });
+  it("keeps native tenant MCP working when tenant IdPs are disabled and platform login allowed", async () => {
+    const f = fixture();
+    f.prisma.tenantAuthPolicy.findUnique.mockResolvedValue({
+      requireTenantIdentityProvider: false, allowPlatformLogin: true,
+      allowTenantIdentityProviders: false,
+    });
+    const req = {
+      params: { tenantId: "tenant-id" },
+      headers: { authorization: "Bearer signed-native-token" },
+      user: { id: "user-id" },
+    };
+    await expect(f.guard.canActivate(contextFor(req, { header: vi.fn() }))).resolves.toBe(true);
+    expect(f.prisma.identityProvider.findFirst).not.toHaveBeenCalled();
+  });
+
   it("continues to allow native MCP login after intentional native-only cutover", async () => {
     const f = fixture();
     f.nativeMode.isNativeOnly.mockResolvedValue(true);
