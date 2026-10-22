@@ -13,16 +13,48 @@ rp_upgrade_rollback_allowed() {
       .migrations.rollbackEvidence.zitadelSourceEventstoreVerified == true and
       .migrations.rollbackEvidence.candidateZitadelRuntimeReadyBeforeRollback == true' "$manifest" >/dev/null || return 1
   fi
-  # New manifests attest compatibility with the immediately preceding
-  # release only. Do not automatically roll back an older source even if the
-  # manifest advertises other supported *upgrade* source versions.
+  # New signed manifests may contain an individually verified rollback source
+  # set. Every entry is certified by a real source-image/DB restore smoke on the
+  # exact release commit. Merely being listed as an *upgrade* source is not proof.
   local assessment_source source_version
+  source_version="${RP_UPGRADE_SOURCE_VERSION:-${RP_CFG_RELEASE_VERSION:-}}"
+  if jq -e '.migrations | has("rollbackCertifiedSources")' "$manifest" >/dev/null; then
+    [[ -n "$source_version" ]] || return 1
+    jq -e --arg src "$source_version" '
+      .migrations.rollbackCertifiedSources
+      | [ .[] | select(.sourceVersion == $src) ]
+      | length == 1
+    ' "$manifest" >/dev/null || return 1
+    local certified_policy
+    certified_policy="$(jq -er --arg src "$source_version" '.migrations.rollbackCertifiedSources[] | select(.sourceVersion == $src) | .policy' "$manifest")" || return 1
+    [[ "$certified_policy" == image-only || "$certified_policy" == tested ]] || return 1
+    if [[ "$certified_policy" == tested ]]; then
+      jq -e --arg src "$source_version" '
+        .migrations.rollbackCertifiedSources[]
+        | select(.sourceVersion == $src)
+        | .databaseSnapshotRestored == true and .restoredSourceSchema == true and
+          .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+          .zitadelSourceEventstoreVerified == true and .candidateZitadelRuntimeReadyBeforeRollback == true
+      ' "$manifest" >/dev/null || return 1
+    fi
+    return 0
+  fi
+  # Legacy signed manifests only cover the immediately preceding version.
   assessment_source="$(jq -r '.migrations.rollbackAssessment.sourceVersion // empty' "$manifest")" || return 1
   if [[ -n "$assessment_source" ]]; then
-    source_version="${RP_UPGRADE_SOURCE_VERSION:-${RP_CFG_RELEASE_VERSION:-}}"
     [[ -n "$source_version" && "$source_version" == "$assessment_source" ]] || return 1
   fi
   return 0
+}
+
+rp_upgrade_source_rollback_policy() {
+  local manifest="$1" source_version="${RP_UPGRADE_SOURCE_VERSION:-${RP_CFG_RELEASE_VERSION:-}}"
+  if jq -e '.migrations | has("rollbackCertifiedSources")' "$manifest" >/dev/null; then
+    [[ -n "$source_version" ]] || return 1
+    jq -er --arg src "$source_version" '.migrations.rollbackCertifiedSources[] | select(.sourceVersion == $src) | .policy' "$manifest"
+  else
+    rp_manifest_value "$manifest" '.migrations.rollbackPolicy'
+  fi
 }
 
 # For schema-changing releases, the *real installer* takes permission-restricted
@@ -48,7 +80,7 @@ rp_upgrade_database_task() {
 
 rp_upgrade_database_snapshot_prepare() {
   local dir="${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" manifest="$1" policy backup role id tmp
-  policy="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
+  policy="$(rp_upgrade_source_rollback_policy "$manifest")" || return 1
   [[ "$policy" == tested ]] || return 0
   [[ -n "$dir" && -r "$dir/state.json" && ! -L "$dir" ]] || return 1
   # Unique per-attempt path: a previous completed upgrade may still have its
@@ -766,7 +798,7 @@ rp_upgrade_restore_after_failure() {
   # rollback after database mutations began. Before the postgres stage it is
   # safe to restore only the stack, because no database has been changed yet.
   local claim snapshot_stage
-  claim="$(rp_manifest_value "$manifest" '.migrations.rollbackPolicy')" || return 1
+  claim="$(rp_upgrade_source_rollback_policy "$manifest")" || return 1
   if [[ "$claim" == tested ]]; then
     snapshot_stage="$(jq -er '.databaseSnapshotState // "none"' "$RP_UPGRADE_ACTIVE_CHECKPOINT/state.json")" || return 1
     if [[ "$snapshot_stage" == none ]]; then

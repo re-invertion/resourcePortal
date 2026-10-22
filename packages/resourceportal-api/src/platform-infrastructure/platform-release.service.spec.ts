@@ -118,6 +118,40 @@ describe("release rollback safety classification", () => {
       automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified",
     });
   });
+  it("reports rollback availability for a separately certified 0.2.92 source", () => {
+    const zitadel = "ghcr.io/zitadel/zitadel@sha256:" + "d".repeat(64);
+    const certificate = {
+      sourceVersion: "0.2.92", policy: "image-only",
+      reason: "no-resourceportal-database-schema-changes",
+      targetCommit: hash, workflowRunId: 123, kind: "real-upgrade-and-restore",
+      candidateZitadelImage: zitadel, sourceZitadelImage: zitadel,
+      actualDatabaseMigration: true, previousImagesRestored: true, injectedHealthFailure: true,
+      databaseSnapshotVerified: true, databaseSnapshotRestored: true,
+      restoredSourceSchema: true, previousApiReadWriteAfterRollback: true,
+      previousApiRuntimeReadyAfterRollback: true, zitadelDatabaseRestored: true,
+      zitadelSourceRuntimeReadyAfterRollback: true,
+      zitadelSourceEventstoreVerified: true, candidateZitadelRuntimeReadyBeforeRollback: true,
+    };
+    const certified = {
+      ...manifest, images: { zitadel },
+      migrations: {
+        ...manifest.migrations,
+        rollbackCertifiedSources: [certificate],
+      },
+    };
+    expect(classifyReleaseRollback(certified, "0.2.76", "0.2.92")).toMatchObject({
+      automaticRollbackAvailable: true, rollbackPolicy: "image-only", rollbackReason: "available",
+    });
+    expect(classifyReleaseRollback(certified, "0.2.76", "0.2.93")).toMatchObject({
+      automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified",
+    });
+    const forged = { ...certified, migrations: { ...certified.migrations,
+      rollbackCertifiedSources: [{ ...certificate, previousImagesRestored: false }] } };
+    expect(classifyReleaseRollback(forged, "0.2.76", "0.2.92")).toMatchObject({
+      automaticRollbackAvailable: false, rollbackReason: "tested-evidence-missing",
+    });
+  });
+
   it("disallows unverifiable tested claims and inconsistent manifests", () => {
     expect(classifyReleaseRollback({ ...manifest, migrations: { rollbackPolicy: "tested" } },
       "0.2.76", "0.2.75").rollbackReason).toBe("tested-evidence-missing");

@@ -66,6 +66,37 @@ rp_validate_release_manifest() {
      then .migrations.rollbackAssessment.reason == "no-resourceportal-database-schema-changes"
      else true end)
   ' "$manifest" >/dev/null || return 1
+  # Each rollback source is certified by the signed manifest for the exact
+  # release SHA and the live Docker rollback job; upgrade compatibility alone
+  # cannot authorize rollback.
+  jq -e '
+    . as $root |
+    if ($root.migrations | has("rollbackCertifiedSources")) then
+      ($root.migrations.rollbackCertifiedSources | type == "array" and length > 0) and
+      (([$root.migrations.rollbackCertifiedSources[].sourceVersion] | unique | length) ==
+       ($root.migrations.rollbackCertifiedSources | length)) and
+      ([$root.migrations.rollbackCertifiedSources[] |
+        (.sourceVersion | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+$")) and
+        (.sourceVersion as $src | $root.migrations.supportedFromVersions | index($src) != null) and
+        (.targetCommit == $root.migrations.rollbackAssessment.targetCommit) and
+        (.workflowRunId | type == "number" and . > 0) and
+        (.kind == "real-upgrade-and-restore") and
+        (.actualDatabaseMigration == true and
+         .previousImagesRestored == true and .injectedHealthFailure == true and
+         .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+         .restoredSourceSchema == true and .previousApiReadWriteAfterRollback == true and
+         .previousApiRuntimeReadyAfterRollback == true and
+         .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+         .zitadelSourceEventstoreVerified == true and
+         .candidateZitadelRuntimeReadyBeforeRollback == true) and
+        (.candidateZitadelImage == $root.images.zitadel) and
+        (.sourceZitadelImage | type == "string" and test("^ghcr[.]io/zitadel/zitadel@sha256:[a-f0-9]{64}$")) and
+        (if .policy == "image-only" then .reason == "no-resourceportal-database-schema-changes"
+         elif .policy == "tested" then .reason == "verified-recovery-test"
+         else false end)
+      ] | all)
+    else true end
+  ' "$manifest" >/dev/null || return 1
   for role in api web postgres zitadel traefik; do
     image="$(jq -er --arg role "$role" '.images[$role]' "$manifest")" || return 1
     rp_release_image_ref_valid "$image" || return 1
