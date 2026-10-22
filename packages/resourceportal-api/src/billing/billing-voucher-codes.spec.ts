@@ -38,7 +38,9 @@ describe("BillingService voucher code persistence", () => {
       { encrypt, decrypt } as unknown as EncryptionService,
     );
 
-    const expiresAt = "2026-10-22T20:00:00.000Z";
+    // A fixed date becomes past-due in CI after October 2026.
+    // Use a future instant so this persistence test never depends on calendar time.
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const result = await service.createVoucher(
       { valueCredits: "250", expiresAt },
       actor,
