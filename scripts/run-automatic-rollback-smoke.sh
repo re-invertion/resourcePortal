@@ -67,6 +67,8 @@ GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh attestation verify "$root/previo
   --source-ref refs/heads/main >/dev/null
 source "$repo_root/scripts/installer/releases.sh"
 source "$repo_root/scripts/installer/upgrade.sh"
+# Production upgrades also load Swarm conflict/capability helpers.
+source "$repo_root/scripts/installer/control-plane.sh"
 rp_validate_release_manifest "$root/previous-release.json"
 [[ "$(jq -er .version "$root/previous-release.json")" == "$source_version" ]] || exit 1
 
