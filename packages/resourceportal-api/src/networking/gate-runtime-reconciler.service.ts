@@ -1,3 +1,4 @@
+import { normalizeSwarmCapabilityAdd } from "./swarm-capabilities";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
@@ -317,10 +318,7 @@ export class GateRuntimeReconcilerService {
     } catch {
       throw new Error("Malformed Site VPN gateway capability inspection");
     }
-    if (enabled !== null && !Array.isArray(enabled)) {
-      throw new Error("Malformed Site VPN gateway capability inspection");
-    }
-    const current = Array.isArray(enabled) ? enabled : [];
+    const current = normalizeSwarmCapabilityAdd(enabled);
     const missing = required.filter(cap => !current.includes(cap));
     if (missing.length === 0) return;
     const update = await this.runDocker([
@@ -338,7 +336,8 @@ export class GateRuntimeReconcilerService {
     } catch {
       throw new Error("Malformed Site VPN gateway capability verification");
     }
-    if (!Array.isArray(actual) || !required.every(cap => actual.includes(cap))) {
+    const verified = normalizeSwarmCapabilityAdd(actual);
+    if (!required.every(cap => verified.includes(cap))) {
       throw new Error("Site VPN gateway capabilities were not applied to Swarm service");
     }
   }

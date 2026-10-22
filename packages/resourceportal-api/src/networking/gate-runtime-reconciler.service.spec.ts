@@ -17,7 +17,7 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
     // The test's fake Swarm implements the effective capability inspection.
     if (args[0] === "service" && args[1] === "inspect" &&
         args.at(-1)?.includes("CapabilityAdd")) {
-      return Promise.resolve({ exitCode: 0, stdout: this.capabilityResults.shift() ?? '["NET_ADMIN","NET_RAW"]', stderr: "" });
+      return Promise.resolve({ exitCode: 0, stdout: this.capabilityResults.shift() ?? '["CAP_NET_ADMIN","CAP_NET_RAW"]', stderr: "" });
     }
     return Promise.resolve(
       this.dockerResults.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
@@ -126,6 +126,24 @@ describe("Gate capability reconciliation", () => {
         "rp_gate_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa_gateway"],
       stdin: undefined,
     });
+  });
+  it("treats canonical CAP_ names as already granted without a service restart", async () => {
+    const { service } = fixture([]);
+    service.capabilityResults.push('["CAP_NET_ADMIN","CAP_NET_RAW"]');
+    const invoke = service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).resolves.toBeUndefined();
+    expect(service.dockerCalls.filter(x => x.args[0] === "service" && x.args[1] === "update")).toHaveLength(0);
+  });
+  it("checks canonical CAP_ names after an update and rejects malformed inspect data", async () => {
+    const { service } = fixture([]);
+    service.capabilityResults.push('["CAP_NET_ADMIN"]', '["CAP_NET_ADMIN","CAP_NET_RAW"]');
+    const invoke = service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).resolves.toBeUndefined();
+    expect(service.dockerCalls.some(x => x.args.includes("--cap-add"))).toBe(true);
+    const malformed = fixture([]);
+    malformed.service.capabilityResults.push('{"CAP_NET_ADMIN":true}');
+    const another = malformed.service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
+    await expect(another.ensureGatewayCapabilities(readyGate.id)).rejects.toThrow("Malformed");
   });
   it("fails closed if the capability never appears in the active Swarm spec", async () => {
     const { service } = fixture([]);

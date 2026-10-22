@@ -34,6 +34,50 @@ Before the `ingress` stage can obtain ACME certificates, verify that Internet-or
 
 On first run, omitting `--mode` opens the interactive mode chooser. Primary installation asks for missing non-secret settings and collects passwords through password prompts. Where the host state is unambiguous, the installer pre-fills editable defaults instead of requiring manual entry: it derives the primary IPv4 address and cluster CIDR from the default route, reuses that private address for Swarm/data-path/NFS/storage-server defaults, and independently tries to discover the host's public IPv4 over HTTPS for the expected ingress/DNS address. Public-IP discovery validates the response and tries a second provider if the first one is unusable; if no public IPv4 can be discovered, ingress falls back to the detected local advertise address. The proposed ingress value remains editable and later DNS validation is still authoritative. The installer also proposes the single safe blank non-system disk when exactly one candidate exists. The primary release version is not prompted manually: during the release phase the installer queries GitHub Releases and selects the newest stable, non-draft, non-prerelease ResourcePortal release. A valid explicitly configured release remains pinned; if an older persisted value points to a release that no longer exists, the installer falls back to the newest stable release and records the resolved manifest version. On a fresh installation, release compatibility checks enforce the manifest's minimum installer and Docker versions but do not treat the empty `0.0.0` installation state as an upgrade migration source; `migrations.supportedFromVersions` is enforced only when upgrading an already installed ResourcePortal release. Ambiguous or externally defined values such as the public domain, ACME email, administrator email/password and SMTP credentials remain explicit user input. Non-secret replay state is persisted in `/etc/resourceportal/installer.conf`; the current safe configuration is written before the storage-readiness systemd gate is started so resume/readiness works during the initial storage phase, then refreshed again by the final persist phase. Phase checkpoints are stored under `/var/lib/resourceportal/installer-state`.
 
+## UI upgrade recovery after a failed Swarm rollback
+
+A platform update issued from the ResourcePortal UI uses a signed target-release
+installer in an isolated updater container. An upgrade that reaches
+`migration/deployment health` may have successfully restored both source
+databases yet fail to redeploy the previous Swarm stack because Docker returns
+`update out of sequence`. This is a **transient service-spec conflict**, not
+permission to skip recovery.
+
+The installer now retries *only* this exact Swarm conflict for a bounded number
+of attempts (default five), including when redeploying the previous stack.
+Docker normalizes service `CapabilityAdd` entries to `CAP_*`; the installer and
+Gate reconciler compare canonical and legacy names before deciding whether a
+capability must be applied. The updater never treats a failed capability check
+as a successful deployment.
+
+For an upgrade journal left in `rollback-failed`, the **next UI-requested
+upgrade** can verify and complete the previous rollback before doing any new
+database mutations. It requires an untampered previous stack, matching source
+version and previous release manifest, *plus* one of:
+
+- a recorded `databaseSnapshotState: restored` for both source databases; or
+- `databaseSnapshotState: none` with a freshly downloaded, signature-verified
+  original *failed target* manifest whose exact SHA-256 matches the checkpoint
+  and whose image-only rollback is certified from the recorded source version.
+
+A database state `verified` but not `restored`, missing source evidence,
+untrusted release manifest, mismatched checkpoint or unhealthy restored services
+**must stop the upgrade**, preserving the checkpoint for controlled recovery.
+Verified recovery archives the previous failed journal under
+`previous-failed-upgrade-recovered.json`, restores the previous installed
+manifest/config/stack, and only then creates the new update checkpoint. Do not
+delete the checkpoint to bypass these guards.
+
+For read-only diagnosis on the RP host:
+
+```bash
+sudo jq '{phase,sourceVersion,targetVersion,databaseSnapshotState,runtimeStage,lastStep,errorCode}'   /var/lib/resourceportal/installer-state/upgrade/state.json
+sudo docker ps -a --filter label=resourceportal.updater=true   --format 'table {{.Names}}\t{{.Status}}'
+```
+
+Do not execute a manual Docker stack deploy in place of the UI upgrade. A
+failed update retains its target installer and supervisor logs for inspection.
+
 ## Primary installation
 
 Primary is the first Swarm manager and the single authoritative storage host in v1. The installer performs preflight, package preparation, Docker validation/install, LocalFilesystem preparation, UFW, Swarm initialization, NFS-Ganesha, release selection, Swarm Secrets, bootstrap stack, migrations, ZITADEL bootstrap, optional SMTP validation, DNS/ACME gating, final control-plane deployment and enrollment listener startup.

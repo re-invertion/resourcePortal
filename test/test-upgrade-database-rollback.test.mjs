@@ -29,7 +29,8 @@ test("database snapshots are atomically journaled and both database restores are
   assert.match(upgrade, /ALTER DATABASE/);
   assert.match(upgrade, /RP_RESTORE_QUARANTINE/);
   const rollback = upgrade.slice(upgrade.indexOf("rp_upgrade_restore_after_failure()"));
-  assert(rollback.indexOf("rp_upgrade_database_restore") < rollback.indexOf('docker stack deploy --compose-file'));
+  assert(rollback.indexOf("rp_upgrade_database_restore") < rollback.indexOf('rp_swarm_stack_deploy_retry "$rollback_stack"'));
+  assert.match(rollback, /rp_swarm_stack_deploy_retry/);
   assert.match(rollback, /rp_upgrade_checkpoint_phase rollback-failed/);
 });
 

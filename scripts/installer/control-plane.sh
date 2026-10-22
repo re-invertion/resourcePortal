@@ -200,36 +200,99 @@ rp_wait_control_plane_converged() {
   return 1
 }
 
+# Swarm service specs are guarded by optimistic version checks. A stack
+# redeploy/rollback can overlap a previous asynchronous Docker service update.
+# Retry ONLY this transient conflict. Every other failure remains terminal.
+rp_swarm_retry_on_conflict() {
+  local label="$1" attempt=1 max_attempts="${RP_SWARM_CONFLICT_MAX_ATTEMPTS:-5}"
+  local output_file status
+  shift
+  [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]] && (( max_attempts <= 10 )) || {
+    printf 'Invalid Swarm conflict retry limit.\n' >&2
+    return 1
+  }
+  output_file="$(mktemp /tmp/resourceportal-swarm-conflict.XXXXXX)" || return 1
+  while :; do
+    if "$@" >"$output_file" 2>&1; then
+      cat "$output_file"
+      rm -f "$output_file"
+      return 0
+    else
+      status=$?
+    fi
+    cat "$output_file" >&2
+    if (( attempt >= max_attempts )) || ! grep -qi 'update out of sequence' "$output_file"; then
+      rm -f "$output_file"
+      return "$status"
+    fi
+    printf 'Transient Swarm update conflict (%s); retry %s/%s.\n' "$label" "$((attempt + 1))" "$max_attempts" >&2
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+}
+
+rp_swarm_stack_deploy_retry() {
+  local stack_file="$1" stack_name="$2"
+  rp_swarm_retry_on_conflict "stack $stack_name" \
+    docker stack deploy --compose-file "$stack_file" --with-registry-auth --prune "$stack_name"
+}
+
+rp_swarm_retry_update() {
+  local service="$1"
+  shift
+  rp_swarm_retry_on_conflict "service $service" \
+    docker service update --detach=false "$@" "$service"
+}
+
 # docker stack deploy can discard Compose cap_add for Swarm services.
 # Enforce and verify the minimum kernel capabilities on the effective task spec.
 # This is idempotent, supports redeploy/rollback, and fails closed.
+# Docker canonicalizes service CapabilityAdd entries as CAP_NET_ADMIN etc.
+# Use exact parsed values, not substring matches against the original CLI args.
+rp_swarm_capability_spec_valid() {
+  jq -e '. == null or (type == "array" and all(.[]; type == "string"))' \
+    <<<"$1" >/dev/null 2>&1
+}
+
+rp_swarm_capability_present() {
+  local spec_json="$1" capability="${2#CAP_}"
+  jq -e --arg name "$capability" \
+    'type == "array" and any(.[]; type == "string" and (ascii_upcase | sub("^CAP_"; "")) == $name)' \
+    <<<"$spec_json" >/dev/null 2>&1
+}
+
 rp_ensure_swarm_service_capabilities() {
-  local service="$1" actual cap expected
+  local service="$1" actual cap
   shift
   local -a missing=() update_args=()
   actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || {
     printf 'Cannot inspect required Swarm capabilities: %s\n' "$service" >&2
     return 1
   }
+  rp_swarm_capability_spec_valid "$actual" || {
+    printf 'Malformed Swarm capability inspection: %s\n' "$service" >&2
+    return 1
+  }
   for cap in "$@"; do
-    expected="\"$cap\""
-    if [[ "$actual" != *"$expected"* ]]; then
+    if ! rp_swarm_capability_present "$actual" "$cap"; then
       missing+=("$cap")
       update_args+=(--cap-add "$cap")
     fi
   done
   if (( ${#missing[@]} )); then
     printf 'Repairing %s required capabilities: %s\n' "$service" "${missing[*]}"
-    docker service update --detach=false "${update_args[@]}" "$service" || return 1
+    # Docker can reject a concurrent service mutation after stack deploy;
+    # retry only the recognized optimistic-lock conflict.
+    rp_swarm_retry_update "$service" "${update_args[@]}" || return 1
     actual="$(docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.CapabilityAdd}}')" || return 1
-    for cap in "$@"; do
-      expected="\"$cap\""
-      if [[ "$actual" != *"$expected"* ]]; then
-        printf 'Swarm service %s lacks required capability %s after update\n' "$service" "$cap" >&2
-        return 1
-      fi
-    done
+    rp_swarm_capability_spec_valid "$actual" || return 1
   fi
+  for cap in "$@"; do
+    if ! rp_swarm_capability_present "$actual" "$cap"; then
+      printf 'Swarm service %s lacks required capability %s after update\n' "$service" "$cap" >&2
+      return 1
+    fi
+  done
 }
 
 rp_ensure_control_plane_capabilities() {
@@ -272,7 +335,7 @@ rp_deploy_control_plane() {
     rm -f "$stack_file"
     return 1
   fi
-  if ! docker stack deploy --compose-file "$stack_file" --with-registry-auth --prune "$stack_name"; then
+  if ! rp_swarm_stack_deploy_retry "$stack_file" "$stack_name"; then
     rm -f "$stack_file"
     return 1
   fi

@@ -559,6 +559,91 @@ rp_upgrade_checkpoint_restore_file() {
   fi
 }
 
+# A previous attempt may have restored both source databases but failed at
+# the final Swarm stack deploy (e.g. "update out of sequence"). Only a proved
+# source-compatible rollback may be completed during the *next UI-requested*
+# upgrade; never delete a failed journal or replay a database restore.
+rp_upgrade_reconcile_failed_rollback() {
+  local dir="$1" source_version="$2" prior_source prior_target db_state
+  local previous_manifest prior_sha expected_sha actual_sha tmp recovered
+  [[ -r "$dir/state.json" && ! -L "$dir/state.json" &&
+     -r "$dir/previous-stack.yml" && ! -L "$dir/previous-stack.yml" ]] || return 1
+  prior_source="$(jq -er '.sourceVersion' "$dir/state.json")" || return 1
+  prior_target="$(jq -er '.targetVersion' "$dir/state.json")" || return 1
+  [[ "$prior_source" == "$source_version" &&
+     "$prior_target" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    printf 'Cannot resume rollback: checkpoint source differs from installed release.\n' >&2
+    return 1
+  }
+  expected_sha="$(jq -er '.previousStackSha256' "$dir/state.json")" || return 1
+  actual_sha="$(sha256sum "$dir/previous-stack.yml" | cut -d' ' -f1)" || return 1
+  [[ "$expected_sha" == "$actual_sha" ]] || {
+    printf 'Cannot resume rollback: previous stack checkpoint integrity failed.\n' >&2
+    return 1
+  }
+  [[ -r "$dir/previous-release.json" &&
+     ! -L "$dir/previous-release.json" &&
+     "$(jq -er '.version' "$dir/previous-release.json")" == "$source_version" ]] || {
+    printf 'Cannot resume rollback: source release manifest evidence missing.\n' >&2
+    return 1
+  }
+  db_state="$(jq -r '.databaseSnapshotState // "none"' "$dir/state.json")" || return 1
+  case "$db_state" in
+    restored)
+      # Restored marker is only written AFTER both DB swaps committed.
+      ;;
+    none)
+      # Image-only releases have signed CI evidence of schema compatibility.
+      # Reverify the exact failed target: the current target manifest cannot
+      # be substituted as proof for a *previous* failed attempt.
+      previous_manifest="$(mktemp /tmp/resourceportal-prior-release.XXXXXX)" || return 1
+      if ! rp_download_release_manifest "$prior_target" "$previous_manifest" ||
+         ! rp_verify_release_manifest_attestation "$previous_manifest"; then
+        rm -f "$previous_manifest"
+        printf 'Cannot resume rollback: prior signed release evidence invalid.\n' >&2
+        return 1
+      fi
+      expected_sha="$(jq -er '.targetManifestSha256' "$dir/state.json")" || return 1
+      actual_sha="$(sha256sum "$previous_manifest" | cut -d' ' -f1)" || return 1
+      if [[ "$expected_sha" != "$actual_sha" ||
+            "$(jq -er '.migrations.rollbackPolicy' "$previous_manifest")" != image-only ]] ||
+         ! RP_UPGRADE_SOURCE_VERSION="$source_version" rp_upgrade_rollback_allowed "$previous_manifest"; then
+        rm -f "$previous_manifest"
+        printf 'Cannot resume rollback: previous target was not certified image-only.\n' >&2
+        return 1
+      fi
+      rm -f "$previous_manifest"
+      ;;
+    *)
+      printf 'Cannot resume rollback: source database restore not verified (%s).\n' "$db_state" >&2
+      return 1
+      ;;
+  esac
+
+  printf 'Verifying recovery of the previously failed ResourcePortal rollback...\n' >&2
+  rp_swarm_stack_deploy_retry "$dir/previous-stack.yml" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
+  # Older signed Compose snapshots may omit privileged agent capabilities;
+  # restore only the known RP system-agent requirements before readiness.
+  rp_ensure_control_plane_capabilities "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
+  rp_wait_control_plane_converged "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
+  rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300 || return 1
+  RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
+  rp_upgrade_restore_manifest_checkpoint || return 1
+  # Keep the previous failed journal as evidence before starting a new
+  # checkpoint. The enclosing prepare() still holds the exclusive flock.
+  recovered="$dir/previous-failed-upgrade-recovered.json"
+  [[ ! -L "$recovered" ]] || return 1
+  cp -- "$dir/state.json" "$recovered" || return 1
+  chmod 0600 "$recovered" || return 1
+  tmp="$(mktemp "$dir/.state.XXXXXX")" || return 1
+  if ! jq '.phase="rolled-back" | .lastStep="verified UI-triggered recovery" | .errorCode=null' "$dir/state.json" > "$tmp" ||
+     ! chmod 0600 "$tmp" || ! mv -f "$tmp" "$dir/state.json"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  printf 'Previous rollback verified; proceeding with requested release update.\n' >&2
+}
+
 rp_upgrade_checkpoint_prepare() {
   local manifest="$1" previous_stack="$2" source_version="$3"
   local dir="${RP_UPGRADE_STATE_DIR:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/upgrade}" tmp prior
@@ -581,6 +666,12 @@ rp_upgrade_checkpoint_prepare() {
     prior="$(jq -r '.phase // "unknown"' "$dir/state.json" 2>/dev/null || printf 'invalid')"
     case "$prior" in
       completed|rolled-back) ;;
+      rollback-failed)
+        if ! rp_upgrade_reconcile_failed_rollback "$dir" "$source_version"; then
+          printf 'Previous failed rollback is not safely recoverable; checkpoint retained.\n' >&2
+          return 1
+        fi
+        ;;
       *)
         printf 'Unresolved previous upgrade checkpoint (%s). Manual recovery required before retry.\n' "$prior" >&2
         return 1
@@ -706,9 +797,13 @@ rp_upgrade_restore_after_failure() {
     rollback_stack="$RP_UPGRADE_ACTIVE_CHECKPOINT/previous-stack.yml"
   fi
   printf "Automatically restoring the previous ResourcePortal stack...\n" >&2
-  if ! docker stack deploy --compose-file "$rollback_stack" --with-registry-auth --prune "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
+  # Rollback must tolerate Swarm's optimistic-lock conflict with an
+  # in-flight service update from the failed rollout. Reapply the immutable
+  # previous compose spec, never skip checks or accept an arbitrary error.
+  if ! rp_swarm_stack_deploy_retry "$rollback_stack" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" ||
+     ! rp_ensure_control_plane_capabilities "${RP_CFG_STACK_NAME:-resourceportal-control-plane}"; then
     rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
-    printf "Automatic rollback failed: previous stack could not be deployed.\n" >&2
+    printf "Automatic rollback failed: previous stack or privileged agents could not be restored.\n" >&2
     return 1
   fi
   if ! rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then

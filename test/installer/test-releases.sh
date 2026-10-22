@@ -5,6 +5,8 @@ source "$repo_root/scripts/installer/common.sh"
 source "$repo_root/scripts/installer/releases.sh"
 source "$repo_root/scripts/installer/upgrade.sh"
 source "$repo_root/scripts/installer/lifecycle.sh"
+# Same Swarm conflict handling used by the production installer entrypoint.
+source "$repo_root/scripts/installer/control-plane.sh"
 failures=0
 pass(){ printf 'PASS: %s\n' "$1"; }
 fail(){ printf 'FAIL: %s\n' "$1" >&2; failures=$((failures+1)); }
@@ -230,12 +232,34 @@ upgrade_automatic_recovery_smoke() (
   trap 'rm -f "$log"' EXIT
   RP_CFG_DOMAIN=rp.example.test
   rp_upgrade_database_restore(){ return 0; }
+  rp_ensure_control_plane_capabilities() { return 0; }
   docker(){ printf 'docker:%s\n' "$*" >>"$log"; return 0; }
   rp_wait_for_https_origin(){ printf 'healthy:%s\n' "$1" >>"$log"; return 0; }
   rp_upgrade_restore_after_failure "$safe_manifest" "$manifest" "injected upgrade failure" || true
   grep -q 'docker:stack deploy' "$log" && grep -q 'healthy:rp.example.test' "$log"
 )
 status 0 'compatible failed upgrade restores previous stack and verifies health' upgrade_automatic_recovery_smoke
+upgrade_rollback_survives_out_of_sequence() (
+  local tries=0 health=0
+  RP_CFG_DOMAIN=rp.example.test
+  rp_upgrade_database_restore() { return 0; }
+  rp_ensure_control_plane_capabilities() { return 0; }
+  sleep() { :; }
+  docker() {
+    [[ "$1 $2" == "stack deploy" ]] || return 3
+    tries=$((tries + 1))
+    if (( tries == 1 )); then
+      printf 'failed to update service resourceportal-control-plane_web: update out of sequence\n' >&2
+      return 1
+    fi
+    return 0
+  }
+  rp_wait_for_https_origin() { health=$((health + 1)); return 0; }
+  rp_upgrade_restore_after_failure "$safe_manifest" "$manifest" "injected Swarm conflict" || true
+  [[ "$tries" == 2 && "$health" == 1 ]]
+)
+status 0 'rollback retries transient out-of-sequence and revalidates HTTPS' upgrade_rollback_survives_out_of_sequence
+
 
 upgrade_rollback_denied_smoke() (
   local log
@@ -320,6 +344,7 @@ upgrade_checkpoint_recovers_previous_state() (
   rp_upgrade_checkpoint_phase applying "inject failure" || return 1
   local restored="$root/restored"
   docker() { [[ "$1 $2" == "stack deploy" ]] || return 1; printf '%s\n' "$*" >"$restored"; }
+  rp_ensure_control_plane_capabilities() { return 0; }
   rp_wait_for_https_origin() { return 0; }
   rp_upgrade_restore_after_failure "$safe_manifest" "$previous" "injected failure" && return 1
   [[ -r "$restored" && "$(jq -r .phase "$root/checkpoint/state.json")" == rolled-back ]] || return 1
@@ -336,6 +361,74 @@ upgrade_checkpoint_recovers_previous_state() (
   fi
 )
 status 0 'upgrade checkpoint survives failure and prevents blind restart' upgrade_checkpoint_recovers_previous_state
+# Real-world v0.2.93 case: previous schema was intact or already restored,
+# but rollback stack deploy failed with Swarm 'update out of sequence'.
+upgrade_checkpoint_resumes_verified_prior_rollback() (
+  local root prior previous_sha previous_target_sha deploys=0 health=0
+  root="$(mktemp -d /tmp/rp-prior-rollback.XXXXXX)"
+  trap 'rm -rf "$root"' EXIT
+  mkdir -p "$root/checkpoint" "$root/installed" "$root/config"
+  printf 'services: {api: {image: original}}\n' > "$root/previous.yml"
+  cp "$root/previous.yml" "$root/checkpoint/previous-stack.yml"
+  cp "$root/previous.yml" "$root/checkpoint/previous-installed-stack.yml"
+  jq '.version="0.1.0"' "$manifest" > "$root/checkpoint/previous-release.json"
+  cp "$root/checkpoint/previous-release.json" "$root/installed/release.json"
+  printf 'source-config\n' > "$root/checkpoint/previous-installer.conf"
+  printf 'partial-target\n' > "$root/config/installer.conf"
+  previous_sha="$(sha256sum "$root/checkpoint/previous-stack.yml" | cut -d' ' -f1)"
+  previous_target_sha="$(sha256sum "$safe_manifest" | cut -d' ' -f1)"
+  jq -n --arg sha "$previous_sha" --arg targetSha "$previous_target_sha" '{
+    phase:"rollback-failed", sourceVersion:"0.1.0", targetVersion:"0.2.0",
+    previousStackSha256:$sha, targetManifestSha256:$targetSha,
+    databaseSnapshotState:"none", configExists:true, manifestExists:true
+  }' > "$root/checkpoint/state.json"
+  export RP_UPGRADE_STATE_DIR="$root/checkpoint"
+  export RP_INSTALLER_STATE_DIR="$root/installed"
+  export RP_UPGRADE_INSTALLER_CONFIG_FILE="$root/config/installer.conf"
+  export RP_UPGRADE_STACK_FILE="$root/config/stack.yml"
+  export RP_CFG_DOMAIN=rp.example.test RP_CFG_RELEASE_VERSION=0.1.0
+  rp_download_release_manifest() { [[ "$1" == 0.2.0 ]] && cp "$safe_manifest" "$2"; }
+  rp_verify_release_manifest_attestation() { return 0; }
+  rp_ensure_control_plane_capabilities() { return 0; }
+  rp_wait_control_plane_converged() { return 0; }
+  rp_wait_for_https_origin() { health=$((health+1)); return 0; }
+  sleep() { :; }
+  docker() {
+    [[ "$1 $2" == 'stack deploy' ]] || return 3
+    deploys=$((deploys+1))
+    if (( deploys == 1 )); then
+      printf 'failed to update service: update out of sequence\n' >&2
+      return 1
+    fi
+  }
+  rp_upgrade_checkpoint_prepare "$safe_manifest" "$root/previous.yml" 0.1.0 || return 1
+  [[ "$deploys" == 2 && "$health" == 1 ]] || return 1
+  [[ "$(jq -r .phase "$root/checkpoint/state.json")" == prepared ]] || return 1
+  [[ "$(jq -r .phase "$root/checkpoint/previous-failed-upgrade-recovered.json")" == rollback-failed ]] || return 1
+  [[ "$(cat "$root/config/installer.conf")" == source-config ]] || return 1
+  rp_upgrade_checkpoint_phase completed target-ready
+)
+status 0 'UI updater recovers signed image-only rollback checkpoint after transient Swarm conflict' upgrade_checkpoint_resumes_verified_prior_rollback
+
+upgrade_checkpoint_refuses_unrestored_database() (
+  local root sha
+  root="$(mktemp -d /tmp/rp-unrestored.XXXXXX)"
+  trap 'rm -rf "$root"' EXIT
+  mkdir -p "$root/checkpoint"
+  printf 'services: {}\n' > "$root/previous.yml"
+  cp "$root/previous.yml" "$root/checkpoint/previous-stack.yml"
+  sha="$(sha256sum "$root/previous.yml" | cut -d' ' -f1)"
+  jq -n --arg sha "$sha" '{phase:"rollback-failed",sourceVersion:"0.1.0",targetVersion:"0.2.0",previousStackSha256:$sha,databaseSnapshotState:"verified"}' > "$root/checkpoint/state.json"
+  export RP_UPGRADE_STATE_DIR="$root/checkpoint"
+  rp_swarm_stack_deploy_retry() { echo 'unsafe stack mutation' >&2; return 0; }
+  if rp_upgrade_checkpoint_prepare "$safe_manifest" "$root/previous.yml" 0.1.0; then
+    echo 'unrestored database allowed through checkpoint' >&2
+    return 1
+  fi
+  [[ "$(jq -r .phase "$root/checkpoint/state.json")" == rollback-failed ]]
+)
+status 0 'unrestored databases keep their failed journal and block UI upgrade' upgrade_checkpoint_refuses_unrestored_database
+
 
 upgrade_checkpoint_denies_tampering() (
   local root previous
@@ -386,7 +479,8 @@ contains "$upgrade_source" 'rp_wait_for_https_origin' 'upgrade verifies Resource
 contains "$upgrade_source" 'rp_config_write' 'upgrade persists release state only after successful health check'
 contains "$upgrade_source" 'RP_CFG_RELEASE_VERSION=' 'upgrade records selected release version'
 contains "$upgrade_source" 'RP_CFG_RELEASE_MANIFEST="$canonical_manifest"' 'upgrade records the canonical applied release manifest for resume'
-contains "$upgrade_source" '--with-registry-auth --prune' 'rollback prunes services from failed target architecture'
+contains "$upgrade_source" 'rp_swarm_stack_deploy_retry "$rollback_stack"' 'rollback uses bounded safe Swarm deploy retries'
+contains "$(cat "$repo_root/scripts/installer/control-plane.sh")" '--with-registry-auth --prune' 'Swarm deploy still prunes services from failed target architecture'
 contains "$upgrade_source" 'rp_upgrade_ensure_v020_node_labels' 'v0.2 upgrade backfills node roles before deploy'
 contains "$upgrade_source" 'rp_upgrade_prepare_zitadel_for_mcp_oauth' 'upgrade updates ZITADEL before MCP OAuth reconciliation'
 contains "$upgrade_source" 'rp_upgrade_zitadel_migration_bridge_image' 'upgrade includes immutable ZITADEL migration bridge for legacy releases'
@@ -491,6 +585,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_verify_release_manifest_attestation(){ printf 'provenance-verified\n' >>"$log"; }
   rp_upgrade_database_snapshot_prepare(){ printf 'database-snapshot-verified\n' >>"$log"; }
   rp_upgrade_database_restore(){ return 0; }
+  rp_ensure_control_plane_capabilities() { return 0; }
   rp_upgrade_rollback_allowed(){ printf 'rollback-verified\n' >>"$log"; }
   rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'tenant-sso-ready\n' >>"$log"; }
   rp_upgrade_identity_preflight(){ printf 'identity-verified\n' >>"$log"; }

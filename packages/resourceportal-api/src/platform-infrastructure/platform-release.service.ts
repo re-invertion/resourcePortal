@@ -155,7 +155,11 @@ export class PlatformReleaseService {
         targetVersion: dto.targetVersion,
         manifestUrl,
       },
-      maxAttempts: 3,
+      // Upgrades intentionally restart the worker more than once while
+      // quiescing database clients and rolling out source/target services.
+      // The executor always inspects the same operation-named updater and
+      // never launches a second updater for a reclaimed lease.
+      maxAttempts: 10,
     });
   }
 
