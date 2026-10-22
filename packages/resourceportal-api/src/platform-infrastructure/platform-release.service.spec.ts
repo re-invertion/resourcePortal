@@ -73,6 +73,7 @@ describe("PlatformReleaseService", () => {
       type: "PLATFORM_RELEASE_UPDATE",
       resourceType: "PlatformRelease",
       idempotencyKey: "platform-release-update:0.2.67",
+      maxAttempts: 10,
       input: {
         targetVersion: "0.2.67",
         manifestUrl: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json",
