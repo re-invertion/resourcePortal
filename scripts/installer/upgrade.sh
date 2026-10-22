@@ -565,7 +565,7 @@ rp_upgrade_checkpoint_restore_file() {
 # upgrade; never delete a failed journal or replay a database restore.
 rp_upgrade_reconcile_failed_rollback() {
   local dir="$1" source_version="$2" prior_source prior_target db_state
-  local previous_manifest prior_sha expected_sha actual_sha tmp recovered
+  local previous_manifest expected_sha actual_sha tmp recovered
   [[ -r "$dir/state.json" && ! -L "$dir/state.json" &&
      -r "$dir/previous-stack.yml" && ! -L "$dir/previous-stack.yml" ]] || return 1
   prior_source="$(jq -er '.sourceVersion' "$dir/state.json")" || return 1
