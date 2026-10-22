@@ -3,6 +3,9 @@ import type { ConfigService } from "@nestjs/config";
 import type { StorageCommandRunnerService } from "../../storage-backends/storage-command-runner.service";
 import { PlatformReleaseUpdateOperationExecutor } from "./platform-release-update-operation.executor";
 import type { OperationRecord } from "../operation.types";
+import { OperationsWorkerService } from "../operations-worker.service";
+import type { OperationsRepository } from "../operations.repository";
+import type { OperationExecutorRegistry } from "../operation-executor-registry";
 
 function operation(): OperationRecord {
   return {
@@ -55,10 +58,10 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
     );
 
     await expect(executor.execute(operation())).resolves.toMatchObject({
-      resourceId: "0.2.67",
       result: { targetVersion: "0.2.67", status: "updater-completed" },
     });
-
+    // Operation.resourceId is typed as UUID in PostgreSQL; semver can never
+    // be passed into the worker's terminal markSucceeded query.
     const dockerRun = run.mock.calls[1];
     expect(dockerRun?.[0]).toBe("docker");
     expect(dockerRun?.[1]).toEqual(expect.arrayContaining([
@@ -85,22 +88,114 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
     );
   });
 
-  it("finishes immediately after a restarted target-version Worker reclaims the operation", async () => {
-    const run = vi.fn();
+  it("after a Worker restart verifies the completed updater before returning UUID-safe success", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "exited 0", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "0", stderr: "" });
     const config = { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.67" : undefined) };
     const executor = new PlatformReleaseUpdateOperationExecutor(
       { run } as unknown as StorageCommandRunnerService,
       config as unknown as ConfigService,
     );
 
-    await expect(executor.execute(operation())).resolves.toMatchObject({
-      result: {
-        targetVersion: "0.2.67",
-        currentVersion: "0.2.67",
-        status: "already-current",
-      },
+    const completed = await executor.execute(operation());
+    expect(completed).toMatchObject({
+      result: { targetVersion: "0.2.67", status: "updater-completed" },
     });
-    expect(run).not.toHaveBeenCalled();
+    expect(completed).not.toHaveProperty("resourceId");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenNthCalledWith(1, "docker", [
+      "inspect", "--format", "{{.State.Status}} {{.State.ExitCode}}",
+      "resourceportal-updater-11111111-1111-4111-8111-111111111111",
+    ]);
+    expect(run).toHaveBeenNthCalledWith(2, "docker", [
+      "wait", "resourceportal-updater-11111111-1111-4111-8111-111111111111",
+    ], 30 * 60 * 1000);
+  });
+
+  it("persists Succeeded after restart without attempting to cast a release version to UUID", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "exited 0", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "0", stderr: "" });
+    const executor = new PlatformReleaseUpdateOperationExecutor(
+      { run } as unknown as StorageCommandRunnerService,
+      { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.67" : undefined) } as unknown as ConfigService,
+    );
+    const claimed = { ...operation(), leaseOwner: "production-worker", attempt: 2 };
+    const markSucceeded = vi.fn((
+      _operationId: string, _workerId: string, _result: unknown, resourceId: string | null | undefined,
+    ) => {
+      // Emulate the PostgreSQL UUID column's rejection of a semantic version.
+      if (resourceId !== null && resourceId !== undefined &&
+          !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(resourceId)) {
+        throw new Error('invalid input syntax for type uuid: "' + resourceId + '"');
+      }
+      return Promise.resolve({ ...claimed, status: "Succeeded" as const });
+    });
+    const repository = {
+      failExhaustedOperations: vi.fn().mockResolvedValue([]),
+      claimNext: vi.fn().mockResolvedValue(claimed),
+      appendEvent: vi.fn().mockResolvedValue(null),
+      heartbeat: vi.fn().mockResolvedValue(claimed),
+      markSucceeded,
+    };
+    const worker = new OperationsWorkerService(
+      repository as unknown as OperationsRepository,
+      { resolve: vi.fn().mockReturnValue(executor) } as unknown as OperationExecutorRegistry,
+    );
+
+    await expect(worker.processNext("production-worker", 300))
+      .resolves.toMatchObject({ status: "Succeeded" });
+    expect(markSucceeded).toHaveBeenCalledWith(
+      claimed.id, "production-worker",
+      expect.objectContaining({ targetVersion: "0.2.67", status: "updater-completed" }),
+      undefined, "Succeeded",
+    );
+    expect(repository.appendEvent).toHaveBeenCalledWith(
+      claimed.id, expect.objectContaining({ event: "ExecutionSucceeded" }),
+    );
+  });
+
+  it("does not mark success when the target API is running but its updater is still active", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "running 0", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 124, stdout: "", stderr: "command terminated by SIGTERM" });
+    const executor = new PlatformReleaseUpdateOperationExecutor(
+      { run } as unknown as StorageCommandRunnerService,
+      { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.67" : undefined) } as unknown as ConfigService,
+    );
+    await expect(executor.execute(operation())).rejects.toMatchObject({
+      code: "PlatformUpdateInProgress", retryable: true,
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed if the new-version Worker cannot find its own updater evidence", async () => {
+    const run = vi.fn().mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "not found" });
+    const executor = new PlatformReleaseUpdateOperationExecutor(
+      { run } as unknown as StorageCommandRunnerService,
+      { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.67" : undefined) } as unknown as ConfigService,
+    );
+    await expect(executor.execute(operation())).rejects.toMatchObject({
+      code: "PlatformUpdaterEvidenceMissing", retryable: false,
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report success when the old updater exited with failure after Worker restart", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "exited 1", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "target upgrade aborted", stderr: "" });
+    const executor = new PlatformReleaseUpdateOperationExecutor(
+      { run } as unknown as StorageCommandRunnerService,
+      { get: vi.fn((key: string) => key === "INSTALLER_VERSION" ? "0.2.67" : undefined) } as unknown as ConfigService,
+    );
+    await expect(executor.execute(operation())).rejects.toMatchObject({
+      code: "PlatformUpdateFailed", retryable: false,
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1]?.[1]).toEqual(["logs", "--tail", "200",
+      "resourceportal-updater-11111111-1111-4111-8111-111111111111"]);
   });
 });
 
