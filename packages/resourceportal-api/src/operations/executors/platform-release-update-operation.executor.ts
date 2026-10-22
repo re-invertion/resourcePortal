@@ -24,17 +24,20 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     const currentVersion =
       this.config.get<string>("INSTALLER_VERSION")?.trim() ||
       this.config.get<string>("RESOURCEPORTAL_VERSION")?.trim();
-    if (currentVersion === targetVersion) {
-      return {
-        resourceId: targetVersion,
-        result: { targetVersion, currentVersion, status: "already-current" },
-      };
-    }
-
+    // A target-version Worker can start before the independent updater has
+    // finished and persisted its checkpoint. Never treat the runtime version
+    // alone as proof that the requested upgrade completed. The updater's
+    // durable container exit code is authoritative across Worker restarts.
     const manifestUrl = this.manifestUrl(input.manifestUrl, targetVersion);
     const name = `resourceportal-updater-${operation.id}`;
     const existing = await this.inspect(name);
     if (!existing) {
+      if (currentVersion === targetVersion) {
+        throw Object.assign(
+          new Error("Updater completion evidence missing despite target-version Worker"),
+          { code: "PlatformUpdaterEvidenceMissing", retryable: false },
+        );
+      }
       await this.startUpdater(name, targetVersion, manifestUrl);
     } else if (existing.status === "exited" && existing.exitCode !== 0) {
       const logs = await this.runner.run("docker", ["logs", "--tail", "200", name]);
@@ -65,7 +68,9 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     }
 
     return {
-      resourceId: targetVersion,
+      // Operation.resourceId is a PostgreSQL UUID. The semver belongs only in
+      // the JSON result, not in resourceId; otherwise the terminal DB update
+      // throws, the lease expires and a successfully applied update is Failed.
       result: {
         targetVersion,
         status: "updater-completed",
