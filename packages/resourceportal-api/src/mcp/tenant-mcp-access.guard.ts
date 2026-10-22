@@ -7,6 +7,9 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { FastifyReply, FastifyRequest } from "fastify";
+import { PrismaService } from "../prisma/prisma.service";
+import { NativeLoginModeService } from "../auth/native-login-mode.service";
+import { assertTenantProviderPolicy } from "../auth/tenant-provider-policy";
 import { applyMcpBearerChallenge } from "./mcp-oauth";
 import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
 
@@ -15,6 +18,8 @@ export class TenantMcpAccessGuard implements CanActivate {
   constructor(
     private readonly settings: TenantMcpSettingsService,
     private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly nativeMode: NativeLoginModeService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -53,6 +58,13 @@ export class TenantMcpAccessGuard implements CanActivate {
     }
 
     await this.settings.assertUserCanUseMcp(tenantId, request.user.id);
+    // The global TenantContextGuard intentionally allows unauthenticated MCP
+    // protocol discovery. Enforce the same provider policy here for any
+    // interactive MCP caller before tools can execute.
+    await assertTenantProviderPolicy(
+      this.prisma, tenantId, request.user.authenticatedIdpId,
+      () => this.nativeMode.isNativeOnly(),
+    );
     return true;
   }
 
