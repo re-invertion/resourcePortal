@@ -112,4 +112,28 @@ if rp_ensure_swarm_service_capabilities test_router NET_ADMIN 2>/dev/null; then
   echo 'malformed service capability spec accepted' >&2; exit 1
 fi
 
+# Recover the exact capabilities of privileged services declared in the
+# old stack; minimal image-rollback fixtures contain no such services.
+(
+  tmp="$(mktemp -d /tmp/rp-prev-agent.XXXXXX)"
+  trap 'rm -rf "$tmp"' EXIT
+  printf 'version: "3.9"\nservices:\n  api: {}\n' > "$tmp/minimal.yml"
+  docker() { echo "unexpected agent inspect" >&2; return 1; }
+  rp_ensure_rollback_agent_capabilities "$tmp/minimal.yml" teststack
+  printf 'version: "3.9"\nservices:\n  app-lan-router: {}\n  egress-guard: {}\n' > "$tmp/agents.yml"
+  caps='["CAP_NET_ADMIN","CAP_SYS_ADMIN","CAP_SYS_PTRACE","CAP_NET_RAW"]'
+  inspected=0
+  docker() {
+    [[ "$1 $2" == 'service inspect' ]] || return 1
+    inspected=$((inspected + 1))
+    printf '%s\n' "$caps"
+  }
+  rp_ensure_rollback_agent_capabilities "$tmp/agents.yml" teststack
+  [[ "$inspected" == 2 ]] || exit 1
+  docker() { return 1; }
+  if rp_ensure_rollback_agent_capabilities "$tmp/agents.yml" teststack 2>/dev/null; then
+    echo "declared but missing privileged agent was ignored" >&2
+    exit 1
+  fi
+)
 echo 'PASS canonical CAP_ capabilities, Swarm conflicts, fail-closed rollback'
