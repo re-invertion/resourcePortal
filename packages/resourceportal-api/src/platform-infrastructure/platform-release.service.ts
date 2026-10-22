@@ -71,11 +71,11 @@ export function classifyReleaseRollback(
     if (!Array.isArray(certificates) || certificates.length === 0 ||
         !assessment || !/^[a-f0-9]{40}$/.test(assessment.targetCommit ?? "") ||
         new Set(certificates.map((certificate) => certificate.sourceVersion)).size !== certificates.length) {
-      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "manifest-invalid" };
+      return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: false, rollbackReason: "manifest-invalid" };
     }
     const certificate = certificates.find((item) => item.sourceVersion === currentVersion);
     if (!certificate) {
-      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified" };
+      return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: false, rollbackReason: "source-version-not-verified" };
     }
     const requiredProofFlags: (keyof RollbackCertificate)[] = [
       "actualDatabaseMigration", "previousImagesRestored", "injectedHealthFailure", "databaseSnapshotVerified",
@@ -94,7 +94,7 @@ export function classifyReleaseRollback(
         (certificate.policy === "image-only" && certificate.reason !== "no-resourceportal-database-schema-changes") ||
         (certificate.policy === "tested" && certificate.reason !== "verified-recovery-test") ||
         !["tested", "image-only"].includes(certificate.policy ?? "")) {
-      return { rollbackPolicy: policy, automaticRollbackAvailable: false, rollbackReason: "tested-evidence-missing" };
+      return { rollbackPolicy: policy ?? null, automaticRollbackAvailable: false, rollbackReason: "tested-evidence-missing" };
     }
     return { rollbackPolicy: certificate.policy ?? null, automaticRollbackAvailable: true, rollbackReason: "available" };
   }
