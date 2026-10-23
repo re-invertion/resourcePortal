@@ -2,19 +2,15 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
+  assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
   nodeLanCommands, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot,
-  type TenantContainer, type NodeLanTarget,
+  type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
-import { appGretapCleanupCommands } from "./remote-lan-app-dataplane";
 
 const logger = new Logger("RemoteLanNode");
 const SNAPSHOT = "RESOURCEPORTAL_REMOTE_LAN_NODES_B64";
 const SCRIPT = "/usr/local/sbin/rp-remote-lan-dhcp.sh";
 const HOST_PROC = "/host/proc";
-const ownedLink = /^rp-a-[0-9a-f]{8}$/;
-const ownedAlias = /^rp-lan:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-type Link = { ifname?: string; ifalias?: string; linkinfo?: { info_kind?: string } };
 type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string }> };
 type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess };
 const managed = new Map<string, Running>();
@@ -69,14 +65,8 @@ function overlayInterface(target: NodeLanTarget): string {
     throw new Error("Tenant overlay source interface is missing or ambiguous");
   return interfaces[0].ifname;
 }
-function links(pid: number): Link[] {
-  return nsjson<Link[]>(pid, ["-d", "-j", "link", "show"]);
-}
-function ensureOwnedLink(link: Link, target: NodeLanTarget, device: string): void {
-  if (link.ifname !== device || !ownedLink.test(device) ||
-      link.ifalias !== "rp-lan:" + target.attachment.attachmentId ||
-      link.linkinfo?.info_kind !== "gretap")
-    throw new Error("Refusing to adopt or revoke a foreign link in tenant namespace");
+function links(pid: number): NodeLanLink[] {
+  return nsjson<NodeLanLink[]>(pid, ["-d", "-j", "link", "show"]);
 }
 function attach(target: NodeLanTarget): Running {
   const interfaceName = overlayInterface(target);
@@ -84,16 +74,32 @@ function attach(target: NodeLanTarget): Running {
   const device = commands[0][1][2];
   const before = links(target.pid).find(link => link.ifname === device);
   if (before) {
-    ensureOwnedLink(before, target, device);
+    assertOwnedNodeLanLink(before, device, target.attachment.attachmentId);
   } else {
+    let created = false;
     try {
-      for (const [, args] of commands) nsrun(target.pid, [...args]);
-      nsrun(target.pid, ["link", "set", "dev", device, "alias",
-        "rp-lan:" + target.attachment.attachmentId]);
+      for (const [, args] of commands) {
+        nsrun(target.pid, [...args]);
+        if (!created) {
+          created = true;
+          nsrun(target.pid, ["link", "set", "dev", device, "alias",
+            "rp-lan:" + target.attachment.attachmentId]);
+        }
+      }
     } catch (error) {
-      // The detached app tunnel must never survive a partial setup.
-      nsrun(target.pid, [...appGretapCleanupCommands({ ...target.tunnel,
-        overlayInterface: interfaceName })[0][1]], true);
+      // Never delete a pre-existing link when "ip link add" failed, nor
+      // a newly created link that was subsequently moved to another bridge.
+      if (created) {
+        try {
+          const partial = links(target.pid).find(link => link.ifname === device);
+          if (partial) {
+            assertCreatedNodeLanLink(partial, device, target.attachment.attachmentId);
+            nsrun(target.pid, ["link", "delete", device]);
+          }
+        } catch (cleanupError) {
+          logger.error("Partial LAN tunnel cleanup blocked: " + String(cleanupError));
+        }
+      }
       throw error;
     }
   }
@@ -110,7 +116,7 @@ function attach(target: NodeLanTarget): Running {
 function detach(entry: Running) {
   entry.dhcp.kill("SIGTERM");
   const { target, device } = entry;
-  let present: Link | undefined;
+  let present: NodeLanLink | undefined;
   try {
     present = links(target.pid).find(link => link.ifname === device);
   } catch {
@@ -118,7 +124,7 @@ function detach(entry: Running) {
     return;
   }
   if (!present) return;
-  ensureOwnedLink(present, target, device);
+  assertOwnedNodeLanLink(present, device, target.attachment.attachmentId);
   nsrun(target.pid, ["link", "delete", device]);
 }
 function reconcile() {
@@ -154,12 +160,8 @@ function reconcile() {
     const attached = new Set([...managed.values()].filter(item =>
       item.target.pid === pid).map(item => item.device));
     for (const link of links(pid)) {
-      if (!link.ifname || !ownedLink.test(link.ifname) ||
-          !link.ifalias || !ownedAlias.test(link.ifalias)) continue;
-      if (attached.has(link.ifname)) continue;
-      if (link.linkinfo?.info_kind !== "gretap")
-        throw new Error("Refusing cleanup of non-GRETAP RP-like link");
-      nsrun(pid, ["link", "delete", link.ifname]);
+      if (shouldDeleteNodeLanOrphan(link, attached))
+        nsrun(pid, ["link", "delete", link.ifname!]);
     }
   }
   if (denied) throw denied instanceof Error ? denied : new Error("Invalid node LAN policy");

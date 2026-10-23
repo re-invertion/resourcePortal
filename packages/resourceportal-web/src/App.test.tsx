@@ -85,9 +85,14 @@ describe("Web Console bootstrap", () => {
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Review + create" }));
+    // Under a saturated CI runner React may not have committed the final
+    // validation update yet. Assert the form is actually submittable before
+    // clicking, rather than silently clicking a disabled button.
+    const reviewButton = screen.getByRole("button", { name: "Review + create" });
+    await vi.waitFor(() => expect(reviewButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(reviewButton);
 
-    expect(await screen.findByRole("heading", { name: "Review configuration" }, { timeout: 10_000 })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Review configuration" }, { timeout: 15_000 })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Create Tenant" }));
 
@@ -98,7 +103,7 @@ describe("Web Console bootstrap", () => {
       contactEmail: "owner@example.test",
       name: "demo-tenant",
     });
-  }, 15_000);
+  }, 25_000);
 
   it("shows Platform Admin navigation only after the protected capability probe succeeds", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

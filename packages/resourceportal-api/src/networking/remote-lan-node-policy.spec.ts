@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
   nodeLanCommands, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
 } from "./remote-lan-node-policy";
@@ -95,5 +96,54 @@ describe("RP node-local remote LAN authorization",()=>{
     expect(selectNodeLanTargets([attachment],[{...container,State:{Running:false,Pid:4567}}])).toEqual([]);
     expect(selectNodeLanTargets([attachment],[{...container,Id:"short"}])).toEqual([]);
     expect(selectNodeLanTargets([attachment],[{...container,NetworkSettings:{Networks:{}}}])).toEqual([]);
+  });
+});
+
+describe("node LAN GRETAP ownership before destructive cleanup", () => {
+  const device = "rp-a-1234abcd";
+  const alias = "rp-lan:aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+  const owned = { ifname: device, ifalias: alias, linkinfo: { info_kind: "gretap" } };
+  const active = new Set([device]);
+
+  it("adopts and revokes only a standalone app-side GRETAP with the exact grant", () => {
+    expect(() => assertOwnedNodeLanLink(owned, device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: "br-foreign" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: 42 },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: "" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, ifalias: "rp-lan:" + attachment.tenantId },
+      device, attachment.attachmentId)).toThrow(/alias/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, linkinfo: { info_kind: "veth" } },
+      device, attachment.attachmentId)).toThrow(/foreign/);
+  });
+
+  it("never selects a foreign bridge for orphan deletion, even with a valid RP alias", () => {
+    expect(shouldDeleteNodeLanOrphan(owned, new Set())).toBe(true);
+    expect(shouldDeleteNodeLanOrphan(owned, active)).toBe(false);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, master: "br-unrelated" },
+      new Set())).toThrow(/bridged/);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, master: "rp-b-1234abcd" },
+      new Set())).toThrow(/bridged/);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, linkinfo: { info_kind: "veth" } },
+      new Set())).toThrow(/foreign/);
+  });
+
+  it("ignores malformed RP identities, unknown interfaces and repeat revocation", () => {
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifalias: "rp-lan:invalid" }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifname: "eth0" }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifalias: undefined }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan(owned, new Set([device]))).toBe(false);
+  });
+
+  it("allows cleanup of a just-created unbridged link before alias is set, but not repurposed links", () => {
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: undefined },
+      device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertCreatedNodeLanLink(owned, device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: undefined, master: "br-foreign" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: "somebody-else" },
+      device, attachment.attachmentId)).toThrow(/alias/);
   });
 });
