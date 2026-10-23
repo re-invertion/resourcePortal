@@ -2,8 +2,8 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
-  assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, sweepNodeLanOrphans,
+  assertCreatedNodeLanLink, assertOwnedNodeLanLink,
+  nodeLanCommands, revokeNodeLanEntries, selectNodeLanTargets, sweepNodeLanOrphans,
   validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
