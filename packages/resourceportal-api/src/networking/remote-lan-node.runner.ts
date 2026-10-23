@@ -3,7 +3,8 @@ import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot,
+  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, sweepNodeLanOrphans,
+  validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
 
@@ -146,19 +147,18 @@ function reconcile() {
     if (managed.has(key)) continue;
     managed.set(key, attach(target));
   }
-  // Remove stale RP-owned links from running tenant containers even after a
-  // node agent crash. Only exact RP-owned GRETAP + alias are eligible.
+  // Sweep all namespaces, even when a foreign bridge or an inaccessible
+  // namespace blocks one orphan. No such link is ever deleted.
+  const namespaces: Array<{ pid: number; active: Set<string> }> = [];
   for (const container of containers) {
     if (!container.State?.Running || !container.State.Pid ||
         !Number.isSafeInteger(container.State.Pid)) continue;
     const pid = container.State.Pid;
-    const attached = new Set([...managed.values()].filter(item =>
-      item.target.pid === pid).map(item => item.device));
-    for (const link of links(pid)) {
-      if (shouldDeleteNodeLanOrphan(link, attached))
-        nsrun(pid, ["link", "delete", link.ifname!]);
-    }
+    namespaces.push({ pid, active: new Set([...managed.values()].filter(item =>
+      item.target.pid === pid).map(item => item.device)) });
   }
+  sweepNodeLanOrphans(namespaces, links, (pid, ifname) =>
+    { nsrun(pid, ["link", "delete", ifname]); });
   if (denied) throw denied instanceof Error ? denied : new Error("Invalid node LAN policy");
   return managed.size;
 }

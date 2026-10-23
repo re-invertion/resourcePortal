@@ -215,3 +215,36 @@ export function shouldDeleteNodeLanOrphan(link: NodeLanLink, active: ReadonlySet
   assertStandaloneGretap(link, link.ifname);
   return true;
 }
+
+
+/**
+ * A bridged/foreign orphan must not stop cleanup of other stale endpoints,
+ * including those in later tenant namespaces. Collect every failure and
+ * fail closed after attempting all independent revocations.
+ */
+export function sweepNodeLanOrphans(
+  namespaces: readonly { pid: number; active: ReadonlySet<string> }[],
+  list: (pid: number) => readonly NodeLanLink[],
+  remove: (pid: number, ifname: string) => void,
+): void {
+  const failures: unknown[] = [];
+  for (const namespace of namespaces) {
+    let candidates: readonly NodeLanLink[];
+    try {
+      candidates = list(namespace.pid);
+    } catch (error) {
+      failures.push(error);
+      continue;
+    }
+    for (const link of candidates) {
+      try {
+        if (shouldDeleteNodeLanOrphan(link, namespace.active))
+          remove(namespace.pid, link.ifname!);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN orphan revocations failed");
+}

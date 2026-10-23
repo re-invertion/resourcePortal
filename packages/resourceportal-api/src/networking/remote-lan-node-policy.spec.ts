@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot, type NodeLanAttachment,
+  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, sweepNodeLanOrphans,
+  validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
 } from "./remote-lan-node-policy";
 
@@ -187,5 +188,51 @@ describe("node LAN independent revocation", () => {
     revokeNodeLanEntries(managed, desired, current => revoked.push(current.target.id));
     expect(revoked).toEqual([second.id, first.id]);
     expect(managed.size).toBe(0);
+  });
+});
+
+
+describe("node LAN orphan sweep isolation", () => {
+  const alias = "rp-lan:aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+  const bridged = {
+    ifname: "rp-a-1234abcd", ifalias: alias,
+    linkinfo: { info_kind: "gretap" }, master: "br-foreign",
+  };
+  const standalone = {
+    ifname: "rp-a-5678abcd", ifalias: alias,
+    linkinfo: { info_kind: "gretap" },
+  };
+  const nextNamespace = { ...standalone, ifname: "rp-a-9012abcd" };
+  const namespaces = [
+    { pid: 4567, active: new Set<string>() },
+    { pid: 4568, active: new Set<string>() },
+  ];
+
+  it("keeps a foreign bridged orphan intact but deletes later unbridged orphans in both namespaces", () => {
+    const removed: string[] = [];
+    expect(() => sweepNodeLanOrphans(namespaces, pid =>
+      pid === 4567 ? [bridged, standalone] : [nextNamespace],
+    (pid, ifname) => removed.push(pid + ":" + ifname))).toThrow(/orphan revocations failed/);
+    expect(removed).toEqual(["4567:rp-a-5678abcd", "4568:rp-a-9012abcd"]);
+  });
+
+  it("continues after namespace enumeration and individual delete failures", () => {
+    const removed: string[] = [];
+    expect(() => sweepNodeLanOrphans(namespaces, pid => {
+      if (pid === 4567) throw new Error("namespace vanished");
+      return [standalone, nextNamespace];
+    }, (_pid, ifname) => {
+      removed.push(ifname);
+      if (ifname === standalone.ifname) throw new Error("delete denied");
+    })).toThrow(/orphan revocations failed/);
+    expect(removed).toEqual([standalone.ifname, nextNamespace.ifname]);
+  });
+
+  it("does not delete active, malformed or previously removed endpoints", () => {
+    const removed: string[] = [];
+    sweepNodeLanOrphans([{ pid: 4567, active: new Set([standalone.ifname]) }],
+      () => [standalone, { ...standalone, ifname: "rp-a-abcdef12", ifalias: "bad" }],
+      (_pid, ifname) => removed.push(ifname));
+    expect(removed).toEqual([]);
   });
 });
