@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot, type NodeLanAttachment,
+  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
 } from "./remote-lan-node-policy";
 
@@ -145,5 +145,47 @@ describe("node LAN GRETAP ownership before destructive cleanup", () => {
       device, attachment.attachmentId)).toThrow(/bridged/);
     expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: "somebody-else" },
       device, attachment.attachmentId)).toThrow(/alias/);
+  });
+});
+
+
+describe("node LAN independent revocation", () => {
+  const [first] = selectNodeLanTargets([attachment], [container]);
+  const second = { ...first, id: "b".repeat(64), pid: 4568 };
+  const entry = (target: typeof first) => ({
+    target, dhcp: { killed: false, pid: 1234, exitCode: null },
+  });
+
+  it("revokes other stale links despite one bridged-link refusal, retaining the failed entry for retry", () => {
+    const managed = new Map([
+      ["bridged", entry(first)],
+      ["standalone", entry(second)],
+    ]);
+    const attempted: string[] = [];
+    expect(() => revokeNodeLanEntries(managed, new Map(), current => {
+      attempted.push(current.target.id);
+      if (current.target.id === first.id) throw new Error("foreign bridge");
+    })).toThrow(/revocations failed/);
+    expect(attempted).toEqual([first.id, second.id]);
+    expect([...managed.keys()]).toEqual(["bridged"]);
+    revokeNodeLanEntries(managed, new Map(), current => attempted.push("retry:" + current.target.id));
+    expect(attempted.at(-1)).toBe("retry:" + first.id);
+    expect(managed.size).toBe(0);
+  });
+
+  it("preserves a healthy active attachment while revoking a changed or dead one", () => {
+    const managed = new Map([
+      ["active", entry(first)],
+      ["changed", entry(second)],
+    ]);
+    const desired = new Map([["active", first]]);
+    const revoked: string[] = [];
+    revokeNodeLanEntries(managed, desired, current => revoked.push(current.target.id));
+    expect(revoked).toEqual([second.id]);
+    expect([...managed.keys()]).toEqual(["active"]);
+    managed.get("active")!.dhcp.killed = true;
+    revokeNodeLanEntries(managed, desired, current => revoked.push(current.target.id));
+    expect(revoked).toEqual([second.id, first.id]);
+    expect(managed.size).toBe(0);
   });
 });

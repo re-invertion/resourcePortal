@@ -134,6 +134,36 @@ export function sameNodeLanTarget(previous: NodeLanTarget, desired: NodeLanTarge
     x.attachmentId === y.attachmentId && x.side === y.side;
 }
 
+
+/**
+ * Revoke stale endpoints independently so a foreign bridge on one endpoint
+ * cannot prevent revocation of unrelated attachments. Keep failed entries
+ * tracked for retry and stop reconciliation before granting replacements.
+ */
+export function revokeNodeLanEntries<T extends {
+  target: NodeLanTarget;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+}>(
+  managed: Map<string, T>,
+  desired: ReadonlyMap<string, NodeLanTarget>,
+  detach: (entry: T) => void,
+): void {
+  const failures: unknown[] = [];
+  for (const [key, entry] of managed) {
+    const updated = desired.get(key);
+    if (updated && sameNodeLanTarget(entry.target, updated) && !entry.dhcp.killed &&
+        entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) continue;
+    try {
+      detach(entry);
+      managed.delete(key);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN attachment revocations failed");
+}
+
 /** Actual interface resolution is verified against the task's netns. */
 export function nodeLanCommands(target: NodeLanTarget, overlayInterface: string) {
   return appGretapCommands({ ...target.tunnel, overlayInterface });

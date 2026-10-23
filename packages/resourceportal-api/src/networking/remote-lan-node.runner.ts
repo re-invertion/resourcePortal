@@ -3,7 +3,7 @@ import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot,
+  nodeLanCommands, revokeNodeLanEntries, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
 
@@ -139,14 +139,9 @@ function reconcile() {
   }
   const desired = new Map(targets.map(target =>
     [target.id + ":" + target.attachment.attachmentId, target]));
-  // Revoke old links before granting replacement ones after task movement.
-  for (const [key, entry] of managed) {
-    const updated = desired.get(key);
-    if (updated && sameNodeLanTarget(entry.target, updated) && !entry.dhcp.killed &&
-        entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) continue;
-    detach(entry);
-    managed.delete(key);
-  }
+  // Attempt every stale revocation, even if another link is foreign/bridged.
+  // A failed revocation remains tracked and blocks all replacement grants.
+  revokeNodeLanEntries(managed, desired, detach);
   for (const [key, target] of desired) {
     if (managed.has(key)) continue;
     managed.set(key, attach(target));
