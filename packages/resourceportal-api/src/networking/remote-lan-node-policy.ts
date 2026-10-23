@@ -223,7 +223,7 @@ export function shouldDeleteNodeLanOrphan(link: NodeLanLink, active: ReadonlySet
  * fail closed after attempting all independent revocations.
  */
 export function sweepNodeLanOrphans(
-  namespaces: readonly { pid: number; active: ReadonlySet<string> }[],
+  namespaces: readonly { pid: number; active: ReadonlySet<string>; protectedAliases?: ReadonlySet<string> }[],
   list: (pid: number) => readonly NodeLanLink[],
   remove: (pid: number, ifname: string) => void,
 ): void {
@@ -238,6 +238,9 @@ export function sweepNodeLanOrphans(
     }
     for (const link of candidates) {
       try {
+        // A desired endpoint may be adopted after revocation; do not delete it
+        // during the pre-grant sweep, even if another revocation failed.
+        if (link.ifalias && namespace.protectedAliases?.has(link.ifalias)) continue;
         if (shouldDeleteNodeLanOrphan(link, namespace.active))
           remove(namespace.pid, link.ifname!);
       } catch (error) {
@@ -247,4 +250,44 @@ export function sweepNodeLanOrphans(
   }
   if (failures.length)
     throw new AggregateError(failures, "One or more LAN orphan revocations failed");
+}
+
+
+/**
+ * Complete independent managed and orphan revocations before any new grant.
+ * A failed bridged managed endpoint cannot block unrelated orphan cleanup,
+ * but any failure still blocks the subsequent attachment phase.
+ */
+export function revokeNodeLanState<T extends {
+  target: NodeLanTarget;
+  device: string;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+}>(
+  managed: Map<string, T>,
+  desired: ReadonlyMap<string, NodeLanTarget>,
+  pids: readonly number[],
+  detach: (entry: T) => void,
+  list: (pid: number) => readonly NodeLanLink[],
+  remove: (pid: number, ifname: string) => void,
+): void {
+  const failures: unknown[] = [];
+  try {
+    revokeNodeLanEntries(managed, desired, detach);
+  } catch (error) {
+    failures.push(error);
+  }
+  const namespaces = [...new Set(pids)].map(pid => ({
+    pid,
+    active: new Set([...managed.values()].filter(item =>
+      item.target.pid === pid).map(item => item.device)),
+    protectedAliases: new Set([...desired.values()].filter(target =>
+      target.pid === pid).map(target => "rp-lan:" + target.attachment.attachmentId)),
+  }));
+  try {
+    sweepNodeLanOrphans(namespaces, list, remove);
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN revocations failed; refusing new grants");
 }

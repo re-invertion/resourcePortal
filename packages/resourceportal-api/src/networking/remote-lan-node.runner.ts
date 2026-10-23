@@ -3,7 +3,7 @@ import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
-  nodeLanCommands, revokeNodeLanEntries, selectNodeLanTargets, sweepNodeLanOrphans,
+  nodeLanCommands, revokeNodeLanState, selectNodeLanTargets,
   validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
@@ -140,25 +140,22 @@ function reconcile() {
   }
   const desired = new Map(targets.map(target =>
     [target.id + ":" + target.attachment.attachmentId, target]));
-  // Attempt every stale revocation, even if another link is foreign/bridged.
-  // A failed revocation remains tracked and blocks all replacement grants.
-  revokeNodeLanEntries(managed, desired, detach);
+  // Revoke stale managed and orphan links independently before granting
+  // replacements. Any bridged/foreign refusal blocks new grants but cannot
+  // prevent revocation of unrelated stale endpoints in other namespaces.
+  const pids: number[] = [];
+  for (const container of containers) {
+    if (!container.State?.Running || !container.State.Pid ||
+        !Number.isSafeInteger(container.State.Pid)) continue;
+    pids.push(container.State.Pid);
+  }
+  revokeNodeLanState(managed, desired, pids, detach, links, (pid, ifname) => {
+    nsrun(pid, ["link", "delete", ifname]);
+  });
   for (const [key, target] of desired) {
     if (managed.has(key)) continue;
     managed.set(key, attach(target));
   }
-  // Sweep all namespaces, even when a foreign bridge or an inaccessible
-  // namespace blocks one orphan. No such link is ever deleted.
-  const namespaces: Array<{ pid: number; active: Set<string> }> = [];
-  for (const container of containers) {
-    if (!container.State?.Running || !container.State.Pid ||
-        !Number.isSafeInteger(container.State.Pid)) continue;
-    const pid = container.State.Pid;
-    namespaces.push({ pid, active: new Set([...managed.values()].filter(item =>
-      item.target.pid === pid).map(item => item.device)) });
-  }
-  sweepNodeLanOrphans(namespaces, links, (pid, ifname) =>
-    { nsrun(pid, ["link", "delete", ifname]); });
   if (denied) throw denied instanceof Error ? denied : new Error("Invalid node LAN policy");
   return managed.size;
 }
