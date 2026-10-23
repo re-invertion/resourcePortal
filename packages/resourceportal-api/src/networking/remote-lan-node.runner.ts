@@ -14,7 +14,7 @@ const HOST_PROC = "/host/proc";
 const ownedLink = /^rp-a-[0-9a-f]{8}$/;
 const ownedAlias = /^rp-lan:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type Link = { ifname?: string; ifalias?: string; linkinfo?: { info_kind?: string } };
+type Link = { ifname?: string; ifalias?: string; master?: string; linkinfo?: { info_kind?: string } };
 type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string }> };
 type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess };
 const managed = new Map<string, Running>();
@@ -75,7 +75,7 @@ function links(pid: number): Link[] {
 function ensureOwnedLink(link: Link, target: NodeLanTarget, device: string): void {
   if (link.ifname !== device || !ownedLink.test(device) ||
       link.ifalias !== "rp-lan:" + target.attachment.attachmentId ||
-      link.linkinfo?.info_kind !== "gretap")
+      link.linkinfo?.info_kind !== "gretap" || link.master !== undefined)
     throw new Error("Refusing to adopt or revoke a foreign link in tenant namespace");
 }
 function attach(target: NodeLanTarget): Running {
@@ -157,8 +157,8 @@ function reconcile() {
       if (!link.ifname || !ownedLink.test(link.ifname) ||
           !link.ifalias || !ownedAlias.test(link.ifalias)) continue;
       if (attached.has(link.ifname)) continue;
-      if (link.linkinfo?.info_kind !== "gretap")
-        throw new Error("Refusing cleanup of non-GRETAP RP-like link");
+      if (link.linkinfo?.info_kind !== "gretap" || link.master !== undefined)
+        throw new Error("Refusing cleanup of RP-like link with foreign kind or bridge master");
       nsrun(pid, ["link", "delete", link.ifname]);
     }
   }
