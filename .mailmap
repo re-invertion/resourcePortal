@@ -1,0 +1,4 @@
+# Presentation-only correction for historical merge 5b593cdb2d7eaa7f82ebc29c08eecf3874465641.
+# This map does NOT change commit objects, GitHub account ownership or signatures.
+# Limit to the precise author name + email accidentally used for the PR #311 merge.
+Patryk Rusak <90280457+P4tkry@users.noreply.github.com> ResourcePortal Workspace <workspace@users.noreply.github.com>
