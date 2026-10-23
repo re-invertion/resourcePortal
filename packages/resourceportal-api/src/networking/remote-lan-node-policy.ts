@@ -134,7 +134,160 @@ export function sameNodeLanTarget(previous: NodeLanTarget, desired: NodeLanTarge
     x.attachmentId === y.attachmentId && x.side === y.side;
 }
 
+
+/**
+ * Revoke stale endpoints independently so a foreign bridge on one endpoint
+ * cannot prevent revocation of unrelated attachments. Keep failed entries
+ * tracked for retry and stop reconciliation before granting replacements.
+ */
+export function revokeNodeLanEntries<T extends {
+  target: NodeLanTarget;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+}>(
+  managed: Map<string, T>,
+  desired: ReadonlyMap<string, NodeLanTarget>,
+  detach: (entry: T) => void,
+): void {
+  const failures: unknown[] = [];
+  for (const [key, entry] of managed) {
+    const updated = desired.get(key);
+    if (updated && sameNodeLanTarget(entry.target, updated) && !entry.dhcp.killed &&
+        entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) continue;
+    try {
+      detach(entry);
+      managed.delete(key);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN attachment revocations failed");
+}
+
 /** Actual interface resolution is verified against the task's netns. */
 export function nodeLanCommands(target: NodeLanTarget, overlayInterface: string) {
   return appGretapCommands({ ...target.tunnel, overlayInterface });
+}
+
+/**
+ * The app-side GRETAP is a standalone DHCP endpoint in the tenant netns.
+ * Only the gateway-side endpoint is bridged. Never adopt or delete an
+ * app-side link that has acquired a bridge/master, even if its alias matches.
+ */
+export type NodeLanLink = {
+  ifname?: string;
+  ifalias?: string;
+  master?: string | number | null;
+  linkinfo?: { info_kind?: string };
+};
+const appLinkName = /^rp-a-[0-9a-f]{8}$/;
+const appLinkAlias = /^rp-lan:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function assertStandaloneGretap(link: NodeLanLink, device: string): void {
+  if (link.ifname !== device || !appLinkName.test(device) ||
+      link.linkinfo?.info_kind !== "gretap" || link.master != null)
+    throw new Error("Refusing to alter foreign or bridged GRETAP in tenant namespace");
+}
+
+/** For adopting or revoking a fully configured attachment. */
+export function assertOwnedNodeLanLink(link: NodeLanLink, device: string, attachmentId: string): void {
+  assertStandaloneGretap(link, device);
+  if (link.ifalias !== "rp-lan:" + attachmentId)
+    throw new Error("Refusing to alter GRETAP with foreign attachment alias");
+}
+
+/**
+ * An interface created by this process may not have received its alias if
+ * setup failed midway. The caller must prove it successfully created it.
+ */
+export function assertCreatedNodeLanLink(link: NodeLanLink, device: string, attachmentId: string): void {
+  assertStandaloneGretap(link, device);
+  if (link.ifalias != null && link.ifalias !== "" &&
+      link.ifalias !== "rp-lan:" + attachmentId)
+    throw new Error("Refusing partial cleanup of GRETAP with foreign alias");
+}
+
+/** Reconcile only unbridged, RP-labelled orphan endpoints. */
+export function shouldDeleteNodeLanOrphan(link: NodeLanLink, active: ReadonlySet<string>): boolean {
+  if (!link.ifname || !appLinkName.test(link.ifname) ||
+      !link.ifalias || !appLinkAlias.test(link.ifalias) ||
+      active.has(link.ifname)) return false;
+  assertStandaloneGretap(link, link.ifname);
+  return true;
+}
+
+
+/**
+ * A bridged/foreign orphan must not stop cleanup of other stale endpoints,
+ * including those in later tenant namespaces. Collect every failure and
+ * fail closed after attempting all independent revocations.
+ */
+export function sweepNodeLanOrphans(
+  namespaces: readonly { pid: number; active: ReadonlySet<string>; protectedAliases?: ReadonlySet<string> }[],
+  list: (pid: number) => readonly NodeLanLink[],
+  remove: (pid: number, ifname: string) => void,
+): void {
+  const failures: unknown[] = [];
+  for (const namespace of namespaces) {
+    let candidates: readonly NodeLanLink[];
+    try {
+      candidates = list(namespace.pid);
+    } catch (error) {
+      failures.push(error);
+      continue;
+    }
+    for (const link of candidates) {
+      try {
+        // A desired endpoint may be adopted after revocation; do not delete it
+        // during the pre-grant sweep, even if another revocation failed.
+        if (link.ifalias && namespace.protectedAliases?.has(link.ifalias)) continue;
+        if (shouldDeleteNodeLanOrphan(link, namespace.active))
+          remove(namespace.pid, link.ifname!);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN orphan revocations failed");
+}
+
+
+/**
+ * Complete independent managed and orphan revocations before any new grant.
+ * A failed bridged managed endpoint cannot block unrelated orphan cleanup,
+ * but any failure still blocks the subsequent attachment phase.
+ */
+export function revokeNodeLanState<T extends {
+  target: NodeLanTarget;
+  device: string;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+}>(
+  managed: Map<string, T>,
+  desired: ReadonlyMap<string, NodeLanTarget>,
+  pids: readonly number[],
+  detach: (entry: T) => void,
+  list: (pid: number) => readonly NodeLanLink[],
+  remove: (pid: number, ifname: string) => void,
+): void {
+  const failures: unknown[] = [];
+  try {
+    revokeNodeLanEntries(managed, desired, detach);
+  } catch (error) {
+    failures.push(error);
+  }
+  const namespaces = [...new Set(pids)].map(pid => ({
+    pid,
+    active: new Set([...managed.values()].filter(item =>
+      item.target.pid === pid).map(item => item.device)),
+    protectedAliases: new Set([...desired.values()].filter(target =>
+      target.pid === pid).map(target => "rp-lan:" + target.attachment.attachmentId)),
+  }));
+  try {
+    sweepNodeLanOrphans(namespaces, list, remove);
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length)
+    throw new AggregateError(failures, "One or more LAN revocations failed; refusing new grants");
 }

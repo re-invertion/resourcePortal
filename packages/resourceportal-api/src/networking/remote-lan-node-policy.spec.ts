@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  nodeLanCommands, sameNodeLanTarget, selectNodeLanTargets, validateNodeLanSnapshot, type NodeLanAttachment,
+  assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
+  nodeLanCommands, revokeNodeLanEntries, revokeNodeLanState, sameNodeLanTarget,
+  selectNodeLanTargets, sweepNodeLanOrphans,
+  validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
 } from "./remote-lan-node-policy";
 
@@ -95,5 +98,188 @@ describe("RP node-local remote LAN authorization",()=>{
     expect(selectNodeLanTargets([attachment],[{...container,State:{Running:false,Pid:4567}}])).toEqual([]);
     expect(selectNodeLanTargets([attachment],[{...container,Id:"short"}])).toEqual([]);
     expect(selectNodeLanTargets([attachment],[{...container,NetworkSettings:{Networks:{}}}])).toEqual([]);
+  });
+});
+
+describe("node LAN GRETAP ownership before destructive cleanup", () => {
+  const device = "rp-a-1234abcd";
+  const alias = "rp-lan:aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+  const owned = { ifname: device, ifalias: alias, linkinfo: { info_kind: "gretap" } };
+  const active = new Set([device]);
+
+  it("adopts and revokes only a standalone app-side GRETAP with the exact grant", () => {
+    expect(() => assertOwnedNodeLanLink(owned, device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: "br-foreign" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: 42 },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, master: "" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, ifalias: "rp-lan:" + attachment.tenantId },
+      device, attachment.attachmentId)).toThrow(/alias/);
+    expect(() => assertOwnedNodeLanLink({ ...owned, linkinfo: { info_kind: "veth" } },
+      device, attachment.attachmentId)).toThrow(/foreign/);
+  });
+
+  it("never selects a foreign bridge for orphan deletion, even with a valid RP alias", () => {
+    expect(shouldDeleteNodeLanOrphan(owned, new Set())).toBe(true);
+    expect(shouldDeleteNodeLanOrphan(owned, active)).toBe(false);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, master: "br-unrelated" },
+      new Set())).toThrow(/bridged/);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, master: "rp-b-1234abcd" },
+      new Set())).toThrow(/bridged/);
+    expect(() => shouldDeleteNodeLanOrphan({ ...owned, linkinfo: { info_kind: "veth" } },
+      new Set())).toThrow(/foreign/);
+  });
+
+  it("ignores malformed RP identities, unknown interfaces and repeat revocation", () => {
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifalias: "rp-lan:invalid" }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifname: "eth0" }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan({ ...owned, ifalias: undefined }, new Set())).toBe(false);
+    expect(shouldDeleteNodeLanOrphan(owned, new Set([device]))).toBe(false);
+  });
+
+  it("allows cleanup of a just-created unbridged link before alias is set, but not repurposed links", () => {
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: undefined },
+      device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertCreatedNodeLanLink(owned, device, attachment.attachmentId)).not.toThrow();
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: undefined, master: "br-foreign" },
+      device, attachment.attachmentId)).toThrow(/bridged/);
+    expect(() => assertCreatedNodeLanLink({ ...owned, ifalias: "somebody-else" },
+      device, attachment.attachmentId)).toThrow(/alias/);
+  });
+});
+
+
+describe("node LAN independent revocation", () => {
+  const [first] = selectNodeLanTargets([attachment], [container]);
+  const second = { ...first, id: "b".repeat(64), pid: 4568 };
+  const entry = (target: typeof first) => ({
+    target, dhcp: { killed: false, pid: 1234, exitCode: null },
+  });
+
+  it("revokes other stale links despite one bridged-link refusal, retaining the failed entry for retry", () => {
+    const managed = new Map([
+      ["bridged", entry(first)],
+      ["standalone", entry(second)],
+    ]);
+    const attempted: string[] = [];
+    expect(() => revokeNodeLanEntries(managed, new Map(), current => {
+      attempted.push(current.target.id);
+      if (current.target.id === first.id) throw new Error("foreign bridge");
+    })).toThrow(/revocations failed/);
+    expect(attempted).toEqual([first.id, second.id]);
+    expect([...managed.keys()]).toEqual(["bridged"]);
+    revokeNodeLanEntries(managed, new Map(), current => attempted.push("retry:" + current.target.id));
+    expect(attempted.at(-1)).toBe("retry:" + first.id);
+    expect(managed.size).toBe(0);
+  });
+
+  it("preserves a healthy active attachment while revoking a changed or dead one", () => {
+    const managed = new Map([
+      ["active", entry(first)],
+      ["changed", entry(second)],
+    ]);
+    const desired = new Map([["active", first]]);
+    const revoked: string[] = [];
+    revokeNodeLanEntries(managed, desired, current => revoked.push(current.target.id));
+    expect(revoked).toEqual([second.id]);
+    expect([...managed.keys()]).toEqual(["active"]);
+    managed.get("active")!.dhcp.killed = true;
+    revokeNodeLanEntries(managed, desired, current => revoked.push(current.target.id));
+    expect(revoked).toEqual([second.id, first.id]);
+    expect(managed.size).toBe(0);
+  });
+});
+
+
+describe("node LAN orphan sweep isolation", () => {
+  const alias = "rp-lan:aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+  const bridged = {
+    ifname: "rp-a-1234abcd", ifalias: alias,
+    linkinfo: { info_kind: "gretap" }, master: "br-foreign",
+  };
+  const standalone = {
+    ifname: "rp-a-5678abcd", ifalias: alias,
+    linkinfo: { info_kind: "gretap" },
+  };
+  const nextNamespace = { ...standalone, ifname: "rp-a-9012abcd" };
+  const namespaces = [
+    { pid: 4567, active: new Set<string>() },
+    { pid: 4568, active: new Set<string>() },
+  ];
+
+  it("keeps a foreign bridged orphan intact but deletes later unbridged orphans in both namespaces", () => {
+    const removed: string[] = [];
+    expect(() => sweepNodeLanOrphans(namespaces, pid =>
+      pid === 4567 ? [bridged, standalone] : [nextNamespace],
+    (pid, ifname) => removed.push(pid + ":" + ifname))).toThrow(/orphan revocations failed/);
+    expect(removed).toEqual(["4567:rp-a-5678abcd", "4568:rp-a-9012abcd"]);
+  });
+
+  it("continues after namespace enumeration and individual delete failures", () => {
+    const removed: string[] = [];
+    expect(() => sweepNodeLanOrphans(namespaces, pid => {
+      if (pid === 4567) throw new Error("namespace vanished");
+      return [standalone, nextNamespace];
+    }, (_pid, ifname) => {
+      removed.push(ifname);
+      if (ifname === standalone.ifname) throw new Error("delete denied");
+    })).toThrow(/orphan revocations failed/);
+    expect(removed).toEqual([standalone.ifname, nextNamespace.ifname]);
+  });
+
+  it("does not delete active, malformed or previously removed endpoints", () => {
+    const removed: string[] = [];
+    sweepNodeLanOrphans([{ pid: 4567, active: new Set([standalone.ifname]) }],
+      () => [standalone, { ...standalone, ifname: "rp-a-abcdef12", ifalias: "bad" }],
+      (_pid, ifname) => removed.push(ifname));
+    expect(removed).toEqual([]);
+  });
+});
+
+
+describe("node LAN combined pre-grant revocation", () => {
+  const [target] = selectNodeLanTargets([attachment], [container]);
+  const next = { ...target, id: "b".repeat(64), pid: 4568 };
+  const entry = (current: typeof target, device: string) => ({
+    target: current, device,
+    dhcp: { killed: false, pid: 1234, exitCode: null },
+  });
+  const owned = {
+    ifname: "rp-a-1234abcd",
+    ifalias: "rp-lan:" + attachment.attachmentId,
+    linkinfo: { info_kind: "gretap" },
+  };
+
+  it("continues orphan cleanup when a managed bridged revocation fails", () => {
+    const managed = new Map([
+      ["blocked", entry(target, "rp-a-11111111")],
+      ["safe", entry(next, "rp-a-22222222")],
+    ]);
+    const revoked: string[] = [];
+    const removed: string[] = [];
+    expect(() => revokeNodeLanState(managed, new Map(), [4567, 4568],
+      current => {
+        revoked.push(current.device);
+        if (current.device === "rp-a-11111111") throw new Error("foreign bridge");
+      },
+      pid => pid === 4567 ? [{ ...owned, master: "br-foreign" }] :
+        [{ ...owned, ifname: "rp-a-33333333" }],
+      (pid, ifname) => removed.push(pid + ":" + ifname),
+    )).toThrow(/refusing new grants/);
+    expect(revoked).toEqual(["rp-a-11111111", "rp-a-22222222"]);
+    expect(removed).toEqual(["4568:rp-a-33333333"]);
+    expect([...managed.keys()]).toEqual(["blocked"]);
+  });
+
+  it("preserves a desired pre-existing link until the post-revocation adoption", () => {
+    const removed: string[] = [];
+    revokeNodeLanState(new Map(), new Map([["desired", target]]), [4567],
+      () => { throw new Error("unexpected detach"); },
+      () => [owned, { ...owned, ifname: "rp-a-ffffffff", ifalias:
+        "rp-lan:bbbbbbbb-bbbb-4ccc-8ddd-222222222222" }],
+      (_pid, ifname) => removed.push(ifname));
+    expect(removed).toEqual(["rp-a-ffffffff"]);
   });
 });
