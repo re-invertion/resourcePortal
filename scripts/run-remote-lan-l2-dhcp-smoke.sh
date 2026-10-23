@@ -92,6 +92,39 @@ ns "$GATE" ip link add "$GATE_BRIDGE" type bridge stp_state 1
 ns "$GATE" ip link set "$WAN_DEV" master "$GATE_BRIDGE"
 ns "$GATE" ip link set eth1 master "$GATE_BRIDGE"
 ns "$GATE" ip link set "$GATE_BRIDGE" up
+# STP is intentionally enabled on both bridges to prevent remote L2 loops.
+# A freshly created Linux STP port starts in blocking/listening/learning and
+# normally needs ~30 seconds before DHCP broadcasts may cross it. Starting
+# udhcpc immediately races its bounded retry budget against STP convergence.
+# Do not disable STP or pretend a DHCP lease exists before the real dataplane
+# proves it.
+log "Waiting for encrypted transport and all L2 bridge ports to forward"
+ready=0
+for attempt in $(seq 1 75); do
+  ready=1
+  for pair in "$RP:$APP_DEV" "$RP:$WAN_DEV" "$GATE:$WAN_DEV" "$GATE:eth1"; do
+    net="${pair%%:*}"; port="${pair#*:}"
+    if ! ns "$net" bridge link show dev "$port" | grep -Eq 'state forwarding'; then
+      ready=0
+      break
+    fi
+  done
+  if [ "$ready" -eq 1 ]; then break; fi
+  sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+  ns "$RP" bridge link show >&2 || true
+  ns "$GATE" bridge link show >&2 || true
+  fail "STP bridge ports did not enter forwarding state"
+fi
+# Exercise the encrypted underlay before sending the first customer DHCP
+# broadcast; the GRETAP tunnel must not be mistaken for an unencrypted link.
+if ! ns "$RP" ping -q -c 3 -W 2 -I wg0 "$CL_IP" >/dev/null 2>&1; then
+  ns "$RP" wg show wg0 >&2 || true
+  ns "$GATE" wg show rp-gate >&2 || true
+  fail "no encrypted WireGuard underlay connectivity"
+fi
+log "PASS STP forwarding and encrypted underlay readiness"
 ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces --interface=lan0 \
   --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,5m \
   --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" > "$TMP/dhcp.log" 2>&1 &
@@ -99,7 +132,18 @@ sleep 1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ns "$APP" env RP_REMOTE_LAN_CIDR=192.168.90.0/24 busybox udhcpc -f -n -q -T 2 -t 15 -i "$APP_DEV" \
   -s "$ROOT/packages/resourceportal-api/src/networking/remote-lan-dhcp.sh" > "$TMP/lease.log" 2>&1 ||
-  { cat "$TMP/lease.log" "$TMP/dhcp.log"; fail "no customer DHCP lease"; }
+  {
+    cat "$TMP/lease.log" "$TMP/dhcp.log" >&2
+    ns "$APP" ip -s link show dev "$APP_DEV" >&2 || true
+    ns "$RP" ip -s link show dev "$APP_DEV" >&2 || true
+    ns "$RP" ip -s link show dev "$WAN_DEV" >&2 || true
+    ns "$GATE" ip -s link show dev "$WAN_DEV" >&2 || true
+    ns "$RP" bridge link show >&2 || true
+    ns "$GATE" bridge link show >&2 || true
+    ns "$RP" wg show wg0 >&2 || true
+    ns "$GATE" wg show rp-gate >&2 || true
+    fail "no customer DHCP lease"
+  }
 ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q "192.168.90.23/" ||
   fail "application did not get customer DHCP address"
 grep -qi "$MAC" "$TMP/dhcp.log" || fail "DHCP server did not see application MAC"
