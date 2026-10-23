@@ -198,13 +198,15 @@ jobs:
           docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
           docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
           # Certify each source independently with immutable official images.
-          # Keep a bounded recovery window including the incident source 0.2.92.
-          # Unsupported/uncertified sources will fail closed during preflight.
+          # Certify the immediate published source and independently test
+          # still-installed older production sources, including 0.2.96.
+          # Upgrade compatibility alone is NOT rollback certification: each
+          # source must pass the real restore smoke and retain exact-SHA proof.
           mkdir -p "$RUNNER_TEMP/rollback-source-evidence"
-          source_versions=("${PREVIOUS_TAG#v}" "0.2.93" "0.2.92")
+          source_versions=("${PREVIOUS_TAG#v}" "0.2.96" "0.2.93" "0.2.92")
           certified=()
           for source_version in "${source_versions[@]}"; do
-            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
+            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.96" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
             # A source not earlier than the target release cannot be certified.
             [[ "$(printf '%s\n%s\n' "$source_version" "$VERSION" | sort -V | head -n 1)" == "$source_version" ]] || continue
             if [[ " ${certified[*]} " == *" $source_version "* ]]; then continue; fi
@@ -243,6 +245,20 @@ jobs:
             certificate_files+=("$RUNNER_TEMP/rollback-source-evidence/$source_version.certified.json")
           done
           jq -s '.' "${certificate_files[@]}" > "$RUNNER_TEMP/rp-rollback-certifications.json"
+          # Fail closed rather than publish a manifest that will reject the
+          # installed 0.2.96 fleet, even if another source was certified.
+          jq -e --arg source "0.2.96" --arg commit "$GITHUB_SHA" '
+            any(.[]; .sourceVersion == $source and .targetCommit == $commit and
+              .kind == "real-upgrade-and-restore" and
+              .actualDatabaseMigration == true and
+              .previousImagesRestored == true and .injectedHealthFailure == true and
+              .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+              .restoredSourceSchema == true and .previousApiReadWriteAfterRollback == true and
+              .previousApiRuntimeReadyAfterRollback == true and
+              .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+              .zitadelSourceEventstoreVerified == true and
+              .candidateZitadelRuntimeReadyBeforeRollback == true)
+          ' "$RUNNER_TEMP/rp-rollback-certifications.json"
           jq -e --arg source "0.2.92" '
             any(.[]; .sourceVersion == $source)
           ' "$RUNNER_TEMP/rp-rollback-certifications.json"

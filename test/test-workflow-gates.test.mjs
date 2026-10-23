@@ -108,6 +108,16 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.match(prepublishSmoke.run,/rollback-source-evidence/);
   assert.match(prepublishSmoke.run,/rp-rollback-evidence\.json/);
   assert.match(prepublishSmoke.run,/0\.2\.92/);
+  assert.match(prepublishSmoke.run,/0\.2\.96/);
+  assert.match(prepublishSmoke.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.96" "0\.2\.93" "0\.2\.92"\)/);
+  assert.match(prepublishSmoke.run,/--previous-tag "v\$source_version"/);
+  assert.match(prepublishSmoke.run,/--verified-evidence-file "\$source_file"/);
+  assert.match(prepublishSmoke.run,/--require-automatic/);
+  assert.match(prepublishSmoke.run,/--arg source "0\.2\.96" --arg commit "\$GITHUB_SHA"/);
+  assert.match(prepublishSmoke.run,/\.actualDatabaseMigration == true/);
+  assert.match(prepublishSmoke.run,/\.previousImagesRestored == true/);
+  assert.match(prepublishSmoke.run,/\.databaseSnapshotRestored == true/);
+  assert.match(prepublishSmoke.run,/\.zitadelSourceRuntimeReadyAfterRollback == true/);
   assert.match(publish.find(s=>s.name?.startsWith('Create release manifest')).run,/rollbackCertifiedSources/);
   for (const smoke of [premergeSmoke,prepublishSmoke]){
     assert.match(smoke.run,/run-automatic-rollback-smoke\.sh/);
