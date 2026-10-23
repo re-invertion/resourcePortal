@@ -127,7 +127,9 @@ fi
 log "PASS STP forwarding and encrypted underlay readiness"
 ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces --interface=lan0 \
   --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,5m \
-  --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" > "$TMP/dhcp.log" 2>&1 &
+  --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" \
+  --dhcp-leasefile="$TMP/dnsmasq.leases" --log-dhcp --log-facility=- \
+  > "$TMP/dhcp.log" 2>&1 &
 sleep 1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # udhcpc executes -s as a binary, not via "sh". Repository source files
@@ -170,7 +172,26 @@ if ! ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q "192.168.90.23/"; the
   ns "$GATE" wg show rp-gate >&2 || true
   fail "application did not get customer DHCP address"
 fi
-grep -qi "$MAC" "$TMP/dhcp.log" || fail "DHCP server did not see application MAC"
+# dnsmasq normally logs to syslog, not the redirected stdout log.
+# Prove the customer-side server recorded the MAC->IP lease in its own
+# authoritative lease database; logging alone is not data-plane evidence.
+server_lease=0
+for attempt in $(seq 1 10); do
+  if [ -f "$TMP/dnsmasq.leases" ] &&
+     awk -v mac="$MAC" 'tolower($2)==tolower(mac) && $3=="192.168.90.23"{found=1} END{exit !found}' "$TMP/dnsmasq.leases"; then
+    server_lease=1
+    break
+  fi
+  sleep 1
+done
+if [ "$server_lease" -ne 1 ]; then
+  echo "--- customer DHCP server log ---" >&2
+  cat "$TMP/dhcp.log" >&2 || true
+  echo "--- customer DHCP lease database ---" >&2
+  cat "$TMP/dnsmasq.leases" >&2 || true
+  fail "customer DHCP server has no lease for application MAC and expected IP"
+fi
+log "PASS customer DHCP server recorded application MAC and expected IP"
 log "PASS stable MAC and remote LAN DHCP"
 ns "$APP" ping -c 3 -W 2 -I "$APP_DEV" 192.168.90.1 ||
   fail "application cannot reach remote LAN"
