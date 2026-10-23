@@ -130,8 +130,15 @@ ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces 
   --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" > "$TMP/dhcp.log" 2>&1 &
 sleep 1
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# udhcpc executes -s as a binary, not via "sh". Repository source files
+# are stored mode 0644, while the production image installs the hook
+# executable (0755). Mirror the production file mode in the isolated smoke;
+# otherwise udhcpc can report a lease but silently skip applying the IP.
+install -m 0755 "$ROOT/packages/resourceportal-api/src/networking/remote-lan-dhcp.sh" \
+  "$TMP/remote-lan-dhcp.sh"
+test -x "$TMP/remote-lan-dhcp.sh" || fail "DHCP hook must be executable"
 ns "$APP" env RP_REMOTE_LAN_CIDR=192.168.90.0/24 busybox udhcpc -f -n -q -T 2 -t 15 -i "$APP_DEV" \
-  -s "$ROOT/packages/resourceportal-api/src/networking/remote-lan-dhcp.sh" > "$TMP/lease.log" 2>&1 ||
+  -s "$TMP/remote-lan-dhcp.sh" > "$TMP/lease.log" 2>&1 ||
   {
     cat "$TMP/lease.log" "$TMP/dhcp.log" >&2
     ns "$APP" ip -s link show dev "$APP_DEV" >&2 || true
