@@ -144,8 +144,25 @@ ns "$APP" env RP_REMOTE_LAN_CIDR=192.168.90.0/24 busybox udhcpc -f -n -q -T 2 -t
     ns "$GATE" wg show rp-gate >&2 || true
     fail "no customer DHCP lease"
   }
-ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q "192.168.90.23/" ||
+# BusyBox udhcpc may return success even when its external hook rejects a
+# bound lease. Always show the hook/DHCP evidence if the address is absent;
+# never treat a successful udhcpc process exit as proof of a configured NIC.
+if ! ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q "192.168.90.23/"; then
+  echo "--- udhcpc lease / DHCP hook output ---" >&2
+  cat "$TMP/lease.log" >&2 || true
+  echo "--- customer dnsmasq output ---" >&2
+  cat "$TMP/dhcp.log" >&2 || true
+  echo "--- actual application NIC / neighbor state ---" >&2
+  ns "$APP" ip -4 addr show dev "$APP_DEV" >&2 || true
+  ns "$APP" ip -s link show dev "$APP_DEV" >&2 || true
+  ns "$APP" ip -4 neigh show dev "$APP_DEV" >&2 || true
+  echo "--- STP and authenticated transport ---" >&2
+  ns "$RP" bridge link show >&2 || true
+  ns "$GATE" bridge link show >&2 || true
+  ns "$RP" wg show wg0 >&2 || true
+  ns "$GATE" wg show rp-gate >&2 || true
   fail "application did not get customer DHCP address"
+fi
 grep -qi "$MAC" "$TMP/dhcp.log" || fail "DHCP server did not see application MAC"
 log "PASS stable MAC and remote LAN DHCP"
 ns "$APP" ping -c 3 -W 2 -I "$APP_DEV" 192.168.90.1 ||
