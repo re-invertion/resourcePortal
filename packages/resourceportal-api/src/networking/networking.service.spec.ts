@@ -394,7 +394,7 @@ describe("NetworkingService control plane", () => {
         ...device,
         ...data,
         revokedAt: data.revokedAt,
-        networks: [],
+        remoteLanAttachments: [],
       }),
     );
 
@@ -434,8 +434,8 @@ describe("NetworkingService control plane", () => {
     );
 
     expect(result.gate.serverListenPort).toBe(52000);
-    expect(result.gate.serverTunnelAddress).toBe("100.96.0.1/30");
-    expect(result.gate.clientTunnelAddress).toBe("100.96.0.2/30");
+    expect(result.gate).not.toHaveProperty("serverTunnelAddress");
+    expect(result.gate).not.toHaveProperty("clientTunnelAddress");
     expect(result.gate).not.toHaveProperty("serverPrivateKeyCiphertext");
     expect(encryption.encrypt).toHaveBeenCalledWith(
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -469,6 +469,7 @@ describe("NetworkingService control plane", () => {
         serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
         serverListenPort: 52001,
         clientTunnelAddress: "100.96.0.6/30",
+        serverTunnelAddress: "100.96.0.5/30",
         configRevision: 2,
         revokedAt: null,
         networks: [],
@@ -478,9 +479,7 @@ describe("NetworkingService control plane", () => {
     const result = await service.enrollGate({
       token: enrollmentToken,
       publicKey: "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
-      lanAddresses: ["192.168.50.2"],
-      lanCidrs: ["192.168.50.0/24"],
-      agentVersion: "test",
+      agentVersion: "gate-l2-v1",
     });
 
     const update = tx.resourcePortalGate.update.mock.calls[0]?.[0];
@@ -582,29 +581,6 @@ describe("NetworkingService control plane", () => {
     ).rejects.toMatchObject({ message: "Application not found" });
   });
 
-  it("rejects Gate attachment when an RP Network overlaps the Gate LAN", async () => {
-    const { service, prisma } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
-      id: "88888888-8888-4888-8888-888888888888",
-      name: "office",
-      revokedAt: null,
-      lanCidrs: ["192.168.10.0/24"],
-    });
-    (prisma.network.findFirst as any).mockResolvedValue({
-      id: "99999999-9999-4999-8999-999999999999",
-      name: "backend",
-      cidr: "192.168.10.0/24",
-    });
-
-    await expect(
-      service.attachGateNetwork(
-        "11111111-1111-4111-8111-111111111111",
-        "88888888-8888-4888-8888-888888888888",
-        { networkId: "99999999-9999-4999-8999-999999999999" },
-        actor,
-      ),
-    ).rejects.toBeInstanceOf(ConflictException);
-  });
   it("marks an empty Network as Deleting instead of dropping the DB record immediately", async () => {
     const { service, prisma, tx } = fixture();
     (prisma.network.findFirst as any).mockResolvedValue({
@@ -665,330 +641,64 @@ describe("NetworkingService control plane", () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it("stores eBGP configuration and derives advertised prefixes only from Gate attachments", async () => {
-    const { service, prisma, tx } = fixture();
-    const gate = {
-      id: "88888888-8888-4888-8888-888888888888",
-      tenantId: "11111111-1111-4111-8111-111111111111",
-      name: "office",
-      revokedAt: null,
-      lanAddresses: ["192.168.50.2"],
-      lanCidrs: ["192.168.50.0/24"],
-      configRevision: 3,
-    };
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
-    tx.resourcePortalGate.update.mockImplementation(({ data }: any) =>
-      Promise.resolve({
-        ...gate,
-        ...data,
-        routeAdvertisementMode: "BGP",
-        bgpLocalAsn: BigInt(65050),
-        bgpRouterAddress: "192.168.50.1",
-        bgpRouterAsn: BigInt(65001),
-        bgpSourceAddress: "192.168.50.2",
-        bgpHoldTimeSeconds: 90,
-        networks: [
-          { network: { id: "network-1", name: "backend", cidr: "10.240.10.0/24" } },
-          { network: { id: "network-2", name: "db", cidr: "10.240.20.0/24" } },
-        ],
-      }),
-    );
-
-    const result = await service.updateGateRouting(
-      "11111111-1111-4111-8111-111111111111",
-      gate.id,
-      {
-        mode: "BGP",
-        localAsn: 65050,
-        routerAddress: "192.168.50.1",
-        routerAsn: 65001,
-        sourceAddress: "192.168.50.2",
-        holdTimeSeconds: 90,
-      },
-      actor,
-    );
-
-    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: gate.id },
-        data: expect.objectContaining({
-          routeAdvertisementMode: "BGP",
-          bgpLocalAsn: BigInt(65050),
-          bgpRouterAddress: "192.168.50.1",
-          bgpRouterAsn: BigInt(65001),
-          bgpSourceAddress: "192.168.50.2",
-          configRevision: { increment: 1 },
-        }),
-      }),
-    );
-    expect(result).toMatchObject({
-      routeAdvertisementMode: "BGP",
-      bgpLocalAsn: 65050,
-      bgpRouterAsn: 65001,
-      advertisedCidrs: ["10.240.10.0/24", "10.240.20.0/24"],
-    });
-    expect(tx.auditLogEntry.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        action: "gate.routing.update",
-        resourceType: "ResourcePortalGate",
-        resourceId: gate.id,
-      }),
-    });
-  });
-
-  it("requires enrolled LAN addressing before BGP can be enabled", async () => {
-    const { service, prisma } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
-      id: "88888888-8888-4888-8888-888888888888",
-      name: "office",
-      revokedAt: null,
-      lanAddresses: [],
-      lanCidrs: [],
-    });
-
-    await expect(
-      service.updateGateRouting(
-        "11111111-1111-4111-8111-111111111111",
-        "88888888-8888-4888-8888-888888888888",
-        {
-          mode: "BGP",
-          localAsn: 65050,
-          routerAddress: "192.168.50.1",
-          routerAsn: 65001,
-        },
-        actor,
-      ),
-    ).rejects.toMatchObject({
-      message:
-        "ResourcePortalGate must report its LAN addressing before BGP can be enabled",
-    });
-  });
-
-  it("rejects BGP peers outside LAN CIDRs reported by the Gate", async () => {
-    const { service, prisma } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
-      id: "88888888-8888-4888-8888-888888888888",
-      name: "office",
-      revokedAt: null,
-      lanAddresses: ["192.168.50.2"],
-      lanCidrs: ["192.168.50.0/24"],
-    });
-
-    await expect(
-      service.updateGateRouting(
-        "11111111-1111-4111-8111-111111111111",
-        "88888888-8888-4888-8888-888888888888",
-        {
-          mode: "BGP",
-          localAsn: 65050,
-          routerAddress: "192.168.60.1",
-          routerAsn: 65001,
-        },
-        actor,
-      ),
-    ).rejects.toMatchObject({
-      message: "BGP router address must belong to a LAN CIDR reported by this Gate",
-    });
-  });
-
-  it("returns export-only BGP desired state to the Gate agent", async () => {
-    const { service, prisma } = fixture();
-    const token = "agent-secret";
-    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue({
-      id: "88888888-8888-4888-8888-888888888888",
-      agentTokenHash: createHash("sha256").update(token).digest("hex"),
-      revokedAt: null,
-    });
-    (prisma.resourcePortalGate.findUniqueOrThrow as any).mockResolvedValue({
-      id: "88888888-8888-4888-8888-888888888888",
-      serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
-      serverListenPort: 52000,
-      clientTunnelAddress: "100.96.0.2/30",
-      configRevision: 7,
-      revokedAt: null,
-      routeAdvertisementMode: "BGP",
-      bgpLocalAsn: BigInt(65050),
-      bgpRouterAddress: "192.168.50.1",
-      bgpRouterAsn: BigInt(65001),
-      bgpSourceAddress: "192.168.50.2",
-      bgpHoldTimeSeconds: 90,
-      networks: [
-        { network: { id: "network-1", name: "backend", cidr: "10.240.20.0/24" } },
-        { network: { id: "network-2", name: "api", cidr: "10.240.10.0/24" } },
-      ],
-    });
-
-    const result = await service.gateAgentConfig(`Bearer ${token}`);
-
-    expect(result.routeAdvertisement).toEqual({
-      mode: "BGP",
-      localAsn: 65050,
-      routerAddress: "192.168.50.1",
-      routerAsn: 65001,
-      sourceAddress: "192.168.50.2",
-      holdTimeSeconds: 90,
-      advertisedCidrs: ["10.240.10.0/24", "10.240.20.0/24"],
-    });
-    expect(result).not.toHaveProperty("learnedRoutes");
-  });
-
 });
-describe("Site VPN firewall policy API", () => {
-  const gateId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+describe("RP Gate LAN Attachments-only machine token policy", () => {
+  const gateToken = "gate-agent-test-token";
   const tenantId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-  const gate = {
-    id: gateId, tenantId, name: "Home LAN", revokedAt: null,
-    lanCidrs: ["192.168.50.0/24"], agentVersion: "gate-shell-v3",
-    allowLanToRp: true, allowRpToLan: false, configRevision: 3,
+  const gateId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const currentGate = {
+    id: gateId, tenantId, agentTokenHash: createHash("sha256").update(gateToken).digest("hex"),
+    revokedAt: null, agentVersion: "gate-l2-v1", status:"Ready",
+    serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+    serverListenPort:52000, serverTunnelAddress:"100.96.0.1/30",
+    clientTunnelAddress:"100.96.0.2/30", configRevision:3,
+    remoteLanAttachments: [{
+      id:"aaaaaaaa-bbbb-4ccc-8ddd-111111111111", tenantId, gateId,
+      singleAppId:"aaaaaaaa-bbbb-4ccc-8ddd-222222222222",
+      networkId:"aaaaaaaa-bbbb-4ccc-8ddd-333333333333",
+      lanInterface:"eth1", lanCidr:"192.168.50.0/24",
+      macAddress:"02:aa:bb:cc:dd:ee",status:"Active",
+    }],
   };
-
-  it("rejects enabling RP → LAN on a legacy agent", async () => {
-    const { service, prisma } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({ ...gate, agentVersion: "gate-shell-v2" });
-    await expect(service.updateGateFirewall(tenantId, gateId, {
-      allowLanToRp: true, allowRpToLan: true, expectedRevision: 3,
-    }, actor)).rejects.toThrow(/agent v3/);
-  });
-
-  it("rejects RP → LAN without a reported LAN prefix", async () => {
-    const { service, prisma } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({ ...gate, lanCidrs: [] });
-    await expect(service.updateGateFirewall(tenantId, gateId, {
-      allowLanToRp: true, allowRpToLan: true, expectedRevision: 3,
-    }, actor)).rejects.toThrow(/LAN CIDRs/);
-  });
-
-  it("updates flags with revision check and records a tenant-scoped audit", async () => {
-    const { service, prisma, tx } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
-    (tx.resourcePortalGate as any).updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    (tx.resourcePortalGate as any).findUniqueOrThrow = vi.fn().mockResolvedValue({
-      ...gate, allowLanToRp: false, allowRpToLan: true, configRevision: 4,
-    });
-    const result = await service.updateGateFirewall(tenantId, gateId, {
-      allowLanToRp: false, allowRpToLan: true, expectedRevision: 3,
-    }, actor);
-    expect(result).toMatchObject({ allowLanToRp: false, allowRpToLan: true, configRevision: 4 });
-    expect((tx.resourcePortalGate as any).updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: gateId, tenantId, revokedAt: null, configRevision: 3 },
-    }));
-    expect(tx.auditLogEntry.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ tenantId, action: "gate.firewall.update" }),
-    }));
-  });
-
-  it("prevents concurrent stale updates", async () => {
-    const { service, prisma, tx } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue(gate);
-    (tx.resourcePortalGate as any).updateMany = vi.fn().mockResolvedValue({ count: 0 });
-    await expect(service.updateGateFirewall(tenantId, gateId, {
-      allowLanToRp: false, allowRpToLan: false, expectedRevision: 3,
-    }, actor)).rejects.toBeInstanceOf(ConflictException);
-  });
-});
-
-describe("Site VPN machine-token validation", () => {
-  it("rejects unknown opaque agent tokens after passing the global user-auth guard", async () => {
-    const { service, prisma } = fixture();
+  it("rejects unknown machine tokens without leaking attachment state",async()=>{
+    const {service,prisma}=fixture();
     (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(null);
-
-    await expect(service.gateHeartbeat("Bearer invalid-machine-token", {
-      lanAddresses: ["192.168.100.142"],
-      lanCidrs: ["192.168.100.0/24"],
-      agentVersion: "gate-shell-v3",
+    await expect(service.gateHeartbeat("Bearer invalid-machine-token",{
+      agentVersion:"gate-l2-v1",
     })).rejects.toThrow("Invalid or revoked ResourcePortalGate token");
-    expect(prisma.resourcePortalGate.findUnique).toHaveBeenCalledWith({
-      where: {
-        agentTokenHash: createHash("sha256").update("invalid-machine-token").digest("hex"),
-      },
-    });
   });
-
-  it("requires a bearer token on every machine heartbeat", async () => {
-    const { service } = fixture();
-    await expect(service.gateHeartbeat(undefined, {
-      lanAddresses: [],
-      lanCidrs: [],
-    })).rejects.toThrow("ResourcePortalGate bearer token is required");
+  it("requires bearer token on each heartbeat",async()=>{
+    const {service}=fixture();
+    await expect(service.gateHeartbeat(undefined,{agentVersion:"gate-l2-v1"}))
+      .rejects.toThrow("ResourcePortalGate bearer token is required");
   });
-
-  it("rejects unknown Device VPN runtime bearer tokens", async () => {
-    const { service, prisma } = fixture();
+  it("requires certified L2 protocol and never returns Site-level routes",async()=>{
+    const {service,prisma}=fixture();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(currentGate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(currentGate);
+    await expect(service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-shell-v3"}))
+      .rejects.toThrow(/certified LAN Attachment/);
+    const desired=await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v1"});
+    expect(desired.lanAttachmentProtocol).toBe(1);
+    expect(desired.allowedIps).toEqual(["100.96.0.1/32"]);
+    expect(desired.lanAttachments).toEqual([expect.objectContaining({
+      singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
+      macAddress:"02:aa:bb:cc:dd:ee",
+    })]);
+    expect(desired).not.toHaveProperty("bgp");
+    expect(desired).not.toHaveProperty("applicationLanPolicies");
+  });
+  it("never publishes grants after Gate token revocation",async()=>{
+    const {service,prisma}=fixture();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue({...currentGate,revokedAt:new Date()});
+    await expect(service.gateAgentConfig("Bearer "+gateToken))
+      .rejects.toThrow();
+  });
+  it("preserves Device VPN separate machine-token validation",async()=>{
+    const {service,prisma}=fixture();
     (prisma.deviceVpnGateway.findUnique as any).mockResolvedValue(null);
-    await expect(service.deviceVpnRuntimeHeartbeat("Bearer invalid-device-token", {
-      peers: [],
-    })).rejects.toThrow("Invalid Device VPN runtime token");
-  });
-});
-
-describe("Site VPN agent re-enrollment safety", () => {
-  it("resets RP → LAN authorization when the agent identity is rotated", async () => {
-    const { service, prisma, tx } = fixture();
-    (prisma.resourcePortalGate.findFirst as any).mockResolvedValue({
-      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      tenantId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      name: "Home LAN", revokedAt: null,
-      allowRpToLan: true,
-    });
-    const result = await service.createGateEnrollment(
-      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      actor,
-    );
-    expect(result.enrollment.token).toBeTruthy();
-    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ allowRpToLan: false, agentVersion: null }),
-    }));
-  });
-});
-
-describe("Site VPN Gate physical LAN overlap regression (#279)", () => {
-  const token = "gate-agent-test-token";
-  function setup() {
-    const { service, prisma } = fixture();
-    const gate = {
-      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      agentTokenHash: createHash("sha256").update(token).digest("hex"),
-      revokedAt: null,
-      serverPublicKey: "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
-      serverListenPort: 52000,
-      clientTunnelAddress: "100.96.0.2/30",
-      serverTunnelAddress: "100.96.0.1/30",
-      configRevision: 1,
-      allowLanToRp: true,
-      allowRpToLan: false,
-      routeAdvertisementMode: "Manual",
-      networks: [{ network: { id: "net-1", name: "rp-service", cidr: "10.240.10.0/24" } }],
-    };
-    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
-    (prisma.resourcePortalGate.update as any).mockResolvedValue(gate);
-    (prisma.gateNetworkAttachment.findMany as any).mockResolvedValue([
-      { network: { cidr: "10.240.10.0/24" } },
-    ]);
-    return { service, prisma };
-  }
-
-  it("accepts consecutive tunnel-up heartbeats advertising physical LAN only", async () => {
-    const { service, prisma } = setup();
-    const heartbeat = {
-      lanAddresses: ["192.168.50.2"],
-      lanCidrs: ["192.168.50.0/24"],
-      agentVersion: "gate-shell-v3",
-    };
-    const first = await service.gateHeartbeat(`Bearer ${token}`, heartbeat);
-    const second = await service.gateHeartbeat(`Bearer ${token}`, heartbeat);
-    expect(first.allowedIps).toEqual(["10.240.10.0/24"]);
-    expect(second.allowedIps).toEqual(["10.240.10.0/24"]);
-    expect(prisma.resourcePortalGate.update).toHaveBeenCalledTimes(4);
-  });
-
-  it("still rejects a genuine RP Network overlap on a physical LAN route", async () => {
-    const { service, prisma } = setup();
-    await expect(service.gateHeartbeat(`Bearer ${token}`, {
-      lanAddresses: ["192.168.50.2"],
-      lanCidrs: ["192.168.50.0/24", "10.240.10.0/24"],
-      agentVersion: "gate-shell-v3",
-    })).rejects.toThrow(ConflictException);
-    expect(prisma.resourcePortalGate.update).toHaveBeenCalledTimes(1);
+    await expect(service.deviceVpnRuntimeHeartbeat("Bearer invalid-device-token",{peers:[]}))
+      .rejects.toThrow("Invalid Device VPN runtime token");
   });
 });

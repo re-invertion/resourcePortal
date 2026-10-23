@@ -67,15 +67,6 @@ export function integerRangeError(
 
 export type NetworkForm = { name: string; description: string; cidr: string };
 export type GateForm = { name: string; description: string };
-export type RoutingForm = {
-  mode: "Manual" | "BGP";
-  localAsn: string;
-  routerAddress: string;
-  routerAsn: string;
-  sourceAddress: string;
-  holdTimeSeconds: string;
-};
-
 export function validateNetworkForm(form: NetworkForm) {
   return {
     name: resourceNameError(form.name),
@@ -84,32 +75,13 @@ export function validateNetworkForm(form: NetworkForm) {
   };
 }
 
+export function hasFormErrors(errors: Record<string, string | undefined>) {
+  return Object.values(errors).some(Boolean);
+}
+
 export function validateGateForm(form: GateForm) {
   return {
     name: resourceNameError(form.name),
     description: descriptionError(form.description),
   };
-}
-
-export function validateRoutingForm(form: RoutingForm) {
-  if (form.mode !== "BGP") return {};
-  const errors: Record<string, string | undefined> = {
-    localAsn: integerRangeError(form.localAsn, "Gate ASN", 1, 4_294_967_295),
-    routerAsn: integerRangeError(form.routerAsn, "Router ASN", 1, 4_294_967_295),
-    routerAddress: ipv4Error(form.routerAddress),
-    sourceAddress: ipv4Error(form.sourceAddress, false),
-    holdTimeSeconds: integerRangeError(form.holdTimeSeconds, "Hold time", 9, 65_535),
-  };
-  if (
-    !errors.localAsn &&
-    !errors.routerAsn &&
-    Number(form.localAsn) === Number(form.routerAsn)
-  ) {
-    errors.routerAsn = "Router ASN must differ from the Gate ASN.";
-  }
-  return errors;
-}
-
-export function hasFormErrors(errors: Record<string, string | undefined>) {
-  return Object.values(errors).some(Boolean);
 }

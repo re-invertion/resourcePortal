@@ -430,34 +430,25 @@ spec:
           <HelpArticle
             id="private-networking"
             icon={<NetworkIcon />}
-            title="Connect applications with private Networks"
-            description="Tenant Networks provide private connectivity across applications and App Groups. ResourcePortalGate can route selected Networks into a local LAN through WireGuard."
+            title="Connect applications through Networks and LAN Attachments"
+            description="RP private Networks connect applications. LAN Attachments give one RP application its own DHCP address and MAC in a customer's LAN through RP Gate."
           >
-            <Subheading>Connect applications</Subheading>
+            <Subheading>Application Networks</Subheading>
             <StepList>
-              <span>Open <strong>Storage & Networking → Networking</strong> and create a Network. ResourcePortal assigns a private CIDR automatically unless you choose a compatible custom private CIDR.</span>
-              <span>On the topology canvas, drag from an application to the Network. The application receives a stable private address from that Network.</span>
-              <span>Deploy every affected App Group. A topology connection is desired state until its App Group deployment applies the additional Swarm Network attachment.</span>
-              <span>Applications connected to the same Network can communicate over that private Network. Networks can include applications from different App Groups in the same tenant.</span>
+              <span>In Networking, create a tenant Network and connect the desired applications. Deploy the App Group to apply its network attachments.</span>
+              <span>Applications share only the Networks explicitly configured for that tenant.</span>
             </StepList>
-
-            <Subheading>Expose a Network to your LAN with ResourcePortalGate</Subheading>
+            <Subheading>Customer LAN Attachment through RP Gate</Subheading>
             <StepList>
-              <span>Create a <strong>ResourcePortalGate</strong> on the Networking page and copy the one-time installation command.</span>
-              <span>Run the installer on a Linux host in the LAN that should act as the VPN router. The installer creates a systemd service and a WireGuard identity locally.</span>
-              <span>Wait until the Gate appears as <strong>Ready</strong> and reports a LAN address.</span>
-              <span>Connect the Gate node to one or more Network nodes. Each Gate→Network edge means that Network is routed through the encrypted Gate tunnel.</span>
-              <span>If the Gate host is not the LAN default router, choose the Gate route-advertisement mode. Manual mode shows the static route required for each RP Network CIDR. BGP mode configures export-only eBGP through FRR using the Gate ASN and LAN router settings, and advertises only CIDRs from active Gate→Network attachments.</span>
+              <span>Enroll RP Gate at the remote location. Use its one-time installation command on the customer's Linux host.</span>
+              <span>Provide a dedicated, unnumbered Ethernet interface or an isolated VLAN. Do not select the management NIC, Wi-Fi client link, or an existing bridge.</span>
+              <span>In LAN Attachments select one application, its private Network, RP Gate, dedicated interface and expected customer's DHCP subnet.</span>
+              <span>After the encrypted L2 transport is established, the application receives an address from the customer's existing DHCP server using its own MAC. Monitor the lease and status; Pending is not proof of connectivity.</span>
+              <span>Revoke the attachment when access is no longer needed. The Gate tears down the dedicated L2 tunnel and retains cleanup state until revocation completes.</span>
             </StepList>
-
-            <InfoBox title="Container IPs are visible on the topology">
-              ResourcePortalGate v1 does not provide private DNS or service discovery. The Networking topology shows each application's stable private addresses directly under the application node and on application→Network edges, so LAN clients can connect to the correct IP.
+            <InfoBox title="Not whole-site routing">
+              LAN Attachments do not route entire customer sites or configure static routes, NAT or BGP. ResourcePortal remains the application's host. Device VPN remains a separate per-device WireGuard access mechanism.
             </InfoBox>
-
-            <InfoBox title="Direction of access">
-              Gate v1 is designed for <strong>LAN → ResourcePortal Network</strong> access. Connecting a Gate does not automatically allow applications in ResourcePortal to initiate connections to the entire LAN.
-            </InfoBox>
-
             <div className="mt-5">
               <LinkButton href={tenantHref(tenantId, "networking")}>Open Networking</LinkButton>
             </div>

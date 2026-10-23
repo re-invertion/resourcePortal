@@ -90,9 +90,10 @@ const commands = {
   "networking": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--",
       "src/networking", "src/internal/v020-placement-networking.spec.ts"],
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/tenant-networking-bgp.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/remote-lan-attachments-panel.test.tsx"],
     ["bash", "test/installer/test-host-runtime.sh"],
-    ["python3", "test/installer/test-gate-discovery-multilan.py"],
+    ["python3", "test/installer/test-remote-lan-gate-agent.py"],
+    ["python3", "test/installer/test-remote-lan-dhcp.py"],
   ],
   "web-console": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
@@ -172,6 +173,11 @@ const commands = {
 };
 
 const classifiers = [
+  // LAN Attachment retirements affect durable topology operations and the tenant
+  // form/panel surface. Never leave these changes outside Fast Fix selection.
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
+  [/^packages\/resourceportal-web\/src\/pages\/networking-form-validation(?:\.test)?\.ts$/, ["web-console", "networking"]],
+  [/^packages\/resourceportal-web\/src\/pages\/remote-lan-attachments-panel(?:\.test)?\.tsx$/, ["web-console", "networking"]],
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.
@@ -255,7 +261,7 @@ const classifiers = [
   [/^scripts\/run-automatic-rollback-smoke\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/rollback-zitadel-runtime\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/publish-tested-release-image\.sh$/, ["platform-release", "workflow"]],
-  [/^test\/installer\/test-gate-discovery-multilan\.py$/, ["networking", "platform-release"]],
+  [/^test\/installer\/test-remote-lan-gate-agent\.py$/, ["networking", "platform-release"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],
@@ -310,12 +316,13 @@ const classifiers = [
   [/^scripts\/upgrade-recovery-from-0\.2\.68\.sh$/, ["platform-release", "installer"]],
   [/^test\/installer\/test-(releases|control-plane)\.sh$/, ["platform-release", "installer"]],
   [/^test\/installer\/test-swarm-required-capabilities\.sh$/, ["platform-release", "installer", "networking"]],
+  [/^test\/installer\/test-remote-lan-dhcp\.py$/, ["networking"]],
   [/^scripts\/installer\/(firewall|diagnostics)\.sh$/, ["installer", "networking"]],
   [/^test\/installer\/test-workflows\.sh$/, ["workflow"]],
   [/^test\/installer\/test-(host-runtime|diagnostics|core)\.sh$/, ["installer"]],
 
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
-  [/^scripts\/run-app-lan-route-agent-smoke\.sh$/, ["networking", "workflow"]],
+  [/^scripts\/run-remote-lan-l2-dhcp-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
   [/^\.github\/workflows\//, ["workflow"]],

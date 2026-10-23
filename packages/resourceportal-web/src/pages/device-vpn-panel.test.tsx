@@ -11,7 +11,6 @@ const network: NetworkResource = {
   status: "Ready",
   revision: 1,
   attachments: [],
-  gateAttachments: [],
 };
 
 const networkTwo: NetworkResource = {
@@ -22,7 +21,6 @@ const networkTwo: NetworkResource = {
   status: "Ready",
   revision: 1,
   attachments: [],
-  gateAttachments: [],
 };
 
 function json(value: unknown, status = 200) {

@@ -25,7 +25,8 @@ import { PlatformReleaseUpdateOperationExecutor } from "./operations/executors/p
 import { RuntimeOperationExecutor } from "./operations/executors/runtime-operation.executor";
 import { VolumeOperationExecutor } from "./operations/executors/volume-operation.executors";
 import { NetworkTopologyOperationExecutor } from "./operations/executors/network-topology-operation.executor";
-import { AppLanRouteReconcilerService } from "./networking/app-lan-route-reconciler.service";
+import { RemoteLanNodeReconcilerService } from "./networking/remote-lan-node-reconciler.service";
+import { RemoteLanLifecycleService } from "./networking/remote-lan-lifecycle.service";
 import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
 import { DeviceVpnRuntimeReconcilerService } from "./networking/device-vpn-runtime-reconciler.service";
 import { NetworkingModule } from "./networking/networking.module";
@@ -62,7 +63,8 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainOperationExecutor,
     IngressReconcilerService,
     GateRuntimeReconcilerService,
-    AppLanRouteReconcilerService,
+    RemoteLanNodeReconcilerService,
+    RemoteLanLifecycleService,
     DeviceVpnRuntimeReconcilerService,
     InstallerEnrollmentNodeLabelService,
     InfrastructureOperationExecutor,
@@ -123,7 +125,8 @@ import { VolumesModule } from "./volumes/volumes.module";
     DomainCertificateReconcilerService,
     IngressReconcilerService,
     GateRuntimeReconcilerService,
-    AppLanRouteReconcilerService,
+    RemoteLanNodeReconcilerService,
+    RemoteLanLifecycleService,
     DeviceVpnRuntimeReconcilerService,
     OperationsWorkerService,
     RuntimeDriftReconcilerService,

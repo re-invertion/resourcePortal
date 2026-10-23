@@ -20,7 +20,6 @@ import { MachineBearerAuth } from "../auth/machine-bearer-auth.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import type { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
-import { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
 import { AttachNetworkDto } from "./dto/attach-network.dto";
 import { CreateGateDto } from "./dto/create-gate.dto";
 import { CreateDeviceVpnDeviceDto } from "./dto/create-device-vpn-device.dto";
@@ -29,10 +28,6 @@ import { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-heartbeat
 import { CreateNetworkDto } from "./dto/create-network.dto";
 import { GateEnrollDto } from "./dto/gate-enroll.dto";
 import { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
-import { UpdateGateDiscoveryDto } from "./dto/update-gate-discovery.dto";
-import { UpdateGateApplicationAccessDto } from "./dto/update-gate-application-access.dto";
-import { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
-import { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import { UpdateNetworkDto } from "./dto/update-network.dto";
 import { resourcePortalGateInstallerScript } from "./gate-installer";
 import { NetworkingService } from "./networking.service";
@@ -178,116 +173,6 @@ export class NetworkingController {
     @CurrentUser() actor: AuthenticatedUser,
   ) {
     return this.networking.createGateEnrollment(tenantId, gateId, actor);
-  }
-
-  @RequirePermissions("gate.manage")
-  @Patch("gates/:gateId/firewall")
-  updateGateFirewall(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Body() dto: UpdateGateFirewallDto,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.networking.updateGateFirewall(tenantId, gateId, dto, actor);
-  }
-
-  @RequirePermissions("gate.manage")
-  @Patch("gates/:gateId/discovery")
-  updateGateDiscovery(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Body() dto: UpdateGateDiscoveryDto,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.networking.updateGateDiscovery(tenantId, gateId, dto, actor);
-  }
-
-  @RequirePermissions("gate.manage")
-  @Patch("gates/:gateId/application-access")
-  updateGateApplicationAccess(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Body() dto: UpdateGateApplicationAccessDto,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.networking.updateGateApplicationAccess(tenantId, gateId, dto, actor);
-  }
-
-  @RequirePermissions("gate.manage")
-  @Patch("gates/:gateId/routing")
-  updateGateRouting(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Body() dto: UpdateGateRoutingDto,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    return this.networking.updateGateRouting(tenantId, gateId, dto, actor);
-  }
-
-  @RequirePermissions("gate.manage")
-  @Post("gates/:gateId/networks")
-  @HttpCode(HttpStatus.ACCEPTED)
-  async attachGateNetwork(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Body() dto: AttachGateNetworkDto,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    const snapshot = await this.networking.topologyChangeSnapshot(tenantId, {
-      action: "GATE_ATTACH",
-      gateId,
-      networkId: dto.networkId,
-    });
-    return this.operations.enqueue({
-      type: "NETWORK_TOPOLOGY_CHANGE",
-      tenantId,
-      resourceType: "ResourcePortalGate",
-      resourceId: gateId,
-      actor,
-      idempotencyKey,
-      input: {
-        action: "GATE_ATTACH",
-        gateId,
-        networkId: dto.networkId,
-        expectedRevision: dto.expectedRevision ?? snapshot.gateRevision,
-        snapshot,
-      },
-    });
-  }
-
-  @RequirePermissions("gate.manage")
-  @Delete("gates/:gateId/networks/:networkId")
-  @HttpCode(HttpStatus.ACCEPTED)
-  async detachGateNetwork(
-    @Param("tenantId", ParseUUIDPipe) tenantId: string,
-    @Param("gateId", ParseUUIDPipe) gateId: string,
-    @Param("networkId", ParseUUIDPipe) networkId: string,
-    @Query("revision", new ParseIntPipe({ optional: true }))
-    revision: number | undefined,
-    @Headers("idempotency-key") idempotencyKey: string | undefined,
-    @CurrentUser() actor: AuthenticatedUser,
-  ) {
-    const snapshot = await this.networking.topologyChangeSnapshot(tenantId, {
-      action: "GATE_DETACH",
-      gateId,
-      networkId,
-    });
-    return this.operations.enqueue({
-      type: "NETWORK_TOPOLOGY_CHANGE",
-      tenantId,
-      resourceType: "ResourcePortalGate",
-      resourceId: gateId,
-      actor,
-      idempotencyKey,
-      input: {
-        action: "GATE_DETACH",
-        gateId,
-        networkId,
-        expectedRevision: revision ?? snapshot.gateRevision,
-        snapshot,
-      },
-    });
   }
 
   @RequirePermissions("device_vpn.read")

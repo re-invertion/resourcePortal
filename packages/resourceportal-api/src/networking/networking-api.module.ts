@@ -6,9 +6,10 @@ import {
   NetworkingController,
 } from "./networking.controller";
 import { NetworkingModule } from "./networking.module";
+import { RemoteLanAttachmentController } from "./remote-lan-attachment.controller";
 
 @Module({
   imports: [NetworkingModule, OperationsModule],
-  controllers: [NetworkingController, GateAgentController, DeviceVpnRuntimeController],
+  controllers: [NetworkingController, GateAgentController, DeviceVpnRuntimeController, RemoteLanAttachmentController],
 })
 export class NetworkingApiModule {}

@@ -245,6 +245,7 @@ model Tenant {
   registries                 Registry[]
   networks                   Network[]
   resourcePortalGates        ResourcePortalGate[]
+  remoteLanAttachments       RemoteLanAttachment[]
   deviceVpnDevices           DeviceVpnDevice[]
   auditEntries               AuditLogEntry[]
   operations                 Operation[]
@@ -792,6 +793,7 @@ model SingleApp {
   registry                Registry?            @relation(fields: [registryId], references: [id], onDelete: Restrict)
   httpEndpoints           HttpEndpoint[]
   networkAttachments      NetworkAttachment[]
+  remoteLanAttachment      RemoteLanAttachment?
   volumeAttachments       VolumeAttachment[]
   variableAttachments     VariableAttachment[]
   configAttachments       ConfigAttachment[]
@@ -1041,7 +1043,7 @@ model Network {
   updatedAt        DateTime                 @updatedAt
   tenant           Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   attachments      NetworkAttachment[]
-  gateAttachments  GateNetworkAttachment[]
+  remoteLanAttachments RemoteLanAttachment[]
   deviceVpnAccess  DeviceVpnNetworkAccess[]
 
   @@unique([tenantId, name])
@@ -1080,21 +1082,7 @@ model ResourcePortalGate {
   serverTunnelAddress        String?                        @unique
   agentTokenHash             String?                        @unique
   configRevision             Int                            @default(1)
-  allowLanToRp               Boolean                        @default(true)
-  allowRpToLan               Boolean                        @default(false)
-  applicationAccessMode      String                         @default("Legacy")
-  applicationLanPolicies     Json                           @default("[]")
-  discoveryRelayVersion      Int                            @default(0)
-  discoveryPolicies          Json                           @default("[]")
-  lanAddresses               String[]                       @default([])
-  lanCidrs                   String[]                       @default([])
   agentVersion               String?
-  routeAdvertisementMode     String                         @default("Manual")
-  bgpLocalAsn                BigInt?
-  bgpRouterAddress           String?
-  bgpRouterAsn               BigInt?
-  bgpSourceAddress           String?
-  bgpHoldTimeSeconds         Int                            @default(90)
   lastSeenAt                 DateTime?
   lastError                  String?
   revokedAt                  DateTime?
@@ -1103,29 +1091,11 @@ model ResourcePortalGate {
   createdAt                  DateTime                       @default(now())
   updatedAt                  DateTime                       @updatedAt
   tenant                     Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  networks                   GateNetworkAttachment[]
+  remoteLanAttachments       RemoteLanAttachment[]
   enrollments                ResourcePortalGateEnrollment[]
 
   @@unique([tenantId, name])
   @@index([tenantId, status])
-}
-
-model GateNetworkAttachment {
-  id             String             @id @default(uuid()) @db.Uuid
-  gateId         String             @db.Uuid
-  networkId      String             @db.Uuid
-  status         String             @default("Pending")
-  enabled        Boolean            @default(true)
-  lastObservedAt DateTime?
-  lastError      String?
-  createdBy      String             @db.Uuid
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  gate           ResourcePortalGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
-  network        Network            @relation(fields: [networkId], references: [id], onDelete: Cascade)
-
-  @@unique([gateId, networkId])
-  @@index([networkId])
 }
 
 model ResourcePortalGateEnrollment {
@@ -1536,4 +1506,36 @@ model FederationLoginProof {
   consumedAt  DateTime?
 
   @@index([createdAt])
+}
+
+/**
+ * Desired-state endpoint for an individual application in a Gate's physical
+ * LAN. Unlike the retired routed-site model, DHCP comes from the remote LAN.
+ * Pending is the only creation state; Active requires verified L2 dataplane.
+ */
+model RemoteLanAttachment {
+  id             String             @id @default(uuid()) @db.Uuid
+  tenantId       String             @db.Uuid
+  singleAppId    String             @unique @db.Uuid
+  networkId      String             @db.Uuid
+  gateId         String             @db.Uuid
+  lanInterface   String             @db.VarChar(15)
+  lanCidr        String             @db.VarChar(18)
+  macAddress     String             @unique @db.VarChar(17)
+  status         String             @default("Pending")
+  dhcpAddress    String?            @db.VarChar(15)
+  leaseExpiresAt DateTime?
+  lastVerifiedAt DateTime?
+  lastError      String?            @db.Text
+  createdBy      String             @db.Uuid
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  singleApp      SingleApp          @relation(fields: [singleAppId], references: [id], onDelete: Cascade)
+  network        Network            @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  gate           ResourcePortalGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([gateId, status])
+  @@index([networkId])
 }

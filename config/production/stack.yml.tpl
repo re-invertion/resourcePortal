@@ -281,6 +281,10 @@ services:
       RESOURCEPORTAL_DEVICE_VPN_SERVER_ADDRESS: 100.64.0.1/11
       RESOURCEPORTAL_RUNTIME_IMAGE: __API_IMAGE__
       RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME: __STACK_NAME__
+      # Reconciler may grant L2 only to a certified Gate and an explicitly
+      # attached single-replica tenant application. Node agent stays inert
+      # until the worker atomically publishes a validated policy snapshot.
+      REMOTE_LAN_L2_ENABLED: "true"
       RESOURCEPORTAL_INTERNAL_NETWORK_CIDRS: __CLUSTER_CIDR__
       TRAEFIK_CERT_RESOLVER: __ACME_CERT_RESOLVER__
       TRAEFIK_SERVICE_NAME: resourceportal-control-plane_traefik
@@ -425,19 +429,22 @@ services:
       restart_policy:
         condition: any
 
-  app-lan-router:
+  # Remote LAN node agent is installed inert. No customer Ethernet is bridged
+  # unless a certified worker sends an authenticated per-tenant policy AND
+  # explicitly sets RP_REMOTE_LAN_NODE_ENABLED=true on this Swarm service.
+  remote-lan-node:
     image: __API_IMAGE__
     user: "0"
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
       - SYS_PTRACE
-    command: ["node", "dist/src/networking/app-lan-route.runner.js"]
-    # Rollback removes the global router only after it has revoked RP-owned
-    # proto-201 routes from persistent tenant namespaces.
+    command: ["node", "dist/src/networking/remote-lan-node.runner.js"]
     stop_grace_period: 120s
     environment:
       NODE_ENV: production
+      RP_REMOTE_LAN_NODE_ENABLED: "false"
+      RESOURCEPORTAL_REMOTE_LAN_NODES_B64: "eyJ2ZXJzaW9uIjoxLCJhdHRhY2htZW50cyI6W119"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro

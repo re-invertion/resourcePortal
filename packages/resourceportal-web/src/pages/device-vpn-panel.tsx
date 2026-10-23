@@ -194,7 +194,7 @@ export function DeviceVpnPanel({
               Connect an individual laptop, workstation or phone directly to
               selected ResourcePortal Networks over WireGuard. Device VPN does
               not route general Internet traffic or grant implicit access to a
-              Site VPN LAN.
+              customer LAN Attachment.
             </p>
           </div>
           <Button
@@ -284,7 +284,7 @@ export function DeviceVpnPanel({
           <div className="p-5">
             <EmptyState
               title="No Device VPN devices"
-              description="Add a device to connect it directly to selected tenant Networks without installing a Site VPN gateway in its local network."
+              description="Add a device to connect it directly to selected tenant Networks without installing an RP Gate device in its local network."
             />
           </div>
         )}

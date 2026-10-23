@@ -3,7 +3,6 @@ import {
   hasFormErrors,
   validateGateForm,
   validateNetworkForm,
-  validateRoutingForm,
 } from "./networking-form-validation";
 
 describe("networking form validation", () => {
@@ -23,18 +22,4 @@ describe("networking form validation", () => {
     expect(validateNetworkForm({ name: "backend", description: "", cidr: "10.20.0.0/24" }).cidr).toBeUndefined();
   });
 
-  it("validates BGP fields and rejects matching ASNs", () => {
-    const errors = validateRoutingForm({
-      mode: "BGP",
-      localAsn: "65001",
-      routerAddress: "192.168.1.1",
-      routerAsn: "65001",
-      sourceAddress: "not-an-ip",
-      holdTimeSeconds: "5",
-    });
-    expect(errors.routerAsn).toMatch(/differ/i);
-    expect(errors.sourceAddress).toMatch(/IPv4/i);
-    expect(errors.holdTimeSeconds).toMatch(/9 to 65535/i);
-    expect(hasFormErrors(errors)).toBe(true);
-  });
 });
