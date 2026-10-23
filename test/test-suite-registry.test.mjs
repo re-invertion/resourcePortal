@@ -19,5 +19,5 @@ test('suite registry has unique ids, valid levels and existing workflows',()=>{
 });
 test('real runtime suites retain explicit coverage',()=>{
   const ids=new Set(registry.suites.map(s=>s.id));
-  for(const id of ['swarm','site-vpn','device-vpn','federation','installer','cli-package'])assert.ok(ids.has(id),id);
+  for(const id of ['swarm','lan-attachment','device-vpn','federation','installer','cli-package'])assert.ok(ids.has(id),id);
 });

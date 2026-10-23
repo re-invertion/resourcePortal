@@ -154,51 +154,30 @@ test("gate create uses the tenant networking API", async () => {
     "--name",
     "office",
     "--description",
-    "Office VPN router",
+    "Customer LAN Attachment gateway",
   ]);
 
   assert.equal(request.method, "POST");
   assert.equal(request.url, `/api/tenants/${tenantId}/networking/gates`);
   assert.deepEqual(request.body, {
     name: "office",
-    description: "Office VPN router",
+    description: "Customer LAN Attachment gateway",
   });
 });
 
-test("gate routing configures export-only BGP", async () => {
-  const tenantId = "00000000-0000-4000-8000-000000000001";
-  const gateId = "00000000-0000-4000-8000-000000000002";
-  const request = await captureJsonRequest([
-    "gate",
-    "routing",
-    tenantId,
-    gateId,
-    "--mode",
-    "BGP",
-    "--local-asn",
-    "65050",
-    "--router-address",
-    "192.168.50.1",
-    "--router-asn",
-    "65001",
-    "--source-address",
-    "192.168.50.2",
-    "--hold-time-seconds",
-    "90",
+test("LAN Attachment create uses a per-application L2 grant",async()=>{
+  const tenantId="00000000-0000-4000-8000-000000000001";
+  const request=await captureJsonRequest([
+    "lan-attachment","create",tenantId,
+    "--gate-id","gate-id","--single-app-id","app-id",
+    "--network-id","network-id","--lan-interface","eth1",
+    "--lan-cidr","192.168.50.0/24",
   ]);
-
-  assert.equal(request.method, "PATCH");
-  assert.equal(
-    request.url,
-    `/api/tenants/${tenantId}/networking/gates/${gateId}/routing`,
-  );
-  assert.deepEqual(request.body, {
-    mode: "BGP",
-    localAsn: 65050,
-    routerAddress: "192.168.50.1",
-    routerAsn: 65001,
-    sourceAddress: "192.168.50.2",
-    holdTimeSeconds: 90,
+  assert.equal(request.method,"POST");
+  assert.equal(request.url,`/api/tenants/${tenantId}/networking/lan-attachments`);
+  assert.deepEqual(request.body,{
+    gateId:"gate-id",singleAppId:"app-id",networkId:"network-id",
+    lanInterface:"eth1",lanCidr:"192.168.50.0/24",
   });
 });
 

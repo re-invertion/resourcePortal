@@ -7,9 +7,8 @@ import type { OperationExecutor } from "../operation-executor";
 import type { OperationRecord, OperationType } from "../operation.types";
 
 type TopologyInput = {
-  action?: "APP_ATTACH" | "APP_DETACH" | "GATE_ATTACH" | "GATE_DETACH";
+  action?: "APP_ATTACH" | "APP_DETACH";
   networkId?: string;
-  gateId?: string;
   singleAppId?: string;
   attachmentId?: string;
   address?: string;
@@ -43,10 +42,6 @@ export class NetworkTopologyOperationExecutor implements OperationExecutor {
         return this.attachApplication(operation, tenantId, input);
       case "APP_DETACH":
         return this.detachApplication(operation, tenantId, input);
-      case "GATE_ATTACH":
-        return this.attachGate(operation, tenantId, input);
-      case "GATE_DETACH":
-        return this.detachGate(operation, tenantId, input);
       default:
         throw this.error(
           "OperationInputInvalid",
@@ -151,94 +146,6 @@ export class NetworkTopologyOperationExecutor implements OperationExecutor {
         action: input.action,
         alreadyApplied: false,
         ...result,
-        snapshot: input.snapshot ?? null,
-        rollback: "transactional",
-      },
-    };
-  }
-
-  private async attachGate(
-    operation: OperationRecord,
-    tenantId: string,
-    input: TopologyInput,
-  ) {
-    const gateId = this.required(input.gateId, "gateId");
-    const networkId = this.required(input.networkId, "networkId");
-    const existing = await this.prisma.gateNetworkAttachment.findFirst({
-      where: { gateId, networkId, gate: { tenantId } },
-    });
-    if (existing?.enabled) {
-      return {
-        resourceId: existing.id,
-        result: {
-          action: input.action,
-          alreadyApplied: true,
-          attachment: existing,
-          reconciliationPending: true,
-          snapshot: input.snapshot ?? null,
-          rollback: "transactional",
-        },
-      };
-    }
-    const attachment = await this.networking.attachGateNetwork(
-      tenantId,
-      gateId,
-      {
-        networkId,
-        expectedRevision: input.expectedRevision,
-      },
-      this.actor(operation),
-    );
-    return {
-      resourceId: attachment.id,
-      result: {
-        action: input.action,
-        alreadyApplied: false,
-        attachment,
-        reconciliationPending: true,
-        snapshot: input.snapshot ?? null,
-        rollback: "transactional",
-      },
-    };
-  }
-
-  private async detachGate(
-    operation: OperationRecord,
-    tenantId: string,
-    input: TopologyInput,
-  ) {
-    const gateId = this.required(input.gateId, "gateId");
-    const networkId = this.required(input.networkId, "networkId");
-    const existing = await this.prisma.gateNetworkAttachment.findFirst({
-      where: { gateId, networkId, gate: { tenantId } },
-    });
-    if (!existing) {
-      return {
-        resourceId: gateId,
-        result: {
-          action: input.action,
-          alreadyApplied: true,
-          deleted: true,
-          reconciliationPending: true,
-          snapshot: input.snapshot ?? null,
-          rollback: "transactional",
-        },
-      };
-    }
-    const result = await this.networking.detachGateNetwork(
-      tenantId,
-      gateId,
-      networkId,
-      this.actor(operation),
-      input.expectedRevision,
-    );
-    return {
-      resourceId: gateId,
-      result: {
-        action: input.action,
-        alreadyApplied: false,
-        ...result,
-        reconciliationPending: true,
         snapshot: input.snapshot ?? null,
         rollback: "transactional",
       },

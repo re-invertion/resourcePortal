@@ -1,34 +1,24 @@
-export type GateRuntimeMapping = {
-  stableAddress: string;
+export type GateRuntimeLanAttachment = {
+  attachmentId: string;
+  tenantId: string;
+  singleAppId: string;
+  gateId: string;
+  networkId: string;
   overlayCidr: string;
-  attachmentAlias: string;
-  serviceName?: string;
+  serviceName: string;
+  macAddress: string;
 };
-
-export type GateRuntimeApplicationLanRule = {
-  attachmentAlias: string;
-  destinationCidr: string;
-  protocol: "tcp" | "udp";
-  port: number;
-};
-export type GateRuntimeDiscoveryRule = {
-  attachmentAlias: string;
-  protocol: "mdns" | "ssdp";
-};
-
+/**
+ * Authenticated encrypted L2 underlay and app-scoped bridge grants only.
+ * Site-level routed access is deliberately not representable here.
+ */
 export type GateRuntimeConfig = {
   gateId: string;
   listenPort: number;
   serverTunnelAddress: string;
   clientTunnelAddress: string;
   peerPublicKey: string;
-  peerLanCidrs: string[];
-  allowLanToRp?: boolean;
-  allowRpToLan?: boolean;
-  rpOverlayCidrs?: string[];
-  applicationAccessMode?: "Legacy" | "PerApplication";
-  applicationLanRules?: GateRuntimeApplicationLanRule[];
-  discoveryRules?: GateRuntimeDiscoveryRule[];
+  rpOverlayCidrs: string[];
   privateKeyPath: string;
-  mappings: GateRuntimeMapping[];
+  remoteLanAttachments: GateRuntimeLanAttachment[];
 };

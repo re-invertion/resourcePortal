@@ -54,7 +54,7 @@ rp_run_diagnostics() {
   rp_diagnostic_cmd 'supported OS' rp_detect_os
   rp_diagnostic_cmd 'Docker daemon' docker info
   rp_diagnostic_cmd 'UFW status' ufw status
-  rp_diagnostic_cmd 'Site VPN UDP firewall' rp_gate_wireguard_ufw_rule_present
+  rp_diagnostic_cmd 'RP Gate encrypted L2 UDP ingress' rp_gate_wireguard_ufw_rule_present
   rp_diagnostic_cmd 'Device VPN UDP firewall' rp_device_vpn_ufw_rule_present
   [[ -n "${RP_CFG_GATE_ENDPOINT_HOST:-}" ]] && rp_diagnostic_line 'Gate endpoint host' "$RP_CFG_GATE_ENDPOINT_HOST"
   rp_diagnostic_cmd 'Swarm active' test "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || true)" = active

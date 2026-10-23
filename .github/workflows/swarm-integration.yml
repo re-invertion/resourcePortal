@@ -335,17 +335,17 @@ jobs:
       - name: Build VPN dataplane smoke image
         run: docker build --tag resourceportal-vpn-e2e:current .
 
-      - name: Run Site VPN real dataplane smoke
-        timeout-minutes: 8
-        env:
-          RP_GATE_E2E_IMAGE: resourceportal-vpn-e2e:current
-        run: bash scripts/run-gate-dataplane-smoke.sh
+      - name: Install Remote LAN L2 DHCP smoke prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y dnsmasq-base busybox-static iproute2 iputils-ping
 
-      - name: Verify Site VPN route agent automatically installs and revokes routes
+      - name: Verify Remote LAN DHCP hook rejects foreign leases
+        run: python3 test/installer/test-remote-lan-dhcp.py
+
+      - name: Run Remote LAN Attachment WireGuard + GRETAP + DHCP dataplane smoke
         timeout-minutes: 8
-        env:
-          RP_GATE_E2E_IMAGE: resourceportal-vpn-e2e:current
-        run: bash scripts/run-app-lan-route-agent-smoke.sh
+        run: bash scripts/run-remote-lan-l2-dhcp-smoke.sh
 
       - name: Run Device VPN real dataplane isolation smoke
         timeout-minutes: 8

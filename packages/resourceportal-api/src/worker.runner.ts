@@ -9,7 +9,8 @@ import { DomainCertificateReconcilerService } from "./internal/domain-certificat
 import { IngressReconcilerService } from "./internal/ingress-reconciler.service";
 import { RuntimeDriftReconcilerService } from "./internal/runtime-drift-reconciler.service";
 import { NetworkEgressReconcilerService } from "./network-egress/network-egress-reconciler.service";
-import { AppLanRouteReconcilerService } from "./networking/app-lan-route-reconciler.service";
+import { RemoteLanNodeReconcilerService } from "./networking/remote-lan-node-reconciler.service";
+import { RemoteLanLifecycleService } from "./networking/remote-lan-lifecycle.service";
 import { GateRuntimeReconcilerService } from "./networking/gate-runtime-reconciler.service";
 import { DeviceVpnRuntimeReconcilerService } from "./networking/device-vpn-runtime-reconciler.service";
 import {
@@ -106,7 +107,8 @@ async function main() {
   const volumeUsage = app.get(VolumeUsageReconcilerService);
   const egressPolicy = app.get(NetworkEgressReconcilerService);
   const gateRuntime = app.get(GateRuntimeReconcilerService);
-  const appLanRoutes = app.get(AppLanRouteReconcilerService);
+  const remoteLanNode = app.get(RemoteLanNodeReconcilerService);
+  const remoteLanLifecycle = app.get(RemoteLanLifecycleService);
   const deviceVpnRuntime = app.get(DeviceVpnRuntimeReconcilerService);
   const runtimeObservability = app.get(WorkerRuntimeObservabilityService);
 
@@ -147,8 +149,11 @@ async function main() {
       10_000,
       2_000,
     ),
-    appLanRoutes: readInt(
-      config, "APP_LAN_ROUTES_RECONCILE_INTERVAL_MS", 10_000, 2_000,
+    remoteLanNode: readInt(
+      config, "REMOTE_LAN_NODE_RECONCILE_INTERVAL_MS", 10_000, 2_000,
+    ),
+    remoteLanLifecycle: readInt(
+      config, "REMOTE_LAN_LIFECYCLE_RECONCILE_INTERVAL_MS", 10_000, 2_000,
     ),
     gateRuntime: readInt(
       config,
@@ -171,7 +176,8 @@ async function main() {
     legacySecrets: 0,
     egressPolicy: 0,
     gateRuntime: 0,
-    appLanRoutes: 0,
+    remoteLanNode: 0,
+    remoteLanLifecycle: 0,
     deviceVpnRuntime: 0,
   };
   let stopping = false;
@@ -340,7 +346,8 @@ async function main() {
       await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
       await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
       await startupReconcile("gateRuntime", () => gateRuntime.reconcile());
-      await startupReconcile("appLanRoutes", () => appLanRoutes.reconcile());
+      await startupReconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
+      await startupReconcile("remoteLanNode", () => remoteLanNode.reconcile());
       await startupReconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
     }
 
@@ -358,7 +365,8 @@ async function main() {
         await reconcile("legacySecrets", () => legacySecrets.migrateAll());
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
         await reconcile("gateRuntime", () => gateRuntime.reconcile());
-        await reconcile("appLanRoutes", () => appLanRoutes.reconcile());
+        await reconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
+        await reconcile("remoteLanNode", () => remoteLanNode.reconcile());
         await reconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
       }
 

@@ -117,26 +117,12 @@ describe("NetworkTopologyOperationExecutor", () => {
     });
   });
 
-  it("is replay-safe after a Gate route edge was removed", async () => {
-    const { executor, prisma, networking } = fixture();
-    (prisma.gateNetworkAttachment.findFirst as any).mockResolvedValue(null);
-
-    const result = await executor.execute(
-      operation({
-        action: "GATE_DETACH",
-        gateId: "11111111-1111-4111-8111-111111111111",
-        networkId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-        expectedRevision: 4,
-        snapshot: { gateRevision: 4 },
-      }),
-    );
-
-    expect(result.result).toMatchObject({
-      alreadyApplied: true,
-      deleted: true,
-      reconciliationPending: true,
-      rollback: "transactional",
-    });
+  it("rejects retired Gate routing operations without touching the tenant dataplane", async () => {
+    const { executor, networking } = fixture();
+    await expect(executor.execute(operation({
+      action:"GATE_DETACH", gateId:"11111111-1111-4111-8111-111111111111",
+      networkId:"cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    }))).rejects.toMatchObject({code:"OperationInputInvalid",retryable:false});
     expect(networking.detachGateNetwork).not.toHaveBeenCalled();
   });
 });

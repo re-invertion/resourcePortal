@@ -49,33 +49,16 @@ export type TenantNetwork = {
 };
 
 export type ResourcePortalGate = {
-  id: string;
-  tenantId: string;
-  name: string;
-  description?: string | null;
-  status: string;
-  configRevision: number;
-  allowLanToRp: boolean;
-  allowRpToLan: boolean;
-  serverListenPort?: number | null;
-  clientTunnelAddress?: string | null;
-  serverTunnelAddress?: string | null;
-  lanAddresses: string[];
-  lanCidrs: string[];
-  agentVersion?: string | null;
-  routeAdvertisementMode?: "Manual" | "BGP";
-  bgpLocalAsn?: number | null;
-  bgpRouterAddress?: string | null;
-  bgpRouterAsn?: number | null;
-  bgpSourceAddress?: string | null;
-  bgpHoldTimeSeconds?: number;
-  advertisedCidrs?: string[];
-  lastSeenAt?: string | null;
-  lastError?: string | null;
-  revokedAt?: string | null;
+  id:string;tenantId:string;name:string;description?:string|null;status:string;
+  configRevision:number;agentVersion?:string|null;serverListenPort?:number|null;
+  lastSeenAt?:string|null;lastError?:string|null;revokedAt?:string|null;
 };
-
-export type SiteVpn = ResourcePortalGate;
+export type RemoteLanAttachment = {
+  id:string;tenantId:string;gateId:string;singleAppId:string;networkId:string;
+  lanInterface:string;lanCidr:string;macAddress:string;status:string;
+  dhcpAddress?:string|null;leaseExpiresAt?:string|null;
+  lastVerifiedAt?:string|null;lastError?:string|null;
+};
 
 export type DeviceVpnNetwork = {
   id: string;
@@ -518,10 +501,19 @@ export class ResourcePortalClient {
       this.request<ResourcePortalGate[]>(
         `/tenants/${encode(tenantId)}/networking/gates`,
       ),
-    listSiteVpns: (tenantId: string) =>
-      this.request<SiteVpn[]>(
-        `/tenants/${encode(tenantId)}/networking/gates`,
-      ),
+    listLanAttachments: (tenantId:string) =>
+      this.request<RemoteLanAttachment[]>(
+        `/tenants/${encode(tenantId)}/networking/lan-attachments`),
+    createLanAttachment: (tenantId:string,body:{
+      gateId:string;singleAppId:string;networkId:string;lanInterface:string;lanCidr:string;
+    }) =>
+      this.request<RemoteLanAttachment>(
+        `/tenants/${encode(tenantId)}/networking/lan-attachments`,
+        {method:"POST",body}),
+    revokeLanAttachment: (tenantId:string,id:string) =>
+      this.request<RemoteLanAttachment>(
+        `/tenants/${encode(tenantId)}/networking/lan-attachments/${encode(id)}`,
+        {method:"DELETE"}),
     listDeviceVpnDevices: (tenantId: string) =>
       this.request<DeviceVpnDevice[]>(
         `/tenants/${encode(tenantId)}/networking/device-vpn/devices`,
@@ -560,54 +552,6 @@ export class ResourcePortalClient {
       this.request(
         `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/enrollment`,
         { method: "POST" },
-      ),
-    updateGateFirewall: (
-      tenantId: string,
-      gateId: string,
-      body: { allowLanToRp: boolean; allowRpToLan: boolean; expectedRevision: number },
-    ) =>
-      this.request<ResourcePortalGate>(
-        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/firewall`,
-        { method: "PATCH", body },
-      ),
-    updateGateRouting: (
-      tenantId: string,
-      gateId: string,
-      body:
-        | { mode: "Manual" }
-        | {
-            mode: "BGP";
-            localAsn: number;
-            routerAddress: string;
-            routerAsn: number;
-            sourceAddress?: string;
-            holdTimeSeconds?: number;
-          },
-    ) =>
-      this.request<ResourcePortalGate>(
-        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/routing`,
-        { method: "PATCH", body },
-      ),
-    attachGateNetwork: (
-      tenantId: string,
-      gateId: string,
-      body: { networkId: string; expectedRevision: number },
-      idempotencyKey?: string,
-    ) =>
-      this.request<NetworkTopologyOperation>(
-        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/networks`,
-        { method: "POST", body, idempotencyKey },
-      ),
-    detachGateNetwork: (
-      tenantId: string,
-      gateId: string,
-      networkId: string,
-      expectedRevision: number,
-      idempotencyKey?: string,
-    ) =>
-      this.request<NetworkTopologyOperation>(
-        `/tenants/${encode(tenantId)}/networking/gates/${encode(gateId)}/networks/${encode(networkId)}?revision=${encode(String(expectedRevision))}`,
-        { method: "DELETE", idempotencyKey },
       ),
     deleteGate: (tenantId: string, gateId: string) =>
       this.request<ResourcePortalGate>(

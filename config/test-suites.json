@@ -124,12 +124,12 @@
       "workflow": "swarm-integration.yml"
     },
     {
-      "id": "site-vpn",
+      "id": "lan-attachment",
       "level": "system",
       "domain": "networking",
       "command": [
         "bash",
-        "scripts/run-gate-dataplane-smoke.sh"
+        "scripts/run-remote-lan-l2-dhcp-smoke.sh"
       ],
       "environment": "workflow",
       "workflow": "swarm-integration.yml"

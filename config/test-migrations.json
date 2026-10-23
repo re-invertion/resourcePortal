@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
   "moves": {
-    "packages/resourceportal-web/codespaces-config.test.mjs": "packages/resourceportal-web/deployment-entrypoints.test.mjs"
+    "packages/resourceportal-web/codespaces-config.test.mjs": "packages/resourceportal-web/deployment-entrypoints.test.mjs",
+    "packages/resourceportal-api/src/networking/gate-runtime.logic.spec.ts": "packages/resourceportal-api/src/networking/remote-lan-gateway-controller.spec.ts",
+    "packages/resourceportal-web/src/pages/tenant-networking-bgp.test.tsx": "packages/resourceportal-web/src/pages/remote-lan-attachments-panel.test.tsx"
   }
 }

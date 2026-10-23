@@ -13,7 +13,6 @@ import { appGroupNetworkName } from "../internal/traefik-routing";
 import { appGroupRuntimeBlockers, singleAppRuntimeBlockers } from "../app-groups/app-groups.view";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
-import type { AttachGateNetworkDto } from "./dto/attach-gate-network.dto";
 import type { AttachNetworkDto } from "./dto/attach-network.dto";
 import type { CreateGateDto } from "./dto/create-gate.dto";
 import type { CreateDeviceVpnDeviceDto } from "./dto/create-device-vpn-device.dto";
@@ -22,12 +21,6 @@ import type { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-hear
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
-import { validateGateDiscoveryRules } from "./gate-discovery-policy";
-import type { UpdateGateDiscoveryDto } from "./dto/update-gate-discovery.dto";
-import { validateApplicationLanRules } from "./gate-application-access";
-import type { UpdateGateApplicationAccessDto } from "./dto/update-gate-application-access.dto";
-import type { UpdateGateFirewallDto } from "./dto/update-gate-firewall.dto";
-import type { UpdateGateRoutingDto } from "./dto/update-gate-routing.dto";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
 import {
   DEFAULT_GATE_TUNNEL_POOL,
@@ -64,9 +57,7 @@ export class NetworkingService {
     tenantId: string,
     input:
       | { action: "APP_ATTACH"; networkId: string; singleAppId: string }
-      | { action: "APP_DETACH"; networkId: string; attachmentId: string }
-      | { action: "GATE_ATTACH"; gateId: string; networkId: string }
-      | { action: "GATE_DETACH"; gateId: string; networkId: string },
+      | { action: "APP_DETACH"; networkId: string; attachmentId: string },
   ) {
     switch (input.action) {
       case "APP_ATTACH": {
@@ -128,57 +119,6 @@ export class NetworkingService {
           attachment,
         };
       }
-      case "GATE_ATTACH": {
-        const [gate, network, existingAttachment] = await Promise.all([
-          this.prisma.resourcePortalGate.findFirst({
-            where: { id: input.gateId, tenantId },
-            select: { id: true, configRevision: true, revokedAt: true },
-          }),
-          this.prisma.network.findFirst({
-            where: { id: input.networkId, tenantId },
-            select: { id: true, revision: true, cidr: true },
-          }),
-          this.prisma.gateNetworkAttachment.findFirst({
-            where: {
-              gateId: input.gateId,
-              networkId: input.networkId,
-              gate: { tenantId },
-            },
-            select: { id: true, enabled: true, status: true },
-          }),
-        ]);
-        if (!gate) throw new NotFoundException("ResourcePortalGate not found");
-        if (!network) throw new NotFoundException("Network not found");
-        return {
-          gateRevision: gate.configRevision,
-          gateRevokedAt: gate.revokedAt,
-          networkRevision: network.revision,
-          networkCidr: network.cidr,
-          existingAttachment,
-        };
-      }
-      case "GATE_DETACH": {
-        const [gate, attachment] = await Promise.all([
-          this.prisma.resourcePortalGate.findFirst({
-            where: { id: input.gateId, tenantId },
-            select: { id: true, configRevision: true },
-          }),
-          this.prisma.gateNetworkAttachment.findFirst({
-            where: {
-              gateId: input.gateId,
-              networkId: input.networkId,
-              gate: { tenantId },
-            },
-            select: { id: true, enabled: true, status: true },
-          }),
-        ]);
-        if (!gate) throw new NotFoundException("ResourcePortalGate not found");
-        if (!attachment) throw new NotFoundException("Gate Network attachment not found");
-        return {
-          gateRevision: gate.configRevision,
-          attachment,
-        };
-      }
     }
   }
 
@@ -209,36 +149,11 @@ export class NetworkingService {
               },
             },
           },
-          gateAttachments: {
-            where: { enabled: true },
-            orderBy: { createdAt: "asc" },
-            include: {
-              gate: {
-                select: {
-                  id: true,
-                  name: true,
-                  status: true,
-                  lastSeenAt: true,
-                },
-              },
-            },
-          },
         },
       }),
       this.prisma.resourcePortalGate.findMany({
         where: { tenantId, revokedAt: null },
         orderBy: { name: "asc" },
-        include: {
-          networks: {
-            where: { enabled: true },
-            include: {
-              network: {
-                select: { id: true, name: true, cidr: true },
-              },
-            },
-            orderBy: { createdAt: "asc" },
-          },
-        },
       }),
       this.prisma.appGroup.findMany({
         where: { tenantId },
@@ -336,14 +251,6 @@ export class NetworkingService {
                 name: true,
                 appGroup: { select: { id: true, name: true } },
               },
-            },
-          },
-        },
-        gateAttachments: {
-          where: { enabled: true },
-          include: {
-            gate: {
-              select: { id: true, name: true, status: true, lastSeenAt: true },
             },
           },
         },
@@ -455,14 +362,14 @@ export class NetworkingService {
       where: { id: networkId, tenantId },
       include: {
         _count: {
-          select: { attachments: true, gateAttachments: true, deviceVpnAccess: true },
+          select: { attachments: true, remoteLanAttachments: true, deviceVpnAccess: true },
         },
       },
     });
     if (!network) throw new NotFoundException("Network not found");
     if (
       network._count.attachments > 0 ||
-      network._count.gateAttachments > 0 ||
+      network._count.remoteLanAttachments > 0 ||
       network._count.deviceVpnAccess > 0
     ) {
       throw new ConflictException(
@@ -633,13 +540,6 @@ export class NetworkingService {
     const gates = await this.prisma.resourcePortalGate.findMany({
       where: { tenantId, revokedAt: null },
       orderBy: { name: "asc" },
-      include: {
-        networks: {
-          where: { enabled: true },
-          orderBy: { createdAt: "asc" },
-          include: { network: true },
-        },
-      },
     });
     return gates.map((gate) => this.publicGate(gate));
   }
@@ -754,14 +654,8 @@ export class NetworkingService {
           publicKey: null,
           agentTokenHash: null,
           agentVersion: null,
-          discoveryRelayVersion: 0,
           lastSeenAt: null,
           lastError: null,
-          lanAddresses: [],
-          lanCidrs: [],
-          // Re-enrollment may replace the LAN agent with an older binary.
-          // Re-enable RP-to-LAN only after a v3 heartbeat.
-          allowRpToLan: false,
           configRevision: { increment: 1 },
           updatedBy: actor.id,
         },
@@ -779,344 +673,6 @@ export class NetworkingService {
       enrollment,
       endpointHost: this.endpointHost(),
     };
-  }
-
-  async updateGateFirewall(
-    tenantId: string,
-    gateId: string,
-    dto: UpdateGateFirewallDto,
-    actor: AuthenticatedUser,
-  ) {
-    const gate = await this.gateOrThrow(tenantId, gateId);
-    if (gate.revokedAt) throw new ConflictException("ResourcePortalGate is revoked");
-    if (dto.allowRpToLan && gate.agentVersion !== "gate-shell-v3") {
-      throw new BadRequestException(
-        "RP to LAN requires Site VPN agent v3; rotate enrollment and reinstall the Gate agent",
-      );
-    }
-    if (dto.allowRpToLan && gate.lanCidrs.length === 0) {
-      throw new BadRequestException("Site VPN must report LAN CIDRs before RP to LAN can be enabled");
-    }
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const claimed = await tx.resourcePortalGate.updateMany({
-        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
-        data: {
-          allowLanToRp: dto.allowLanToRp,
-          allowRpToLan: dto.allowRpToLan,
-          configRevision: { increment: 1 },
-          updatedBy: actor.id,
-        },
-      });
-      if (claimed.count !== 1) {
-        throw new ConflictException("Site VPN settings changed; refresh before saving");
-      }
-      await this.audit(tx, tenantId, actor, {
-        action: "gate.firewall.update",
-        resourceType: "ResourcePortalGate",
-        resourceId: gateId,
-        resourceName: gate.name,
-        changes: {
-          previous: { allowLanToRp: gate.allowLanToRp, allowRpToLan: gate.allowRpToLan },
-          current: { allowLanToRp: dto.allowLanToRp, allowRpToLan: dto.allowRpToLan },
-        },
-      });
-      return tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } });
-    });
-    return this.publicGate(updated);
-  }
-
-  async updateGateDiscovery(
-    tenantId: string,
-    gateId: string,
-    dto: UpdateGateDiscoveryDto,
-    actor: AuthenticatedUser,
-  ) {
-    const gate = await this.gateOrThrow(tenantId, gateId);
-    if (gate.revokedAt) throw new ConflictException("Site VPN is revoked");
-    if (dto.rules.length > 0 && gate.discoveryRelayVersion !== 1) {
-      throw new BadRequestException("Discovery requires an enrolled Site VPN agent with discovery relay capability");
-    }
-    const attachments = await this.prisma.networkAttachment.findMany({
-      where: {
-        network: {
-          tenantId,
-          gateAttachments: { some: { gateId, enabled: true } },
-        },
-        singleApp: { pendingDeletion: false, appGroup: { tenantId } },
-      },
-      select: { id: true },
-    });
-    let rules;
-    try {
-      rules = validateGateDiscoveryRules(
-        dto.rules, new Set(attachments.map(item => item.id)),
-      );
-    } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : "Invalid discovery rule");
-    }
-    return this.prisma.$transaction(async (tx) => {
-      const claimed = await tx.resourcePortalGate.updateMany({
-        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
-        data: {
-          discoveryPolicies: rules,
-          configRevision: { increment: 1 },
-          updatedBy: actor.id,
-        },
-      });
-      if (claimed.count !== 1) {
-        throw new ConflictException("Site VPN settings changed; refresh before saving");
-      }
-      await this.audit(tx, tenantId, actor, {
-        action: "gate.discovery.update",
-        resourceType: "ResourcePortalGate",
-        resourceId: gateId,
-        resourceName: gate.name,
-        changes: { previous: gate.discoveryPolicies, current: rules },
-      });
-      return this.publicGate(await tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } }));
-    });
-  }
-
-  async updateGateApplicationAccess(
-    tenantId: string,
-    gateId: string,
-    dto: UpdateGateApplicationAccessDto,
-    actor: AuthenticatedUser,
-  ) {
-    const gate = await this.gateOrThrow(tenantId, gateId);
-    if (gate.revokedAt) throw new ConflictException("Site VPN is revoked");
-    const attachments = await this.prisma.networkAttachment.findMany({
-      where: {
-        network: {
-          tenantId,
-          gateAttachments: { some: { gateId, enabled: true } },
-        },
-        singleApp: { pendingDeletion: false, appGroup: { tenantId } },
-      },
-      select: { id: true },
-    });
-    let rules;
-    try {
-      rules = validateApplicationLanRules(
-        dto.rules, gate.lanCidrs, new Set(attachments.map((attachment) => attachment.id)),
-      );
-    } catch (error) {
-      throw new BadRequestException(error instanceof Error ? error.message : "Invalid application policy");
-    }
-    return this.prisma.$transaction(async (tx) => {
-      const claim = await tx.resourcePortalGate.updateMany({
-        where: { id: gateId, tenantId, revokedAt: null, configRevision: dto.expectedRevision },
-        data: {
-          applicationAccessMode: "PerApplication",
-          applicationLanPolicies: rules,
-          configRevision: { increment: 1 },
-          updatedBy: actor.id,
-        },
-      });
-      if (claim.count !== 1) {
-        throw new ConflictException("Site VPN settings changed; refresh before saving");
-      }
-      await this.audit(tx, tenantId, actor, {
-        action: "gate.application-access.update",
-        resourceType: "ResourcePortalGate",
-        resourceId: gateId,
-        resourceName: gate.name,
-        changes: {
-          previous: { mode: gate.applicationAccessMode, rules: gate.applicationLanPolicies },
-          current: { mode: "PerApplication", rules },
-        },
-      });
-      const updated = await tx.resourcePortalGate.findUniqueOrThrow({ where: { id: gateId } });
-      return this.publicGate(updated);
-    });
-  }
-
-  async updateGateRouting(
-    tenantId: string,
-    gateId: string,
-    dto: UpdateGateRoutingDto,
-    actor: AuthenticatedUser,
-  ) {
-    const gate = await this.gateOrThrow(tenantId, gateId);
-    if (gate.revokedAt) throw new ConflictException("ResourcePortalGate is revoked");
-
-    if (dto.mode === "BGP") {
-      if (gate.lanAddresses.length === 0 || gate.lanCidrs.length === 0) {
-        throw new BadRequestException(
-          "ResourcePortalGate must report its LAN addressing before BGP can be enabled",
-        );
-      }
-      if (!dto.localAsn || !dto.routerAddress || !dto.routerAsn) {
-        throw new BadRequestException(
-          "BGP mode requires localAsn, routerAddress and routerAsn",
-        );
-      }
-      if (dto.localAsn === dto.routerAsn) {
-        throw new BadRequestException(
-          "ResourcePortalGate BGP requires different local and router ASNs",
-        );
-      }
-      if (
-        gate.lanCidrs.length > 0 &&
-        !gate.lanCidrs.some((cidr) => {
-          const parsed = parseIpv4Cidr(cidr);
-          return parsed ? containsIpv4(parsed, dto.routerAddress!) : false;
-        })
-      ) {
-        throw new BadRequestException(
-          "BGP router address must belong to a LAN CIDR reported by this Gate",
-        );
-      }
-      if (
-        dto.sourceAddress &&
-        gate.lanAddresses.length > 0 &&
-        !gate.lanAddresses.includes(dto.sourceAddress)
-      ) {
-        throw new BadRequestException(
-          "BGP source address must be one of the LAN addresses reported by this Gate",
-        );
-      }
-    }
-
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const value = await tx.resourcePortalGate.update({
-        where: { id: gateId },
-        data:
-          dto.mode === "BGP"
-            ? {
-                routeAdvertisementMode: "BGP",
-                bgpLocalAsn: BigInt(dto.localAsn!),
-                bgpRouterAddress: dto.routerAddress!,
-                bgpRouterAsn: BigInt(dto.routerAsn!),
-                bgpSourceAddress: dto.sourceAddress ?? null,
-                bgpHoldTimeSeconds: dto.holdTimeSeconds ?? 90,
-                configRevision: { increment: 1 },
-                updatedBy: actor.id,
-              }
-            : {
-                routeAdvertisementMode: "Manual",
-                bgpLocalAsn: null,
-                bgpRouterAddress: null,
-                bgpRouterAsn: null,
-                bgpSourceAddress: null,
-                bgpHoldTimeSeconds: 90,
-                configRevision: { increment: 1 },
-                updatedBy: actor.id,
-              },
-        include: {
-          networks: {
-            where: { enabled: true },
-            include: { network: true },
-          },
-        },
-      });
-      await this.audit(tx, tenantId, actor, {
-        action: "gate.routing.update",
-        resourceType: "ResourcePortalGate",
-        resourceId: gate.id,
-        resourceName: gate.name,
-        changes:
-          dto.mode === "BGP"
-            ? {
-                mode: "BGP",
-                localAsn: dto.localAsn,
-                routerAddress: dto.routerAddress,
-                routerAsn: dto.routerAsn,
-                sourceAddress: dto.sourceAddress ?? null,
-                holdTimeSeconds: dto.holdTimeSeconds ?? 90,
-              }
-            : { mode: "Manual" },
-      });
-      return value;
-    });
-    return this.publicGate(updated);
-  }
-
-  async attachGateNetwork(
-    tenantId: string,
-    gateId: string,
-    dto: AttachGateNetworkDto,
-    actor: AuthenticatedUser,
-  ) {
-    const [gate, network] = await Promise.all([
-      this.gateOrThrow(tenantId, gateId),
-      this.networkOrThrow(tenantId, dto.networkId),
-    ]);
-    if (gate.revokedAt) throw new ConflictException("ResourcePortalGate is revoked");
-    this.assertNoLanConflict(network.cidr, gate.lanCidrs);
-
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        await this.bumpGateRevision(
-          tx,
-          gateId,
-          dto.expectedRevision,
-          actor.id,
-        );
-        const attachment = await tx.gateNetworkAttachment.create({
-          data: {
-            gateId,
-            networkId: network.id,
-            status: "Pending",
-            createdBy: actor.id,
-          },
-        });
-        await this.audit(tx, tenantId, actor, {
-          action: "gate.network.attach",
-          resourceType: "GateNetworkAttachment",
-          resourceId: attachment.id,
-          resourceName: `${gate.name} / ${network.name}`,
-          changes: { gateId, networkId: network.id, cidr: network.cidr },
-        });
-        return attachment;
-      });
-    } catch (error) {
-      this.rethrowRevisionConflict(
-        error,
-        dto.expectedRevision,
-        "ResourcePortalGate topology changed since it was loaded",
-      );
-      this.rethrowKnownConflict(error, "This Gate is already attached to the Network");
-      throw error;
-    }
-  }
-
-  async detachGateNetwork(
-    tenantId: string,
-    gateId: string,
-    networkId: string,
-    actor: AuthenticatedUser,
-    expectedRevision?: number,
-  ) {
-    const attachment = await this.prisma.gateNetworkAttachment.findFirst({
-      where: {
-        gateId,
-        networkId,
-        gate: { tenantId },
-      },
-      include: {
-        gate: { select: { name: true } },
-        network: { select: { name: true } },
-      },
-    });
-    if (!attachment) throw new NotFoundException("Gate Network attachment not found");
-    await this.prisma.$transaction(async (tx) => {
-      await this.bumpGateRevision(
-        tx,
-        gateId,
-        expectedRevision,
-        actor.id,
-      );
-      await tx.gateNetworkAttachment.delete({ where: { id: attachment.id } });
-      await this.audit(tx, tenantId, actor, {
-        action: "gate.network.detach",
-        resourceType: "GateNetworkAttachment",
-        resourceId: attachment.id,
-        resourceName: `${attachment.gate.name} / ${attachment.network.name}`,
-        changes: { gateId, networkId },
-      });
-    });
-    return { deleted: true };
   }
 
   async revokeGate(
@@ -1462,15 +1018,8 @@ export class NetworkingService {
     if (!this.wireGuard.isPublicKey(dto.publicKey)) {
       throw new BadRequestException("Invalid WireGuard public key");
     }
-    const lanAddresses = this.normalizeLanAddresses(dto.lanAddresses);
-    const lanCidrs = this.normalizeLanCidrs(dto.lanCidrs);
-    const networkLinks = await this.prisma.gateNetworkAttachment.findMany({
-      where: { gateId: enrollment.gateId, enabled: true },
-      include: { network: { select: { cidr: true } } },
-    });
-    for (const link of networkLinks) {
-      this.assertNoLanConflict(link.network.cidr, lanCidrs);
-    }
+    if (dto.agentVersion !== "gate-l2-v1")
+      throw new BadRequestException("Only the certified RP Gate LAN Attachment agent can enroll");
 
     const agentToken = randomBytes(32).toString("base64url");
     const now = new Date();
@@ -1487,20 +1036,14 @@ export class NetworkingService {
         data: {
           publicKey: dto.publicKey,
           agentTokenHash: hashToken(agentToken),
-          lanAddresses,
-          lanCidrs,
-          agentVersion: dto.agentVersion?.trim() || null,
-          discoveryRelayVersion: dto.discoveryRelayVersion === 1 ? 1 : 0,
+          agentVersion: dto.agentVersion,
           lastSeenAt: now,
           status: "Ready",
           lastError: null,
           configRevision: { increment: 1 },
         },
         include: {
-          networks: {
-            where: { enabled: true },
-            include: { network: true },
-          },
+          remoteLanAttachments: true,
         },
       });
     });
@@ -1511,122 +1054,70 @@ export class NetworkingService {
     };
   }
 
-  async gateHeartbeat(
-    authorization: string | undefined,
-    dto: GateHeartbeatDto,
-  ) {
+  async gateHeartbeat(authorization: string | undefined, dto: GateHeartbeatDto) {
     const gate = await this.authenticateGateAgent(authorization, true);
-    const lanAddresses = this.normalizeLanAddresses(dto.lanAddresses);
-    const lanCidrs = this.normalizeLanCidrs(dto.lanCidrs);
-    const links = await this.prisma.gateNetworkAttachment.findMany({
-      where: { gateId: gate.id, enabled: true },
-      include: { network: { select: { cidr: true } } },
-    });
-    for (const link of links) {
-      this.assertNoLanConflict(link.network.cidr, lanCidrs);
-    }
+    if (dto.agentVersion !== "gate-l2-v1")
+      throw new BadRequestException("RP Gate must use the certified LAN Attachment protocol");
     const updated = await this.prisma.resourcePortalGate.update({
       where: { id: gate.id },
       data: {
-        lanAddresses,
-        lanCidrs,
-        agentVersion: dto.agentVersion?.trim() || gate.agentVersion,
-        discoveryRelayVersion: dto.discoveryRelayVersion === 1 ? 1 : 0,
+        agentVersion: dto.agentVersion,
         lastSeenAt: new Date(),
       },
-      include: {
-        networks: {
-          where: { enabled: true },
-          include: { network: true },
-        },
-      },
+      include: { remoteLanAttachments: true },
     });
     return this.agentConfig(updated);
   }
 
   async gateAgentConfig(authorization: string | undefined) {
     const gate = await this.authenticateGateAgent(authorization, false);
+    if (gate.agentVersion !== "gate-l2-v1")
+      throw new UnauthorizedException("Legacy RP Gate agent must be upgraded");
     const full = await this.prisma.resourcePortalGate.findUniqueOrThrow({
       where: { id: gate.id },
-      include: {
-        networks: {
-          where: { enabled: true },
-          include: { network: true },
-        },
-      },
+      include: { remoteLanAttachments: true },
     });
     return this.agentConfig(full);
   }
 
   private agentConfig(gate: {
     id: string;
+    tenantId: string;
+    remoteLanAttachments?: Array<{
+      id: string; tenantId: string; gateId: string; singleAppId: string; networkId: string;
+      lanInterface: string; lanCidr: string; macAddress: string; status: string;
+    }>;
     serverPublicKey: string | null;
     serverListenPort: number | null;
     clientTunnelAddress: string | null;
     serverTunnelAddress: string | null;
     configRevision: number;
     revokedAt: Date | null;
-    routeAdvertisementMode: string;
-    allowLanToRp: boolean;
-    allowRpToLan: boolean;
-    discoveryRelayVersion: number;
-    discoveryPolicies: unknown;
-    bgpLocalAsn: bigint | null;
-    bgpRouterAddress: string | null;
-    bgpRouterAsn: bigint | null;
-    bgpSourceAddress: string | null;
-    bgpHoldTimeSeconds: number;
-    networks: Array<{ network: { id: string; name: string; cidr: string } }>;
   }) {
-    if (
-      !gate.serverPublicKey ||
-      !gate.serverListenPort ||
-      !gate.clientTunnelAddress
-    ) {
-      throw new ConflictException("ResourcePortalGate server endpoint is incomplete");
-    }
+    if (!gate.serverPublicKey || !gate.serverListenPort ||
+        !gate.clientTunnelAddress || !gate.serverTunnelAddress)
+      throw new ConflictException("RP Gate L2 underlay is not enrolled");
+    const grants = (gate.remoteLanAttachments ?? [])
+      .filter(item => item.tenantId === gate.tenantId && item.gateId === gate.id &&
+        ["Provisioning","Active"].includes(item.status))
+      .map(item => ({
+        id: item.id, singleAppId: item.singleAppId,
+        networkId: item.networkId, lanInterface: item.lanInterface,
+        lanCidr: item.lanCidr, macAddress: item.macAddress,
+      }))
+      .sort((x,y) => x.id.localeCompare(y.id));
     return {
-      gateId: gate.id,
-      endpoint: `${this.endpointHost()}:${gate.serverListenPort}`,
+      gateId: gate.id, tenantId: gate.tenantId,
+      lanAttachmentProtocol: 1,
+      lanAttachments: grants,
+      endpoint: this.endpointHost() + ":" + gate.serverListenPort,
       serverPublicKey: gate.serverPublicKey,
       tunnelAddress: gate.clientTunnelAddress,
-      allowedIps: [
-        ...gate.networks.map((link) => link.network.cidr),
-        ...(gate.allowRpToLan && gate.serverTunnelAddress
-          ? [gate.serverTunnelAddress.split("/")[0] + "/32"]
-          : []),
-      ].sort(),
       serverTunnelAddress: gate.serverTunnelAddress,
-      allowLanToRp: gate.allowLanToRp,
-      allowRpToLan: gate.allowRpToLan,
-      discoveryEnabled: gate.allowRpToLan &&
-        gate.discoveryRelayVersion === 1 &&
-        Array.isArray(gate.discoveryPolicies) && gate.discoveryPolicies.length > 0,
-      networks: gate.networks.map((link) => ({
-        id: link.network.id,
-        name: link.network.name,
-        cidr: link.network.cidr,
-      })),
-      routeAdvertisement:
-        gate.routeAdvertisementMode === "BGP" &&
-        gate.bgpLocalAsn &&
-        gate.bgpRouterAddress &&
-        gate.bgpRouterAsn
-          ? {
-              mode: "BGP" as const,
-              localAsn: Number(gate.bgpLocalAsn),
-              routerAddress: gate.bgpRouterAddress,
-              routerAsn: Number(gate.bgpRouterAsn),
-              sourceAddress: gate.bgpSourceAddress,
-              holdTimeSeconds: gate.bgpHoldTimeSeconds,
-              advertisedCidrs: gate.networks
-                .map((link) => link.network.cidr)
-                .sort(),
-            }
-          : {
-              mode: "Manual" as const,
-              advertisedCidrs: [] as string[],
-            },
+      // WireGuard transports only its peer's /32. LAN frames are bridged
+      // over per-attachment GRETAP; no Site-level CIDRs or BGP routes.
+      allowedIps: grants.length ?
+        [gate.serverTunnelAddress.split("/")[0] + "/32"] : [],
       configRevision: gate.configRevision,
       revoked: Boolean(gate.revokedAt),
       persistentKeepaliveSeconds: 25,
@@ -1907,32 +1398,6 @@ export class NetworkingService {
     }
   }
 
-  private normalizeLanAddresses(values: string[]) {
-    return [...new Set(values.map((value) => value.trim()))].filter(Boolean).sort();
-  }
-
-  private normalizeLanCidrs(values: string[]) {
-    const normalized = values.map((value) => {
-      const parsed = parseIpv4Cidr(value);
-      if (!parsed) throw new BadRequestException(`Invalid LAN CIDR: ${value}`);
-      return parsed.normalized;
-    });
-    return [...new Set(normalized)].sort();
-  }
-
-  private assertNoLanConflict(networkCidr: string, lanCidrs: string[]) {
-    const network = parseIpv4Cidr(networkCidr);
-    if (!network) throw new ConflictException("Network has invalid CIDR");
-    for (const lanCidr of lanCidrs) {
-      const lan = parseIpv4Cidr(lanCidr);
-      if (lan && cidrsOverlap(network, lan)) {
-        throw new ConflictException(
-          `Network CIDR ${network.normalized} overlaps Gate LAN route ${lan.normalized}`,
-        );
-      }
-    }
-  }
-
   private nextGatePort(used: number[]) {
     const occupied = new Set(used);
     for (let port = GATE_PORT_MIN; port <= GATE_PORT_MAX; port += 1) {
@@ -2113,37 +1578,22 @@ export class NetworkingService {
     });
   }
 
-  private publicGate(
-    gate: Record<string, unknown> & {
-      serverPrivateKeyCiphertext?: string | null;
-      agentTokenHash?: string | null;
-      enrollments?: unknown;
-    },
-  ) {
-    const safe: Record<string, unknown> = { ...gate };
-    delete safe.serverPrivateKeyCiphertext;
-    delete safe.agentTokenHash;
-    delete safe.enrollments;
-    if (typeof safe.bgpLocalAsn === "bigint") {
-      safe.bgpLocalAsn = Number(safe.bgpLocalAsn);
-    }
-    if (typeof safe.bgpRouterAsn === "bigint") {
-      safe.bgpRouterAsn = Number(safe.bgpRouterAsn);
-    }
-    const links = Array.isArray(gate.networks) ? gate.networks : [];
-    safe.advertisedCidrs =
-      safe.routeAdvertisementMode === "BGP"
-        ? links
-            .flatMap((link) => {
-              if (!link || typeof link !== "object") return [];
-              const network = (link as { network?: unknown }).network;
-              if (!network || typeof network !== "object") return [];
-              const cidr = (network as { cidr?: unknown }).cidr;
-              return typeof cidr === "string" ? [cidr] : [];
-            })
-            .sort()
-        : [];
-    return safe;
+  private publicGate(gate: {
+    id?: string; tenantId?: string; name?: string; description?: string | null;
+    status?: string; agentVersion?: string | null; serverListenPort?: number | null;
+    lastSeenAt?: Date | null; lastError?: string | null; revokedAt?: Date | null;
+    configRevision?: number;
+  }) {
+    // Explicit allow-list prevents old Site VPN policy columns from leaking
+    // back into the active tenant API during migration.
+    return {
+      id: gate.id, tenantId: gate.tenantId, name: gate.name,
+      description: gate.description, status: gate.status,
+      agentVersion: gate.agentVersion,
+      serverListenPort: gate.serverListenPort,
+      lastSeenAt: gate.lastSeenAt, lastError: gate.lastError,
+      revokedAt: gate.revokedAt, configRevision: gate.configRevision,
+    };
   }
 
   private rethrowRevisionConflict(

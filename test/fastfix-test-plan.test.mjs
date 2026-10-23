@@ -234,12 +234,12 @@ test("rollback release paths require explicit scoped tests, including legacy ins
 });
 
 test("multihomed Site VPN discovery helper must run in explicit networking and rollback gates", async () => {
-  const plan = selectProfiles(["test/installer/test-gate-discovery-multilan.py"]);
+  const plan = selectProfiles(["test/installer/test-remote-lan-gate-agent.py"]);
   assert.deepEqual(plan.profiles, ["networking", "platform-release"]);
   assert.equal(plan.vpnSmoke, true);
   const { readFileSync } = await import("node:fs");
   const planner = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
-  assert.match(planner, /\["python3", "test\/installer\/test-gate-discovery-multilan\.py"\]/);
+  assert.match(planner, /\["python3", "test\/installer\/test-remote-lan-gate-agent\.py"\]/);
 });
 
 test("SingleApp placement-networking assertions require release and VPN integration gates", async () => {
@@ -386,9 +386,10 @@ test("stack apply changes always run deployment rollout and auth regressions", (
 });
 
 
-test("Site VPN route agent smoke and capability helper select security regression gates", () => {
+test("LAN Attachment DHCP smoke and capability helper select security regression gates", () => {
   const plan = selectProfiles([
-    "scripts/run-app-lan-route-agent-smoke.sh",
+    "scripts/run-remote-lan-l2-dhcp-smoke.sh",
+    "test/installer/test-remote-lan-dhcp.py",
     "test/installer/test-swarm-required-capabilities.sh",
   ]);
   assert.equal(plan.vpnSmoke, true);

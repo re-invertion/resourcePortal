@@ -69,7 +69,13 @@ export function assertExpandOnlyMigrationSql(sql) {
   }
 }
 
-function verifyMigrationDiffIsExpandOnly(previous, head) {
+/**
+ * Published migration history must remain immutable. Independently verified
+ * full source-DB restoration may authorize a DROP migration, unlike the
+ * image-only/expand-only compatibility route. No static SQL analysis or
+ * repository fixture can itself authorize destructive DDL.
+ */
+function verifyMigrationDiff(previous, head, verifiedSourceRestore) {
   const base = previous + "..." + head;
   const raw = execFileSync("git", [
     "diff", "--name-status", base, "--", "packages/resourceportal-api/prisma/migrations",
@@ -85,7 +91,7 @@ function verifyMigrationDiffIsExpandOnly(previous, head) {
       throw new Error("Release blocked: existing Prisma migrations must remain immutable");
     }
     const sql = execFileSync("git", ["show", head + ":" + path], { encoding: "utf8" });
-    assertExpandOnlyMigrationSql(sql);
+    if (!verifiedSourceRestore) assertExpandOnlyMigrationSql(sql);
   }
 }
 
@@ -184,12 +190,14 @@ if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
     }
     evidence = JSON.parse(readFileSync(evidenceFile, "utf8"));
   }
-  if (evidence && assessment.reason === "database-compatibility-not-verified") {
-    verifyMigrationDiffIsExpandOnly(previous, head);
-  }
   const result = process.argv.includes("--require-automatic")
     ? requireAutomaticRollback(assessment, evidence)
     : assessment;
+  if (assessment.reason === "database-compatibility-not-verified" && evidence) {
+    // A destructive migration can be authorized ONLY after all independently
+    // generated exact-run restore evidence was accepted by requireAutomaticRollback.
+    verifyMigrationDiff(previous, head, result.policy === "tested");
+  }
   console.log(JSON.stringify(result));
   const output = option("--github-output");
   if (output) {

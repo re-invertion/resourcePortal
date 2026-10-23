@@ -277,56 +277,25 @@ const commands: Command[] = [
   command("gate", "enrollment", "<tenantId> <gateId>", "Rotate ResourcePortalGate enrollment token.", (p, c) =>
     c.networking.rotateGateEnrollment(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
   ),
-  command("gate", "routing", "<tenantId> <gateId> --mode Manual|BGP [--local-asn N --router-address IP --router-asn N --source-address IP --hold-time-seconds N]", "Configure manual or export-only eBGP route advertisement.", (p, c) => {
-    const mode = String(flag(p.flags, "mode"));
-    if (mode === "Manual") {
-      return c.networking.updateGateRouting(
-        arg(p, 0, "tenantId"),
-        arg(p, 1, "gateId"),
-        { mode: "Manual" },
-      );
-    }
-    if (mode !== "BGP") {
-      throw new Error("--mode must be Manual or BGP");
-    }
-    return c.networking.updateGateRouting(
-      arg(p, 0, "tenantId"),
-      arg(p, 1, "gateId"),
-      {
-        mode: "BGP",
-        localAsn: Number(flag(p.flags, "localAsn")),
-        routerAddress: String(flag(p.flags, "routerAddress")),
-        routerAsn: Number(flag(p.flags, "routerAsn")),
-        ...(p.flags.sourceAddress === undefined
-          ? {}
-          : { sourceAddress: String(p.flags.sourceAddress) }),
-        ...(p.flags.holdTimeSeconds === undefined
-          ? {}
-          : { holdTimeSeconds: Number(p.flags.holdTimeSeconds) }),
-      },
-    );
-  }),
-  command("gate", "attach-network", "<tenantId> <gateId> <networkId> --expected-revision N", "Route a tenant Network through ResourcePortalGate.", (p, c) =>
-    c.networking.attachGateNetwork(
-      arg(p, 0, "tenantId"),
-      arg(p, 1, "gateId"),
-      {
-        networkId: arg(p, 2, "networkId"),
-        expectedRevision: Number(flag(p.flags, "expectedRevision")),
-      },
-      optionalString(p.flags.idempotencyKey),
-    ),
+  command("lan-attachment", "list", "<tenantId>", "List app-scoped customer LAN Attachments.", (p,c) =>
+    c.networking.listLanAttachments(arg(p,0,"tenantId")),
   ),
-  command("gate", "detach-network", "<tenantId> <gateId> <networkId> --expected-revision N", "Stop routing a tenant Network through ResourcePortalGate.", (p, c) =>
-    c.networking.detachGateNetwork(
-      arg(p, 0, "tenantId"),
-      arg(p, 1, "gateId"),
-      arg(p, 2, "networkId"),
-      Number(flag(p.flags, "expectedRevision")),
-      optionalString(p.flags.idempotencyKey),
-    ),
+  command("lan-attachment", "create",
+    "<tenantId> --gate-id ID --single-app-id ID --network-id ID --lan-interface eth1 --lan-cidr 192.168.50.0/24",
+    "Attach an RP application to customer DHCP over RP Gate.", (p,c) =>
+      c.networking.createLanAttachment(arg(p,0,"tenantId"),{
+        gateId:String(flag(p.flags,"gateId")),
+        singleAppId:String(flag(p.flags,"singleAppId")),
+        networkId:String(flag(p.flags,"networkId")),
+        lanInterface:String(flag(p.flags,"lanInterface")),
+        lanCidr:String(flag(p.flags,"lanCidr")),
+      }),
   ),
-  command("gate", "delete", "<tenantId> <gateId>", "Permanently delete ResourcePortalGate after removing its RP-side VPN runtime.", (p, c) =>
+  command("lan-attachment", "revoke", "<tenantId> <attachmentId>",
+    "Revoke a customer LAN Attachment and track remote cleanup.", (p,c) =>
+      c.networking.revokeLanAttachment(arg(p,0,"tenantId"),arg(p,1,"attachmentId")),
+  ),
+  command("gate", "delete", "<tenantId> <gateId>", "Permanently revoke a customer RP Gate after LAN Attachment cleanup.", (p, c) =>
     c.networking.deleteGate(arg(p, 0, "tenantId"), arg(p, 1, "gateId")),
   ),
   command("gate", "revoke", "<tenantId> <gateId>", "Compatibility alias for permanent ResourcePortalGate deletion.", (p, c) =>

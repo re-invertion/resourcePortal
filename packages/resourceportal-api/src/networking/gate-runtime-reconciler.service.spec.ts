@@ -154,53 +154,59 @@ describe("Gate capability reconciliation", () => {
 });
 
 describe("GateRuntimeReconcilerService", () => {
-  it("prepares networks, provisions the versioned key and deploys one Gate stack", async () => {
-    const { service, runtime, secrets, encryption } = fixture([readyGate]);
-
-    await expect(service.reconcile()).resolves.toEqual({
-      gates: 1,
-      ready: 1,
-      pending: 0,
-      removed: 0,
-      failed: 0,
-      networksDeleting: 0,
-      networksDeleted: 0,
-      networkDeleteFailures: 0,
-    });
-
+  it("attaches a Gate to a remote application's overlay without any Site VPN link", async () => {
+    const networkId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const gate = {
+      ...readyGate, networks: [], agentVersion:"gate-l2-v1",
+      remoteLanAttachments: [{
+        id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+        tenantId:readyGate.tenantId,
+        gateId:readyGate.id,
+        singleAppId:"99999999-9999-4999-8999-999999999999",
+        networkId,
+        macAddress:"02:aa:bb:cc:dd:ee",
+        singleApp:{name:"home-assistant",appGroupId:"88888888-8888-4888-8888-888888888888",desiredReplicas:1,pendingDeletion:false,appGroup:{tenantId:readyGate.tenantId}},
+        network:{id:networkId,tenantId:readyGate.tenantId,swarmNetworkName:"rp-network-"+networkId,overlayCidr:"10.200.40.0/24"},
+      }],
+    };
+    const {service,runtime}=fixture([gate]);
+    await expect(service.reconcile()).resolves.toMatchObject({ready:1,failed:0});
     expect(runtime.reconcileTenantNetwork).toHaveBeenCalledWith({
-      networkName: "rp-network-cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      subnet: "10.200.5.0/24",
-      networkId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      tenantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      networkName:"rp-network-"+networkId,
+      subnet:"10.200.40.0/24",
+      networkId,
+      tenantId:readyGate.tenantId,
     });
-    expect(encryption.decrypt).toHaveBeenCalledWith("enc:v1:cipher");
-    expect(secrets.provisionSecrets).toHaveBeenCalledWith([
-      {
-        dockerSecretName:
-          "rp-gate-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa-private-key-v2",
-        value: "server-private-key",
-      },
-    ]);
-    const deploy = service.dockerCalls.find(
-      (call) => call.args[0] === "stack" && call.args[1] === "deploy",
-    );
-    expect(deploy?.args.at(-1)).toBe(
-      "rp_gate_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa",
-    );
-    expect(deploy?.stdin).toContain("published: 52001");
-    const encoded = deploy?.stdin?.match(/RP_GATE_CONFIG_B64:\s+(\S+)/)?.[1];
+    const rendered=service.dockerCalls.find(x=>x.args[0]==="stack"&&x.args[1]==="deploy")?.stdin;
+    expect(rendered).toContain("rp-network-"+networkId);
+    const encoded=rendered?.match(/RP_GATE_CONFIG_B64:\s+(\S+)/)?.[1];
     expect(encoded).toBeTruthy();
-    const runtimeConfig = JSON.parse(
-      Buffer.from(encoded ?? "", "base64").toString("utf8"),
-    );
-    expect(runtimeConfig.mappings).toEqual([
-      {
-        stableAddress: "10.240.5.10",
-        overlayCidr: "10.200.5.0/24",
-        attachmentAlias: "rp-att-dddddddd-dddd-4ddd-8ddd-dddddddddddd",
-      },
+    const runtimeConfig=JSON.parse(Buffer.from(encoded??"","base64").toString("utf8"));
+    expect(runtimeConfig).not.toHaveProperty("mappings");
+    expect(runtimeConfig.remoteLanAttachments).toEqual([expect.objectContaining({
+      attachmentId:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+      tenantId:readyGate.tenantId,
+      networkId,
+      macAddress:"02:aa:bb:cc:dd:ee",
+    })]);
+  });
+
+  it("revokes old hosted routed gateway services when no LAN Attachment is authorized", async () => {
+    const { service, runtime, secrets } = fixture([{
+      ...readyGate, agentVersion:"gate-l2-v1", remoteLanAttachments: [],
+    }]);
+    await expect(service.reconcile()).resolves.toMatchObject({ready:1,failed:0});
+    expect(runtime.reconcileTenantNetwork).not.toHaveBeenCalled();
+    expect(secrets.provisionSecrets).not.toHaveBeenCalled();
+    expect(service.dockerCalls.map(call => call.args)).toContainEqual([
+      "stack","rm","rp_gate_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa",
     ]);
+  });
+
+  it("removes the previous Gate stack until the physical Gate runs the certified L2 agent", async () => {
+    const {service}=fixture([{...readyGate,agentVersion:"gate-shell-v3",remoteLanAttachments:[]}]);
+    await expect(service.reconcile()).resolves.toMatchObject({ready:0,pending:1,failed:0});
+    expect(service.dockerCalls.some(call=>call.args[0]==="stack"&&call.args[1]==="deploy")).toBe(false);
   });
 
   it("permanently deletes a Gate only after its runtime and private key are removed", async () => {

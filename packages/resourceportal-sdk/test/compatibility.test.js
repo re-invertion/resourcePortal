@@ -70,6 +70,7 @@ test("classifies every API controller so new public surface cannot drift silentl
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
     "networking/networking.controller.ts",
+    "networking/remote-lan-attachment.controller.ts",
     "oauth-applications/oauth-applications.controller.ts",
     "oauth-applications/platform-oauth-applications.controller.ts",
     "observability/observability.controller.ts",
@@ -263,34 +264,23 @@ test("uses canonical methods and bodies for representative mutations", async () 
 });
 
 
-test("configures export-only BGP routing for ResourcePortalGate", async () => {
-  const { client, calls } = recordingClient();
-
-  await client.networking.updateGateRouting("tenant id", "gate id", {
-    mode: "BGP",
-    localAsn: 65050,
-    routerAddress: "192.168.50.1",
-    routerAsn: 65001,
-    sourceAddress: "192.168.50.2",
-    holdTimeSeconds: 90,
+test("exposes app-scoped LAN Attachment API and revocation",async()=>{
+  const {client,calls}=recordingClient();
+  await client.networking.listLanAttachments("tenant id");
+  await client.networking.createLanAttachment("tenant id",{
+    gateId:"gate id",singleAppId:"app id",networkId:"network id",
+    lanInterface:"eth1",lanCidr:"192.168.50.0/24",
   });
-
-  assert.equal(calls[0].init.method, "PATCH");
-  assert.equal(
-    pathOf(calls[0]),
-    "/api/tenants/tenant%20id/networking/gates/gate%20id/routing",
-  );
-  assert.equal(
-    calls[0].init.body,
-    JSON.stringify({
-      mode: "BGP",
-      localAsn: 65050,
-      routerAddress: "192.168.50.1",
-      routerAsn: 65001,
-      sourceAddress: "192.168.50.2",
-      holdTimeSeconds: 90,
-    }),
-  );
+  await client.networking.revokeLanAttachment("tenant id","attachment id");
+  assert.deepEqual(calls.map(call=>[call.init.method,pathOf(call)]),[
+    ["GET","/api/tenants/tenant%20id/networking/lan-attachments"],
+    ["POST","/api/tenants/tenant%20id/networking/lan-attachments"],
+    ["DELETE","/api/tenants/tenant%20id/networking/lan-attachments/attachment%20id"],
+  ]);
+  assert.equal(calls[1].init.body,JSON.stringify({
+    gateId:"gate id",singleAppId:"app id",networkId:"network id",
+    lanInterface:"eth1",lanCidr:"192.168.50.0/24",
+  }));
 });
 
 test("uses revisions and idempotency keys for Network topology mutations", async () => {
@@ -313,38 +303,16 @@ test("uses revisions and idempotency keys for Network topology mutations", async
     8,
     "idem-detach",
   );
-  await client.networking.attachGateNetwork(
-    "tenant id",
-    "gate id",
-    { networkId: "network id", expectedRevision: 4 },
-    "idem-gate",
-  );
-  await client.networking.detachGateNetwork(
-    "tenant id",
-    "gate id",
-    "network id",
-    5,
-    "idem-gate-detach",
-  );
-
   assert.deepEqual(
     calls.map((call) => [call.init.method, pathOf(call)]),
     [
       ["POST", "/api/tenants/tenant%20id/networking/networks/network%20id/attachments"],
       ["DELETE", "/api/tenants/tenant%20id/networking/networks/network%20id/attachments/attachment%20id"],
-      ["POST", "/api/tenants/tenant%20id/networking/gates/gate%20id/networks"],
-      ["DELETE", "/api/tenants/tenant%20id/networking/gates/gate%20id/networks/network%20id"],
     ],
   );
   assert.equal(new URL(calls[1].url).searchParams.get("revision"), "8");
-  assert.equal(new URL(calls[3].url).searchParams.get("revision"), "5");
   assert.equal(new Headers(calls[0].init.headers).get("idempotency-key"), "idem-app");
   assert.equal(new Headers(calls[1].init.headers).get("idempotency-key"), "idem-detach");
-  assert.equal(new Headers(calls[2].init.headers).get("idempotency-key"), "idem-gate");
-  assert.equal(
-    new Headers(calls[3].init.headers).get("idempotency-key"),
-    "idem-gate-detach",
-  );
   assert.equal(
     calls[0].init.body,
     JSON.stringify({

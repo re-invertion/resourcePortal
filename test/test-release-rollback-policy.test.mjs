@@ -180,6 +180,71 @@ test("milestones fail closed, including an empty diff", () => {
 });
 
 
+test("destructive LAN retirement DDL requires exact-run restored-source proof and new migration history", async () => {
+  const { execFileSync, spawnSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, resolve } = await import("node:path");
+  const work = mkdtempSync(join(tmpdir(), "rp-milestone-retirement-"));
+  const command = args => execFileSync("git", ["-C", work, ...args], {encoding:"utf8"}).trim();
+  const runner = resolve("scripts/release-rollback-policy.mjs");
+  const runId = 89987;
+  const env = {...process.env, GITHUB_ACTIONS:"false", GITHUB_RUN_ID:String(runId)};
+  try {
+    command(["init","-q"]);
+    command(["config","user.email","test@example.invalid"]);
+    command(["config","user.name","RP Test"]);
+    const base="packages/resourceportal-api/prisma/migrations";
+    mkdirSync(join(work,base,"20261001000000_baseline"),{recursive:true});
+    writeFileSync(join(work,base,"20261001000000_baseline","migration.sql"),
+      'CREATE TABLE "Tenant" ("id" TEXT);\n');
+    command(["add","."]);
+    command(["commit","-q","-m","source schema"]);
+    command(["tag","v0.2.95"]);
+    mkdirSync(join(work,base,"20261023000000_lan_retirement"));
+    writeFileSync(join(work,base,"20261023000000_lan_retirement","migration.sql"),
+      'DROP TABLE "GateNetworkAttachment";\nALTER TABLE "ResourcePortalGate" DROP COLUMN "allowLanToRp";\n');
+    command(["add","."]);
+    command(["commit","-q","-m","retire old routing with verified restore"]);
+    const commit=command(["rev-parse","HEAD"]);
+    const argv=[runner,"--previous-tag","v0.2.95","--head","HEAD",
+      "--mode","milestone","--require-automatic"];
+    const run=args=>spawnSync(process.execPath,args,{cwd:work,env,encoding:"utf8"});
+    const absent=run(argv);
+    assert.notEqual(absent.status,0,"destructive migration must not ship without independent evidence");
+    assert.match(absent.stderr,/Release blocked/);
+    const evidence={
+      kind:"real-upgrade-and-restore",sourceVersion:"0.2.95",targetCommit:commit,
+      workflowRunId:runId,actualDatabaseMigration:true,previousApiReadWriteAfterRollback:true,
+      previousApiRuntimeReadyAfterRollback:true,injectedHealthFailure:true,
+      previousImagesRestored:true,databaseSnapshotVerified:true,databaseSnapshotRestored:true,
+      restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,
+      zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,
+      candidateZitadelImage:"ghcr.io/zitadel/zitadel@sha256:"+"a".repeat(64),
+      sourceZitadelImage:"ghcr.io/zitadel/zitadel@sha256:"+"b".repeat(64),
+    };
+    const evidencePath=join(work,"source-restore-test-fixture.json");
+    writeFileSync(evidencePath,JSON.stringify(evidence));
+    const validated=run([...argv,"--verified-evidence-file",evidencePath]);
+    assert.equal(validated.status,0,validated.stderr);
+    assert.equal(JSON.parse(validated.stdout).policy,"tested");
+    writeFileSync(evidencePath,JSON.stringify({...evidence,databaseSnapshotRestored:false}));
+    const denied=run([...argv,"--verified-evidence-file",evidencePath]);
+    assert.notEqual(denied.status,0,"missing database restore evidence must fail closed");
+    // Published history may NOT be rewritten even when a later DB restore is certified.
+    writeFileSync(join(work,base,"20261001000000_baseline","migration.sql"),
+      'DROP TABLE "Tenant";\n');
+    command(["add","."]);command(["commit","-q","-m","alter published migration"]);
+    const changedCommit=command(["rev-parse","HEAD"]);
+    writeFileSync(evidencePath,JSON.stringify({...evidence,targetCommit:changedCommit}));
+    const tampered=run([...argv,"--verified-evidence-file",evidencePath]);
+    assert.notEqual(tampered.status,0);
+    assert.match(tampered.stderr,/immutable/);
+  } finally {
+    rmSync(work,{recursive:true,force:true});
+  }
+});
+
 test("release CLI compares both tag and target commit in a real Git history", async () => {
   const { execFileSync, spawnSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs");

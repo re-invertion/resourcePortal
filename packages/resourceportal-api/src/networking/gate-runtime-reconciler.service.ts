@@ -10,8 +10,6 @@ import {
   gatePrivateSecretName,
   gateStackName,
 } from "./network-runtime-names";
-import { runtimeGateDiscoveryRules, validateGateDiscoveryRules } from "./gate-discovery-policy";
-import { runtimeApplicationLanRules, validateApplicationLanRules } from "./gate-application-access";
 import { gateStackDigest, renderGateStack } from "./gate-stack";
 
 type DockerResult = {
@@ -34,18 +32,11 @@ export class GateRuntimeReconcilerService {
     const [gates, deletingNetworks] = await Promise.all([
       this.prisma.resourcePortalGate.findMany({
         include: {
-          networks: {
-            where: { enabled: true },
-            orderBy: { createdAt: "asc" },
+          remoteLanAttachments: {
+            where: { status: { in: ["Provisioning", "Active"] } },
             include: {
-              network: {
-                include: {
-                  attachments: {
-                    orderBy: { createdAt: "asc" },
-                    include: { singleApp: { select: { name: true, appGroupId: true } } },
-                  },
-                },
-              },
+              network: true,
+              singleApp: { include: { appGroup: { select: { tenantId: true } } } },
             },
           },
         },
@@ -56,13 +47,11 @@ export class GateRuntimeReconcilerService {
         orderBy: { createdAt: "asc" },
       }),
     ]);
-
     let ready = 0;
     let pending = 0;
     let removed = 0;
     let failed = 0;
-    // Tenant Networks are first-class resources, not dependent on Site VPN
-    // attachments. Provision them even before the first application deployment.
+    // Tenant Networks remain independent of LAN Attachments.
     const pendingNetworks = await this.prisma.network.findMany({
       where: { status: { in: ["Provisioning", "Error"] } },
       orderBy: { createdAt: "asc" },
@@ -88,207 +77,111 @@ export class GateRuntimeReconcilerService {
         });
       }
     }
+
     for (const gate of gates) {
       try {
+        const attachments = gate.remoteLanAttachments;
         if (gate.revokedAt || gate.status === "Revoked" || gate.status === "Deleting") {
           await this.removeGateRuntime(gate.id, gate.serverKeyVersion);
-          await this.prisma.resourcePortalGate.delete({
-            where: { id: gate.id },
-          });
+          await this.prisma.resourcePortalGate.delete({ where: { id: gate.id } });
           removed += 1;
           continue;
         }
-
-        if (
-          !gate.publicKey ||
-          !gate.serverPrivateKeyCiphertext ||
-          !gate.serverListenPort ||
-          !gate.serverTunnelAddress ||
-          !gate.clientTunnelAddress
-        ) {
+        if (!gate.publicKey || !gate.serverPrivateKeyCiphertext ||
+            !gate.serverListenPort || !gate.serverTunnelAddress ||
+            !gate.clientTunnelAddress || gate.agentVersion !== "gate-l2-v1") {
+          // A legacy Gate must NEVER receive any L2 grant. Remove the
+          // previous stack/route surface before requiring re-enrollment.
           await this.removeStack(gateStackName(gate.id));
           await this.prisma.resourcePortalGate.update({
             where: { id: gate.id },
-            data: {
-              status: "PendingEnrollment",
-              lastError: null,
-            },
+            data: { status: "PendingEnrollment", lastError: null },
           });
           pending += 1;
           continue;
         }
-
-        if (gate.networks.length === 0) {
+        if (!attachments.length) {
           await this.removeStack(gateStackName(gate.id));
           await this.prisma.resourcePortalGate.update({
-            where: { id: gate.id },
-            data: {
-              status: "Ready",
-              lastError: null,
-            },
+            where: { id: gate.id }, data: { status: "Ready", lastError: null },
           });
           ready += 1;
           continue;
         }
-
-        for (const link of gate.networks) {
-          const prepared = await this.runtime.reconcileTenantNetwork({
-            networkName: link.network.swarmNetworkName,
-            subnet: link.network.overlayCidr,
-            networkId: link.network.id,
-            tenantId: gate.tenantId,
+        const networks = new Map<string, {
+          id: string; swarmNetworkName: string; overlayCidr: string;
+        }>();
+        for (const attachment of attachments) {
+          if (attachment.gateId !== gate.id || attachment.tenantId !== gate.tenantId ||
+              attachment.network.tenantId !== gate.tenantId ||
+              attachment.singleApp.appGroup.tenantId !== gate.tenantId ||
+              attachment.singleApp.pendingDeletion || attachment.singleApp.desiredReplicas !== 1)
+            throw new Error("Untrusted or revoked Remote LAN tenant application");
+          networks.set(attachment.networkId, {
+            id: attachment.network.id,
+            swarmNetworkName: attachment.network.swarmNetworkName,
+            overlayCidr: attachment.network.overlayCidr,
           });
-          if (!prepared.success) {
-            throw new Error(
-              "error" in prepared && prepared.error
-                ? prepared.error
-                : `Unable to prepare ${link.network.swarmNetworkName}`,
-            );
-          }
+        }
+        for (const network of networks.values()) {
+          const provisioned = await this.runtime.reconcileTenantNetwork({
+            networkName: network.swarmNetworkName, subnet: network.overlayCidr,
+            networkId: network.id, tenantId: gate.tenantId,
+          });
+          if (!provisioned.success)
+            throw new Error("Unable to prepare Remote LAN tenant overlay: " +
+              ("error" in provisioned ? String(provisioned.error) : "unknown"));
           await this.prisma.network.update({
-            where: { id: link.network.id },
-            data: {
-              status: "Ready",
-              lastObservedAt: new Date(),
-              lastError: null,
-            },
+            where: { id: network.id },
+            data: { status: "Ready", lastObservedAt: new Date(), lastError: null },
           });
         }
-
-        const secretName = gatePrivateSecretName(
-          gate.id,
-          gate.serverKeyVersion,
-        );
-        const provisioned = await this.secrets.provisionSecrets([
-          {
-            dockerSecretName: secretName,
-            value: this.encryption.decrypt(gate.serverPrivateKeyCiphertext),
-          },
-        ]);
-        if (!provisioned.success) {
-          throw new Error(provisioned.details || provisioned.message);
-        }
-
-        const image = this.runtimeImage();
-        const allowedAttachmentIds = new Set(
-          gate.networks.flatMap((link) =>
-            link.network.attachments.map((attachment) => attachment.id),
-          ),
-        );
-        let applicationLanRules: ReturnType<typeof runtimeApplicationLanRules> = [];
-        if (gate.applicationAccessMode === "PerApplication") {
-          // Detached apps or removed LAN prefixes cannot retain stale firewall grants.
-          // On invalid saved state, deny every new application-to-LAN connection.
-          try {
-            const raw = Array.isArray(gate.applicationLanPolicies)
-              ? gate.applicationLanPolicies.filter((rule) =>
-                  Boolean(rule && typeof rule === "object" && !Array.isArray(rule) &&
-                    allowedAttachmentIds.has((rule as { attachmentId?: string }).attachmentId ?? "")),
-                )
-              : [];
-            applicationLanRules = runtimeApplicationLanRules(validateApplicationLanRules(
-              raw, gate.lanCidrs, allowedAttachmentIds,
-            ));
-          } catch {
-            applicationLanRules = [];
-          }
-        }
-        let discoveryRules: ReturnType<typeof runtimeGateDiscoveryRules> = [];
-        if (gate.discoveryRelayVersion === 1) {
-          try {
-            const saved = Array.isArray(gate.discoveryPolicies)
-              ? gate.discoveryPolicies.filter(item => Boolean(item && typeof item === "object" &&
-                  !Array.isArray(item) && allowedAttachmentIds.has(
-                    (item as { attachmentId?: string }).attachmentId ?? "",
-                  )))
-              : [];
-            discoveryRules = runtimeGateDiscoveryRules(validateGateDiscoveryRules(
-              saved, allowedAttachmentIds,
-            ));
-          } catch {
-            discoveryRules = [];
-          }
-        }
+        const secretName = gatePrivateSecretName(gate.id, gate.serverKeyVersion);
+        const secret = await this.secrets.provisionSecrets([{
+          dockerSecretName: secretName,
+          value: this.encryption.decrypt(gate.serverPrivateKeyCiphertext),
+        }]);
+        if (!secret.success) throw new Error(secret.details || secret.message);
         const stackInput = {
-          discoveryRules,
-          applicationAccessMode: gate.applicationAccessMode === "PerApplication"
-            ? "PerApplication" as const : "Legacy" as const,
-          applicationLanRules,
-          gateId: gate.id,
-          image,
-          publishedPort: gate.serverListenPort,
+          gateId: gate.id, image: this.runtimeImage(), publishedPort: gate.serverListenPort,
           serverTunnelAddress: gate.serverTunnelAddress,
           clientTunnelAddress: gate.clientTunnelAddress,
           peerPublicKey: gate.publicKey,
-          peerLanCidrs: gate.lanCidrs,
-          allowLanToRp: gate.allowLanToRp,
-          allowRpToLan: gate.allowRpToLan,
           privateSecretName: secretName,
-          networks: gate.networks.map((link) => ({
-            id: link.network.id,
-            swarmNetworkName: link.network.swarmNetworkName,
-            overlayCidr: link.network.overlayCidr,
-            attachments: link.network.attachments.map((attachment) => ({
-              id: attachment.id,
-              address: attachment.address,
-              ...(attachment.singleApp ? {
-                serviceName: "rp_" + attachment.singleApp.appGroupId.replaceAll("-", "_") + "_" +
-                  attachment.singleApp.name.replaceAll("-", "_"),
-              } : {}),
-            })),
+          remoteLanAttachments: attachments.map(attachment => ({
+            attachmentId: attachment.id,
+            tenantId: attachment.tenantId,
+            singleAppId: attachment.singleAppId,
+            gateId: gate.id, networkId: attachment.networkId,
+            overlayCidr: attachment.network.overlayCidr,
+            serviceName: "rp_" + attachment.singleApp.appGroupId.replaceAll("-", "_") +
+              "_" + attachment.singleApp.name.replaceAll("-", "_"),
+            macAddress: attachment.macAddress,
+          })),
+          networks: [...networks.values()].map(network => ({
+            ...network, attachments: [] as Array<{ id: string; address: string }>,
           })),
         };
-        const rendered = renderGateStack(stackInput);
-        const desiredDigest = gateStackDigest(stackInput);
-        const currentDigest = await this.currentGateDigest(gate.id);
-
-        const deployed =
-          currentDigest === desiredDigest
-            ? { exitCode: 0, stdout: "unchanged", stderr: "" }
-            : await this.deployStack(gateStackName(gate.id), rendered);
-        if (deployed.exitCode !== 0) {
-          throw new Error(
-            deployed.stderr ||
-              deployed.stdout ||
-              `Unable to deploy Gate runtime ${gate.id}`,
-          );
+        const digest = gateStackDigest(stackInput);
+        if (await this.currentGateDigest(gate.id) !== digest) {
+          const deployed = await this.deployStack(gateStackName(gate.id),
+            renderGateStack(stackInput));
+          if (deployed.exitCode !== 0)
+            throw new Error(deployed.stderr || deployed.stdout ||
+              "Unable to deploy Remote LAN Gateway runtime");
         }
-        // The Compose cap_add declaration is not a reliable source of
-        // effective Swarm capabilities. Ensure the actual Gate task spec.
         await this.ensureGatewayCapabilities(gate.id);
-
-        const observedAt = new Date();
-        await this.prisma.$transaction([
-          this.prisma.resourcePortalGate.update({
-            where: { id: gate.id },
-            data: {
-              status: "Ready",
-              lastError: null,
-            },
-          }),
-          this.prisma.gateNetworkAttachment.updateMany({
-            where: { gateId: gate.id, enabled: true },
-            data: {
-              status: "Ready",
-              lastObservedAt: observedAt,
-              lastError: null,
-            },
-          }),
-        ]);
+        await this.prisma.resourcePortalGate.update({
+          where: { id: gate.id }, data: { status: "Ready", lastError: null },
+        });
         ready += 1;
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message : String(error);
-        await this.prisma.$transaction([
-          this.prisma.resourcePortalGate.update({
-            where: { id: gate.id },
-            data: { status: "Error", lastError: message.slice(0, 4000) },
-          }),
-          this.prisma.gateNetworkAttachment.updateMany({
-            where: { gateId: gate.id, enabled: true },
-            data: { status: "Error", lastError: message.slice(0, 4000) },
-          }),
-        ]);
+        await this.prisma.resourcePortalGate.update({
+          where: { id: gate.id },
+          data: { status: "Error", lastError: message.slice(0, 4000) },
+        });
       }
     }
 
