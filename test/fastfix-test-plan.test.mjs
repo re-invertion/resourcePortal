@@ -404,3 +404,21 @@ test("voucher expiry fixture changes require full billing correctness profile", 
   assert.deepEqual(plan.profiles, ["billing-correctness"]);
   assert.equal(plan.vpnSmoke, false);
 });
+
+test("historical Workspace merge author maps to canonical maintainer only in presentation", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const cwd = fileURLToPath(new URL("../", import.meta.url));
+  const canonicalize = (contact) => execFileSync("git", [
+    "check-mailmap", contact,
+  ], { cwd, encoding: "utf8" }).trim();
+  assert.equal(
+    canonicalize("ResourcePortal Workspace <workspace@users.noreply.github.com>"),
+    "Patryk Rusak <90280457+P4tkry@users.noreply.github.com>",
+  );
+  assert.equal(
+    canonicalize("Agent Workspace <agent-workspace@local>"),
+    "Agent Workspace <agent-workspace@local>",
+  );
+  assert.deepEqual(selectProfiles([".mailmap"]).profiles, ["workflow"]);
+});

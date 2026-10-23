@@ -325,6 +325,7 @@ const classifiers = [
   [/^test\/.*\.test\.mjs$/, ["workflow"]],
   [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],
   [/^(package\.json|package-lock\.json)$/, ["dependency", "cli"]],
+  [/^\.mailmap$/, ["workflow"]],
   [/^\.env\.example$/, []],
   [/^docs\//, []],
   [/^AGENTS\.md$/, []],
