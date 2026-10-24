@@ -33,12 +33,12 @@ export type Topology={networks:NetworkResource[];gates:GateResource[];appGroups:
 type GraphNodeData = { label: string; detail: string; status?: string; category: "application" | "network"; group?: string };
 type GraphNode = Node<GraphNodeData, "resource">;
 
-function ResourceNode({ data }: NodeProps<GraphNode>) {
+function ResourceNode({ data, isConnectable }: NodeProps<GraphNode>) {
   const isNetwork = data.category === "network";
   return (
     <div className="w-[260px] overflow-hidden rounded-xl border border-[#D7E0EC] bg-white shadow-[0_4px_18px_rgba(31,50,81,0.08)] transition-shadow hover:shadow-[0_8px_24px_rgba(31,50,81,0.14)]">
-      {!isNetwork ? <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-[#4479CA]" /> :
-        <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-[#4479CA]" />}
+      {!isNetwork ? <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-[#4479CA]" /> :
+        <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-[#4479CA]" />}
       <div className="flex items-start gap-3 px-4 py-3.5">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#DFE8F5] bg-[#F0F5FC] text-[#406DAB]">
           {isNetwork ? <NetworkIcon /> : <ServerIcon />}
