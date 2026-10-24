@@ -271,10 +271,14 @@ test("exposes app-scoped LAN Attachment API and revocation",async()=>{
     gateId:"gate id",singleAppId:"app id",networkId:"network id",
     lanInterface:"eth1",lanCidr:"192.168.50.0/24",
   });
+  await client.networking.updateLanAttachmentAddressing("tenant id","attachment id",{
+    addressMode:"Static",staticAddress:"192.168.50.45/24",staticGateway:"192.168.50.1"
+  });
   await client.networking.revokeLanAttachment("tenant id","attachment id");
   assert.deepEqual(calls.map(call=>[call.init.method,pathOf(call)]),[
     ["GET","/api/tenants/tenant%20id/networking/lan-attachments"],
     ["POST","/api/tenants/tenant%20id/networking/lan-attachments"],
+    ["PATCH","/api/tenants/tenant%20id/networking/lan-attachments/attachment%20id/addressing"],
     ["DELETE","/api/tenants/tenant%20id/networking/lan-attachments/attachment%20id"],
   ]);
   assert.equal(calls[1].init.body,JSON.stringify({

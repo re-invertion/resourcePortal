@@ -22,6 +22,8 @@ trap cleanup EXIT
 for binary in ip wg dnsmasq busybox python3 ping; do
   command -v "$binary" >/dev/null || fail "missing $binary"
 done
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$REPO_ROOT/test" -p "test_gate*py" -v
 sudo -n true || fail "passwordless sudo required"
 read -r APP_DEV WAN_DEV APP_KEY WAN_KEY GATE_BRIDGE < <(python3 - <<'PY'
 import hashlib
@@ -198,6 +200,33 @@ ns "$APP" ping -c 3 -W 2 -I "$APP_DEV" 192.168.90.1 ||
 ns "$APP" ip -4 neigh show dev "$APP_DEV" | grep -q "192.168.90.1" ||
   fail "application did not learn remote LAN ARP"
 log "PASS Ethernet ARP and LAN IP"
+
+# Reuse the same encrypted WG/GRETAP application attachment to test Static
+# address transition. The customer LAN supplies another on-link IP/gateway;
+# RP tenant overlay's main default route must remain unchanged.
+ns "$APP" ip route replace default via "$RP_IP" dev aa0
+original_main="$(ns "$APP" ip -4 route show default)"
+ns "$LAN" ip addr add 192.168.90.254/24 dev lan0
+ns "$APP" ip -4 addr del 192.168.90.23/24 dev "$APP_DEV"
+ns "$APP" busybox arping -D -f -c 3 -w 5 -I "$APP_DEV" 192.168.90.50 ||
+  fail "static IPv4 duplicate detection failed on customer LAN"
+ns "$APP" ip -4 addr add 192.168.90.50/24 dev "$APP_DEV"
+ns "$APP" ip -4 route replace default via 192.168.90.254 dev "$APP_DEV" table 20015
+ns "$APP" ip -4 rule add pref 18015 from 192.168.90.50/32 lookup 20015
+[ "$(ns "$APP" ip -4 route show default)" = "$original_main" ] ||
+  fail "static customer LAN rewrote Docker overlay default route"
+ns "$APP" ip -4 route get 8.8.8.8 from 192.168.90.50 |
+  grep -q 'via 192.168.90.254' ||
+  fail "static application source rule does not use requested on-link gateway"
+ns "$APP" ping -c 3 -W 2 -I 192.168.90.50 192.168.90.254 ||
+  fail "static application cannot reach customer LAN through encrypted L2"
+ns "$APP" ip -4 neigh show dev "$APP_DEV" | grep -q '192.168.90.254' ||
+  fail "static app did not resolve its configured gateway through customer ARP"
+ns "$APP" ip -4 rule del pref 18015
+ns "$APP" ip -4 route flush table 20015
+[ "$(ns "$APP" ip -4 route show default)" = "$original_main" ] ||
+  fail "static revocation changed Docker overlay default"
+log "PASS source-scoped Static IPv4 with custom gateway over encrypted L2"
 ns "$GATE" ip link delete "$WAN_DEV"
 if ns "$APP" ping -c 1 -W 2 -I "$APP_DEV" 192.168.90.1 >/dev/null 2>&1; then
   fail "revoked L2 tunnel still passes traffic"

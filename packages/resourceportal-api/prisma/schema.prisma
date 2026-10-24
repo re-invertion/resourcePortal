@@ -1083,6 +1083,8 @@ model ResourcePortalGate {
   agentTokenHash             String?                        @unique
   configRevision             Int                            @default(1)
   agentVersion               String?
+  observedLan                Json?
+  observedLanAt              DateTime?
   lastSeenAt                 DateTime?
   lastError                  String?
   revokedAt                  DateTime?
@@ -1521,6 +1523,11 @@ model RemoteLanAttachment {
   gateId         String             @db.Uuid
   lanInterface   String             @db.VarChar(15)
   lanCidr        String             @db.VarChar(18)
+  uplinkMode     String             @default("DedicatedUnnumbered") @db.VarChar(24)
+  addressMode    String             @default("DHCP") @db.VarChar(8)
+  configurationRevision Int         @default(1)
+  staticAddress  String?            @db.VarChar(18)
+  staticGateway  String?            @db.VarChar(15)
   macAddress     String             @unique @db.VarChar(17)
   status         String             @default("Pending")
   dhcpAddress    String?            @db.VarChar(15)

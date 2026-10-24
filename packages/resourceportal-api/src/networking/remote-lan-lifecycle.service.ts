@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
+import {verifiedManagedLan} from "./remote-lan-addressing";
 
 /**
  * Desired-state handoff, not DHCP proof. A Pending attachment can only enter
@@ -35,12 +36,21 @@ export class RemoteLanLifecycleService {
     let provisioned = 0;
     let waiting = 0;
     for (const row of pending) {
-      const ready = row.gate.tenantId === row.tenantId &&
+      let managedReady=true;
+      if(row.uplinkMode==="ManagedSharedUplink") {
+        try {
+          const observed=verifiedManagedLan(row.gateId,row.lanInterface,
+            row.gate.observedLan,row.gate.observedLanAt);
+          managedReady=observed.networkCidr===row.lanCidr;
+        } catch { managedReady=false; }
+      }
+      const ready = managedReady &&
+        row.gate.tenantId === row.tenantId &&
         row.network.tenantId === row.tenantId &&
         row.singleApp.appGroup.tenantId === row.tenantId &&
         row.gate.revokedAt === null &&
         row.gate.status === "Ready" &&
-        row.gate.agentVersion === "gate-l2-v1" &&
+        ["gate-l2-v1","gate-l2-v2"].includes(row.gate.agentVersion ?? "") &&
         row.network.status === "Ready" &&
         row.singleApp.pendingDeletion === false &&
         row.singleApp.desiredReplicas === 1 &&

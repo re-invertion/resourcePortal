@@ -1,9 +1,10 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
+import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
-  nodeLanCommands, revokeNodeLanState, selectNodeLanTargets,
+  nodeLanCommands, staticNodeLanCommands, revokeNodeLanState, selectNodeLanTargets,
   validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
@@ -13,7 +14,7 @@ const SNAPSHOT = "RESOURCEPORTAL_REMOTE_LAN_NODES_B64";
 const SCRIPT = "/usr/local/sbin/rp-remote-lan-dhcp.sh";
 const HOST_PROC = "/host/proc";
 type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string }> };
-type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess };
+type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess | null };
 const managed = new Map<string, Running>();
 let stopping = false;
 
@@ -69,6 +70,51 @@ function overlayInterface(target: NodeLanTarget): string {
 function links(pid: number): NodeLanLink[] {
   return nsjson<NodeLanLink[]>(pid, ["-d", "-j", "link", "show"]);
 }
+function staticClaim(target:NodeLanTarget,device:string):StaticRoutingClaim {
+  const addr=target.attachment.staticAddress;
+  const gateway=target.attachment.staticGateway;
+  if(target.attachment.addressMode!=="Static"||!addr||!gateway)
+    throw new Error("Static cleanup cannot infer trusted source/gateway");
+  return {source:addr.split("/")[0],gateway,device};
+}
+function currentStaticClaim(pid:number,claim:StaticRoutingClaim) {
+  const rules=nsrun(pid,["-4","rule","show"]);
+  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  return inspectStaticRoutingClaim(claim,rules,routes);
+}
+function removeStaticClaim(pid:number,claim:StaticRoutingClaim) {
+  for(const args of currentStaticClaim(pid,claim).cleanup)
+    nsrun(pid,[...args]);
+}
+/**
+ * A crashed agent has no in-memory map of its old app routing rules. The RP
+ * GRETAP ifalias is an ownership anchor; before deleting an orphan endpoint,
+ * remove ONLY its source-bound priority+route when both refer to that link.
+ * Unknown tables or policy owners fail closed.
+ */
+function cleanupOrphanStaticPolicy(pid:number,device:string) {
+  const rules=nsrun(pid,["-4","rule","show"]);
+  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  const lines=rules.split(/\r?\n/).map(x=>x.trim());
+  const pref=lines.filter(line=>/^18015:/.test(line));
+  if(!pref.length && !routes.trim()) return;
+  if(pref.length>1) throw new Error("Ambiguous orphan RP LAN routing priority");
+  const rule=pref[0]?.match(/^18015:\s+from ((?:\d{1,3}\.){3}\d{1,3})(?:\/32)? lookup 20015(?:\s|$)/);
+  if(pref.length && !rule) throw new Error("Unowned orphan static source rule");
+  const route=routes.trim().match(/^default via ((?:\d{1,3}\.){3}\d{1,3}) dev (rp-a-[0-9a-f]{8})(?:\s|$)/);
+  if(routes.trim() && (!route || route[2]!==device))
+    throw new Error("Orphan static table belongs to a different device");
+  const ips=nsjson<Address[]>(pid,["-j","-4","addr","show","dev",device])
+    .flatMap(x=>x.addr_info??[]).filter(x=>x.family==="inet").map(x=>x.local);
+  if(rule && !ips.includes(rule[1]))
+    throw new Error("Orphan static source was not assigned to RP-owned endpoint");
+  if(!rule && ips.length!==1)
+    throw new Error("Cannot establish orphan static route source identity");
+  const claim={device,source:rule?.[1]??ips[0]??"",
+    gateway:route?.[1]??"0.0.0.1"};
+  for(const command of inspectStaticRoutingClaim(claim,rules,routes).cleanup)
+    nsrun(pid,[...command]);
+}
 function attach(target: NodeLanTarget): Running {
   const interfaceName = overlayInterface(target);
   const commands = nodeLanCommands(target, interfaceName);
@@ -104,6 +150,33 @@ function attach(target: NodeLanTarget): Running {
       throw error;
     }
   }
+  if(target.attachment.addressMode==="Static") {
+    // Exact desired owner may be adopted across an agent restart; never
+    // override a foreign policy or reuse a stale route with wrong gateway.
+    const claim=staticClaim(target,device);
+    const current=currentStaticClaim(target.pid,claim);
+    const ips=nsjson<Address[]>(target.pid,["-j","-4","addr","show","dev",device]);
+    const configured=ips.some(x=>x.addr_info?.some(a=>
+      a.family==="inet" && a.local===claim.source));
+    if(current.fullyConfigured && configured) return {target,device,dhcp:null};
+    removeStaticClaim(target.pid,claim);
+    const oldDefault=nsrun(target.pid,["-4","route","show","default"]);
+    try {
+      // Linux ARP duplicate detection from the new L2 endpoint before IP
+      // assignment. A missing BusyBox feature is an explicit failure.
+      const ip=target.attachment.staticAddress!.split("/")[0];
+      run("nsenter",["--net="+namespacePath(target.pid),"--","/bin/busybox",
+        "arping","-D","-f","-c","3","-w","5","-I",device,ip]);
+      for(const args of staticNodeLanCommands(target,device))
+        nsrun(target.pid,[...args]);
+      if(nsrun(target.pid,["-4","route","show","default"])!==oldDefault)
+        throw new Error("Static LAN must preserve the tenant Docker default route");
+    } catch(error) {
+      removeStaticClaim(target.pid,claim);
+      throw error;
+    }
+    return {target,device,dhcp:null};
+  }
   const dhcp = spawn("nsenter", [
     "--net=" + namespacePath(target.pid), "--", "/bin/busybox", "udhcpc",
     "-f", "-n", "-i", device, "-s", SCRIPT,
@@ -115,7 +188,7 @@ function attach(target: NodeLanTarget): Running {
   return { target, device, dhcp };
 }
 function detach(entry: Running) {
-  entry.dhcp.kill("SIGTERM");
+  entry.dhcp?.kill("SIGTERM");
   const { target, device } = entry;
   let present: NodeLanLink | undefined;
   try {
@@ -126,6 +199,8 @@ function detach(entry: Running) {
   }
   if (!present) return;
   assertOwnedNodeLanLink(present, device, target.attachment.attachmentId);
+  if(target.attachment.addressMode==="Static")
+    removeStaticClaim(target.pid,staticClaim(target,device));
   nsrun(target.pid, ["link", "delete", device]);
 }
 function reconcile() {
@@ -150,6 +225,7 @@ function reconcile() {
     pids.push(container.State.Pid);
   }
   revokeNodeLanState(managed, desired, pids, detach, links, (pid, ifname) => {
+    cleanupOrphanStaticPolicy(pid,ifname);
     nsrun(pid, ["link", "delete", ifname]);
   });
   for (const [key, target] of desired) {
