@@ -13,6 +13,15 @@ describe("RP Gate LAN Attachments-only installer", () => {
   const script = resourcePortalGateInstallerScript();
   const agent = script.match(/<<'RP_GATE_AGENT'\n([\s\S]*?)\nRP_GATE_AGENT/)?.[1] ?? "";
   const python = script.match(/<<'RP_GATE_LAN_PYTHON'\n([\s\S]*?)\nRP_GATE_LAN_PYTHON/)?.[1] ?? "";
+  it("bundles the fail-closed Netplan NetworkManager bridge with independent rollback", () => {
+    const uplink=script.match(/<<'RP_GATE_UPLINK_PYTHON'\n([\s\S]*?)\nRP_GATE_UPLINK_PYTHON/)?.[1]??"";
+    expect(script).toContain("python3-yaml");
+    expect(uplink).toContain("def preflight_networkmanager(");
+    expect(uplink).toContain("def rollback_networkmanager(");
+    expect(uplink).toContain("OnUnitActiveSec=60s");
+    expect(uplink).toContain("netplan_override(plan)");
+    expect(uplink).toContain('call("netplan", "apply")');
+  });
   it("generates valid fresh-install and installed-agent Bash", () => {
     for (const source of [script, agent]) {
       const result = spawnSync("bash", ["-n"], { input:source, encoding:"utf8" });

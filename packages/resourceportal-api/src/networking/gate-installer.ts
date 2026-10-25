@@ -34,7 +34,7 @@ install_packages() {
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y curl jq wireguard-tools iproute2 nftables python3 ca-certificates
+    apt-get install -y curl jq wireguard-tools iproute2 nftables python3 python3-yaml ca-certificates
   elif command -v dnf >/dev/null; then
     dnf install -y curl jq wireguard-tools iproute nftables python3 ca-certificates
   elif command -v yum >/dev/null; then
