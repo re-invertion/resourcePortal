@@ -6,6 +6,7 @@ import { gateStackName } from "./network-runtime-names";
 import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 import { validateNodeLanSnapshot, type NodeLanAttachment } from "./remote-lan-node-policy";
 import { normalizeSwarmCapabilityAdd } from "./swarm-capabilities";
+import {verifiedManagedLan} from "./remote-lan-addressing";
 
 const POLICY_ENV = "RESOURCEPORTAL_REMOTE_LAN_NODES_B64";
 
@@ -150,10 +151,16 @@ export class RemoteLanNodeReconcilerService {
           row.gate.revokedAt || row.gate.status !== "Ready" ||
           row.network.status !== "Ready" || row.singleApp.pendingDeletion ||
           row.singleApp.desiredReplicas !== 1 ||
-          !["gate-l2-v1"].includes(row.gate.agentVersion ?? "") ||
+          !["gate-l2-v1","gate-l2-v2"].includes(row.gate.agentVersion ?? "") ||
           !row.gate.serverTunnelAddress || !row.gate.clientTunnelAddress)
         throw new Error("Remote LAN attachment lacks certified Gate, app or network authorization");
 
+      if(row.uplinkMode==="ManagedSharedUplink") {
+        const segment=verifiedManagedLan(row.gateId,row.lanInterface,
+          row.gate.observedLan,row.gate.observedLanAt);
+        if(segment.networkCidr!==row.lanCidr)
+          throw new Error("Managed Gate LAN subnet changed; revoking app grants");
+      }
       const key = row.gateId + ":" + row.networkId;
       if (!gatewayIp.has(key)) {
         gatewayIp.set(key, this.taskGatewayIp(row.gateId,
@@ -167,6 +174,10 @@ export class RemoteLanNodeReconcilerService {
         networkName: row.network.swarmNetworkName,
         overlayCidr: row.network.overlayCidr,
         lanCidr: row.lanCidr,
+        configurationRevision: row.configurationRevision,
+        uplinkMode: row.uplinkMode as "DedicatedUnnumbered"|"ManagedSharedUplink",
+        addressMode: row.addressMode as "DHCP"|"Static",
+        staticAddress: row.staticAddress,staticGateway: row.staticGateway,
         gatewayOverlayIp: gatewayIp.get(key)!,
         macAddress: row.macAddress,
       });

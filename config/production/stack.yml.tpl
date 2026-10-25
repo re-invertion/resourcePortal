@@ -444,6 +444,7 @@ services:
     environment:
       NODE_ENV: production
       RP_REMOTE_LAN_NODE_ENABLED: "false"
+      RESOURCEPORTAL_LAN_NODE_TASK_ID: "{{.Task.ID}}"
       RESOURCEPORTAL_REMOTE_LAN_NODES_B64: "eyJ2ZXJzaW9uIjoxLCJhdHRhY2htZW50cyI6W119"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

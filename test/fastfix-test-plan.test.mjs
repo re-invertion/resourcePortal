@@ -69,6 +69,26 @@ test("real database rollback smoke changes require the platform release regressi
 test("security runtime changes select security tests (never silently skipped)", () => {
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });
+test("managed Gate Python regression files select mandatory real networking coverage", async () => {
+  const paths = ["test/test_gate_managed_uplink.py", "test/test_gate_uplink_installer.py"];
+  const plan = selectProfiles(paths);
+  assert.deepEqual(plan.profiles, ["networking"]);
+  assert.equal(plan.vpnSmoke, true);
+  // Only those two reviewed files are registered. Unknown root scripts still fail closed.
+  assert.throws(() => selectProfiles(["test/test_gate_unreviewed.py"]), /unclassified changes/);
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(script, /\["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_gate\*\.py", "-v"\]/);
+});
+test("production Gate installer image packages both runtime Python assets", async () => {
+  const { readFileSync } = await import("node:fs");
+  const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
+  for (const name of ["gate-lan-agent.py", "gate-managed-uplink.py"]) {
+    assert.ok(dockerfile.includes(
+      `COPY packages/resourceportal-api/src/networking/${name} ./dist/src/networking/${name}`
+    ), `${name} must be colocated with the compiled gate-installer module`);
+  }
+});
 test("unregistered root-level changes still fail closed", () => {
   assert.throws(() => selectProfiles(["new-unmapped-runtime/entry.ts"]), /unclassified changes/);
 });

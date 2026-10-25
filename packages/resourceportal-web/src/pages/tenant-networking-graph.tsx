@@ -27,6 +27,12 @@ export type GateResource={
   id:string;name:string;description?:string|null;status:string;configRevision:number;
   agentVersion?:string|null;serverListenPort?:number|null;lastSeenAt?:string|null;
   lastError?:string|null;revokedAt?:string|null;
+  observedLan?:{
+    protocol:number;gateId:string;physicalInterface:string;bridge:string;
+    networkCidr:string;gateway:string;state:string;observedAt:string;
+    agentVersion:string;segmentId:string;
+  }|null;
+  observedLanAt?:string|null;
 };
 export type Topology={networks:NetworkResource[];gates:GateResource[];appGroups:AppGroup[]};
 

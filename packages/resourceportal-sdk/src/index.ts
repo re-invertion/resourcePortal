@@ -52,10 +52,19 @@ export type ResourcePortalGate = {
   id:string;tenantId:string;name:string;description?:string|null;status:string;
   configRevision:number;agentVersion?:string|null;serverListenPort?:number|null;
   lastSeenAt?:string|null;lastError?:string|null;revokedAt?:string|null;
+  observedLanAt?:string|null;
+  observedLan?:{
+    protocol:1;gateId:string;segmentId:string;physicalInterface:string;bridge:string;
+    networkCidr:string;gateway:string;discoveryMethod:"host-verified";
+    observedAt:string;agentVersion:string;state:"Ready";
+  }|null;
 };
 export type RemoteLanAttachment = {
   id:string;tenantId:string;gateId:string;singleAppId:string;networkId:string;
   lanInterface:string;lanCidr:string;macAddress:string;status:string;
+  uplinkMode?:"DedicatedUnnumbered"|"ManagedSharedUplink";
+  addressMode?:"DHCP"|"Static";
+  staticAddress?:string|null;staticGateway?:string|null;configurationRevision?:number;
   dhcpAddress?:string|null;leaseExpiresAt?:string|null;
   lastVerifiedAt?:string|null;lastError?:string|null;
 };
@@ -506,10 +515,17 @@ export class ResourcePortalClient {
         `/tenants/${encode(tenantId)}/networking/lan-attachments`),
     createLanAttachment: (tenantId:string,body:{
       gateId:string;singleAppId:string;networkId:string;lanInterface:string;lanCidr:string;
+      uplinkMode?:"DedicatedUnnumbered"|"ManagedSharedUplink";
+      addressMode?:"DHCP"|"Static";staticAddress?:string;staticGateway?:string;
     }) =>
       this.request<RemoteLanAttachment>(
         `/tenants/${encode(tenantId)}/networking/lan-attachments`,
         {method:"POST",body}),
+    updateLanAttachmentAddressing:(tenantId:string,id:string,body:{
+      addressMode:"DHCP"|"Static";staticAddress?:string;staticGateway?:string;
+    }) => this.request<RemoteLanAttachment>(
+      `/tenants/${encode(tenantId)}/networking/lan-attachments/${encode(id)}/addressing`,
+      {method:"PATCH",body}),
     revokeLanAttachment: (tenantId:string,id:string) =>
       this.request<RemoteLanAttachment>(
         `/tenants/${encode(tenantId)}/networking/lan-attachments/${encode(id)}`,

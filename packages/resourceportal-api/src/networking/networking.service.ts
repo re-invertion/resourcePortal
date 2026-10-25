@@ -21,6 +21,7 @@ import type { DeviceVpnRuntimeHeartbeatDto } from "./dto/device-vpn-runtime-hear
 import type { CreateNetworkDto } from "./dto/create-network.dto";
 import type { GateEnrollDto } from "./dto/gate-enroll.dto";
 import type { GateHeartbeatDto } from "./dto/gate-heartbeat.dto";
+import {verifiedManagedLan} from "./remote-lan-addressing";
 import type { UpdateNetworkDto } from "./dto/update-network.dto";
 import {
   DEFAULT_GATE_TUNNEL_POOL,
@@ -1018,8 +1019,8 @@ export class NetworkingService {
     if (!this.wireGuard.isPublicKey(dto.publicKey)) {
       throw new BadRequestException("Invalid WireGuard public key");
     }
-    if (dto.agentVersion !== "gate-l2-v1")
-      throw new BadRequestException("Only the certified RP Gate LAN Attachment agent can enroll");
+    if (!["gate-l2-v1","gate-l2-v2"].includes(dto.agentVersion))
+      throw new BadRequestException("Only certified RP Gate LAN Attachment agents can enroll");
 
     const agentToken = randomBytes(32).toString("base64url");
     const now = new Date();
@@ -1056,12 +1057,66 @@ export class NetworkingService {
 
   async gateHeartbeat(authorization: string | undefined, dto: GateHeartbeatDto) {
     const gate = await this.authenticateGateAgent(authorization, true);
-    if (dto.agentVersion !== "gate-l2-v1")
-      throw new BadRequestException("RP Gate must use the certified LAN Attachment protocol");
+    if (!["gate-l2-v1","gate-l2-v2"].includes(dto.agentVersion))
+      throw new BadRequestException("RP Gate must use a certified LAN Attachment protocol");
+    if (dto.agentVersion === "gate-l2-v1" && dto.lanObservation)
+      throw new BadRequestException("Legacy Gate may not advertise managed LAN");
+    let observedLan: Prisma.InputJsonValue | typeof Prisma.DbNull = Prisma.DbNull;
+    if (dto.lanObservation) {
+      try {
+        const segment = verifiedManagedLan(gate.id,dto.lanObservation.physicalInterface,
+          dto.lanObservation,new Date(dto.lanObservation.observedAt));
+        observedLan = segment;
+      } catch (error) {
+        throw new BadRequestException("Invalid authenticated Gate LAN observation: "+String(error));
+      }
+    }
+    // Gate L2 proof is authenticated by the enrolled machine bearer.
+    // Never accept a tenant-provided claim, a foreign Gate/tenant, an expired
+    // observation or duplicate attachment IDs. Revoking attachments may still
+    // be reported during teardown; retaining that report prevents false ACKs.
+    const now = Date.now();
+    const supplied = dto.lanAttachmentProofs ?? [];
+    if(dto.agentVersion === "gate-l2-v1" && supplied.length)
+      throw new BadRequestException("Legacy Gate cannot report L2 evidence");
+    if(dto.lanAppliedAtMs!==undefined&&
+      (dto.lanAppliedAtMs>now+5000||dto.lanAppliedAtMs<now-24*3600_000))
+      throw new BadRequestException("Invalid Gate L2 apply acknowledgement");
+    const seen = new Set<string>();
+    for(const proof of supplied) {
+      if(proof.gateId !== gate.id || proof.tenantId !== gate.tenantId ||
+         seen.has(proof.attachmentId) ||
+         proof.observedAtMs < now-30_000 || proof.observedAtMs > now+5_000 ||
+         proof.handshakeAtMs > now+5_000 || proof.handshakeAtMs < now-90_000)
+        throw new BadRequestException("Untrusted or stale Gate attachment proof");
+      seen.add(proof.attachmentId);
+    }
+    // The Gate is the authenticated source, but its persisted local state can
+    // lag a revision change. Do not ingest old/foreign claims as current
+    // activation evidence. Still return the desired policy so the Gate can
+    // revoke obsolete kernel links instead of deadlocking its heartbeat.
+    const authorized = supplied.length ? await this.prisma.remoteLanAttachment.findMany({
+      where:{gateId:gate.id,tenantId:gate.tenantId,
+        status:{in:["Provisioning","Active","Revoking"]}},
+      select:{id:true,singleAppId:true,configurationRevision:true,macAddress:true},
+    }) : [];
+    const approved=new Map(authorized.map(row=>[row.id,row]));
+    const bound=supplied.filter(proof=>{
+      const row=approved.get(proof.attachmentId);
+      return row&&row.singleAppId===proof.singleAppId&&
+        row.configurationRevision===proof.configurationRevision&&
+        row.macAddress.toLowerCase()===proof.macAddress.toLowerCase();
+    });
     const updated = await this.prisma.resourcePortalGate.update({
       where: { id: gate.id },
       data: {
         agentVersion: dto.agentVersion,
+        observedLan, observedLanAt: dto.lanObservation ? new Date() : null,
+        observedL2: dto.agentVersion === "gate-l2-v2"
+          ? bound as unknown as Prisma.InputJsonValue : Prisma.DbNull,
+        observedL2At: dto.agentVersion === "gate-l2-v2" ? new Date() : null,
+        observedL2AppliedAt: dto.agentVersion === "gate-l2-v2" && dto.lanAppliedAtMs
+          ? new Date(dto.lanAppliedAtMs) : null,
         lastSeenAt: new Date(),
       },
       include: { remoteLanAttachments: true },
@@ -1071,7 +1126,7 @@ export class NetworkingService {
 
   async gateAgentConfig(authorization: string | undefined) {
     const gate = await this.authenticateGateAgent(authorization, false);
-    if (gate.agentVersion !== "gate-l2-v1")
+    if (!["gate-l2-v1","gate-l2-v2"].includes(gate.agentVersion ?? ""))
       throw new UnauthorizedException("Legacy RP Gate agent must be upgraded");
     const full = await this.prisma.resourcePortalGate.findUniqueOrThrow({
       where: { id: gate.id },
@@ -1086,6 +1141,8 @@ export class NetworkingService {
     remoteLanAttachments?: Array<{
       id: string; tenantId: string; gateId: string; singleAppId: string; networkId: string;
       lanInterface: string; lanCidr: string; macAddress: string; status: string;
+      uplinkMode: string; addressMode: string; configurationRevision: number;
+      staticAddress: string | null; staticGateway: string | null;
     }>;
     serverPublicKey: string | null;
     serverListenPort: number | null;
@@ -1104,6 +1161,9 @@ export class NetworkingService {
         id: item.id, singleAppId: item.singleAppId,
         networkId: item.networkId, lanInterface: item.lanInterface,
         lanCidr: item.lanCidr, macAddress: item.macAddress,
+        uplinkMode: item.uplinkMode, addressMode: item.addressMode,
+        configurationRevision: item.configurationRevision,
+        staticAddress: item.staticAddress, staticGateway: item.staticGateway,
       }))
       .sort((x,y) => x.id.localeCompare(y.id));
     return {
@@ -1583,6 +1643,8 @@ export class NetworkingService {
     status?: string; agentVersion?: string | null; serverListenPort?: number | null;
     lastSeenAt?: Date | null; lastError?: string | null; revokedAt?: Date | null;
     configRevision?: number;
+    observedLan?: Prisma.JsonValue;
+    observedLanAt?: Date | null;
   }) {
     // Explicit allow-list prevents old Site VPN policy columns from leaking
     // back into the active tenant API during migration.
@@ -1593,6 +1655,10 @@ export class NetworkingService {
       serverListenPort: gate.serverListenPort,
       lastSeenAt: gate.lastSeenAt, lastError: gate.lastError,
       revokedAt: gate.revokedAt, configRevision: gate.configRevision,
+      observedLan: gate.observedLan && gate.observedLanAt &&
+        Math.abs(Date.now()-gate.observedLanAt.getTime()) <= 60_000
+        ? gate.observedLan : null,
+      observedLanAt: gate.observedLanAt,
     };
   }
 

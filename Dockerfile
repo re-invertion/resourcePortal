@@ -75,6 +75,9 @@ COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist
 COPY packages/resourceportal-api/src/networking/gate-lan-agent.py ./dist/src/networking/gate-lan-agent.py
+# gate-installer.ts reads both Python assets from its compiled __dirname.
+# Missing this asset makes every production Gate installer request fail ENOENT.
+COPY packages/resourceportal-api/src/networking/gate-managed-uplink.py ./dist/src/networking/gate-managed-uplink.py
 COPY --chown=root:root packages/resourceportal-api/src/networking/remote-lan-dhcp.sh /usr/local/sbin/rp-remote-lan-dhcp.sh
 RUN chmod 0755 /usr/local/sbin/rp-remote-lan-dhcp.sh \
   && /bin/busybox --list | grep -qx udhcpc \

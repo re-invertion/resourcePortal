@@ -347,7 +347,16 @@ async function main() {
       await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
       await startupReconcile("gateRuntime", () => gateRuntime.reconcile());
       await startupReconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
-      await startupReconcile("remoteLanNode", () => remoteLanNode.reconcile());
+      await startupReconcile("remoteLanNode", async () => {
+        try {
+          const result=await remoteLanNode.reconcile();
+          await remoteLanLifecycle.reconcileActivation(true);
+          return result;
+        } catch(error) {
+          await remoteLanLifecycle.reconcileActivation(false);
+          throw error;
+        }
+      });
       await startupReconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
     }
 
@@ -366,7 +375,16 @@ async function main() {
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
         await reconcile("gateRuntime", () => gateRuntime.reconcile());
         await reconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
-        await reconcile("remoteLanNode", () => remoteLanNode.reconcile());
+        await reconcile("remoteLanNode", async () => {
+          try {
+            const result=await remoteLanNode.reconcile();
+            await remoteLanLifecycle.reconcileActivation(true);
+            return result;
+          } catch(error) {
+            await remoteLanLifecycle.reconcileActivation(false);
+            throw error;
+          }
+        });
         await reconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
       }
 

@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import type {ManagedUplinkMode, ManagedUplinkObservation} from "./remote-lan-managed-uplink";
 import {assertSafeGateLanInterface, type IpAddressSnapshot, type IpLinkSnapshot, type IpRouteSnapshot} from "./remote-lan-gate-preflight";
 import {gretapSetupCommands, type RemoteLanTunnel} from "./remote-lan-l2-transport";
 
@@ -8,6 +9,8 @@ export type GateLanBridge = {
   attachmentId: string;
   lanDevice: string;
   tunnel: RemoteLanTunnel;
+  uplinkMode?: ManagedUplinkMode;
+  managedObservation?: ManagedUplinkObservation;
 };
 type IpCommand = readonly [binary: "ip" | "bridge", args: readonly string[]];
 const ifname = /^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$/;
@@ -37,12 +40,25 @@ export function gateLanBridgePlan(
   const bridge = gateLanBridgeName(input.gateId,input.lanDevice);
   const alias = "rp-lan:" + input.gateId + ":" + input.lanDevice;
   const existing = links.find(link => link.ifname === bridge);
+  const managed = input.uplinkMode === "ManagedSharedUplink";
+  if(input.uplinkMode && !["ManagedSharedUplink","DedicatedUnnumbered"].includes(input.uplinkMode))
+    throw new Error("Unsupported Gate uplink mode");
+  if(managed) {
+    const observed = input.managedObservation;
+    if(!observed || observed.protocol!==1 || observed.state!=="Ready" ||
+       observed.gateId!==input.gateId || observed.bridge!==bridge ||
+       observed.physicalInterface!==input.lanDevice ||
+       !Number.isFinite(Date.parse(observed.observedAt)) ||
+       Math.abs(Date.now()-Date.parse(observed.observedAt))>60_000)
+      throw new Error("Managed uplink requires fresh Gate-owned Ready observation");
+    if(!existing) throw new Error("Managed bridge must be prepared independently from attachments");
+  }
   const lanLink = links.find(link => link.ifname === input.lanDevice);
   if(existing) {
     if(existing.linkinfo?.info_kind !== "bridge" || existing.ifalias !== alias ||
       lanLink?.master !== bridge)
       throw new Error("Unowned or inconsistent existing Gate LAN bridge");
-    // Even an existing RP bridge may not use management IPs.
+    // Managed mode may hold management IP on the bridge, never on the port.
     if(addresses.find(a=>a.ifname===input.lanDevice)?.addr_info?.some(
       a=>a.family==="inet"||a.family==="inet6") ||
       routes.some(r=>r.dev===input.lanDevice&&[ "default","0.0.0.0/0","::/0" ].includes(r.dst??"")))
@@ -92,8 +108,15 @@ export function gateLanBridgeCleanup(
   const dev=gretapSetupCommands(input.tunnel)[0][1][2];
   if(links.some(link=>link.ifname===dev&&link.master!==bridge))
     throw new Error("RP tunnel no longer belongs to expected bridge");
+  // Revocation must remain possible after a LAN observation goes stale or
+  // the management bridge is degraded. The kernel bridge's RP-owned alias
+  // and tunnel's physical membership are the cleanup authorization anchors.
+  if(input.uplinkMode === "ManagedSharedUplink" && input.managedObservation &&
+     (input.managedObservation.gateId!==input.gateId ||
+      input.managedObservation.bridge!==bridge))
+    throw new Error("Managed bridge cleanup has inconsistent ownership");
   const commands:IpCommand[]=[["ip",["link","delete",dev]]];
-  if(remainingAttachmentCount===0) {
+  if(remainingAttachmentCount===0 && input.uplinkMode!=="ManagedSharedUplink") {
     // The caller must compare remaining desired state to observed bridge ports.
     // Unexpected bridge ports always block teardown.
     const children=links.filter(link=>link.master===bridge&&link.ifname!==dev);

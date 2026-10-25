@@ -1,5 +1,6 @@
 import {describe,expect,it} from "vitest";
 import {gateLanBridgeName,gateLanBridgePlan,gateLanBridgeCleanup,type GateLanBridge} from "./remote-lan-gate-bridge";
+import {observeManagedUplink} from "./remote-lan-managed-uplink";
 const input:GateLanBridge={
   gateId:"aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb",
   tenantId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -38,6 +39,34 @@ describe("isolated Gate LAN bridge",()=>{
     const commands=gateLanBridgePlan(input,existing,addresses,routes);
     expect(commands.some(x=>x[1].includes("eth1")&&x[1].includes("master"))).toBe(false);
     expect(()=>gateLanBridgePlan(input,[existing[0],{...existing[1],ifalias:"other"}],addresses,routes)).toThrow();
+  });
+  it("keeps the separately managed bridge after last application removal",()=>{
+    const name=gateLanBridgeName(input.gateId,"eth0");
+    const at=new Date().toISOString();
+    const l=[{ifname:"eth0",ifindex:2,link_type:"ether",operstate:"UP",master:name},
+      {ifname:name,ifindex:6,operstate:"UP",link_type:"ether",linkinfo:{info_kind:"bridge"},
+      ifalias:"rp-lan:"+input.gateId+":eth0"}];
+    const addr=[{ifname:"eth0",addr_info:[]},
+      {ifname:name,addr_info:[{family:"inet",local:"192.168.100.11",prefixlen:24}]}];
+    const route=[{dst:"default",dev:name,gateway:"192.168.100.1"}];
+    const observation=observeManagedUplink({gateId:input.gateId,device:"eth0",links:l,
+      addresses:addr,routes:route,manager:"systemd-networkd",networkManagerOwnsDevice:true,
+      checkpointVerified:true,watchdogArmed:true,rollbackTested:true,
+      controlPlaneReachable:true,agentVersion:"gate-l2-v2",observedAt:at});
+    const managed:GateLanBridge={...input,lanDevice:"eth0",uplinkMode:"ManagedSharedUplink",
+      managedObservation:observation};
+    expect(gateLanBridgePlan(managed,l,addr,route).some(x=>
+      x[1].includes("eth0")&&x[1].includes("master"))).toBe(false);
+    const cleanup=gateLanBridgeCleanup(managed,l,0);
+    expect(cleanup).toHaveLength(1);
+    // Revocation must work with stale/missing observations after failures.
+    expect(gateLanBridgeCleanup({...managed,managedObservation:undefined},l,0)).toHaveLength(1);
+    expect(JSON.stringify(cleanup)).not.toContain("nomaster");
+    expect(JSON.stringify(cleanup)).not.toContain("bridge");
+    expect(()=>gateLanBridgePlan({...managed,managedObservation:undefined},l,addr,route))
+      .toThrow(/Ready observation/);
+    expect(()=>gateLanBridgePlan(managed,links,addresses,routes))
+      .toThrow(/independently/);
   });
   it("tears down only RP-owned tunnels and never removes other bridge members",()=>{
     const name=gateLanBridgeName(input.gateId,input.lanDevice);

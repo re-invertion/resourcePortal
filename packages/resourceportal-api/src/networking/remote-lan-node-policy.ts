@@ -1,5 +1,6 @@
 import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 import { appGretapCommands, type AppL2Tunnel } from "./remote-lan-app-dataplane";
+import {normalizeLanAddress} from "./remote-lan-addressing";
 
 /**
  * Versioned, least-privilege snapshot for a node-local Swarm attachment agent.
@@ -13,6 +14,11 @@ export type NodeLanAttachment = {
   networkName: string;
   overlayCidr: string;
   lanCidr: string;
+  configurationRevision?: number;
+  addressMode?: "DHCP" | "Static";
+  staticAddress?: string | null;
+  staticGateway?: string | null;
+  uplinkMode?: "DedicatedUnnumbered" | "ManagedSharedUplink";
   gatewayOverlayIp: string;
   macAddress: string;
 };
@@ -55,6 +61,14 @@ export function validateNodeLanSnapshot(input: unknown): NodeLanAttachment[] {
         !containsIpv4(cidr, item.gatewayOverlayIp) ||
         gateway.network === cidr.network || gateway.network === cidr.broadcast)
       throw new Error("Invalid remote LAN overlay address");
+    const address = normalizeLanAddress({
+      lanCidr:item.lanCidr,addressMode:item.addressMode??"DHCP",
+      staticAddress:item.staticAddress,staticGateway:item.staticGateway
+    });
+    if(address.addressMode==="Static" && item.uplinkMode!=="ManagedSharedUplink")
+      throw new Error("Static address requires a verified managed Gate");
+    if(item.configurationRevision!==undefined&&(!Number.isSafeInteger(item.configurationRevision)||item.configurationRevision<1))
+      throw new Error("Invalid LAN configuration revision");
     const appKey = item.tenantId + ":" + item.singleAppId;
     if (apps.has(appKey)) throw new Error("More than one LAN attachment for the same application");
     apps.add(appKey);
@@ -126,6 +140,11 @@ export function sameNodeLanTarget(previous: NodeLanTarget, desired: NodeLanTarge
     a.singleAppId === b.singleAppId && a.gateId === b.gateId &&
     a.networkName === b.networkName && a.overlayCidr === b.overlayCidr &&
     a.lanCidr === b.lanCidr && a.gatewayOverlayIp === b.gatewayOverlayIp &&
+    (a.configurationRevision??1)===(b.configurationRevision??1) &&
+    (a.addressMode??"DHCP") === (b.addressMode??"DHCP") &&
+    (a.uplinkMode??"DedicatedUnnumbered") === (b.uplinkMode??"DedicatedUnnumbered") &&
+    (a.staticAddress??null) === (b.staticAddress??null) &&
+    (a.staticGateway??null) === (b.staticGateway??null) &&
     a.macAddress === b.macAddress &&
     x.appOverlayIp === y.appOverlayIp &&
     x.gatewayOverlayIp === y.gatewayOverlayIp &&
@@ -142,7 +161,7 @@ export function sameNodeLanTarget(previous: NodeLanTarget, desired: NodeLanTarge
  */
 export function revokeNodeLanEntries<T extends {
   target: NodeLanTarget;
-  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null } | null;
 }>(
   managed: Map<string, T>,
   desired: ReadonlyMap<string, NodeLanTarget>,
@@ -151,8 +170,10 @@ export function revokeNodeLanEntries<T extends {
   const failures: unknown[] = [];
   for (const [key, entry] of managed) {
     const updated = desired.get(key);
-    if (updated && sameNodeLanTarget(entry.target, updated) && !entry.dhcp.killed &&
-        entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) continue;
+    if (updated && sameNodeLanTarget(entry.target, updated) &&
+        (entry.dhcp ? (!entry.dhcp.killed &&
+          entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) :
+          entry.target.attachment.addressMode === "Static")) continue;
     try {
       detach(entry);
       managed.delete(key);
@@ -170,6 +191,31 @@ export function nodeLanCommands(target: NodeLanTarget, overlayInterface: string)
 }
 
 /**
+ * Static routes are installed only inside the target application namespace.
+ * Its ordinary Docker default route is retained. Source-specific traffic from
+ * the explicit static LAN address uses the customer-supplied Gateway, with no
+ * host/Site VPN route added to RP or to other tenant namespaces.
+ */
+export function staticNodeLanCommands(target: NodeLanTarget,device:string) {
+  const config=normalizeLanAddress({
+    lanCidr:target.attachment.lanCidr,addressMode:target.attachment.addressMode,
+    staticAddress:target.attachment.staticAddress,
+    staticGateway:target.attachment.staticGateway
+  });
+  if(config.addressMode!=="Static"||!config.staticAddress||!config.staticGateway||
+     target.attachment.uplinkMode!=="ManagedSharedUplink"||
+     !/^rp-a-[0-9a-f]{8}$/.test(device))
+    throw new Error("Static route requires authorized managed LAN endpoint");
+  const source=config.staticAddress.split("/")[0];
+  return [
+    ["-4","address","replace",config.staticAddress,"dev",device],
+    ["-4","route","replace","default","via",config.staticGateway,
+      "dev",device,"table","20015"],
+    ["-4","rule","add","pref","18015","from",source+"/32","lookup","20015"]
+  ] as readonly (readonly string[])[];
+}
+
+/**
  * The app-side GRETAP is a standalone DHCP endpoint in the tenant netns.
  * Only the gateway-side endpoint is bridged. Never adopt or delete an
  * app-side link that has acquired a bridge/master, even if its alias matches.
@@ -178,7 +224,12 @@ export type NodeLanLink = {
   ifname?: string;
   ifalias?: string;
   master?: string | number | null;
-  linkinfo?: { info_kind?: string };
+  address?: string;
+  flags?: string[];
+  linkinfo?: {
+    info_kind?: string;
+    info_data?: { local?: string; remote?: string };
+  };
 };
 const appLinkName = /^rp-a-[0-9a-f]{8}$/;
 const appLinkAlias = /^rp-lan:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -261,7 +312,7 @@ export function sweepNodeLanOrphans(
 export function revokeNodeLanState<T extends {
   target: NodeLanTarget;
   device: string;
-  dhcp: { killed: boolean; pid?: number; exitCode: number | null };
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null } | null;
 }>(
   managed: Map<string, T>,
   desired: ReadonlyMap<string, NodeLanTarget>,

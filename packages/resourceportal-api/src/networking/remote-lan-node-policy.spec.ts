@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, revokeNodeLanEntries, revokeNodeLanState, sameNodeLanTarget,
+  nodeLanCommands, staticNodeLanCommands, revokeNodeLanEntries, revokeNodeLanState, sameNodeLanTarget,
   selectNodeLanTargets, sweepNodeLanOrphans,
   validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
@@ -92,6 +92,28 @@ describe("RP node-local remote LAN authorization",()=>{
     expect(()=>validateNodeLanSnapshot({version:1,attachments:[{...attachment,lanCidr:"0.0.0.0/0"}]})).toThrow();
     expect(()=>validateNodeLanSnapshot({version:1,attachments:[{...attachment,lanCidr:"192.168.50.7/24"}]})).toThrow();
     expect(()=>validateNodeLanSnapshot({version:1,attachments:[{...attachment,lanCidr:"192.168.50.0/8"}]})).toThrow();
+  });
+  it("isolates static source routing from the Docker overlay default route",()=>{
+    const managed:NodeLanAttachment={...attachment,uplinkMode:"ManagedSharedUplink",
+      addressMode:"Static",staticAddress:"192.168.50.22/24",
+      staticGateway:"192.168.50.1",configurationRevision:2};
+    const valid=validateNodeLanSnapshot({version:1,attachments:[managed]});
+    const [target]=selectNodeLanTargets(valid,[container]);
+    const command=staticNodeLanCommands(target,"rp-a-1234abcd");
+    expect(command[0]).toContain("192.168.50.22/24");
+    expect(command[1]).toEqual(["-4","route","replace","default","via",
+      "192.168.50.1","dev","rp-a-1234abcd","table","20015"]);
+    expect(command[2]).toEqual(["-4","rule","add","pref","18015","from",
+      "192.168.50.22/32","lookup","20015"]);
+    const original=selectNodeLanTargets([attachment],[container])[0];
+    expect(sameNodeLanTarget(original,target)).toBe(false);
+    expect(()=>validateNodeLanSnapshot({version:1,attachments:[{
+      ...managed,uplinkMode:"DedicatedUnnumbered"
+    }]})).toThrow(/managed/);
+    expect(()=>validateNodeLanSnapshot({version:1,attachments:[{
+      ...managed,staticAddress:"10.1.2.3/24"
+    }]})).toThrow();
+    expect(()=>staticNodeLanCommands(target,"eth0")).toThrow();
   });
   it("rejects untrusted workload types and missing network/task provenance",()=>{
     expect(selectNodeLanTargets([attachment],[{...container,Config:{Labels:{"resourceportal.workload":"system"}}}])).toEqual([]);

@@ -89,7 +89,7 @@ export class GateRuntimeReconcilerService {
         }
         if (!gate.publicKey || !gate.serverPrivateKeyCiphertext ||
             !gate.serverListenPort || !gate.serverTunnelAddress ||
-            !gate.clientTunnelAddress || gate.agentVersion !== "gate-l2-v1") {
+            !gate.clientTunnelAddress || !["gate-l2-v1","gate-l2-v2"].includes(gate.agentVersion ?? "")) {
           // A legacy Gate must NEVER receive any L2 grant. Remove the
           // previous stack/route surface before requiring re-enrollment.
           await this.removeStack(gateStackName(gate.id));

@@ -3,12 +3,13 @@ import { join } from "node:path";
 /** Install a dedicated LAN Attachments agent; routed Site VPN is unsupported. */
 export function resourcePortalGateInstallerScript() {
   const lanAgent = readFileSync(join(__dirname, "gate-lan-agent.py"), "utf8");
+  const managedUplink = readFileSync(join(__dirname, "gate-managed-uplink.py"), "utf8");
   return String.raw`#!/usr/bin/env bash
 set -euo pipefail
 API_URL=""
 TOKEN=""
 INTERVAL=30
-AGENT_VERSION="gate-l2-v1"
+AGENT_VERSION="gate-l2-v2"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
@@ -52,7 +53,7 @@ if [ ! -s "$PRIVATE_KEY" ]; then umask 077; wg genkey > "$PRIVATE_KEY"; fi
 chmod 0600 "$PRIVATE_KEY"
 PUBLIC_KEY="$(wg pubkey < "$PRIVATE_KEY")"
 PAYLOAD="$(jq -cn --arg token "$TOKEN" --arg key "$PUBLIC_KEY" \
-  '{token:$token,publicKey:$key,agentVersion:"gate-l2-v1"}')"
+  '{token:$token,publicKey:$key,agentVersion:"gate-l2-v2"}')"
 RESPONSE="$(curl -fsS --max-time 20 -H 'content-type: application/json' -X POST \
   --data "$PAYLOAD" "$API_URL/networking/gates/enroll")" || die "LAN enrollment failed"
 AGENT_TOKEN="$(printf '%s' "$RESPONSE" | jq -er .agentToken)"
@@ -67,6 +68,13 @@ cat > /usr/local/sbin/resourceportal-gate-lan.py <<'RP_GATE_LAN_PYTHON'
 __RP_GATE_LAN_PYTHON__
 RP_GATE_LAN_PYTHON
 chmod 0700 /usr/local/sbin/resourceportal-gate-lan.py
+
+# Install an explicit, standalone host-network command. Agent heartbeats never
+# trigger NIC migration; the admin must run preflight/apply/confirm separately.
+cat > /usr/local/sbin/resourceportal-gate-uplink <<'RP_GATE_UPLINK_PYTHON'
+__RP_GATE_UPLINK_PYTHON__
+RP_GATE_UPLINK_PYTHON
+chmod 0700 /usr/local/sbin/resourceportal-gate-uplink
 
 cat > "$AGENT_BIN" <<'RP_GATE_AGENT'
 #!/usr/bin/env bash
@@ -166,9 +174,19 @@ EOF
   printf '%s' "$config" | python3 "$LAN_AGENT" || { revoke_lan; return 1; }
 }
 while :; do
+  # Report only locally observed, verified host bridge state. A missing or
+  # stale proof is null; never fabricate a subnet from tenant policy.
+  # Recheck actual host networking and authenticated RP access each cycle.
+  # Expired local attestation is never reused.
+  /usr/local/sbin/resourceportal-gate-uplink refresh >/dev/null 2>&1 || true
+  OBSERVED_LAN="$(python3 "$LAN_AGENT" --observed-lan 2>/dev/null || printf 'null')"
+  OBSERVED_L2="$(python3 "$LAN_AGENT" --observed-attachments 2>/dev/null || printf '[]')"
+  APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
+  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson applied "$APPLIED_AT" \
+    '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
   if RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
     -H 'content-type: application/json' -X POST \
-    --data '{"agentVersion":"gate-l2-v1"}' \
+    --data "$HEARTBEAT" \
     "$API_URL/networking/gates/agent/heartbeat")"; then
     if ! apply_config "$RESPONSE"; then
       revoke_lan || true
@@ -204,5 +222,5 @@ systemctl daemon-reload
 systemctl enable resourceportal-gate.service
 systemctl restart resourceportal-gate.service
 log "LAN Gate enrolled as $GATE_ID"
-`.replace("__RP_GATE_LAN_PYTHON__", lanAgent).replaceAll("__RP_SHELL_EXPAND__", "${");
+`.replace("__RP_GATE_LAN_PYTHON__", lanAgent).replace("__RP_GATE_UPLINK_PYTHON__", managedUplink).replaceAll("__RP_SHELL_EXPAND__", "${");
 }

@@ -94,6 +94,7 @@ const commands = {
     ["bash", "test/installer/test-host-runtime.sh"],
     ["python3", "test/installer/test-remote-lan-gate-agent.py"],
     ["python3", "test/installer/test-remote-lan-dhcp.py"],
+    ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_gate*.py", "-v"],
   ],
   "web-console": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
@@ -262,6 +263,9 @@ const classifiers = [
   [/^scripts\/rollback-zitadel-runtime\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/publish-tested-release-image\.sh$/, ["platform-release", "workflow"]],
   [/^test\/installer\/test-remote-lan-gate-agent\.py$/, ["networking", "platform-release"]],
+  // Managed Gate migration tests run in patch CI as well as privileged real Swarm;
+  // unknown root Python files still fail closed instead of being skipped.
+  [/^test\/test_gate_(?:managed_uplink|uplink_installer)\.py$/, ["networking"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],
