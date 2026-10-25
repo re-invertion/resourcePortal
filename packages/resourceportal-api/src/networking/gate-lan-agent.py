@@ -114,23 +114,37 @@ def validate_link(interface: str, bridge: str, gate: str, links: list[dict],
         route = primary[0]
         if proof.get("gateway") and route["gateway"] != proof["gateway"]:
             raise ValueError("Management gateway differs from verified uplink")
-        if proof.get("manager") == "NetplanNetworkManager":
-            # Only the preflight-approved, lower-priority Wi-Fi backup is
-            # allowed. It must never displace the bridge's management route.
+        manager = proof.get("manager")
+        if manager in ("NetplanNetworkManager", "NativeNetworkManager"):
+            # The shared Ethernet bridge must retain its independently
+            # verified management MAC and DHCPv4 route after every heartbeat.
+            # NativeNetworkManager persists the same fields as the earlier
+            # Netplan bridge, but has no Wi-Fi dependency or fixed NIC name.
             metric = proof.get("routeMetric")
             if type(metric) is not int or route.get("metric", 0) != metric:
-                raise ValueError("Managed Netplan route priority changed")
+                raise ValueError("Managed bridge route priority changed")
             mac = proof.get("bridgeMac")
             if not isinstance(mac, str) or existing.get("address", "").lower() != mac.lower():
-                raise ValueError("Managed Netplan bridge MAC changed")
+                raise ValueError("Managed bridge MAC changed")
             backups = [r for r in defaults if r is not route]
-            if len(backups) > 1 or any(
-                r.get("dev") != "wlan0" or type(r.get("metric")) is not int or
-                r["metric"] <= metric or r.get("gateway") != route["gateway"]
-                for r in backups
-            ):
+            if manager == "NetplanNetworkManager":
+                if len(backups) > 1 or any(
+                    r.get("dev") != "wlan0" or type(r.get("metric")) is not int or
+                    r["metric"] <= metric or r.get("gateway") != route["gateway"]
+                    for r in backups
+                ):
+                    raise ValueError("Unsupported or competing management default route")
+            elif (not proof.get("gateway") or
+                  any(type(r.get("metric")) is not int or
+                      r["metric"] <= metric or
+                      not r.get("dev") or r["dev"] in (interface, bridge) or
+                      not r.get("gateway")
+                      for r in backups)):
+                # Mirror native Gate verification: no competing route may
+                # preempt management via the wired bridge. A backup is
+                # optional and is never assumed to be a WLAN interface.
                 raise ValueError("Unsupported or competing management default route")
-        elif proof.get("manager") not in (None, "Networkd") or len(defaults) != 1:
+        elif manager not in (None, "Networkd") or len(defaults) != 1:
             raise ValueError("Unsupported competing management default route")
         if any(r.get("dev") == interface for r in routes):
             raise ValueError("Physical interface still owns host routes")

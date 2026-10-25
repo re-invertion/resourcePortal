@@ -50,6 +50,85 @@ class ManagedUplinkTests(TestCase):
     def test_valid_preverified_bridge_does_not_migrate_nic(self):
         self.assertTrue(self.validate(*self.state(), self.checkpoint()))
 
+    def native_state(self):
+        links, addresses, routes = self.state()
+        links[1]["address"] = "88:a2:9e:01:d5:e3"
+        routes[0]["metric"] = 100
+        return links, addresses, routes
+
+    def native_checkpoint(self):
+        return dict(self.checkpoint(), manager="NativeNetworkManager",
+                    gateway="192.168.100.1", routeMetric=100,
+                    bridgeMac="88:a2:9e:01:d5:e3")
+
+    def test_native_nm_proof_authorizes_real_app_neutral_observed_lan(self):
+        links, addresses, routes = self.native_state()
+        proof = self.native_checkpoint()
+        self.assertTrue(self.validate(links, addresses, routes, proof))
+        with mock.patch.object(agent, "MANAGED") as state, \
+             mock.patch.object(agent, "device_state",
+                               return_value=(links, addresses, routes)):
+            state.is_file.return_value = True
+            state.is_symlink.return_value = False
+            state.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100600)
+            state.read_text.return_value = __import__("json").dumps(proof)
+            observed = agent.observed_managed_segment()
+        self.assertEqual(observed["physicalInterface"], "eth0")
+        self.assertEqual(observed["bridge"], BRIDGE)
+        self.assertEqual(observed["networkCidr"], "192.168.100.0/24")
+        self.assertEqual(observed["gateway"], "192.168.100.1")
+        self.assertEqual(observed["discoveryMethod"], "host-verified")
+        self.assertEqual(observed["capabilities"],
+                         ["ManagedSharedUplink", "LANDiscoveryV1"])
+
+    def test_native_nm_proof_allows_no_backup_or_lower_priority_wired_backup(self):
+        links, addresses, routes = self.native_state()
+        proof = self.native_checkpoint()
+        # No dependence on Wi-Fi or on a second interface.
+        self.assertTrue(self.validate(links, addresses, routes, proof))
+        routes.append({"dst": "default", "dev": "enp7s0",
+                       "gateway": "192.168.100.1", "metric": 600})
+        self.assertTrue(self.validate(links, addresses, routes, proof))
+
+    def test_native_nm_rejects_mac_route_metric_and_gateway_divergence(self):
+        links, addresses, routes = self.native_state()
+        proof = self.native_checkpoint()
+        links[1]["address"] = "88:a2:9e:01:d5:e4"
+        with self.assertRaisesRegex(ValueError, "MAC"):
+            self.validate(links, addresses, routes, proof)
+        links[1]["address"] = "88:a2:9e:01:d5:e3"
+        routes[0]["metric"] = 500
+        with self.assertRaisesRegex(ValueError, "route priority"):
+            self.validate(links, addresses, routes, proof)
+        routes[0]["metric"] = 100
+        proof["gateway"] = "192.168.100.99"
+        with self.assertRaisesRegex(ValueError, "gateway differs"):
+            self.validate(links, addresses, routes, proof)
+
+    def test_native_nm_rejects_competing_default_and_physical_route(self):
+        links, addresses, routes = self.native_state()
+        proof = self.native_checkpoint()
+        for backup in (
+            {"dst": "default", "dev": "enp7s0", "gateway": "192.168.100.1",
+             "metric": 100},
+            {"dst": "default", "dev": "enp7s0", "gateway": "192.168.100.1",
+             "metric": 50},
+            {"dst": "default", "dev": "eth0", "gateway": "192.168.100.1",
+             "metric": 600},
+            {"dst": "default", "dev": "enp7s0", "gateway": "", "metric": 600},
+            {"dst": "default", "dev": "", "gateway": "192.168.100.1",
+             "metric": 600},
+        ):
+            with self.subTest(backup=backup), \
+                 self.assertRaisesRegex(ValueError, "competing"):
+                self.validate(links, addresses, routes + [backup], proof)
+        with self.assertRaisesRegex(ValueError, "priority"):
+            self.validate(links, addresses, routes,
+                          dict(proof, routeMetric="100"))
+        with self.assertRaisesRegex(ValueError, "Unsupported competing"):
+            self.validate(links, addresses, routes,
+                          dict(proof, manager="UnknownManager"))
+
     def test_managed_uplink_fails_closed_without_local_checkpoint(self):
         links, addresses, routes = self.state()
         with mock.patch.object(agent, "MANAGED") as state:
