@@ -89,6 +89,8 @@ class HostUplinkTests(TestCase):
             commands.append(args)
             if args == ("networkctl", "reconfigure", "eth0") and commands.count(args) == 1:
                 raise RuntimeError("simulated network disruption")
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return "[]"
             return "active"
         with mock.patch.object(mod, "call", side_effect=runner):
             with self.assertRaisesRegex(RuntimeError, "disruption"):
@@ -98,7 +100,11 @@ class HostUplinkTests(TestCase):
         self.assertFalse(mod.checkpoint_file().exists())
 
     def test_rollback_is_idempotent_and_fails_closed_on_malformed_path(self):
-        with mock.patch.object(mod, "call", return_value="active"):
+        def runner(*args):
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return "[]"
+            return "active"
+        with mock.patch.object(mod, "call", side_effect=runner):
             mod.arm(self.plan())
             mod.rollback()
             mod.rollback()
@@ -109,6 +115,90 @@ class HostUplinkTests(TestCase):
         mod.write(mod.checkpoint_file(), json.dumps(malicious))
         with self.assertRaisesRegex(ValueError, "outside"):
             mod.rollback()
+
+    def test_rollback_removes_only_owned_kernel_bridge_before_reconfiguring_nic(self):
+        calls = []
+        def runner(*args):
+            calls.append(args)
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return json.dumps([
+                    {"ifname": "eth0", "master": BR},
+                    {"ifname": BR, "linkinfo": {"info_kind": "bridge"}},
+                ])
+            return "active"
+        with mock.patch.object(mod, "call", side_effect=runner):
+            mod.arm(self.plan())
+            mod.rollback()
+        down = ("ip", "link", "set", "dev", BR, "down")
+        delete = ("ip", "link", "delete", "dev", BR, "type", "bridge")
+        reload = ("networkctl", "reload")
+        reconfigure = ("networkctl", "reconfigure", "eth0")
+        self.assertIn(down, calls)
+        self.assertIn(delete, calls)
+        self.assertLess(calls.index(down), calls.index(delete))
+        self.assertLess(calls.index(delete), len(calls) - 1 - calls[::-1].index(reconfigure))
+        self.assertFalse(mod.checkpoint_file().exists())
+        self.assertFalse((self.net / ("09-" + BR + ".netdev")).exists())
+        self.assertEqual(self.original.read_text(), self.plan()["originalText"])
+
+    def test_rollback_foreign_bridge_keeps_checkpoint_and_watchdog(self):
+        calls = []
+        def runner(*args):
+            calls.append(args)
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return json.dumps([
+                    {"ifname": "eth0", "master": BR},
+                    {"ifname": BR, "ifalias": "foreign-owner",
+                     "linkinfo": {"info_kind": "bridge"}},
+                ])
+            return "active"
+        with mock.patch.object(mod, "call", side_effect=runner):
+            mod.arm(self.plan())
+            with self.assertRaisesRegex(ValueError, "foreign"):
+                mod.rollback()
+        self.assertTrue(mod.checkpoint_file().exists())
+        self.assertNotIn(("ip", "link", "delete", "dev", BR, "type", "bridge"), calls)
+        self.assertNotIn(("systemctl", "disable", "--now", mod.WATCH + ".timer"), calls)
+        self.assertEqual(self.original.read_text(), self.plan()["originalText"])
+        self.assertTrue((self.net / ("09-" + BR + ".netdev")).exists())
+        self.assertEqual(calls.count(("networkctl", "reload")), 1)  # arm only; rollback did not reload
+
+    def test_bridge_delete_failure_preserves_watchdog_for_retry(self):
+        calls = []
+        delete = ("ip", "link", "delete", "dev", BR, "type", "bridge")
+        def runner(*args):
+            calls.append(args)
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return json.dumps([
+                    {"ifname": "eth0", "master": BR},
+                    {"ifname": BR, "linkinfo": {"info_kind": "bridge"}},
+                ])
+            if args == delete:
+                raise RuntimeError("kernel refused bridge delete")
+            return "active"
+        with mock.patch.object(mod, "call", side_effect=runner):
+            mod.arm(self.plan())
+            with self.assertRaisesRegex(RuntimeError, "kernel refused"):
+                mod.rollback()
+        self.assertIn(delete, calls)
+        self.assertTrue(mod.checkpoint_file().exists())
+        self.assertTrue((self.net / ("09-" + BR + ".netdev")).exists())
+        self.assertEqual(calls.count(("networkctl", "reload")), 1)  # arm only; rollback did not reload
+        self.assertNotIn(("systemctl", "disable", "--now", mod.WATCH + ".timer"), calls)
+        # The next watchdog attempt must be able to verify ownership and
+        # finish rollback without manually reconstructing deleted files.
+        def recovered(*args):
+            calls.append(args)
+            if args == ("ip", "-j", "-d", "link", "show"):
+                return json.dumps([
+                    {"ifname": "eth0", "master": BR},
+                    {"ifname": BR, "linkinfo": {"info_kind": "bridge"}},
+                ])
+            return "active"
+        with mock.patch.object(mod, "call", side_effect=recovered):
+            mod.rollback()
+        self.assertFalse(mod.checkpoint_file().exists())
+        self.assertFalse((self.net / ("09-" + BR + ".netdev")).exists())
 
     def test_confirmation_needs_observed_bridge_and_live_authenticated_control_plane(self):
         with mock.patch.object(mod, "call", return_value="active"):

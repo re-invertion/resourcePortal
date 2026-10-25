@@ -61,6 +61,8 @@ In tenant Networking → LAN Attachments, select **Managed shared uplink** and a
 
 The dedicated unnumbered port mode remains available for existing deployments. It continues to accept an expected DHCP subnet and does not require host management NIC migration.
 
+**Current activation limitation (release blocker):** The existing `validateRemoteLanLeaseProof` function validates paired, recent DHCP observations, but no production service currently invokes it with independently authenticated app-namespace and Gate observations. The lifecycle only advances `Pending` to `Provisioning`, not to `Active`; `Static` has no equivalent authenticated dataplane activation proof. The privileged real-L2 smoke verifies transport and addressing but does not establish the missing per-attachment control-plane proof. Do not mark DHCP or Static attachments `Active`, claim end-to-end activation, or enable the feature for production until both proof ingestion paths, identity/revision binding, lease/route validation, revocation acknowledgements, and corresponding live tests are implemented and certified.
+
 ### Release and verification safeguards
 
 The new fields include a Prisma migration; the automatic release policy **forbids release** until a certified control-plane database restore/rollback is proven. Unit/mock tests and a generated policy are not certification of a live host's management migration. Run a privileged disposable Linux runner with networkd, cold reboot/recovery, real WireGuard/GRETAP/Swarm DHCP and Static tests, ARP, TCP/UDP, MAC anti-spoofing and revocation, followed by all mandatory release gate checks. Do not disable the restore gate or advertise a published version before the required evidence exists.

@@ -303,14 +303,40 @@ def rollback():
     original = Path(plan["originalPath"])
     if original.parent != NETWORKD or not NETWORK_FILE.fullmatch(original.name) or original.is_symlink():
         raise ValueError("Rollback path is outside supported networkd directory")
-    write(original, plan["originalText"], plan["originalMode"])
-    for suffix in (".netdev", ".network"):
-        path = NETWORKD / ("09-" + plan["bridge"] + suffix)
+    # A .netdev deletion alone does not remove its live kernel bridge.
+    # Capture exact RP configuration ownership before removing files; an
+    # unrelated bridge reusing the deterministic name must never be deleted.
+    expected = config_files(plan)
+    netdev = NETWORKD / ("09-" + plan["bridge"] + ".netdev")
+    network = NETWORKD / ("09-" + plan["bridge"] + ".network")
+    for path, contents in ((netdev, expected["netdev"]), (network, expected["bridge"])):
         if path.is_symlink():
             raise ValueError("Refusing to remove symlinked networkd resource")
-        path.unlink(missing_ok=True)
+        if path.exists() and path.read_text() != contents:
+            raise ValueError("Refusing foreign managed bridge configuration")
+    owned_netdev = netdev.is_file()
+    # Inspect ownership while the exact RP-owned .netdev is still on disk.
+    # Removing it before a failed link deletion would make the watchdog's
+    # next attempt unable to authenticate its own bridge.
+    links = json.loads(call("ip", "-j", "-d", "link", "show"))
+    bridge = next((link for link in links if link.get("ifname") == plan["bridge"]), None)
+    if bridge:
+        parent = next((link for link in links if link.get("ifname") == plan["device"]), None)
+        owner = "rp-lan:" + plan["gateId"] + ":" + plan["device"]
+        if (not owned_netdev or bridge.get("linkinfo", {}).get("info_kind") != "bridge" or
+                bridge.get("ifalias") not in (None, "", owner) or
+                (not parent or parent.get("master") != plan["bridge"]) and bridge.get("ifalias") != owner):
+            raise ValueError("Refusing to delete unverified or foreign managed bridge")
+    # Restore the old management configuration before touching kernel links.
+    # Keep the exact RP netdev configuration until deletion succeeds so a
+    # watchdog retry can still authenticate the bridge after a failed delete.
+    write(original, plan["originalText"], plan["originalMode"])
+    if bridge:
+        call("ip", "link", "set", "dev", plan["bridge"], "down")
+        call("ip", "link", "delete", "dev", plan["bridge"], "type", "bridge")
+    netdev.unlink(missing_ok=True)
+    network.unlink(missing_ok=True)
     (STATE / "managed-uplink.json").unlink(missing_ok=True)
-    # Files are restored durably before touching link state.
     call("networkctl", "reload")
     call("networkctl", "reconfigure", plan["device"])
     checkpoint_file().unlink()
