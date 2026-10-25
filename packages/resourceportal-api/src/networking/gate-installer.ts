@@ -180,8 +180,10 @@ while :; do
   # Expired local attestation is never reused.
   /usr/local/sbin/resourceportal-gate-uplink refresh >/dev/null 2>&1 || true
   OBSERVED_LAN="$(python3 "$LAN_AGENT" --observed-lan 2>/dev/null || printf 'null')"
-  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" \
-    '{agentVersion:"gate-l2-v2",lanObservation:$observation}')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
+  OBSERVED_L2="$(python3 "$LAN_AGENT" --observed-attachments 2>/dev/null || printf '[]')"
+  APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
+  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson applied "$APPLIED_AT" \
+    '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
   if RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
     -H 'content-type: application/json' -X POST \
     --data "$HEARTBEAT" \

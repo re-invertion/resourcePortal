@@ -141,6 +141,36 @@ class ManagedUplinkTests(TestCase):
             agent.reconcile(config, current)
             apply.assert_called_once()
 
+    def test_versioned_addressing_update_revokes_old_kernel_endpoint_before_regrant(self):
+        current_item = {"singleAppId": AID, "networkId": AID, "lanInterface": "eth1",
+                        "lanCidr": "192.168.100.0/24", "macAddress": "02:00:00:00:00:01",
+                        "uplinkMode": "DedicatedUnnumbered", "addressMode": "DHCP",
+                        "staticAddress": None, "staticGateway": None,
+                        "configurationRevision": 1}
+        updated_item = dict(current_item, macAddress="02:00:00:00:00:02",
+                            configurationRevision=2)
+        config = {"gateId": GATE, "tenantId": TENANT, "lanAttachmentProtocol": 1,
+                  "lanAttachments": [dict(updated_item, id=AID)]}
+        state = {"gateId": GATE, "tenantId": TENANT, "attachments": {AID: current_item}}
+        calls = []
+        with mock.patch.object(agent, "is_handshake_recent", return_value=True), \
+             mock.patch.object(agent, "underlay", return_value=("100.96.0.2", "100.96.0.1")), \
+             mock.patch.object(agent, "remove_one", side_effect=lambda *_: calls.append("remove")), \
+             mock.patch.object(agent, "apply_one", side_effect=lambda *_: calls.append("apply")), \
+             mock.patch.object(agent, "save_state", side_effect=lambda *_: calls.append("checkpoint")):
+            result = agent.reconcile(config, state)
+        self.assertEqual(calls, ["remove", "checkpoint", "apply"])
+        self.assertEqual(result["attachments"][AID]["configurationRevision"], 2)
+
+        state = {"gateId": GATE, "tenantId": TENANT, "attachments": {AID: current_item}}
+        config["lanAttachments"][0]["configurationRevision"] = 1
+        with mock.patch.object(agent, "is_handshake_recent", return_value=True), \
+             mock.patch.object(agent, "underlay", return_value=("100.96.0.2", "100.96.0.1")), \
+             mock.patch.object(agent, "remove_one") as remove:
+            with self.assertRaisesRegex(ValueError, "newer revision"):
+                agent.reconcile(config, state)
+            remove.assert_not_called()
+
     def test_unknown_mode_fails_closed(self):
         links, addresses, routes = self.state()
         with self.assertRaisesRegex(ValueError, "Unsupported"):

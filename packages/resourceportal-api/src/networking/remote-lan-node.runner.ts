@@ -1,7 +1,9 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { readFileSync, unlinkSync } from "node:fs";
 import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
+import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
   nodeLanCommands, staticNodeLanCommands, revokeNodeLanState, selectNodeLanTargets,
@@ -13,8 +15,8 @@ const logger = new Logger("RemoteLanNode");
 const SNAPSHOT = "RESOURCEPORTAL_REMOTE_LAN_NODES_B64";
 const SCRIPT = "/usr/local/sbin/rp-remote-lan-dhcp.sh";
 const HOST_PROC = "/host/proc";
-type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string }> };
-type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess | null };
+type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string; prefixlen?: number }> };
+type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess | null; dockerDefault:string };
 const managed = new Map<string, Running>();
 let stopping = false;
 
@@ -116,6 +118,10 @@ function cleanupOrphanStaticPolicy(pid:number,device:string) {
     nsrun(pid,[...command]);
 }
 function attach(target: NodeLanTarget): Running {
+  const dockerDefault = nsrun(target.pid,["-4","route","show","default"]);
+  if (dockerDefault.split(/\r?\n/).filter(Boolean).length!==1 ||
+      /\bdev rp-a-[0-9a-f]{8}\b/.test(dockerDefault))
+    throw new Error("Docker default route is missing, ambiguous or points into RP LAN");
   const interfaceName = overlayInterface(target);
   const commands = nodeLanCommands(target, interfaceName);
   const device = commands[0][1][2];
@@ -158,7 +164,7 @@ function attach(target: NodeLanTarget): Running {
     const ips=nsjson<Address[]>(target.pid,["-j","-4","addr","show","dev",device]);
     const configured=ips.some(x=>x.addr_info?.some(a=>
       a.family==="inet" && a.local===claim.source));
-    if(current.fullyConfigured && configured) return {target,device,dhcp:null};
+    if(current.fullyConfigured && configured) return {target,device,dhcp:null,dockerDefault};
     removeStaticClaim(target.pid,claim);
     const oldDefault=nsrun(target.pid,["-4","route","show","default"]);
     try {
@@ -175,20 +181,84 @@ function attach(target: NodeLanTarget): Running {
       removeStaticClaim(target.pid,claim);
       throw error;
     }
-    return {target,device,dhcp:null};
+    return {target,device,dhcp:null,dockerDefault};
   }
   const dhcp = spawn("nsenter", [
     "--net=" + namespacePath(target.pid), "--", "/bin/busybox", "udhcpc",
     "-f", "-n", "-i", device, "-s", SCRIPT,
   ], { stdio: "ignore",
     // The DHCP hook must never accept an address outside the tenant-approved LAN.
-    env: { ...process.env, RP_REMOTE_LAN_CIDR: target.attachment.lanCidr },
+    env: { ...process.env, RP_REMOTE_LAN_CIDR: target.attachment.lanCidr,
+      RP_LAN_DHCP_PROOF_FILE: "/run/resourceportal-remote-lan/" + device },
   });
   dhcp.on("error", err => logger.error("DHCP client failed: " + err.message));
-  return { target, device, dhcp };
+  return { target, device, dhcp, dockerDefault };
 }
+function observeNodeProof(entry:Running):NodeLanProof {
+  const {target,device}=entry;
+  const link=links(target.pid).find(x=>x.ifname===device);
+  if(!link)throw new Error("Node L2 tunnel disappeared");
+  assertOwnedNodeLanLink(link,device,target.attachment.attachmentId);
+  if(link.address?.toLowerCase() !==
+     target.attachment.macAddress.toLowerCase())
+    throw new Error("RP-owned node tunnel MAC differs from granted application");
+  const addresses=nsjson<Array<{ifname?:string;addr_info?:Array<{
+    family?:string;local?:string;prefixlen?:number}>}>>(
+    target.pid,["-j","-4","addr","show","dev",device])
+    .flatMap(x=>x.addr_info??[]).filter(x=>x.family==="inet");
+  if(addresses.length!==1||!addresses[0].local||
+      !Number.isInteger(addresses[0].prefixlen))
+    throw new Error("Node L2 address not uniquely configured");
+  const targetMode=target.attachment.addressMode??"DHCP";
+  const result:NodeLanProof={
+    source:"node-agent",
+    attachmentId:target.attachment.attachmentId,
+    tenantId:target.attachment.tenantId,
+    singleAppId:target.attachment.singleAppId,
+    gateId:target.attachment.gateId,
+    configurationRevision:target.attachment.configurationRevision??1,
+    macAddress:target.attachment.macAddress,
+    observedAtMs:Date.now(),
+    taskContainerId:target.id,
+    nodeTaskId:process.env.RESOURCEPORTAL_LAN_NODE_TASK_ID??"",
+    mode:targetMode,
+    address:addresses[0].local,prefix:addresses[0].prefixlen!,
+    appLinkOwned:true,appLinkUp:link.flags?.includes("UP")===true,
+    overlayPeerMatched:link.linkinfo?.info_data?.local===target.tunnel.appOverlayIp&&
+      link.linkinfo?.info_data?.remote===target.tunnel.gatewayOverlayIp,
+    dockerDefaultPreserved:nsrun(target.pid,["-4","route","show","default"])===entry.dockerDefault,
+  };
+  if(targetMode==="Static") {
+    const claim=staticClaim(target,device);
+    const routing=currentStaticClaim(target.pid,claim);
+    result.sourcePolicyVerified=routing.fullyConfigured;
+    result.staticGateway=claim.gateway;
+  } else {
+    if(!entry.dhcp||entry.dhcp.killed||entry.dhcp.exitCode!==null)
+      throw new Error("DHCP process not alive");
+    // Only the authenticated node agent's DHCP hook can write this path.
+    const lease=readFileSync("/run/resourceportal-remote-lan/"+device,"utf8")
+      .trim().split(/\r?\n/);
+    if(lease.length!==5 || lease[0]!==result.address ||
+        Number(lease[1])!==result.prefix ||
+        !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lease[2]))
+      throw new Error("DHCP ACK proof disagrees with netns address");
+    const seconds=Number(lease[3]),issued=Number(lease[4]);
+    if(!Number.isSafeInteger(seconds)||seconds<60||seconds>7776000||
+      !Number.isSafeInteger(issued)||issued*1000>Date.now()+5000)
+      throw new Error("DHCP lease metadata missing or malformed");
+    result.dhcpServer=lease[2];
+    result.leaseExpiresAtMs=(issued+seconds)*1000;
+  }
+  return result;
+}
+
 function detach(entry: Running) {
   entry.dhcp?.kill("SIGTERM");
+  if(entry.dhcp) {
+    try { unlinkSync("/run/resourceportal-remote-lan/"+entry.device); }
+    catch(error) { if((error as NodeJS.ErrnoException).code!=="ENOENT") throw error; }
+  }
   const { target, device } = entry;
   let present: NodeLanLink | undefined;
   try {
@@ -233,6 +303,18 @@ function reconcile() {
     managed.set(key, attach(target));
   }
   if (denied) throw denied instanceof Error ? denied : new Error("Invalid node LAN policy");
+  // Docker Swarm service logs come from a privileged, RP-owned node agent,
+  // never from tenant container stdout. Worker independently binds the
+  // resulting proof to running task identity, Gate and current revision.
+  for(const entry of managed.values()){
+    try { logger.log("RP_LAN_NODE_PROOF_V1 "+JSON.stringify(observeNodeProof(entry))); }
+    catch { /* A missing/expired DHCP ACK or route never produces evidence. */ }
+  }
+  logger.log("RP_LAN_NODE_RECONCILE_V1 "+JSON.stringify({
+    observedAtMs:Date.now(),
+    nodeTaskId:process.env.RESOURCEPORTAL_LAN_NODE_TASK_ID??"",
+    attachmentIds:[...managed.values()].map(x=>x.target.attachment.attachmentId).sort(),
+  }));
   return managed.size;
 }
 async function main() {

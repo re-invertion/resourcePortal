@@ -1,5 +1,5 @@
 import {Type} from "class-transformer";
-import {ArrayUnique, IsArray, IsIn, IsInt, IsIP, IsISO8601, IsOptional, IsString, IsUUID, Matches, Max, Min, ValidateNested } from "class-validator";
+import {ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsIP, IsISO8601, IsOptional, IsString, IsUUID, Matches, Max, Min, ValidateNested } from "class-validator";
 
 export class GateLanObservationDto {
   @IsIn([1]) protocol!: 1;
@@ -18,10 +18,31 @@ export class GateLanObservationDto {
   @IsIn(["gate-l2-v2"]) agentVersion!: "gate-l2-v2";
   @IsIn(["Ready"]) state!: "Ready";
 }
+export class GateLanAttachmentProofDto {
+  @IsIn(["gate-agent"]) source!: "gate-agent";
+  @IsUUID() attachmentId!:string;
+  @IsUUID() tenantId!:string;
+  @IsUUID() singleAppId!:string;
+  @IsUUID() gateId!:string;
+  @IsInt() @Min(1) configurationRevision!:number;
+  @Matches(/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i) macAddress!:string;
+  @IsInt() @Min(1) observedAtMs!:number;
+  @IsBoolean() gatewayTunnelOwned!:boolean;
+  @IsBoolean() bridgeOwned!:boolean;
+  @IsBoolean() macLearnedOnTunnel!:boolean;
+  @IsInt() @Min(1) handshakeAtMs!:number;
+}
 export class GateHeartbeatDto {
   @IsIn(["gate-l2-v1", "gate-l2-v2"])
   agentVersion!: "gate-l2-v1" | "gate-l2-v2";
 
   @IsOptional() @ValidateNested() @Type(() => GateLanObservationDto)
   lanObservation?: GateLanObservationDto;
+
+  @IsOptional() @IsArray() @ArrayMaxSize(64)
+  @ValidateNested({each:true}) @Type(()=>GateLanAttachmentProofDto)
+  lanAttachmentProofs?: GateLanAttachmentProofDto[];
+
+  @IsOptional() @IsInt() @Min(1)
+  lanAppliedAtMs?:number;
 }

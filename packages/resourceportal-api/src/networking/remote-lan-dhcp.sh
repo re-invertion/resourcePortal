@@ -84,9 +84,41 @@ case "$1" in
     ip -4 address flush dev "$IFACE" scope global
     ip -4 address add "$ip/$prefix" dev "$IFACE"
     ip link set dev "$IFACE" up
+    # Record only DHCP-client observed ACK metadata, not a claimed lease.
+    # The node agent has its own mount namespace: tenant workloads cannot
+    # write this root-owned lease proof. The active network state is checked
+    # separately before this file may participate in activation.
+    proof="${RP_LAN_DHCP_PROOF_FILE:-}"
+    case "$proof" in
+      /run/resourceportal-remote-lan/rp-a-????????) ;;
+      *) proof="" ;;
+    esac
+    if [ -n "$proof" ]; then
+      rm -f "$proof"
+      case "${serverid:-}" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+        *) serverid="" ;;
+      esac
+      case "${lease:-}" in
+        ""|*[!0-9]*) ;;
+        *)
+          if [ -n "$serverid" ] && [ "$lease" -gt 60 ] && [ "$lease" -le 7776000 ]; then
+            umask 077
+            mkdir -p /run/resourceportal-remote-lan
+            tmp="$(mktemp "$proof.XXXXXX")"
+            printf '%s\n%s\n%s\n%s\n%s\n' "$ip" "$prefix" "$serverid" "$lease" "$(date +%s)" > "$tmp"
+            mv -f "$tmp" "$proof"
+          fi
+          ;;
+      esac
+    fi
     ;;
   deconfig)
     ip -4 address flush dev "$IFACE" scope global
+    case "${RP_LAN_DHCP_PROOF_FILE:-}" in
+      /run/resourceportal-remote-lan/rp-a-????????)
+        rm -f "$RP_LAN_DHCP_PROOF_FILE" ;;
+    esac
     ;;
   *) exit 0 ;;
 esac

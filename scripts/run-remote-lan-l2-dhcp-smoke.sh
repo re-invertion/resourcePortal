@@ -2,17 +2,18 @@
 # Disposable four-namespace Ethernet-over-WireGuard DHCP integration smoke.
 set -euo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
-APP="rpa-$$"; RP="rpr-$$"; GATE="rpg-$$"; LAN="rpl-$$"
+APP="rpa-$"; APP2="rp2-$"; RP="rpr-$"; GATE="rpg-$"; LAN="rpl-$"
 TMP="$(mktemp -d)"
-MAC="02:aa:bb:cc:dd:ee"
+MAC="02:aa:bb:cc:dd:ee"; MAC2="02:aa:bb:cc:dd:ef"
 APP_IP="10.200.42.12"; RP_IP="10.200.42.20"
+APP2_IP="10.200.43.12"; RP2_IP="10.200.43.20"
 SV_IP="100.96.90.1"; CL_IP="100.96.90.2"
 log() { printf '[l2-dhcp] %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ns() { local net="$1"; shift; sudo -n ip netns exec "$net" "$@"; }
 cleanup() {
   set +e
-  for net in "$APP" "$RP" "$GATE" "$LAN"; do
+  for net in "$APP" "$APP2" "$RP" "$GATE" "$LAN"; do
     sudo -n ip netns pids "$net" 2>/dev/null | xargs -r sudo -n kill >/dev/null 2>&1 || true
     sudo -n ip netns del "$net" >/dev/null 2>&1 || true
   done
@@ -39,7 +40,19 @@ print("rp-a-"+h[:4].hex(),"rp-l2-"+h[:4].hex(),
 PY
 )
 BRIDGE="rp-b-$(echo "$APP_DEV" | cut -c6-)"
-for net in "$APP" "$RP" "$GATE" "$LAN"; do
+read -r APP2_DEV WAN2_DEV APP2_KEY WAN2_KEY < <(python3 - <<'PY'
+import hashlib
+tenant="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+gate="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
+attachment="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
+h=hashlib.sha256(f"{tenant}:{gate}:{attachment}".encode()).digest()
+print("rp-a-"+h[:4].hex(),"rp-l2-"+h[:4].hex(),
+      (int.from_bytes(h[8:12],"big")%4294967295)+1,
+      (int.from_bytes(h[4:8],"big")%4294967295)+1)
+PY
+)
+BRIDGE2="rp-b-$(echo "$APP2_DEV" | cut -c6-)"
+for net in "$APP" "$APP2" "$RP" "$GATE" "$LAN"; do
   sudo -n ip netns add "$net"
   ns "$net" ip link set lo up
 done
@@ -50,6 +63,13 @@ ns "$APP" ip addr add "$APP_IP/24" dev aa0
 ns "$RP" ip addr add "$RP_IP/24" dev ar0
 ns "$APP" ip link set aa0 up
 ns "$RP" ip link set ar0 up
+sudo -n ip link add ab0 type veth peer name rb0
+sudo -n ip link set ab0 netns "$APP2"
+sudo -n ip link set rb0 netns "$RP"
+ns "$APP2" ip addr add "$APP2_IP/24" dev ab0
+ns "$RP" ip addr add "$RP2_IP/24" dev rb0
+ns "$APP2" ip link set ab0 up
+ns "$RP" ip link set rb0 up
 sudo -n ip link add ru0 type veth peer name gu0
 sudo -n ip link set ru0 netns "$RP"
 sudo -n ip link set gu0 netns "$GATE"
@@ -94,6 +114,24 @@ ns "$GATE" ip link add "$GATE_BRIDGE" type bridge stp_state 1
 ns "$GATE" ip link set "$WAN_DEV" master "$GATE_BRIDGE"
 ns "$GATE" ip link set eth1 master "$GATE_BRIDGE"
 ns "$GATE" ip link set "$GATE_BRIDGE" up
+# Second isolated application, second independent GRETAP/WireGuard bridge
+# endpoint. Both MACs reach the same customer bridge, never one another's
+# application namespace or Docker default route.
+ns "$APP2" ip link add "$APP2_DEV" type gretap local "$APP2_IP" remote "$RP2_IP" key "$APP2_KEY" dev ab0 ttl 64
+ns "$APP2" ip link set dev "$APP2_DEV" mtu 1180
+ns "$APP2" ip link set dev "$APP2_DEV" address "$MAC2"
+ns "$APP2" ip link set "$APP2_DEV" up
+ns "$RP" ip link add "$APP2_DEV" type gretap local "$RP2_IP" remote "$APP2_IP" key "$APP2_KEY" dev rb0 ttl 64
+ns "$RP" ip link set "$APP2_DEV" mtu 1180 up
+ns "$RP" ip link add "$WAN2_DEV" type gretap local "$SV_IP" remote "$CL_IP" key "$WAN2_KEY" dev wg0 ttl 64
+ns "$RP" ip link set "$WAN2_DEV" mtu 1280 up
+ns "$RP" ip link add "$BRIDGE2" type bridge stp_state 1
+ns "$RP" ip link set "$APP2_DEV" master "$BRIDGE2"
+ns "$RP" ip link set "$WAN2_DEV" master "$BRIDGE2"
+ns "$RP" ip link set "$BRIDGE2" up
+ns "$GATE" ip link add "$WAN2_DEV" type gretap local "$CL_IP" remote "$SV_IP" key "$WAN2_KEY" dev rp-gate ttl 64
+ns "$GATE" ip link set "$WAN2_DEV" mtu 1280 up
+ns "$GATE" ip link set "$WAN2_DEV" master "$GATE_BRIDGE"
 # STP is intentionally enabled on both bridges to prevent remote L2 loops.
 # A freshly created Linux STP port starts in blocking/listening/learning and
 # normally needs ~30 seconds before DHCP broadcasts may cross it. Starting
@@ -104,7 +142,7 @@ log "Waiting for encrypted transport and all L2 bridge ports to forward"
 ready=0
 for attempt in $(seq 1 75); do
   ready=1
-  for pair in "$RP:$APP_DEV" "$RP:$WAN_DEV" "$GATE:$WAN_DEV" "$GATE:eth1"; do
+  for pair in "$RP:$APP_DEV" "$RP:$WAN_DEV" "$RP:$APP2_DEV" "$RP:$WAN2_DEV" "$GATE:$WAN_DEV" "$GATE:$WAN2_DEV" "$GATE:eth1"; do
     net="${pair%%:*}"; port="${pair#*:}"
     if ! ns "$net" bridge link show dev "$port" | grep -Eq 'state forwarding'; then
       ready=0
@@ -129,7 +167,7 @@ fi
 log "PASS STP forwarding and encrypted underlay readiness"
 ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces --interface=lan0 \
   --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,5m \
-  --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" \
+  --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" --dhcp-host="$MAC2,192.168.90.24" \
   --dhcp-leasefile="$TMP/dnsmasq.leases" --log-dhcp --log-facility=- \
   > "$TMP/dhcp.log" 2>&1 &
 sleep 1
@@ -201,6 +239,28 @@ ns "$APP" ip -4 neigh show dev "$APP_DEV" | grep -q "192.168.90.1" ||
   fail "application did not learn remote LAN ARP"
 log "PASS Ethernet ARP and LAN IP"
 
+# Independently lease and route a second application MAC over a separate
+# tenant overlay and GRETAP key, sharing only the customer-facing Gate bridge.
+ns "$APP2" env RP_REMOTE_LAN_CIDR=192.168.90.0/24 busybox udhcpc -f -n -q -T 2 -t 15 -i "$APP2_DEV" \
+  -s "$TMP/remote-lan-dhcp.sh" > "$TMP/lease2.log" 2>&1 || {
+    cat "$TMP/lease2.log" "$TMP/dhcp.log" >&2
+    fail "second application did not obtain its independent DHCP lease"
+  }
+ns "$APP2" ip -4 -o addr show dev "$APP2_DEV" | grep -q '192.168.90.24/' ||
+  fail "second application did not receive its reserved customer DHCP IP"
+awk -v mac="$MAC2" 'tolower($2)==tolower(mac) && $3=="192.168.90.24"{found=1} END{exit !found}' "$TMP/dnsmasq.leases" ||
+  fail "customer DHCP server did not record the second application MAC"
+ns "$APP2" ping -c 3 -W 2 -I "$APP2_DEV" 192.168.90.1 ||
+  fail "second application cannot reach customer LAN"
+ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q '192.168.90.23/' ||
+  fail "second DHCP attachment overwrote the first application's IP"
+# Learned customer-side MAC entries must map to their own tunnel ports.
+ns "$GATE" bridge fdb show dev "$WAN_DEV" | grep -qi "$MAC" ||
+  fail "first application MAC was not learned on its own Gate tunnel"
+ns "$GATE" bridge fdb show dev "$WAN2_DEV" | grep -qi "$MAC2" ||
+  fail "second application MAC was not learned on its own Gate tunnel"
+log "PASS two independent application DHCP leases, MACs, ARP and encrypted tunnels"
+
 # Reuse the same encrypted WG/GRETAP application attachment to test Static
 # address transition. The customer LAN supplies another on-link IP/gateway;
 # RP tenant overlay's main default route must remain unchanged.
@@ -231,9 +291,20 @@ ns "$GATE" ip link delete "$WAN_DEV"
 if ns "$APP" ping -c 1 -W 2 -I "$APP_DEV" 192.168.90.1 >/dev/null 2>&1; then
   fail "revoked L2 tunnel still passes traffic"
 fi
+ns "$APP2" ping -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 ||
+  fail "revoking the first attachment disrupted the independent second app"
+log "PASS per-app revocation leaves other customer's app tunnel connected"
+ns "$GATE" ip link delete "$WAN2_DEV"
+if ns "$APP2" ping -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+  fail "second revoked L2 tunnel still passes traffic"
+fi
 ns "$APP" ip link delete "$APP_DEV"
+ns "$APP2" ip link delete "$APP2_DEV"
 ns "$RP" ip link delete "$APP_DEV"
+ns "$RP" ip link delete "$APP2_DEV"
 ns "$RP" ip link delete "$WAN_DEV"
+ns "$RP" ip link delete "$WAN2_DEV"
 ns "$RP" ip link delete "$BRIDGE"
+ns "$RP" ip link delete "$BRIDGE2"
 ns "$GATE" ip link delete "$GATE_BRIDGE"
-log "PASS L2 revocation"
+log "PASS independent multi-app L2 revocation"

@@ -9,7 +9,10 @@ ALTER TABLE "RemoteLanAttachment"
 
 ALTER TABLE "ResourcePortalGate"
   ADD COLUMN "observedLan" JSONB,
-  ADD COLUMN "observedLanAt" TIMESTAMP(3);
+  ADD COLUMN "observedLanAt" TIMESTAMP(3),
+  ADD COLUMN "observedL2" JSONB,
+  ADD COLUMN "observedL2At" TIMESTAMP(3),
+  ADD COLUMN "observedL2AppliedAt" TIMESTAMP(3);
 
 -- Database boundaries are a final defense against malformed API writes.
 ALTER TABLE "RemoteLanAttachment"

@@ -1085,6 +1085,9 @@ model ResourcePortalGate {
   agentVersion               String?
   observedLan                Json?
   observedLanAt              DateTime?
+  observedL2                 Json?
+  observedL2At               DateTime?
+  observedL2AppliedAt        DateTime?
   lastSeenAt                 DateTime?
   lastError                  String?
   revokedAt                  DateTime?

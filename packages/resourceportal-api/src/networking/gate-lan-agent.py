@@ -240,10 +240,13 @@ def reconcile(config: dict, current: dict):
             if observed["gateId"] != gate or observed["physicalInterface"] != physical or \
                observed["networkCidr"] != str(cidr):
                 raise ValueError("Managed Gate LAN differs from granted subnet")
+        revision = item.get("configurationRevision", 1)
+        if not isinstance(revision, int) or isinstance(revision, bool) or not 1 <= revision <= 2**31-1:
+            raise ValueError("Invalid LAN attachment configuration revision")
         new[a] = {"lanInterface": physical, "macAddress": mac, "singleAppId": item["singleAppId"],
                   "networkId": item["networkId"], "lanCidr": str(cidr), "uplinkMode": mode,
                   "addressMode": address_mode, "staticAddress": static_addr,
-                  "staticGateway": static_gateway}
+                  "staticGateway": static_gateway, "configurationRevision": revision}
     # Reject conflicting addressing before any privileged L2 mutation.
     static_ips = [item["staticAddress"] for item in new.values() if item["addressMode"] == "Static"]
     if len(static_ips) != len(set(static_ips)):
@@ -255,7 +258,8 @@ def reconcile(config: dict, current: dict):
     if new and not is_handshake_recent(config.get("serverPublicKey")):
         raise RuntimeError("Missing fresh authenticated WireGuard peer handshake")
     if not new:
-        return {"gateId": gate, "tenantId": tenant, "attachments": old}
+        return {"gateId": gate, "tenantId": tenant, "attachments": old,
+                "serverPublicKey": config.get("serverPublicKey")}
     client, server = underlay(config)
     applied = []
     try:
@@ -265,6 +269,7 @@ def reconcile(config: dict, current: dict):
             previous.setdefault("addressMode", "DHCP")
             previous.setdefault("staticAddress", None)
             previous.setdefault("staticGateway", None)
+            previous.setdefault("configurationRevision", 1)
             if a in old and previous == item:
                 # Revalidate kernel state: durable desired state is not proof
                 # that a tunnel survived a Gate restart or host reboot.
@@ -280,7 +285,16 @@ def reconcile(config: dict, current: dict):
                 old[a] = item
                 continue
             if a in old:
-                raise ValueError("Changed attachment requires revoke-and-recreate")
+                # Addressing edits are revisioned desired-state transitions.
+                # Remove the old Gate endpoint before installing the next
+                # revision; never leave stale bridged privileges in place.
+                previous_revision = old[a].get("configurationRevision", 1)
+                revision = item.get("configurationRevision", 1)
+                if not isinstance(revision, int) or revision <= previous_revision:
+                    raise ValueError("Changed attachment requires a newer revision")
+                remove_one(gate, tenant, a, old[a], new, old)
+                old.pop(a, None)
+                save_state({"gateId": gate, "tenantId": tenant, "attachments": old})
             apply_one(gate, tenant, a, item, client, server)
             applied.append(a)
             old[a] = item
@@ -299,7 +313,8 @@ def reconcile(config: dict, current: dict):
                 print("LAN rollback blocked: %s" % cleanup_error, file=sys.stderr)
                 raise RuntimeError("Unsafe partial LAN reconciliation; cleanup required") from cleanup_error
         raise
-    return {"gateId": gate, "tenantId": tenant, "attachments": old}
+    return {"gateId": gate, "tenantId": tenant, "attachments": old,
+            "serverPublicKey": config.get("serverPublicKey")}
 
 
 def apply_one(gate: str, tenant: str, aid: str, item: dict, client: str, server: str):
@@ -402,6 +417,56 @@ def observed_managed_segment() -> dict:
     }
 
 
+def observed_attachment_proofs(state: dict) -> list[dict]:
+    """Attest ONLY kernel bridges, learned MACs and this Gate's WG peer.
+
+    These are observations, not a tenant-provided DHCP ACK. The independent
+    node proof must additionally establish lease/address/source routes.
+    """
+    gate, tenant = state.get("gateId"), state.get("tenantId")
+    peer = state.get("serverPublicKey")
+    if not gate or not tenant or not peer:
+        return []
+    rows = call("wg", "show", WG, "latest-handshakes").splitlines()
+    stamps = [row.split() for row in rows if row.split()[:1] == [peer]]
+    if len(stamps) != 1 or len(stamps[0]) != 2:
+        return []
+    try:
+        handshake = int(stamps[0][1]) * 1000
+    except ValueError:
+        return []
+    now_ms = int(time.time() * 1000)
+    if handshake <= 0 or now_ms - handshake >= 90_000 or handshake > now_ms + 5_000:
+        return []
+    links, _, _ = device_state()
+    result = []
+    for aid, item in sorted(state.get("attachments", {}).items()):
+        tunnel, bridge, _, _ = names(gate, tenant, aid, item["lanInterface"])
+        device = next((row for row in links if row.get("ifname") == tunnel), None)
+        bridge_link = next((row for row in links if row.get("ifname") == bridge), None)
+        owner = "rp-lan:" + gate + ":" + item["lanInterface"]
+        if not device or not bridge_link:
+            continue
+        owned = device.get("master") == bridge and device.get("linkinfo", {}).get("info_kind") == "gretap"
+        bridged = bridge_link.get("ifalias") == owner and bridge_link.get("linkinfo", {}).get("info_kind") == "bridge"
+        if not owned or not bridged:
+            continue
+        entries = call("bridge", "fdb", "show", "dev", tunnel).lower().splitlines()
+        expected = item["macAddress"].lower()
+        mac_seen = any(line.split()[:1] == [expected] and
+                       "permanent" not in line and "static" not in line
+                       for line in entries)
+        result.append({
+            "source": "gate-agent", "attachmentId": aid, "tenantId": tenant,
+            "singleAppId": item["singleAppId"], "gateId": gate,
+            "configurationRevision": item.get("configurationRevision", 1),
+            "macAddress": expected, "observedAtMs": now_ms,
+            "gatewayTunnelOwned": True, "bridgeOwned": True,
+            "macLearnedOnTunnel": mac_seen, "handshakeAtMs": handshake,
+        })
+    return result
+
+
 def load_state() -> dict:
     if not STATE.exists():
         return {"attachments": {}}
@@ -428,7 +493,13 @@ def main():
     if sys.argv[1:] == ["--observed-lan"]:
         print(json.dumps(observed_managed_segment(), sort_keys=True))
         return
+    if sys.argv[1:] == ["--applied-at"]:
+        print(int(load_state().get("lastAppliedAtMs", 0)))
+        return
     state = load_state()
+    if sys.argv[1:] == ["--observed-attachments"]:
+        print(json.dumps(observed_attachment_proofs(state), sort_keys=True))
+        return
     if sys.argv[1:] == ["--revoke-all"]:
         # Authorization failures and agent shutdown must be able to revoke
         # the last approved L2 links WITHOUT any reachable control plane.
@@ -443,6 +514,7 @@ def main():
     else:
         raise ValueError("Unsupported Gate LAN command")
     next_state = reconcile(config, state)
+    next_state["lastAppliedAtMs"] = int(time.time() * 1000)
     save_state(next_state)
 
 

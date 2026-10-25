@@ -224,7 +224,12 @@ export type NodeLanLink = {
   ifname?: string;
   ifalias?: string;
   master?: string | number | null;
-  linkinfo?: { info_kind?: string };
+  address?: string;
+  flags?: string[];
+  linkinfo?: {
+    info_kind?: string;
+    info_data?: { local?: string; remote?: string };
+  };
 };
 const appLinkName = /^rp-a-[0-9a-f]{8}$/;
 const appLinkAlias = /^rp-lan:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
