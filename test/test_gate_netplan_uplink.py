@@ -57,7 +57,7 @@ class NetworkManagerGateTests(TestCase):
             return "netplan-eth0"
         if args == ("netplan","get"):return "mocked config"
         if args == ("nmcli","-g","GENERAL.CON-UUID","device","show","eth0"):
-            return "75a1216a-9d1a-30cd-8aca-ace5526ec021"
+            return "11111111-1111-4111-8111-111111111111"
         if args == ("systemctl","is-active",uplink.WATCH+".timer"):return "active"
         if args == ("ip","-j","-d","link","show"):return "[]"
         return ""
@@ -87,7 +87,7 @@ class NetworkManagerGateTests(TestCase):
             "renderer":"NetworkManager", "match":{}, "dhcp4":True,
             "dhcp6":True,
             "networkmanager":{
-                "uuid":"75a1216a-9d1a-30cd-8aca-ace5526ec021",
+                "uuid":"11111111-1111-4111-8111-111111111111",
                 "name":"netplan-eth0",
                 "passthrough":{"proxy._":""}
             }
@@ -106,7 +106,7 @@ class NetworkManagerGateTests(TestCase):
     def test_trixie_nm_metadata_fails_closed_on_unknown_passthrough_and_uuid(self):
         eth=self.netplan["network"]["ethernets"]["eth0"]
         eth.update(dhcp6=True, match={},
-                   networkmanager={"uuid":"75a1216a-9d1a-30cd-8aca-ace5526ec021",
+                   networkmanager={"uuid":"11111111-1111-4111-8111-111111111111",
                                    "name":"netplan-eth0","passthrough":{"proxy._":""}})
         self.assertEqual(self.preflight()["manager"],"NetplanNetworkManager")
         eth["networkmanager"]["passthrough"]["connection.autoconnect"]="false"
@@ -116,7 +116,7 @@ class NetworkManagerGateTests(TestCase):
         eth["networkmanager"]["uuid"]="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
         with self.assertRaisesRegex(ValueError,"UUID does not match"):
             self.preflight()
-        eth["networkmanager"]["uuid"]="75a1216a-9d1a-30cd-8aca-ace5526ec021"
+        eth["networkmanager"]["uuid"]="11111111-1111-4111-8111-111111111111"
         eth["match"]={"name":"*"}
         with self.assertRaisesRegex(ValueError,"Customized"):
             self.preflight()
