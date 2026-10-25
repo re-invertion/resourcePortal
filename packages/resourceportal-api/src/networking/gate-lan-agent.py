@@ -107,10 +107,31 @@ def validate_link(interface: str, bridge: str, gate: str, links: list[dict],
         if proof.get("networkCidr") != str(host.network):
             raise ValueError("Gate managed network observation disagrees with current bridge")
         defaults = [r for r in routes if r.get("dst") in ("default", "0.0.0.0/0")]
-        if len(defaults) != 1 or defaults[0].get("dev") != bridge or \
-           not defaults[0].get("gateway") or \
-           ipaddress.ip_address(defaults[0]["gateway"]) not in host.network:
+        primary = [r for r in defaults if r.get("dev") == bridge]
+        if len(primary) != 1 or not primary[0].get("gateway") or \
+           ipaddress.ip_address(primary[0]["gateway"]) not in host.network:
             raise ValueError("Management default gateway must be on managed bridge")
+        route = primary[0]
+        if proof.get("gateway") and route["gateway"] != proof["gateway"]:
+            raise ValueError("Management gateway differs from verified uplink")
+        if proof.get("manager") == "NetplanNetworkManager":
+            # Only the preflight-approved, lower-priority Wi-Fi backup is
+            # allowed. It must never displace the bridge's management route.
+            metric = proof.get("routeMetric")
+            if type(metric) is not int or route.get("metric", 0) != metric:
+                raise ValueError("Managed Netplan route priority changed")
+            mac = proof.get("bridgeMac")
+            if not isinstance(mac, str) or existing.get("address", "").lower() != mac.lower():
+                raise ValueError("Managed Netplan bridge MAC changed")
+            backups = [r for r in defaults if r is not route]
+            if len(backups) > 1 or any(
+                r.get("dev") != "wlan0" or type(r.get("metric")) is not int or
+                r["metric"] <= metric or r.get("gateway") != route["gateway"]
+                for r in backups
+            ):
+                raise ValueError("Unsupported or competing management default route")
+        elif proof.get("manager") not in (None, "Networkd") or len(defaults) != 1:
+            raise ValueError("Unsupported competing management default route")
         if any(r.get("dev") == interface for r in routes):
             raise ValueError("Physical interface still owns host routes")
         return True
@@ -401,7 +422,8 @@ def observed_managed_segment() -> dict:
                            for a in entry.get("addr_info", []) if a.get("family") == "inet"]
     host = ipaddress.ip_interface(
         addresses_on_bridge[0]["local"] + "/" + str(addresses_on_bridge[0]["prefixlen"]))
-    route = next(r for r in routes if r.get("dst") in ("default", "0.0.0.0/0"))
+    route = next(r for r in routes if r.get("dst") in ("default", "0.0.0.0/0")
+                 and r.get("dev") == bridge)
     segment_id = hashlib.sha256(
         (gate + ":" + physical + ":" + str(host.network)).encode()).hexdigest()[:24]
     return {

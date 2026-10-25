@@ -171,6 +171,62 @@ class ManagedUplinkTests(TestCase):
                 agent.reconcile(config, state)
             remove.assert_not_called()
 
+    def netplan_state(self):
+        links, addresses, routes = self.state()
+        links[1]["address"] = "dc:a6:32:10:20:30"
+        links.append({"ifname": "wlan0", "link_type": "ether", "operstate": "UP"})
+        addresses.append({"ifname": "wlan0", "addr_info": [
+            {"family": "inet", "local": "192.168.100.143", "prefixlen": 24}]})
+        routes[0]["metric"] = 100
+        routes.append({"dst": "default", "dev": "wlan0",
+                       "gateway": "192.168.100.1", "metric": 600})
+        proof = dict(self.checkpoint(), manager="NetplanNetworkManager",
+                     bridgeMac="dc:a6:32:10:20:30", routeMetric=100,
+                     gateway="192.168.100.1")
+        return links, addresses, routes, proof
+
+    def test_netplan_wifi_backup_allows_observation_and_attachment_application(self):
+        links, addresses, routes, proof = self.netplan_state()
+        self.assertTrue(self.validate(links, addresses, routes, proof))
+        with mock.patch.object(agent, "MANAGED") as state, \
+             mock.patch.object(agent, "device_state", return_value=(links, addresses, routes)), \
+             mock.patch.object(agent, "call") as call, \
+             mock.patch.object(agent, "nft_install"):
+            state.is_file.return_value = True
+            state.is_symlink.return_value = False
+            state.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100600)
+            state.read_text.return_value = __import__("json").dumps(proof)
+            observed = agent.observed_managed_segment()
+            self.assertEqual(observed["gateway"], "192.168.100.1")
+            self.assertEqual(observed["state"], "Ready")
+            agent.apply_one(GATE, TENANT, AID, {
+                "lanInterface": "eth0", "uplinkMode": "ManagedSharedUplink",
+                "macAddress": "02:00:00:00:00:01"}, "100.96.0.2", "100.96.0.1")
+            commands = [c.args for c in call.call_args_list]
+            self.assertTrue(any(c[:4] == ("ip", "link", "add",
+                                           agent.names(GATE, TENANT, AID, "eth0")[0])
+                                for c in commands))
+            self.assertFalse(any(c[:4] == ("ip", "link", "add", BRIDGE)
+                                 for c in commands))
+
+    def test_netplan_backup_route_fails_closed_on_competition_and_spoofing(self):
+        for mutation in ("equal", "preferred", "extra", "ethernet", "mac", "primary"):
+            links, addresses, routes, proof = self.netplan_state()
+            if mutation == "equal":
+                routes[1]["metric"] = 100
+            elif mutation == "preferred":
+                routes[1]["metric"] = 50
+            elif mutation == "extra":
+                routes.append(dict(routes[1]))
+            elif mutation == "ethernet":
+                routes[1]["dev"] = "eth1"
+            elif mutation == "mac":
+                links[1]["address"] = "02:00:00:00:00:09"
+            else:
+                routes[0]["metric"] = 200
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.validate(links, addresses, routes, proof)
+
     def test_unknown_mode_fails_closed(self):
         links, addresses, routes = self.state()
         with self.assertRaisesRegex(ValueError, "Unsupported"):

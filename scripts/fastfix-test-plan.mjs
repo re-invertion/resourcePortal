@@ -265,7 +265,7 @@ const classifiers = [
   [/^test\/installer\/test-remote-lan-gate-agent\.py$/, ["networking", "platform-release"]],
   // Managed Gate migration tests run in patch CI as well as privileged real Swarm;
   // unknown root Python files still fail closed instead of being skipped.
-  [/^test\/test_gate_(?:managed_uplink|uplink_installer)\.py$/, ["networking"]],
+  [/^test\/test_gate_(?:managed_uplink|uplink_installer|netplan_uplink)\.py$/, ["networking"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
   [/^config\/observability\//, ["observability"]],

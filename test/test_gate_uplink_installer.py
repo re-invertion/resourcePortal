@@ -54,7 +54,7 @@ class HostUplinkTests(TestCase):
         with mock.patch.object(mod, "read_control_config", return_value={"gateId": GATE}), \
              mock.patch.object(mod, "call", side_effect=self.fake_call), \
              mock.patch.object(mod, "snapshot", return_value=self.data()), \
-             mock.patch.object(mod.subprocess, "run", return_value=SimpleNamespace(returncode=0)):
+             mock.patch.object(mod, "service_active", side_effect=lambda x: x == "dhcpcd"):
             with self.assertRaisesRegex(ValueError, "competing"):
                 mod.preflight("eth0")
         with self.assertRaises(ValueError):
@@ -234,6 +234,7 @@ class HostUplinkTests(TestCase):
     def test_watchdog_timer_is_persistent_across_reboot(self):
         service, timer = mod.watchdog_files()
         self.assertIn("OnBootSec=120s", timer)
+        self.assertIn("OnUnitActiveSec=60s", timer)
         self.assertIn("OnActiveSec=120s", timer)
         self.assertIn("WantedBy=timers.target", timer)
         self.assertIn(" rollback", service)

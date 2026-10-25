@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -82,7 +82,11 @@ describe("Web Console bootstrap", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo Tenant" } });
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "not-an-email" } });
     expect(screen.getByRole("alert").textContent).toContain("valid email");
-    fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
+    // Formik schedules asynchronous schema validation on every edit. Wait
+    // for the valid email to settle before submitting under a busy CI runner.
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
+    });
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
     // Under a saturated CI runner React may not have committed the final
@@ -90,7 +94,11 @@ describe("Web Console bootstrap", () => {
     // clicking, rather than silently clicking a disabled button.
     const reviewButton = screen.getByRole("button", { name: "Review + create" });
     await vi.waitFor(() => expect(reviewButton.hasAttribute("disabled")).toBe(false));
-    fireEvent.click(reviewButton);
+    // The button can be enabled while Formik's async submit validation is
+    // pending. Flush that work before asserting the review step.
+    await act(async () => {
+      fireEvent.click(reviewButton);
+    });
 
     expect(await screen.findByRole("heading", { name: "Review configuration" }, { timeout: 15_000 })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(2);
