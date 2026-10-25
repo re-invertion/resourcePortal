@@ -404,8 +404,13 @@ def confirm():
          "rp-lan:" + plan["gateId"] + ":" + plan["device"])
     verified = dict(gateId=plan["gateId"], device=plan["device"], bridge=plan["bridge"],
                     state="Ready", rollbackTested=True, verifiedAt=time.time(),
-                    networkCidr=plan["networkCidr"],gateway=plan["gateway"])
-    write(STATE / "managed-uplink.json", json.dumps(verified))
+                    networkCidr=plan["networkCidr"], gateway=plan["gateway"])
+    if plan.get("manager") == "NetplanNetworkManager":
+        # A periodic refresh must verify the same persistent Netplan plan as
+        # confirm. Without these fields it silently checks networkd instead.
+        verified.update(manager="NetplanNetworkManager", bridgeMac=plan["bridgeMac"],
+                        routeMetric=plan["routeMetric"])
+    write(STATE / "managed-uplink.json", json.dumps(verified, sort_keys=True))
     checkpoint_file().unlink()
     call("systemctl", "disable", "--now", WATCH + ".timer")
     return verified
@@ -424,6 +429,14 @@ def refresh():
     plan = {"gateId": current["gateId"], "device": current["device"],
             "bridge": current["bridge"], "networkCidr": current["networkCidr"],
             "gateway": current.get("gateway")}
+    manager = current.get("manager")
+    if manager not in (None, "Networkd", "NetplanNetworkManager"):
+        raise ValueError("Unknown managed uplink network manager")
+    if manager == "NetplanNetworkManager":
+        if not isinstance(current.get("bridgeMac"), str) or type(current.get("routeMetric")) is not int:
+            raise ValueError("NetworkManager proof lacks bridge MAC or route priority")
+        plan.update(manager=manager, bridgeMac=current["bridgeMac"],
+                    routeMetric=current["routeMetric"])
     if not plan["gateway"]:
         # Older proofs do not persist the network gateway, so no stale
         # state may be upgraded into a new authorization.

@@ -227,5 +227,41 @@ class NetworkManagerGateTests(TestCase):
             with self.assertRaisesRegex(RuntimeError,"routing"):
                 uplink.verify(plan)
 
+    def test_confirm_and_periodic_refresh_preserve_netplan_verification_plan(self):
+        plan = self.preflight()
+        with mock.patch.object(uplink, "call", side_effect=self.commands):
+            uplink.arm(plan)
+        verified_plans = []
+        with mock.patch.object(uplink, "verify", side_effect=lambda p: verified_plans.append(dict(p)) or True), \
+             mock.patch.object(uplink, "call", side_effect=self.commands):
+            confirmed = uplink.confirm()
+            refreshed = uplink.refresh()
+        self.assertEqual(confirmed["manager"], "NetplanNetworkManager")
+        self.assertEqual(confirmed["bridgeMac"], plan["bridgeMac"])
+        self.assertEqual(confirmed["routeMetric"], plan["routeMetric"])
+        self.assertEqual(refreshed["manager"], "NetplanNetworkManager")
+        self.assertEqual(verified_plans, [plan, {k: plan[k] for k in (
+            "gateId", "device", "bridge", "networkCidr", "gateway",
+            "manager", "bridgeMac", "routeMetric")}])
+        self.assertFalse(uplink.checkpoint_file().exists())
+        self.assertTrue(uplink.netplan_config_file(plan).exists())
+        self.assertTrue(self.wifi_file.exists())
+
+    def test_refresh_rejects_missing_netplan_proof_fields_without_reverification(self):
+        plan = self.preflight()
+        with mock.patch.object(uplink, "call", side_effect=self.commands):
+            uplink.arm(plan)
+        with mock.patch.object(uplink, "verify", return_value=True), \
+             mock.patch.object(uplink, "call", side_effect=self.commands):
+            uplink.confirm()
+        path = uplink.STATE / "managed-uplink.json"
+        proof = json.loads(path.read_text())
+        del proof["bridgeMac"]
+        path.write_text(json.dumps(proof))
+        with mock.patch.object(uplink, "verify") as verify:
+            with self.assertRaisesRegex(ValueError, "lacks bridge MAC"):
+                uplink.refresh()
+            verify.assert_not_called()
+
 if __name__=="__main__":
     main()
