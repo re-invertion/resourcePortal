@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 import { PrismaClient } from "@prisma/client";
+import { waitForZitadelUserProjection } from "./federation-zitadel-user-projection.mjs";
 
 const statePath = resolve(process.env.FEDERATION_E2E_STATE_FILE ?? "var/federation/state.json");
 const state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -201,7 +202,7 @@ async function loginThroughTenantProvider({
       page.locator("#kc-login").click(),
     ]);
 
-    await finishZitadelLogin(page, protocol);
+    await finishZitadelLogin(page, protocol, user.email);
 
     const meResponse = await context.request.get(`${apiOrigin}/api/auth/me`);
     const meText = await meResponse.text();
@@ -264,7 +265,7 @@ async function routeToKeycloak(page, providerLabel) {
   throw new Error(`ZITADEL did not redirect to tenant provider; current URL: ${page.url()}`);
 }
 
-async function finishZitadelLogin(page, protocol) {
+async function finishZitadelLogin(page, protocol, userEmail) {
   const api = new URL(apiOrigin);
   const zitadel = new URL(zitadelOrigin);
   const deadline = Date.now() + 60_000;
@@ -285,6 +286,13 @@ async function finishZitadelLogin(page, protocol) {
         'form[action="/ui/login/mfa/prompt"] button[name="skip"][value="true"]',
       );
       if ((await skipMfa.count()) > 0 && (await skipMfa.isVisible().catch(() => false))) {
+        const projectedId = await waitForZitadelUserProjection({
+          origin: zitadelOrigin,
+          managementToken: zitadelManagementToken,
+          organizationId: zitadelOrganizationId,
+          email: userEmail,
+        });
+        console.log(`${protocol} ZITADEL user projection ready: ${projectedId}`);
         console.log(`${protocol} skipping optional ZITADEL MFA enrollment`);
         await Promise.all([
           page.waitForLoadState("domcontentloaded"),

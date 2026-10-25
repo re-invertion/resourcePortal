@@ -31,6 +31,15 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
   assert.equal(plan.vpnSmoke, false);
 });
 
+test("real ZITADEL federation browser and projection helpers require identity and security gates", () => {
+  const plan = selectProfiles([
+    "scripts/run-federation-browser-e2e.mjs",
+    "scripts/federation-zitadel-user-projection.mjs",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "security"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
 test("tenant OIDC readiness health files require identity and platform release regression", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/src/health/health.controller.ts",
