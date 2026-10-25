@@ -43,6 +43,8 @@ Run `scripts/run-remote-lan-l2-dhcp-smoke.sh` only in an isolated Linux test run
 
 ## Managed Shared L2 Gateway (Gate v2)
 
+Supported Gate enrollment automatically configures a single physical Ethernet for shared management and application LAN Attachment traffic, with independent rollback and no Wi-Fi/VLAN dependency. This applies to arbitrary eligible applications, not just home automation. See the Single-Ethernet managed RP Gate enrollment section of the advanced networking guide.
+
 `ManagedSharedUplink` is an opt-in alternative to a **dedicated unnumbered Ethernet port**. Applications still have separate stable MAC addresses and isolated L2 GRETAP tunnels through the existing authenticated WireGuard transport. The remote Gate's **physical management Ethernet** becomes a port of one persistent, RP-owned Linux bridge; the Gate's own DHCPv4 management address, default route and DNS are assigned to the bridge. The bridge is owned independently of individual application attachments and must not be deleted when the final attachment is revoked.
 
 ### Gate host configuration

@@ -9,6 +9,8 @@ set -euo pipefail
 API_URL=""
 TOKEN=""
 INTERVAL=30
+UPLINK_DEVICE=""
+SKIP_MANAGED_UPLINK=0
 AGENT_VERSION="gate-l2-v2"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
@@ -22,6 +24,8 @@ while [ "$#" -gt 0 ]; do
     --url) API_URL="__RP_SHELL_EXPAND__2:-}"; shift 2 ;;
     --token) TOKEN="__RP_SHELL_EXPAND__2:-}"; shift 2 ;;
     --interval) INTERVAL="__RP_SHELL_EXPAND__2:-30}"; shift 2 ;;
+    --uplink-device) UPLINK_DEVICE="__RP_SHELL_EXPAND__2:-}"; shift 2 ;;
+    --skip-managed-uplink) SKIP_MANAGED_UPLINK=1; shift ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
@@ -222,5 +226,53 @@ systemctl daemon-reload
 systemctl enable resourceportal-gate.service
 systemctl restart resourceportal-gate.service
 log "LAN Gate enrolled as $GATE_ID"
+
+# One-command enrollment prepares a managed physical LAN bridge.
+# Wi-Fi is neither bridged nor used as a recovery prerequisite. A detached
+# systemd migration and verifier survive disconnection of this SSH process.
+if [ "$SKIP_MANAGED_UPLINK" -eq 0 ]; then
+  UPLINK="/usr/local/sbin/resourceportal-gate-uplink"
+  if "$UPLINK" refresh >/dev/null 2>&1; then
+    log "Verified shared LAN uplink already exists; keeping it unchanged"
+  else
+    mapfile -t CANDIDATES < <("$UPLINK" devices | jq -r '.[]')
+    if [ -n "$UPLINK_DEVICE" ]; then
+      printf '%s\n' "__RP_SHELL_EXPAND__CANDIDATES[@]}" | grep -Fxq "$UPLINK_DEVICE" ||
+        die "Selected uplink is not an eligible connected physical Ethernet: $UPLINK_DEVICE"
+    elif [ "__RP_SHELL_EXPAND__#CANDIDATES[@]}" -eq 1 ]; then
+      UPLINK_DEVICE="__RP_SHELL_EXPAND__CANDIDATES[0]}"
+    elif [ "__RP_SHELL_EXPAND__#CANDIDATES[@]}" -eq 0 ]; then
+      log "No connected physical Ethernet found; Gate enrolled but LAN bridge not configured"
+      log "Connect the Ethernet and run: sudo $UPLINK preflight --device <device>"
+    else
+      log "Multiple physical Ethernet ports are available:"
+      for candidate in "__RP_SHELL_EXPAND__CANDIDATES[@]}"; do
+        log "  $candidate"
+      done
+      [ -r /dev/tty ] || die "Select with --uplink-device <name> (no interactive terminal)"
+      while :; do
+        printf 'Choose the Gate LAN Ethernet port: ' > /dev/tty
+        IFS= read -r UPLINK_DEVICE < /dev/tty ||
+          die "No Ethernet selection entered"
+        printf '%s\n' "__RP_SHELL_EXPAND__CANDIDATES[@]}" | grep -Fxq "$UPLINK_DEVICE" && break
+        log "Invalid Ethernet selection: $UPLINK_DEVICE"
+      done
+    fi
+    if [ -n "$UPLINK_DEVICE" ]; then
+      log "Preparing shared LAN bridge on $UPLINK_DEVICE; SSH may reconnect shortly"
+      PLAN="$("$UPLINK" preflight --device "$UPLINK_DEVICE")" ||
+        die "Uplink preflight rejected unsafe Ethernet configuration"
+      printf '%s\n' "$PLAN" | jq -e         '.applySupported == true and .networkCidr and .gateway and .device' >/dev/null ||
+        die "Shared uplink requires a supported network configuration"
+      MANAGER="$(printf '%s' "$PLAN" | jq -er .manager)"
+      if [ "$MANAGER" = "NetplanNetworkManager" ]; then
+        die "Netplan takeover is not certified for automatic enrollment; use a native NM profile or supported networkd"
+      fi
+      "$UPLINK" apply --device "$UPLINK_DEVICE" ||
+        die "Shared uplink migration was not scheduled; inspect rollback logs"
+      log "Shared Ethernet migration scheduled; authenticated auto-confirm and rollback armed"
+    fi
+  fi
+fi
 `.replace("__RP_GATE_LAN_PYTHON__", lanAgent).replace("__RP_GATE_UPLINK_PYTHON__", managedUplink).replaceAll("__RP_SHELL_EXPAND__", "${");
 }

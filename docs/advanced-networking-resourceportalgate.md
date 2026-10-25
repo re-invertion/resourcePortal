@@ -41,20 +41,76 @@ The DB migration removes legacy routed-site resource records. Historical migrati
 
 Run `scripts/run-remote-lan-l2-dhcp-smoke.sh` only in an isolated Linux test runner with root/sudo permissions, WireGuard, GRETAP, dnsmasq, iproute2 and BusyBox. The test provisions four network namespaces, obtains a real customer-side DHCP lease and tests ARP, connectivity, and revocation. It must be executed in release CI rather than inferred from tests that validate only command generation.
 
+
+### Single-Ethernet managed RP Gate enrollment (v0.x)
+
+The standard enrollment installer now selects the single connected physical
+Ethernet interface and schedules the managed shared uplink automatically.
+The same Ethernet cable carries the Gate management address, SSH, WireGuard
+control-plane traffic and application-neutral Remote LAN Attachments. Neither
+Wi-Fi nor VLANs nor a second adapter are required.
+
+When multiple physical Ethernet ports are connected, the installer prompts
+on the controlling terminal. Use --uplink-device DEVICE to select a port
+non-interactively. Use --skip-managed-uplink to enroll without migrating
+Ethernet. When an already confirmed, authenticated uplink exists, re-enrollment
+does not modify the bridge again. If no usable connected physical port is
+found, Gate enrollment succeeds but LAN setup remains incomplete.
+
+On Raspberry Pi OS with NetworkManager/Netplan, the uplink tool creates
+persistent native NetworkManager bridge and port profiles with deterministic
+RP-owned UUIDs, high autoconnect priority and a bridge MAC matching the
+original physical Ethernet. These profile names intentionally lack the
+netplan- prefix, so Raspberry Pi OS stores them under
+/etc/NetworkManager/system-connections and does not erase them during
+Netplan regeneration. The original netplan-* Ethernet profile is not edited
+or removed, allowing local or automatic restoration.
+
+Before reparenting Ethernet, the installer persists an fsynced checkpoint,
+arms an independent 120-second systemd rollback timer, and schedules both
+a detached migration service and a detached authenticated auto-confirm
+service. Disconnecting SSH cannot terminate the migration job.
+Auto-confirm checks the physical bridge membership, saved NM identities,
+DHCPv4 subnet/default route, and authenticated ResourcePortal Gate API.
+An unverified migration reactivates the original wired profile. The
+checkpoint and timer remain in place if an incomplete rollback needs retry,
+also following reboot. Only RP-owned profiles and bridges may be removed.
+
+LAN Attachment is explicitly application-neutral. Any eligible RP
+application can be attached after a fresh trusted LAN observation appears
+on the Gate; DHCP is provided by the existing customer LAN DHCP server.
+The bridge remains in place across attachment add/remove operations.
+
 ## Managed Shared L2 Gateway (Gate v2)
 
 `ManagedSharedUplink` is an opt-in alternative to a **dedicated unnumbered Ethernet port**. Applications still have separate stable MAC addresses and isolated L2 GRETAP tunnels through the existing authenticated WireGuard transport. The remote Gate's **physical management Ethernet** becomes a port of one persistent, RP-owned Linux bridge; the Gate's own DHCPv4 management address, default route and DNS are assigned to the bridge. The bridge is owned independently of individual application attachments and must not be deleted when the final attachment is revoked.
 
 ### Gate host configuration
 
-Supported automatic migration requires a wired DHCPv4 management NIC without global IPv6, VLAN trunks or foreign bridges. Two fail-closed backends are supported:\n\n- **systemd-networkd:** a unique device-specific `.network` file in `/etc/systemd/network`, no competing manager.\n- **Netplan + NetworkManager:** A simple `netplan-eth0` DHCPv4 configuration is allowed for read-only preflight. Raspberry Pi OS/Debian 13 may generate `match: {}`, `dhcp6: true`, and `networkmanager: {uuid, name, passthrough: {proxy._: ""}}`. The preflight now validates that metadata against the *currently connected* NetworkManager UUID and proves there is **no global IPv6 address or IPv6 default route**. DHCPv6 being enabled in the profile is not evidence of an active IPv6 lease. A second default route on Wi-Fi is accepted only with a **strictly higher metric** than Ethernet; Wi-Fi is never bridged or modified by the helper. Any additional profile passthrough, nonempty `match`, VLAN/bond, custom Ethernet routes or active global IPv6 still fails closed.
-- **Raspberry Pi OS safeguard:** Pi OS's NetworkManager can rewrite or remove `/etc/netplan` YAML. Netplan `apply` may also retain orphan kernel bridge devices after a rollback. The currently implemented Netplan drop-in/watchdog method **is not sufficient to certify recovery on Pi OS**. On an RP Gate running an `rpt-rpi` kernel, `preflight` reports `applySupported: false` and `apply` refuses the migration even if requested with confirmation. This protects SSH-only installations from losing their management network. Do not bypass this guard by running `netplan apply` or manually bridging `eth0`. Use a separately configured *dedicated* Ethernet/VLAN port (kept unnumbered, without impacting the management NIC) if immediate LAN Attachment is required, or postpone until a separately tested Pi OS recovery implementation is released.
-- **Other NetworkManager installations:** `apply` requires an explicit `--confirm-local-recovery` acknowledgement after verifying physical/out-of-band access. This flag is not a replacement for actual recovery access. The systemd-networkd path is unchanged.
+Supported automatic migration requires a unique wired DHCPv4 management NIC,
+a verified IPv4 gateway, a dedicated RP-owned bridge identity and no global
+IPv6 or foreign bridge/VLAN. The networkd backend keeps its explicit,
+device-specific .network file. On Raspberry Pi OS Trixie, the Netplan profile
+is recognized in read-only preflight but a detached native NetworkManager
+backend creates the RP-owned persistent profiles without editing the original
+netplan-* Ethernet configuration. Higher-priority RP port autoconnect keeps
+the same physical NIC available after reboot. Wi-Fi is not required, altered
+or bridged.
 
-1. Install/update the Gate with the standard `install.sh`. The installer installs `/usr/local/sbin/resourceportal-gate-uplink`; no physical interface is migrated automatically.
-2. On the Gate host run `sudo resourceportal-gate-uplink preflight --device eth0`. Inspect its `manager`, physical device, observed IPv4 CIDR, gateway and `routeMetric`. The command does not change the network. For a Pi with `netplan-eth0` and Wi-Fi in the same subnet, verify that the Ethernet default route has a strictly lower metric than Wi-Fi.
-3. Only if the *read-only* preflight reports `applySupported: true` and genuine physical/out-of-band access is available, proceed with migration. NetworkManager installs require `sudo resourceportal-gate-uplink apply --device eth0 --confirm-local-recovery`; the systemd-networkd path retains `sudo resourceportal-gate-uplink apply --device eth0`. Never use this command on Raspberry Pi OS with `applySupported: false` or with SSH-only access. A persistent systemd watchdog and checkpoint are created **before** modifying Netplan or networkd. NetworkManager hosts apply the isolated Netplan override via `netplan generate` / `netplan apply`. This may interrupt BOTH Ethernet and Wi-Fi during reprovisioning: do not depend on Wi-Fi being a guaranteed recovery path. An unconfirmed migration is rolled back automatically, including after reboot. Never stop NetworkManager or switch renderers manually.
-4. After verifying actual management connectivity, run `sudo resourceportal-gate-uplink confirm` on the host **before the watchdog's 120-second deadline**. Confirmation checks the bridge's physical member, live IPv4 subnet/default route, the persistent RP-owned Netplan or networkd source and an authenticated HTTPS call to RP. `sudo resourceportal-gate-uplink rollback` restores the original configuration; an incomplete rollback retains its checkpoint so the watchdog can retry.
+1. Run the standard Gate enrollment one-liner. The installer identifies the
+   physical Ethernet and prompts only if several connected wired NICs qualify.
+   The Gate is enrolled and its managed uplink prepared by the same command.
+2. The installer arms the persistent systemd watchdog and schedules detached
+   migration plus authenticated automatic confirmation. SSH may disconnect.
+   Do not interrupt the watchdog or remove the checkpoint manually.
+3. Confirm by reading the live Gate status and observed LAN in ResourcePortal.
+   The automatic verifier checks DHCPv4, the default route and HTTPS RP auth.
+   If proof cannot be obtained before the watchdog deadline, the previous
+   NetworkManager Ethernet profile is reactivated.
+4. For diagnostics or manual recovery use the installed uplink command
+   with status, preflight, confirm or rollback. No direct netplan apply is
+   required on Raspberry Pi OS.
+
 5. The Gate v2 heartbeat reports a fresh, versioned and machine-authenticated *observed LAN*, including real IPv4 subnet, mask, gateway, bridge, uplink and capture time. RP never accepts tenant-supplied CIDR values as evidence of a prepared managed bridge. Missing/stale Gate observation blocks new managed attachments and revokes stale grants.
 
 ### Application addressing
