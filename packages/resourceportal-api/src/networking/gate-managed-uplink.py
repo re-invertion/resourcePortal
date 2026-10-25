@@ -31,6 +31,7 @@ import uuid
 STATE = Path("/etc/resourceportal-gate")
 NETWORKD = Path("/etc/systemd/network")
 NETPLAN = Path("/etc/netplan")
+SYSFS = Path("/sys/class/net")
 SYSTEMD = Path("/etc/systemd/system")
 TOOL = Path("/usr/local/sbin/resourceportal-gate-uplink")
 WATCH = "resourceportal-gate-uplink-rollback"
@@ -43,6 +44,14 @@ def call(*args: str) -> str:
     # Netplan apply may wait for NetworkManager DHCP; allow bounded recovery
     # while the independent 120-second watchdog is already armed.
     timeout = 60 if args == ("netplan", "apply") else 20
+    if len(args) >= 3 and args[0] == "nmcli" and args[1] == "--wait":
+        try:
+            wait_seconds = int(args[2])
+        except ValueError as exc:
+            raise ValueError("Invalid bounded NetworkManager timeout") from exc
+        if not 1 <= wait_seconds <= 60:
+            raise ValueError("Unbounded NetworkManager command wait")
+        timeout = wait_seconds + 10
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     if result.returncode:
         raise RuntimeError("%s: %s" % (args[0], result.stderr.strip()[:300]))
@@ -158,6 +167,195 @@ def raspberry_pi_os_netplan_rewrite_risk() -> bool:
     return "rpt-rpi" in os.uname().release.lower()
 
 
+
+def native_nm_uuid(gate: str, device: str, role: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,
+                         "resourceportal-gate-uplink:" + gate + ":" + device + ":" + role))
+
+
+def native_nm_port(plan: dict) -> str:
+    return "rp-port-" + plan["bridge"][6:]
+
+
+def native_nm_recovery(plan: dict) -> str:
+    return "rp-recovery-" + plan["bridge"][6:]
+
+
+def native_nm_original(plan: dict) -> str:
+    value = plan.get("originalUuid", "")
+    if not isinstance(value, str) or not UUID.fullmatch(value):
+        raise ValueError("Missing original NetworkManager connection UUID")
+    if value in (plan.get("bridgeUuid"), plan.get("portUuid")):
+        raise ValueError("NetworkManager bridge would overwrite original Ethernet")
+    return value
+
+
+def native_nm_identity(plan: dict) -> None:
+    """No foreign profiles, port ownership or unverified aliases may be changed."""
+    if plan["bridge"] != bridge_name(plan["gateId"], plan["device"]):
+        raise ValueError("Unsafe RP Gate bridge identifier")
+    for role, key in (("bridge", "bridgeUuid"), ("port", "portUuid")):
+        expected = native_nm_uuid(plan["gateId"], plan["device"], role)
+        if plan.get(key) != expected:
+            raise ValueError("Unsafe NetworkManager " + role + " UUID")
+    native_nm_original(plan)
+
+
+def nm_connection_exists(uid: str) -> bool:
+    # Failed lookups are normal when an operation is interrupted between steps.
+    return subprocess.run(("nmcli", "-g", "connection.uuid", "connection", "show", uid),
+                          capture_output=True, timeout=5, check=False).returncode == 0
+
+
+def nm_connection_matches(uid: str, expected_name: str, expected_type: str) -> bool:
+    if not nm_connection_exists(uid):
+        return False
+    name = call("nmcli", "-g", "connection.id", "connection", "show", uid)
+    category = call("nmcli", "-g", "connection.type", "connection", "show", uid)
+    return name == expected_name and category == expected_type
+
+
+def native_nm_profile_state(plan: dict, require_bridge: bool = False):
+    native_nm_identity(plan)
+    b, p = plan["bridgeUuid"], plan["portUuid"]
+    if nm_connection_exists(b) and not nm_connection_matches(b, plan["bridge"], "bridge"):
+        raise ValueError("Refusing a foreign NetworkManager bridge profile")
+    if nm_connection_exists(p) and not nm_connection_matches(p, native_nm_port(plan), "802-3-ethernet"):
+        raise ValueError("Refusing a foreign NetworkManager port profile")
+    if require_bridge and (not nm_connection_exists(b) or not nm_connection_exists(p)):
+        raise RuntimeError("Persistent NetworkManager bridge profiles are missing")
+
+
+def apply_native_networkmanager(plan: dict):
+    """Use NetworkManager's native connection writer, NEVER netplan apply.
+
+    Raspberry Pi OS NM can replace Netplan YAML when saving its profiles.
+    Profiles are therefore created through NM (which owns their persistence).
+    The prior wired profile survives and is re-enabled on rollback. The
+    watchdog and separate verifier run even if the invoking SSH session dies.
+    """
+    native_nm_profile_state(plan)
+    original = native_nm_original(plan)
+    if not nm_connection_matches(original, plan["originalName"], "802-3-ethernet"):
+        raise ValueError("Original NetworkManager Ethernet profile changed")
+    if nm_connection_exists(plan["bridgeUuid"]) or nm_connection_exists(plan["portUuid"]):
+        raise ValueError("Refusing partial or pre-existing managed NM profile state")
+    br, port, mac = plan["bridge"], native_nm_port(plan), plan["bridgeMac"]
+    call("nmcli", "connection", "add", "type", "bridge",
+         "ifname", br, "con-name", br,
+         "connection.uuid", plan["bridgeUuid"],
+         "connection.autoconnect", "yes",
+         "connection.autoconnect-priority", str(plan["portPriority"]),
+         "bridge.stp", "no", "bridge.mac-address", mac,
+         "ipv4.method", "auto", "ipv4.route-metric", str(plan["routeMetric"]),
+         "ipv6.method", "disabled")
+    call("nmcli", "connection", "add", "type", "ethernet",
+         "ifname", plan["device"], "con-name", port,
+         "connection.uuid", plan["portUuid"],
+         "connection.autoconnect", "yes",
+         "connection.autoconnect-priority", str(plan["portPriority"]),
+         "ipv4.method", "disabled", "ipv6.method", "disabled",
+         "master", br, "slave-type", "bridge")
+    # Do NOT modify original netplan-eth0. Pi OS patched NetworkManager
+    # regenerates /etc/netplan on edits of a netplan-prefixed connection.
+    # Instead the new persistent RP port gets higher autoconnect priority;
+    # original DHCP profile remains available for rollback and manual rescue.
+    call("nmcli", "--wait", "15", "connection", "down", "uuid", original)
+    # Activating a bridge port activates its bridge controller. The bridge's
+    # DHCPv4 transaction acquires the original MAC and should regain the lease.
+    call("nmcli", "--wait", "35", "connection", "up", "uuid", plan["portUuid"])
+
+
+def nm_live_profile_uuid(device: str) -> str:
+    return call("nmcli", "-g", "GENERAL.CON-UUID", "device", "show", device).lower()
+
+
+def rollback_native_networkmanager(plan: dict):
+    """Watchdog-safe idempotent recovery via saved original wired NM profile."""
+    if not service_active("NetworkManager") or service_active("systemd-networkd"):
+        raise ValueError("NetworkManager ownership changed during recovery")
+    native_nm_profile_state(plan)
+    original = native_nm_original(plan)
+    b, p = plan["bridgeUuid"], plan["portUuid"]
+    # The original netplan-prefixed connection is NEVER modified on apply:
+    # keeping it intact avoids Pi OS Netplan YAML regeneration. If missing
+    # after an unrelated NM rewrite, create a minimal separate DHCP recovery.
+    if nm_connection_exists(original):
+        if not (nm_connection_matches(original, plan["originalName"], "802-3-ethernet") or
+                nm_connection_matches(original, native_nm_recovery(plan), "802-3-ethernet")):
+            raise ValueError("Original wired profile was replaced")
+    else:
+        # A Pi OS NetworkManager rebuild may remove the original Netplan
+        # profile entirely. Recreate a minimal wired DHCP recovery connection,
+        # retaining the hardware and the original UUID identity on disk.
+        call("nmcli", "connection", "add", "type", "ethernet",
+             "ifname", plan["device"], "con-name", native_nm_recovery(plan),
+             "connection.uuid", original, "connection.autoconnect", "yes",
+             "ipv4.method", "auto", "ipv4.route-metric", str(plan["routeMetric"]),
+             "ipv6.method", "disabled")
+    # Quiesce RP-owned port first; never delete a bridge with foreign members.
+    links = json.loads(call("ip", "-j", "-d", "link", "show"))
+    bridge = next((x for x in links if x.get("ifname") == plan["bridge"]), None)
+    if bridge:
+        member_names = [x["ifname"] for x in links if x.get("master") == plan["bridge"]]
+        owner = "rp-lan:" + plan["gateId"] + ":" + plan["device"]
+        if (bridge.get("linkinfo", {}).get("info_kind") != "bridge" or
+                bridge.get("ifalias") not in (None, "", owner) or
+                any(x != plan["device"] for x in member_names)):
+            raise ValueError("Refusing to destroy a foreign LAN bridge")
+    if nm_connection_exists(p):
+        subprocess.run(("nmcli", "--wait", "10", "connection", "down", "uuid", p),
+                       check=False, capture_output=True, timeout=20)
+    if nm_connection_exists(b):
+        subprocess.run(("nmcli", "--wait", "10", "connection", "down", "uuid", b),
+                       check=False, capture_output=True, timeout=20)
+    call("nmcli", "--wait", "35", "connection", "up", "uuid", original,
+         "ifname", plan["device"])
+    links, addresses, routes = snapshot()
+    member = next((x for x in links if x.get("ifname") == plan["device"]), None)
+    if not member or member.get("master"):
+        raise RuntimeError("NetworkManager did not restore standalone Ethernet")
+    ips = [a for x in addresses if x.get("ifname") == plan["device"] for a in x.get("addr_info", [])
+           if a.get("family") == "inet" and a.get("scope") != "host"]
+    if (len(ips) != 1 or str(ipaddress.ip_interface(
+            ips[0]["local"] + "/" + str(ips[0]["prefixlen"])).network) != plan["networkCidr"]):
+        raise RuntimeError("Wired DHCP subnet was not restored")
+    chosen_default(routes, plan["device"], plan["gateway"])
+    # Delete solely deterministic RP profiles after wired management is restored.
+    if nm_connection_exists(p):
+        call("nmcli", "connection", "delete", "uuid", p)
+    if nm_connection_exists(b):
+        call("nmcli", "connection", "delete", "uuid", b)
+    # An orphan kernel bridge can survive NM profile deletion; remove only the
+    # verified RP-generated bridge with no attached ports or foreign alias.
+    links = json.loads(call("ip", "-j", "-d", "link", "show"))
+    old = next((x for x in links if x.get("ifname") == plan["bridge"]), None)
+    if old:
+        owner = "rp-lan:" + plan["gateId"] + ":" + plan["device"]
+        if (old.get("linkinfo", {}).get("info_kind") != "bridge" or
+            old.get("ifalias") not in (None, "", owner) or
+            any(x.get("master") == plan["bridge"] for x in links)):
+            raise ValueError("Refusing foreign bridge cleanup after DHCP recovery")
+        call("ip", "link", "set", "dev", plan["bridge"], "down")
+        call("ip", "link", "delete", "dev", plan["bridge"], "type", "bridge")
+    (STATE / "managed-uplink.json").unlink(missing_ok=True)
+    checkpoint_file().unlink()
+    call("systemctl", "disable", "--now", WATCH + ".timer")
+
+
+def auto_confirm():
+    """Independent systemd recovery verifier, survives caller SSH disconnect."""
+    for attempt in range(36):
+        if not checkpoint_file().exists():
+            return
+        try:
+            confirm()
+            return
+        except Exception:
+            if attempt == 35:
+                raise
+            time.sleep(2)
+
 def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
     # Netplan (rather than an ephemeral nmcli connection profile) is the
     # source of truth on this Raspberry Pi. Pure NetworkManager configurations
@@ -236,15 +434,65 @@ def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
     path = NETPLAN / ("99-resourceportal-" + br + ".yaml")
     if path.exists() or path.is_symlink():
         raise ValueError("RP Netplan bridge override already exists")
-    plan = {"protocol": 1, "manager": "NetplanNetworkManager",
+    # On Raspberry Pi OS the patched NetworkManager can rewrite /etc/netplan;
+    # use NM's own persistent connection API instead of a fragile YAML drop-in.
+    native = raspberry_pi_os_netplan_rewrite_risk()
+    plan = {"protocol": 1, "manager": "NativeNetworkManager" if native else "NetplanNetworkManager",
             "gateId": gate, "device": device, "bridge": br, "bridgeMac": mac,
             "routeMetric": default.get("metric", 0),
             "networkCidr": str(address.network), "gateway": str(gateway),
             "checkedAt": time.time(), "state": "Preflight",
             "requiresOutOfBandRecovery": True,
-            "applySupported": not raspberry_pi_os_netplan_rewrite_risk()}
-    netplan_override(plan)
+            "applySupported": True}
+    if native:
+        original_uuid = call("nmcli", "-g", "GENERAL.CON-UUID", "device", "show", device).lower()
+        if not UUID.fullmatch(original_uuid):
+            raise ValueError("Ethernet NetworkManager profile has no stable UUID")
+        original_name = call("nmcli", "-g", "GENERAL.CONNECTION", "device", "show", device)
+        if not nm_connection_matches(original_uuid, original_name, "802-3-ethernet"):
+            raise ValueError("Connected NetworkManager Ethernet profile changed")
+        original_auto = call("nmcli", "-g", "connection.autoconnect",
+                             "connection", "show", original_uuid)
+        if original_auto.strip().lower() not in ("yes", "true"):
+            raise ValueError("Wired Ethernet must autoconnect for crash recovery")
+        original_priority = int(call("nmcli", "-g", "connection.autoconnect-priority",
+                                     "connection", "show", original_uuid))
+        if not -999 <= original_priority < 999:
+            raise ValueError("Original Ethernet autoconnect priority is unsupported")
+        plan.update(originalUuid=original_uuid, originalName=original_name,
+                    portPriority=min(999, original_priority + 50),
+                    bridgeUuid=native_nm_uuid(gate, device, "bridge"),
+                    portUuid=native_nm_uuid(gate, device, "port"))
+        native_nm_identity(plan)
+        native_nm_profile_state(plan)
+    if not native:
+        netplan_override(plan)
     return plan
+
+
+def ethernet_candidates() -> list[str]:
+    # Physical, carrier-up Ethernet only. Never select Wi-Fi (including
+    # 802.11-station interfaces, which Linux also calls link_type=ether),
+    # VLAN, virtual adapters, existing bridge slaves or RP WireGuard.
+    links = json.loads(call("ip", "-j", "-d", "link", "show"))
+    result = []
+    for row in links:
+        dev = row.get("ifname", "")
+        if not DEVICE.fullmatch(dev) or dev in ("lo", "docker0", "rp-gate"):
+            continue
+        if (row.get("link_type") != "ether" or row.get("master") or
+                row.get("linkinfo", {}).get("info_kind") or
+                row.get("operstate") != "UP"):
+            continue
+        sysif = SYSFS / dev
+        # Platform Ethernet on Raspberry Pi (bcmgenet) does not always
+        # expose the same "device" symlink as PCI Ethernet cards. Check the
+        # resolved sysfs ancestry instead and exclude /devices/virtual/net.
+        if (not sysif.exists() or (sysif / "wireless").exists() or
+                "/virtual/net/" in str(sysif.resolve())):
+            continue
+        result.append(dev)
+    return sorted(result)
 
 
 def preflight(device: str) -> dict:
@@ -297,7 +545,8 @@ def preflight(device: str) -> dict:
     new_names = [NETWORKD / ("09-" + br + ".netdev"), NETWORKD / ("09-" + br + ".network")]
     if any(x.exists() or x.is_symlink() for x in new_names):
         raise ValueError("Managed uplink config already exists")
-    return {"protocol": 1, "gateId": gate, "device": device, "bridge": br,
+    return {"protocol": 1, "manager": "Networkd", "gateId": gate,
+            "device": device, "bridge": br, "applySupported": True,
             "networkCidr": str(local.network), "gateway": str(gateway),
             "originalPath": str(original), "originalText": text,
             "originalMode": stat.S_IMODE(original.stat().st_mode),
@@ -326,6 +575,35 @@ def watchdog_files() -> tuple[str, str]:
     return service, timer
 
 
+def auto_confirm_unit() -> str:
+    # Detached systemd verification survives disconnection of installation SSH.
+    return chr(10).join(("[Unit]", "Description=Confirm authenticated RP Gate Ethernet bridge",
+                         "After=NetworkManager.service", "[Service]", "Type=oneshot",
+                         "ExecStart=" + str(TOOL) + " auto-confirm",
+                         "TimeoutStartSec=100", ""))
+
+
+def migrate_unit() -> str:
+    # NetworkManager takeover of the SSH NIC must NOT depend on the SSH
+    # session surviving the first successful nmcli connection down.
+    return chr(10).join(("[Unit]", "Description=Apply RP Gate Ethernet bridge migration",
+                         "After=NetworkManager.service", "[Service]", "Type=oneshot",
+                         "ExecStart=" + str(TOOL) + " migrate",
+                         "TimeoutStartSec=95", ""))
+
+
+def migrate():
+    plan = load_checkpoint()
+    if plan.get("manager") != "NativeNetworkManager":
+        raise ValueError("Native NetworkManager migration is not pending")
+    try:
+        apply_native_networkmanager(plan)
+    except Exception:
+        # Watchdog checkpoint is intentionally retained on incomplete rollback.
+        rollback()
+        raise
+
+
 def checkpoint_file() -> Path:
     return STATE / "uplink-checkpoint.json"
 
@@ -345,13 +623,22 @@ def arm(plan: dict):
     service, timer = watchdog_files()
     write(SYSTEMD / (WATCH + ".service"), service)
     write(SYSTEMD / (WATCH + ".timer"), timer)
+    write(SYSTEMD / ("resourceportal-gate-uplink-autoconfirm.service"), auto_confirm_unit())
+    write(SYSTEMD / ("resourceportal-gate-uplink-migrate.service"), migrate_unit())
     write(checkpoint_file(), json.dumps(plan, sort_keys=True))
     try:
         call("systemctl", "daemon-reload")
         call("systemctl", "enable", "--now", WATCH + ".timer")
         if call("systemctl", "is-active", WATCH + ".timer") != "active":
             raise RuntimeError("Rollback watchdog is not armed")
-        if plan.get("manager") == "NetplanNetworkManager":
+        # Start verification as a detached systemd job BEFORE reparenting the
+        # management NIC; it can complete when the installer SSH disappears.
+        call("systemctl", "start", "--no-block", "resourceportal-gate-uplink-autoconfirm.service")
+        if plan.get("manager") == "NativeNetworkManager":
+            # Detached systemd job, so an SSH transport reset cannot kill the
+            # actual link migration halfway. Watchdog remains independent.
+            call("systemctl", "start", "--no-block", "resourceportal-gate-uplink-migrate.service")
+        elif plan.get("manager") == "NetplanNetworkManager":
             path = netplan_config_file(plan)
             if path.exists() or path.is_symlink():
                 raise ValueError("Refusing existing Netplan override")
@@ -392,7 +679,15 @@ def verify(plan: dict):
         raise RuntimeError("Foreign managed bridge alias detected")
     if plan["bridge"] != bridge_name(plan["gateId"], plan["device"]):
         raise RuntimeError("Unexpected managed bridge identity")
-    if plan.get("manager") == "NetplanNetworkManager":
+    if plan.get("manager") == "NativeNetworkManager":
+        native_nm_profile_state(plan, require_bridge=True)
+        if (nm_live_profile_uuid(br) != plan["bridgeUuid"] or
+                nm_live_profile_uuid(plan["device"]) != plan["portUuid"]):
+            raise RuntimeError("NetworkManager active bridge/port UUIDs differ from checkpoint")
+        if call("nmcli", "-g", "connection.master", "connection", "show",
+                plan["portUuid"]) not in (br, plan["bridgeUuid"]):
+            raise RuntimeError("NetworkManager port is not owned by the RP bridge")
+    elif plan.get("manager") == "NetplanNetworkManager":
         conf = netplan_config_file(plan)
         if not conf.is_file() or conf.is_symlink() or conf.read_text() != netplan_override(plan):
             raise RuntimeError("RP-owned persistent NetworkManager/Netplan bridge config not found")
@@ -410,8 +705,8 @@ def verify(plan: dict):
         raise RuntimeError("Observed management bridge subnet differs from preflight")
     try:
         route = chosen_default(routes, br, plan["gateway"])
-        if plan.get("manager") == "NetplanNetworkManager" and route.get("metric", 0) != plan["routeMetric"]:
-            raise ValueError("Netplan bridge changed route priority")
+        if plan.get("manager") in ("NativeNetworkManager", "NetplanNetworkManager") and route.get("metric", 0) != plan["routeMetric"]:
+            raise ValueError("NetworkManager bridge changed route priority")
     except ValueError as exc:
         raise RuntimeError("Managed bridge lost safe default routing: " + str(exc)) from exc
     # Prove RP can still authenticate this enrolled Gate after migration.
@@ -437,6 +732,11 @@ def confirm():
     verified = dict(gateId=plan["gateId"], device=plan["device"], bridge=plan["bridge"],
                     state="Ready", rollbackTested=True, verifiedAt=time.time(),
                     networkCidr=plan["networkCidr"], gateway=plan["gateway"])
+    if plan.get("manager") == "NativeNetworkManager":
+        verified.update(manager="NativeNetworkManager", bridgeMac=plan["bridgeMac"],
+                        routeMetric=plan["routeMetric"],
+                        originalUuid=plan["originalUuid"], originalName=plan["originalName"],
+                        bridgeUuid=plan["bridgeUuid"], portUuid=plan["portUuid"])
     if plan.get("manager") == "NetplanNetworkManager":
         # A periodic refresh must verify the same persistent Netplan plan as
         # confirm. Without these fields it silently checks networkd instead.
@@ -462,8 +762,17 @@ def refresh():
             "bridge": current["bridge"], "networkCidr": current["networkCidr"],
             "gateway": current.get("gateway")}
     manager = current.get("manager")
-    if manager not in (None, "Networkd", "NetplanNetworkManager"):
+    if manager not in (None, "Networkd", "NetplanNetworkManager", "NativeNetworkManager"):
         raise ValueError("Unknown managed uplink network manager")
+    if manager == "NativeNetworkManager":
+        for key in ("originalUuid", "bridgeUuid", "portUuid", "originalName"):
+            if not isinstance(current.get(key), str) or not current[key]:
+                raise ValueError("NetworkManager proof lacks immutable profile identity")
+        if not isinstance(current.get("bridgeMac"), str) or type(current.get("routeMetric")) is not int:
+            raise ValueError("NetworkManager proof lacks MAC or route priority")
+        plan.update(manager=manager, bridgeMac=current["bridgeMac"], routeMetric=current["routeMetric"],
+                    originalUuid=current["originalUuid"], originalName=current["originalName"],
+                    bridgeUuid=current["bridgeUuid"], portUuid=current["portUuid"])
     if manager == "NetplanNetworkManager":
         if not isinstance(current.get("bridgeMac"), str) or type(current.get("routeMetric")) is not int:
             raise ValueError("NetworkManager proof lacks bridge MAC or route priority")
@@ -540,6 +849,9 @@ def rollback():
         raise ValueError("Refusing unsafe rollback checkpoint")
     if plan.get("bridge") != bridge_name(plan["gateId"], plan["device"]):
         raise ValueError("Rollback bridge identity mismatch")
+    if plan.get("manager") == "NativeNetworkManager":
+        rollback_native_networkmanager(plan)
+        return
     if plan.get("manager") == "NetplanNetworkManager":
         rollback_networkmanager(plan)
         return
@@ -592,19 +904,25 @@ def rollback():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("preflight", "apply", "confirm", "refresh", "rollback", "status"))
+    parser.add_argument("action", choices=("devices", "preflight", "apply", "migrate", "auto-confirm", "confirm", "refresh", "rollback", "status"))
     parser.add_argument("--device")
     parser.add_argument("--confirm-local-recovery", action="store_true",
                         help="Explicitly attest physical/out-of-band access for NetworkManager apply")
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise PermissionError("RP managed uplink requires root")
-    if args.action in ("preflight", "apply"):
+    if args.action == "devices":
+        print(json.dumps(ethernet_candidates()))
+    elif args.action in ("preflight", "apply"):
         if not args.device:
             raise ValueError("--device is mandatory")
         plan = preflight(args.device)
         if args.action == "apply":
-            if plan.get("manager") == "NetplanNetworkManager":
+            if plan.get("manager") == "NativeNetworkManager":
+                # The caller may lose SSH. Autoconfirmation occurs via systemd
+                # only after actual network/L2 and RP authentication succeed.
+                pass
+            elif plan.get("manager") == "NetplanNetworkManager":
                 if not plan.get("applySupported", True):
                     raise ValueError("Raspberry Pi OS NetworkManager rewrites /etc/netplan; "
                                      "rollback is not proven safe. Use dedicated LAN port "
@@ -614,6 +932,10 @@ def main():
                                      "--confirm-local-recovery and physical/out-of-band access")
             arm(plan)
         print(json.dumps({k: v for k, v in plan.items() if k not in ("originalText",)}, sort_keys=True))
+    elif args.action == "migrate":
+        migrate()
+    elif args.action == "auto-confirm":
+        auto_confirm()
     elif args.action == "rollback":
         rollback()
     elif args.action == "refresh":

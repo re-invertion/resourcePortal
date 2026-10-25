@@ -79,7 +79,7 @@ test("security runtime changes select security tests (never silently skipped)", 
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });
 test("managed Gate Python regression files select mandatory real networking coverage", async () => {
-  const paths = ["test/test_gate_managed_uplink.py", "test/test_gate_uplink_installer.py"];
+  const paths = ["test/test_gate_managed_uplink.py", "test/test_gate_uplink_installer.py", "test/test_gate_native_nm_uplink.py"];
   const plan = selectProfiles(paths);
   assert.deepEqual(plan.profiles, ["networking"]);
   assert.equal(plan.vpnSmoke, true);

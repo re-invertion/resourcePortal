@@ -22,6 +22,20 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(uplink).toContain("netplan_override(plan)");
     expect(uplink).toContain('call("netplan", "apply")');
   });
+  it("configures a single physical Ethernet uplink during one-command enrollment", () => {
+    expect(script).toContain('mapfile -t CANDIDATES');
+    expect(script).toContain('--uplink-device');
+    expect(script).toContain('--skip-managed-uplink');
+    expect(script).toContain('read -r UPLINK_DEVICE < /dev/tty');
+    expect(script).toContain('preflight --device');
+    expect(script).toContain('apply --device');
+    expect(script).toContain('resourceportal-gate-uplink');
+    expect(script).toContain('Verified shared LAN uplink already exists');
+    expect(script).toContain('auto-confirm and rollback armed');
+    expect(script).not.toContain('systemctl stop NetworkManager');
+    expect(script).not.toContain('nmcli radio wifi off');
+  });
+
   it("generates valid fresh-install and installed-agent Bash", () => {
     for (const source of [script, agent]) {
       const result = spawnSync("bash", ["-n"], { input:source, encoding:"utf8" });

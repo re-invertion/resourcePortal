@@ -56,6 +56,10 @@ class NetworkManagerGateTests(TestCase):
         if args == ("nmcli","-g","GENERAL.CONNECTION","device","show","eth0"):
             return "netplan-eth0"
         if args == ("netplan","get"):return "mocked config"
+        if args[0:3] == ("nmcli","-g","connection.autoconnect"):
+            return "yes"
+        if args[0:3] == ("nmcli","-g","connection.autoconnect-priority"):
+            return "0"
         if args == ("nmcli","-g","GENERAL.CON-UUID","device","show","eth0"):
             return "11111111-1111-4111-8111-111111111111"
         if args == ("systemctl","is-active",uplink.WATCH+".timer"):return "active"
@@ -80,6 +84,12 @@ class NetworkManagerGateTests(TestCase):
         self.assertEqual(self.wifi_file.read_text().count("dhcp4: true"),1)
         self.assertFalse(uplink.netplan_config_file(config).exists())
 
+    def pi_commands(self, *args):
+        if args == ("nmcli", "-g", "connection.autoconnect-priority",
+                    "connection", "show", "75a1216a-9d1a-30cd-8aca-ace5526ec021"):
+            return "0"
+        return self.commands(*args)
+
     def test_debian13_rpi_real_netplan_profile_is_accepted_read_only(self):
         # Matches the sanitized observed netplan-eth0 profile on Pi Debian 13:
         # link-local IPv6 only, DHCPv6 flag enabled, NetworkManager metadata.
@@ -93,13 +103,18 @@ class NetworkManagerGateTests(TestCase):
             }
         }
         with mock.patch.object(uplink.os,"uname",
-                               return_value=SimpleNamespace(release="6.18.50+rpt-rpi-v8")):
+                               return_value=SimpleNamespace(release="6.18.50+rpt-rpi-v8")), \
+             mock.patch.object(uplink,"nm_connection_exists",return_value=False), \
+             mock.patch.object(uplink,"nm_connection_matches",return_value=True), \
+             mock.patch.object(uplink,"native_nm_profile_state"):
             plan=self.preflight()
-        self.assertEqual(plan["manager"],"NetplanNetworkManager")
+        self.assertEqual(plan["manager"],"NativeNetworkManager")
         self.assertEqual(plan["networkCidr"],"192.168.100.0/24")
         self.assertEqual(plan["routeMetric"],100)
         self.assertTrue(plan["requiresOutOfBandRecovery"])
-        self.assertFalse(plan["applySupported"])  # Pi OS NM rewrite risk
+        self.assertTrue(plan["applySupported"])  # Native persistent NM profiles
+        self.assertEqual(plan["originalName"],"netplan-eth0")
+        self.assertEqual(plan["portPriority"],50)
         self.assertFalse(uplink.netplan_config_file(plan).exists())
         self.assertTrue(self.wifi_file.exists())
 
