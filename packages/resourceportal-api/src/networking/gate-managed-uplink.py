@@ -150,6 +150,14 @@ def netplan_config_file(plan: dict) -> Path:
     return NETPLAN / ("99-resourceportal-" + plan["bridge"] + ".yaml")
 
 
+def raspberry_pi_os_netplan_rewrite_risk() -> bool:
+    # Raspberry Pi OS's patched NetworkManager may regenerate /etc/netplan
+    # and discard the RP-owned drop-in. Our original-file-free rollback is
+    # NOT sufficient there, and netplan apply may leave kernel bridges behind.
+    # Do not arm the timer or mutate the host until recovery is certified.
+    return "rpt-rpi" in os.uname().release.lower()
+
+
 def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
     # Netplan (rather than an ephemeral nmcli connection profile) is the
     # source of truth on this Raspberry Pi. Pure NetworkManager configurations
@@ -173,11 +181,28 @@ def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
         raise ValueError("Netplan must already use NetworkManager as the global renderer")
     eth = network.get("ethernets", {}).get(device)
     if not isinstance(eth, dict) or (eth.get("renderer", "NetworkManager") != "NetworkManager" or
-        eth.get("dhcp4") is not True or eth.get("dhcp6", False) is not False):
+        eth.get("dhcp4") is not True or type(eth.get("dhcp6", False)) is not bool):
         raise ValueError("Only Netplan/NetworkManager DHCPv4 Ethernet is supported")
-    allowed = {"renderer", "dhcp4", "dhcp6", "optional", "accept-ra", "link-local"}
-    if any(k not in allowed for k in eth) or eth.get("accept-ra", False) is not False:
+    # Raspberry Pi OS 13 materializes netplan-eth0 from NetworkManager,
+    # including dhcp6:true and bookkeeping. The live global-IPv6 check below
+    # is authoritative; an idle DHCPv6 *setting* is not an IPv6 lease.
+    allowed = {"renderer", "dhcp4", "dhcp6", "optional", "accept-ra", "link-local",
+               "match", "networkmanager"}
+    if (any(k not in allowed for k in eth) or
+            eth.get("accept-ra", False) is not False or
+            eth.get("match", {}) != {}):
         raise ValueError("Customized Netplan Ethernet requires a tailored migration")
+    nm = eth.get("networkmanager")
+    if nm is not None:
+        if not isinstance(nm, dict) or set(nm) != {"uuid", "name", "passthrough"}:
+            raise ValueError("Unsupported NetworkManager metadata keys")
+        if (not isinstance(nm["uuid"], str) or not UUID.fullmatch(nm["uuid"]) or
+                nm["name"] != "netplan-" + device or
+                nm["passthrough"] not in ({}, {"proxy._": ""})):
+            raise ValueError("Unsafe NetworkManager profile metadata")
+        runtime_uuid = call("nmcli", "-g", "GENERAL.CON-UUID", "device", "show", device)
+        if runtime_uuid.lower() != nm["uuid"].lower():
+            raise ValueError("Netplan profile UUID does not match connected Ethernet")
     if device in network.get("bridges", {}) or network.get("bonds") or network.get("vlans"):
         raise ValueError("Existing host bridge, bond or VLAN configuration is unsupported")
     links, addresses, routes = snapshot()
@@ -195,6 +220,11 @@ def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
             if a.get("family") == "inet6" and a.get("scope") != "link"]
     if len(active) != 1 or ipv6:
         raise ValueError("Netplan uplink requires one DHCPv4 and no global IPv6")
+    # A DHCPv6 option without a live IPv6 route is permitted for read-only
+    # preflight; we still reject a working IPv6 default before migration.
+    ipv6_defaults = json.loads(call("ip", "-6", "-j", "route", "show", "default") or "[]")
+    if not isinstance(ipv6_defaults, list) or ipv6_defaults:
+        raise ValueError("IPv6 default route is active on this host")
     address = ipaddress.ip_interface(active[0]["local"] + "/" + str(active[0]["prefixlen"]))
     if not 16 <= address.network.prefixlen <= 30:
         raise ValueError("Netplan management subnet is outside /16..30")
@@ -210,7 +240,9 @@ def preflight_networkmanager(device: str, gate: str, br: str) -> dict:
             "gateId": gate, "device": device, "bridge": br, "bridgeMac": mac,
             "routeMetric": default.get("metric", 0),
             "networkCidr": str(address.network), "gateway": str(gateway),
-            "checkedAt": time.time(), "state": "Preflight"}
+            "checkedAt": time.time(), "state": "Preflight",
+            "requiresOutOfBandRecovery": True,
+            "applySupported": not raspberry_pi_os_netplan_rewrite_risk()}
     netplan_override(plan)
     return plan
 
@@ -562,6 +594,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("preflight", "apply", "confirm", "refresh", "rollback", "status"))
     parser.add_argument("--device")
+    parser.add_argument("--confirm-local-recovery", action="store_true",
+                        help="Explicitly attest physical/out-of-band access for NetworkManager apply")
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise PermissionError("RP managed uplink requires root")
@@ -570,6 +604,14 @@ def main():
             raise ValueError("--device is mandatory")
         plan = preflight(args.device)
         if args.action == "apply":
+            if plan.get("manager") == "NetplanNetworkManager":
+                if not plan.get("applySupported", True):
+                    raise ValueError("Raspberry Pi OS NetworkManager rewrites /etc/netplan; "
+                                     "rollback is not proven safe. Use dedicated LAN port "
+                                     "or wait for certified migration.")
+                if not args.confirm_local_recovery:
+                    raise ValueError("NetworkManager management migration requires "
+                                     "--confirm-local-recovery and physical/out-of-band access")
             arm(plan)
         print(json.dumps({k: v for k, v in plan.items() if k not in ("originalText",)}, sort_keys=True))
     elif args.action == "rollback":

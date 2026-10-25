@@ -56,6 +56,8 @@ class NetworkManagerGateTests(TestCase):
         if args == ("nmcli","-g","GENERAL.CONNECTION","device","show","eth0"):
             return "netplan-eth0"
         if args == ("netplan","get"):return "mocked config"
+        if args == ("nmcli","-g","GENERAL.CON-UUID","device","show","eth0"):
+            return "75a1216a-9d1a-30cd-8aca-ace5526ec021"
         if args == ("systemctl","is-active",uplink.WATCH+".timer"):return "active"
         if args == ("ip","-j","-d","link","show"):return "[]"
         return ""
@@ -77,6 +79,103 @@ class NetworkManagerGateTests(TestCase):
         self.assertEqual(config["bridgeMac"],"dc:a6:32:10:20:30")
         self.assertEqual(self.wifi_file.read_text().count("dhcp4: true"),1)
         self.assertFalse(uplink.netplan_config_file(config).exists())
+
+    def test_debian13_rpi_real_netplan_profile_is_accepted_read_only(self):
+        # Matches the sanitized observed netplan-eth0 profile on Pi Debian 13:
+        # link-local IPv6 only, DHCPv6 flag enabled, NetworkManager metadata.
+        self.netplan["network"]["ethernets"]["eth0"] = {
+            "renderer":"NetworkManager", "match":{}, "dhcp4":True,
+            "dhcp6":True,
+            "networkmanager":{
+                "uuid":"75a1216a-9d1a-30cd-8aca-ace5526ec021",
+                "name":"netplan-eth0",
+                "passthrough":{"proxy._":""}
+            }
+        }
+        with mock.patch.object(uplink.os,"uname",
+                               return_value=SimpleNamespace(release="6.18.50+rpt-rpi-v8")):
+            plan=self.preflight()
+        self.assertEqual(plan["manager"],"NetplanNetworkManager")
+        self.assertEqual(plan["networkCidr"],"192.168.100.0/24")
+        self.assertEqual(plan["routeMetric"],100)
+        self.assertTrue(plan["requiresOutOfBandRecovery"])
+        self.assertFalse(plan["applySupported"])  # Pi OS NM rewrite risk
+        self.assertFalse(uplink.netplan_config_file(plan).exists())
+        self.assertTrue(self.wifi_file.exists())
+
+    def test_trixie_nm_metadata_fails_closed_on_unknown_passthrough_and_uuid(self):
+        eth=self.netplan["network"]["ethernets"]["eth0"]
+        eth.update(dhcp6=True, match={},
+                   networkmanager={"uuid":"75a1216a-9d1a-30cd-8aca-ace5526ec021",
+                                   "name":"netplan-eth0","passthrough":{"proxy._":""}})
+        self.assertEqual(self.preflight()["manager"],"NetplanNetworkManager")
+        eth["networkmanager"]["passthrough"]["connection.autoconnect"]="false"
+        with self.assertRaisesRegex(ValueError,"metadata"):
+            self.preflight()
+        del eth["networkmanager"]["passthrough"]["connection.autoconnect"]
+        eth["networkmanager"]["uuid"]="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
+        with self.assertRaisesRegex(ValueError,"UUID does not match"):
+            self.preflight()
+        eth["networkmanager"]["uuid"]="75a1216a-9d1a-30cd-8aca-ace5526ec021"
+        eth["match"]={"name":"*"}
+        with self.assertRaisesRegex(ValueError,"Customized"):
+            self.preflight()
+
+    def test_dhcp6_flag_does_not_mask_live_ipv6_routes_or_global_address(self):
+        self.netplan["network"]["ethernets"]["eth0"]["dhcp6"]=True
+        original=self.snapshot
+        def with_global_v6():
+            links,addresses,routes=original()
+            addresses[0]["addr_info"].append(
+                {"family":"inet6","local":"2001:db8::4","prefixlen":64,"scope":"global"})
+            return links,addresses,routes
+        with mock.patch.object(self,"snapshot",side_effect=with_global_v6):
+            with self.assertRaisesRegex(ValueError,"no global IPv6"):
+                self.preflight()
+        def active_ipv6_route(*args):
+            if args==("ip","-6","-j","route","show","default"):
+                return '[{"dst":"default","gateway":"fe80::1","dev":"eth0"}]'
+            return self.commands(*args)
+        with mock.patch.object(uplink,"call",side_effect=active_ipv6_route), \
+             mock.patch.object(uplink,"read_control_config",
+                               return_value={"gateId":GATE}), \
+             mock.patch.object(uplink,"service_active",side_effect=self.active), \
+             mock.patch.object(uplink,"snapshot",side_effect=self.snapshot), \
+             mock.patch.dict(sys.modules,{"yaml":SimpleNamespace(
+                 safe_load=lambda _:self.netplan)}):
+            with self.assertRaisesRegex(ValueError,"IPv6 default route"):
+                uplink.preflight("eth0")
+
+    def test_pi_os_netplan_apply_never_modifies_host_even_with_opt_in(self):
+        import contextlib
+        import io
+        plan=self.preflight()
+        plan["applySupported"]=False
+        for opts in ([],["--confirm-local-recovery"]):
+            with mock.patch.object(uplink.os,"geteuid",return_value=0), \
+                 mock.patch.object(sys,"argv",
+                   ["gate-uplink","apply","--device","eth0",*opts]), \
+                 mock.patch.object(uplink,"preflight",return_value=plan), \
+                 mock.patch.object(uplink,"arm") as arm, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError,"rollback is not proven safe"):
+                    uplink.main()
+                arm.assert_not_called()
+
+    def test_other_networkmanager_requires_explicit_local_recovery_for_apply(self):
+        plan=self.preflight()
+        self.assertTrue(plan["applySupported"])
+        import contextlib
+        import io
+        with mock.patch.object(uplink.os,"geteuid",return_value=0), \
+             mock.patch.object(sys,"argv",
+                 ["gate-uplink","apply","--device","eth0"]), \
+             mock.patch.object(uplink,"preflight",return_value=plan), \
+             mock.patch.object(uplink,"arm") as arm, \
+             contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(ValueError,"physical/out-of-band"):
+                uplink.main()
+            arm.assert_not_called()
 
     def test_rejects_equal_or_preferred_wifi_default_route(self):
         for metric in (0, 100):
