@@ -4,6 +4,7 @@ import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
 import {
   DHCP_PROOF_LOG_INTERVAL_MS,
+  dhcpClientStopped,
   reconcileNodeLanDhcp,
 } from "./remote-lan-dhcp-recovery";
 import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
@@ -243,7 +244,10 @@ function observeNodeProof(entry:Running):NodeLanProof {
     result.sourcePolicyVerified=routing.fullyConfigured;
     result.staticGateway=claim.gateway;
   } else {
-    if(!entry.dhcp||entry.dhcp.killed||entry.dhcp.exitCode!==null||entry.dhcp.signalCode!==null)
+    // A failed spawn can return ChildProcess with pid=undefined before the
+    // asynchronous error event. Never accept an old DHCP ACK from such a
+    // process as active lease evidence.
+    if (dhcpClientStopped(entry.dhcp))
       throw new Error("DHCP process not alive");
     // Only the authenticated node agent's DHCP hook can write this path.
     const lease=readFileSync("/run/resourceportal-remote-lan/"+device,"utf8")
