@@ -11,6 +11,7 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
   readonly dockerCalls: Array<{ args: string[]; stdin?: string }> = [];
   readonly dockerResults: Array<{ exitCode: number; stdout: string; stderr: string }> = [];
   readonly capabilityResults: string[] = [];
+  sysctlValue: string | null = "0";
 
   protected override runDocker(args: string[], stdin?: string) {
     this.dockerCalls.push({ args, stdin });
@@ -19,6 +20,13 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
         args.at(-1)?.includes("CapabilityAdd")) {
       return Promise.resolve({ exitCode: 0, stdout: this.capabilityResults.shift() ?? '["CAP_NET_ADMIN","CAP_NET_RAW"]', stderr: "" });
     }
+    if (args[0] === "service" && args[1] === "inspect" &&
+        args.at(-1)?.includes("ContainerSpec.Sysctls"))
+      return Promise.resolve({ exitCode: 0,
+        stdout: JSON.stringify(this.sysctlValue===null ? null : {"net.ipv4.ip_forward":this.sysctlValue}),
+        stderr: "" });
+    if (args[0]==="service" && args[1]==="update" && args.includes("--sysctl-add"))
+      this.sysctlValue="0";
     return Promise.resolve(
       this.dockerResults.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
     );
@@ -116,6 +124,21 @@ const readyGate = {
 };
 
 describe("Gate capability reconciliation", () => {
+  it("repairs missing Swarm sysctl without editing container /proc/sys", async () => {
+    const {service}=fixture([]);
+    service.sysctlValue=null;
+    const invoke=service as unknown as {ensureGatewayCapabilities(id:string):Promise<void>};
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).resolves.toBeUndefined();
+    expect(service.dockerCalls.some(call=>call.args.includes("--sysctl-add") &&
+      call.args.includes("net.ipv4.ip_forward=0"))).toBe(true);
+  });
+  it("rejects existing Swarm forwarding-enabled configuration", async () => {
+    const {service}=fixture([]);
+    service.sysctlValue="1";
+    const invoke=service as unknown as {ensureGatewayCapabilities(id:string):Promise<void>};
+    await expect(invoke.ensureGatewayCapabilities(readyGate.id)).rejects.toThrow(/enabled IPv4 forwarding/);
+    expect(service.dockerCalls.some(call=>call.args[1]==="update")).toBe(false);
+  });
   it("repairs missing effective capabilities and verifies the updated Swarm spec", async () => {
     const { service } = fixture([]);
     service.capabilityResults.push('["NET_ADMIN"]', '["NET_ADMIN","NET_RAW"]');
