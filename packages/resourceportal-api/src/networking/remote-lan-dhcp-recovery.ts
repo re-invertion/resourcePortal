@@ -50,6 +50,7 @@ export function reconcileNodeLanDhcp<T extends {
   restartAt: Map<string, number>,
   nowMs: number,
   onStopped: (attachmentId: string) => void,
+  transportMatches?: (entry: T) => boolean,
 ): void {
   revokeNodeLanState(managed, desired, pids, (entry) => {
     const key = entry.target.id + ":" + entry.target.attachment.attachmentId;
@@ -64,7 +65,7 @@ export function reconcileNodeLanDhcp<T extends {
       restartAt.set(key, nowMs);
       onStopped(entry.target.attachment.attachmentId);
     }
-  }, links, remove);
+  }, links, remove, transportMatches);
   for (const [key, target] of desired) {
     if (managed.has(key)) continue;
     const last = restartAt.get(key);

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink, shouldDeleteNodeLanOrphan,
-  nodeLanCommands, staticNodeLanCommands, revokeNodeLanEntries, revokeNodeLanState, sameNodeLanTarget,
+  nodeLanCommands, nodeLanTransportMatches, prepareNodeLanLinkForGrant,
+  staticNodeLanCommands, revokeNodeLanEntries, revokeNodeLanState, sameNodeLanTarget,
   selectNodeLanTargets, sweepNodeLanOrphans,
   validateNodeLanSnapshot, type NodeLanAttachment,
   type TenantContainer,
@@ -303,5 +304,124 @@ describe("node LAN combined pre-grant revocation", () => {
         "rp-lan:bbbbbbbb-bbbb-4ccc-8ddd-222222222222" }],
       (_pid, ifname) => removed.push(ifname));
     expect(removed).toEqual(["rp-a-ffffffff"]);
+  });
+});
+
+describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", () => {
+  const [dhcp] = selectNodeLanTargets([attachment], [container]);
+  const staticPolicy: NodeLanAttachment = {
+    ...attachment, uplinkMode: "ManagedSharedUplink", addressMode: "Static",
+    staticAddress: "192.168.50.44/24", staticGateway: "192.168.50.1",
+  };
+  const [staticTarget] = selectNodeLanTargets([staticPolicy], [container]);
+  const device = "rp-a-1234abcd";
+  const link = {
+    ifname: device,
+    ifalias: "rp-lan:" + attachment.attachmentId,
+    address: attachment.macAddress,
+    linkinfo: { info_kind: "gretap", info_data: {
+      local: "10.200.4.15", remote: "10.200.4.125",
+    } },
+  };
+
+  it("rebuilds only owned stale peer after node-agent restart, without touching tenant eth0", () => {
+    const events: string[] = [];
+    const reused = prepareNodeLanLinkForGrant(dhcp, device, link,
+      () => events.push("cleanup:rp-static-policy"),
+      () => events.push("delete:" + device), () => true);
+    expect(reused).toBe(false);
+    expect(nodeLanTransportMatches(link, dhcp)).toBe(false);
+    expect(events).toEqual(["cleanup:rp-static-policy", "delete:" + device]);
+  });
+
+  it("preserves already-correct Static GRETAP on restart, but rotates an old Static peer", () => {
+    const correct = { ...link, linkinfo: { ...link.linkinfo, info_data: {
+      local: staticTarget.tunnel.appOverlayIp,
+      remote: staticTarget.tunnel.gatewayOverlayIp,
+    } } };
+    const changed: string[] = [];
+    expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => true)).toBe(true);
+    expect(changed).toEqual([]);
+    expect(prepareNodeLanLinkForGrant(staticTarget, device, link,
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => true)).toBe(false);
+    expect(changed).toEqual(["static:cleanup", "static:delete"]);
+  });
+
+  it("on DHCP/Static transitions, rebuilds inherited DHCP link and never adopts stale proof", () => {
+    const correct = { ...link, linkinfo: { ...link.linkinfo, info_data: {
+      local: dhcp.tunnel.appOverlayIp, remote: dhcp.tunnel.gatewayOverlayIp,
+    } } };
+    const changed: string[] = [];
+    expect(prepareNodeLanLinkForGrant(dhcp, device, correct,
+      () => changed.push("cleanup"), () => changed.push("delete"),
+      () => true)).toBe(false);
+    expect(changed).toEqual(["cleanup", "delete"]);
+    const switchedStatic = { ...dhcp, attachment: staticPolicy };
+    expect(sameNodeLanTarget(dhcp, switchedStatic)).toBe(false);
+    // Same tunnel does not prove that the old DHCP address was replaced.
+    // Without an exact Static address AND owned source route, discard it.
+    expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => false)).toBe(false);
+    expect(changed).toEqual(["cleanup","delete","static:cleanup","static:delete"]);
+  });
+
+
+  it("refuses Static adoption when a previous DHCP address or partial route remains", () => {
+    const correct = { ...link, linkinfo: { ...link.linkinfo, info_data: {
+      local: staticTarget.tunnel.appOverlayIp,
+      remote: staticTarget.tunnel.gatewayOverlayIp,
+    } } };
+    const operations: string[] = [];
+    const checked = () => {
+      operations.push("verify-static-address-and-route");
+      return false; // Other IPv4 address or missing routing table.
+    };
+    expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
+      () => operations.push("cleanup-owned-policy"),
+      () => operations.push("delete-owned-link"), checked)).toBe(false);
+    expect(operations).toEqual([
+      "verify-static-address-and-route", "cleanup-owned-policy", "delete-owned-link",
+    ]);
+  });
+
+  it("never removes foreign, bridged or wrong-alias links, even when remote peer is stale", () => {
+    const cases = [
+      { ...link, ifalias: "rp-lan:" + attachment.gateId },
+      { ...link, master: "br-foreign" },
+      { ...link, linkinfo: { ...link.linkinfo, info_kind: "veth" } },
+      { ...link, ifname: "eth0" },
+    ];
+    for (const alien of cases) {
+      const events: string[] = [];
+      expect(() => prepareNodeLanLinkForGrant(dhcp, device, alien,
+        () => events.push("cleanup"), () => events.push("delete"),
+        () => true)).toThrow(/foreign|bridged|alias/);
+      expect(events).toEqual([]);
+    }
+  });
+
+  it("fails closed on partial Static cleanup and cannot erase the interface", () => {
+    const events: string[] = [];
+    expect(() => prepareNodeLanLinkForGrant(staticTarget, device, link, () => {
+      events.push("cleanup");
+      throw new Error("foreign source routing owner");
+    }, () => events.push("delete"), () => false)).toThrow(/foreign source/);
+    expect(events).toEqual(["cleanup"]);
+  });
+
+  it("rejects wrong app-local, remote or MAC in transport evidence", () => {
+    const correct = { ...link, linkinfo: { ...link.linkinfo, info_data: {
+      local: dhcp.tunnel.appOverlayIp, remote: dhcp.tunnel.gatewayOverlayIp,
+    } } };
+    expect(nodeLanTransportMatches(correct, dhcp)).toBe(true);
+    expect(nodeLanTransportMatches({ ...correct, address: "02:aa:aa:aa:aa:aa" }, dhcp)).toBe(false);
+    expect(nodeLanTransportMatches({ ...correct, linkinfo: { ...correct.linkinfo,
+      info_data: { ...correct.linkinfo.info_data, local: "10.200.4.99" } } }, dhcp)).toBe(false);
+    expect(nodeLanTransportMatches({ ...correct, linkinfo: { ...correct.linkinfo,
+      info_data: { ...correct.linkinfo.info_data, remote: "10.200.4.125" } } }, dhcp)).toBe(false);
   });
 });

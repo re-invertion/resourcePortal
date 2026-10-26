@@ -166,16 +166,20 @@ export function revokeNodeLanEntries<T extends {
   managed: Map<string, T>,
   desired: ReadonlyMap<string, NodeLanTarget>,
   detach: (entry: T) => void,
+  transportMatches?: (entry: T) => boolean,
 ): void {
   const failures: unknown[] = [];
   for (const [key, entry] of managed) {
-    const updated = desired.get(key);
-    if (updated && sameNodeLanTarget(entry.target, updated) &&
+    try {
+      const updated = desired.get(key);
+      const healthy = updated && sameNodeLanTarget(entry.target, updated) &&
         (entry.dhcp ? (!entry.dhcp.killed &&
           entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null &&
           entry.dhcp.signalCode == null) :
-          entry.target.attachment.addressMode === "Static")) continue;
-    try {
+          entry.target.attachment.addressMode === "Static");
+      // The snapshot may already be current while a surviving GRETAP still
+      // points at a previous Swarm Gateway task (or lost its RP MAC).
+      if (healthy && (!transportMatches || transportMatches(entry))) continue;
       detach(entry);
       managed.delete(key);
     } catch (error) {
@@ -259,6 +263,43 @@ export function assertCreatedNodeLanLink(link: NodeLanLink, device: string, atta
     throw new Error("Refusing partial cleanup of GRETAP with foreign alias");
 }
 
+/**
+ * A matching RP alias proves ownership, not correctness of the running
+ * transport. Require the actual kernel GRETAP peer and RP-assigned MAC to
+ * match the current authenticated Swarm policy.
+ */
+export function nodeLanTransportMatches(link: NodeLanLink, target: NodeLanTarget): boolean {
+  return link.linkinfo?.info_data?.local === target.tunnel.appOverlayIp &&
+    link.linkinfo?.info_data?.remote === target.tunnel.gatewayOverlayIp &&
+    link.address?.toLowerCase() === target.attachment.macAddress.toLowerCase();
+}
+
+/**
+ * Called before adopting an orphan from a previous node-agent task. Never
+ * adopt an unverified DHCP lease or a GRETAP pointing at an old Gateway IP.
+ * Only remove a standalone, correctly aliased RP-owned interface, after
+ * safely removing any RP-owned Static source policy.
+ *
+ * Returns true only when an already configured Static link may be adopted.
+ */
+export function prepareNodeLanLinkForGrant(
+  target: NodeLanTarget, device: string, observed: NodeLanLink | undefined,
+  cleanupOldStatic: () => void, removeOwnedLink: () => void,
+  staticConfigurationMatches: () => boolean,
+): boolean {
+  if (!observed) return false;
+  assertOwnedNodeLanLink(observed, device, target.attachment.attachmentId);
+  // An aligned GRETAP may still carry the previous DHCP address after an
+  // agent restart. Adopt Static only with exact source rule, route and one
+  // matching IPv4 address. Otherwise drop just this RP-owned interface.
+  if (target.attachment.addressMode === "Static" &&
+      nodeLanTransportMatches(observed, target) &&
+      staticConfigurationMatches()) return true;
+  cleanupOldStatic();
+  removeOwnedLink();
+  return false;
+}
+
 /** Reconcile only unbridged, RP-labelled orphan endpoints. */
 export function shouldDeleteNodeLanOrphan(link: NodeLanLink, active: ReadonlySet<string>): boolean {
   if (!link.ifname || !appLinkName.test(link.ifname) ||
@@ -321,10 +362,11 @@ export function revokeNodeLanState<T extends {
   detach: (entry: T) => void,
   list: (pid: number) => readonly NodeLanLink[],
   remove: (pid: number, ifname: string) => void,
+  transportMatches?: (entry: T) => boolean,
 ): void {
   const failures: unknown[] = [];
   try {
-    revokeNodeLanEntries(managed, desired, detach);
+    revokeNodeLanEntries(managed, desired, detach, transportMatches);
   } catch (error) {
     failures.push(error);
   }

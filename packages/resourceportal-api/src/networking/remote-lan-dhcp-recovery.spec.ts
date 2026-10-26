@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { NodeLanTarget } from "./remote-lan-node-policy";
+import { nodeLanTransportMatches, type NodeLanTarget, type NodeLanLink } from "./remote-lan-node-policy";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -101,7 +101,91 @@ describe("LAN DHCP process recovery", () => {
     expect(source).toContain("reattachment delayed to prevent restart loops");
     expect(source).toContain("lastDhcpRestartAt");
     expect(source).toContain("if (dhcpClientStopped(entry.dhcp))");
+    // Exercise the same code path the systemd/Swarm node-agent runs.
+    expect(source).toContain("prepareNodeLanLinkForGrant(target, device, before");
+    expect(source).toContain("nodeLanTransportMatches(current[0], entry.target)");
+    expect(source).toContain("nodeLanTransportMatches(link, target)");
+    expect(source).toContain("policy.fullyConfigured && addresses.length === 1");
+    expect(source).toContain("currentStaticClaim(target.pid, claim)");
+    expect(source).toContain('unlinkSync("/run/resourceportal-remote-lan/" + device)');
     expect(source).toContain('RP_LAN_NODE_PROOF_V1');
     expect(source).toContain("LAN evidence pending for attachment");
+  });
+});
+
+describe("live LAN reconciliation after Swarm Gateway task rotation", () => {
+  function scenario(mode: "DHCP" | "Static") {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const device = "rp-a-1234abcd";
+    const target = {
+      id: "c".repeat(64), pid: 4242,
+      attachment: { attachmentId: id, addressMode: mode,
+        gatewayOverlayIp: "10.200.2.10", macAddress: "62:bc:1c:51:53:ef",
+      },
+      tunnel: { appOverlayIp: "10.200.2.2", gatewayOverlayIp: "10.200.2.10" },
+    } as NodeLanTarget;
+    const key = target.id + ":" + id;
+    type Entry = {
+      target: NodeLanTarget; device: string;
+      dhcp: { pid: number; killed: boolean; exitCode: number | null; signalCode: string | null } | null;
+    };
+    let observed: NodeLanLink | undefined = {
+      ifname: device, ifalias: "rp-lan:" + id, address: "62:bc:1c:51:53:ef",
+      linkinfo: { info_kind: "gretap",
+        info_data: { local: "10.200.2.2", remote: "10.200.2.125" } },
+    };
+    const entry = (current: NodeLanTarget): Entry => ({
+      target: current, device,
+      dhcp: mode === "DHCP" ? { pid: 200, killed: false, exitCode: null, signalCode: null } : null,
+    });
+    const managed = new Map([[key, entry(target)]]);
+    const desired = new Map([[key, target]]);
+    const revoked = vi.fn(() => { observed=undefined; });
+    const grant = vi.fn((next: NodeLanTarget) => {
+      observed = { ifname: device, ifalias: "rp-lan:" + id,
+        address: next.attachment.macAddress,
+        linkinfo: { info_kind: "gretap", info_data: {
+          local: next.tunnel.appOverlayIp, remote: next.tunnel.gatewayOverlayIp,
+        } } };
+      return entry(next);
+    });
+    const stopped = vi.fn();
+    const cycle = () => reconcileNodeLanDhcp(managed, desired, [4242],
+      revoked, () => observed ? [observed] : [],
+      () => { throw new Error("unexpected orphan deletion"); },
+      grant, new Map(), 100_000, stopped,
+      current => observed !== undefined &&
+        nodeLanTransportMatches(observed, current.target));
+    return { managed, desired, target, observed: () => observed, revoked, grant, stopped, cycle };
+  }
+
+  for(const mode of ["DHCP", "Static"] as const) {
+    it("rebuilds a still-managed "+mode+" tunnel when kernel remote diverges from current policy", () => {
+      const state = scenario(mode);
+      state.cycle();
+      expect(state.revoked).toHaveBeenCalledTimes(1);
+      expect(state.grant).toHaveBeenCalledTimes(1);
+      expect(state.observed()?.linkinfo?.info_data?.remote).toBe("10.200.2.10");
+      expect(state.managed.size).toBe(1);
+      expect(state.stopped).not.toHaveBeenCalled();
+      state.cycle();
+      expect(state.revoked).toHaveBeenCalledTimes(1);
+      expect(state.grant).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("re-reconciles new Gateway task address while preserving attachment identity", () => {
+    const state = scenario("DHCP");
+    state.cycle();
+    const key = [...state.desired.keys()][0];
+    const moved = { ...state.target,
+      attachment: { ...state.target.attachment, gatewayOverlayIp: "10.200.2.11" },
+      tunnel: { ...state.target.tunnel, gatewayOverlayIp: "10.200.2.11" },
+    };
+    state.desired.set(key, moved);
+    state.cycle();
+    expect(state.revoked).toHaveBeenCalledTimes(2);
+    expect(state.grant).toHaveBeenCalledTimes(2);
+    expect(state.observed()?.linkinfo?.info_data?.remote).toBe("10.200.2.11");
   });
 });
