@@ -1,3 +1,5 @@
+import { revokeNodeLanState, sameNodeLanTarget, type NodeLanLink, type NodeLanTarget } from "./remote-lan-node-policy";
+
 /** Recovery policy for a DHCP process bound to one verified tenant L2 tunnel.
  *
  * An early udhcpc -n exit is not proof of a permanent network failure. The
@@ -28,4 +30,46 @@ export function shouldRestartDhcp(
   return Number.isFinite(nowMs) && nowMs >= 0 &&
     Number.isFinite(lastRestartAtMs) &&
     nowMs - lastRestartAtMs >= DHCP_RESTART_INTERVAL_MS;
+}
+
+/** Reconcile revocation AND grants together, so a dead-client cleanup cannot
+ * bypass the bounded DHCP re-attachment delay. Never reset owner validation. */
+export function reconcileNodeLanDhcp<T extends {
+  target: NodeLanTarget;
+  device: string;
+  dhcp: (DhcpChildState & { pid?: number }) | null;
+}>(
+  managed: Map<string, T>,
+  desired: ReadonlyMap<string, NodeLanTarget>,
+  pids: readonly number[],
+  detach: (entry: T) => void,
+  links: (pid: number) => readonly NodeLanLink[],
+  remove: (pid: number, ifname: string) => void,
+  attach: (target: NodeLanTarget) => T,
+  restartAt: Map<string, number>,
+  nowMs: number,
+  onStopped: (attachmentId: string) => void,
+): void {
+  revokeNodeLanState(managed, desired, pids, (entry) => {
+    const key = entry.target.id + ":" + entry.target.attachment.attachmentId;
+    const updated = desired.get(key);
+    const stopped = updated !== undefined &&
+      sameNodeLanTarget(entry.target, updated) &&
+      (entry.target.attachment.addressMode ?? "DHCP") === "DHCP" &&
+      dhcpClientStopped(entry.dhcp);
+    // Only record the retry deadline after verified, successful cleanup.
+    detach(entry);
+    if (stopped) {
+      restartAt.set(key, nowMs);
+      onStopped(entry.target.attachment.attachmentId);
+    }
+  }, links, remove);
+  for (const [key, target] of desired) {
+    if (managed.has(key)) continue;
+    const last = restartAt.get(key);
+    if ((target.attachment.addressMode ?? "DHCP") === "DHCP" &&
+        last !== undefined &&
+        !shouldRestartDhcp("DHCP", null, last, nowMs)) continue;
+    managed.set(key, attach(target));
+  }
 }
