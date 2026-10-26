@@ -240,10 +240,28 @@ export class GateRuntimeReconcilerService {
     }
     const current = normalizeSwarmCapabilityAdd(enabled);
     const missing = required.filter(cap => !current.includes(cap));
-    if (missing.length === 0) return;
+    // Docker Swarm owns namespace sysctls; the container's /proc/sys is RO.
+    const inspectSysctl = ["service","inspect",name,"--format",
+      "{{json .Spec.TaskTemplate.ContainerSpec.Sysctls}}"];
+    const beforeSysctl = await this.runDocker(inspectSysctl);
+    if (beforeSysctl.exitCode !== 0)
+      throw new Error("Cannot inspect Gate Swarm sysctls: "+beforeSysctl.stderr);
+    let currentSysctls: unknown;
+    try { currentSysctls=JSON.parse(beforeSysctl.stdout||"null") as unknown; }
+    catch { throw new Error("Malformed Gate Swarm sysctl inspection"); }
+    if (currentSysctls!==null && (typeof currentSysctls!=="object" ||
+        Array.isArray(currentSysctls)))
+      throw new Error("Untrusted Gate Swarm sysctl policy");
+    const entries=(currentSysctls??{}) as Record<string,unknown>;
+    if (entries["net.ipv4.ip_forward"]!==undefined &&
+        entries["net.ipv4.ip_forward"]!=="0")
+      throw new Error("Gate Swarm sysctl requests enabled IPv4 forwarding");
+    const missingSysctl=entries["net.ipv4.ip_forward"]!=="0";
+    if (missing.length === 0 && !missingSysctl) return;
     const update = await this.runDocker([
       "service", "update", "--detach=false",
-      ...missing.flatMap(cap => ["--cap-add", cap]), name,
+      ...missing.flatMap(cap => ["--cap-add", cap]),
+      ...(missingSysctl ? ["--sysctl-add","net.ipv4.ip_forward=0"] : []), name,
     ]);
     if (update.exitCode !== 0) {
       throw new Error(`Cannot grant Site VPN gateway capabilities: ${update.stderr || update.stdout}`);
@@ -257,6 +275,16 @@ export class GateRuntimeReconcilerService {
       throw new Error("Malformed Site VPN gateway capability verification");
     }
     const verified = normalizeSwarmCapabilityAdd(actual);
+    const afterSysctl=await this.runDocker(inspectSysctl);
+    if (afterSysctl.exitCode!==0)
+      throw new Error("Cannot verify Gate Swarm sysctls");
+    let verifiedSysctl: unknown;
+    try { verifiedSysctl=JSON.parse(afterSysctl.stdout||"null") as unknown; }
+    catch { throw new Error("Malformed Gate Swarm sysctl verification"); }
+    if(!verifiedSysctl || typeof verifiedSysctl!=="object" ||
+       Array.isArray(verifiedSysctl) ||
+       (verifiedSysctl as Record<string,unknown>)["net.ipv4.ip_forward"]!=="0")
+      throw new Error("Gate Swarm sysctl IPv4 forwarding must remain disabled");
     if (!required.every(cap => verified.includes(cap))) {
       throw new Error("Site VPN gateway capabilities were not applied to Swarm service");
     }
