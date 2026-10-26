@@ -53,7 +53,7 @@ export class RemoteLanNodeReconcilerService {
     const observations: string[] = [];
     for (let attempt = 0; attempt < 3; attempt++) {
       const taskIds = this.docker(["service", "ps", "-q", "--no-trunc",
-        "--filter", "desired-state=running", serviceName]).split(/\\s+/).filter(Boolean);
+        "--filter", "desired-state=running", serviceName]).split(/\s+/).filter(Boolean);
       const valid: string[] = [];
       let running = 0;
       let disappeared = 0;
