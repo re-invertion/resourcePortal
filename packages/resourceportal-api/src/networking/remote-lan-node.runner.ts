@@ -2,6 +2,10 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { Logger } from "@nestjs/common";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
+import {
+  DHCP_PROOF_LOG_INTERVAL_MS,
+  shouldRestartDhcp,
+} from "./remote-lan-dhcp-recovery";
 import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
@@ -18,6 +22,8 @@ const HOST_PROC = "/host/proc";
 type Address = { ifname?: string; addr_info?: Array<{ family?: string; local?: string; prefixlen?: number }> };
 type Running = { target: NodeLanTarget; device: string; dhcp: ChildProcess | null; dockerDefault:string };
 const managed = new Map<string, Running>();
+const lastDhcpRestartAt = new Map<string, number>();
+const lastMissingProofLogAt = new Map<string, number>();
 let stopping = false;
 
 function run(program: string, args: string[], allowFailure = false): string {
@@ -185,7 +191,10 @@ function attach(target: NodeLanTarget): Running {
   }
   const dhcp = spawn("nsenter", [
     "--net=" + namespacePath(target.pid), "--", "/bin/busybox", "udhcpc",
-    "-f", "-n", "-i", device, "-s", SCRIPT,
+    // Keep retrying if the L2 tunnel or customer DHCP server comes online
+    // after the application. -n made the client exit after the initial
+    // attempts; a still-managed tunnel would then never acquire a lease.
+    "-f", "-i", device, "-s", SCRIPT,
   ], { stdio: "ignore",
     // The DHCP hook must never accept an address outside the tenant-approved LAN.
     env: { ...process.env, RP_REMOTE_LAN_CIDR: target.attachment.lanCidr,
@@ -298,7 +307,26 @@ function reconcile() {
     cleanupOrphanStaticPolicy(pid,ifname);
     nsrun(pid, ["link", "delete", ifname]);
   });
+  for (const [key] of lastDhcpRestartAt) {
+    if (!desired.has(key)) lastDhcpRestartAt.delete(key);
+  }
+  for (const [key] of lastMissingProofLogAt) {
+    if (!desired.has(key)) lastMissingProofLogAt.delete(key);
+  }
   for (const [key, target] of desired) {
+    const entry = managed.get(key);
+    const mode = target.attachment.addressMode ?? "DHCP";
+    const now = Date.now();
+    if (entry && shouldRestartDhcp(mode, entry.dhcp, lastDhcpRestartAt.get(key) ?? 0, now)) {
+      // A dead client must never leave its old lease proof trusted. Remove
+      // the RP-owned endpoint with the existing ownership validation, then
+      // create a fresh attachment/client. Fail closed if cleanup fails.
+      logger.warn("Reinitializing stopped LAN DHCP client for attachment " +
+        target.attachment.attachmentId);
+      detach(entry);
+      managed.delete(key);
+      lastDhcpRestartAt.set(key, now);
+    }
     if (managed.has(key)) continue;
     managed.set(key, attach(target));
   }
@@ -306,9 +334,22 @@ function reconcile() {
   // Docker Swarm service logs come from a privileged, RP-owned node agent,
   // never from tenant container stdout. Worker independently binds the
   // resulting proof to running task identity, Gate and current revision.
-  for(const entry of managed.values()){
-    try { logger.log("RP_LAN_NODE_PROOF_V1 "+JSON.stringify(observeNodeProof(entry))); }
-    catch { /* A missing/expired DHCP ACK or route never produces evidence. */ }
+  for(const [key, entry] of managed){
+    try {
+      logger.log("RP_LAN_NODE_PROOF_V1 "+JSON.stringify(observeNodeProof(entry)));
+      lastMissingProofLogAt.delete(key);
+    } catch (error) {
+      // Retain the fail-closed proof requirement, but report WHY it is
+      // missing. Previously this error was silently discarded and the UI
+      // stayed Provisioning indefinitely without actionable diagnostics.
+      const now = Date.now();
+      if (now - (lastMissingProofLogAt.get(key) ?? 0) >= DHCP_PROOF_LOG_INTERVAL_MS) {
+        logger.warn("LAN evidence pending for attachment " +
+          entry.target.attachment.attachmentId + ": " +
+          (error instanceof Error ? error.message : "unavailable"));
+        lastMissingProofLogAt.set(key, now);
+      }
+    }
   }
   logger.log("RP_LAN_NODE_RECONCILE_V1 "+JSON.stringify({
     observedAtMs:Date.now(),
