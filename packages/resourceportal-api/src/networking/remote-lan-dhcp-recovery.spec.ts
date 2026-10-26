@@ -105,6 +105,8 @@ describe("LAN DHCP process recovery", () => {
     expect(source).toContain("prepareNodeLanLinkForGrant(target, device, before");
     expect(source).toContain("nodeLanTransportMatches(current[0], entry.target)");
     expect(source).toContain("nodeLanTransportMatches(link, target)");
+    expect(source).toContain("policy.fullyConfigured && addresses.length === 1");
+    expect(source).toContain("currentStaticClaim(target.pid, claim)");
     expect(source).toContain('unlinkSync("/run/resourceportal-remote-lan/" + device)');
     expect(source).toContain('RP_LAN_NODE_PROOF_V1');
     expect(source).toContain("LAN evidence pending for attachment");
