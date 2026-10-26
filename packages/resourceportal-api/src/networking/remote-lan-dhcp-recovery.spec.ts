@@ -101,6 +101,11 @@ describe("LAN DHCP process recovery", () => {
     expect(source).toContain("reattachment delayed to prevent restart loops");
     expect(source).toContain("lastDhcpRestartAt");
     expect(source).toContain("if (dhcpClientStopped(entry.dhcp))");
+    // Exercise the same code path the systemd/Swarm node-agent runs.
+    expect(source).toContain("prepareNodeLanLinkForGrant(target, device, before");
+    expect(source).toContain("nodeLanTransportMatches(current[0], entry.target)");
+    expect(source).toContain("nodeLanTransportMatches(link, target)");
+    expect(source).toContain('unlinkSync("/run/resourceportal-remote-lan/" + device)');
     expect(source).toContain('RP_LAN_NODE_PROOF_V1');
     expect(source).toContain("LAN evidence pending for attachment");
   });
