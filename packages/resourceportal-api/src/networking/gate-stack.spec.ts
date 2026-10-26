@@ -34,6 +34,7 @@ type Stack = {
   services: {gateway:{
     ports:Array<{target:number;published:number;protocol:string;mode:string}>;
     cap_add:string[];command:string[];environment:Record<string,string>;
+    sysctls:Record<string,string>;
     volumes?:unknown;
   }};
   networks: Record<string,{external:boolean;name:string}>;
@@ -45,6 +46,7 @@ describe("LAN Attachments-only Gateway stack rendering",()=>{
       target:GATE_CONTAINER_PORT,published:52042,protocol:"udp",mode:"ingress",
     }]);
     expect(stack.services.gateway.cap_add).toEqual(["NET_ADMIN","NET_RAW"]);
+    expect(stack.services.gateway.sysctls).toEqual({"net.ipv4.ip_forward":"0"});
     expect(stack.services.gateway.command).toContain("dist/src/networking/remote-lan-gateway.runner.js");
     expect(stack.services.gateway.environment.RP_REMOTE_LAN_GATEWAY_ENABLED).toBe("true");
     expect(stack.networks["rpnet_"+app.networkId.replaceAll("-","_")]).toEqual({
