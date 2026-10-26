@@ -100,6 +100,7 @@ describe("LAN DHCP process recovery", () => {
     expect(source).toContain("reconcileNodeLanDhcp(managed, desired, pids");
     expect(source).toContain("reattachment delayed to prevent restart loops");
     expect(source).toContain("lastDhcpRestartAt");
+    expect(source).toContain("if (dhcpClientStopped(entry.dhcp))");
     expect(source).toContain('RP_LAN_NODE_PROOF_V1');
     expect(source).toContain("LAN evidence pending for attachment");
   });
