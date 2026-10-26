@@ -138,7 +138,7 @@ describe("live LAN reconciliation after Swarm Gateway task rotation", () => {
     });
     const managed = new Map([[key, entry(target)]]);
     const desired = new Map([[key, target]]);
-    const revoked = vi.fn((_entry: Entry) => { observed=undefined; });
+    const revoked = vi.fn(() => { observed=undefined; });
     const grant = vi.fn((next: NodeLanTarget) => {
       observed = { ifname: device, ifalias: "rp-lan:" + id,
         address: next.attachment.macAddress,
