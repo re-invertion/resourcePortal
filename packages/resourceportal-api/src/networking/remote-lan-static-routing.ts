@@ -62,7 +62,7 @@ export function readRpStaticTable(
   const stderr = (result.stderr ?? "").trim();
   if (!result.error && result.status === 0 && !stderr) return stdout;
   if (!result.error && result.status === 2 && !stdout &&
-      /^Error: ipv4: FIB table does not exist\.\s*Dump terminated\.$/.test(stderr))
+      /^Error: ipv4: FIB table does not exist\.\s*Dump terminated\.?$/.test(stderr))
     return "";
   throw new Error("RP static routing table 20015 inspection failed: " +
     (result.error?.message || stderr || "exit " + String(result.status)));

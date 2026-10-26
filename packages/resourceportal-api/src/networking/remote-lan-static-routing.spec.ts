@@ -53,6 +53,13 @@ describe("Static table 20015 read in tenant netns",()=>{
     expect(inspectStaticRoutingClaim(config,"0: from all lookup local",read(2,missing))
       .fullyConfigured).toBe(false);
   });
+  it("accepts actual Linux/nsenter iproute2 status 2 with unpunctuated Dump terminated and trailing newline",()=>{
+    const actual = "Error: ipv4: FIB table does not exist.\nDump terminated\n";
+    expect(read(2,actual,"")).toBe("");
+    expect(inspectStaticRoutingClaim(config,"0: from all lookup local",read(2,actual))
+      .fullyConfigured).toBe(false);
+    expect(()=>read(2,actual+"Permission denied\n")).toThrow(/inspection failed/);
+  });
   it("recovery after restart removes an RP-owned rule with an absent table",()=>{
     const state=inspectStaticRoutingClaim(config,rule,read(2,missing));
     expect(state.cleanup).toEqual([

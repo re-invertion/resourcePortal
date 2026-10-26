@@ -346,6 +346,9 @@ jobs:
       - name: Verify Remote LAN DHCP hook rejects foreign leases
         run: python3 test/installer/test-remote-lan-dhcp.py
 
+      - name: Verify first Static LAN attach and DHCP/Static routing transitions in Linux nsenter
+        run: bash scripts/run-remote-lan-static-nsenter-smoke.sh
+
       - name: Run Remote LAN Attachment WireGuard + GRETAP + DHCP dataplane smoke
         timeout-minutes: 8
         run: bash scripts/run-remote-lan-l2-dhcp-smoke.sh

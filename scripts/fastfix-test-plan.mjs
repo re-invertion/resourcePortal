@@ -257,6 +257,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
   [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
   [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release"]],
+  [/^scripts\/run-remote-lan-static-nsenter-smoke\.sh$/, ["networking", "platform-release"]],
 
   [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
   [/^scripts\/release-rollback-policy\.mjs$/, ["platform-release", "workflow"]],
