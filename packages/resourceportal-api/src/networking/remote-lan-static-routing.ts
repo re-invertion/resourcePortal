@@ -49,7 +49,7 @@ export function parseStaticTableRead(
 ): string {
   if(status===0) return stdout.trim();
   if(status===2 && !stdout.trim() &&
-      stderr.trim()==="Error: ipv4: FIB table does not exist. Dump terminated.")
+      /^Error: ipv4: FIB table does not exist\.(?: |\r?\n)Dump terminated\.$/.test(stderr.trim()))
     return "";
   throw new Error("Static LAN route inspection failed: " +
     (stderr.trim() || "exit "+status));
