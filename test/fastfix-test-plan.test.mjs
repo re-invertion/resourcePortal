@@ -2,6 +2,13 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
+test("new Gate Swarm sysctl smoke is classified and validated, unknown scripts still fail closed", () => {
+  const plan=selectProfiles(["scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"]);
+  assert.deepEqual(plan.profiles, ["networking","workflow"]);
+  assert.equal(plan.vpnSmoke,true);
+  assert.throws(()=>selectProfiles(["scripts/run-unregistered-swarm-smoke.sh"]),/unclassified changes/);
+});
+
 test("patch VPN release selects related API, UI, installer and real dataplane smoke", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/src/networking/device-vpn-runtime.logic.ts",
