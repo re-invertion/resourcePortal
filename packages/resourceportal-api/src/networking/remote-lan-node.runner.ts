@@ -145,7 +145,18 @@ function attach(target: NodeLanTarget): Running {
   // is also rebuilt to avoid trusting the previous agent's lease/proof.
   const adopted = prepareNodeLanLinkForGrant(target, device, before,
     () => cleanupOrphanStaticPolicy(target.pid, device),
-    () => nsrun(target.pid, ["link", "delete", device]));
+    () => nsrun(target.pid, ["link", "delete", device]),
+    () => {
+      const claim = staticClaim(target, device);
+      const policy = currentStaticClaim(target.pid, claim);
+      const addresses = nsjson<Address[]>(target.pid,
+        ["-j", "-4", "addr", "show", "dev", device])
+        .flatMap(item => item.addr_info ?? []).filter(item => item.family === "inet");
+      const [, prefix] = target.attachment.staticAddress?.split("/") ?? [];
+      return policy.fullyConfigured && addresses.length === 1 &&
+        addresses[0].local === claim.source &&
+        addresses[0].prefixlen === Number(prefix);
+    });
   if (!adopted) {
     let created = false;
     try {
