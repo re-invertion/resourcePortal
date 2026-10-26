@@ -7,9 +7,9 @@ import {
   DHCP_RESTART_INTERVAL_MS, DHCP_PROOF_LOG_INTERVAL_MS,
 } from "./remote-lan-dhcp-recovery";
 
-const live = { exitCode: null, signalCode: null, killed: false };
-const exited = { exitCode: 1, signalCode: null, killed: false };
-const signaled = { exitCode: null, signalCode: "SIGTERM", killed: false };
+const live = { pid: 42, exitCode: null, signalCode: null, killed: false };
+const exited = { pid: 42, exitCode: 1, signalCode: null, killed: false };
+const signaled = { pid: 42, exitCode: null, signalCode: "SIGTERM", killed: false };
 
 describe("LAN DHCP process recovery", () => {
   it("does not recycle a running DHCP process or a Static attachment", () => {
@@ -19,7 +19,7 @@ describe("LAN DHCP process recovery", () => {
   });
 
   it("self-heals an exited, signaled, killed or absent DHCP client", () => {
-    for (const child of [exited, signaled, {...live, killed: true}, null]) {
+    for (const child of [exited, signaled, {...live, killed: true}, {...live, pid: undefined}, null]) {
       expect(dhcpClientStopped(child)).toBe(true);
       expect(shouldRestartDhcp("DHCP", child, 1_000, 21_000)).toBe(true);
     }
