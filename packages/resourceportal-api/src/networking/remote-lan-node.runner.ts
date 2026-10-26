@@ -86,9 +86,25 @@ function staticClaim(target:NodeLanTarget,device:string):StaticRoutingClaim {
     throw new Error("Static cleanup cannot infer trusted source/gateway");
   return {source:addr.split("/")[0],gateway,device};
 }
+/**
+ * Linux FIB table 20015 does not exist until the first Static route is
+ * inserted. Only this exact iproute2 ENOENT diagnostic means empty table.
+ * Never hide EACCES, other netlink errors, or unexpected command output.
+ */
+function staticTableRoutes(pid:number): string {
+  const result=spawnSync("nsenter", [
+    "--net="+namespacePath(pid),"--","ip","-4","route","show","table","20015",
+  ], {encoding:"utf8",timeout:12_000});
+  if(result.status===0) return (result.stdout??"").trim();
+  if(result.status===2 && !(result.stdout??"").trim() &&
+      (result.stderr??"").trim()==="Error: ipv4: FIB table does not exist. Dump terminated.")
+    return "";
+  throw new Error("Static LAN route inspection failed: " +
+    (result.stderr || result.error?.message || "exit "+result.status));
+}
 function currentStaticClaim(pid:number,claim:StaticRoutingClaim) {
   const rules=nsrun(pid,["-4","rule","show"]);
-  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  const routes=staticTableRoutes(pid);
   return inspectStaticRoutingClaim(claim,rules,routes);
 }
 function removeStaticClaim(pid:number,claim:StaticRoutingClaim) {
@@ -103,7 +119,7 @@ function removeStaticClaim(pid:number,claim:StaticRoutingClaim) {
  */
 function cleanupOrphanStaticPolicy(pid:number,device:string) {
   const rules=nsrun(pid,["-4","rule","show"]);
-  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  const routes=staticTableRoutes(pid);
   const lines=rules.split(/\r?\n/).map(x=>x.trim());
   const pref=lines.filter(line=>/^18015:/.test(line));
   if(!pref.length && !routes.trim()) return;
