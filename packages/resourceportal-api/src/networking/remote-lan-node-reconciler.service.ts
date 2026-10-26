@@ -34,7 +34,11 @@ export class RemoteLanNodeReconcilerService {
     return (result.stdout ?? "").trim();
   }
 
-  private taskGatewayIp(gateId: string, networkName: string, overlayCidr: string): string {
+  protected async pauseForGatewayTaskChange(): Promise<void> {
+    await new Promise<void>(resolve => setTimeout(resolve, 1_000));
+  }
+
+  private async taskGatewayIp(gateId: string, networkName: string, overlayCidr: string): Promise<string> {
     const network = parseIpv4Cidr(overlayCidr);
     if (!network || !/^rp-network-[0-9a-f-]{36}$/i.test(networkName))
       throw new Error("Invalid tenant overlay identity");
@@ -43,29 +47,54 @@ export class RemoteLanNodeReconcilerService {
     if (!/^[a-z0-9]{12,64}$/i.test(dockerNetworkId))
       throw new Error("Missing Docker network identity");
     const serviceName = gateStackName(gateId) + "_gateway";
-    const taskIds = this.docker(["service", "ps", "-q", "--no-trunc",
-      "--filter", "desired-state=running", serviceName]).split(/\s+/).filter(Boolean);
-    const valid: string[] = [];
-    for(const id of taskIds) {
-      // Docker Swarm task IDs are base36-style IDs, unlike Docker object hashes.
-      if (!/^[a-z0-9]{12,64}$/i.test(id)) throw new Error("Untrusted Gate Swarm task ID");
-      const task = JSON.parse(this.docker(["inspect", "--type", "task", id, "--format", "{{json .}}"])) as {
-        Status?: { State?: string };
-        NetworksAttachments?: Array<{ Network?: { ID?: string }; Addresses?: string[] }>;
-      };
-      if (task.Status?.State !== "running") continue;
-      const matches = (task.NetworksAttachments ?? [])
-        .filter(item => item.Network?.ID === dockerNetworkId)
-        .flatMap(item => item.Addresses ?? [])
-        .map(address => address.split("/")[0])
-        .filter(address => containsIpv4(network, address) &&
-          parseIpv4Cidr(address + "/32")?.network !== network.network &&
-          parseIpv4Cidr(address + "/32")?.network !== network.broadcast);
-      valid.push(...matches);
+    // Swarm's replacement task can briefly be absent from the overlay even
+    // after desired-state=running. Re-observe a bounded number of times; a
+    // missing/ambiguous address never authorizes a stale or guessed endpoint.
+    const observations: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const taskIds = this.docker(["service", "ps", "-q", "--no-trunc",
+        "--filter", "desired-state=running", serviceName]).split(/\\s+/).filter(Boolean);
+      const valid: string[] = [];
+      let running = 0;
+      let disappeared = 0;
+      for (const id of taskIds) {
+        if (!/^[a-z0-9]{12,64}$/i.test(id)) throw new Error("Untrusted Gate Swarm task ID");
+        let task: {
+          Status?: { State?: string };
+          NetworksAttachments?: Array<{ Network?: { ID?: string }; Addresses?: string[] }>;
+        };
+        try {
+          task = JSON.parse(this.docker(["inspect", "--type", "task", id,
+            "--format", "{{json .}}"])) as typeof task;
+        } catch (error) {
+          // Tasks can disappear between service ps and inspect during a
+          // legitimate rolling update; every other Docker error is fatal.
+          if (!/(?:no such (?:task|object)|task .* not found)/i.test(String(error))) throw error;
+          disappeared++;
+          continue;
+        }
+        if (task.Status?.State !== "running") continue;
+        running++;
+        const matches = (task.NetworksAttachments ?? [])
+          .filter(item => item.Network?.ID === dockerNetworkId)
+          .flatMap(item => item.Addresses ?? [])
+          .map(address => address.split("/")[0])
+          .filter(address => containsIpv4(network, address) &&
+            parseIpv4Cidr(address + "/32")?.network !== network.network &&
+            parseIpv4Cidr(address + "/32")?.network !== network.broadcast);
+        valid.push(...matches);
+      }
+      if (valid.length === 1) return valid[0];
+      observations.push("attempt=" + (attempt + 1) +
+        ",tasks=" + taskIds.length + ",running=" + running +
+        ",addresses=" + valid.length + ",disappeared=" + disappeared);
+      if (attempt < 2) await this.pauseForGatewayTaskChange();
     }
-    if (valid.length !== 1)
-      throw new Error("LAN policy requires exactly one running Gate task address on the overlay");
-    return valid[0];
+    // Diagnostic counts identify the transient failure mode without
+    // publishing stale network identity, secret keys or unverified L2 grants.
+    throw new Error("LAN policy requires exactly one running Gate task address on the overlay (" +
+      observations.join("; ") + ")");
+
   }
 
   /**
@@ -163,7 +192,7 @@ export class RemoteLanNodeReconcilerService {
       }
       const key = row.gateId + ":" + row.networkId;
       if (!gatewayIp.has(key)) {
-        gatewayIp.set(key, this.taskGatewayIp(row.gateId,
+        gatewayIp.set(key, await this.taskGatewayIp(row.gateId,
           row.network.swarmNetworkName, row.network.overlayCidr));
       }
       records.push({
