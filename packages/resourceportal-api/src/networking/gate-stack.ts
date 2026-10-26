@@ -63,6 +63,7 @@ export function renderGateStack(input: GateStackInput) {
         image: input.image,
         user: "0",
         cap_add: ["NET_ADMIN","NET_RAW"],
+        sysctls: { "net.ipv4.ip_forward": "0" },
         command: ["node","dist/src/networking/remote-lan-gateway.runner.js"],
         environment: {
           RP_REMOTE_LAN_GATEWAY_ENABLED: input.remoteLanAttachments.length ? "true" : "false",
