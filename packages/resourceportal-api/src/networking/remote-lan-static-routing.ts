@@ -41,3 +41,16 @@ export function inspectStaticRoutingClaim(
     ]
   };
 }
+
+/** Only the exact iproute2 missing-table diagnostic represents a clean,
+ * never-created routing table. All other failures must abort revocation. */
+export function parseStaticTableRead(
+  status: number | null, stdout: string, stderr: string,
+): string {
+  if(status===0) return stdout.trim();
+  if(status===2 && !stdout.trim() &&
+      stderr.trim()==="Error: ipv4: FIB table does not exist. Dump terminated.")
+    return "";
+  throw new Error("Static LAN route inspection failed: " +
+    (stderr.trim() || "exit "+status));
+}
