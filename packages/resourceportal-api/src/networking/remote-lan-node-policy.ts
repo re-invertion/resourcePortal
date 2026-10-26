@@ -161,7 +161,7 @@ export function sameNodeLanTarget(previous: NodeLanTarget, desired: NodeLanTarge
  */
 export function revokeNodeLanEntries<T extends {
   target: NodeLanTarget;
-  dhcp: { killed: boolean; pid?: number; exitCode: number | null } | null;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null; signalCode?: string | null } | null;
 }>(
   managed: Map<string, T>,
   desired: ReadonlyMap<string, NodeLanTarget>,
@@ -172,7 +172,8 @@ export function revokeNodeLanEntries<T extends {
     const updated = desired.get(key);
     if (updated && sameNodeLanTarget(entry.target, updated) &&
         (entry.dhcp ? (!entry.dhcp.killed &&
-          entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null) :
+          entry.dhcp.pid !== undefined && entry.dhcp.exitCode === null &&
+          entry.dhcp.signalCode == null) :
           entry.target.attachment.addressMode === "Static")) continue;
     try {
       detach(entry);
@@ -312,7 +313,7 @@ export function sweepNodeLanOrphans(
 export function revokeNodeLanState<T extends {
   target: NodeLanTarget;
   device: string;
-  dhcp: { killed: boolean; pid?: number; exitCode: number | null } | null;
+  dhcp: { killed: boolean; pid?: number; exitCode: number | null; signalCode?: string | null } | null;
 }>(
   managed: Map<string, T>,
   desired: ReadonlyMap<string, NodeLanTarget>,

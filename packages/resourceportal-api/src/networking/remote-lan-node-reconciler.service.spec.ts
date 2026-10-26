@@ -31,17 +31,30 @@ class Harness extends RemoteLanNodeReconcilerService {
   grantCapabilities=true;
   taskNetwork=networkDocker;
   currentTask=true;
+  taskAttempts=0;
+  taskReadyAfter=0;
+  taskCopies=1;
+  taskDisappearsOnce=false;
+  protected override pauseForGatewayTaskChange(): Promise<void> { return Promise.resolve(); }
   protected override docker(args: string[]): string {
     this.calls.push(args);
     const query=args.slice(0,2).join(" ");
     if (query==="network inspect") return this.taskNetwork;
     if (query==="service ps") {
-      return args.includes("--format") ? "Running 20 seconds ago" : networkTask;
+      if (args.includes("--format")) return "Running 20 seconds ago";
+      this.taskAttempts++;
+      return Array.from({length:this.taskCopies}, (_,i)=>i===0 ? networkTask : "z".repeat(25)).join("\n");
     }
-    if (query==="inspect --type") return JSON.stringify({
-      Status:{State:this.currentTask?"running":"failed"},
+    if (query==="inspect --type") {
+      if (this.taskDisappearsOnce) {
+        this.taskDisappearsOnce=false;
+        throw new Error("No such task");
+      }
+      return JSON.stringify({
+      Status:{State:this.currentTask && this.taskAttempts>this.taskReadyAfter?"running":"failed"},
       NetworksAttachments:[{Network:{ID:networkDocker},Addresses:["10.200.42.20/24"]}],
-    });
+      });
+    }
     if (query==="service inspect"){
       if(!this.servicePresent) throw new Error(this.serviceError);
       return JSON.stringify(args.at(-1)?.includes("CapabilityAdd") ?
@@ -172,6 +185,33 @@ describe("Remote LAN node policy rollout",()=>{
     const {service}=fixture("true",[{...row,gate:{...row.gate,agentVersion:"untrusted"}}]);
     service.servicePresent=false;
     await expect(service.reconcile()).rejects.toThrow(/revocation was not confirmed/);
+  });
+  it("recovers a Gate overlay task that becomes running during a bounded re-observation",async()=>{
+    const {service}=fixture();
+    service.taskReadyAfter=1;
+    const result=await service.reconcile();
+    expect(result).toMatchObject({attachments:1,disabled:false});
+    expect(service.taskAttempts).toBe(2);
+    expect(service.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=true");
+  });
+  it("recovers if the Gate task disappears between service ps and inspect",async()=>{
+    const {service}=fixture();
+    service.taskDisappearsOnce=true;
+    const result=await service.reconcile();
+    expect(result).toMatchObject({attachments:1});
+    expect(service.taskAttempts).toBe(2);
+  });
+  it("does not publish a guessed Gateway IP when tasks stay absent or ambiguous",async()=>{
+    const missing=fixture().service;
+    missing.currentTask=false;
+    await expect(missing.reconcile()).rejects.toThrow(/tasks=1,running=0,addresses=0/);
+    expect(missing.taskAttempts).toBe(3);
+    expect(missing.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
+    const ambiguous=fixture().service;
+    ambiguous.taskCopies=2;
+    await expect(ambiguous.reconcile()).rejects.toThrow(/tasks=2,running=2,addresses=2/);
+    expect(ambiguous.taskAttempts).toBe(3);
+    expect(ambiguous.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
   });
   it("fails closed for missing, duplicate or foreign Gate task IP",async()=>{
     const {service}=fixture();
