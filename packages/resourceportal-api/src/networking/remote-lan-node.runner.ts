@@ -11,7 +11,8 @@ import {inspectStaticRoutingClaim,readRpStaticTable,type StaticRoutingClaim} fro
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
-  nodeLanCommands, staticNodeLanCommands, selectNodeLanTargets,
+  nodeLanCommands, nodeLanTransportMatches, prepareNodeLanLinkForGrant,
+  staticNodeLanCommands, selectNodeLanTargets,
   validateNodeLanSnapshot,
   type TenantContainer, type NodeLanTarget, type NodeLanLink,
 } from "./remote-lan-node-policy";
@@ -138,9 +139,14 @@ function attach(target: NodeLanTarget): Running {
   const commands = nodeLanCommands(target, interfaceName);
   const device = commands[0][1][2];
   const before = links(target.pid).find(link => link.ifname === device);
-  if (before) {
-    assertOwnedNodeLanLink(before, device, target.attachment.attachmentId);
-  } else {
+  // A service rollout changes the Gateway task IP and restarts this node
+  // agent, leaving an RP-aliased GRETAP in the persistent HA namespace.
+  // Do not adopt that alias with its old remote peer. An existing DHCP link
+  // is also rebuilt to avoid trusting the previous agent's lease/proof.
+  const adopted = prepareNodeLanLinkForGrant(target, device, before,
+    () => cleanupOrphanStaticPolicy(target.pid, device),
+    () => nsrun(target.pid, ["link", "delete", device]));
+  if (!adopted) {
     let created = false;
     try {
       for (const [, args] of commands) {
@@ -195,6 +201,12 @@ function attach(target: NodeLanTarget): Running {
     }
     return {target,device,dhcp:null,dockerDefault};
   }
+  // A pre-existing proof file was written by a previous node-agent task.
+  // Require a fresh, authenticated DHCP ACK from this process.
+  try { unlinkSync("/run/resourceportal-remote-lan/" + device); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   const dhcp = spawn("nsenter", [
     "--net=" + namespacePath(target.pid), "--", "/bin/busybox", "udhcpc",
     // Keep retrying if the L2 tunnel or customer DHCP server comes online
@@ -239,8 +251,7 @@ function observeNodeProof(entry:Running):NodeLanProof {
     mode:targetMode,
     address:addresses[0].local,prefix:addresses[0].prefixlen!,
     appLinkOwned:true,appLinkUp:link.flags?.includes("UP")===true,
-    overlayPeerMatched:link.linkinfo?.info_data?.local===target.tunnel.appOverlayIp&&
-      link.linkinfo?.info_data?.remote===target.tunnel.gatewayOverlayIp,
+    overlayPeerMatched:nodeLanTransportMatches(link, target),
     dockerDefaultPreserved:nsrun(target.pid,["-4","route","show","default"])===entry.dockerDefault,
   };
   if(targetMode==="Static") {
@@ -324,6 +335,12 @@ function reconcile() {
   }, attach, lastDhcpRestartAt, Date.now(), attachmentId => {
     logger.warn("Stopped LAN DHCP client for attachment " + attachmentId +
       "; reattachment delayed to prevent restart loops");
+  }, entry => {
+    const current = links(entry.target.pid).filter(link => link.ifname === entry.device);
+    if (current.length === 0) return false;
+    if (current.length !== 1) throw new Error("Ambiguous RP LAN endpoint in tenant namespace");
+    assertOwnedNodeLanLink(current[0], entry.device, entry.target.attachment.attachmentId);
+    return nodeLanTransportMatches(current[0], entry.target);
   });
   if (denied) throw denied instanceof Error ? denied : new Error("Invalid node LAN policy");
   // Docker Swarm service logs come from a privileged, RP-owned node agent,
