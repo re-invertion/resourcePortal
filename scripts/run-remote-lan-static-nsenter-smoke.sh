@@ -32,7 +32,7 @@ const state=()=>inspectStaticRoutingClaim(claim,ip('-4','rule','show').stdout,ro
 const initial=ip('-4','route','show','table','20015');
 assert.equal(initial.status,2);
 assert.equal(initial.stdout,'');
-assert.match(initial.stderr,/^Error: ipv4: FIB table does not exist\\.\\s*Dump terminated\\.?\\s*$/);
+assert.match(initial.stderr,/^Error: ipv4: FIB table does not exist\.\s*Dump terminated\.?\s*$/);
 assert.equal(routes(),'');
 assert.equal(state().fullyConfigured,false);
 must('link','add',claim.device,'type','dummy');
