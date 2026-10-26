@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {inspectStaticRoutingClaim} from "./remote-lan-static-routing";
+import {inspectStaticRoutingClaim,readRpStaticTable} from "./remote-lan-static-routing";
 
 const config={source:"192.168.50.44",gateway:"192.168.50.254",device:"rp-a-1234abcd"};
 const rule="0: from all lookup local\n18015: from 192.168.50.44 lookup 20015\n32766: from all lookup main";
@@ -38,5 +38,43 @@ describe("app-scoped static routing ownership and safe revocation",()=>{
   it("requires RP-owned interface before emitting any destructive action",()=>{
     expect(()=>inspectStaticRoutingClaim({...config,device:"eth0"},rule,route)).toThrow();
     expect(()=>inspectStaticRoutingClaim({...config,source:"1.1.1.1;rm"},rule,route)).toThrow();
+  });
+});
+
+
+describe("Static table 20015 read in tenant netns",()=>{
+  const missing="Error: ipv4: FIB table does not exist.\nDump terminated.";
+  const read=(status:number,stderr="",stdout="")=>readRpStaticTable(args=>{
+    expect(args).toEqual(["-4","route","show","table","20015"]);
+    return {status,stderr,stdout};
+  });
+  it("first Static attach recognizes the precise missing empty FIB table",()=>{
+    expect(read(2,missing)).toBe("");
+    expect(inspectStaticRoutingClaim(config,"0: from all lookup local",read(2,missing))
+      .fullyConfigured).toBe(false);
+  });
+  it("recovery after restart removes an RP-owned rule with an absent table",()=>{
+    const state=inspectStaticRoutingClaim(config,rule,read(2,missing));
+    expect(state.cleanup).toEqual([
+      ["-4","rule","del","pref","18015","from","192.168.50.44/32","lookup","20015"],
+    ]);
+  });
+  it("DHCP to Static transition accepts an empty snapshot but never foreign rules",()=>{
+    const empty=read(2,missing);
+    expect(inspectStaticRoutingClaim(config,"",empty).cleanup).toEqual([]);
+    expect(()=>inspectStaticRoutingClaim(config,
+      rule.replace("192.168.50.44","192.168.50.99"),empty)).toThrow(/different source/);
+    expect(()=>inspectStaticRoutingClaim(config,rule,
+      read(0,"","default via 192.168.50.254 dev eth0"))).toThrow(/foreign/);
+  });
+  it("does not reinterpret permissions, unknown stderr or missing process as absence",()=>{
+    for(const [status,stderr] of [
+      [1,"RTNETLINK answers: Operation not permitted"],
+      [2,"Error: ipv4: FIB table does not exist.\nUnexpected output."],
+      [2,"Permission denied"],[0,"Permission denied"],[1,missing],[2,""],
+    ] as const) expect(()=>read(status,stderr)).toThrow(/inspection failed/);
+    expect(()=>readRpStaticTable(()=>({status:null,error:new Error("spawn EACCES")})))
+      .toThrow(/EACCES/);
+    expect(read(0,"",route)).toBe(route);
   });
 });

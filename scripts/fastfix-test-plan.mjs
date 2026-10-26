@@ -94,6 +94,7 @@ const commands = {
     ["bash", "test/installer/test-host-runtime.sh"],
     ["python3", "test/installer/test-remote-lan-gate-agent.py"],
     ["python3", "test/installer/test-remote-lan-dhcp.py"],
+    ["bash", "-n", "scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"],
     ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_gate*.py", "-v"],
   ],
   "web-console": [
@@ -328,6 +329,8 @@ const classifiers = [
 
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^scripts\/run-remote-lan-l2-dhcp-smoke\.sh$/, ["networking", "workflow"]],
+  // Running Gateway sysctl in real Swarm is networking and release-critical.
+  [/^scripts\/run-remote-lan-gateway-sysctl-swarm-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
   [/^\.github\/workflows\//, ["workflow"]],
