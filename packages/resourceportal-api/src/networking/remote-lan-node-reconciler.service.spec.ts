@@ -42,7 +42,7 @@ class Harness extends RemoteLanNodeReconcilerService {
     if (query==="service ps") {
       if (args.includes("--format")) return "Running 20 seconds ago";
       this.taskAttempts++;
-      return Array.from({length:this.taskCopies}, (_,i)=>i===0 ? networkTask : "z".repeat(25)).join("\\n");
+      return Array.from({length:this.taskCopies}, (_,i)=>i===0 ? networkTask : "z".repeat(25)).join("\n");
     }
     if (query==="inspect --type") return JSON.stringify({
       Status:{State:this.currentTask && this.taskAttempts>this.taskReadyAfter?"running":"failed"},
