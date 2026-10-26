@@ -7,6 +7,7 @@ import { revokeNodeLanState, sameNodeLanTarget, type NodeLanLink, type NodeLanTa
  * and customer's DHCP server become reachable.
  */
 export type DhcpChildState = {
+  pid?: number;
   exitCode: number | null;
   signalCode: string | null;
   killed: boolean;
@@ -16,7 +17,7 @@ export const DHCP_RESTART_INTERVAL_MS = 20_000;
 export const DHCP_PROOF_LOG_INTERVAL_MS = 30_000;
 
 export function dhcpClientStopped(client: DhcpChildState | null): boolean {
-  return client === null || client.killed ||
+  return client === null || client.killed || client.pid === undefined ||
     client.exitCode !== null || client.signalCode !== null;
 }
 
