@@ -7,7 +7,7 @@ import {
   dhcpClientStopped,
   reconcileNodeLanDhcp,
 } from "./remote-lan-dhcp-recovery";
-import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
+import {inspectStaticRoutingClaim,parseStaticTableRead,type StaticRoutingClaim} from "./remote-lan-static-routing";
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
@@ -95,12 +95,8 @@ function staticTableRoutes(pid:number): string {
   const result=spawnSync("nsenter", [
     "--net="+namespacePath(pid),"--","ip","-4","route","show","table","20015",
   ], {encoding:"utf8",timeout:12_000});
-  if(result.status===0) return (result.stdout??"").trim();
-  if(result.status===2 && !(result.stdout??"").trim() &&
-      (result.stderr??"").trim()==="Error: ipv4: FIB table does not exist. Dump terminated.")
-    return "";
-  throw new Error("Static LAN route inspection failed: " +
-    (result.stderr || result.error?.message || "exit "+result.status));
+  if(result.error) throw new Error("Static LAN route inspection failed: "+result.error.message);
+  return parseStaticTableRead(result.status, result.stdout??"", result.stderr??"");
 }
 function currentStaticClaim(pid:number,claim:StaticRoutingClaim) {
   const rules=nsrun(pid,["-4","rule","show"]);
