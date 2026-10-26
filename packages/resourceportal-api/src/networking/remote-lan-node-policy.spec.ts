@@ -328,7 +328,7 @@ describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", ()
     const events: string[] = [];
     const reused = prepareNodeLanLinkForGrant(dhcp, device, link,
       () => events.push("cleanup:rp-static-policy"),
-      () => events.push("delete:" + device));
+      () => events.push("delete:" + device), () => true);
     expect(reused).toBe(false);
     expect(nodeLanTransportMatches(link, dhcp)).toBe(false);
     expect(events).toEqual(["cleanup:rp-static-policy", "delete:" + device]);
@@ -341,10 +341,12 @@ describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", ()
     } } };
     const changed: string[] = [];
     expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
-      () => changed.push("static:cleanup"), () => changed.push("static:delete"))).toBe(true);
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => true)).toBe(true);
     expect(changed).toEqual([]);
     expect(prepareNodeLanLinkForGrant(staticTarget, device, link,
-      () => changed.push("static:cleanup"), () => changed.push("static:delete"))).toBe(false);
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => true)).toBe(false);
     expect(changed).toEqual(["static:cleanup", "static:delete"]);
   });
 
@@ -354,12 +356,36 @@ describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", ()
     } } };
     const changed: string[] = [];
     expect(prepareNodeLanLinkForGrant(dhcp, device, correct,
-      () => changed.push("cleanup"), () => changed.push("delete"))).toBe(false);
+      () => changed.push("cleanup"), () => changed.push("delete"),
+      () => true)).toBe(false);
     expect(changed).toEqual(["cleanup", "delete"]);
     const switchedStatic = { ...dhcp, attachment: staticPolicy };
     expect(sameNodeLanTarget(dhcp, switchedStatic)).toBe(false);
+    // Same tunnel does not prove that the old DHCP address was replaced.
+    // Without an exact Static address AND owned source route, discard it.
     expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
-      () => changed.push("unexpected"), () => changed.push("unexpected"))).toBe(true);
+      () => changed.push("static:cleanup"), () => changed.push("static:delete"),
+      () => false)).toBe(false);
+    expect(changed).toEqual(["cleanup","delete","static:cleanup","static:delete"]);
+  });
+
+
+  it("refuses Static adoption when a previous DHCP address or partial route remains", () => {
+    const correct = { ...link, linkinfo: { ...link.linkinfo, info_data: {
+      local: staticTarget.tunnel.appOverlayIp,
+      remote: staticTarget.tunnel.gatewayOverlayIp,
+    } } };
+    const operations: string[] = [];
+    const checked = () => {
+      operations.push("verify-static-address-and-route");
+      return false; // Other IPv4 address or missing routing table.
+    };
+    expect(prepareNodeLanLinkForGrant(staticTarget, device, correct,
+      () => operations.push("cleanup-owned-policy"),
+      () => operations.push("delete-owned-link"), checked)).toBe(false);
+    expect(operations).toEqual([
+      "verify-static-address-and-route", "cleanup-owned-policy", "delete-owned-link",
+    ]);
   });
 
   it("never removes foreign, bridged or wrong-alias links, even when remote peer is stale", () => {
@@ -372,7 +398,8 @@ describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", ()
     for (const alien of cases) {
       const events: string[] = [];
       expect(() => prepareNodeLanLinkForGrant(dhcp, device, alien,
-        () => events.push("cleanup"), () => events.push("delete"))).toThrow(/foreign|bridged|alias/);
+        () => events.push("cleanup"), () => events.push("delete"),
+        () => true)).toThrow(/foreign|bridged|alias/);
       expect(events).toEqual([]);
     }
   });
@@ -382,7 +409,7 @@ describe("Gateway Swarm task IP rotation and persistent app GRETAP adoption", ()
     expect(() => prepareNodeLanLinkForGrant(staticTarget, device, link, () => {
       events.push("cleanup");
       throw new Error("foreign source routing owner");
-    }, () => events.push("delete"))).toThrow(/foreign source/);
+    }, () => events.push("delete"), () => false)).toThrow(/foreign source/);
     expect(events).toEqual(["cleanup"]);
   });
 
