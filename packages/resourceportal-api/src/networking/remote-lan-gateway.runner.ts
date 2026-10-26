@@ -50,7 +50,11 @@ function tasks(serviceName: string): string[] {
 function setupWireguard(config: GateRuntimeConfig) {
   // An L2-only WireGuard underlay has NO customer-LAN routes, broad peer
   // AllowedIPs or namespace IPv4 forwarding. The sole peer is the Gate /32.
-  run("sysctl", ["-w", "net.ipv4.ip_forward=0"]);
+  // Swarm provisions namespace sysctls before task startup. /proc/sys is
+  // read-only at runtime: verify zero forwarding rather than writing it.
+  const forwarding = run("sysctl", ["-n", "net.ipv4.ip_forward"]);
+  if (forwarding.stdout !== "0")
+    throw new Error("Remote LAN Gateway requires disabled IPv4 forwarding");
   run("ip", ["link", "del", WG], true);
   run("ip", ["link", "add", WG, "type", "wireguard"]);
   run("ip", ["address", "add", config.serverTunnelAddress, "dev", WG]);
