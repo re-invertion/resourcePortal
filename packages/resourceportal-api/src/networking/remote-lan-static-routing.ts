@@ -41,3 +41,29 @@ export function inspectStaticRoutingClaim(
     ]
   };
 }
+
+
+type TableReadResult = {
+  status: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  error?: Error | undefined;
+};
+
+/** Check only the dedicated RP routing table. A fresh namespace has no FIB
+ * table 20015, so iproute2 reports ENOENT (status 2) instead of empty stdout.
+ * Every other status/stderr (including EPERM/EACCES) is a hard failure.
+ */
+export function readRpStaticTable(
+  execute: (args: readonly string[]) => TableReadResult,
+): string {
+  const result = execute(["-4", "route", "show", "table", table]);
+  const stdout = (result.stdout ?? "").trim();
+  const stderr = (result.stderr ?? "").trim();
+  if (!result.error && result.status === 0 && !stderr) return stdout;
+  if (!result.error && result.status === 2 && !stdout &&
+      /^Error: ipv4: FIB table does not exist\.\s*Dump terminated\.$/.test(stderr))
+    return "";
+  throw new Error("RP static routing table 20015 inspection failed: " +
+    (result.error?.message || stderr || "exit " + String(result.status)));
+}

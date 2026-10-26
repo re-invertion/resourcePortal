@@ -170,7 +170,7 @@ export class GateRuntimeReconcilerService {
             throw new Error(deployed.stderr || deployed.stdout ||
               "Unable to deploy Remote LAN Gateway runtime");
         }
-        await this.ensureGatewayCapabilities(gate.id);
+        await this.ensureGatewayCapabilities(gate.id, true);
         await this.prisma.resourcePortalGate.update({
           where: { id: gate.id }, data: { status: "Ready", lastError: null },
         });
@@ -221,7 +221,7 @@ export class GateRuntimeReconcilerService {
     };
   }
 
-  private async ensureGatewayCapabilities(gateId: string) {
+  private async ensureGatewayCapabilities(gateId: string, enforceForwarding = false) {
     const name = `${gateStackName(gateId)}_gateway`;
     const required = ["NET_ADMIN", "NET_RAW"];
     const inspectArgs = [
@@ -230,36 +230,69 @@ export class GateRuntimeReconcilerService {
     ];
     const before = await this.runDocker(inspectArgs);
     if (before.exitCode !== 0) {
-      throw new Error(`Cannot inspect Site VPN gateway capabilities: ${before.stderr}`);
+      throw new Error(`Cannot inspect Remote LAN Gateway capabilities: ${before.stderr}`);
     }
     let enabled: unknown;
     try {
       enabled = JSON.parse(before.stdout || "null") as unknown;
     } catch {
-      throw new Error("Malformed Site VPN gateway capability inspection");
+      throw new Error("Malformed Remote LAN Gateway capability inspection");
     }
     const current = normalizeSwarmCapabilityAdd(enabled);
     const missing = required.filter(cap => !current.includes(cap));
-    if (missing.length === 0) return;
+    // Apply both missing Linux caps and task-scoped forwarding in ONE Swarm
+    // service update. Two blocking updates could deadlock: a task requiring
+    // the other missing condition may fail before --detach=false converges.
+    const needsForwarding = enforceForwarding &&
+      (await this.currentGatewayForwarding(gateId)) !== "0";
+    if (missing.length === 0 && !needsForwarding) return;
     const update = await this.runDocker([
       "service", "update", "--detach=false",
-      ...missing.flatMap(cap => ["--cap-add", cap]), name,
+      ...missing.flatMap(cap => ["--cap-add", cap]),
+      ...(needsForwarding ? ["--sysctl-add", "net.ipv4.ip_forward=0"] : []),
+      name,
     ]);
     if (update.exitCode !== 0) {
-      throw new Error(`Cannot grant Site VPN gateway capabilities: ${update.stderr || update.stdout}`);
+      throw new Error(`Cannot reconcile Remote LAN Gateway capabilities and forwarding isolation: ${update.stderr || update.stdout}`);
     }
     const after = await this.runDocker(inspectArgs);
-    if (after.exitCode !== 0) throw new Error("Cannot verify Site VPN gateway capabilities");
+    if (after.exitCode !== 0) throw new Error("Cannot verify Remote LAN Gateway capabilities");
     let actual: unknown;
     try {
       actual = JSON.parse(after.stdout || "null") as unknown;
     } catch {
-      throw new Error("Malformed Site VPN gateway capability verification");
+      throw new Error("Malformed Remote LAN Gateway capability verification");
     }
     const verified = normalizeSwarmCapabilityAdd(actual);
     if (!required.every(cap => verified.includes(cap))) {
-      throw new Error("Site VPN gateway capabilities were not applied to Swarm service");
+      throw new Error("Remote LAN Gateway capabilities were not applied to Swarm service");
     }
+    if (enforceForwarding && (await this.currentGatewayForwarding(gateId)) !== "0")
+      throw new Error("Remote LAN Gateway forwarding isolation was not applied to Swarm service");
+  }
+
+  /** Task-scoped sysctl is applied atomically with missing Linux caps, never
+   * by writing /proc/sys or changing forwarding in the host namespace.
+   */
+  private async currentGatewayForwarding(gateId: string): Promise<string | undefined> {
+    const name = gateStackName(gateId) + "_gateway";
+    const result = await this.runDocker(["service", "inspect", name, "--format",
+      "{{json .Spec.TaskTemplate.ContainerSpec.Sysctls}}"]);
+    if (result.exitCode !== 0)
+      throw new Error("Cannot inspect Remote LAN Gateway namespace sysctls: " +
+        (result.stderr || result.stdout));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result.stdout || "null") as unknown;
+    } catch {
+      throw new Error("Malformed Remote LAN Gateway sysctl inspection");
+    }
+    if (parsed === null) return undefined;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+        Object.entries(parsed).some(([k,v]) =>
+          !/^[a-z0-9_.]+$/.test(k) || typeof v !== "string"))
+      throw new Error("Malformed Remote LAN Gateway sysctl inspection");
+    return (parsed as Record<string,string>)["net.ipv4.ip_forward"];
   }
 
   private async currentGateDigest(gateId: string) {

@@ -7,7 +7,7 @@ import {
   dhcpClientStopped,
   reconcileNodeLanDhcp,
 } from "./remote-lan-dhcp-recovery";
-import {inspectStaticRoutingClaim,type StaticRoutingClaim} from "./remote-lan-static-routing";
+import {inspectStaticRoutingClaim,readRpStaticTable,type StaticRoutingClaim} from "./remote-lan-static-routing";
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
@@ -86,9 +86,14 @@ function staticClaim(target:NodeLanTarget,device:string):StaticRoutingClaim {
     throw new Error("Static cleanup cannot infer trusted source/gateway");
   return {source:addr.split("/")[0],gateway,device};
 }
+function staticRoutes(pid: number): string {
+  return readRpStaticTable(args => spawnSync("nsenter", [
+    "--net=" + namespacePath(pid), "--", "ip", ...args,
+  ], { encoding: "utf8", timeout: 12_000 }));
+}
 function currentStaticClaim(pid:number,claim:StaticRoutingClaim) {
   const rules=nsrun(pid,["-4","rule","show"]);
-  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  const routes=staticRoutes(pid);
   return inspectStaticRoutingClaim(claim,rules,routes);
 }
 function removeStaticClaim(pid:number,claim:StaticRoutingClaim) {
@@ -103,7 +108,7 @@ function removeStaticClaim(pid:number,claim:StaticRoutingClaim) {
  */
 function cleanupOrphanStaticPolicy(pid:number,device:string) {
   const rules=nsrun(pid,["-4","rule","show"]);
-  const routes=nsrun(pid,["-4","route","show","table","20015"]);
+  const routes=staticRoutes(pid);
   const lines=rules.split(/\r?\n/).map(x=>x.trim());
   const pref=lines.filter(line=>/^18015:/.test(line));
   if(!pref.length && !routes.trim()) return;

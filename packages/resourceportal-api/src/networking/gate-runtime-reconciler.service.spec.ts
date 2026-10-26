@@ -11,6 +11,8 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
   readonly dockerCalls: Array<{ args: string[]; stdin?: string }> = [];
   readonly dockerResults: Array<{ exitCode: number; stdout: string; stderr: string }> = [];
   readonly capabilityResults: string[] = [];
+  sysctlValue: string | null = null;
+  applySysctlUpdate = true;
 
   protected override runDocker(args: string[], stdin?: string) {
     this.dockerCalls.push({ args, stdin });
@@ -18,6 +20,15 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
     if (args[0] === "service" && args[1] === "inspect" &&
         args.at(-1)?.includes("CapabilityAdd")) {
       return Promise.resolve({ exitCode: 0, stdout: this.capabilityResults.shift() ?? '["CAP_NET_ADMIN","CAP_NET_RAW"]', stderr: "" });
+    }
+    if (args[0] === "service" && args[1] === "inspect" &&
+        args.at(-1)?.includes("Sysctls"))
+      return Promise.resolve({exitCode:0,stdout:JSON.stringify(this.sysctlValue === null ? null :
+        {"net.ipv4.ip_forward":this.sysctlValue}),stderr:""});
+    if (args[0] === "service" && args[1] === "update" &&
+        args.includes("--sysctl-add")) {
+      if (this.applySysctlUpdate) this.sysctlValue="0";
+      return Promise.resolve({exitCode:0,stdout:"updated",stderr:""});
     }
     return Promise.resolve(
       this.dockerResults.shift() ?? { exitCode: 0, stdout: "", stderr: "" },
@@ -150,6 +161,66 @@ describe("Gate capability reconciliation", () => {
     service.capabilityResults.push('["NET_ADMIN"]', '["NET_ADMIN"]');
     const invoke = service as unknown as { ensureGatewayCapabilities(id: string): Promise<void> };
     await expect(invoke.ensureGatewayCapabilities(readyGate.id)).rejects.toThrow("not applied");
+  });
+});
+
+describe("Gate task network-namespace forwarding contract", () => {
+  const name="rp_gate_aaaaaaaa_aaaa_4aaa_8aaa_aaaaaaaaaaaa_gateway";
+  const call=(service:TestGateRuntimeReconcilerService)=>
+    (service as unknown as {
+      ensureGatewayCapabilities(id:string,enforceForwarding:boolean): Promise<void>;
+    }).ensureGatewayCapabilities(readyGate.id,true);
+
+  it("provisions the Swarm namespace sysctl without writing the host /proc/sys", async () => {
+    const {service}=fixture([]);
+    await call(service);
+    const updates=service.dockerCalls.filter(x=>x.args[0]==="service"&&x.args[1]==="update");
+    expect(updates.map(x=>x.args)).toEqual([[
+      "service","update","--detach=false","--sysctl-add","net.ipv4.ip_forward=0",name,
+    ]]);
+    expect(service.sysctlValue).toBe("0");
+    await call(service);
+    expect(service.dockerCalls.filter(x=>x.args[0]==="service"&&x.args[1]==="update"))
+      .toHaveLength(1);
+  });
+  it("atomically applies missing caps and forwarding to avoid restart-loop deadlock", async () => {
+    const {service}=fixture([]);
+    service.capabilityResults.push('["NET_ADMIN"]','["NET_ADMIN","NET_RAW"]');
+    await call(service);
+    const updates=service.dockerCalls.filter(x=>x.args[1]==="update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args).toEqual([
+      "service","update","--detach=false",
+      "--cap-add","NET_RAW","--sysctl-add","net.ipv4.ip_forward=0",name,
+    ]);
+  });
+  it("fails closed if Docker refuses to persist namespace isolation", async () => {
+    const {service}=fixture([]);
+    service.applySysctlUpdate=false;
+    await expect(call(service)).rejects.toThrow("not applied");
+    expect(service.dockerCalls.some(x=>x.args.includes("--sysctl-add"))).toBe(true);
+  });
+  it("blocks the actual Gate reconcile before Ready when isolation is absent", async () => {
+    const gate={...readyGate,agentVersion:"gate-l2-v1",remoteLanAttachments: [{
+      id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+      tenantId:readyGate.tenantId,gateId:readyGate.id,
+      networkId:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      singleAppId:"99999999-9999-4999-8999-999999999999",
+      macAddress:"02:aa:bb:cc:dd:ee",
+      singleApp:{name:"sensor",appGroupId:"88888888-8888-4888-8888-888888888888",
+        desiredReplicas:1,pendingDeletion:false,appGroup:{tenantId:readyGate.tenantId}},
+      network:{id:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        tenantId:readyGate.tenantId,swarmNetworkName:"rp-network-eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        overlayCidr:"10.200.40.0/24"},
+    }]};
+    const {service,prisma}=fixture([gate]);
+    service.applySysctlUpdate=false;
+    await expect(service.reconcile()).resolves.toMatchObject({ready:0,failed:1});
+    expect(prisma.resourcePortalGate.update).toHaveBeenCalledWith(expect.objectContaining({
+      data:expect.objectContaining({status:"Error",lastError:expect.stringContaining("not applied")}),
+    }));
+    service.applySysctlUpdate=true;
+    await expect(service.reconcile()).resolves.toMatchObject({ready:1,failed:0});
   });
 });
 

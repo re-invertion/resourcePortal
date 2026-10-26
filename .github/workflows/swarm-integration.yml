@@ -318,6 +318,9 @@ jobs:
             alpine:3.20 sleep 3600
           docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null
 
+      - name: Verify actual Swarm task-scoped Gateway forwarding isolation
+        run: bash scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh
+
       - name: Run Stage 20 browser smoke against real Swarm
         timeout-minutes: 10
         env:
