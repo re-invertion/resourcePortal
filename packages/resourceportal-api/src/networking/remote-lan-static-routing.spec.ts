@@ -7,7 +7,7 @@ const route="default via 192.168.50.254 dev rp-a-1234abcd";
 describe("app-scoped static routing ownership and safe revocation",()=>{
   it("treats never-created Static table as empty for first attach and restart cleanup",()=>{
     const missing="Error: ipv4: FIB table does not exist. Dump terminated.";
-    const empty=parseStaticTableRead(2,"",missing+"\\n");
+    const empty=parseStaticTableRead(2,"",missing+"\n");
     expect(empty).toBe("");
     expect(inspectStaticRoutingClaim(config,"0: from all lookup local",empty).fullyConfigured).toBe(false);
     expect(inspectStaticRoutingClaim(config,rule,empty).cleanup).toEqual([
