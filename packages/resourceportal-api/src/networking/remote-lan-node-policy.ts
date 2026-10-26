@@ -285,11 +285,16 @@ export function nodeLanTransportMatches(link: NodeLanLink, target: NodeLanTarget
 export function prepareNodeLanLinkForGrant(
   target: NodeLanTarget, device: string, observed: NodeLanLink | undefined,
   cleanupOldStatic: () => void, removeOwnedLink: () => void,
+  staticConfigurationMatches: () => boolean,
 ): boolean {
   if (!observed) return false;
   assertOwnedNodeLanLink(observed, device, target.attachment.attachmentId);
+  // An aligned GRETAP may still carry the previous DHCP address after an
+  // agent restart. Adopt Static only with exact source rule, route and one
+  // matching IPv4 address. Otherwise drop just this RP-owned interface.
   if (target.attachment.addressMode === "Static" &&
-      nodeLanTransportMatches(observed, target)) return true;
+      nodeLanTransportMatches(observed, target) &&
+      staticConfigurationMatches()) return true;
   cleanupOldStatic();
   removeOwnedLink();
   return false;
