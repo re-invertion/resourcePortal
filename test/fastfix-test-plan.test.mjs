@@ -82,6 +82,12 @@ test("real database rollback smoke changes require the platform release regressi
   assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
 });
 
+test("API HTTP entrypoint changes always execute security, worker and container terminal regressions", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/src/main.ts"]);
+  assert.deepEqual(plan.profiles, ["container-terminal", "platform-release", "security", "worker"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
 test("Swarm interactive terminal files select explicit security, worker, app and release gates", () => {
   const files = [
     "packages/resourceportal-api/scripts/smoke-container-terminal.ts",
