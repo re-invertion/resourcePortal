@@ -1,9 +1,9 @@
 import {describe,it,expect} from "vitest";
 import {inspectStaticRoutingClaim,readRpStaticTable} from "./remote-lan-static-routing";
 
-const config={source:"192.168.50.44",gateway:"192.168.50.254",device:"rp-a-1234abcd"};
+const config={source:"192.168.50.44",gateway:"192.168.50.254",device:"rp-a-1234abcd",prefix:"192.168.50.0/24"};
 const rule="0: from all lookup local\n18015: from 192.168.50.44 lookup 20015\n32766: from all lookup main";
-const route="default via 192.168.50.254 dev rp-a-1234abcd";
+const route="192.168.50.0/24 dev rp-a-1234abcd scope link\ndefault via 192.168.50.254 dev rp-a-1234abcd";
 describe("app-scoped static routing ownership and safe revocation",()=>{
   it("recognizes exact current link/source/gateway and emits targeted cleanup",()=>{
     const state=inspectStaticRoutingClaim(config,rule,route);
@@ -12,6 +12,7 @@ describe("app-scoped static routing ownership and safe revocation",()=>{
       ["-4","rule","del","pref","18015","from","192.168.50.44/32","lookup","20015"],
       ["-4","route","del","default","via","192.168.50.254",
         "dev","rp-a-1234abcd","table","20015"],
+      ["-4","route","del","192.168.50.0/24","dev","rp-a-1234abcd","table","20015"],
     ]);
   });
   it("permits empty snapshot and clean partial crash recovery",()=>{
@@ -21,7 +22,7 @@ describe("app-scoped static routing ownership and safe revocation",()=>{
     const partial=inspectStaticRoutingClaim(config,rule,"");
     expect(partial.cleanup).toHaveLength(1);
     expect(partial.fullyConfigured).toBe(false);
-    expect(inspectStaticRoutingClaim(config,"",route).cleanup).toHaveLength(1);
+    expect(inspectStaticRoutingClaim(config,"",route).cleanup).toHaveLength(2);
   });
   it("never deletes another source, gateway or app device in shared namespace",()=>{
     expect(()=>inspectStaticRoutingClaim(config,rule.replace(
@@ -29,11 +30,23 @@ describe("app-scoped static routing ownership and safe revocation",()=>{
     expect(()=>inspectStaticRoutingClaim(config,rule,route.replace(
       "192.168.50.254","192.168.50.1"))).toThrow(/foreign/);
     expect(()=>inspectStaticRoutingClaim(config,rule,route.replace(
-      "rp-a-1234abcd","eth0"))).toThrow(/foreign/);
+      "rp-a-1234abcd","eth0"))).toThrow(/unexpected routes|foreign/);
     expect(()=>inspectStaticRoutingClaim(config,rule,route+"\n10.0.0.0/8 dev eth0"))
       .toThrow(/unexpected routes/);
     expect(()=>inspectStaticRoutingClaim(config,rule+"\n18015: from 10.0.0.5 lookup main",route))
       .toThrow(/Duplicate/);
+  });
+  it("accepts two exact owned routes, safely migrates legacy default and rejects collisions",()=>{
+    const claim=inspectStaticRoutingClaim(config,rule,route);
+    expect(claim.fullyConfigured).toBe(true);
+    expect(claim.cleanup).toHaveLength(3);
+    for(const bad of ["192.168.51.0/24 dev rp-a-1234abcd", "192.168.50.0/24 dev eth0",
+      "192.168.50.0/24 via 192.168.50.254 dev rp-a-1234abcd",
+      "192.168.50.0/24 dev rp-a-1234abcd\n192.168.51.0/24 dev rp-a-1234abcd"])
+      expect(()=>inspectStaticRoutingClaim(config,rule,bad+"\n"+route.split("\n")[1])).toThrow();
+    const legacy=inspectStaticRoutingClaim(config,rule,route.split("\n")[1]);
+    expect(legacy.fullyConfigured).toBe(false);
+    expect(legacy.cleanup).toHaveLength(2);
   });
   it("requires RP-owned interface before emitting any destructive action",()=>{
     expect(()=>inspectStaticRoutingClaim({...config,device:"eth0"},rule,route)).toThrow();

@@ -214,6 +214,7 @@ export function staticNodeLanCommands(target: NodeLanTarget,device:string) {
   const source=config.staticAddress.split("/")[0];
   return [
     ["-4","address","replace",config.staticAddress,"dev",device],
+    ["-4","route","replace",target.attachment.lanCidr,"dev",device,"table","20015"],
     ["-4","route","replace","default","via",config.staticGateway,
       "dev",device,"table","20015"],
     ["-4","rule","add","pref","18015","from",source+"/32","lookup","20015"]

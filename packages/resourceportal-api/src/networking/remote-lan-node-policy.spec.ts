@@ -102,9 +102,10 @@ describe("RP node-local remote LAN authorization",()=>{
     const [target]=selectNodeLanTargets(valid,[container]);
     const command=staticNodeLanCommands(target,"rp-a-1234abcd");
     expect(command[0]).toContain("192.168.50.22/24");
-    expect(command[1]).toEqual(["-4","route","replace","default","via",
+    expect(command[1]).toEqual(["-4","route","replace","192.168.50.0/24","dev","rp-a-1234abcd","table","20015"]);
+    expect(command[2]).toEqual(["-4","route","replace","default","via",
       "192.168.50.1","dev","rp-a-1234abcd","table","20015"]);
-    expect(command[2]).toEqual(["-4","rule","add","pref","18015","from",
+    expect(command[3]).toEqual(["-4","rule","add","pref","18015","from",
       "192.168.50.22/32","lookup","20015"]);
     const original=selectNodeLanTargets([attachment],[container])[0];
     expect(sameNodeLanTarget(original,target)).toBe(false);
