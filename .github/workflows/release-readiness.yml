@@ -40,6 +40,39 @@ jobs:
           previous_sha="$(git rev-list -n 1 "$previous_tag")"
           main_sha="$(git rev-parse origin/main)"
           if [[ "$previous_sha" != "$main_sha" ]]; then
+            # ONE-TIME SECURITY RECOVERY: #349 passed protected merge checks,
+            # but npm audit correctly prevented its post-merge publication.
+            # Only the exact reviewed dependency patch for #356 can recover
+            # the backlog. No other unpublished main commit or file is allowed.
+            # Existing lint, full tests, rollback, Swarm, signing and
+            # post-merge audit gates continue to execute without overrides.
+            if [[ "$previous_tag" == "v0.2.118" &&
+                  "$previous_sha" == "e3155f1cb3e77a28a513f9e6f305d2cd4f03c754" &&
+                  "$main_sha" == "52202280c92bb536080c5382e2de199dde93d21e" ]]; then
+              recovery_diff="$(git diff --name-only "$main_sha" HEAD | LC_ALL=C sort)"
+              allowed_diff="$(printf '%s\n' \
+                '.github/workflows/release-readiness.yml' \
+                'package-lock.json' \
+                'packages/resourceportal-api/package.json' \
+                'packages/resourceportal-web/package.json' \
+                'test/test-workflow-gates.test.mjs' | LC_ALL=C sort)"
+              if [[ "$recovery_diff" != "$allowed_diff" ]]; then
+                echo "Security recovery accepts only the exact reviewed #356 dependency and gate changes." >&2
+                exit 1
+              fi
+              for pair in \
+                'package-lock.json:ddea2fe95c57b6bc5a747239831bd97228314fdb' \
+                'packages/resourceportal-api/package.json:b5dd485d7f87ed374351e820fc0a24cdcda7dd4f' \
+                'packages/resourceportal-web/package.json:500db66dc22b0ff97625e0c3b3c9def99842e686'; do
+                path="${pair%%:*}"
+                expected="${pair#*:}"
+                if [[ "$(git rev-parse "HEAD:$path")" != "$expected" ]]; then
+                  echo "Security recovery dependency blob mismatch ($path)." >&2
+                  exit 1
+                fi
+              done
+              echo "::notice::One-time approved #356 security recovery; all full release checks remain mandatory."
+            else
             # ONE-TIME RELEASE BACKLOG RECOVERY: #317 passed protected merge
             # checks, but its signed main release failed on an expiring test
             # fixture. #318 fixes that fixture. Admit ONLY this known recovery
@@ -70,6 +103,7 @@ jobs:
               exit 1
             fi
             echo "::notice::One-time recovery for unpublished main #317; ALL remaining release checks still required."
+            fi
           fi
           node scripts/next-main-release.mjs --github-output "$GITHUB_OUTPUT"
       - name: Install dependencies and generate Prisma
@@ -118,6 +152,9 @@ jobs:
           RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: |
           # Targeted tests above are useful but never substitute for the full suite.
+          # Patch releases must also pass the exact same dependency security
+          # threshold as post-merge CI before they can enter the merge queue.
+          npm audit --audit-level=high
           npm run lint
           npm run test
           npm run build

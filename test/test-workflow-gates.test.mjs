@@ -187,6 +187,33 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
 });
 
 
+test('unpublished #349 main admits only the immutable #356 security recovery through full gates', () => {
+  const gate = load('release-readiness.yml');
+  const guard = gate.jobs.candidate.steps.find((step) =>
+    step.name?.startsWith('Block merges while the previous main release is unpublished'));
+  assert.ok(guard);
+  for (const exact of [
+    'v0.2.118',
+    'e3155f1cb3e77a28a513f9e6f305d2cd4f03c754',
+    '52202280c92bb536080c5382e2de199dde93d21e',
+    'package-lock.json:ddea2fe95c57b6bc5a747239831bd97228314fdb',
+    'packages/resourceportal-api/package.json:b5dd485d7f87ed374351e820fc0a24cdcda7dd4f',
+    'packages/resourceportal-web/package.json:500db66dc22b0ff97625e0c3b3c9def99842e686',
+    'test/test-workflow-gates.test.mjs',
+    '.github/workflows/release-readiness.yml',
+  ]) assert.ok(guard.run.includes(exact), `security recovery must pin: ${exact}`);
+  assert.match(guard.run, /git diff --name-only "\$main_sha" HEAD/);
+  assert.match(guard.run, /recovery_diff.*allowed_diff/);
+  assert.match(guard.run, /Security recovery dependency blob mismatch/);
+  assert.match(guard.run, /exit 1/);
+  const complete = gate.jobs.candidate.steps.find((step) =>
+    step.name?.startsWith('Require complete regression suite'));
+  assert.match(complete.run, /npm audit --audit-level=high/);
+  for (const c of ['npm run lint', 'npm run test', 'npm run build', 'npm run test:installer', 'npm run test:cli-release']) {
+    assert.ok(complete.run.includes(c), `security hotfix must keep full gate: ${c}`);
+  }
+});
+
 test('one-time unpublished main recovery for #318 remains SHA- and file-scoped', () => {
   const gate = load('release-readiness.yml');
   const guard = gate.jobs.candidate.steps.find((step) =>
