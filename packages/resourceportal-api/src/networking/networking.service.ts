@@ -1116,6 +1116,13 @@ export class NetworkingService {
         observedL2: dto.agentVersion === "gate-l2-v2"
           ? bound as unknown as Prisma.InputJsonValue : Prisma.DbNull,
         observedL2At: dto.agentVersion === "gate-l2-v2" ? new Date() : null,
+        observedL2Diagnostic: dto.agentVersion === "gate-l2-v2" ? {
+          reasonCode: supplied.length > bound.length ? "proof_filtered_by_api" :
+            dto.lanProofDiagnostic?.reasonCode ?? (supplied.length ? "ok" : "no_local_attachment"),
+          rawCount: supplied.length,
+          acceptedCount: bound.length,
+          errorCode: dto.lanProofDiagnostic?.errorCode ?? "none",
+        } : Prisma.DbNull,
         observedL2AppliedAt: dto.agentVersion === "gate-l2-v2" && dto.lanAppliedAtMs
           ? new Date(dto.lanAppliedAtMs) : null,
         lastSeenAt: new Date(),
@@ -1646,6 +1653,8 @@ export class NetworkingService {
     configRevision?: number;
     observedLan?: Prisma.JsonValue;
     observedLanAt?: Date | null;
+    observedL2Diagnostic?: Prisma.JsonValue;
+    observedL2At?: Date | null;
   }) {
     // Explicit allow-list prevents old Site VPN policy columns from leaking
     // back into the active tenant API during migration.
@@ -1660,6 +1669,10 @@ export class NetworkingService {
         Math.abs(Date.now()-gate.observedLanAt.getTime()) <= 60_000
         ? gate.observedLan : null,
       observedLanAt: gate.observedLanAt,
+      observedL2Diagnostic: gate.observedL2Diagnostic && gate.observedL2At &&
+        Math.abs(Date.now()-gate.observedL2At.getTime()) <= 60_000
+        ? gate.observedL2Diagnostic : null,
+      observedL2At: gate.observedL2At,
     };
   }
 
