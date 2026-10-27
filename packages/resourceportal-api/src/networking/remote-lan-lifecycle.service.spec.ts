@@ -164,6 +164,18 @@ describe("production LAN activation and revocation ingestion",()=>{
     expect(await broken.reconcileActivation()).toMatchObject({degraded:1,activated:0});
     expect(second.remoteLanAttachment.updateMany).toHaveBeenCalled();
   });
+  it("keeps Provisioning fail-closed and exposes a fixed missing Gate proof category",async()=>{
+    const now=Date.now();
+    const {prisma,service}=make(now);
+    const rows=await prisma.remoteLanAttachment.findMany();
+    prisma.remoteLanAttachment.findMany.mockResolvedValueOnce([{...rows[0],
+      gate:{...rows[0].gate,observedL2:[]},lastError:null}]);
+    expect(await service.reconcileActivation()).toMatchObject({activated:0});
+    expect(prisma.remoteLanAttachment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({data:{lastError:"Gate L2 proof missing or ambiguous"}}));
+    expect(prisma.remoteLanAttachment.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({data:expect.objectContaining({status:"Active"})}));
+  });
   it("demotes Active on missing app proof instead of retaining stale lease",async()=>{
     const now=Date.now();
     const {prisma,service}=make(now,"Active",false);
