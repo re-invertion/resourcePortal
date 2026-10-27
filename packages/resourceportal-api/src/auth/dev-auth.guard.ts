@@ -133,6 +133,15 @@ export class DevAuthGuard implements CanActivate {
       return true;
     }
 
+    // Starting or discovering an interactive OIDC flow must not require
+    // refreshing a previous browser session. A stale cookie cannot block
+    // the public re-authentication path. Bearer tokens remain verified above;
+    // no other public or protected endpoints receive this exception.
+    const path = request.url.split("?", 1)[0];
+    if(isPublic && request.method === "GET" &&
+       ["/api/auth/login", "/api/auth/providers", "/api/auth/register",
+        "/api/auth/recover"].includes(path)) return true;
+
     const hasSessionCookie = this.sessions.hasSessionCookie(request);
     const sessionId = this.sessions.getSessionIdFromRequest(request);
     if (sessionId) {
