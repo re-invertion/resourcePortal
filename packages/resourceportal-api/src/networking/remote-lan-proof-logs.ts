@@ -21,6 +21,11 @@ export function parseNodeLanServiceLogs(logs:string, expectedTasks:readonly stri
   const states=new Map<string,{observedAtMs:number;attachmentIds:string[];proofs:NodeLanProof[]}>();
   const pending=new Map<string,NodeLanProof[]>();
   const expected=new Set(expectedTasks);
+  const shortIds=new Map<string,string|null>();
+  for(const id of expectedTasks) {
+    const short=id.slice(0,12);
+    shortIds.set(short,shortIds.has(short)?null:id);
+  }
   for(const raw of logs.split(/\r?\n/)) {
     // Nest's production logger can append ANSI reset codes after JSON.
     // Strip terminal coloring without removing Docker's task attribution.
@@ -28,9 +33,12 @@ export function parseNodeLanServiceLogs(logs:string, expectedTasks:readonly stri
     if(!line.includes("RP_LAN_NODE_"))continue;
     // Default (non --raw) Docker Swarm log prefix binds to a task, not an
     // arbitrary application-supplied field inside a JSON log message.
-    const prefix=line.match(/^\S+\.\S+\.([a-z0-9]{12,64})@\S+\s+\|\s+(?:\d{4}-\d\d-\d\dT\S+\s+)?/);
-    if(!prefix||!expected.has(prefix[1]))continue;
-    const task=prefix[1];
+    const prefix=line.match(/^(?:\d{4}-\d\d-\d\dT\S+\s+)?\S+\.\S+\.([a-z0-9]{12,64})@\S+\s+\|\s+(?:\d{4}-\d\d-\d\dT\S+\s+)?/);
+    if(!prefix)continue;
+    const displayed=prefix[1];
+    const task=displayed.length===12?shortIds.get(displayed):
+      expected.has(displayed)?displayed:undefined;
+    if(!task)continue;
     const marker=line.match(/\bLOG\s+\[RemoteLanNode\]\s+RP_LAN_NODE_(PROOF|RECONCILE)_V1\s+(\{.*\})\s*$/);
     if(!marker)continue;
     let payload:unknown;

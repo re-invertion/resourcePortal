@@ -80,6 +80,11 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(script).not.toContain("lanCidrs:$lanCidrs");
     expect(script).not.toContain("lanAddresses:$lanAddresses");
   });
+  it("reports Gate proof collector failures without leaking stderr or fabricating Active",()=>{
+    expect(agent).toContain('LAN proof collection failed (gate observation unavailable)');
+    expect(agent).toContain("OBSERVED_L2='[]'");
+    expect(agent).not.toContain('--observed-attachments 2>/dev/null || printf');
+  });
   it("never enables routed site access, forwarding or BGP", () => {
     expect(script).not.toMatch(/apt-get install -y frr|sync_bgp|router bgp/i);
     expect(script).not.toContain("sysctl --system");

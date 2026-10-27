@@ -184,7 +184,12 @@ while :; do
   # Expired local attestation is never reused.
   /usr/local/sbin/resourceportal-gate-uplink refresh >/dev/null 2>&1 || true
   OBSERVED_LAN="$(python3 "$LAN_AGENT" --observed-lan 2>/dev/null || printf 'null')"
-  OBSERVED_L2="$(python3 "$LAN_AGENT" --observed-attachments 2>/dev/null || printf '[]')"
+  # Do not report collector execution failures as a healthy empty proof set.
+  # Emit only a fixed diagnostic code, never Python stderr or bearer data.
+  if ! OBSERVED_L2="$(python3 "$LAN_AGENT" --observed-attachments 2>/dev/null)"; then
+    log "LAN proof collection failed (gate observation unavailable)"
+    OBSERVED_L2='[]'
+  fi
   APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
   HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson applied "$APPLIED_AT" \
     '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'

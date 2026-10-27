@@ -82,7 +82,7 @@ describe("Remote LAN Pending -> Provisioning handoff",()=>{
 const proofTask="a".repeat(25);
 const containerId="c".repeat(64);
 function proofLog(task:string,kind:string,payload:unknown){
-  return `resourceportal-control-plane_remote-lan-node.0.${task}@node1 | 2026-10-25T09:00:00Z [Nest] LOG [RemoteLanNode] RP_LAN_NODE_${kind}_V1 ${JSON.stringify({nodeTaskId:task,...(payload as object)})}`;
+  return `2026-10-27T00:34:40.639315543Z resourceportal-control-plane_remote-lan-node.0.${task.slice(0,12)}@seprd1    | [Nest] 1 - LOG [RemoteLanNode] RP_LAN_NODE_${kind}_V1 ${JSON.stringify({nodeTaskId:task,...(payload as object)})}`;
 }
 describe("production LAN activation and revocation ingestion",()=>{
   const nodeProof=(now:number)=>({
@@ -163,6 +163,19 @@ describe("production LAN activation and revocation ingestion",()=>{
       .mockImplementation(()=>{throw new Error("Docker daemon unavailable");});
     expect(await broken.reconcileActivation()).toMatchObject({degraded:1,activated:0});
     expect(second.remoteLanAttachment.updateMany).toHaveBeenCalled();
+  });
+  it("keeps Provisioning fail-closed and exposes a fixed missing Gate proof category",async()=>{
+    const now=Date.now();
+    const {prisma,service}=make(now);
+    const rows=await prisma.remoteLanAttachment.findMany() as unknown as
+      Array<{gate:Record<string,unknown>;lastError:string|null}>;
+    prisma.remoteLanAttachment.findMany.mockResolvedValueOnce([{...rows[0],
+      gate:{...rows[0].gate,observedL2:[]},lastError:null}]);
+    expect(await service.reconcileActivation()).toMatchObject({activated:0});
+    expect(prisma.remoteLanAttachment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({data:{lastError:"Gate L2 proof missing or ambiguous"}}));
+    expect(prisma.remoteLanAttachment.updateMany.mock.calls.some(call =>
+      (call[0] as {data:{status?:string}}).data.status==="Active")).toBe(false);
   });
   it("demotes Active on missing app proof instead of retaining stale lease",async()=>{
     const now=Date.now();

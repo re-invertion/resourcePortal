@@ -162,6 +162,7 @@ export class RemoteLanLifecycleService {
         continue;
       }
       let result:ReturnType<typeof validateLanActivationProof>|null=null;
+      let reason="Authenticated LAN evidence not verified";
       try {
         if(!nodeProofsReady||!gateFresh||row.network.status!=="Ready"||
           row.network.tenantId!==row.tenantId||
@@ -173,7 +174,9 @@ export class RemoteLanLifecycleService {
         const matchingNode=nodes.flatMap(n=>n.proofs)
           .filter(p=>p.attachmentId===row.id);
         if(matchingGate.length!==1||matchingNode.length!==1)
-          throw new Error("Missing or ambiguous independent L2 proofs");
+          throw new Error(matchingGate.length!==1
+            ? "Gate L2 proof missing or ambiguous"
+            : "Node L2 proof missing or ambiguous");
         const proof=matchingNode[0];
         // The node's own successful reconciliation must include the
         // attachment. A stale proof from an earlier cycle is not enough.
@@ -189,7 +192,16 @@ export class RemoteLanLifecycleService {
           staticAddress:row.staticAddress,staticGateway:row.staticGateway,
           status:"Provisioning",
         },proof,matchingGate[0],now);
-      }catch{/* No trusted Active evidence; fail closed. */}
+      }catch(error){
+        // Only closed-set categories are persisted: never expose untrusted
+        // Docker output, tenant identifiers, host paths, tokens or policy JSON.
+        if(error instanceof Error && [
+          "Gate L2 proof missing or ambiguous", "Node L2 proof missing or ambiguous",
+          "Node attachment proof is not in the current cycle",
+        ].includes(error.message)) reason=error.message;
+        else if(!nodeProofsReady)reason="Node reconciliation evidence unavailable";
+        else if(!gateFresh)reason="Gate L2 observation missing or stale";
+      }
       if(result){
         const claimed=await this.prisma.remoteLanAttachment.updateMany({
           where:{id:row.id,tenantId:row.tenantId,
@@ -200,6 +212,13 @@ export class RemoteLanLifecycleService {
             lastVerifiedAt:new Date(now),lastError:null},
         });
         if(row.status!=="Active")activated+=claimed.count;
+      }else if(row.status==="Provisioning"){
+        if(row.lastError!==reason)
+          await this.prisma.remoteLanAttachment.updateMany({
+            where:{id:row.id,tenantId:row.tenantId,status:"Provisioning",
+              configurationRevision:row.configurationRevision},
+            data:{lastError:reason},
+          });
       }else if(row.status==="Active"){
         const claimed=await this.prisma.remoteLanAttachment.updateMany({
           where:{id:row.id,tenantId:row.tenantId,status:"Active",
