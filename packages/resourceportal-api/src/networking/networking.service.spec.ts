@@ -709,6 +709,10 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
     expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].data.observedL2Diagnostic)
       .toEqual({reasonCode:"collector_error",rawCount:0,acceptedCount:0,
         errorCode:"collector_execution_failed"});
+    await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v2",lanAttachmentProofs:[]});
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].data.observedL2Diagnostic)
+      .toEqual({reasonCode:"unknown_legacy_agent",rawCount:0,acceptedCount:0,errorCode:"none"});
+
   });
   it("accepts authenticated heartbeat during 120s rekey grace but rejects >=150s and wrong peer",async()=>{
     const {service,prisma}=fixture();
