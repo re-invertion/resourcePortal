@@ -18,6 +18,35 @@ describe("Docker Swarm authenticated global node observations",()=>{
     expect(nodes[0].proofs).toEqual([proof]);
     expect(nodes[1].attachmentIds).toEqual([]);
   });
+
+  it("accepts actual timestamp-leading Docker logs with shortened task prefix and full payload principal",()=>{
+    const full="pxu0nrwqj8qr8gniyslgbkna5";
+    const line=(kind:string,payload:object)=>
+      "2026-10-27T00:34:40.639315543Z resourceportal-control-plane_remote-lan-node.0."+
+      full.slice(0,12)+"@seprd1    | [Nest] 1 - 10/27/2026, 12:34:40 AM "+
+      "LOG [RemoteLanNode] RP_LAN_NODE_"+kind+"_V1 "+
+      JSON.stringify({nodeTaskId:full,...payload});
+    const proof={attachmentId,observedAtMs:now-1100,source:"node-agent"};
+    const logs=line("PROOF",proof)+"\n"+
+      line("RECONCILE",{observedAtMs:now-1000,attachmentIds:[attachmentId]});
+    const parsed=parseNodeLanServiceLogs(logs,[full],now);
+    expect(parsed[0].taskId).toBe(full);
+    expect(parsed[0].proofs).toEqual([{nodeTaskId:full,...proof}]);
+    expect(parsed[0].attachmentIds).toEqual([attachmentId]);
+  });
+  it("rejects ambiguous abbreviated task identities and forged full payload principal",()=>{
+    const full="pxu0nrwqj8qr8gniyslgbkna5";
+    const rival=full.slice(0,12)+"anotheruniqueid";
+    const line=(payloadId:string)=>"2026-10-27T00:34:40.639315543Z "+
+      "resourceportal-control-plane_remote-lan-node.0."+full.slice(0,12)+"@seprd1 | "+
+      "[Nest] LOG [RemoteLanNode] RP_LAN_NODE_RECONCILE_V1 "+
+      JSON.stringify({nodeTaskId:payloadId,observedAtMs:now-1000,attachmentIds:[]});
+    expect(()=>parseNodeLanServiceLogs(line(full),[full,rival],now)).toThrow(
+      /Missing fresh reconciliation/);
+    expect(()=>parseNodeLanServiceLogs(line(rival),[full],now)).toThrow(
+      /Missing fresh reconciliation/);
+    expect(parseNodeLanServiceLogs(line(full),[full],now)).toHaveLength(1);
+  });
   it("rejects absent node marker, stale cycle and empty agent set",()=>{
     expect(()=>parseNodeLanServiceLogs(cycle(task1,[]),[task1,task2],now)).toThrow();
     expect(()=>parseNodeLanServiceLogs("",[],now)).toThrow();
