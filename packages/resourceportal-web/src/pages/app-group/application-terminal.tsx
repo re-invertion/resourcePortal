@@ -67,7 +67,7 @@ export function ApplicationTerminal({ appRoot, running }: { appRoot: string; run
         void terminalCall("write", { sessionId, input }).catch(() => {
           if (sessionIdRef.current === sessionId) { setError("Terminal input was not delivered. Reconnect the session."); setStatus("Connection lost"); }
         }).finally(() => { writing.current = false; });
-      }, 45);
+      }, 350);
       resizeObserver = new ResizeObserver(() => {
         if (disposed) return;
         fit.fit();
@@ -111,7 +111,7 @@ export function ApplicationTerminal({ appRoot, running }: { appRoot: string; run
         .finally(() => { pending = false; });
     };
     poll();
-    const timer = window.setInterval(poll, 320);
+    const timer = window.setInterval(poll, 700);
     return () => { active = false; window.clearInterval(timer); };
   }, [session, terminalCall]);
 
