@@ -25,6 +25,8 @@ MANAGED = Path("/etc/resourceportal-gate/managed-uplink.json")
 WG = "rp-gate"
 MAC_RE = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 DEVICE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$")
+# WG rekeys around 120s. Accept bounded 30s grace, reject before 180s key lifetime.
+MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS = 150
 
 
 def call(*argv: str, ignore: bool = False) -> str:
@@ -195,7 +197,7 @@ def is_handshake_recent(expected_peer: str):
     except ValueError:
         return False
     age = time.time() - timestamp
-    return 0 <= age < 90
+    return 0 <= age < MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS
 
 
 def nft_install(chain: str, tunnel: str, mac: str):
@@ -472,7 +474,7 @@ def observed_attachment_proofs(state: dict) -> list[dict]:
     except ValueError:
         return []
     now_ms = int(time.time() * 1000)
-    if handshake <= 0 or now_ms - handshake >= 90_000 or handshake > now_ms + 5_000:
+    if handshake <= 0 or now_ms - handshake >= MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS * 1000 or handshake > now_ms + 5_000:
         return []
     links, _, _ = device_state()
     result = []
