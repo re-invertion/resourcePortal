@@ -82,7 +82,7 @@ describe("Remote LAN Pending -> Provisioning handoff",()=>{
 const proofTask="a".repeat(25);
 const containerId="c".repeat(64);
 function proofLog(task:string,kind:string,payload:unknown){
-  return `resourceportal-control-plane_remote-lan-node.0.${task}@node1 | 2026-10-25T09:00:00Z [Nest] LOG [RemoteLanNode] RP_LAN_NODE_${kind}_V1 ${JSON.stringify({nodeTaskId:task,...(payload as object)})}`;
+  return `2026-10-27T00:34:40.639315543Z resourceportal-control-plane_remote-lan-node.0.${task.slice(0,12)}@seprd1    | [Nest] 1 - LOG [RemoteLanNode] RP_LAN_NODE_${kind}_V1 ${JSON.stringify({nodeTaskId:task,...(payload as object)})}`;
 }
 describe("production LAN activation and revocation ingestion",()=>{
   const nodeProof=(now:number)=>({
