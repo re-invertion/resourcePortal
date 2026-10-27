@@ -24,9 +24,19 @@ describe("independent Gate and application LAN activation proof",()=>{
   });
   it("requires fresh Gate MAC learned on authorized bridge and encrypted peer",()=>{
     for(const patch of [{macLearnedOnTunnel:false},{bridgeOwned:false},
-      {gatewayTunnelOwned:false},{handshakeAtMs:now-100_000}]){
+      {gatewayTunnelOwned:false},{handshakeAtMs:now-150_000}]){
       expect(()=>validateLanActivationProof(target(),node(),{...gate(),...patch},now)).toThrow();
     }
+  });
+  it("accepts rekey grace at 89/90/120s and rejects 150/180s without weakening L2 checks",()=>{
+    for(const age of [89,90,120])
+      expect(validateLanActivationProof(target(),node(),
+        {...gate(),handshakeAtMs:now-age*1000},now)).toBeDefined();
+    for(const age of [150,180])
+      expect(()=>validateLanActivationProof(target(),node(),
+        {...gate(),handshakeAtMs:now-age*1000},now)).toThrow();
+    expect(()=>validateLanActivationProof(target(),node(),
+      {...gate(),handshakeAtMs:now-120_000,macLearnedOnTunnel:false},now)).toThrow();
   });
   it("rejects wrong tenant/app/gate/revision, stale observations and false container identity",()=>{
     for(const patch of [{tenantId:gateId},{singleAppId:tenantId},
