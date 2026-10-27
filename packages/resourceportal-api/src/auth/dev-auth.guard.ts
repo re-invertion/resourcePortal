@@ -140,7 +140,7 @@ export class DevAuthGuard implements CanActivate {
     const path = request.url.split("?", 1)[0];
     if(isPublic && request.method === "GET" &&
        ["/api/auth/login", "/api/auth/providers", "/api/auth/register",
-        "/api/auth/recover"].includes(path)) return true;
+        "/api/auth/recover", "/api/auth/callback"].includes(path)) return true;
 
     const hasSessionCookie = this.sessions.hasSessionCookie(request);
     const sessionId = this.sessions.getSessionIdFromRequest(request);

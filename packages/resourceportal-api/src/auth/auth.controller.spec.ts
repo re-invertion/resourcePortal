@@ -351,6 +351,24 @@ describe("AuthController cookie flow", () => {
     });
   });
 
+  it("starts fresh login even if an old session cookie cannot refresh", async () => {
+    prisma.portalSession.findUnique.mockResolvedValue({
+      id: "session-1", accessTokenExpiresAt: new Date(Date.now()-10000),
+      refreshToken:"old-refresh", accessToken:"old-access",idToken:"old-id",
+      revokedAt:null,expiresAt:new Date(Date.now()+3600_000),
+      lastSeenAt:new Date(),user,
+    });
+    const response=await app.inject({method:"GET",url:"/api/auth/login",
+      headers:{cookie:"rp_session="+app.getHttpAdapter().getInstance().signCookie("session-1")}});
+    expect(response.statusCode).toBe(302);
+    expect(prisma.portalSession.findUnique).not.toHaveBeenCalled();
+    const privateResponse = await app.inject({method:"GET",url:"/api/auth/me",
+      headers:{cookie:"rp_session="+app.getHttpAdapter().getInstance().signCookie("session-1")}});
+    expect(privateResponse.statusCode).toBe(503);
+    expect(privateResponse.json()).toMatchObject({message:"OIDC refresh temporarily unavailable"});
+    expect(prisma.portalSession.findUnique).toHaveBeenCalled();
+  });
+
   it("starts OIDC login with signed callback cookies", async () => {
     const response = await app.inject({
       method: "GET",
@@ -487,6 +505,26 @@ describe("AuthController cookie flow", () => {
     expect(response.json()).toMatchObject({
       message: "OIDC state is invalid",
     });
+  });
+
+  it("completes signed login to callback with stale browser session without refreshing old token", async () => {
+    prisma.portalSession.findUnique.mockResolvedValue({
+      id:"session-1",accessTokenExpiresAt:new Date(Date.now()-10_000),
+      refreshToken:"stale-refresh",accessToken:"stale-access",idToken:"stale-id",
+      revokedAt:null,expiresAt:new Date(Date.now()+3_600_000),
+      lastSeenAt:new Date(),user,
+    });
+    const old=app.getHttpAdapter().getInstance().signCookie("session-1");
+    const login=await app.inject({method:"GET",url:"/api/auth/login",
+      headers:{cookie:"rp_session="+old}});
+    expect(login.statusCode).toBe(302);
+    const state=new URL(getRequiredHeader(login,"location")).searchParams.get("state");
+    const callback=await app.inject({method:"GET",
+      url:"/api/auth/callback?code=valid-code&state="+encodeURIComponent(state??""),
+      headers:{cookie:getCookieHeader(login)+"; rp_session="+old}});
+    expect(callback.statusCode).toBe(302);
+    expect(getSetCookieHeaders(callback).some(x=>x.startsWith("rp_session="))).toBe(true);
+    expect(prisma.portalSession.findUnique).not.toHaveBeenCalled();
   });
 
   it("preserves an existing session when an unauthenticated OIDC callback fails", async () => {
