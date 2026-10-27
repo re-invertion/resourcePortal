@@ -1,8 +1,9 @@
+import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 
 const taskId=/^[a-z0-9]{12,64}$/;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const maxAge=30_000;
+const maxAge=REMOTE_LAN_PROOF_MAX_AGE_MS;
 export type NodeLanSnapshot={taskId:string;observedAtMs:number;attachmentIds:string[];proofs:NodeLanProof[]};
 
 /**

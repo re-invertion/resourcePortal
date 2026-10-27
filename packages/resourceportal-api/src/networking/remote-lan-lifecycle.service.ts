@@ -1,3 +1,4 @@
+import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {spawnSync} from "node:child_process";
@@ -134,7 +135,7 @@ export class RemoteLanLifecycleService {
       const gateFresh=gate.tenantId===row.tenantId&&
         gate.agentVersion==="gate-l2-v2"&&gate.status==="Ready"&&
         !gate.revokedAt&&gate.observedL2At!==null&&
-        now-gate.observedL2At.getTime()<=30_000&&
+        now-gate.observedL2At.getTime()<=REMOTE_LAN_PROOF_MAX_AGE_MS&&
         gate.observedL2At.getTime()<=now+5000&&
         Array.isArray(gate.observedL2);
       const gateProofs=gateFresh ? gate.observedL2 as unknown as GateLanProof[] : [];
