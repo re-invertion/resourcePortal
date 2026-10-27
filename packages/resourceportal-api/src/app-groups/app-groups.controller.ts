@@ -18,6 +18,7 @@ import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations
 import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
 import { SingleAppLogsService } from "./single-app-logs.service";
+import { ContainerTerminalService, type TerminalAction } from "../terminal/container-terminal.service";
 import { AppGroupManifestRequestDto } from "./dto/app-group-manifest-request.dto";
 import { AttachConfigDto } from "./dto/attach-config.dto";
 import { AttachSecretDto } from "./dto/attach-secret.dto";
@@ -45,6 +46,7 @@ export class AppGroupsController {
     private readonly runtimeOperations: AppGroupRuntimeOperationsService,
     private readonly manifestService: AppGroupManifestService,
     private readonly appLogs: SingleAppLogsService,
+    private readonly terminal: ContainerTerminalService,
   ) {}
 
   @RequirePermissions("appgroup.read")
@@ -515,6 +517,19 @@ export class AppGroupsController {
     @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
   ) {
     return this.appLogs.list(tenantId, appGroupId, singleAppId);
+  }
+
+  @RequirePermissions("singleapp.update", "appgroup.deployment.read", "secret.read")
+  @Post(":appGroupId/single-apps/:singleAppId/terminal/:action")
+  applicationTerminal(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @Param("action") action: TerminalAction,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.terminal.call(tenantId, appGroupId, singleAppId, actor, action, body);
   }
 
   @RequirePermissions("endpoint.read")

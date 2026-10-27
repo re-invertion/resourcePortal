@@ -322,6 +322,33 @@ services:
       restart_policy:
         condition: any
 
+  # Swarm-wide authenticated container shell broker: one private agent per node.
+  # Never publish port 3102; the API enforces tenant RBAC and the Worker routes
+  # an HMAC-bound session across the private rp-control overlay network.
+  terminal-agent:
+    image: __API_IMAGE__
+    user: "0"
+    command: ["node", "dist/src/terminal/terminal-agent.runner.js"]
+    environment:
+      NODE_ENV: production
+      INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
+      RESOURCEPORTAL_TERMINAL_NODE_PORT: "3102"
+    secrets:
+      - rp_internal_worker_token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - rp-control
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+      restart_policy:
+        condition: any
+        delay: 2s
+
   dr-reconciliation:
     image: __API_IMAGE__
     command:

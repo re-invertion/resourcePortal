@@ -17,7 +17,7 @@ function installApi() {
     if (url === "/api/platform/remote-locations") return json([]);
     if (url === "/api/platform/storage-backends") return json([]);
     if (url === "/api/platform/resource-usage") return json({ cpuUsedNano: "0", cpuTotalNano: "0", memoryUsedBytes: "0", memoryTotalBytes: "0", gpuUsed: 0, gpuTotal: 0, storageUsedBytes: "0", storageTotalBytes: "0", runningReplicas: 0 });
-    if (url === "/api/platform/release") return json({ currentVersion: "0.2.66", latestVersion: "0.2.67", updateAvailable: true, releaseFeedAvailable: true, rollbackPolicy: "image-only", automaticRollbackAvailable: true, fallbackCommand: "sudo ./resourceportal-install.sh --mode upgrade --manifest /absolute/path/resourceportal-release-manifest.json --non-interactive" });
+    if (url === "/api/platform/release") return json({ currentVersion: "0.2.66", latestVersion: "0.2.67", updateAvailable: true, updateEligible: true, supportedFromVersions: ["0.2.66"], sourceSupported: true, releaseFeedAvailable: true, rollbackPolicy: "image-only", automaticRollbackAvailable: true, fallbackCommand: "sudo ./resourceportal-install.sh --mode upgrade --manifest /absolute/path/resourceportal-release-manifest.json --non-interactive" });
     if (url === "/api/platform/identity-providers") return json([]);
     if (url === "/api/platform/oauth-applications") return json([]);
     if (url === "/api/platform/service-identities") return json([]);

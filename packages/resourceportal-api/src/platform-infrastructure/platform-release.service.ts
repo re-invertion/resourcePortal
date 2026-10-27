@@ -35,12 +35,27 @@ type ReleaseManifest = {
   version?: string;
   images?: { zitadel?: string };
   migrations?: {
+    supportedFromVersions?: string[];
     rollbackCertifiedSources?: RollbackCertificate[];
     rollbackPolicy?: string;
     rollbackAssessment?: { reason?: string; sourceVersion?: string; targetCommit?: string };
     rollbackEvidence?: { kind?: string; sourceVersion?: string; workflowRunId?: number };
   };
 };
+
+export function upgradeSourceEligibility(manifest: ReleaseManifest | null, targetVersion: string | null, currentVersion: string) {
+  const supportedFromVersions = manifest?.migrations?.supportedFromVersions;
+  if (!manifest || !targetVersion || manifest.version !== targetVersion || !Array.isArray(supportedFromVersions) ||
+      !supportedFromVersions.length || supportedFromVersions.length > 256 ||
+      !supportedFromVersions.every((version) => typeof version === "string" && (version === "*" || /^\d+\.\d+\.\d+$/.test(version)))) {
+    return { supportedFromVersions: [] as string[], sourceSupported: false, sourceSupportReason: "manifest-compatibility-unverified" };
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(currentVersion)) {
+    return { supportedFromVersions, sourceSupported: false, sourceSupportReason: "source-version-unknown" };
+  }
+  const supported = supportedFromVersions.includes(currentVersion) || supportedFromVersions.includes("*");
+  return { supportedFromVersions, sourceSupported: supported, sourceSupportReason: supported ? "supported" : "unsupported-source-version" };
+}
 
 type RollbackReason =
   | "available"
@@ -129,6 +144,7 @@ export class PlatformReleaseService {
     try {
       const release = await this.latestRelease();
       const latestVersion = normalizeVersion(release.tag_name);
+      let sourceStatus = upgradeSourceEligibility(null, latestVersion, currentVersion);
       let rollbackStatus: ReturnType<typeof classifyReleaseRollback> = {
         rollbackPolicy: null,
         automaticRollbackAvailable: false,
@@ -141,6 +157,7 @@ export class PlatformReleaseService {
         try {
           const manifest = await this.fetchJson<ReleaseManifest>(manifestUrl);
           rollbackStatus = classifyReleaseRollback(manifest, latestVersion, currentVersion);
+          sourceStatus = upgradeSourceEligibility(manifest, latestVersion, currentVersion);
         } catch {
           rollbackStatus = {
             rollbackPolicy: null,
@@ -157,6 +174,9 @@ export class PlatformReleaseService {
           latestVersion !== null &&
           compareVersions(latestVersion, currentVersion) > 0,
         releaseFeedAvailable: true,
+        ...sourceStatus,
+        updateEligible: currentVersion !== "unknown" && latestVersion !== null &&
+          compareVersions(latestVersion, currentVersion) > 0 && sourceStatus.sourceSupported,
         ...rollbackStatus,
       };
     } catch (error) {
@@ -165,6 +185,8 @@ export class PlatformReleaseService {
         latestVersion: null,
         updateAvailable: false,
         releaseFeedAvailable: false,
+        supportedFromVersions: [], sourceSupported: false,
+        sourceSupportReason: "release-feed-unavailable", updateEligible: false,
         rollbackPolicy: null,
         automaticRollbackAvailable: false,
         rollbackReason: "release-feed-unavailable" as const,
@@ -198,6 +220,13 @@ export class PlatformReleaseService {
     )?.browser_download_url;
     if (!manifestUrl) {
       throw new ServiceUnavailableException("Target release has no ResourcePortal release manifest");
+    }
+    const manifest = await this.fetchJson<ReleaseManifest>(manifestUrl).catch(() => {
+      throw new ServiceUnavailableException("Target release compatibility manifest unavailable");
+    });
+    const eligibility = upgradeSourceEligibility(manifest, dto.targetVersion, currentVersion);
+    if (!eligibility.sourceSupported) {
+      throw new BadRequestException(`Upgrade from ${currentVersion} to ${dto.targetVersion} is not supported (${eligibility.sourceSupportReason})`);
     }
 
     return this.operations.enqueue({

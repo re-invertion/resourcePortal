@@ -34,8 +34,8 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
     if (sub[2] === "edit") {
       return <ApplicationEdit tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} subsection={sub[3]} hasPendingChanges={group.data.hasPendingChanges === true} />;
     }
-    if (sub[2] === "logs") {
-      return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section="logs" />;
+    if (sub[2] === "logs" || sub[2] === "terminal") {
+      return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} section={sub[2] as "logs" | "terminal"} />;
     }
     if (sub[2] === "health") {
       return <ApplicationDetail tenantId={tenantId} appGroupId={appGroupId} appGroupName={appGroupName} appId={appId} />;

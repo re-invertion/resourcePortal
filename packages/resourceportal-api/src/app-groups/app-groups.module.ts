@@ -11,6 +11,7 @@ import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations
 import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
 import { SingleAppLogsService } from "./single-app-logs.service";
+import { ContainerTerminalService } from "../terminal/container-terminal.service";
 import { Stage15AppGroupsService } from "./stage15-app-groups.service";
 
 @Module({
@@ -28,6 +29,7 @@ import { Stage15AppGroupsService } from "./stage15-app-groups.service";
     AppGroupRuntimeOperationsService,
     AppGroupManifestService,
     SingleAppLogsService,
+    ContainerTerminalService,
     {
       provide: AppGroupsService,
       useClass: Stage15AppGroupsService,

@@ -154,6 +154,17 @@ export class TenantMcpProtocolService {
           "GET",
           `/app-groups/${encodeURIComponent(this.uuid(args.appGroupId, "appGroupId"))}/single-apps/${encodeURIComponent(this.uuid(args.singleAppId, "singleAppId"))}/logs`,
         );
+      case "resourceportal_exec_single_app_command":
+      case "resourceportal_manage_single_app_terminal": {
+        const groupId = encodeURIComponent(this.uuid(args.appGroupId, "appGroupId"));
+        const appId = encodeURIComponent(this.uuid(args.singleAppId, "singleAppId"));
+        const action = name === "resourceportal_exec_single_app_command" ? "execute" : this.string(args.action, "Terminal action is required");
+        if (!["containers", "start", "read", "write", "resize", "close", "execute"].includes(action)) throw new BadRequestException("Unsupported terminal action");
+        const body = name === "resourceportal_exec_single_app_command"
+          ? { command: args.command, container: args.container }
+          : { container: args.container, sessionId: args.sessionId, input: args.input, command: args.command, rows: args.rows, cols: args.cols };
+        return this.executeTenantApiCall(context, name, "POST", `/app-groups/${groupId}/single-apps/${appId}/terminal/${action}`, body);
+      }
       case "resourceportal_deploy_app_group":
         return this.callFocusedTool(
           context,
@@ -357,6 +368,7 @@ export class TenantMcpProtocolService {
       case "single-apps:stop": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime/stop`; break;
       case "single-apps:restart": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime/restart`; break;
       case "single-apps:get_logs": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/logs`; break;
+      case "single-apps:terminal_containers": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/terminal/containers`; break;
       case "single-apps:get_runtime_config": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime-config`; break;
       case "single-apps:update_runtime_config": method = "PATCH"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/runtime-config`; break;
       case "single-apps:list_http_endpoints": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}/http-endpoints`; break;
@@ -426,6 +438,7 @@ export class TenantMcpProtocolService {
       case "networking:delete_gate": method = "DELETE"; path = `/networking/gates/${encodeURIComponent(uuid("gateId"))}`; break;
 
       case "access:get_tenant": path = ""; break;
+      case "access:update_branding": method = "PATCH"; path = "/branding"; break;
       case "access:get_billing": path = "/billing"; break;
       case "access:list_transactions": path = "/billing/transactions"; break;
       case "access:list_usage_records": path = "/billing/usage-records"; break;
@@ -490,6 +503,7 @@ export class TenantMcpProtocolService {
       case "operations:retry": method = "POST"; path = `/operations/${encodeURIComponent(uuid("operationId"))}/retry`; break;
 
       case "mcp-settings:get": path = "/mcp-settings"; break;
+      case "mcp-settings:catalog": path = "/mcp-settings/catalog"; break;
       case "mcp-settings:update": method = "PATCH"; path = "/mcp-settings"; break;
 
       case "search-audit:search": {
@@ -978,6 +992,32 @@ export class TenantMcpProtocolService {
         "Read the latest 100 timestamped Docker Swarm service log lines (up to 64 KiB) for one application. Requires singleapp.read and appgroup.deployment.read. Uses the connected tenant's RBAC; log output can contain sensitive application data.",
         singleAppLogsInput,
       ),
+      {
+        name: "resourceportal_exec_single_app_command",
+        title: "Execute command in application container",
+        description: "Run one bounded shell command (15 second limit) inside a tenant-owned running application container. Requires singleapp.update, appgroup.deployment.read and secret.read; command may modify application data. Never use without explicit user authorization.",
+        inputSchema: this.objectSchema({
+          appGroupId: { type: "string", format: "uuid" }, singleAppId: { type: "string", format: "uuid" },
+          container: { type: "string", description: "Optional container ID when multiple local replicas exist." },
+          command: { type: "string", minLength: 1, maxLength: 4096 },
+        }, ["appGroupId", "singleAppId", "command"]),
+        outputSchema: apiOutput, securitySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+        _meta: { ...commonMeta, "openai/toolInvocation/invoking": "Executing tenant container command…", "openai/toolInvocation/invoked": "Container command finished" },
+      },
+      {
+        name: "resourceportal_manage_single_app_terminal",
+        title: "Manage application shell session",
+        description: "List local Swarm task containers, open an interactive shell, read output, send input or close a terminal session. Requires singleapp.update, appgroup.deployment.read and secret.read.",
+        inputSchema: this.objectSchema({
+          appGroupId: { type: "string", format: "uuid" }, singleAppId: { type: "string", format: "uuid" },
+          action: { type: "string", enum: ["containers", "start", "read", "write", "resize", "close"] },
+          container: { type: "string" }, sessionId: { type: "string", format: "uuid" }, input: { type: "string", maxLength: 8192 }, rows: { type: "integer", minimum: 5, maximum: 120 }, cols: { type: "integer", minimum: 20, maximum: 300 },
+        }, ["appGroupId", "singleAppId", "action"]),
+        outputSchema: apiOutput, securitySchemes,
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+        _meta: { ...commonMeta, "openai/toolInvocation/invoking": "Connecting to application shell…", "openai/toolInvocation/invoked": "Application shell operation finished" },
+      },
       actionTool(
         "resourceportal_deploy_app_group",
         "Deploy App Group",
@@ -1063,7 +1103,7 @@ export class TenantMcpProtocolService {
         "resourceportal_manage_single_apps",
         "Manage applications",
         "Create, update, delete and control Single Apps, read bounded service logs, runtime config, HTTP endpoints and resource attachments inside an App Group.",
-        ["list", "create", "update", "delete", "start", "stop", "restart", "get_logs", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
+        ["list", "create", "update", "delete", "start", "stop", "restart", "get_logs", "terminal_containers", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
       ),
       managedTool(
         "resourceportal_manage_volumes",
@@ -1093,7 +1133,7 @@ export class TenantMcpProtocolService {
         "resourceportal_manage_access",
         "Manage tenant access and billing",
         "Read billing/quota/auth policy and manage memberships, invitations, groups, group members and group roles.",
-        ["get_tenant", "get_billing", "list_transactions", "list_usage_records", "get_usage_series", "get_usage_summary", "redeem_voucher", "get_quota", "update_quota", "get_auth_policy", "update_auth_policy", "list_roles", "list_memberships", "create_membership", "update_membership", "delete_membership", "list_invitations", "create_invitation", "resend_invitation", "delete_invitation", "list_groups", "create_group", "update_group", "delete_group", "add_group_member", "remove_group_member", "add_group_role", "remove_group_role"],
+        ["get_tenant", "update_branding", "get_billing", "list_transactions", "list_usage_records", "get_usage_series", "get_usage_summary", "redeem_voucher", "get_quota", "update_quota", "get_auth_policy", "update_auth_policy", "list_roles", "list_memberships", "create_membership", "update_membership", "delete_membership", "list_invitations", "create_invitation", "resend_invitation", "delete_invitation", "list_groups", "create_group", "update_group", "delete_group", "add_group_member", "remove_group_member", "add_group_role", "remove_group_role"],
       ),
       managedTool(
         "resourceportal_manage_identity",
@@ -1116,8 +1156,8 @@ export class TenantMcpProtocolService {
       managedTool(
         "resourceportal_manage_mcp_settings",
         "Manage MCP settings",
-        "Read or update the tenant MCP enablement and allow-list settings. This can affect future MCP access.",
-        ["get", "update"],
+        "Read or update tenant MCP enablement, tool catalog and allow-list settings. This can affect future MCP access.",
+        ["get", "catalog", "update"],
       ),
       managedTool(
         "resourceportal_search_and_audit",
