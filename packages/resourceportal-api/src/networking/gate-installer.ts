@@ -186,13 +186,19 @@ while :; do
   OBSERVED_LAN="$(python3 "$LAN_AGENT" --observed-lan 2>/dev/null || printf 'null')"
   # Do not report collector execution failures as a healthy empty proof set.
   # Emit only a fixed diagnostic code, never Python stderr or bearer data.
-  if ! OBSERVED_L2="$(python3 "$LAN_AGENT" --observed-attachments 2>/dev/null)"; then
+  # Collector emits only an allow-listed reason and count; no raw stderr is sent.
+  if ! OBSERVED_RESULT="$(python3 "$LAN_AGENT" --observed-attachment-diagnostics 2>/dev/null)"; then
     log "LAN proof collection failed (gate observation unavailable)"
-    OBSERVED_L2='[]'
+    OBSERVED_RESULT='{"proofs":[],"diagnostic":{"reasonCode":"collector_error","rawCount":0,"errorCode":"collector_execution_failed"}}'
   fi
+  if ! printf '%s' "$OBSERVED_RESULT" | jq -e '.proofs | type == "array"' >/dev/null 2>&1; then
+    OBSERVED_RESULT='{"proofs":[],"diagnostic":{"reasonCode":"collector_error","rawCount":0,"errorCode":"invalid_collector_output"}}'
+  fi
+  OBSERVED_L2="$(printf '%s' "$OBSERVED_RESULT" | jq -c '.proofs')"
+  OBSERVED_DIAG="$(printf '%s' "$OBSERVED_RESULT" | jq -c '.diagnostic')"
   APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
-  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson applied "$APPLIED_AT" \
-    '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
+  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson diag "$OBSERVED_DIAG" --argjson applied "$APPLIED_AT" \
+    '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2,lanProofDiagnostic:$diag} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
   if RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
     -H 'content-type: application/json' -X POST \
     --data "$HEARTBEAT" \

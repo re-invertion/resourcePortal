@@ -455,7 +455,7 @@ def observed_managed_segment() -> dict:
     }
 
 
-def observed_attachment_proofs(state: dict) -> list[dict]:
+def observed_attachment_proofs(state: dict, diagnostic: dict | None = None) -> list[dict]:
     """Attest ONLY kernel bridges, learned MACs and this Gate's WG peer.
 
     These are observations, not a tenant-provided DHCP ACK. The independent
@@ -464,30 +464,38 @@ def observed_attachment_proofs(state: dict) -> list[dict]:
     gate, tenant = state.get("gateId"), state.get("tenantId")
     peer = state.get("serverPublicKey")
     if not gate or not tenant or not peer:
+        if diagnostic is not None: diagnostic["reasonCode"] = "no_local_attachment"
         return []
     rows = call("wg", "show", WG, "latest-handshakes").splitlines()
     stamps = [row.split() for row in rows if row.split()[:1] == [peer]]
     if len(stamps) != 1 or len(stamps[0]) != 2:
+        if diagnostic is not None: diagnostic["reasonCode"] = "peer_not_matched"
         return []
     try:
         handshake = int(stamps[0][1]) * 1000
     except ValueError:
+        if diagnostic is not None: diagnostic["reasonCode"] = "peer_not_matched"
         return []
     now_ms = int(time.time() * 1000)
     if handshake <= 0 or now_ms - handshake >= MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS * 1000 or handshake > now_ms + 5_000:
+        if diagnostic is not None: diagnostic["reasonCode"] = "peer_not_matched"
         return []
     links, _, _ = device_state()
     result = []
+    if diagnostic is not None and not state.get("attachments"):
+        diagnostic["reasonCode"] = "no_local_attachment"
     for aid, item in sorted(state.get("attachments", {}).items()):
         tunnel, bridge, _, _ = names(gate, tenant, aid, item["lanInterface"])
         device = next((row for row in links if row.get("ifname") == tunnel), None)
         bridge_link = next((row for row in links if row.get("ifname") == bridge), None)
         owner = "rp-lan:" + gate + ":" + item["lanInterface"]
         if not device or not bridge_link:
+            if diagnostic is not None: diagnostic["reasonCode"] = "tunnel_or_bridge_not_owned"
             continue
         owned = device.get("master") == bridge and device.get("linkinfo", {}).get("info_kind") == "gretap"
         bridged = bridge_link.get("ifalias") == owner and bridge_link.get("linkinfo", {}).get("info_kind") == "bridge"
         if not owned or not bridged:
+            if diagnostic is not None: diagnostic["reasonCode"] = "tunnel_or_bridge_not_owned"
             continue
         entries = call("bridge", "fdb", "show", "dev", tunnel).lower().splitlines()
         expected = item["macAddress"].lower()
@@ -502,6 +510,8 @@ def observed_attachment_proofs(state: dict) -> list[dict]:
             "gatewayTunnelOwned": True, "bridgeOwned": True,
             "macLearnedOnTunnel": mac_seen, "handshakeAtMs": handshake,
         })
+    if diagnostic is not None:
+        diagnostic["rawCount"] = len(result)
     return result
 
 
@@ -535,6 +545,11 @@ def main():
         print(int(load_state().get("lastAppliedAtMs", 0)))
         return
     state = load_state()
+    if sys.argv[1:] == ["--observed-attachment-diagnostics"]:
+        diagnostic = {"reasonCode": "ok", "rawCount": 0, "errorCode": "none"}
+        proofs = observed_attachment_proofs(state, diagnostic)
+        print(json.dumps({"proofs": proofs, "diagnostic": diagnostic}, sort_keys=True))
+        return
     if sys.argv[1:] == ["--observed-attachments"]:
         print(json.dumps(observed_attachment_proofs(state), sort_keys=True))
         return

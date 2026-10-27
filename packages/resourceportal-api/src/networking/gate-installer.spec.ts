@@ -82,7 +82,8 @@ describe("RP Gate LAN Attachments-only installer", () => {
   });
   it("reports Gate proof collector failures without leaking stderr or fabricating Active",()=>{
     expect(agent).toContain('LAN proof collection failed (gate observation unavailable)');
-    expect(agent).toContain("OBSERVED_L2='[]'");
+    expect(agent).toContain("collector_execution_failed");
+    expect(agent).toContain("lanProofDiagnostic:$diag");
     expect(agent).not.toContain('--observed-attachments 2>/dev/null || printf');
   });
   it("never enables routed site access, forwarding or BGP", () => {

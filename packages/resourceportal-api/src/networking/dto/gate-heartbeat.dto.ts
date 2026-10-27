@@ -32,6 +32,13 @@ export class GateLanAttachmentProofDto {
   @IsBoolean() macLearnedOnTunnel!:boolean;
   @IsInt() @Min(1) handshakeAtMs!:number;
 }
+export class GateL2DiagnosticDto {
+  @IsIn(["ok","collector_error","peer_not_matched","no_local_attachment","tunnel_or_bridge_not_owned"])
+  reasonCode!: "ok"|"collector_error"|"peer_not_matched"|"no_local_attachment"|"tunnel_or_bridge_not_owned";
+  @IsInt() @Min(0) @Max(64) rawCount!:number;
+  @IsOptional() @IsIn(["none","collector_execution_failed","invalid_collector_output"])
+  errorCode?:"none"|"collector_execution_failed"|"invalid_collector_output";
+}
 export class GateHeartbeatDto {
   @IsIn(["gate-l2-v1", "gate-l2-v2"])
   agentVersion!: "gate-l2-v1" | "gate-l2-v2";
@@ -42,6 +49,9 @@ export class GateHeartbeatDto {
   @IsOptional() @IsArray() @ArrayMaxSize(64)
   @ValidateNested({each:true}) @Type(()=>GateLanAttachmentProofDto)
   lanAttachmentProofs?: GateLanAttachmentProofDto[];
+
+  @IsOptional() @ValidateNested() @Type(() => GateL2DiagnosticDto)
+  lanProofDiagnostic?:GateL2DiagnosticDto;
 
   @IsOptional() @IsInt() @Min(1)
   lanAppliedAtMs?:number;

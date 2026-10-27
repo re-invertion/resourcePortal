@@ -689,6 +689,31 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
     expect(desired).not.toHaveProperty("bgp");
     expect(desired).not.toHaveProperty("applicationLanPolicies");
   });
+  it("stores only bounded diagnostics and distinguishes authenticated API filtering",async()=>{
+    const {service,prisma}=fixture();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(currentGate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(currentGate);
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([])};
+    const now=Date.now();
+    const proof={source:"gate-agent" as const,attachmentId:currentGate.remoteLanAttachments[0].id,
+      tenantId,gateId,singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
+      configurationRevision:4,macAddress:"02:aa:bb:cc:dd:ee",observedAtMs:now-1000,
+      handshakeAtMs:now-1000,gatewayTunnelOwned:true,bridgeOwned:true,macLearnedOnTunnel:true};
+    await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v2",
+      lanAttachmentProofs:[proof],lanProofDiagnostic:{reasonCode:"ok",rawCount:1,errorCode:"none"}});
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].data.observedL2Diagnostic)
+      .toEqual({reasonCode:"proof_filtered_by_api",rawCount:1,acceptedCount:0,errorCode:"none"});
+    await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v2",
+      lanAttachmentProofs:[],lanProofDiagnostic:{reasonCode:"collector_error",rawCount:0,
+        errorCode:"collector_execution_failed"}});
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].data.observedL2Diagnostic)
+      .toEqual({reasonCode:"collector_error",rawCount:0,acceptedCount:0,
+        errorCode:"collector_execution_failed"});
+    await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v2",lanAttachmentProofs:[]});
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].data.observedL2Diagnostic)
+      .toEqual({reasonCode:"unknown_legacy_agent",rawCount:0,acceptedCount:0,errorCode:"none"});
+
+  });
   it("accepts authenticated heartbeat during 120s rekey grace but rejects >=150s and wrong peer",async()=>{
     const {service,prisma}=fixture();
     const now=Date.now();

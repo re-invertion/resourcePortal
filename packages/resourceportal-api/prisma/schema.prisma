@@ -1088,6 +1088,7 @@ model ResourcePortalGate {
   observedL2                 Json?
   observedL2At               DateTime?
   observedL2AppliedAt        DateTime?
+  observedL2Diagnostic       Json?
   lastSeenAt                 DateTime?
   lastError                  String?
   revokedAt                  DateTime?
