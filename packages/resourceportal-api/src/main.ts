@@ -17,7 +17,7 @@ import { ObservabilityService } from "./observability/observability.service";
 import { structuredLog } from "./observability/structured-log";
 import { ServerSpan, TracingService } from "./observability/tracing.service";
 import { RateLimitService } from "./security/rate-limit.service";
-import { shouldRateLimitRequest } from "./security/rate-limit-policy";
+import { isContainerTerminalRequest, shouldRateLimitRequest } from "./security/rate-limit-policy";
 
 type ObservedRequest = FastifyRequest & {
   requestId?: string;
@@ -78,7 +78,11 @@ async function bootstrap() {
     applySecurityHeaders(request, reply, config);
 
     if (shouldRateLimitRequest(request.url)) {
-      const limit = await rateLimit.consume(request.ip);
+      // Shell I/O retains a bounded IP-level limiter, independent from the
+      // normal API budget, to avoid starving unrelated UI traffic behind NAT.
+      const limit = isContainerTerminalRequest(request.url)
+        ? await rateLimit.consumeWithPolicy(`terminal:${request.ip}`, { maxRequests: 900, windowSeconds: 60 })
+        : await rateLimit.consume(request.ip);
       reply.header("x-ratelimit-limit", String(limit.limit));
       reply.header("x-ratelimit-remaining", String(limit.remaining));
       reply.header("x-ratelimit-reset", String(Math.ceil(limit.resetAt / 1000)));

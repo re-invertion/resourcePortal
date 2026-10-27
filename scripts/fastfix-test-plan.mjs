@@ -9,6 +9,13 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  // The container terminal introduces a privileged runtime path through a
+  // tenant-scoped API, Swarm agent and interactive browser. Never treat it as
+  // a docs-only change or allow a patch release without these regressions.
+  "container-terminal": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/terminal", "src/platform-infrastructure/platform-release.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group", "src/pages/platform.final-routes.test.tsx"],
+  ],
   "upgrade-recovery": [
     ["node", "--test", "test/installer/test-target-upgrade.test.mjs", "test/installer/test-upgrade-preflight.test.mjs", "test/installer/test-upgrade-recovery.test.mjs"],
     ["bash", "-n", "scripts/installer/target-upgrade.sh"],
@@ -175,6 +182,14 @@ const commands = {
 };
 
 const classifiers = [
+  // The HTTP entrypoint owns rate limiting and the global security/CSRF
+  // pipeline; changes must exercise the actual terminal, security and
+  // release-critical worker regression suites before any patch publication.
+  [/^packages\/resourceportal-api\/src\/main\.ts$/, ["container-terminal", "security", "worker", "platform-release"]],
+  // All new executable terminal code and its tests must be release-gated.
+  [/^packages\/resourceportal-api\/src\/terminal\/.*\.ts$/, ["container-terminal", "security", "worker"]],
+  [/^packages\/resourceportal-api\/scripts\/smoke-container-terminal\.ts$/, ["container-terminal", "platform-release", "workflow"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/application-terminal\.tsx$/, ["container-terminal", "tenant-ux-patch", "applications"]],
   // LAN Attachment retirements affect durable topology operations and the tenant
   // form/panel surface. Never leave these changes outside Fast Fix selection.
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],

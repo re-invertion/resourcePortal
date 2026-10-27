@@ -82,6 +82,32 @@ test("real database rollback smoke changes require the platform release regressi
   assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
 });
 
+test("API HTTP entrypoint changes always execute security, worker and container terminal regressions", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/src/main.ts"]);
+  assert.deepEqual(plan.profiles, ["container-terminal", "platform-release", "security", "worker"]);
+  assert.equal(plan.vpnSmoke, false);
+});
+
+test("Swarm interactive terminal files select explicit security, worker, app and release gates", () => {
+  const files = [
+    "packages/resourceportal-api/scripts/smoke-container-terminal.ts",
+    "packages/resourceportal-api/src/terminal/container-terminal.service.spec.ts",
+    "packages/resourceportal-api/src/terminal/container-terminal.service.ts",
+    "packages/resourceportal-api/src/terminal/swarm-terminal-router.spec.ts",
+    "packages/resourceportal-api/src/terminal/swarm-terminal-router.ts",
+    "packages/resourceportal-api/src/terminal/terminal-agent.runner.spec.ts",
+    "packages/resourceportal-api/src/terminal/terminal-agent.runner.ts",
+    "packages/resourceportal-api/src/terminal/terminal-worker.spec.ts",
+    "packages/resourceportal-api/src/terminal/terminal-worker.ts",
+    "packages/resourceportal-web/src/pages/app-group/application-terminal.tsx",
+  ];
+  const plan = selectProfiles(files);
+  for (const needed of ["container-terminal", "security", "worker", "applications", "platform-release", "workflow", "tenant-ux-patch"]) {
+    assert.ok(plan.profiles.includes(needed), `${needed} is a required terminal release profile`);
+  }
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/terminal-cli/host.ts"]), /unclassified changes/);
+});
+
 test("security runtime changes select security tests (never silently skipped)", () => {
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });

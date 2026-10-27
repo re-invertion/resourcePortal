@@ -48,6 +48,26 @@ export class HealthController {
     return this.workerObservability.workerHealth();
   }
 
+  // Minimal public status survives page reloads and independent UI sessions.
+  // Never return operation input, actor identity, worker logs, or credentials.
+  @Get("upgrade")
+  async getUpgradeState() {
+    const operation = await this.prisma.operation.findFirst({
+      where: { type: "PLATFORM_RELEASE_UPDATE", tenantId: null },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, status: true, phase: true, createdAt: true, completedAt: true },
+    });
+    const updating = operation?.status === "Pending" || operation?.status === "Running";
+    return {
+      updating,
+      status: operation?.status ?? null,
+      phase: updating ? operation?.phase ?? null : null,
+      startedAt: updating ? operation?.createdAt ?? null : null,
+      completedAt: !updating ? operation?.completedAt ?? null : null,
+      version: this.releaseVersion() ?? null,
+    };
+  }
+
   @Get("ready")
   async getReadiness() {
     await this.prisma.$queryRaw`SELECT 1`;

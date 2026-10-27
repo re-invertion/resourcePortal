@@ -318,6 +318,10 @@ jobs:
             alpine:3.20 sleep 3600
           docker service inspect "$TRAEFIK_SERVICE_NAME" >/dev/null
 
+      - name: Verify container shell isolation and interactive PTY against real Swarm
+        timeout-minutes: 3
+        run: npm --workspace @resource-portal/api exec -- ts-node --files scripts/smoke-container-terminal.ts
+
       - name: Verify actual Swarm task-scoped Gateway forwarding isolation
         run: bash scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh
 

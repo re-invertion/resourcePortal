@@ -163,6 +163,13 @@ describe("TenantMcpProtocolService", () => {
       expect(listAppGroups?.annotations?.readOnlyHint).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_stop_app_group")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_tenant_api")).toBe(true);
+      const exec = result.tools.find((tool) => tool.name === "resourceportal_exec_single_app_command");
+      const interactive = result.tools.find((tool) => tool.name === "resourceportal_manage_single_app_terminal");
+      expect(exec?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(interactive?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect((exec?.inputSchema as {required?: string[]}).required).toEqual(["appGroupId", "singleAppId", "command"]);
+      expect((interactive?.inputSchema as {required?: string[]}).required).toEqual(["appGroupId", "singleAppId", "action"]);
+
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_single_apps")).toBe(true);
       const logs = result.tools.find((tool) => tool.name === "resourceportal_get_single_app_logs");
       expect(logs?.annotations).toMatchObject({

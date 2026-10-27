@@ -39,6 +39,20 @@ function sharedPrisma() {
 }
 
 describe("RateLimitService shared PostgreSQL buckets", () => {
+  it("keeps terminal polling in a finite separate bucket, leaving normal API calls available behind NAT", async () => {
+    const { prisma, buckets } = sharedPrisma();
+    const limiter = new RateLimitService(config({ API_RATE_LIMIT_MAX: "2", API_RATE_LIMIT_WINDOW_SECONDS: "60" }), prisma);
+    for (let n = 0; n < 15; n++) {
+      const terminal = await limiter.consumeWithPolicy("terminal:192.0.2.55", { maxRequests: 900, windowSeconds: 60 }, 1000 + n);
+      expect(terminal.allowed).toBe(true);
+    }
+    expect((await limiter.consume("192.0.2.55", 1100)).allowed).toBe(true);
+    expect((await limiter.consume("192.0.2.55", 1200)).allowed).toBe(true);
+    expect((await limiter.consume("192.0.2.55", 1300)).allowed).toBe(false);
+    expect((await limiter.consumeWithPolicy("terminal:192.0.2.55", { maxRequests: 900, windowSeconds: 60 }, 1400)).allowed).toBe(true);
+    expect(buckets.size).toBe(2);
+  });
+
   it("allows requests up to the configured limit", async () => {
     const { prisma } = sharedPrisma();
     const limiter = new RateLimitService(

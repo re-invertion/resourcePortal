@@ -32,7 +32,7 @@ describe("Web Console bootstrap", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
       .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }, { id: "t2", name: "two", status: "Active" }]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
@@ -59,7 +59,7 @@ describe("Web Console bootstrap", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
       .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
@@ -72,7 +72,7 @@ describe("Web Console bootstrap", () => {
       .mockResolvedValueOnce(json([]))
       .mockResolvedValueOnce(json({ id: "t1", name: "demo", displayName: "Demo tenant", contactEmail: "owner@example.test", status: "Active" }, 201))
       .mockResolvedValueOnce(json([{ id: "t1", name: "demo", displayName: "Demo tenant", status: "Active" }]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App />);
 
     await screen.findByRole("heading", { name: "Choose a tenant" });
@@ -127,7 +127,7 @@ describe("Web Console bootstrap", () => {
       if (path === "/api/tenants/t1/operations") return json([]);
       return json({ error: { message: `Unexpected ${path}` } }, 404);
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App initialPath="/tenants/t1/overview" />);
 
     expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
@@ -148,7 +148,7 @@ describe("Web Console bootstrap", () => {
       if (path === "/api/tenants/t1/operations") return json([]);
       return json({ error: { message: `Unexpected ${path}` } }, 404);
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App initialPath="/tenants/t1/overview" />);
 
     expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
@@ -160,7 +160,7 @@ describe("Web Console bootstrap", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ id: "u1", email: "u@example.test", displayName: "User", status: "Active" }))
       .mockResolvedValueOnce(json([{ id: "t1", name: "one", status: "Active" }]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/health/upgrade" ? Promise.resolve(json({ updating: false })) : Reflect.apply(fetchMock, undefined, [input, init]) as Promise<Response>);
     render(<App initialPath="/definitely-not-a-resource-portal-route" />);
 
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();

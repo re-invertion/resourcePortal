@@ -29,7 +29,7 @@ export function tenantInternalName(displayName: string) {
 }
 
 function AppLoading({ route, error }: { route: AppRoute; error?: unknown }) {
-  return <main {...routeAttributes(route)} className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5"><Card className="w-full max-w-md p-6"><ResourcePortalLogo/><h1 className="mt-6 text-xl font-semibold">ResourcePortal</h1><p className="mt-2 text-sm text-[#5B6678]">{routeLoadingText(route)}</p>{error ? <div className="mt-4"><ErrorState error={error}/></div> : null}</Card></main>;
+  return <main {...routeAttributes(route)} className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5"><Card className="w-full max-w-md p-6"><ResourcePortalLogo/><h1 className="mt-6 text-xl font-semibold">ResourcePortal</h1><p className="mt-2 text-sm text-[#5B6678]">{error ? "ResourcePortal is restarting, upgrading, or temporarily unreachable. The application will become available after the platform recovers." : routeLoadingText(route)}</p>{error ? <div className="mt-4"><ErrorState error={error}/></div> : null}</Card></main>;
 }
 
 export function App({ initialPath }: AppProps = {}) {
@@ -38,10 +38,37 @@ export function App({ initialPath }: AppProps = {}) {
   const [tenants, setTenants] = useState<Tenant[] | undefined>();
   const [platformAdmin, setPlatformAdmin] = useState(false);
   const [error, setError] = useState<unknown>();
+  const [upgrade, setUpgrade] = useState<{ updating: boolean; status?: string | null; phase?: string | null; version?: string | null } | null>(null);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void apiRequest<{ updating: boolean; status?: string | null; phase?: string | null; version?: string | null }>("/api/health/upgrade")
+        .then((state) => {
+          if (!active) return;
+          setUpgrade(state);
+        })
+        .catch(() => { /* Preserve a previously verified upgrade across API restarts. */ });
+    };
+    const onStart = () => { setUpgrade({ updating: true, phase: "Queued" }); };
+    window.addEventListener("rp-upgrade-started", onStart);
+    refresh();
+    const interval = window.setInterval(refresh, 4000);
+    return () => { active = false; window.clearInterval(interval); window.removeEventListener("rp-upgrade-started", onStart); };
+  }, []);
   useEffect(() => { if (route.kind === "public" && route.page === "health") return; apiRequest<User>("/api/auth/me").then(setUser).catch((cause) => { if (cause instanceof ApiError && cause.status === 401) setUser(null); else { setError(cause); setUser(null); } }); }, []);
   const reloadTenants = async () => { const result = await apiRequest("/api/tenants"); setTenants(tenantList(result)); };
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
   useEffect(() => { if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; } let active = true; apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); }); return () => { active = false; }; }, [user, route.kind]);
+  if (upgrade?.updating) return <main role="status" aria-live="polite" className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-6">
+    <Card className="w-full max-w-xl p-8 text-center">
+      <div className="mb-6 flex justify-center"><ResourcePortalLogo /></div>
+      <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-[#D7E0EC] border-t-[#1769E0]" aria-hidden="true" />
+      <h1 className="mt-6 text-2xl font-semibold text-[#172033]">ResourcePortal is updating</h1>
+      <p className="mt-3 text-sm leading-6 text-[#5B6678]">The ResourcePortal services are being upgraded. Access to the management UI will return after the update finishes.</p>
+      {upgrade.phase ? <p className="mt-3 text-xs font-medium text-[#526070]">Current phase: {upgrade.phase}</p> : null}
+      <p className="mt-5 text-xs text-[#718096]">This page automatically checks the platform status. Do not restart the updater or repeat the update.</p>
+    </Card>
+  </main>;
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
   if (user === undefined) return <AppLoading route={route} error={error}/>;
   if (!user) { if (route.kind === "invitation") return <InvitationPage token={route.token} user={null} />; const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }

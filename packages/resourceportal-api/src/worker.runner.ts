@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
+import { SwarmTerminalRouter } from "./terminal/swarm-terminal-router";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { DomainCertificateReconcilerService } from "./internal/domain-certificate-reconciler.service";
@@ -63,10 +64,14 @@ async function main() {
   const tokenPath = config.get<string>("INTERNAL_WORKER_TOKEN_FILE");
   const internalToken = tokenPath ? readFileSync(tokenPath, "utf8").trim() : config.get<string>("INTERNAL_WORKER_TOKEN");
   if (!internalToken && process.env.NODE_ENV === "production") throw new Error("Worker log authentication token missing");
+  const terminal = internalToken ? new SwarmTerminalRouter(
+    internalToken,
+    config.get<string>("RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME") ?? "resourceportal-control-plane",
+  ) : null;
   const logsServer = createServer((request, reply) => {
     void (async () => {
     const deny = (status: number) => { reply.writeHead(status); reply.end(); };
-    if (request.method !== "POST" || request.url !== "/internal/single-app-logs") return deny(404);
+    if (request.method !== "POST" || (request.url !== "/internal/single-app-logs" && request.url !== "/internal/container-terminal")) return deny(404);
     const supplied = request.headers["x-internal-token"];
     const candidate = typeof supplied === "string" ? supplied : "";
     const correct = Buffer.from(internalToken ?? "");
@@ -74,6 +79,24 @@ async function main() {
     if (!correct.length || received.length !== correct.length || !timingSafeEqual(correct, received)) return deny(403);
     let body = "";
     try {
+      if (request.url === "/internal/container-terminal") {
+        if (!terminal) return deny(503);
+        for await (const chunk of request) {
+          body += String(chunk);
+          if (Buffer.byteLength(body) > 16384) return deny(413);
+        }
+        const payload: unknown = JSON.parse(body);
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return deny(400);
+        try {
+          const result = await terminal.handle(payload as Record<string, unknown>);
+          reply.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+          reply.end(JSON.stringify(result));
+        } catch (error) {
+          reply.writeHead(422, { "content-type": "application/json", "cache-control": "no-store" });
+          reply.end(JSON.stringify({ message: error instanceof Error ? error.message : "Terminal unavailable" }));
+        }
+        return;
+      }
       for await (const chunk of request) {
         body += String(chunk);
         if (body.length > 1024) return deny(413);

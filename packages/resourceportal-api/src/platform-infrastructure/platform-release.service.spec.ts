@@ -2,7 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { ConfigService } from "@nestjs/config";
 import type { OperationsService } from "../operations/operations.service";
-import { PlatformReleaseService, classifyReleaseRollback } from "./platform-release.service";
+import { PlatformReleaseService, classifyReleaseRollback, upgradeSourceEligibility } from "./platform-release.service";
 
 describe("PlatformReleaseService", () => {
   it("reports current/latest version and rollback capability from the release manifest", async () => {
@@ -51,13 +51,13 @@ describe("PlatformReleaseService", () => {
     const operations = {
       enqueue: vi.fn().mockResolvedValue({ id: "op1", status: "Pending" }),
     };
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
-      tag_name: "v0.2.67",
-      assets: [{
-        name: "resourceportal-release-manifest.json",
-        browser_download_url: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json",
-      }],
-    }), { status: 200 }))));
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      return Promise.resolve(new Response(JSON.stringify(url.includes("resourceportal-release-manifest.json")
+        ? { version: "0.2.67", migrations: { supportedFromVersions: ["0.2.66"] } }
+        : { tag_name: "v0.2.67", assets: [{ name: "resourceportal-release-manifest.json",
+          browser_download_url: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json" }] }), { status: 200 }));
+    }));
     const service = new PlatformReleaseService(
       config as unknown as ConfigService,
       operations as unknown as OperationsService,
@@ -94,6 +94,31 @@ describe("PlatformReleaseService", () => {
       { targetVersion: "0.2.66", confirmation: "AKTUALIZUJ" },
       actor,
     )).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("fail-closed platform upgrade compatibility", () => {
+  const approved = { version: "0.2.67", migrations: { supportedFromVersions: ["0.2.66"] } };
+  it("supports only manifest-listed sources and rejects missing or malformed source metadata", () => {
+    expect(upgradeSourceEligibility(approved, "0.2.67", "0.2.66").sourceSupported).toBe(true);
+    expect(upgradeSourceEligibility(approved, "0.2.67", "0.2.65").sourceSupported).toBe(false);
+    expect(upgradeSourceEligibility({ version: "0.2.67" }, "0.2.67", "0.2.66").sourceSupported).toBe(false);
+    expect(upgradeSourceEligibility({ ...approved, version: "0.2.70" }, "0.2.67", "0.2.66").sourceSupported).toBe(false);
+    expect(upgradeSourceEligibility({ version: "0.2.67", migrations: { supportedFromVersions: ["*"] } }, "0.2.67", "0.2.66").sourceSupported).toBe(true);
+  });
+  it("never enqueues an incompatible upgrade even if release metadata is valid", async () => {
+    const config = { get: vi.fn((key: string) => key === "RESOURCEPORTAL_VERSION" ? "0.2.65" : undefined) };
+    const operations = { enqueue: vi.fn() };
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
+      return Promise.resolve(new Response(JSON.stringify(url.includes("resourceportal-release-manifest.json") ? approved : {
+        tag_name: "v0.2.67", assets: [{ name: "resourceportal-release-manifest.json", browser_download_url: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json" }],
+      }), { status: 200 }));
+    }));
+    const service = new PlatformReleaseService(config as unknown as ConfigService, operations as unknown as OperationsService);
+    await expect(service.requestUpdate({ targetVersion: "0.2.67", confirmation: "AKTUALIZUJ" }, { id: "user" } as never)).rejects.toBeInstanceOf(BadRequestException);
+    expect(operations.enqueue).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });
 
