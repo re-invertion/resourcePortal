@@ -1118,7 +1118,7 @@ export class NetworkingService {
         observedL2At: dto.agentVersion === "gate-l2-v2" ? new Date() : null,
         observedL2Diagnostic: dto.agentVersion === "gate-l2-v2" ? {
           reasonCode: supplied.length > bound.length ? "proof_filtered_by_api" :
-            dto.lanProofDiagnostic?.reasonCode ?? (supplied.length ? "ok" : "no_local_attachment"),
+            dto.lanProofDiagnostic?.reasonCode ?? "unknown_legacy_agent",
           rawCount: supplied.length,
           acceptedCount: bound.length,
           errorCode: dto.lanProofDiagnostic?.errorCode ?? "none",
