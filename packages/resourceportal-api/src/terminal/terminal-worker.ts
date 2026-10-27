@@ -11,6 +11,7 @@ type Session = { actor: string; service: string; container: string; socket: Dupl
 // Internal-only terminal broker: the public API resolves tenant ownership and RBAC.
 export class ContainerTerminalWorker {
   private readonly sessions = new Map<string, Session>();
+  private pendingStarts = 0;
   constructor() {
     const timer = setInterval(() => {
       for (const [id, session] of this.sessions) if (Date.now() - session.lastAccess > idleMs) this.close(id, session);
@@ -110,21 +111,47 @@ export class ContainerTerminalWorker {
     this.sessions.delete(id);
   }
 
+  private async waitForOutput(session: Session): Promise<void> {
+    // A bounded long-poll avoids a steady flood of empty HTTP reads.
+    if (session.output || session.finished) return;
+    await new Promise<void>((resolve) => {
+      const complete = () => {
+        clearTimeout(timer);
+        session.socket.off("data", complete);
+        session.socket.off("close", complete);
+        session.socket.off("error", complete);
+        resolve();
+      };
+      const timer = setTimeout(complete, 1500);
+      session.socket.on("data", complete);
+      session.socket.on("close", complete);
+      session.socket.on("error", complete);
+      if (session.output || session.finished) complete();
+    });
+  }
+
   async handle(payload: Record<string, unknown>): Promise<unknown> {
     const { action, actor, service } = payload;
     if (typeof actor !== "string" || !/^[a-zA-Z0-9:@._-]{1,160}$/.test(actor) || typeof service !== "string" || !servicePattern.test(service)) throw new Error("Invalid terminal identity");
     if (action === "containers") return { containers: await this.containers(service) };
     if (action === "start") {
-      if (this.sessions.size >= 16) throw new Error("Terminal session limit reached");
-      const container = await this.select(service, payload.container);
-      const { socket, execId } = await this.shell(container);
-      const id = randomUUID();
-      const session: Session = { actor, service, container, socket, execId, output: "", finished: false, lastAccess: Date.now() };
-      this.sessions.set(id, session);
-      socket.on("data", (chunk: Buffer) => { session.output = (session.output + chunk.toString()).slice(-maxOutput); });
-      socket.on("error", () => { session.finished = true; });
-      socket.on("close", () => { session.finished = true; });
-      return { sessionId: id, container, idleTimeoutSeconds: idleMs / 1000 };
+      // Reserve synchronously before any await, including discovery and Docker
+      // engine allocation. Concurrent starts cannot exceed node-wide capacity.
+      if (this.sessions.size + this.pendingStarts >= 16) throw new Error("Terminal session limit reached");
+      this.pendingStarts++;
+      try {
+        const container = await this.select(service, payload.container);
+        const { socket, execId } = await this.shell(container);
+        const id = randomUUID();
+        const session: Session = { actor, service, container, socket, execId, output: "", finished: false, lastAccess: Date.now() };
+        this.sessions.set(id, session);
+        socket.on("data", (chunk: Buffer) => { session.output = (session.output + chunk.toString()).slice(-maxOutput); });
+        socket.on("error", () => { session.finished = true; });
+        socket.on("close", () => { session.finished = true; });
+        return { sessionId: id, container, idleTimeoutSeconds: idleMs / 1000 };
+      } finally {
+        this.pendingStarts--;
+      }
     }
     if (action === "execute") {
       if (typeof payload.command !== "string" || !payload.command.trim() || Buffer.byteLength(payload.command) > 4096) throw new Error("Invalid command");
@@ -135,6 +162,7 @@ export class ContainerTerminalWorker {
     const id = payload.sessionId;
     const session = this.session(id, actor, service);
     if (action === "read") {
+      await this.waitForOutput(session);
       const output = session.output;
       session.output = "";
       let exitCode: number | null = null;
