@@ -10,11 +10,11 @@ const agent = { address: "10.0.0.5", base: "http://10.0.0.5:3102" };
 describe("tenant terminal Swarm remote routing", () => {
   function router() {
     const dispatcher = new SwarmTerminalRouter("internal-token", "rp-test");
-    const send = vi.fn(async (_agent: unknown, payload: Record<string, unknown>) => {
-      if (payload.action === "containers") return { containers: [container] };
-      if (payload.action === "start") return { sessionId, container };
-      if (payload.action === "read") return { output: "test output", finished: false };
-      return { accepted: true };
+    const send = vi.fn((_agent: unknown, payload: Record<string, unknown>) => {
+      if (payload.action === "containers") return Promise.resolve({ containers: [container] });
+      if (payload.action === "start") return Promise.resolve({ sessionId, container });
+      if (payload.action === "read") return Promise.resolve({ output: "test output", finished: false });
+      return Promise.resolve({ accepted: true });
     });
     Object.defineProperty(dispatcher, "agents", { value: vi.fn().mockResolvedValue([agent]) });
     Object.defineProperty(dispatcher, "send", { value: send });

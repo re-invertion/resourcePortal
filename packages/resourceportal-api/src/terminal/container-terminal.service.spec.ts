@@ -24,14 +24,19 @@ describe("tenant container terminal boundary", () => {
   });
   it("binds worker session to tenant app and actor, not caller-provided service or identity", async () => {
     const { service, prisma } = setup();
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ sessionId: "55555555-5555-4555-8555-555555555555", container: "a".repeat(12) }), { status: 200 }));
+    let capturedBody = "";
+    const fetcher = vi.fn((_url: Request | string | URL, init?: RequestInit) => {
+      capturedBody = typeof init?.body === "string" ? init.body : "";
+      return Promise.resolve(new Response(JSON.stringify({ sessionId: "55555555-5555-4555-8555-555555555555", container: "a".repeat(12) }), { status: 200 }));
+    });
     vi.stubGlobal("fetch", fetcher);
     await service.call(tenant, group, app, actor, "start", { service: "unauthorized", actor: "forged" });
-    const body = JSON.parse(String(fetcher.mock.calls[0][1].body));
+    const body = JSON.parse(capturedBody) as { action: string; service: string; actor: string };
     expect(body).toMatchObject({ action: "start", service: `rp_${group.replaceAll("-", "_")}_app` });
     expect(body.actor).toMatch(/^[a-f0-9]{64}$/);
     expect(body.actor).not.toBe(actorId);
-    expect(prisma.auditLogEntry.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "singleapp.terminal.start", resourceId: app }) }));
+    const auditEntry: unknown = prisma.auditLogEntry.create.mock.calls[0]?.[0];
+    expect(auditEntry).toMatchObject({ data: { action: "singleapp.terminal.start", resourceId: app } });
   });
   it("rejects invalid input and never forwards oversized interactive writes", async () => {
     const { service } = setup();

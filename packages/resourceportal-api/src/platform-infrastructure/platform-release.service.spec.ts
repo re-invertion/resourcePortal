@@ -110,7 +110,7 @@ describe("fail-closed platform upgrade compatibility", () => {
     const config = { get: vi.fn((key: string) => key === "RESOURCEPORTAL_VERSION" ? "0.2.65" : undefined) };
     const operations = { enqueue: vi.fn() };
     vi.stubGlobal("fetch", vi.fn((input: string | URL | Request) => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input instanceof URL ? input.href : input;
       return Promise.resolve(new Response(JSON.stringify(url.includes("resourceportal-release-manifest.json") ? approved : {
         tag_name: "v0.2.67", assets: [{ name: "resourceportal-release-manifest.json", browser_download_url: "https://github.com/re-invertion/resourcePortal/releases/download/v0.2.67/resourceportal-release-manifest.json" }],
       }), { status: 200 }));

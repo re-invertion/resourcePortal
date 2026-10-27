@@ -28,7 +28,7 @@ async function main() {
       const address = agentServer.address();
       if (!address || typeof address === "string") throw new Error("Terminal agent failed to listen");
       const broker = new SwarmTerminalRouter(secret, "ci-stack");
-      Object.defineProperty(broker, "agents", { value: async () => [{ address: "127.0.0.1", base: `http://127.0.0.1:${address.port}` }] });
+      Object.defineProperty(broker, "agents", { value: () => Promise.resolve([{ address: "127.0.0.1", base: `http://127.0.0.1:${address.port}` }]) });
     let containers: string[] = [];
     for (let attempt = 0; attempt < 40; attempt++) {
       const result = await broker.handle({ action: "containers", actor, service }) as { containers: string[] };

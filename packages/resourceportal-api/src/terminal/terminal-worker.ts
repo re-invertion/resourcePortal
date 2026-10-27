@@ -154,7 +154,7 @@ export class ContainerTerminalWorker {
     if (action === "resize") {
       const cols = payload.cols, rows = payload.rows;
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || Number(cols) < 20 || Number(cols) > 300 || Number(rows) < 5 || Number(rows) > 120) throw new Error("Invalid terminal dimensions");
-      await this.engine(`/exec/${session.execId}/resize?w=${cols}&h=${rows}`, "POST");
+      await this.engine(`/exec/${session.execId}/resize?w=${Number(cols)}&h=${Number(rows)}`, "POST");
       return { resized: true };
     }
     if (action === "close") { this.close(id as string, session); return { closed: true }; }
