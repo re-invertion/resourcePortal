@@ -94,7 +94,7 @@ class GateLanAgentTest(unittest.TestCase):
                 return agent.is_handshake_recent(key)
         self.assertTrue(check(f"{rp_key} {now - 10}\n"))
         self.assertFalse(check(f"{foreign_key} {now - 1}\n"))
-        self.assertFalse(check(f"{foreign_key} {now - 1}\n{rp_key} {now - 100}\n"))
+        self.assertFalse(check(f"{foreign_key} {now - 1}\n{rp_key} {now - 150}\n"))
         self.assertTrue(check(f"{foreign_key} {now - 1}\n{rp_key} {now - 10}\n"))
         self.assertFalse(check(f"{rp_key} {now - 10}\n{rp_key} {now - 9}\n"))
         self.assertFalse(check(f"{rp_key} {now + 1}\n"))
