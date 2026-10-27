@@ -182,6 +182,10 @@ const commands = {
 };
 
 const classifiers = [
+  // The HTTP entrypoint owns rate limiting and the global security/CSRF
+  // pipeline; changes must exercise the actual terminal, security and
+  // release-critical worker regression suites before any patch publication.
+  [/^packages\/resourceportal-api\/src\/main\.ts$/, ["container-terminal", "security", "worker", "platform-release"]],
   // All new executable terminal code and its tests must be release-gated.
   [/^packages\/resourceportal-api\/src\/terminal\/.*\.ts$/, ["container-terminal", "security", "worker"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-container-terminal\.ts$/, ["container-terminal", "platform-release", "workflow"]],
