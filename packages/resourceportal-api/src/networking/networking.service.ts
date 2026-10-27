@@ -1087,7 +1087,7 @@ export class NetworkingService {
       if(proof.gateId !== gate.id || proof.tenantId !== gate.tenantId ||
          seen.has(proof.attachmentId) ||
          proof.observedAtMs < now-30_000 || proof.observedAtMs > now+5_000 ||
-         proof.handshakeAtMs > now+5_000 || proof.handshakeAtMs < now-90_000)
+         proof.handshakeAtMs > now+5_000 || proof.handshakeAtMs <= now-150_000)
         throw new BadRequestException("Untrusted or stale Gate attachment proof");
       seen.add(proof.attachmentId);
     }

@@ -58,7 +58,7 @@ export function validateLanActivationProof(target:LanActivationTarget,
     !node.dockerDefaultPreserved||
     !gate.gatewayTunnelOwned||!gate.bridgeOwned||!gate.macLearnedOnTunnel||
     !Number.isSafeInteger(gate.handshakeAtMs)||
-    gate.handshakeAtMs<now-90_000||gate.handshakeAtMs>now+clockSkew)
+    gate.handshakeAtMs<=now-150_000||gate.handshakeAtMs>now+clockSkew)
     throw new Error("L2 dataplane or independent observer is not ready");
   const network=parseIpv4Cidr(target.lanCidr);
   if(!network||!containsIpv4(network,node.address)||

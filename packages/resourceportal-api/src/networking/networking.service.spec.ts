@@ -689,6 +689,34 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
     expect(desired).not.toHaveProperty("bgp");
     expect(desired).not.toHaveProperty("applicationLanPolicies");
   });
+  it("accepts authenticated heartbeat during 120s rekey grace but rejects >=150s and wrong peer",async()=>{
+    const {service,prisma}=fixture();
+    const now=Date.now();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(currentGate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(currentGate);
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([{
+      id:currentGate.remoteLanAttachments[0].id,
+      singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
+      configurationRevision:4,macAddress:"02:aa:bb:cc:dd:ee",
+    }])};
+    const payload=(age:number)=>({agentVersion:"gate-l2-v2" as const,
+      lanAttachmentProofs:[{
+        source:"gate-agent" as const,
+        attachmentId:currentGate.remoteLanAttachments[0].id,
+        tenantId,gateId,singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
+        configurationRevision:4,macAddress:"02:aa:bb:cc:dd:ee",
+        observedAtMs:now-1000,handshakeAtMs:now-age*1000,
+        gatewayTunnelOwned:true,bridgeOwned:true,macLearnedOnTunnel:true,
+      }]});
+    for(const age of [89,90,120])
+      await expect(service.gateHeartbeat("Bearer "+gateToken,payload(age))).resolves.toBeDefined();
+    for(const age of [150,180])
+      await expect(service.gateHeartbeat("Bearer "+gateToken,payload(age))).rejects.toThrow(
+        /Untrusted or stale Gate attachment proof/);
+    await expect(service.gateHeartbeat("Bearer "+gateToken,{
+      ...payload(120),lanAttachmentProofs:[{...payload(120).lanAttachmentProofs[0],tenantId:gateId}],
+    })).rejects.toThrow(/Untrusted or stale Gate attachment proof/);
+  });
   it("never publishes grants after Gate token revocation",async()=>{
     const {service,prisma}=fixture();
     (prisma.resourcePortalGate.findUnique as any).mockResolvedValue({...currentGate,revokedAt:new Date()});
