@@ -507,6 +507,26 @@ describe("AuthController cookie flow", () => {
     });
   });
 
+  it("completes signed login to callback with stale browser session without refreshing old token", async () => {
+    prisma.portalSession.findUnique.mockResolvedValue({
+      id:"session-1",accessTokenExpiresAt:new Date(Date.now()-10_000),
+      refreshToken:"stale-refresh",accessToken:"stale-access",idToken:"stale-id",
+      revokedAt:null,expiresAt:new Date(Date.now()+3_600_000),
+      lastSeenAt:new Date(),user,
+    });
+    const old=app.getHttpAdapter().getInstance().signCookie("session-1");
+    const login=await app.inject({method:"GET",url:"/api/auth/login",
+      headers:{cookie:"rp_session="+old}});
+    expect(login.statusCode).toBe(302);
+    const state=new URL(getRequiredHeader(login,"location")).searchParams.get("state");
+    const callback=await app.inject({method:"GET",
+      url:"/api/auth/callback?code=valid-code&state="+encodeURIComponent(state??""),
+      headers:{cookie:getCookieHeader(login)+"; rp_session="+old}});
+    expect(callback.statusCode).toBe(302);
+    expect(getSetCookieHeaders(callback).some(x=>x.startsWith("rp_session="))).toBe(true);
+    expect(prisma.portalSession.findUnique).not.toHaveBeenCalled();
+  });
+
   it("preserves an existing session when an unauthenticated OIDC callback fails", async () => {
     const loginResponse = await app.inject({
       method: "GET",
