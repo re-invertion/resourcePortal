@@ -53,7 +53,8 @@ export class SwarmTerminalRouter {
     const found = await Promise.all(agents.map(async (agent) => {
       const response = await this.send(agent, { action: "containers", service, actor });
       if (!Array.isArray(response.containers) || !response.containers.every((c) => typeof c === "string" && idPattern.test(c))) throw new Error("Invalid Swarm node container inventory");
-      return response.containers.map((container) => ({ container, agent }));
+      const candidates = response.containers as string[];
+      return candidates.map((container) => ({ container, agent }));
     }));
     return found.flat();
   }
