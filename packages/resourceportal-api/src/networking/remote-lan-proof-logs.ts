@@ -36,8 +36,8 @@ export function parseNodeLanServiceLogs(logs:string, expectedTasks:readonly stri
     const prefix=line.match(/^(?:\d{4}-\d\d-\d\dT\S+\s+)?\S+\.\S+\.([a-z0-9]{12,64})@\S+\s+\|\s+(?:\d{4}-\d\d-\d\dT\S+\s+)?/);
     if(!prefix)continue;
     const displayed=prefix[1];
-    const task=expected.has(displayed)?displayed:
-      displayed.length===12?shortIds.get(displayed):undefined;
+    const task=displayed.length===12?shortIds.get(displayed):
+      expected.has(displayed)?displayed:undefined;
     if(!task)continue;
     const marker=line.match(/\bLOG\s+\[RemoteLanNode\]\s+RP_LAN_NODE_(PROOF|RECONCILE)_V1\s+(\{.*\})\s*$/);
     if(!marker)continue;
