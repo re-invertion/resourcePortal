@@ -1,9 +1,10 @@
+import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import {containsIpv4,parseIpv4Cidr} from "./network-addressing";
 import {normalizeLanAddress} from "./remote-lan-addressing";
 
 const identity=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const mac=/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
-const proofAge=30_000;
+const proofAge=REMOTE_LAN_PROOF_MAX_AGE_MS;
 const clockSkew=5_000;
 export type LanProofIdentity={
   attachmentId:string; tenantId:string; singleAppId:string; gateId:string;

@@ -38,9 +38,23 @@ describe("independent Gate and application LAN activation proof",()=>{
     expect(()=>validateLanActivationProof(target(),node(),
       {...gate(),handshakeAtMs:now-120_000,macLearnedOnTunnel:false},now)).toThrow();
   });
+  it("accepts the 30s heartbeat plus 10s worker phase and rejects overage without weakening identity",()=>{
+    for(const age of [29,30,32,39,42,45])
+      expect(validateLanActivationProof(target(),
+        {...node(),observedAtMs:now-age*1000},
+        {...gate(),observedAtMs:now-age*1000},now)).toBeDefined();
+    expect(()=>validateLanActivationProof(target(),
+      {...node(),observedAtMs:now-46_000},gate(),now)).toThrow();
+    expect(()=>validateLanActivationProof(target(),node(),
+      {...gate(),observedAtMs:now-46_000},now)).toThrow();
+    expect(()=>validateLanActivationProof(target(),node(),
+      {...gate(),observedAtMs:now-42_000,configurationRevision:3},now)).toThrow();
+    expect(()=>validateLanActivationProof(target(),node(),
+      {...gate(),observedAtMs:now-42_000,macLearnedOnTunnel:false},now)).toThrow();
+  });
   it("rejects wrong tenant/app/gate/revision, stale observations and false container identity",()=>{
     for(const patch of [{tenantId:gateId},{singleAppId:tenantId},
-      {configurationRevision:3},{observedAtMs:now-45_000},{taskContainerId:"bad"}])
+      {configurationRevision:3},{observedAtMs:now-46_000},{taskContainerId:"bad"}])
       expect(()=>validateLanActivationProof(target(),{...node(),...patch},gate(),now)).toThrow();
   });
   it("rejects mismatched DHCP subnet, expired lease, damaged Docker route",()=>{

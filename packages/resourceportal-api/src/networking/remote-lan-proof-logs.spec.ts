@@ -50,7 +50,7 @@ describe("Docker Swarm authenticated global node observations",()=>{
   it("rejects absent node marker, stale cycle and empty agent set",()=>{
     expect(()=>parseNodeLanServiceLogs(cycle(task1,[]),[task1,task2],now)).toThrow();
     expect(()=>parseNodeLanServiceLogs("",[],now)).toThrow();
-    expect(()=>parseNodeLanServiceLogs(cycle(task1,[]).replace(String(now-1000),String(now-45000)),[task1],now)).toThrow();
+    expect(()=>parseNodeLanServiceLogs(cycle(task1,[]).replace(String(now-1000),String(now-46000)),[task1],now)).toThrow();
   });
   it("ignores stale prior task, tenant-injected text and a proof after last marker",()=>{
     const stale=log("c".repeat(25),"RECONCILE",{observedAtMs:now-1000,attachmentIds:[]});

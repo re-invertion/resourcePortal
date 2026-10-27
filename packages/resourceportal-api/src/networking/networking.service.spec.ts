@@ -708,6 +708,13 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
         observedAtMs:now-1000,handshakeAtMs:now-age*1000,
         gatewayTunnelOwned:true,bridgeOwned:true,macLearnedOnTunnel:true,
       }]});
+    for(const age of [32,39,42,44])
+      await expect(service.gateHeartbeat("Bearer "+gateToken,{
+        ...payload(120),lanAttachmentProofs:[{...payload(120).lanAttachmentProofs[0],observedAtMs:now-age*1000}],
+      })).resolves.toBeDefined();
+    await expect(service.gateHeartbeat("Bearer "+gateToken,{
+      ...payload(120),lanAttachmentProofs:[{...payload(120).lanAttachmentProofs[0],observedAtMs:now-46_000}],
+    })).rejects.toThrow(/Untrusted or stale Gate attachment proof/);
     for(const age of [89,90,120])
       await expect(service.gateHeartbeat("Bearer "+gateToken,payload(age))).resolves.toBeDefined();
     for(const age of [150,180])

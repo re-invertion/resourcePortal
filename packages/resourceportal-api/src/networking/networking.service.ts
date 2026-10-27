@@ -1,3 +1,4 @@
+import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import {
   BadRequestException,
   ConflictException,
@@ -1086,7 +1087,7 @@ export class NetworkingService {
     for(const proof of supplied) {
       if(proof.gateId !== gate.id || proof.tenantId !== gate.tenantId ||
          seen.has(proof.attachmentId) ||
-         proof.observedAtMs < now-30_000 || proof.observedAtMs > now+5_000 ||
+         proof.observedAtMs < now-REMOTE_LAN_PROOF_MAX_AGE_MS || proof.observedAtMs > now+5_000 ||
          proof.handshakeAtMs > now+5_000 || proof.handshakeAtMs <= now-150_000)
         throw new BadRequestException("Untrusted or stale Gate attachment proof");
       seen.add(proof.attachmentId);
