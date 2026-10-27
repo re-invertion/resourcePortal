@@ -7,7 +7,7 @@ import {
   dhcpClientStopped,
   reconcileNodeLanDhcp,
 } from "./remote-lan-dhcp-recovery";
-import {inspectStaticRoutingClaim,readRpStaticTable,type StaticRoutingClaim} from "./remote-lan-static-routing";
+import {inspectStaticRoutingClaim,readRpStaticTable,staticConnectedPrefix,type StaticRoutingClaim} from "./remote-lan-static-routing";
 import type {NodeLanProof} from "./remote-lan-activation-proof";
 import {
   assertCreatedNodeLanLink, assertOwnedNodeLanLink,
@@ -85,7 +85,7 @@ function staticClaim(target:NodeLanTarget,device:string):StaticRoutingClaim {
   const gateway=target.attachment.staticGateway;
   if(target.attachment.addressMode!=="Static"||!addr||!gateway)
     throw new Error("Static cleanup cannot infer trusted source/gateway");
-  return {source:addr.split("/")[0],gateway,device};
+  return {source:addr.split("/")[0],gateway,device,prefix:target.attachment.lanCidr};
 }
 function staticRoutes(pid: number): string {
   return readRpStaticTable(args => spawnSync("nsenter", [
@@ -116,17 +116,24 @@ function cleanupOrphanStaticPolicy(pid:number,device:string) {
   if(pref.length>1) throw new Error("Ambiguous orphan RP LAN routing priority");
   const rule=pref[0]?.match(/^18015:\s+from ((?:\d{1,3}\.){3}\d{1,3})(?:\/32)? lookup 20015(?:\s|$)/);
   if(pref.length && !rule) throw new Error("Unowned orphan static source rule");
-  const route=routes.trim().match(/^default via ((?:\d{1,3}\.){3}\d{1,3}) dev (rp-a-[0-9a-f]{8})(?:\s|$)/);
-  if(routes.trim() && (!route || route[2]!==device))
+  const rows=routes.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  const defaults=rows.filter(x=>x.startsWith('default'));
+  const route=defaults[0]?.match(/^default via ((?:\d{1,3}\.){3}\d{1,3}) dev (rp-a-[0-9a-f]{8})(?:\s|$)/);
+  if(defaults.length>1 || (defaults.length && (!route || route[2]!==device)))
     throw new Error("Orphan static table belongs to a different device");
-  const ips=nsjson<Address[]>(pid,["-j","-4","addr","show","dev",device])
-    .flatMap(x=>x.addr_info??[]).filter(x=>x.family==="inet").map(x=>x.local);
+  const addresses=nsjson<Address[]>(pid,["-j","-4","addr","show","dev",device])
+    .flatMap(x=>x.addr_info??[]).filter(x=>x.family==="inet");
+  const ips=addresses.map(x=>x.local);
   if(rule && !ips.includes(rule[1]))
     throw new Error("Orphan static source was not assigned to RP-owned endpoint");
   if(!rule && ips.length!==1)
     throw new Error("Cannot establish orphan static route source identity");
-  const claim={device,source:rule?.[1]??ips[0]??"",
-    gateway:route?.[1]??"0.0.0.1"};
+  const owner=addresses.find(x=>x.local===(rule?.[1]??ips[0]));
+  if(!owner?.local || !Number.isInteger(owner.prefixlen))
+    throw new Error("Orphan static source prefix is not verifiable");
+  const claim={device,source:owner.local,
+    gateway:route?.[1]??"0.0.0.1",
+    prefix:staticConnectedPrefix(owner.local,owner.prefixlen!)};
   for(const command of inspectStaticRoutingClaim(claim,rules,routes).cleanup)
     nsrun(pid,[...command]);
 }
