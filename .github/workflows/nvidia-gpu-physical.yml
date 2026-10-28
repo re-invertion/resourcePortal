@@ -1,0 +1,40 @@
+name: NVIDIA GPU Post-release Physical Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published signed ResourcePortal release tag to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-physical:
+    name: Physical NVIDIA isolation (post-release, manual)
+    # The private runner must be a disposable, single-node GPU Swarm with no
+    # existing services. Never install it on production ResourcePortal.
+    runs-on: [self-hosted, linux, x64, rp-isolated-nvidia-gpu]
+    timeout-minutes: 30
+    steps:
+      - name: Check official published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            --jq 'select(.draft == false and .published_at != null) | .tag_name' \
+            | grep -Fx -- "$RELEASE_TAG"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+      - name: Run physical NVIDIA Swarm isolation
+        env:
+          RP_GPU_SMOKE_ACK: isolated-nonproduction-swarm
+        run: bash scripts/test-nvidia-gpu-swarm.sh

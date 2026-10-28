@@ -1,6 +1,6 @@
 # NVIDIA GPU — Exclusive Allocation
 
-Status: implementation candidate only. NOT production-ready, not released.
+Status: hardware acceptance **pending**. This change is eligible for the normal signed RP release after full pre-merge CI and DB rollback certification, **before** physical NVIDIA acceptance. A release is not proof of hardware isolation; the operator validates the actual host after updating.
 Baseline: main after PR #349, SHA 52202280c92bb536080c5382e2de199dde93d21e.
 
 ## Contract
@@ -33,15 +33,15 @@ Baseline: main after PR #349, SHA 52202280c92bb536080c5382e2de199dde93d21e.
 ## Release safety
 
 - The Prisma table is a schema migration. The existing CI supports candidate-specific real-upgrade-and-restore certification, including old API+PostgreSQL+ZITADEL recovery, and this migration passes expand-only SQL review. This is not yet candidate-specific CI evidence. A release is blocked without the exact workflow proof; never substitute a locally fabricated evidence file.
-- Do not claim image-only rollback for this change, bypass merge queue, omit mandatory fault-injection or skip real physical NVIDIA integration tests.
+- Do not claim image-only rollback for this change, bypass merge queue or omit mandatory fault injection. Hardware-specific NVIDIA runtime tests are explicitly **post-release acceptance**, not a pre-merge CI condition. They are not claimed as passed, and failures are handled by follow-up fixes and a new signed release.
 - Readiness, rollback from immediate published release, signed release manifest, images, tag, full CI and tenant production access must be verified.
 - The RP Admin inventory queried while implementing reported GPU count zero. This is not proof that hardware is absent, but it is not physical-GPU test evidence.
-- Do not mark Wiki Implementation Stages GPU steps as complete until real release and runtime tests pass.
+- Do not mark Wiki Implementation Stages GPU steps as fully hardware-verified until both signed release and real user acceptance tests pass.
 
 
-## Required physical GPU CI runner
+## Optional post-release physical GPU CI runner
 
-ResourcePortal Release Readiness triggers the gpu-physical job whenever GPU files are changed.
+ResourcePortal Release Readiness runs normal mandatory checks (full regression, Swarm, installer, OIDC/federation as applicable, **real database upgrade/restore and automatic rollback**). Hardware-specific NVIDIA acceptance is intentionally moved to a separately triggered post-release workflow, not treated as a pre-merge runner requirement.
 The smoke refuses to run if the node is not a single-node Swarm manager, the
 acknowledgement is missing, or any existing Swarm service is detected.
 The nonproduction safety invariant is tested in
@@ -52,13 +52,13 @@ Never install this CI runner on the production RP manager. It deploys and remove
 short-lived Swarm services to prove single-device scheduling, actual UUID visibility,
 and GPU denial to CPU-only tenants.
 The script requires RP_GPU_SMOKE_ACK=isolated-nonproduction-swarm in CI.
-A skipped, failed, or missing GPU job blocks merge.
+The physical GPU job is invoked manually **after** the signed release using `.github/workflows/nvidia-gpu-physical.yml` and a published release tag. No NVIDIA hardware result is implied by the signing or publication of RP.
 Provision this separate test runner with NVIDIA kernel driver, Container Toolkit,
 default NVIDIA runtime and actual NVIDIA-GPU UUID generic resources in Swarm.
 
 ### Evidence still needed
 
-- Actual physical NVIDIA run of gpu-physical and API-owned tenant allocation.
-- Full candidate CI, isolated DB upgrade-and-restore, merge queue, exact-SHA release.
-- Production GPU placement and CPU-only runtime verification after a safe update.
+- After updating the real RP environment: confirm GPU host driver, container toolkit, default NVIDIA runtime, node generic resource UUID and tenant quota UI/MCP, then test one dedicated GPU application; verify a second tenant is denied and CPU-only apps cannot access the GPU. Report any failure for a follow-up fix and signed patch release.
+- Before publishing: complete candidate CI, isolated DB upgrade-and-restore, merge queue and exact-SHA signed release. Do not make the physical NVIDIA job a prerequisite for this first release.
+- Production GPU placement and CPU-only runtime verification after a safe update, with recording of observed GPU UUID, tenant allocations and deployment states. Never run the isolated smoke script on the live RP cluster: it intentionally creates/removes disposable services.
 - Never restart Docker on the production manager outside an approved maintenance window.

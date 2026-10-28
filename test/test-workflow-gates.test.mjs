@@ -153,7 +153,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc','gpu-physical']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -236,19 +236,22 @@ test('one-time unpublished main recovery for #318 remains SHA- and file-scoped',
 });
 
 
-test("GPU changes require private physical NVIDIA Swarm gate before merge", () => {
+test("NVIDIA hardware acceptance is manual after a normally certified release", () => {
   const readiness=load("release-readiness.yml");
-  const candidate=readiness.jobs.candidate;
-  assert.match(candidate.outputs.gpu_smoke,/test-plan.outputs.gpu_smoke/);
-  const gpu=readiness.jobs["gpu-physical"];
-  assert.ok(gpu);
-  assert.ok(gpu["runs-on"].includes("rp-isolated-nvidia-gpu"));
-  assert.match(gpu.if,/gpu_smoke/);
-  assert.match(gpu.if,/head.repo.full_name == github.repository/);
-  assert.match(gpu.steps.at(-1).run,/scripts\/test-nvidia-gpu-swarm.sh/);
+  const physical=load("nvidia-gpu-physical.yml");
   const gate=readiness.jobs["release-ready"];
-  assert.ok(gate.needs.includes("gpu-physical"));
-  const verify=gate.steps.find(step=>step.name?.startsWith("Fail closed"));
-  assert.match(verify.run,/verify_gate physical-nvidia-swarm "\$GPU_PHYSICAL" true/);
-  assert.match(verify.env.GPU_PHYSICAL,/needs.gpu-physical.result/);
+  assert.ok(!readiness.jobs["gpu-physical"]);
+  assert.ok(!gate.needs.includes("gpu-physical"));
+  assert.match(gate.steps[0].run,/Release candidate validation failed/);
+  assert.match(gate.steps[0].run,/verify_gate swarm/);
+  assert.match(gate.steps[0].run,/verify_gate federation/);
+  assert.match(gate.steps[0].run,/verify_gate installer/);
+  assert.doesNotMatch(gate.steps[0].run,/physical-nvidia-swarm/);
+  assert.ok(physical.on.workflow_dispatch.inputs.release_tag.required);
+  const job=physical.jobs["gpu-physical"];
+  assert.ok(job["runs-on"].includes("rp-isolated-nvidia-gpu"));
+  assert.match(job.steps.find(step=>step.name==="Check official published release").run,/releases\/tags/);
+  assert.match(job.steps.find(step=>step.name==="Run physical NVIDIA Swarm isolation").run,/scripts\/test-nvidia-gpu-swarm\.sh/);
+  const mandatoryRollback=readiness.jobs.candidate.steps.find(step=>step.name?.startsWith("Require verified automatic rollback"));
+  assert.match(mandatoryRollback.run,/--require-automatic/);
 });
