@@ -25,7 +25,7 @@ rp_upgrade_identity_preflight
 }
 
 for (const stage of ["quiescing-clients", "postgres-rollout", "zitadel-rollout", "mcp-oauth-reconciliation", "resourceportal-migrations-started", "target-stack-healthy", "completed"]) {
-  for (const policy of ["allowed", "none"]) {
+  for (const policy of ["allowed", "revoked"]) {
     test(`checkpoint failure at ${stage} follows guarded recovery (${policy})`, () => {
       const result = spawnSync("bash", ["-c", `
 set -eu
@@ -39,6 +39,7 @@ rp_upgrade_identity_preflight(){ :; }
 rp_pull_release_images(){ :; }
 rp_apply_release_manifest_images(){ :; }
 rp_upgrade_checkpoint_prepare(){ :; }
+rp_upgrade_database_snapshot_prepare(){ :; }
 rp_manifest_value(){ printf '0.2.81'; }
 rp_upgrade_ensure_v020_node_labels(){ :; }
 rp_upgrade_refresh_firewall(){ :; }
@@ -51,28 +52,57 @@ rp_run_zitadel_mcp_oauth_reconcile(){ printf 'OAUTH\\n'; }
 rp_run_migrations(){ printf 'MIGRATE\\n'; }
 rp_deploy_control_plane(){ printf 'DEPLOY\\n'; }
 rp_wait_for_https_origin(){ :; }
+rp_upgrade_wait_for_tenant_oidc_ready(){ :; }
 rp_upgrade_refresh_enrollment_listener(){ :; }
 rp_persist_release_manifest(){ printf '/etc/hosts'; }
 rp_config_write(){ :; }
 rp_write_stack(){ :; }
-rp_upgrade_rollback_allowed(){ [[ "$POLICY" == allowed ]]; }
+RP_TEST_ROLLBACK_CHECKS=0
+rp_upgrade_rollback_allowed(){
+  RP_TEST_ROLLBACK_CHECKS=$((RP_TEST_ROLLBACK_CHECKS + 1))
+  [[ "$POLICY" != revoked || "$RP_TEST_ROLLBACK_CHECKS" == 1 ]]
+}
+rp_upgrade_source_rollback_policy(){ printf 'image-only\\n'; }
+rp_upgrade_database_restore(){ printf 'DB-RESTORE\\n'; }
+rp_swarm_stack_deploy_retry(){ printf 'ROLLBACK\\n'; }
+rp_ensure_rollback_agent_capabilities(){ :; }
 rp_upgrade_restore_manifest_checkpoint(){ :; }
-docker(){ printf 'ROLLBACK\\n'; }
+docker(){ printf 'UNEXPECTED-DOCKER\\n'; return 1; }
 if rp_upgrade_apply /etc/hosts /etc/hosts; then exit 99; else exit 1; fi
 `], { encoding: "utf8", env: { ...process.env, FAIL_STAGE: stage, POLICY: policy } });
       assert.equal(result.status, 1, result.stderr);
       assert.match(result.stderr, /ResourcePortal update failed at checkpoint/);
-      if (policy === "none") {
+      if (policy === "revoked") {
         assert.match(result.stdout, /PHASE:manual-recovery-required/);
-        assert.doesNotMatch(result.stdout, /ROLLBACK/);
+        assert.doesNotMatch(result.stdout, /ROLLBACK|DB-RESTORE/);
+        assert.match(result.stderr, /Automatic rollback refused/);
       } else {
-        assert.match(result.stdout, /PHASE:rolling-back\nROLLBACK\nPHASE:rolled-back/);
+        assert.match(result.stdout, /PHASE:rolling-back\nDB-RESTORE\nROLLBACK\nPHASE:rolled-back/);
       }
+      assert.doesNotMatch(result.stdout, /UNEXPECTED-DOCKER/);
       const next = { "quiescing-clients": "QUIESCE", "postgres-rollout": "POSTGRES", "zitadel-rollout": "ZITADEL", "mcp-oauth-reconciliation": "OAUTH", "resourceportal-migrations-started": "MIGRATE" }[stage];
       if (next) assert.doesNotMatch(result.stdout, new RegExp(`^${next}$`, "m"));
     });
   }
 }
+test("rollback policy without automatic recovery is rejected before any image pull or runtime mutation", () => {
+  const result = spawnSync("bash", ["-c", `
+set -eu
+source scripts/installer/upgrade.sh
+rp_upgrade_check_temporary_files(){ :; }
+rp_config_apply_defaults(){ :; }
+rp_verify_release_manifest_attestation(){ :; }
+rp_upgrade_rollback_allowed(){ return 1; }
+rp_upgrade_identity_preflight(){ printf 'UNSAFE-IDENTITY'; }
+rp_pull_release_images(){ printf 'UNSAFE-PULL'; }
+rp_upgrade_quiesce_database_clients(){ printf 'UNSAFE-QUIESCE'; }
+rp_upgrade_apply /etc/hosts /etc/hosts
+`], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /release manifest does not guarantee automatic rollback/);
+  assert.doesNotMatch(result.stdout, /UNSAFE/);
+});
+
 test("identity preflight accepts available identity metadata, PAT and secret reference", () => {
   const result = preflight(""); assert.equal(result.status, 0, result.stderr);
 });
@@ -91,6 +121,7 @@ source scripts/installer/upgrade.sh
 rp_upgrade_check_temporary_files(){ return 0; }
 rp_config_apply_defaults(){ return 0; }
 rp_verify_release_manifest_attestation(){ return 0; }
+rp_upgrade_rollback_allowed(){ return 0; }
 rp_upgrade_identity_preflight(){ printf 'missing secret\\n' >&2; return 1; }
 rp_upgrade_quiesce_database_clients(){ printf 'UNSAFE-QUIESCE'; }
 rp_pull_release_images(){ printf 'UNSAFE-PULL'; }
