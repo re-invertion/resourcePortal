@@ -429,10 +429,11 @@ test("API production build config is classified and retains narrow E2E-only excl
 test("deployment runtime patch selects targeted rollout and mount regressions", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
+    "packages/resourceportal-api/src/internal/explicit-rollback-completion.spec.ts",
     "packages/resourceportal-api/src/internal/stack-rollout.service.spec.ts",
     "packages/resourceportal-api/src/internal/deployment-mount-paths.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "gpu-security"]);
 });
 
 
@@ -484,4 +485,30 @@ test("historical Workspace merge author maps to canonical maintainer only in pre
     "Agent Workspace <agent-workspace@local>",
   );
   assert.deepEqual(selectProfiles([".mailmap"]).profiles, ["workflow"]);
+});
+
+
+test("GPU change is classified and requires physical NVIDIA Swarm security gate", () => {
+  const cases = [
+    "packages/resourceportal-api/src/platform-infrastructure/nvidia-gpu-node-probe.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/swarm-gpu-node-probe-router.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-swarm-render.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-app-group-teardown.spec.ts",
+    "packages/resourceportal-api/src/app-groups/nvidia-gpu-draft-discard.spec.ts",
+    "packages/resourceportal-api/src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-release-admission.spec.ts",
+    "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
+    "packages/resourceportal-web/src/pages/platform-gpu-permissions.test.tsx",
+    "scripts/test-nvidia-gpu-swarm.sh",
+    "test/installer/test-gpu-readiness.sh",
+    "test/installer/test-gpu-swarm-gate-safety.sh",
+    "packages/resourceportal-api/src/internal/stack-runtime.service.ts",
+    "packages/resourceportal-api/src/operations/executors/app-group-delete-operation.executor.ts",
+  ];
+  const plan = selectProfiles(cases);
+  assert.equal(plan.gpuSmoke, true);
+  assert.ok(plan.profiles.includes("gpu-security"));
+  assert.ok(plan.profiles.includes("platform-release"));
+  assert.throws(() => selectProfiles(["scripts/unregistered-nvidia-test.sh"]), /unclassified changes/);
 });

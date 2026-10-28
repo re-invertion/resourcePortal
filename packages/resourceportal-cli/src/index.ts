@@ -177,6 +177,12 @@ const commands: Command[] = [
   command("app-group", "restart", "<tenantId> <appGroupId>", "Restart app group.", (p, c) =>
     c.appGroups.restart(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
   ),
+  command("app", "gpu-list", "<tenantId>", "List tenant-visible NVIDIA GPU devices.", (p, c) =>
+    c.apps.listGpuDevices(arg(p, 0, "tenantId")),
+  ),
+  command("app", "gpu-allocate", "<tenantId> <appGroupId> <appId> --gpu-uuid GPU-UUID", "Reserve one whole NVIDIA GPU exclusively.", (p, c) =>
+    c.apps.allocateGpu(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId"), arg(p, 2, "appId"), String(flag(p.flags, "gpuUuid"))),
+  ),
   command("app", "list", "<tenantId> <appGroupId>", "List apps.", (p, c) =>
     c.apps.list(arg(p, 0, "tenantId"), arg(p, 1, "appGroupId")),
   ),

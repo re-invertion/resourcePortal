@@ -429,3 +429,18 @@ test("exposes structured API error metadata", async () => {
     },
   );
 });
+test("NVIDIA GPU SDK limits all operations to tenant API and uses exact UUID", async () => {
+  const { client, calls } = recordingClient();
+  const tenantId = "22222222-2222-4222-8222-222222222222";
+  const groupId = "33333333-3333-4333-8333-333333333333";
+  const appId = "44444444-4444-4444-8444-444444444444";
+  const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  await client.apps.listGpuDevices(tenantId);
+  await client.apps.allocateGpu(tenantId, groupId, appId, uuid);
+  assert.equal(pathOf(calls[0]), "/api/tenants/" + tenantId + "/app-groups/gpu-devices");
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(pathOf(calls[1]), "/api/tenants/" + tenantId +
+    "/app-groups/" + groupId + "/single-apps/" + appId + "/gpu-allocation");
+  assert.equal(calls[1].init.method, "POST");
+  assert.equal(calls[1].init.body, JSON.stringify({ gpuUuid: uuid }));
+});

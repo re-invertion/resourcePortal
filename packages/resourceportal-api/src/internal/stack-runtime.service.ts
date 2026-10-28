@@ -100,6 +100,50 @@ export class StackRuntimeService {
     };
   }
 
+  /**
+   * Release a deleted App Group's physical GPU only after all Swarm nodes
+   * confirm no stack services or nonterminal tasks. Unknown nodes fail closed.
+   */
+  async verifyRemovedGpuAppGroupRuntime(appGroupId: string): Promise<boolean> {
+    const stackName = "rp_" + appGroupId.replaceAll("-", "_");
+    const nodes = await this.runDocker([
+      "node", "ls", "--format", "{{.ID}}|{{.Status}}|{{.Availability}}",
+    ]);
+    if (nodes.exitCode !== 0 || !nodes.stdout.trim()) return false;
+    const ids: string[] = [];
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [rawNodeId, state, availability] = line.split("|");
+      // Docker node ls may suffix the local manager with a star.
+      const nodeId = rawNodeId?.trim().replace(/\s+\*$/, "");
+      if (!nodeId || !/^[a-z0-9]{20,40}$/i.test(nodeId) ||
+          state !== "Ready" || availability !== "Active") return false;
+      ids.push(nodeId);
+    }
+    if (!ids.length || ids.length > 128) return false;
+
+    const services = await this.runDocker([
+      "service", "ls", "--filter", "label=com.docker.stack.namespace=" + stackName,
+      "--format", "{{.ID}}",
+    ]);
+    if (services.exitCode !== 0 || services.stdout.trim()) return false;
+
+    for (const nodeId of ids) {
+      const tasks = await this.runDocker([
+        "node", "ps", nodeId, "--no-trunc",
+        "--format", "{{.Name}}|{{.CurrentState}}",
+      ]);
+      if (tasks.exitCode !== 0) return false;
+      for (const line of tasks.stdout.split("\n").filter(Boolean)) {
+        const [name, state] = line.split("|");
+        if (!name?.startsWith(stackName + "_")) continue;
+        if (!state || !/^(?:Shutdown|Complete|Failed|Rejected)\b/i.test(state)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   async removeTenantNetwork(networkName: string) {
     const network = await this.inspectNetwork(networkName);
     if (!network.success) {

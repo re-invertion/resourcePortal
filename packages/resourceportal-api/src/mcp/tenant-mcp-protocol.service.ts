@@ -360,6 +360,8 @@ export class TenantMcpProtocolService {
         break;
       }
 
+      case "single-apps:list_gpu_devices": path = '/app-groups/gpu-devices'; break;
+      case "single-apps:allocate_gpu": method = "POST"; path = '/app-groups/' + encodeURIComponent(uuid("appGroupId")) + '/single-apps/' + encodeURIComponent(uuid("singleAppId")) + '/gpu-allocation'; break;
       case "single-apps:list": path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps`; break;
       case "single-apps:create": method = "POST"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps`; break;
       case "single-apps:update": method = "PATCH"; path = `/app-groups/${encodeURIComponent(uuid("appGroupId"))}/single-apps/${encodeURIComponent(uuid("singleAppId"))}`; break;
@@ -1103,7 +1105,7 @@ export class TenantMcpProtocolService {
         "resourceportal_manage_single_apps",
         "Manage applications",
         "Create, update, delete and control Single Apps, read bounded service logs, runtime config, HTTP endpoints and resource attachments inside an App Group.",
-        ["list", "create", "update", "delete", "start", "stop", "restart", "get_logs", "terminal_containers", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
+        ["list", "create", "update", "delete", "list_gpu_devices", "allocate_gpu", "start", "stop", "restart", "get_logs", "terminal_containers", "get_runtime_config", "update_runtime_config", "list_http_endpoints", "get_http_endpoint", "create_http_endpoint", "update_http_endpoint", "delete_http_endpoint", "attach_variable", "detach_variable", "attach_secret", "detach_secret", "attach_config", "detach_config", "attach_volume", "detach_volume"],
       ),
       managedTool(
         "resourceportal_manage_volumes",
@@ -1133,7 +1135,7 @@ export class TenantMcpProtocolService {
         "resourceportal_manage_access",
         "Manage tenant access and billing",
         "Read billing/quota/auth policy and manage memberships, invitations, groups, group members and group roles.",
-        ["get_tenant", "update_branding", "get_billing", "list_transactions", "list_usage_records", "get_usage_series", "get_usage_summary", "redeem_voucher", "get_quota", "update_quota", "get_auth_policy", "update_auth_policy", "list_roles", "list_memberships", "create_membership", "update_membership", "delete_membership", "list_invitations", "create_invitation", "resend_invitation", "delete_invitation", "list_groups", "create_group", "update_group", "delete_group", "add_group_member", "remove_group_member", "add_group_role", "remove_group_role"],
+        ["get_tenant", "update_branding", "get_billing", "list_transactions", "list_usage_records", "get_usage_series", "get_usage_summary", "redeem_voucher", "get_quota", "get_auth_policy", "update_auth_policy", "list_roles", "list_memberships", "create_membership", "update_membership", "delete_membership", "list_invitations", "create_invitation", "resend_invitation", "delete_invitation", "list_groups", "create_group", "update_group", "delete_group", "add_group_member", "remove_group_member", "add_group_role", "remove_group_role"],
       ),
       managedTool(
         "resourceportal_manage_identity",
@@ -1380,7 +1382,7 @@ export class TenantMcpProtocolService {
         },
         { path: "/domains", methods: ["GET", "POST"], purpose: "Domains" },
         { path: "/billing", methods: ["GET"], purpose: "Billing account" },
-        { path: "/quota", methods: ["GET", "PATCH"], purpose: "Tenant quota" },
+        { path: "/quota", methods: ["GET"], purpose: "Read assigned tenant quota; only Platform Admin can grant or change GPU entitlements" },
         {
           path: "/memberships",
           methods: ["GET", "POST"],

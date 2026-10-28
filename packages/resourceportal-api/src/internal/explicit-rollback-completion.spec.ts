@@ -70,6 +70,7 @@ describe("explicit rollback completion", () => {
       },
     };
     const prisma = {
+      gpuDevice: { findMany: vi.fn().mockResolvedValue([]) },
       appGroupDeployment: {
         findUnique: vi.fn().mockResolvedValue(deployment),
       },

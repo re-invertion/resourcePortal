@@ -392,3 +392,20 @@ test("rp login --dev-user-id stores only development authentication", async () =
     rmSync(home, { recursive: true, force: true });
   }
 });
+test("dedicated NVIDIA GPU CLI accepts exact UUID and never leaves tenant scope", async () => {
+  const tenantId = "22222222-2222-4222-8222-222222222222";
+  const appGroupId = "33333333-3333-4333-8333-333333333333";
+  const appId = "44444444-4444-4444-8444-444444444444";
+  const gpuUuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const allocation = await captureJsonRequest([
+    "app", "gpu-allocate", tenantId, appGroupId, appId, "--gpu-uuid", gpuUuid,
+  ]);
+  assert.equal(allocation.method, "POST");
+  assert.equal(allocation.url,
+    "/api/tenants/" + tenantId + "/app-groups/" + appGroupId +
+    "/single-apps/" + appId + "/gpu-allocation");
+  assert.deepEqual(allocation.body, { gpuUuid });
+  const inventory = await captureJsonRequest(["app", "gpu-list", tenantId]);
+  assert.equal(inventory.method, "GET");
+  assert.equal(inventory.url, "/api/tenants/" + tenantId + "/app-groups/gpu-devices");
+});

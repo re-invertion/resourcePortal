@@ -9,6 +9,25 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  // GPU changes require real physical Swarm proof in addition to unit tests.
+  "gpu-security": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--",
+      "src/platform-infrastructure/nvidia-gpu-observation.spec.ts",
+      "src/platform-infrastructure/nvidia-gpu-node-probe.spec.ts",
+      "src/platform-infrastructure/swarm-gpu-node-probe-router.spec.ts",
+      "src/platform-infrastructure/nvidia-gpu-allocation.service.spec.ts",
+      "src/internal/nvidia-gpu-swarm-render.spec.ts",
+      "src/internal/nvidia-gpu-app-group-teardown.spec.ts",
+      "src/app-groups/nvidia-gpu-draft-discard.spec.ts",
+      "src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
+      "src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
+      "src/internal/nvidia-gpu-release-admission.spec.ts",
+      "src/operations/executors/app-group-delete-operation.executor.spec.ts"],
+    ["bash", "-n", "scripts/test-nvidia-gpu-swarm.sh"],
+    ["bash", "test/installer/test-gpu-readiness.sh"],
+    ["bash", "test/installer/test-gpu-swarm-gate-safety.sh"],
+    ["node", "--test", "test/test-release-rollback-policy.test.mjs"],
+  ],
   // The container terminal introduces a privileged runtime path through a
   // tenant-scoped API, Swarm agent and interactive browser. Never treat it as
   // a docs-only change or allow a patch release without these regressions.
@@ -182,6 +201,23 @@ const commands = {
 };
 
 const classifiers = [
+  [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-draft-discard(?:\.spec)?\.ts$/, ["gpu-security", "applications"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-identity-immutable\.spec\.ts$/, ["gpu-security", "applications"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/stack-rollout\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/explicit-rollback-completion\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+
+  [/^packages\/resourceportal-api\/src\/platform-infrastructure\/(?:nvidia-gpu-|swarm-gpu-node-probe-router)/, ["gpu-security", "platform-release"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-swarm-render\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-app-group-teardown\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/dto\/allocate-gpu\.dto\.ts$/, ["gpu-security", "applications"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-gpu-permissions\.test\.tsx$/, ["gpu-security", "platform-admin-ui"]],
+  [/^scripts\/test-nvidia-gpu-swarm\.sh$/, ["gpu-security", "workflow"]],
+  [/^test\/installer\/test-gpu-readiness\.sh$/, ["gpu-security", "installer"]],
+  [/^test\/installer\/test-gpu-swarm-gate-safety\.sh$/, ["gpu-security", "installer"]],
+  [/^packages\/resourceportal-api\/src\/internal\/stack-runtime\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/app-group-delete-operation\.executor(?:\.spec)?\.ts$/, ["gpu-security", "operations"]],
+
   // The HTTP entrypoint owns rate limiting and the global security/CSRF
   // pipeline; changes must exercise the actual terminal, security and
   // release-critical worker regression suites before any patch publication.
@@ -383,6 +419,7 @@ export function selectProfiles(paths) {
   return {
     profiles: [...profiles].sort(),
     vpnSmoke: profiles.has("networking"),
+    gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };
 }
@@ -406,6 +443,7 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
   const output = readArg("--github-output");
   if (output) appendFileSync(output, [
     `vpn_smoke=${plan.vpnSmoke}`,
+    `gpu_smoke=${plan.gpuSmoke}`,
     `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
     `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,
     "",

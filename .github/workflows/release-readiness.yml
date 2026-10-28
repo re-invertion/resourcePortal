@@ -18,6 +18,7 @@ jobs:
     outputs:
       mode: ${{ steps.release-mode.outputs.mode }}
       vpn_smoke: ${{ steps.test-plan.outputs.vpn_smoke }}
+      gpu_smoke: ${{ steps.test-plan.outputs.gpu_smoke }}
       federation_required: ${{ steps.test-plan.outputs.federation_required }}
       installer_required: ${{ steps.test-plan.outputs.installer_required }}
     steps:
@@ -242,20 +243,36 @@ jobs:
     with:
       force_gate: true
 
+  gpu-physical:
+    name: Physical NVIDIA Swarm isolation gate
+    needs: candidate
+    # Never run untrusted fork PR code on a private physical GPU runner.
+    if: needs.candidate.outputs.gpu_smoke == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, rp-isolated-nvidia-gpu]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove single-device exclusivity and CPU-only isolation on an isolated GPU Swarm
+        env:
+          RP_GPU_SMOKE_ACK: isolated-nonproduction-swarm
+        run: bash scripts/test-nvidia-gpu-swarm.sh
+
   release-ready:
     name: Required release readiness
     runs-on: ubuntu-latest
     if: always()
-    needs: [candidate, swarm, federation, installer, tenant-oidc]
+    needs: [candidate, swarm, federation, installer, tenant-oidc, gpu-physical]
     steps:
       - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
           CANDIDATE: ${{ needs.candidate.result }}
           MODE: ${{ needs.candidate.outputs.mode }}
           VPN_SMOKE: ${{ needs.candidate.outputs.vpn_smoke }}
+          GPU_SMOKE: ${{ needs.candidate.outputs.gpu_smoke }}
           FEDERATION_REQUIRED: ${{ needs.candidate.outputs.federation_required }}
           INSTALLER_REQUIRED: ${{ needs.candidate.outputs.installer_required }}
           SWARM: ${{ needs.swarm.result }}
+          GPU_PHYSICAL: ${{ needs.gpu-physical.result }}
           FEDERATION: ${{ needs.federation.result }}
           INSTALLER: ${{ needs.installer.result }}
           TENANT_OIDC: ${{ needs.tenant-oidc.result }}
@@ -275,6 +292,13 @@ jobs:
               exit 1
             fi
           }
+          # GPU code requires physical GPU evidence in THIS PR/merge queue run.
+          # A missing runner, skipped job, or failed isolation test blocks merge.
+          if [[ "$GPU_SMOKE" == true ]]; then
+            verify_gate physical-nvidia-swarm "$GPU_PHYSICAL" true
+          else
+            verify_gate physical-nvidia-swarm "$GPU_PHYSICAL" false
+          fi
           if [[ "$MODE" == milestone || "$VPN_SMOKE" == true ]]; then
             verify_gate swarm "$SWARM" true
           else

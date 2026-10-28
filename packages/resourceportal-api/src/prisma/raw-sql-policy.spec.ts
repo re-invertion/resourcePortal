@@ -17,6 +17,12 @@ function sourceFiles(root: string): string[] {
 }
 
 const allowedRawSqlFiles = new Set([
+  // Global GPU allocation advisory lock serializes draft discard with reservations.
+  "app-groups/app-groups.service.ts",
+  // Global GPU allocation lock protects verified rollout deletion/release.
+  "internal/deployment-execution.service.ts",
+  // Atomic GPU UUID reservation and cross-node ownership reconciliation.
+  "platform-infrastructure/nvidia-gpu-allocation.service.ts",
   // Reviewed tenant usage time-series aggregate with bounded bucket choices.
   "billing/billing-read.service.ts",
   // Atomic usage dedupe plus BillingAccount row locking.
@@ -32,6 +38,8 @@ const allowedRawSqlFiles = new Set([
   "health/health.controller.ts",
   // Atomic mirrored Operation + OperationEvent creation in caller transaction.
   "operations/deployment-operation-adapter.service.ts",
+  // Global GPU reservation lock: release only after every Swarm node is clean.
+  "operations/executors/app-group-delete-operation.executor.ts",
   // SKIP LOCKED claim/lease CAS and idempotent Operation state transitions.
   "operations/operations.repository.ts",
   // BillingAccount FOR UPDATE protects ResourceBot reservation and settlement races.

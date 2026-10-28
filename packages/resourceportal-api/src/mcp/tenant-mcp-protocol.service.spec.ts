@@ -184,6 +184,8 @@ describe("TenantMcpProtocolService", () => {
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_networking")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_domains")).toBe(true);
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_access")).toBe(true);
+      expect(JSON.stringify(result.tools.find((tool) => tool.name === "resourceportal_manage_access")?.inputSchema))
+        .not.toContain('"update_quota"');
       expect(result.tools.some((tool) => tool.name === "resourceportal_manage_identity")).toBe(true);
     } finally {
       await connection.close();
@@ -574,4 +576,62 @@ describe("TenantMcpProtocolService", () => {
       await connection.close();
     }
   });
+  it("routes tenant GPU listing and exclusive allocation through tenant RBAC with no platform escalation", async () => {
+    const { service, settings } = fixture();
+    const appGroupId = "44444444-4444-4444-8444-444444444444";
+    const singleAppId = "55555555-5555-4555-8555-555555555555";
+    const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const calls: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      calls.push(request);
+      if (request.method === "GET" && request.url.endsWith("/app-groups/gpu-devices")) {
+        return Promise.resolve(new Response(JSON.stringify({ enabled: true, quota: 1, devices: [] }),
+          { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      if (request.method === "POST" && request.url.endsWith("/app-groups/" +
+        appGroupId + "/single-apps/" + singleAppId + "/gpu-allocation")) {
+        return Promise.resolve(new Response(JSON.stringify({ uuid, alreadyAllocated: false }),
+          { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      throw new Error("Unexpected GPU tenant path: " + request.url);
+    }));
+    const connection = await connectClient({
+      service, request: mcpRequest({ authorization: "Bearer tenant-gpu-test" }),
+      authenticated: true,
+    });
+    try {
+      const tools = await connection.client.listTools();
+      const manage = tools.tools.find(tool => tool.name === "resourceportal_manage_single_apps");
+      const schema = JSON.stringify(manage?.inputSchema);
+      expect(schema).toContain('"list_gpu_devices"');
+      expect(schema).toContain('"allocate_gpu"');
+      const visible = await connection.client.callTool({
+        name: "resourceportal_manage_single_apps",
+        arguments: { operation: "list_gpu_devices" },
+      });
+      expect(visible.structuredContent).toMatchObject({
+        status: 200, ok: true, data: { quota: 1, enabled: true },
+      });
+      const reserved = await connection.client.callTool({
+        name: "resourceportal_manage_single_apps",
+        arguments: { operation: "allocate_gpu", appGroupId, singleAppId, body: { gpuUuid: uuid } },
+      });
+      expect(reserved.structuredContent).toMatchObject({
+        status: 200, ok: true, data: { uuid },
+      });
+      expect(calls).toHaveLength(2);
+      expect(calls.every((req) => req.url.startsWith("http://127.0.0.1:3000/api/tenants/" + tenantId + "/"))).toBe(true);
+      expect(calls.every((req) => req.headers.get("authorization") === "Bearer tenant-gpu-test")).toBe(true);
+      expect(await calls[1].json()).toEqual({ gpuUuid: uuid });
+      expect(settings.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId, toolName: "resourceportal_manage_single_apps", method: "POST",
+        path: "/app-groups/" + appGroupId + "/single-apps/" + singleAppId + "/gpu-allocation",
+        success: true,
+      }));
+    } finally {
+      await connection.close();
+    }
+  }, 60_000);
+
 });

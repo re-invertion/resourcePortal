@@ -79,6 +79,7 @@ type StackConfigSingleApp = {
     cpu: string;
     memoryBytes: string;
     gpu: number;
+    gpuUuid?: string | null;
   };
   environment: Record<string, string>;
   variables: Array<{
@@ -852,14 +853,39 @@ export class DeploymentExecutionService {
       );
     }
 
-    const gpuAllocation = snapshot.singleApps.find(
+    const gpuAllocations = snapshot.singleApps.filter(
       (singleApp) => singleApp.resources.gpu > 0,
     );
-    if (gpuAllocation) {
-      return this.validationFailure(
-        "GpuNotAvailable",
-        `GPU allocation is not available for SingleApp ${gpuAllocation.name}`,
-      );
+    for (const app of gpuAllocations) {
+      if (app.resources.gpu !== 1 ||
+          !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(app.resources.gpuUuid ?? "") ||
+          app.desiredReplicas !== 1 ||
+          this.effectiveReplicas(snapshot, app) > 1) {
+        return this.validationFailure("GpuNotAvailable",
+          "GPU allocation requires one replica and a reserved device UUID for " + app.name);
+      }
+    }
+    if (gpuAllocations.length) {
+      const devices = await this.prisma.gpuDevice.findMany({
+        where: { uuid: { in: gpuAllocations.map((app) => app.resources.gpuUuid!) } },
+        select: {
+          uuid: true, allocatedSingleAppId: true, allocationState: true,
+          observedState: true, lastObservedAt: true,
+          remoteLocation: { select: { status: true, availability: true } },
+        },
+      });
+      for (const app of gpuAllocations) {
+        const device = devices.find((row) => row.uuid === app.resources.gpuUuid);
+        if (!device || device.allocatedSingleAppId !== app.id ||
+            device.allocationState !== "Allocated" ||
+            device.observedState !== "Available" ||
+            !device.lastObservedAt || Date.now() - device.lastObservedAt.getTime() > 120_000 ||
+            device.remoteLocation?.status !== "Ready" ||
+            device.remoteLocation?.availability !== "Active") {
+          return this.validationFailure("GpuNotAvailable",
+            "GPU is not exclusively reserved and ready for SingleApp " + app.name);
+        }
+      }
     }
 
     const registryFailure = await this.validateRegistries(snapshot);
@@ -1472,6 +1498,29 @@ export class DeploymentExecutionService {
       );
     }
 
+    // Service reconciliation checks the service list, not whether old Docker
+    // tasks have exited. Verify stopped GPU tasks on every known Swarm node
+    // BEFORE freeing the physical reservation on successful rollout.
+    const pendingGpu = await this.prisma.gpuDevice.findMany({
+      where: { allocatedSingleApp: { appGroupId: deployment.appGroupId, pendingDeletion: true } },
+      select: { allocatedSingleApp: { select: { name: true } } },
+    });
+    if (pendingGpu.length) {
+      const removedServiceNames = pendingGpu.flatMap((device) =>
+        device.allocatedSingleApp ? [this.serviceName(device.allocatedSingleApp.name)] : [],
+      );
+      if (removedServiceNames.length !== pendingGpu.length ||
+          !await this.stackRolloutService.verifyRemovedGpuServiceTasks(
+            stackName, removedServiceNames,
+          )) {
+        return this.rollbackAfterRuntimeFailure(
+          deployment, snapshot,
+          "GPU runtime cleanup unverified",
+          "A removed GPU-backed service still has active tasks or a Swarm node is unavailable",
+        );
+      }
+    }
+
     const completed = await this.prisma.$transaction(async (tx) => {
       const deletedSingleApps = await tx.singleApp.findMany({
         where: {
@@ -1485,13 +1534,17 @@ export class DeploymentExecutionService {
       });
 
       if (deletedSingleApps.length > 0) {
-        await tx.singleApp.deleteMany({
-          where: {
-            id: {
-              in: deletedSingleApps.map((singleApp) => singleApp.id),
-            },
+        const ids = deletedSingleApps.map((singleApp) => singleApp.id);
+        // Docker stack --prune + rollout verified no removed services remain.
+        // Failed rollout keeps the GPU reservation for rollback.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
+        await tx.gpuDevice.updateMany({
+          where: { allocatedSingleAppId: { in: ids } },
+          data: {
+            allocatedSingleAppId: null, allocationState: "Free", allocatedAt: null,
           },
         });
+        await tx.singleApp.deleteMany({ where: { id: { in: ids } } });
       }
 
       const appGroup = await tx.appGroup.findUniqueOrThrow({
@@ -1728,6 +1781,16 @@ export class DeploymentExecutionService {
     singleApp: StackConfigSingleApp,
   ) {
     const environment = this.renderEnvironment(singleApp);
+    const uuid = singleApp.resources.gpu > 0 ? singleApp.resources.gpuUuid : null;
+    if (singleApp.resources.gpu > 0 && (
+      singleApp.resources.gpu !== 1 ||
+      !uuid ||
+      !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(uuid)
+    )) {
+      throw new ConflictException("GpuNotAvailable");
+    }
+    // Tenant environment must not expose other tenants' GPU devices.
+    environment.NVIDIA_VISIBLE_DEVICES = uuid ?? "void";
 
     return this.withoutUndefined({
       image: singleApp.image,
@@ -1778,7 +1841,13 @@ export class DeploymentExecutionService {
             cpus: singleApp.resources.cpu,
             memory: `${singleApp.resources.memoryBytes}B`,
           },
+          reservations: uuid ? {
+            generic_resources: [{
+              named_resource_spec: { kind: "NVIDIA-GPU", value: uuid },
+            }],
+          } : undefined,
         },
+        // Swarm named generic resources make scheduling UUID-exact.
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
         placement: this.withoutUndefined({

@@ -49,10 +49,42 @@ rp_mcp_oauth_authorization_server_metadata_advertised() {
   [[ "$pkce" != null ]]
 }
 
+# Read-only NVIDIA host preflight: never changes daemon.json, drivers or Swarm.
+# Missing GPU does not affect normal CPU-only RP installation.
+rp_nvidia_gpu_readiness() {
+  local runtime node_id advertised uuid
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    printf '%s\n' 'Not detected (CPU-only host)'
+    return 0
+  fi
+  uuid="$(nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d '\r' || true)"
+  if [[ ! "$uuid" =~ ^GPU-[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]]; then
+    printf '%s\n' 'Unavailable (NVIDIA driver or GPU UUID)'
+    return 0
+  fi
+  runtime="$(docker info --format '{{.DefaultRuntime}}' 2>/dev/null || true)"
+  if [[ "$runtime" != nvidia ]]; then
+    printf '%s\n' 'Unavailable (NVIDIA must be the Docker default runtime; restart requires maintenance)'
+    return 0
+  fi
+  node_id="$(docker info --format '{{.Swarm.NodeID}}' 2>/dev/null || true)"
+  if [[ ! "$node_id" =~ ^[a-z0-9]{20,40}$ ]]; then
+    printf '%s\n' 'Unavailable (local Swarm node identity)'
+    return 0
+  fi
+  advertised="$(docker node inspect "$node_id" --format '{{json .Description.Resources.GenericResources}}' 2>/dev/null || true)"
+  if [[ "$advertised" != *'"Kind":"NVIDIA-GPU"'* || "$advertised" != *"$uuid"* ]]; then
+    printf '%s\n' 'Unavailable (GPU UUID not advertised as NVIDIA-GPU in Swarm)'
+    return 0
+  fi
+  printf '%s\n' 'Candidate (host UUID, default NVIDIA runtime and Swarm resource present; secure container probe still required)'
+}
+
 rp_run_diagnostics() {
   local base="${RP_CFG_STORAGE_BASE_PATH:-/srv/resource-portal/storage}" stack="${RP_CFG_STACK_NAME:-resourceportal-control-plane}" quorum node_id fstype uuid acme_env acme_state acme_resolver acme_cache
   rp_diagnostic_cmd 'supported OS' rp_detect_os
   rp_diagnostic_cmd 'Docker daemon' docker info
+  rp_diagnostic_line 'NVIDIA GPU readiness' "$(rp_nvidia_gpu_readiness)"
   rp_diagnostic_cmd 'UFW status' ufw status
   rp_diagnostic_cmd 'RP Gate encrypted L2 UDP ingress' rp_gate_wireguard_ufw_rule_present
   rp_diagnostic_cmd 'Device VPN UDP firewall' rp_device_vpn_ufw_rule_present

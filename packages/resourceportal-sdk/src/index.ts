@@ -405,6 +405,13 @@ export class ResourcePortalClient {
   };
 
   readonly apps = {
+    listGpuDevices: (tenantId: string) =>
+      this.request('/tenants/' + encode(tenantId) + '/app-groups/gpu-devices'),
+    allocateGpu: (tenantId: string, appGroupId: string, singleAppId: string, gpuUuid: string) =>
+      this.request('/tenants/' + encode(tenantId) + '/app-groups/' + encode(appGroupId) +
+        '/single-apps/' + encode(singleAppId) + '/gpu-allocation', {
+        method: "POST", body: { gpuUuid },
+      }),
     list: (tenantId: string, appGroupId: string) =>
       this.request(
         `/tenants/${encode(tenantId)}/app-groups/${encode(appGroupId)}/single-apps`,

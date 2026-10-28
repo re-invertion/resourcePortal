@@ -6,6 +6,8 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { NvidiaGpuAllocationService } from "./nvidia-gpu-allocation.service";
+import { SwarmGpuNodeProbeRouter } from "./swarm-gpu-node-probe-router";
 import { AuthenticatedUser } from "../auth/types";
 import { ObservabilityService } from "../observability/observability.service";
 import { DockerSwarmInfrastructureService } from "./docker-swarm-infrastructure.service";
@@ -29,6 +31,8 @@ export class SwarmInfrastructureService {
     private readonly docker: DockerSwarmInfrastructureService,
     private readonly audit: SwarmInfrastructureAuditService,
     @Optional() private readonly observability?: ObservabilityService,
+    @Optional() private readonly gpuProbe?: SwarmGpuNodeProbeRouter,
+    @Optional() private readonly gpuAllocation?: NvidiaGpuAllocationService,
   ) {}
 
   async getCluster() {
@@ -80,6 +84,8 @@ export class SwarmInfrastructureService {
       ]),
     );
     const now = new Date();
+    const probeReports = await this.gpuProbe?.collect() ?? [];
+    const reportsByNode = new Map(probeReports.map((report) => [report.swarmNodeId, report]));
 
     for (const node of nodes) {
       const observation = observationByNodeId.get(node.swarmNodeId);
@@ -95,6 +101,14 @@ export class SwarmInfrastructureService {
         node.cpuNano,
         node.memoryBytes,
       );
+      const report = reportsByNode.get(node.swarmNodeId);
+      const advertised = node.gpuUuids ?? [];
+      const advertisedUuids = new Set(advertised.map((uuid) => uuid.toLowerCase()));
+      const verified =
+        report?.status === "Observed" &&
+        advertised.length === report.devices.length &&
+        report.devices.every((device) => advertisedUuids.has(device.uuid.toLowerCase())) &&
+        node.status === "Ready" && node.availability === "Active";
       const maintenance =
         node.availability === "Drain" && current?.maintenance === true;
       const id = observation.remoteLocationId ?? randomUUID();
@@ -112,10 +126,22 @@ export class SwarmInfrastructureService {
         availableCpuNano: capacity.availableCpuNano,
         memoryBytes: node.memoryBytes,
         availableMemoryBytes: capacity.availableMemoryBytes,
-        gpuCount: capabilities.gpuCount,
+        gpuCount: verified ? advertised.length : 0,
         networkCapabilities: capabilities.networkCapabilities,
         lastSeenAt: now,
       });
+
+      // Unknown or failed probes invalidate availability, never ownership.
+      // A Swarm label alone does not authorize GPU scheduling.
+      if (this.gpuAllocation) {
+        if (!verified) {
+          await this.gpuAllocation.markNodeUnavailable(id);
+        } else {
+          for (const device of report.devices) {
+            await this.gpuAllocation.observe(id, device, true);
+          }
+        }
+      }
 
       if (observation.discovered) {
         await this.audit.recordDiscovered({

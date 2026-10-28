@@ -153,7 +153,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc','gpu-physical']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -233,4 +233,22 @@ test('one-time unpublished main recovery for #318 remains SHA- and file-scoped',
   assert.match(guard.run, /fixture_blob.*f2dfc5a72dc4ba981a6e2cb4b33d6d9a3ca9f86a/);
   assert.match(guard.run, /exit 1/);
   assert.match(guard.run, /node scripts\/next-main-release\.mjs --github-output/);
+});
+
+
+test("GPU changes require private physical NVIDIA Swarm gate before merge", () => {
+  const readiness=load("release-readiness.yml");
+  const candidate=readiness.jobs.candidate;
+  assert.match(candidate.outputs.gpu_smoke,/test-plan.outputs.gpu_smoke/);
+  const gpu=readiness.jobs["gpu-physical"];
+  assert.ok(gpu);
+  assert.ok(gpu["runs-on"].includes("rp-isolated-nvidia-gpu"));
+  assert.match(gpu.if,/gpu_smoke/);
+  assert.match(gpu.if,/head.repo.full_name == github.repository/);
+  assert.match(gpu.steps.at(-1).run,/scripts\/test-nvidia-gpu-swarm.sh/);
+  const gate=readiness.jobs["release-ready"];
+  assert.ok(gate.needs.includes("gpu-physical"));
+  const verify=gate.steps.find(step=>step.name?.startsWith("Fail closed"));
+  assert.match(verify.run,/verify_gate physical-nvidia-swarm "\$GPU_PHYSICAL" true/);
+  assert.match(verify.env.GPU_PHYSICAL,/needs.gpu-physical.result/);
 });

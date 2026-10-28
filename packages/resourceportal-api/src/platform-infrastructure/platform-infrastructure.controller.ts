@@ -2,10 +2,12 @@ import {
   Body,
   Controller,
   Get,
+  Optional,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  ServiceUnavailableException,
   UseGuards,
 } from "@nestjs/common";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -16,6 +18,7 @@ import { RequestPlatformUpdateDto } from "./dto/request-platform-update.dto";
 import { SetRemoteLocationMaintenanceDto } from "./dto/set-maintenance.dto";
 import { PlatformReleaseService } from "./platform-release.service";
 import { SwarmInfrastructureReadService } from "./swarm-infrastructure-read.service";
+import { NvidiaGpuAllocationService } from "./nvidia-gpu-allocation.service";
 
 @Controller("platform")
 @UseGuards(PlatformAdminGuard)
@@ -24,6 +27,7 @@ export class PlatformInfrastructureController {
     private readonly service: SwarmInfrastructureReadService,
     private readonly operations: OperationsService,
     private readonly releases: PlatformReleaseService,
+    @Optional() private readonly gpu?: NvidiaGpuAllocationService,
   ) {}
 
   @Get("release")
@@ -53,6 +57,12 @@ export class PlatformInfrastructureController {
       actor,
       input: {},
     });
+  }
+
+  @Get("gpu-devices")
+  listGpuDevices() {
+    if (!this.gpu) throw new ServiceUnavailableException("GpuInventoryUnavailable");
+    return this.gpu.listInventory();
   }
 
   @Get("remote-locations")
