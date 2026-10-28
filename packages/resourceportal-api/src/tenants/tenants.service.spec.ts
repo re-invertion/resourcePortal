@@ -157,7 +157,34 @@ describe("TenantsService tenant inventories", () => {
         status: true,
         createdAt: true,
         updatedAt: true,
+        quota: { select: { gpu: true } },
       },
     });
+  });
+});
+
+
+describe("Platform Admin GPU quota cannot revoke active dedicated devices", () => {
+  it("rejects a quota reduction below existing reservations under the global GPU lock", async () => {
+    const tenantId = "11111111-1111-4111-8111-111111111111";
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      gpuDevice: { count: vi.fn().mockResolvedValue(2) },
+      quota: { upsert: vi.fn() },
+    };
+    const prisma = {
+      tenant: { findUnique: vi.fn().mockResolvedValue({ id: tenantId, name: "Research" }) },
+      quota: { findUnique: vi.fn().mockResolvedValue({ tenantId, gpu: 2 }) },
+      $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    };
+    const service = new TenantsService(prisma as never, { sendTenantInvitation: vi.fn() } as never);
+    await expect(service.updateQuota(tenantId, { gpu: 1 }, {
+      id: "admin", displayName: "Platform Admin",
+    } as never)).rejects.toThrow("GpuQuotaBelowActiveAllocations");
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.gpuDevice.count).toHaveBeenCalledWith({
+      where: { allocatedSingleApp: { appGroup: { tenantId } } },
+    });
+    expect(tx.quota.upsert).not.toHaveBeenCalled();
   });
 });

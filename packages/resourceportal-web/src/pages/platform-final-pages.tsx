@@ -14,6 +14,7 @@ import {
   LockIcon,
   MetricCard,
   NetworkIcon,
+  NumberInput,
   PageHeader,
   SearchField,
   Select,
@@ -185,6 +186,13 @@ export function PlatformUsersPage() {
 export function PlatformInfrastructurePage() {
   const swarm = useApi<Row>("/api/platform/swarm-cluster");
   const remotes = useApi<unknown>("/api/platform/remote-locations", []);
+  const gpuDevices = useApi<unknown>("/api/platform/gpu-devices", []);
+  const gpuTenants = useApi<unknown>("/api/platform/tenants", []);
+  const [gpuTenantId, setGpuTenantId] = useState("");
+  const [gpuQuota, setGpuQuota] = useState(0);
+  const [gpuBaseQuota, setGpuBaseQuota] = useState({
+    cpu: "", memoryGiB: "", storageGiB: "", maxSingleApps: "", maxVolumes: "",
+  });
   const backends = useApi<unknown>("/api/platform/storage-backends", []);
   const usage = useApi<Row>("/api/platform/resource-usage");
   const release = useApi<Row>("/api/platform/release");
@@ -195,7 +203,25 @@ export function PlatformInfrastructurePage() {
   const updateOperation = useApi<Row>(updateOperationId ? `/api/platform/operations/${encodeURIComponent(updateOperationId)}` : undefined);
   useEffect(()=>{if(!updateOperationId)return;const handle=window.setInterval(()=>void updateOperation.reload(),4000);return()=>window.clearInterval(handle);},[updateOperationId,updateOperation.reload]);
   useEffect(()=>{const status=text(updateOperation.data?.status,"");if(!updateOperationId||!["Succeeded","Failed","RolledBack","RollbackFailed"].includes(status))return;if(status==="Succeeded")toast.success("ResourcePortal update completed.");else toast.error(`ResourcePortal update ended with ${status}. Verify the current version and operation events.`);setUpdateOperationId(undefined);void release.reload();},[updateOperationId,updateOperation.data?.status]);
-  const remoteRows = items<Row>(remotes.data); const backendRows = items<Row>(backends.data);
+  const remoteRows = items<Row>(remotes.data); const backendRows = items<Row>(backends.data); const gpuRows = items<Row>(gpuDevices.data); const gpuTenantRows = items<Row>(gpuTenants.data);
+  const selectedGpuTenant = gpuTenantRows.find((item)=>idOf(item)===gpuTenantId);
+  const needsBaseGpuQuota = Boolean(gpuTenantId) && Boolean(selectedGpuTenant) &&
+    (selectedGpuTenant?.quota === null || selectedGpuTenant?.quota === undefined);
+  const fullBaseQuota = {
+    cpu: Number(gpuBaseQuota.cpu),
+    memoryBytes: Number(gpuBaseQuota.memoryGiB)*1073741824,
+    storageBytes: Number(gpuBaseQuota.storageGiB)*1073741824,
+    maxSingleApps: Number(gpuBaseQuota.maxSingleApps),
+    maxVolumes: Number(gpuBaseQuota.maxVolumes),
+  };
+  const gpuBaseValid = !needsBaseGpuQuota || (
+    Object.values(gpuBaseQuota).every((value)=>value.trim()!=="") &&
+    Number.isFinite(fullBaseQuota.cpu) && fullBaseQuota.cpu>=0 &&
+    Number.isSafeInteger(fullBaseQuota.memoryBytes) && fullBaseQuota.memoryBytes>=0 &&
+    Number.isSafeInteger(fullBaseQuota.storageBytes) && fullBaseQuota.storageBytes>=0 &&
+    Number.isSafeInteger(fullBaseQuota.maxSingleApps) && fullBaseQuota.maxSingleApps>=0 &&
+    Number.isSafeInteger(fullBaseQuota.maxVolumes) && fullBaseQuota.maxVolumes>=0
+  );
   async function run(label: string, path: string, reload?: () => Promise<void>) { setBusy(label); try { await apiRequest(path, { method: "POST" }); if (reload) await reload(); toast.success(`${label} completed.`); } catch (error) { toast.error(`${label} failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function setStorageMaintenance(row: Row, enabled: boolean) { const id = idOf(row); if (!id) return; const label = enabled ? "Enter storage maintenance" : "Exit storage maintenance"; setBusy(label); try { await apiRequest(`/api/platform/storage-backends/${encodeURIComponent(id)}/maintenance`, { method: "PATCH", body: { enabled } }); await backends.reload(); toast.success(enabled ? "Storage backend entered maintenance." : "Storage backend left maintenance."); } catch (error) { toast.error(`Storage backend maintenance update failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function requestPlatformUpdate() { const targetVersion=text(release.data?.latestVersion,""); if(!targetVersion)return; setBusy("Update ResourcePortal"); try { const operation=await apiRequest<Row>("/api/platform/release/update",{method:"POST",body:{targetVersion,confirmation:updateConfirmation}}); if(typeof operation.id==="string")setUpdateOperationId(operation.id);window.dispatchEvent(new Event("rp-upgrade-started"));setUpdateOpen(false); setUpdateConfirmation(""); toast.success(`ResourcePortal update to v${targetVersion} started. The UI may reconnect while services roll out.`); } catch(error){ toast.error(`ResourcePortal update failed to start: ${readableError(error)}`); } finally { setBusy(undefined); } }
@@ -229,6 +255,62 @@ export function PlatformInfrastructurePage() {
     </section>
     <div className="mt-6 space-y-6">
       <Card className="overflow-hidden"><SectionTitle eyebrow="Release" title="ResourcePortal version" description="Current deployment and latest stable release." action={<Button variant="primary" disabled={Boolean(busy)||release.loading||release.data?.updateEligible!==true} onClick={()=>{setUpdateConfirmation("");setUpdateOpen(true);}}>Update ResourcePortal</Button>} /><div className="space-y-4 p-5">{release.error?<ErrorCard label="Release status" error={release.error} retry={release.reload}/>:<><DetailList columns={3} items={[{label:"Current version",value:text(release.data?.currentVersion,"Unknown")},{label:"Latest version",value:text(release.data?.latestVersion,"Unavailable")},{label:"Automatic rollback",value:release.data?.automaticRollbackAvailable===true?"Available":release.data?.rollbackPolicy?"Unavailable ("+text(release.data.rollbackPolicy)+")":"Unknown"}]}/>{release.data?.updateEligible===true?<Callout tone="warning" title="Update available">The update runs through the production installer in an independent updater container. The control plane can restart while the update is in progress.</Callout>:null}{release.data?.updateAvailable===true && release.data?.updateEligible!==true?<Callout tone="warning" title="Update blocked: source version unsupported">The latest release manifest does not certify this installation as a supported upgrade source. Supported sources: {Array.isArray(release.data?.supportedFromVersions)&&release.data.supportedFromVersions.length ? release.data.supportedFromVersions.join(", ") : "Not verified"}. Reason: {text(release.data?.sourceSupportReason,"Unknown")}. No upgrade can be started from this UI until compatibility is confirmed.</Callout>:null}{release.data?.updateEligible===true?<p className="text-xs text-[#526070]">Upgrade compatible: source v{text(release.data?.currentVersion)} is supported by the v{text(release.data?.latestVersion)} release manifest. Supported source versions: {Array.isArray(release.data?.supportedFromVersions) ? release.data.supportedFromVersions.join(", ") : "Unavailable"}.</p>:null}{release.data?.releaseFeedAvailable===false?<Callout tone="warning" title="Release feed unavailable">The current version remains available. Retry when the release feed is reachable; manual CLI fallback is not required.</Callout>:null}</>}</div></Card>
+      <Card className="overflow-hidden">
+        <SectionTitle eyebrow="Compute policy" title="Tenant GPU permissions" description="Platform Admin grants exclusive physical GPU quota. Lowering quota below active allocations is rejected." />
+        <div className="grid items-end gap-4 p-5 md:grid-cols-[minmax(0,1fr)_120px_auto]">
+          <Field label="Tenant">
+            <Select aria-label="GPU quota tenant" value={gpuTenantId} onChange={(event)=>{
+              const id=event.target.value; setGpuTenantId(id);
+              setGpuQuota(numberOf(asRecord(gpuTenantRows.find((item)=>idOf(item)===id)?.quota).gpu,0));
+              setGpuBaseQuota({ cpu:"",memoryGiB:"",storageGiB:"",maxSingleApps:"",maxVolumes:"" });
+            }}>
+              <option value="">Select tenant</option>
+              {gpuTenantRows.map((tenant)=><option key={idOf(tenant)} value={idOf(tenant)}>{text(valueOf(tenant,"displayName","name"),"Unknown tenant")}</option>)}
+            </Select>
+          </Field>
+          <Field label="Max GPUs">
+            <NumberInput aria-label="GPU quota limit" min={0} max={128} step={1} value={gpuQuota} onChange={(event)=>setGpuQuota(Number(event.target.value))}/>
+          </Field>
+          <Button variant="primary" disabled={!gpuTenantId||Boolean(busy)||!Number.isSafeInteger(gpuQuota)||gpuQuota<0||gpuQuota>128||!gpuBaseValid} onClick={()=>{
+            setBusy("Update GPU quota");
+            void apiRequest("/api/platform/tenants/"+encodeURIComponent(gpuTenantId)+"/quota",{method:"PATCH",body:needsBaseGpuQuota?{...fullBaseQuota,gpu:gpuQuota}:{gpu:gpuQuota}})
+              .then(async()=>{await gpuTenants.reload();toast.success("GPU entitlement updated.");})
+              .catch((error)=>toast.error("GPU quota update failed: "+readableError(error)))
+              .finally(()=>setBusy(undefined));
+          }}>Save GPU quota</Button>
+        </div>
+        {needsBaseGpuQuota?<div className="px-5 pb-5">
+          <Callout tone="warning" title="Base quota required">This tenant does not yet have any resource quota. Set all initial capacity limits before granting dedicated GPU access. Existing tenant quotas are never replaced by this form.</Callout>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {([
+              ["cpu","CPU cores","0.25"],
+              ["memoryGiB","Memory (GiB)","1"],
+              ["storageGiB","Storage (GiB)","1"],
+              ["maxSingleApps","Max apps","1"],
+              ["maxVolumes","Max volumes","1"],
+            ] as const).map(([key,label,step])=><Field key={key} label={label} required>
+              <NumberInput aria-label={"Base quota "+label} min={0} step={step}
+                value={gpuBaseQuota[key]} onChange={(event)=>setGpuBaseQuota((current)=>({...current,[key]:event.target.value}))}/>
+            </Field>)}
+          </div>
+        </div>:null}
+        {gpuTenants.error?<div className="px-5 pb-4"><ErrorCard label="GPU permissions" error={gpuTenants.error} retry={gpuTenants.reload}/></div>:null}
+      </Card>
+      <Card className="overflow-hidden">
+        <SectionTitle eyebrow="Compute" title="NVIDIA GPUs" description="Hardware identity, per-node runtime readiness and exclusive SingleApp assignments. Fail-closed when observations are missing." action={<Button size="sm" onClick={()=>void gpuDevices.reload()}>Refresh GPU inventory</Button>} />
+        {gpuDevices.error ? <div className="p-5"><ErrorCard label="GPU inventory" error={gpuDevices.error} retry={gpuDevices.reload}/></div> : <DataTable embedded className="rounded-none border-0" loading={gpuDevices.loading} columns={[
+          {key:"name",label:"GPU"},{key:"node",label:"Swarm node"},{key:"status",label:"Availability"},{key:"memory",label:"VRAM"},{key:"assignment",label:"Assignment"}
+        ]} rows={gpuRows.map((gpu)=>{const node=asRecord(gpu.node);const status=text(gpu.status,"Unavailable");return {
+          key:text(gpu.uuid),
+          cells:{
+            name:<div><strong className="block">{text(gpu.model,"NVIDIA GPU")}</strong><code className="text-xs text-[#718096]">{text(gpu.uuid)}</code></div>,
+            node:<div>{text(node.hostname,"Unknown node")}<span className="block text-xs text-[#718096]">{text(node.status,"Unknown")}</span></div>,
+            status:<StatusBadge tone={statusTone(status)}>{status}</StatusBadge>,
+            memory:formatBytes(gpu.memoryBytes),
+            assignment:gpu.allocatedSingleAppId?<div className="text-xs"><strong>Assigned</strong><code className="block break-all">{text(gpu.allocatedSingleAppId)}</code></div>:<span className="text-xs">Unassigned</span>
+          }
+        }})} empty={<EmptyState title="No verified NVIDIA devices" description="A Swarm agent must successfully verify the NVIDIA runtime and the daemon must advertise matching GPU UUID resources. Existing assignments are not released by observation failures."/>}/>}
+      </Card>
       <Card className="overflow-hidden"><SectionTitle eyebrow="Compute" title="Swarm cluster" description="Current persisted/live platform cluster state." /><div className="p-5">{swarm.error ? <ErrorCard label="Swarm cluster" error={swarm.error} retry={swarm.reload} /> : swarm.loading ? <p className="text-sm text-[#5B6678]">Loading cluster state…</p> : <DetailList columns={3} items={[{ label: "Status", value: <StatusBadge tone={statusTone(swarmState)}>{swarmState}</StatusBadge> },{ label: "Nodes", value: numberOf(valueOf(swarmRow, "nodeCount", "nodes"), 0) },{ label: "Managers", value: numberOf(valueOf(swarmRow, "managerCount", "managers"), 0) },{ label: "Last synchronized", value: formatDate(valueOf(swarmRow, "lastSyncedAt", "updatedAt")) }]} />}</div></Card>
       <Card className="overflow-hidden"><SectionTitle eyebrow="Storage" title="Storage backends" description="Validate and reconcile existing backends. The API does not expose create/update/delete operations here." />{backends.error ? <div className="p-5"><ErrorCard label="Storage backends" error={backends.error} retry={backends.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={backends.loading} columns={[{ key: "name", label: "Backend" },{ key: "status", label: "Status" },{ key: "capacity", label: "Capacity" },{ key: "available", label: "Available" },{ key: "actions", label: "Actions" }]} rows={backendRows.map((row) => { const id = idOf(row); const state = text(valueOf(row, "health", "status"), "Unknown"); return { key: id || text(row.name), cells: { name: <div><strong className="block text-[#172033]">{text(row.name, "Unnamed backend")}</strong><span className="text-xs text-[#718096]">{titleCase(row.type)}</span></div>, status: <div className="flex flex-wrap gap-2"><StatusBadge tone={statusTone(state)}>{state}</StatusBadge>{bool(row.maintenance) ? <StatusBadge tone="warning">Maintenance</StatusBadge> : null}</div>, capacity: formatBytes(row.capacityTotal), available: formatBytes(row.capacityAvailable), actions: id ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={Boolean(busy)} onClick={() => void run(`Validate ${text(row.name, "backend")}`, `/api/platform/storage-backends/${encodeURIComponent(id)}/validate`, backends.reload)}>Validate</Button><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => void setStorageMaintenance(row, !bool(row.maintenance))}>{bool(row.maintenance) ? "Exit maintenance" : "Enter maintenance"}</Button></div> : "—" } }; })} empty={<EmptyState title="No storage backends" description="No storage backend is currently returned by the platform API." />} />}</Card>
       <Card className="overflow-hidden"><SectionTitle eyebrow="Locations" title="Remote locations" description="Discovered infrastructure locations. Maintenance state is managed per location by the platform API." />{remotes.error ? <div className="p-5"><ErrorCard label="Remote locations" error={remotes.error} retry={remotes.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={remotes.loading} columns={[{ key: "name", label: "Location" },{ key: "status", label: "Status" },{ key: "type", label: "Type" },{ key: "updated", label: "Last update" }]} rows={remoteRows.map((row) => ({ key: idOf(row) || text(row.name), cells: { name: text(valueOf(row, "displayName", "name"), "Unnamed location"), status: <StatusBadge tone={statusTone(valueOf(row, "health", "status"))}>{titleCase(valueOf(row, "health", "status"))}</StatusBadge>, type: titleCase(valueOf(row, "type", "kind")), updated: formatDate(valueOf(row, "lastSyncedAt", "updatedAt")) } }))} empty={<EmptyState title="No remote locations" description="No remote locations are currently registered." />} />}</Card>

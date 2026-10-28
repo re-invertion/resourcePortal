@@ -800,6 +800,8 @@ model SingleApp {
   secrets                 SingleAppSecret[]
   secretAttachments       SecretAttachment[]
 
+  gpuAllocation           GpuDevice?           @relation("SingleAppDedicatedGpu")
+
   @@unique([appGroupId, name])
 }
 
@@ -1424,8 +1426,38 @@ model RemoteLocation {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
+  gpuDevices           GpuDevice[]
+
   @@index([hostname])
   @@index([status, health])
+}
+
+// One physical NVIDIA GPU UUID maps to at most one SingleApp. Inventory updates
+// never clear allocatedSingleAppId; cleanup is an explicit reconciled action.
+model GpuDevice {
+  uuid                 String          @id @db.VarChar(64)
+  remoteLocationId     String?         @db.Uuid
+  vendor               String          @default("NVIDIA")
+  model                String
+  pciBusId             String
+  memoryBytes          BigInt
+  memoryUsedBytes      BigInt?
+  driverVersion        String
+  cudaVersion          String?
+  temperatureCelsius   Int?
+  utilizationPercent   Int?
+  observedState        String          @default("Unavailable")
+  lastObservedAt       DateTime?
+  allocatedSingleAppId String?         @unique @db.Uuid
+  allocationState      String          @default("Free")
+  allocatedAt          DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  remoteLocation       RemoteLocation? @relation(fields: [remoteLocationId], references: [id], onDelete: SetNull)
+  allocatedSingleApp   SingleApp?      @relation("SingleAppDedicatedGpu", fields: [allocatedSingleAppId], references: [id], onDelete: Restrict)
+
+  @@index([remoteLocationId, observedState])
+  @@index([allocatedSingleAppId, allocationState])
 }
 
 model WorkerRuntimeState {

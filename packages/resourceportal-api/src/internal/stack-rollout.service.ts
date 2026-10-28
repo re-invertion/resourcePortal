@@ -75,6 +75,56 @@ export class StackRolloutService {
     };
   }
 
+  /**
+   * Successful Swarm service convergence does not mean stopped tasks have
+   * actually exited on every node. Never release a dedicated physical GPU
+   * while an old task may still have access to its NVIDIA device.
+   */
+  async verifyRemovedGpuServiceTasks(
+    stackName: string, removedServiceNames: readonly string[],
+  ): Promise<boolean> {
+    if (!removedServiceNames.length) return true;
+    if (!/^[a-z0-9_-]{1,128}$/.test(stackName) ||
+        removedServiceNames.some((name) => !/^[a-z0-9_-]{1,128}$/.test(name))) return false;
+    const services = new Set(removedServiceNames.map((name) => stackName + "_" + name));
+    const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
+    const prefix = dockerContext ? ["--context", dockerContext] : [];
+    const nodes = await this.runDocker([
+      ...prefix, "node", "ls", "--format", "{{.ID}}|{{.Status}}|{{.Availability}}",
+    ]);
+    if (nodes.exitCode !== 0 || !nodes.stdout.trim()) return false;
+    const ids: string[] = [];
+    for (const line of nodes.stdout.split("\n").filter(Boolean)) {
+      const [rawId, status, availability] = line.split("|");
+      const id = rawId?.trim().replace(/\s+\*$/, "");
+      if (!id || !/^[a-z0-9]{20,40}$/.test(id) ||
+          status !== "Ready" || availability !== "Active") return false;
+      ids.push(id);
+    }
+    if (!ids.length || ids.length > 128) return false;
+
+    const current = await this.runDocker([
+      ...prefix, "service", "ls",
+      "--filter", "label=com.docker.stack.namespace=" + stackName,
+      "--format", "{{.Name}}",
+    ]);
+    if (current.exitCode !== 0 ||
+        current.stdout.split("\n").filter(Boolean).some((name) => services.has(name))) return false;
+
+    for (const id of ids) {
+      const tasks = await this.runDocker([
+        ...prefix, "node", "ps", id, "--no-trunc", "--format", "{{.Name}}|{{.CurrentState}}",
+      ]);
+      if (tasks.exitCode !== 0) return false;
+      for (const line of tasks.stdout.split("\n").filter(Boolean)) {
+        const [name, state] = line.split("|");
+        if (!name || ![...services].some((service) => name.startsWith(service + "."))) continue;
+        if (!state || !/^(?:Shutdown|Complete|Failed|Rejected)\b/i.test(state)) return false;
+      }
+    }
+    return true;
+  }
+
   private inspectStackServices(stackName: string) {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const args = [

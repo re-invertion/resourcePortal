@@ -50,6 +50,7 @@ export class BillingPreflightGuard implements CanActivate {
       (route.endsWith("/:appGroupId/single-apps") ||
         route.endsWith("/:appGroupId/runtime/start") ||
         route.endsWith("/:appGroupId/single-apps/:singleAppId/runtime/start") ||
+        route.endsWith("/:appGroupId/single-apps/:singleAppId/gpu-allocation") ||
         route.endsWith("/tenants/:tenantId/volumes"))
     ) {
       await this.billing.assertActivePriceList();

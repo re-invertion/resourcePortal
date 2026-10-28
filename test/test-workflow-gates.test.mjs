@@ -234,3 +234,24 @@ test('one-time unpublished main recovery for #318 remains SHA- and file-scoped',
   assert.match(guard.run, /exit 1/);
   assert.match(guard.run, /node scripts\/next-main-release\.mjs --github-output/);
 });
+
+
+test("NVIDIA hardware acceptance is manual after a normally certified release", () => {
+  const readiness=load("release-readiness.yml");
+  const physical=load("nvidia-gpu-physical.yml");
+  const gate=readiness.jobs["release-ready"];
+  assert.ok(!readiness.jobs["gpu-physical"]);
+  assert.ok(!gate.needs.includes("gpu-physical"));
+  assert.match(gate.steps[0].run,/Release candidate validation failed/);
+  assert.match(gate.steps[0].run,/verify_gate swarm/);
+  assert.match(gate.steps[0].run,/verify_gate federation/);
+  assert.match(gate.steps[0].run,/verify_gate installer/);
+  assert.doesNotMatch(gate.steps[0].run,/physical-nvidia-swarm/);
+  assert.ok(physical.on.workflow_dispatch.inputs.release_tag.required);
+  const job=physical.jobs["gpu-physical"];
+  assert.ok(job["runs-on"].includes("rp-isolated-nvidia-gpu"));
+  assert.match(job.steps.find(step=>step.name==="Check official published release").run,/releases\/tags/);
+  assert.match(job.steps.find(step=>step.name==="Run physical NVIDIA Swarm isolation").run,/scripts\/test-nvidia-gpu-swarm\.sh/);
+  const mandatoryRollback=readiness.jobs.candidate.steps.find(step=>step.name?.startsWith("Require verified automatic rollback"));
+  assert.match(mandatoryRollback.run,/--require-automatic/);
+});

@@ -423,6 +423,54 @@ export class AdminMcpProtocolService {
         "Read aggregate platform infrastructure resource usage.",
         "/api/platform/resource-usage",
       ),
+      read(
+        "resourceportal_admin_list_gpu_devices",
+        "List platform NVIDIA GPUs",
+        "Read physical NVIDIA UUIDs, node readiness and exclusive allocations; no tenant-private workload access.",
+        "/api/platform/gpu-devices",
+      ),
+      write(
+        "resourceportal_admin_set_tenant_gpu_quota",
+        "Set tenant GPU allowance",
+        "Grant or reduce the maximum exclusive physical GPUs available to a tenant through the Platform Admin quota API. Existing assignments cannot be forcibly revoked.",
+        "PATCH",
+        (args) => "/api/platform/tenants/" +
+          encodeURIComponent(this.uuid(args.tenantId, "tenantId")) + "/quota",
+        this.objectSchema({
+          tenantId: uuid("Tenant UUID receiving a platform GPU entitlement."),
+          gpu: { type: "integer", minimum: 0, maximum: 128,
+            description: "Maximum count of exclusive NVIDIA GPUs for the tenant. 0 disables new allocations." },
+          initialQuota: this.objectSchema({
+            cpu: { type: "number", minimum: 0 },
+            memoryBytes: { type: "integer", minimum: 0 },
+            storageBytes: { type: "integer", minimum: 0 },
+            maxSingleApps: { type: "integer", minimum: 0 },
+            maxVolumes: { type: "integer", minimum: 0 },
+          }, ["cpu", "memoryBytes", "storageBytes", "maxSingleApps", "maxVolumes"]),
+        }, ["tenantId", "gpu"]),
+        (args) => {
+          if (!Number.isSafeInteger(args.gpu) || Number(args.gpu) < 0 || Number(args.gpu) > 128) {
+            throw new BadRequestException("gpu must be an integer between 0 and 128");
+          }
+          if (args.initialQuota === undefined) return { gpu: args.gpu };
+          if (!args.initialQuota || typeof args.initialQuota !== "object" ||
+              Array.isArray(args.initialQuota)) {
+            throw new BadRequestException("initialQuota must be an object");
+          }
+          const initial = args.initialQuota as Record<string, unknown>;
+          const integerKeys = ["memoryBytes", "storageBytes", "maxSingleApps", "maxVolumes"];
+          if (Object.keys(initial).some((key) => !["cpu", ...integerKeys].includes(key)) ||
+              !Number.isFinite(initial.cpu) || Number(initial.cpu) < 0 ||
+              integerKeys.some((key) => !Number.isSafeInteger(initial[key]) || Number(initial[key]) < 0)) {
+            throw new BadRequestException("Invalid initialQuota capacity values");
+          }
+          return { gpu: args.gpu, cpu: initial.cpu, memoryBytes: initial.memoryBytes,
+            storageBytes: initial.storageBytes, maxSingleApps: initial.maxSingleApps,
+            maxVolumes: initial.maxVolumes };
+        },
+        false,
+        true,
+      ),
       write(
         "resourceportal_admin_set_remote_location_maintenance",
         "Set remote location maintenance",

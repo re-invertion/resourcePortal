@@ -13,6 +13,7 @@ export type ObservedSwarmNode = {
   cpuNano: bigint;
   memoryBytes: bigint;
   labels: Record<string, string>;
+  gpuUuids?: string[];
 };
 
 type DockerNodeInspect = {
@@ -27,6 +28,7 @@ type DockerNodeInspect = {
     Resources?: {
       NanoCPUs?: unknown;
       MemoryBytes?: unknown;
+      GenericResources?: unknown;
     };
   };
   Status?: {
@@ -69,6 +71,7 @@ export function parseDockerNodeInspect(value: unknown): ObservedSwarmNode | null
     cpuNano,
     memoryBytes,
     labels: parseLabels(node.Spec?.Labels),
+    ...extractNamedNvidiaGpus(node.Description?.Resources?.GenericResources),
   };
 }
 
@@ -134,4 +137,25 @@ function parseLabels(value: unknown) {
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+}
+
+/** Docker daemon-advertised UUIDs, not user-controlled node labels. */
+function extractNamedNvidiaGpus(value: unknown): { gpuUuids?: string[] } {
+  if (!Array.isArray(value)) return {};
+  const uuids: string[] = [];
+  for (const resource of value) {
+    if (!resource || typeof resource !== "object") continue;
+    const named: unknown = (resource as Record<string, unknown>).NamedResourceSpec;
+    if (!named || typeof named !== "object") continue;
+    const spec = named as Record<string, unknown>;
+    if (spec.Kind !== "NVIDIA-GPU") continue;
+    if (typeof spec.Value !== "string" ||
+        !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(spec.Value) ||
+        uuids.some((value) => value.toLowerCase() === (spec.Value as string).toLowerCase())) {
+      // Malformed/duplicated UUIDs must never be treated as capacity.
+      return {};
+    }
+    uuids.push(spec.Value);
+  }
+  return uuids.length ? { gpuUuids: uuids.sort() } : {};
 }

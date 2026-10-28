@@ -61,6 +61,31 @@ describe("Stage 13 Docker Swarm parsing", () => {
     });
   });
 
+  it("extracts distinct NVIDIA UUID generic resources from the trusted daemon description", () => {
+    const gpuA = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const gpuB = "GPU-bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const base = {
+      ID: "node-1", Spec: { Role: "manager", Availability: "active" },
+      Description: {
+        Hostname: "nvidia-node", Resources: {
+          NanoCPUs: 8_000_000_000, MemoryBytes: 17_179_869_184,
+          GenericResources: [
+            { NamedResourceSpec: { Kind: "NVIDIA-GPU", Value: gpuB } },
+            { NamedResourceSpec: { Kind: "NVIDIA-GPU", Value: gpuA } },
+            { DiscreteResourceSpec: { Kind: "OTHER", Value: 1 } },
+          ],
+        },
+      },
+      Status: { State: "ready" },
+    };
+    expect(parseDockerNodeInspect(base)?.gpuUuids).toEqual([gpuA, gpuB]);
+    const duplicate = structuredClone(base);
+    duplicate.Description.Resources.GenericResources[1] = {
+      NamedResourceSpec: { Kind: "NVIDIA-GPU", Value: gpuB },
+    };
+    expect(parseDockerNodeInspect(duplicate)?.gpuUuids).toBeUndefined();
+  });
+
   it("rejects malformed Docker node payloads", () => {
     expect(parseDockerNodeInspect({ ID: "node-3" })).toBeNull();
     expect(parseDockerNodeInspect(null)).toBeNull();

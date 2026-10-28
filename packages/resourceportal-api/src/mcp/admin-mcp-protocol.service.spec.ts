@@ -499,4 +499,73 @@ describe("AdminMcpProtocolService", () => {
       await connection.close();
     }
   });
+  it("exposes platform GPU inventory and bounded tenant entitlement as explicit RBAC-protected Admin MCP tools", async () => {
+    const { service, audit } = fixture();
+    const tenantId = "12345678-1234-4234-8234-123456789abc";
+    const observed: Request[] = [];
+    const apiFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        observed.push(request);
+        if (request.method === "GET" && request.url.endsWith("/api/platform/gpu-devices")) {
+          return new Response(JSON.stringify([{ uuid: "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }]),
+            { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (request.method === "PATCH" && request.url.endsWith("/api/platform/tenants/" + tenantId + "/quota")) {
+          const submitted = await request.json();
+          expect(submitted).toEqual(observed.length === 2 ? { gpu: 1 } : {
+            gpu: 1, cpu: 2, memoryBytes: 4294967296, storageBytes: 10737418240,
+            maxSingleApps: 8, maxVolumes: 5,
+          });
+          return new Response(JSON.stringify({ gpu: 1 }),
+            { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new Error("Unexpected platform GPU call: " + request.method + " " + request.url);
+    });
+    vi.stubGlobal("fetch", apiFetch);
+    const connection = await connectClient({
+      service,
+      request: mcpRequest({ authorization: "Bearer platform-admin-gpu-test" }),
+      authenticated: true,
+    });
+    try {
+      const list = await connection.client.listTools();
+      const inventory = list.tools.find((tool) => tool.name === "resourceportal_admin_list_gpu_devices");
+      const allowance = list.tools.find((tool) => tool.name === "resourceportal_admin_set_tenant_gpu_quota");
+      expect(inventory?.annotations).toMatchObject({ readOnlyHint: true });
+      expect(allowance?.annotations).toMatchObject({ readOnlyHint: false });
+      expect(allowance?.inputSchema).toMatchObject({
+        required: ["tenantId", "gpu"],
+        properties: { gpu: { type: "integer", minimum: 0, maximum: 128 } },
+      });
+      const devices = await connection.client.callTool({
+        name: "resourceportal_admin_list_gpu_devices", arguments: {},
+      });
+      expect(devices.structuredContent).toMatchObject({ ok: true });
+      const granted = await connection.client.callTool({
+        name: "resourceportal_admin_set_tenant_gpu_quota",
+        arguments: { tenantId, gpu: 1 },
+      });
+      expect(granted.structuredContent).toMatchObject({ ok: true });
+      const initiallyGranted = await connection.client.callTool({
+        name: "resourceportal_admin_set_tenant_gpu_quota",
+        arguments: { tenantId, gpu: 1, initialQuota: {
+          cpu: 2, memoryBytes: 4294967296, storageBytes: 10737418240,
+          maxSingleApps: 8, maxVolumes: 5,
+        } },
+      });
+      expect(initiallyGranted.structuredContent).toMatchObject({ ok: true });
+      expect(observed).toHaveLength(3);
+      expect(observed.every((request) => request.url.includes("/api/platform/"))).toBe(true);
+      expect(observed.every((request) => request.headers.get("authorization") ===
+        "Bearer platform-admin-gpu-test")).toBe(true);
+      expect(audit.recordToolCall).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "resourceportal_admin_set_tenant_gpu_quota",
+        path: "/api/platform/tenants/" + tenantId + "/quota",
+        method: "PATCH", success: true,
+      }));
+    } finally {
+      await connection.close();
+    }
+  }, 60_000);
+
 });

@@ -6,6 +6,7 @@ import { OperationsModule } from "../operations/operations.module";
 import { RegistriesModule } from "../registries/registries.module";
 import { SecurityModule } from "../security/security.module";
 import { ApiVolumesModule } from "../volumes/api-volumes.module";
+import { NvidiaGpuAllocationService } from "../platform-infrastructure/nvidia-gpu-allocation.service";
 import { AppGroupsController } from "./app-groups.controller";
 import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
 import { AppGroupManifestService } from "./app-group-manifest.service";
@@ -30,6 +31,7 @@ import { Stage15AppGroupsService } from "./stage15-app-groups.service";
     AppGroupManifestService,
     SingleAppLogsService,
     ContainerTerminalService,
+    NvidiaGpuAllocationService,
     {
       provide: AppGroupsService,
       useClass: Stage15AppGroupsService,

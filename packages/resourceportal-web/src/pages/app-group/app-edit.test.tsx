@@ -142,3 +142,25 @@ it("opens attachment forms only when requested on Storage and Configuration", as
   fireEvent.click(screen.getByRole("button",{name:"Attach configuration"}));
   expect(screen.getByRole("dialog",{name:"Attach configuration"})).toBeTruthy();
 });
+
+it("loads GPU inventory from the tenant-level collection endpoint", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/tenants/t1/app-groups/gpu-devices") {
+      return json({ enabled: true, quota: 1, devices: [] });
+    }
+    if (url.endsWith("/single-apps")) {
+      return json([{ id: "app1", name: "checkout", gpu: 0, image: "nginx:latest" }]);
+    }
+    if (url.endsWith("/gpu-devices")) return json({}, 404);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" />);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([input]) =>
+    String(input) === "/api/tenants/t1/app-groups/gpu-devices",
+  )).toBe(true));
+  expect(fetchMock.mock.calls.some(([input]) =>
+    String(input).includes("/app-groups/ag1/gpu-devices"),
+  )).toBe(false);
+});

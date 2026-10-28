@@ -87,7 +87,7 @@ describe("SwarmInfrastructureService", () => {
         availableCpuNano: 2_000_000_000n,
         memoryBytes: 4_294_967_296n,
         availableMemoryBytes: 4_294_967_296n,
-        gpuCount: 1,
+        gpuCount: 0, // A legacy label alone is never a trusted GPU runtime probe.
         networkCapabilities: ["overlay"],
       }),
     );

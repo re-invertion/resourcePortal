@@ -92,6 +92,8 @@ export class TenantsService {
         status: true,
         createdAt: true,
         updatedAt: true,
+        // Platform-managed hardware entitlement, no tenant-private data.
+        quota: { select: { gpu: true } },
       },
     });
   }
@@ -373,6 +375,16 @@ export class TenantsService {
     }
 
     const quota = await this.prisma.$transaction(async (tx) => {
+      // Share global GPU reservation lock: quota cannot shrink below usage.
+      if (dto.gpu !== undefined) {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
+        const allocated = await tx.gpuDevice.count({
+          where: { allocatedSingleApp: { appGroup: { tenantId } } },
+        });
+        if (dto.gpu < allocated) {
+          throw new ConflictException("GpuQuotaBelowActiveAllocations");
+        }
+      }
       const updated = await tx.quota.upsert({
         where: { tenantId },
         create: {

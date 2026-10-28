@@ -17,6 +17,8 @@ import { FastifyRequest } from "fastify";
 import { AppGroupRuntimeOperationsService } from "./app-group-runtime-operations.service";
 import { AppGroupManifestService } from "./app-group-manifest.service";
 import { AppGroupsService } from "./app-groups.service";
+import { AllocateGpuDto } from "./dto/allocate-gpu.dto";
+import { NvidiaGpuAllocationService } from "../platform-infrastructure/nvidia-gpu-allocation.service";
 import { SingleAppLogsService } from "./single-app-logs.service";
 import { ContainerTerminalService, type TerminalAction } from "../terminal/container-terminal.service";
 import { AppGroupManifestRequestDto } from "./dto/app-group-manifest-request.dto";
@@ -47,6 +49,7 @@ export class AppGroupsController {
     private readonly manifestService: AppGroupManifestService,
     private readonly appLogs: SingleAppLogsService,
     private readonly terminal: ContainerTerminalService,
+    private readonly gpu: NvidiaGpuAllocationService,
   ) {}
 
   @RequirePermissions("appgroup.read")
@@ -386,6 +389,24 @@ export class AppGroupsController {
     @Param("configId", ParseUUIDPipe) configId: string,
   ) {
     return this.appGroupsService.deleteConfig(tenantId, appGroupId, configId);
+  }
+
+  @RequirePermissions("singleapp.read")
+  @Get("gpu-devices")
+  listTenantGpuDevices(@Param("tenantId", ParseUUIDPipe) tenantId: string) {
+    return this.gpu.listForTenant(tenantId);
+  }
+
+  @RequirePermissions("singleapp.update")
+  @Post(":appGroupId/single-apps/:singleAppId/gpu-allocation")
+  allocateSingleAppGpu(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("appGroupId", ParseUUIDPipe) appGroupId: string,
+    @Param("singleAppId", ParseUUIDPipe) singleAppId: string,
+    @Body() dto: AllocateGpuDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.gpu.reserve(tenantId, appGroupId, singleAppId, dto.gpuUuid, actor);
   }
 
   @RequirePermissions("singleapp.read")

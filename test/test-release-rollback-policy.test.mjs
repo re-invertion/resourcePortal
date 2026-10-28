@@ -25,6 +25,22 @@ test("release is blocked when automatic rollback is not eligible", () => {
   ]) assert.throws(() => requireAutomaticRollback(invalid), /Release blocked/);
 });
 
+test("NVIDIA GPU migration qualifies as expand-only SQL, but never skips live rollback certification", async () => {
+  const { readFileSync } = await import("node:fs");
+  const sql = readFileSync(
+    new URL("../packages/resourceportal-api/prisma/migrations/20261027231000_nvidia_gpu_exclusive_allocation/migration.sql", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotThrow(() => assertExpandOnlyMigrationSql(sql));
+  const candidate = rollbackAssessment(
+    ["packages/resourceportal-api/prisma/migrations/20261027231000_nvidia_gpu_exclusive_allocation/migration.sql"],
+    "fastfix", "v0.2.110", hash,
+  );
+  assert.equal(candidate.policy, "none");
+  assert.equal(candidate.reason, "database-compatibility-not-verified");
+  assert.throws(() => requireAutomaticRollback(candidate), /Release blocked/);
+});
+
 test("only immutable expand-only database migrations can qualify for tested rollback", () => {
   assert.doesNotThrow(() => assertExpandOnlyMigrationSql(`
     -- New isolated IDP provider and optional legacy-client linkage
