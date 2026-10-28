@@ -142,6 +142,7 @@ pull_release_images_reuses_local_digest() (
     fi
     return 1
   }
+  timeout() { shift 3; "$@"; }
   rp_pull_release_images "$manifest" || return 1
   grep -Fq 'ghcr.io/re-invertion/resourceportal-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$calls" || return 1
   ! grep -Fq 'traefik@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$calls"

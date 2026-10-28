@@ -73,6 +73,15 @@ export async function resolveRegistryDestination(
   }
 }
 
+type PinnedLookupCallback = (error: NodeJS.ErrnoException | null, address: string | Address[], family?: 4 | 6) => void;
+
+// Adapt Node's all:true address-family selection without resolving DNS again.
+// This is the vetted-address fix from PR #361, retained for both lookup modes.
+export function replyWithPinnedRegistryAddress(selected: Address, all: boolean, callback: PinnedLookupCallback): void {
+  if (all) callback(null, [selected]);
+  else callback(null, selected.address, selected.family);
+}
+
 export async function pingRegistry(urlValue: string, headers: Record<string, string>): Promise<number> {
   const url = new URL(urlValue);
   const selected = await resolveRegistryDestination(url);
@@ -84,7 +93,10 @@ export async function pingRegistry(urlValue: string, headers: Record<string, str
       agent: false,
       // Hostname, Host header and TLS SNI remain the original requested host.
       // Only the socket address is replaced with the previously vetted IP.
-      lookup: (_hostname, _options, callback) => callback(null, selected.address, selected.family),
+      lookup: (_hostname, options, callback) => replyWithPinnedRegistryAddress(
+        selected, typeof options === "object" && options.all === true,
+        callback,
+      ),
       signal: AbortSignal.timeout(10_000),
     }, (response) => {
       const status = response.statusCode ?? 0;

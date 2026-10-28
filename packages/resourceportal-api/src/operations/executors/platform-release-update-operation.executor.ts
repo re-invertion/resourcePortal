@@ -29,8 +29,17 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     // alone as proof that the requested upgrade completed. The updater's
     // durable container exit code is authoritative across Worker restarts.
     const manifestUrl = this.manifestUrl(input.manifestUrl, targetVersion);
-    const name = `resourceportal-updater-${operation.id}`;
-    const existing = await this.inspect(name);
+    let name = `resourceportal-updater-${operation.id}`;
+    let existing = await this.inspect(name);
+    // An explicit failed-operation retry clears startedAt before the claim.
+    // A Worker lease reclaim retains it. Only a new execution that began after
+    // the old container finished may start a fresh updater; preserve old logs.
+    if (existing?.status === "exited" && existing.exitCode !== 0 &&
+        existing.finishedAt !== null && operation.startedAt &&
+        operation.startedAt.getTime() > existing.finishedAt) {
+      name += `-retry-${operation.startedAt.getTime()}`;
+      existing = await this.inspect(name);
+    }
     if (!existing) {
       if (currentVersion === targetVersion) {
         throw Object.assign(
@@ -42,7 +51,7 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     } else if (existing.status === "exited" && existing.exitCode !== 0) {
       const logs = await this.runner.run("docker", ["logs", "--tail", "200", name]);
       throw Object.assign(
-        new Error(logs.stderr || logs.stdout || `Updater container exited with code ${existing.exitCode}`),
+        new Error(this.safeUpdaterError(logs.stderr || logs.stdout || `Updater container exited with code ${existing.exitCode}`)),
         { code: "PlatformUpdateFailed", retryable: false },
       );
     }
@@ -62,7 +71,7 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     if (waited.exitCode !== 0 || updaterExit !== 0) {
       const logs = await this.runner.run("docker", ["logs", "--tail", "200", name]);
       throw Object.assign(
-        new Error(logs.stderr || logs.stdout || "Platform updater failed"),
+        new Error(this.safeUpdaterError(logs.stderr || logs.stdout || "Platform updater failed")),
         { code: "PlatformUpdateFailed", retryable: false },
       );
     }
@@ -131,7 +140,7 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     const started = await this.runner.run("docker", args, 120000);
     if (started.exitCode !== 0) {
       throw Object.assign(
-        new Error(started.stderr || "Unable to start platform updater container"),
+        new Error(this.safeUpdaterError(started.stderr || "Unable to start platform updater container")),
         { code: "PlatformUpdaterStartFailed", retryable: true },
       );
     }
@@ -141,15 +150,22 @@ export class PlatformReleaseUpdateOperationExecutor implements OperationExecutor
     const result = await this.runner.run("docker", [
       "inspect",
       "--format",
-      "{{.State.Status}} {{.State.ExitCode}}",
+      "{{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}",
       name,
     ]);
     if (result.exitCode !== 0) return null;
-    const [status, code] = result.stdout.trim().split(/\s+/, 2);
+    const [status, code, finished] = result.stdout.trim().split(/\s+/, 3);
+    const finishedAt = finished ? Date.parse(finished) : NaN;
     return {
       status,
       exitCode: Number.parseInt(code ?? "0", 10),
+      finishedAt: Number.isFinite(finishedAt) ? finishedAt : null,
     };
+  }
+
+  private safeUpdaterError(message: string): string {
+    // Docker errors contain time-limited blob URLs with bearer-like signatures.
+    return message.replace(/https?:\/\/[^\s"'<>]+/gi, "[redacted URL]");
   }
 
   private input(operation: OperationRecord): UpdateInput {

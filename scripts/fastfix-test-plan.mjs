@@ -268,6 +268,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.test\.tsx$/, ["tenant-ux-patch", "mcp-oauth"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant\.tsx$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:create-app-wizard\.tsx|(?:application-navigation|layout|networking|route)(?:\.test)?\.tsx)$/, ["tenant-ux-patch"]],
+  [/^scripts\/installer\/common\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^scripts\/installer\/(target-upgrade|recovery)\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^scripts\/upgrade-recovery-from-0\.2\.78\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^test\/installer\/test-(target-upgrade|upgrade-preflight|upgrade-recovery)\.test\.mjs$/, ["upgrade-recovery"]],
@@ -389,6 +390,7 @@ const classifiers = [
 
   [/^scripts\/next-main-release\.mjs$/, ["platform-release", "workflow"]],
   [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix)\.mjs$/, ["workflow"]],
+  [/^test\/cli\/test-release-package\.sh$/, ["cli"]],
   [/^test\/.*\.test\.mjs$/, ["workflow"]],
   [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],
   [/^(package\.json|package-lock\.json)$/, ["dependency", "cli"]],
