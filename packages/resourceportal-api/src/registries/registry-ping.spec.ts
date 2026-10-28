@@ -1,5 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { isAllowedRegistryAddress, pingRegistry, resolveRegistryDestination } from "./registry-ping";
+import { isAllowedRegistryAddress, pingRegistry, replyWithPinnedRegistryAddress, resolveRegistryDestination } from "./registry-ping";
+
+
+describe("pinned DNS lookup callback compatibility", () => {
+  const selected = { address: "1.1.1.1", family: 4 as const };
+
+  it("returns a list when the runtime requests all address families", () => {
+    const callback = vi.fn();
+    replyWithPinnedRegistryAddress(selected, true, callback);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(null, [selected]);
+  });
+
+  it("returns an address and family for single-address lookups", () => {
+    const callback = vi.fn();
+    replyWithPinnedRegistryAddress(selected, false, callback);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(null, selected.address, 4);
+  });
+});
 
 describe("registry ping SSRF boundary (#207)", () => {
   it.each([
