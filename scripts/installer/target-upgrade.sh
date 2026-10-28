@@ -30,7 +30,7 @@ rp_launch_target_upgrade() (
     printf 'Target installer container already exists; inspect it before retry: %s\n' "$name" >&2
     return 1
   fi
-  docker pull "$image" >/dev/null || return 1
+  rp_pull_image_with_retry "$image" || return 1
   docker create --name "$name" --user 0 --network host \
     --label resourceportal.upgrade-installer=true \
     --label "resourceportal.target-version=$version" \

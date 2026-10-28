@@ -109,3 +109,22 @@ rp_run_logged_operation() {
   rm -f "$tmp"
   return "$rc"
 }
+
+# Retry a fresh immutable pull only for transient transport/server failures.
+# No service is changed here. Never print signed blob URLs returned by Docker.
+rp_pull_image_with_retry() (
+  local image="$1" attempt rc error_file
+  [[ "$image" =~ @sha256:[a-fA-F0-9]{64}$ ]] || { printf 'Image pull requires an immutable digest.\n' >&2; return 2; }
+  error_file="$(mktemp /tmp/resourceportal-image-pull.XXXXXX)" || return 1
+  chmod 0600 "$error_file" || return 1
+  trap 'rm -f -- "$error_file"' EXIT
+  for attempt in 1 2 3; do
+    if timeout -k 5 300 docker pull "$image" > /dev/null 2>"$error_file"; then return 0; else rc=$?; fi
+    printf 'Image pull failed (attempt %s/3, exit %s).\n' "$attempt" "$rc" >&2
+    sed -E 's#https?://[^[:space:]"<>]+#[redacted URL]#g' "$error_file" >&2
+    if [[ "$attempt" == 3 ]] || { [[ "$rc" != 124 && "$rc" != 137 && "$rc" != 143 ]] && ! grep -Eqi 'timeout|timed out|connection reset|TLS handshake|unexpected EOF|too many requests|HTTP[^0-9]*(429|502|503|504)|[Ss]ervice [Uu]navailable' "$error_file"; }; then
+      return "$rc"
+    fi
+    sleep "$((attempt * 2))"
+  done
+)

@@ -512,3 +512,10 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
   assert.ok(plan.profiles.includes("platform-release"));
   assert.throws(() => selectProfiles(["scripts/unregistered-nvidia-test.sh"]), /unclassified changes/);
 });
+
+test("shared installer image-pull helper requires upgrade and complete installer coverage (#366)", () => {
+  const plan = selectProfiles(["scripts/installer/common.sh"]);
+  assert.ok(plan.profiles.includes("upgrade-recovery"));
+  assert.ok(plan.profiles.includes("installer"));
+  assert.ok(plan.profiles.includes("platform-release"));
+});

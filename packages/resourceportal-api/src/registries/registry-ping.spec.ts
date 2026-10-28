@@ -1,5 +1,6 @@
+import { request as httpRequest } from "node:http";
 import { describe, expect, it, vi } from "vitest";
-import { isAllowedRegistryAddress, pingRegistry, resolveRegistryDestination } from "./registry-ping";
+import { isAllowedRegistryAddress, pingRegistry, replyWithPinnedRegistryAddress, resolveRegistryDestination } from "./registry-ping";
 
 describe("registry ping SSRF boundary (#207)", () => {
   it.each([
@@ -49,5 +50,27 @@ describe("actual registry HTTP entrypoint", () => {
     await expect(pingRegistry("http://169.254.169.254/v2/", {
       authorization: "Bearer must-not-leave-process",
     })).rejects.toThrow(/non-public address/);
+  });
+});
+
+
+describe("Node address-family selection (#362, #366)", () => {
+  it.each([true, false])("passes a vetted address through the real Node HTTP socket (all=%s)", async (all) => {
+    // A public address is required by the production SSRF policy. Abort at
+    // lookup completion, before Node can open an external connection.
+    const selected = { address: "1.1.1.1", family: 4 as const };
+    const controller = new AbortController();
+    const result = await new Promise<string>((resolve) => {
+      const req = httpRequest("http://registry.example.test/v2/", {
+        agent: false, autoSelectFamily: all, signal: controller.signal,
+        lookup: (_host, options, callback) => {
+          replyWithPinnedRegistryAddress(selected, typeof options === "object" && options.all === true, callback);
+          controller.abort();
+        },
+      });
+      req.on("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? error.message));
+      req.end();
+    });
+    expect(result).toBe("ABORT_ERR");
   });
 });

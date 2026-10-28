@@ -93,3 +93,42 @@ test("attach failure still propagates the exit status of an exited target", () =
   assert.notEqual(result.status, 0);
   assert.match(result.commands, /wait rp-test-target/);
 });
+
+function pullFixture(failures, message, timeoutCode) {
+  const root = mkdtempSync(join(tmpdir(), "rp-pull-retry-"));
+  const counter = join(root, "attempts");
+  writeFileSync(counter, "0");
+  writeFileSync(join(root, "docker"), `#!/bin/bash
+n=$(cat "$COUNTER"); n=$((n+1)); echo "$n" > "$COUNTER"
+if ((n <= FAILURES)); then echo "$FAILURE_MESSAGE" >&2; exit 1; fi
+`, {mode: 0o755});
+  writeFileSync(join(root, "sleep"), "#!/bin/bash\nexit 0\n", {mode: 0o755});
+  if (timeoutCode) writeFileSync(join(root, "timeout"), `#!/bin/bash
+n=$(cat "$COUNTER"); echo "$((n+1))" > "$COUNTER"; exit ${timeoutCode}
+`, {mode: 0o755});
+  try {
+    const result = spawnSync("bash", ["-c", `source scripts/installer/common.sh; rp_pull_image_with_retry '${digest("ghcr.io/re-invertion/resourceportal-api", "a")}'`], {
+      encoding: "utf8", env: {...process.env, PATH: root + ":" + process.env.PATH, COUNTER: counter, FAILURES: String(failures), FAILURE_MESSAGE: message},
+    });
+    return {...result, attempts: Number(readFileSync(counter, "utf8"))};
+  } finally { rmSync(root, {recursive: true, force: true}); }
+}
+test("transient image-download failure gets a fresh Docker pull before succeeding (#366)", () => {
+  const r = pullFixture(1, "Get https://pkg-containers.githubusercontent.com/blob?sig=secret: net/http: timeout awaiting response headers");
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.attempts, 2);
+  assert.doesNotMatch(r.stderr, /sig=secret/);
+});
+test("image-download retries are bounded and preserve a failing exit status", () => {
+  const r = pullFixture(9, "net/http: timeout awaiting response headers");
+  assert.notEqual(r.status, 0); assert.equal(r.attempts, 3);
+});
+test("authentication failures are actionable and are not blindly retried", () => {
+  const r = pullFixture(9, "unauthorized: authentication required");
+  assert.notEqual(r.status, 0); assert.equal(r.attempts, 1);
+  assert.match(r.stderr, /unauthorized/);
+});
+
+for (const code of [124, 137, 143]) test(`image-download watchdog status ${code} gets exactly three bounded attempts`, () => {
+  const r = pullFixture(9, "", code);
+  assert.notEqual(r.status, 0); assert.equal(r.attempts, 3);
+});

@@ -105,7 +105,7 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
     expect(completed).not.toHaveProperty("resourceId");
     expect(run).toHaveBeenCalledTimes(2);
     expect(run).toHaveBeenNthCalledWith(1, "docker", [
-      "inspect", "--format", "{{.State.Status}} {{.State.ExitCode}}",
+      "inspect", "--format", "{{.State.Status}} {{.State.ExitCode}} {{.State.FinishedAt}}",
       "resourceportal-updater-11111111-1111-4111-8111-111111111111",
     ]);
     expect(run).toHaveBeenNthCalledWith(2, "docker", [
@@ -217,5 +217,53 @@ describe("platform release provenance restrictions (#227)", () => {
       ...operation(), input: { targetVersion: "0.2.67", manifestUrl },
     })).rejects.toThrow("InvalidOperationInput:manifestUrl");
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("explicit platform update retry (#366)", () => {
+  const base = "resourceportal-updater-11111111-1111-4111-8111-111111111111";
+  const values: Record<string, string> = {
+    INSTALLER_VERSION: "0.2.66",
+    RESOURCEPORTAL_RUNTIME_IMAGE: "ghcr.io/re-invertion/resourceportal-api@sha256:" + "a".repeat(64),
+    RESOURCE_STORAGE_BASE_PATH: "/srv/resource-portal/storage",
+    RESOURCE_STORAGE_QUOTA_DEVICE: "/dev/vdb",
+  };
+  it("starts a fresh stable container for a retry made after the old updater failed", async () => {
+    const startedAt = new Date("2026-10-28T21:00:00Z");
+    const name = `${base}-retry-${startedAt.getTime()}`;
+    const run = vi.fn<(command: string, args: string[], timeout?: number) => Promise<{exitCode: number; stdout: string; stderr: string}>>().mockImplementation((_command, args) => {
+      if (args[0] === "inspect") return Promise.resolve(args.at(-1) === base
+        ? { exitCode: 0, stdout: "exited 1 2026-10-28T20:00:00Z", stderr: "" }
+        : { exitCode: 1, stdout: "", stderr: "not found" });
+      return Promise.resolve({ exitCode: 0, stdout: args[0] === "wait" ? "0" : "container-id", stderr: "" });
+    });
+    const executor = new PlatformReleaseUpdateOperationExecutor({ run } as unknown as StorageCommandRunnerService,
+      { get: (key: string) => values[key] } as unknown as ConfigService);
+    await expect(executor.execute({ ...operation(), startedAt })).resolves.toMatchObject({ result: { status: "updater-completed" } });
+    expect(run).toHaveBeenCalledWith("docker", expect.arrayContaining(["run", "--name", name]), 120000);
+    expect(run).toHaveBeenLastCalledWith("docker", ["wait", name], 30 * 60 * 1000);
+    expect(run.mock.calls.some(([, args]) => args[0] === "rm")).toBe(false);
+  });
+  it("reconnects to the same retry container after a Worker restart", async () => {
+    const startedAt = new Date("2026-10-28T21:00:00Z");
+    const name = `${base}-retry-${startedAt.getTime()}`;
+    const run = vi.fn<(command: string, args: string[], timeout?: number) => Promise<{exitCode: number; stdout: string; stderr: string}>>().mockImplementation((_command, args) => Promise.resolve({ exitCode: 0, stderr: "",
+      stdout: args[0] === "wait" ? "0" : args.at(-1) === base ? "exited 1 2026-10-28T20:00:00Z" : "running 0 0001-01-01T00:00:00Z" }));
+    const executor = new PlatformReleaseUpdateOperationExecutor({ run } as unknown as StorageCommandRunnerService,
+      { get: (key: string) => values[key] } as unknown as ConfigService);
+    await expect(executor.execute({ ...operation(), startedAt, attempt: 2 })).resolves.toBeDefined();
+    expect(run).toHaveBeenLastCalledWith("docker", ["wait", name], 30 * 60 * 1000);
+    expect(run.mock.calls.some(([, args]) => args[0] === "run")).toBe(false);
+  });
+  it("does not replay a failed updater from the same execution or expose signed URLs", async () => {
+    const run = vi.fn<(command: string, args: string[], timeout?: number) => Promise<{exitCode: number; stdout: string; stderr: string}>>().mockImplementation((_command, args) => Promise.resolve({ exitCode: 0, stderr: "",
+      stdout: args[0] === "inspect" ? "exited 1 2026-10-28T22:00:00Z" : "Get https://pkg-containers.githubusercontent.com/blob?sig=secret: timeout awaiting response headers" }));
+    const executor = new PlatformReleaseUpdateOperationExecutor({ run } as unknown as StorageCommandRunnerService,
+      { get: (key: string) => values[key] } as unknown as ConfigService);
+    const failure = executor.execute({ ...operation(), startedAt: new Date("2026-10-28T21:00:00Z") });
+    await expect(failure).rejects.toMatchObject({ code: "PlatformUpdateFailed", retryable: false });
+    await expect(failure).rejects.not.toThrow("sig=secret");
+    expect(run.mock.calls.some(([, args]) => args[0] === "run")).toBe(false);
   });
 });

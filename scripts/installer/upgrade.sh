@@ -301,7 +301,7 @@ rp_pull_release_images() {
     if docker image inspect "$image" >/dev/null 2>&1; then
       continue
     fi
-    docker pull "$image" >/dev/null || return 1
+    rp_pull_image_with_retry "$image" || return 1
   done < <(jq -r '.images | [.api,.web,.postgres,.zitadel,.traefik][]' "$manifest")
 }
 

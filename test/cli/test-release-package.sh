@@ -33,8 +33,9 @@ checksums="$out_dir/SHA256SUMS"
   sha256sum -c SHA256SUMS
 )
 
-tar -tzf "$archive" | grep -Fq 'package/dist/index.js'
-tar -tzf "$archive" | grep -Fq 'package/node_modules/@resource-portal/sdk/dist/full.js'
+tar -tzf "$archive" >"$tmp/archive-contents.txt"
+grep -Fq 'package/dist/index.js' "$tmp/archive-contents.txt"
+grep -Fq 'package/node_modules/@resource-portal/sdk/dist/full.js' "$tmp/archive-contents.txt"
 
 npm install --global --prefix "$prefix" "$archive" >/dev/null
 [[ "$("$prefix/bin/rp" --help)" == 'fixture help' ]]
