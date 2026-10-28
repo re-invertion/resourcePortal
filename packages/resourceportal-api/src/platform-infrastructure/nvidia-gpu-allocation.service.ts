@@ -127,6 +127,14 @@ export class NvidiaGpuAllocationService {
         if (device.allocationState !== "Allocated") {
           throw new ConflictException("GpuReleaseInProgress");
         }
+        // Repair legacy same-owner draft inconsistency atomically.
+        if (app.gpu !== 1) {
+          await tx.singleApp.update({ where: { id: app.id }, data: { gpu: 1 } });
+          await tx.appGroup.update({
+            where: { id: app.appGroupId },
+            data: { hasPendingChanges: true, runtimeDraftRevision: { increment: 1 } },
+          });
+        }
         return { uuid: device.uuid, singleAppId: app.id, alreadyAllocated: true };
       }
       if (device.observedState !== "Available" ||

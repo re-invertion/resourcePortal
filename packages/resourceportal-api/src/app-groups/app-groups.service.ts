@@ -58,7 +58,7 @@ import { UpdateSingleAppDto } from "./dto/update-single-app.dto";
 import { UpdateSecretDto } from "./dto/update-secret.dto";
 import { UpdateVariableDto } from "./dto/update-variable.dto";
 import { DEFAULT_RESTART_POLICY, DEFAULT_UPDATE_POLICY } from "./default-policies";
-import { assertGpuDraftHasNoDeploymentHistory } from "./nvidia-gpu-draft-discard";
+import { assertGpuDraftHasNoDeploymentHistory, assertGpuExistingAppsNeverAttemptedGpuRuntime } from "./nvidia-gpu-draft-discard";
 import {
   mapAppGroup,
   mapAppGroupDeployment,
@@ -231,37 +231,53 @@ export class AppGroupsService {
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.assertNoActiveDeployment(tx, appGroupId);
 
+      // All exclusive GPU assignment and release paths use one global
+      // transaction-level lock. Inspect allocations AFTER taking it.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
       const draftOnlyApps = await tx.singleApp.findMany({
         where: { appGroupId, id: { notIn: [...snapshotAppIds] } },
         select: { id: true },
       });
-      if (draftOnlyApps.length) {
-        // Only never-deployed drafts; active workloads require rollout prune.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
-        const ids = draftOnlyApps.map((app) => app.id);
-        const reserved = await tx.gpuDevice.findMany({
-          where: { allocatedSingleAppId: { in: ids } },
-          select: { allocatedSingleAppId: true },
+      const draftOnlyIds = draftOnlyApps.map((app) => app.id);
+      const snapshotGpu = new Map(deployedSnapshot.singleApps.map(
+        (app) => [app.id, app.resources.gpu],
+      ));
+      const allocations = await tx.gpuDevice.findMany({
+        where: { allocatedSingleApp: { appGroupId } },
+        select: { allocatedSingleAppId: true },
+      });
+      const allocatedIds = new Set(allocations.flatMap((device) =>
+        device.allocatedSingleAppId ? [device.allocatedSingleAppId] : [],
+      ));
+      if (deployedSnapshot.singleApps.some((app) =>
+        app.resources.gpu > 0 && !allocatedIds.has(app.id))) {
+        throw new ConflictException("GpuSnapshotAllocationMissing");
+      }
+      const releaseDraftIds = draftOnlyIds.filter((id) => allocatedIds.has(id));
+      const releaseExistingIds = deployedSnapshot.singleApps
+        .filter((app) => app.resources.gpu === 0 && allocatedIds.has(app.id))
+        .map((app) => app.id);
+      if ([...allocatedIds].some((id) =>
+        !snapshotGpu.has(id) && !draftOnlyIds.includes(id))) {
+        throw new ConflictException("GpuDraftDiscardRequiresVerifiedRuntimeCleanup");
+      }
+      if (releaseDraftIds.length || releaseExistingIds.length) {
+        const history = await tx.appGroupDeployment.findMany({
+          where: { appGroupId },
+          select: { stackConfig: true },
         });
-        if (reserved.length > 0) {
-          // Historical failed deployments can leave GPU tasks even if the
-          // last successful snapshot did not include the newly drafted app.
-          // Only never-deployed GPU IDs may be released without live Swarm proof.
-          const history = await tx.appGroupDeployment.findMany({
-            where: { appGroupId },
-            select: { stackConfig: true },
-          });
-          assertGpuDraftHasNoDeploymentHistory(
-            reserved.flatMap((device) => device.allocatedSingleAppId
-              ? [device.allocatedSingleAppId] : []),
-            history,
-          );
-        }
+        // A new draft app must not appear in ANY persisted attempted rollout.
+        assertGpuDraftHasNoDeploymentHistory(releaseDraftIds, history);
+        // An existing CPU-only app may appear in history, but never with GPU
+        // workloads, including failed deployment candidates.
+        assertGpuExistingAppsNeverAttemptedGpuRuntime(releaseExistingIds, history);
         await tx.gpuDevice.updateMany({
-          where: { allocatedSingleAppId: { in: ids } },
+          where: { allocatedSingleAppId: { in: [...releaseDraftIds, ...releaseExistingIds] } },
           data: { allocatedSingleAppId: null, allocationState: "Free", allocatedAt: null },
         });
-        await tx.singleApp.deleteMany({ where: { id: { in: ids } } });
+      }
+      if (draftOnlyIds.length) {
+        await tx.singleApp.deleteMany({ where: { id: { in: draftOnlyIds } } });
       }
 
       await Promise.all(
@@ -1509,7 +1525,7 @@ export class AppGroupsService {
 
     // An assigned GPU workload must keep its Swarm service identity stable
     // until runtime teardown confirms that all UUID-bearing tasks exited.
-    if (existing.gpu > 0 && (dto.name !== undefined || dto.gpu !== undefined ||
+    if (existing.gpu > 0 && ((dto.name !== undefined && dto.name !== existing.name) || dto.gpu !== undefined ||
         (dto.desiredReplicas !== undefined && dto.desiredReplicas !== 1))) {
       throw new ConflictException("DedicatedGpuCannotBeModifiedThroughGenericPatch");
     }

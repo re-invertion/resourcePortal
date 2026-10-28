@@ -226,3 +226,22 @@ describe("CreateApplicationWizard", () => {
   expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(4);
   });
 });
+
+it("loads dedicated GPUs through tenant collection, never App Group-specific route", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/tenants/t1/app-groups/gpu-devices") {
+      return json({ enabled: true, quota: 1, devices: [] });
+    }
+    if (url.endsWith("/gpu-devices")) return json({}, 404);
+    return initialResponse(url) ?? json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<CreateApplicationWizard tenantId="t1" appGroupId="ag1" />);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([input]) =>
+    String(input) === "/api/tenants/t1/app-groups/gpu-devices",
+  )).toBe(true));
+  expect(fetchMock.mock.calls.some(([input]) =>
+    String(input).includes("/app-groups/ag1/gpu-devices"),
+  )).toBe(false);
+});

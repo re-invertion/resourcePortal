@@ -98,6 +98,16 @@ describe("dedicated NVIDIA GPU allocation transactions", () => {
     await expect(service.reserve(tenantA, "group-a", appA, GPU2)).rejects.toThrow("GpuReassignmentRequiresDetach");
   });
 
+  it("restores gpu=1 when a previously allocated same-owner draft became inconsistent", async () => {
+    const { service, apps, devices } = fakeDatabase();
+    await service.reserve(tenantA, "group-a", appA, GPU);
+    apps.get(appA)!.gpu = 0;
+    const result = await service.reserve(tenantA, "group-a", appA, GPU);
+    expect(result.alreadyAllocated).toBe(true);
+    expect(apps.get(appA)!.gpu).toBe(1);
+    expect(devices.get(GPU)!.allocatedSingleAppId).toBe(appA);
+  });
+
   it("atomically audits a successful assignment with the authenticated actor", async () => {
     const { service, auditWrites, devices } = fakeDatabase();
     await service.reserve(tenantA, 'group-a', appA, GPU, {
