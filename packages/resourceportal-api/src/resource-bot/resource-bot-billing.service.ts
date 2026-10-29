@@ -210,11 +210,15 @@ export class ResourceBotBillingService {
         if (existingReservation.tenantId !== input.tenantId) {
           throw new ConflictException("ResourceBot reservation belongs to another tenant");
         }
-        return {
-          duplicate: false as const,
-          reservationId: existingReservation.id,
-          reservedCredits: existingReservation.reservedCredits,
-        };
+        // requestId is the idempotency key, NOT proof of execution ownership.
+        // Only the transaction which created the reservation may receive its
+        // unpredictable reservationId. Reusing the existing ID would authorize
+        // a second provider invocation and let either caller settle/release
+        // the other caller's work, including across API replicas.
+        throw new ConflictException({
+          code: "ResourceBotRequestInProgress",
+          message: "A ResourceBot request with this requestId is already running",
+        });
       }
 
       const activeWhere = {
@@ -293,10 +297,13 @@ export class ResourceBotBillingService {
         if (existing.tenantId !== input.tenantId) {
           throw new ConflictException("ResourceBot requestId belongs to another tenant");
         }
-        await tx.resourceBotUsageReservation.deleteMany({
-          where: { requestId: input.requestId, tenantId: input.tenantId },
+        // Never replay settlement to a different execution owner. The
+        // reservation has been consumed and its ID is no longer verifiable;
+        // return a conflict rather than a prior caller's billing record.
+        throw new ConflictException({
+          code: "ResourceBotRequestAlreadyProcessed",
+          message: "This ResourceBot request has already been processed",
         });
-        return this.toUsageView(existing);
       }
 
       // The reservation is the authorization to spend. Never select a new

@@ -346,6 +346,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],
   [/^packages\/resourceportal-api\/src\/operations\/operations\.repository(?:\.spec)?\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/prisma\/raw-sql-policy\.spec\.ts$/, ["operations"]],
+  // ResourceBot billing idempotency is a cross-replica financial security boundary.
+  [/^packages\/resourceportal-api\/src\/resource-bot\/resource-bot-(?:billing\.service|reservation-concurrency\.spec)\.ts$/, ["resource-bot", "security"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
   [/^packages\/resourceportal-web\/(server|proxy-target(\.test)?)\.mjs$/, ["web-proxy"]],

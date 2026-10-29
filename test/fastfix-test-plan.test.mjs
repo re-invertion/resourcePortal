@@ -259,6 +259,7 @@ test("security and infrastructure hardening selects explicit release gates", () 
     "operations",
     "resource-bot",
     "runtime-config",
+    "security",
     "tenant-access",
     "web-proxy",
   ]);
@@ -595,4 +596,12 @@ test("Service Identity authorization changes require identity and security regre
     "packages/resourceportal-api/src/service-identities/service-identity-role-grants.spec.ts",
   ]);
   assert.deepEqual(plan.profiles, ["identity", "security"]);
+});
+
+test("ResourceBot billing concurrency fixes require billing and security regressions (#322)", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/resource-bot/resource-bot-billing.service.ts",
+    "packages/resourceportal-api/src/resource-bot/resource-bot-reservation-concurrency.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["resource-bot", "security"]);
 });
