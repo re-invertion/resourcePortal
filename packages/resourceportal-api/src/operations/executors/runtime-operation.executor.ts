@@ -6,8 +6,10 @@ import type { OperationExecutor } from "../operation-executor";
 import type { OperationRecord, OperationType } from "../operation.types";
 
 type RuntimeSnapshot = {
-  singleApps?: Array<{ id?: unknown; name?: unknown }>;
+  singleApps?: Array<{ id?: unknown; name?: unknown; desiredReplicas?: unknown }>;
 };
+
+type DeployedService = { name: string; desiredReplicas: number | null };
 
 type ScaleTarget = {
   stackName: string;
@@ -52,9 +54,9 @@ export class RuntimeOperationExecutor implements OperationExecutor {
 
     if (operation.type === "APP_GROUP_RESTART") {
       const targets = appGroup.singleApps.flatMap((singleApp) => {
-        const deployedName = names.get(singleApp.id);
+        const deployedService = names.get(singleApp.id);
         if (
-          !deployedName ||
+          !deployedService ||
           appGroup.runtimeState !== RuntimeState.Running ||
           singleApp.pendingDeletion ||
           singleApp.runtimeState !== RuntimeState.Running ||
@@ -62,7 +64,7 @@ export class RuntimeOperationExecutor implements OperationExecutor {
         ) {
           return [];
         }
-        return [{ stackName, serviceName: this.serviceName(deployedName) }];
+        return [{ stackName, serviceName: this.serviceName(deployedService.name) }];
       });
       if (targets.length === 0) {
         return { resourceId: appGroup.id, result: { restartedServices: 0 } };
@@ -73,18 +75,19 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     }
 
     const targets: ScaleTarget[] = appGroup.singleApps.flatMap((singleApp) => {
-      const deployedName = names.get(singleApp.id);
-      if (!deployedName) return [];
+      const deployedService = names.get(singleApp.id);
+      if (!deployedService) return [];
       const replicas =
+        operation.type === "APP_GROUP_STOP" ||
         appGroup.runtimeState === RuntimeState.Stopped ||
         singleApp.runtimeState === RuntimeState.Stopped ||
         singleApp.pendingDeletion
           ? 0
-          : singleApp.desiredReplicas;
+          : this.deployedReplicaTarget(deployedService);
       return [
         {
           stackName,
-          serviceName: this.serviceName(deployedName),
+          serviceName: this.serviceName(deployedService.name),
           singleAppId: singleApp.id,
           replicas,
         },
@@ -113,8 +116,8 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     if (!singleApp) throw this.error("SingleAppMissing", "SingleApp not found", false);
 
     const names = await this.deployedServiceNames(appGroup.id, appGroup.currentDeploymentVersion);
-    const deployedName = names.get(singleApp.id);
-    if (!deployedName) {
+    const deployedService = names.get(singleApp.id);
+    if (!deployedService) {
       if (operation.type === "SINGLE_APP_RESTART") {
         throw this.error("RestartServiceUnavailable", "No deployed Swarm service exists for SingleApp restart", false);
       }
@@ -122,7 +125,7 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     }
     const target = {
       stackName: this.stackName(appGroup.id),
-      serviceName: this.serviceName(deployedName),
+      serviceName: this.serviceName(deployedService.name),
     };
 
     if (operation.type === "SINGLE_APP_RESTART") {
@@ -140,10 +143,11 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     }
 
     const replicas =
+      operation.type === "SINGLE_APP_START" &&
       appGroup.runtimeState === RuntimeState.Running &&
       singleApp.runtimeState === RuntimeState.Running &&
       !singleApp.pendingDeletion
-        ? singleApp.desiredReplicas
+        ? this.deployedReplicaTarget(deployedService)
         : 0;
     await this.applyScaleTargets([{ ...target, singleAppId, replicas }]);
     return { resourceId: singleApp.id, result: { replicas } };
@@ -156,7 +160,7 @@ export class RuntimeOperationExecutor implements OperationExecutor {
   }
 
   private async deployedServiceNames(appGroupId: string, currentVersion: number | null) {
-    if (currentVersion === null) return new Map<string, string>();
+    if (currentVersion === null) return new Map<string, DeployedService>();
     const deployment = await this.prisma.appGroupDeployment.findFirst({
       where: {
         appGroupId,
@@ -165,20 +169,34 @@ export class RuntimeOperationExecutor implements OperationExecutor {
       },
       select: { stackConfig: true },
     });
-    if (!deployment?.stackConfig) return new Map<string, string>();
+    if (!deployment?.stackConfig) return new Map<string, DeployedService>();
     let snapshot: RuntimeSnapshot;
     try {
       snapshot = JSON.parse(deployment.stackConfig) as RuntimeSnapshot;
     } catch {
       throw this.error("DeploymentSnapshotInvalid", "Current deployment snapshot is invalid", false);
     }
-    const names = new Map<string, string>();
+    const names = new Map<string, DeployedService>();
     for (const app of snapshot.singleApps ?? []) {
       if (typeof app.id === "string" && typeof app.name === "string") {
-        names.set(app.id, app.name);
+        names.set(app.id, {
+          name: app.name,
+          desiredReplicas: typeof app.desiredReplicas === "number" &&
+            Number.isSafeInteger(app.desiredReplicas) && app.desiredReplicas >= 0
+              ? app.desiredReplicas : null,
+        });
       }
     }
     return names;
+  }
+
+  private deployedReplicaTarget(service: DeployedService): number {
+    if (service.desiredReplicas === null) {
+      throw this.error("DeploymentSnapshotInvalid", "Deployed replica count is unavailable", false);
+    }
+    // A saved draft is not a deployment. Runtime start may only scale to the
+    // last succeeded snapshot, which is also the capacity reservation baseline.
+    return service.desiredReplicas;
   }
 
   private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>, unknownOnTimeout = false) {
