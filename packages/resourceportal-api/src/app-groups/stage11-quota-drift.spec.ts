@@ -18,13 +18,14 @@ function quotaFixture() {
     singleApp: { findMany: vi.fn().mockResolvedValue(existing) },
   };
   const service = Object.create(Stage11AppGroupsService.prototype) as Stage11AppGroupsService;
-  const check = Reflect.get(service, "assertStage11QuotaAllowsSingleAppChange")
-    .bind(service) as (
-      tx: unknown,
-      tenant: string,
-      next: { cpu: number; memoryBytes: number; gpu: number; desiredReplicas: number },
-      replacingId?: string,
-    ) => Promise<void>;
+  const checkMethod = Reflect.get(service, "assertStage11QuotaAllowsSingleAppChange") as (
+    this: Stage11AppGroupsService,
+    tx: unknown,
+    tenant: string,
+    next: { cpu: number; memoryBytes: number; gpu: number; desiredReplicas: number },
+    replacingId?: string,
+  ) => Promise<void>;
+  const check = checkMethod.bind(service);
   return { tx, existing, check };
 }
 
