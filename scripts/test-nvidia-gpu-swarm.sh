@@ -31,7 +31,12 @@ default_runtime="$(docker info --format '{{.DefaultRuntime}}')"
 [[ "$node_id" =~ ^[a-z0-9]{20,40}$ ]] || { echo "BLOCKED: invalid local Swarm NodeID" >&2; exit 2; }
 
 # Explicit physical identity is mandatory; no numeric GPU indexes.
-uuid="$(nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits | head -n 1 | tr -d '\r')"
+gpu_uuids="$(nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits | tr -d '\r')"
+gpu_count="$(printf '%s\n' "$gpu_uuids" | grep -c '^GPU-')"
+[[ "$gpu_count" == 1 ]] || {
+  echo "BLOCKED: isolated duplicate-capacity smoke requires exactly one physical GPU" >&2; exit 2;
+}
+uuid="$(printf '%s\n' "$gpu_uuids" | head -n 1)"
 [[ "$uuid" =~ ^GPU-[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$ ]] || {
   echo "BLOCKED: nvidia-smi did not supply a physical GPU UUID" >&2; exit 2;
 }
@@ -51,7 +56,7 @@ trap cleanup EXIT
 docker image pull --quiet "$image" >/dev/null
 docker service create --quiet --name "$gpu_service" \
   --constraint "node.id==$node_id" --restart-condition none \
-  --replicas 1 --generic-resource "NVIDIA-GPU=$uuid" \
+  --replicas 1 --generic-resource "NVIDIA-GPU=1" \
   --env "NVIDIA_VISIBLE_DEVICES=$uuid" --env "NVIDIA_DRIVER_CAPABILITIES=utility,compute" "$image" \
   sh -c 'nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits; sleep 100' >/dev/null
 
@@ -66,10 +71,12 @@ done
 seen="$(docker exec "$gpu_container" nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits | tr -d '\r')"
 [[ "$seen" == "$uuid" ]] || { echo "FAIL: GPU task did not exclusively see assigned UUID" >&2; exit 1; }
 
-# The same physical named resource MUST NOT be scheduled twice while held.
+# On this deliberately single-GPU acceptance node, the discrete capacity unit
+# MUST NOT be scheduled twice. Production UUID uniqueness is additionally
+# enforced transactionally by ResourcePortal before any stack is rendered.
 docker service create --quiet --name "$contender_service" \
   --constraint "node.id==$node_id" --restart-condition none \
-  --replicas 1 --generic-resource "NVIDIA-GPU=$uuid" \
+  --replicas 1 --generic-resource "NVIDIA-GPU=1" \
   --env "NVIDIA_VISIBLE_DEVICES=$uuid" --env "NVIDIA_DRIVER_CAPABILITIES=utility,compute" "$image" sleep 100 >/dev/null
 sleep 8
 if docker ps -q --filter "label=com.docker.swarm.service.name=$contender_service" | grep -q .; then

@@ -17,8 +17,10 @@ const commands = {
       "src/platform-infrastructure/swarm-gpu-node-probe-router.spec.ts",
       "src/platform-infrastructure/nvidia-gpu-allocation.service.spec.ts",
       "src/internal/nvidia-gpu-swarm-render.spec.ts",
+      "src/internal/nvidia-gpu-deployment-validation.spec.ts",
       "src/internal/nvidia-gpu-app-group-teardown.spec.ts",
       "src/app-groups/nvidia-gpu-draft-discard.spec.ts",
+      "src/app-groups/nvidia-gpu-deployment-snapshot.spec.ts",
       "src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
       "src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
       "src/internal/nvidia-gpu-release-admission.spec.ts",
@@ -201,18 +203,20 @@ const commands = {
 };
 
 const classifiers = [
-  [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-draft-discard(?:\.spec)?\.ts$/, ["gpu-security", "applications"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-identity-immutable\.spec\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-rollout\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/explicit-rollback-completion\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
 
   [/^packages\/resourceportal-api\/src\/platform-infrastructure\/(?:nvidia-gpu-|swarm-gpu-node-probe-router)/, ["gpu-security", "platform-release"]],
-  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-swarm-render\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:swarm-render|deployment-validation)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-app-group-teardown\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/allocate-gpu\.dto\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-gpu-permissions\.test\.tsx$/, ["gpu-security", "platform-admin-ui"]],
   [/^scripts\/test-nvidia-gpu-swarm\.sh$/, ["gpu-security", "workflow"]],
+  [/^packages\/resourceportal-api\/scripts\/render-nvidia-gpu-stack-fixture\.ts$/, ["gpu-security", "workflow"]],
+  [/^scripts\/run-real-swarm-smoke\.sh$/, ["gpu-security", "platform-release", "workflow"]],
   [/^test\/installer\/test-gpu-readiness\.sh$/, ["gpu-security", "installer"]],
   [/^test\/installer\/test-gpu-swarm-gate-safety\.sh$/, ["gpu-security", "installer"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-runtime\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
@@ -431,7 +435,7 @@ export function selectProfiles(paths) {
     vpnSmoke: profiles.has("networking"),
     // Force the isolated real-Swarm integration gate for terminal/exec changes,
     // independently of the VPN-only dataplane smoke selection.
-    swarmSmoke: profiles.has("networking") || profiles.has("container-terminal"),
+    swarmSmoke: profiles.has("networking") || profiles.has("container-terminal") || profiles.has("gpu-security"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };

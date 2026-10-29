@@ -529,6 +529,9 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
     "packages/resourceportal-api/src/platform-infrastructure/nvidia-gpu-node-probe.ts",
     "packages/resourceportal-api/src/platform-infrastructure/swarm-gpu-node-probe-router.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-swarm-render.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-deployment-validation.spec.ts",
+    "packages/resourceportal-api/src/app-groups/nvidia-gpu-deployment-snapshot.spec.ts",
+    "packages/resourceportal-api/scripts/render-nvidia-gpu-stack-fixture.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-app-group-teardown.spec.ts",
     "packages/resourceportal-api/src/app-groups/nvidia-gpu-draft-discard.spec.ts",
     "packages/resourceportal-api/src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
@@ -537,6 +540,7 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
     "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
     "packages/resourceportal-web/src/pages/platform-gpu-permissions.test.tsx",
     "scripts/test-nvidia-gpu-swarm.sh",
+    "scripts/run-real-swarm-smoke.sh",
     "test/installer/test-gpu-readiness.sh",
     "test/installer/test-gpu-swarm-gate-safety.sh",
     "packages/resourceportal-api/src/internal/stack-runtime.service.ts",
@@ -544,6 +548,7 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
   ];
   const plan = selectProfiles(cases);
   assert.equal(plan.gpuSmoke, true);
+  assert.equal(plan.swarmSmoke, true, "GPU runtime changes require the isolated real Docker Swarm gate");
   assert.ok(plan.profiles.includes("gpu-security"));
   assert.ok(plan.profiles.includes("platform-release"));
   assert.throws(() => selectProfiles(["scripts/unregistered-nvidia-test.sh"]), /unclassified changes/);
