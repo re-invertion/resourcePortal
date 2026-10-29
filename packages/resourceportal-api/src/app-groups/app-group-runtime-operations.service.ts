@@ -160,12 +160,29 @@ export class AppGroupRuntimeOperationsService {
         throw new ConflictException("SingleAppNotRunning");
       }
       await this.assertNoActiveDeployment(tx, appGroupId);
+      // The admission lock makes concurrent restart requests observe the same
+      // outstanding operation rather than queueing two force updates.
+      const activeRestarts = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id" FROM "Operation"
+        WHERE "tenantId" = ${tenantId}::uuid
+          AND "resourceId" = ${singleAppId}::uuid
+          AND "type" = 'SINGLE_APP_RESTART'
+          AND "status" IN ('Pending'::"OperationStatus", 'Running'::"OperationStatus")
+        ORDER BY "createdAt" DESC LIMIT 1
+      `);
+      if (activeRestarts.length) {
+        return { singleApp: mapSingleApp(singleApp), runtimeApplied: false,
+          operationId: activeRestarts[0].id, deduplicated: true };
+      }
+
       const tenant = await tx.tenant.findUniqueOrThrow({
         where: { id: tenantId },
         select: { name: true },
       });
       const operation = await this.operations.createOperationInTransaction(tx, {
         type: "SINGLE_APP_RESTART",
+        // A lease reclaim must not repeat a side-effecting force restart.
+        maxAttempts: 1,
         tenantId,
         resourceType: "SingleApp",
         resourceId: singleAppId,

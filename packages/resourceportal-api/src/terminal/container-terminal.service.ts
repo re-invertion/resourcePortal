@@ -33,6 +33,10 @@ export class ContainerTerminalService {
     if (["read", "write", "close", "resize"].includes(action)) {
       if (typeof body.sessionId !== "string" || !/^[0-9a-f-]{36}$/.test(body.sessionId)) throw new BadRequestException("Invalid session ID");
       payload.sessionId = body.sessionId;
+      if (action === "read" && body.cursor !== undefined) {
+        if (!Number.isSafeInteger(body.cursor) || Number(body.cursor) < 0) throw new BadRequestException("Invalid terminal cursor");
+        payload.cursor = body.cursor;
+      }
     }
     if (action === "write") {
       if (typeof body.input !== "string" || Buffer.byteLength(body.input) > 8192) throw new BadRequestException("Terminal input exceeds 8 KiB");
@@ -76,7 +80,7 @@ export class ContainerTerminalService {
         tenantId, tenantName: tenant?.name ?? "Tenant", actor: actor.id,
         actorName: actor.displayName, action: `singleapp.terminal.${action}`,
         resourceType: "SingleApp", resourceId: singleAppId, resourceName: app.name,
-        result: "Success", changes: { appGroupId, sessionId: action === "execute" ? null : String(result && typeof result === "object" && "sessionId" in result ? result.sessionId : (body.sessionId ?? "")), container: String(result && typeof result === "object" && "container" in result ? result.container : (body.container ?? "")) },
+        result: action === "execute" && result && typeof result === "object" && "status" in result && result.status !== "completed" ? "Failed" : "Success", changes: { appGroupId, sessionId: action === "execute" ? null : String(result && typeof result === "object" && "sessionId" in result ? result.sessionId : (body.sessionId ?? "")), container: String(result && typeof result === "object" && "container" in result ? result.container : (body.container ?? "")) },
       } });
     }
     return result;

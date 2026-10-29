@@ -82,6 +82,60 @@ describe("Docker shell broker containment", () => {
     await serviceWorker.handle({ action: "close", actor, service, sessionId: opened.sessionId });
   });
 
+  it("reports an explicit exit status rather than treating empty execution output as success (#363)", async () => {
+    const { serviceWorker } = worker();
+    Object.defineProperty(serviceWorker, "docker", { value: vi.fn().mockResolvedValue({ stdout: "", stderr: "failure", exitCode: 7, timedOut: false, truncated: false, status: "failed" }) });
+    const result = await serviceWorker.handle({ action: "execute", actor, service, container, command: "exit 7" });
+    expect(result).toMatchObject({ stdout: "", stderr: "failure", exitCode: 7, status: "failed" });
+  });
+
+  it.each([
+    { command: "printf 'first\\nsecond\\n'", stdout: "first\nsecond\n", stderr: "", exitCode: 0, status: "completed", timedOut: false, truncated: false },
+    { command: "python3 -c 'print(123)'", stdout: "123\n", stderr: "", exitCode: 0, status: "completed", timedOut: false, truncated: false },
+    { command: "echo failure >&2; exit 9", stdout: "", stderr: "failure\n", exitCode: 9, status: "failed", timedOut: false, truncated: false },
+    { command: "sleep 999", stdout: "", stderr: "", exitCode: 124, status: "timed_out", timedOut: true, truncated: false },
+    { command: "printf test", stdout: "", stderr: "Docker transport error", exitCode: null, status: "transport_error", timedOut: false, truncated: false },
+    { command: "head -c 100000 /dev/zero", stdout: "a".repeat(65536), stderr: "", exitCode: 0, status: "output_truncated", timedOut: false, truncated: true },
+  ])("propagates an unambiguous exec outcome for $command (#363)", async (expected) => {
+    const { serviceWorker } = worker();
+    const docker = vi.fn().mockResolvedValue(expected);
+    Object.defineProperty(serviceWorker, "docker", { value: docker });
+    const result = await serviceWorker.handle({ action: "execute", actor, service, container, command: expected.command }) as Record<string, unknown>;
+    expect(result).toMatchObject({ stdout: expected.stdout, stderr: expected.stderr, exitCode: expected.exitCode,
+      status: expected.status, timedOut: expected.timedOut, truncated: expected.truncated });
+    expect(docker).toHaveBeenCalledWith(["exec", "-i", container, "/bin/sh", "-lc", expected.command], 15000);
+  });
+
+  it("reports a retriable read cursor and preserves output across repeated reads (#364)", async () => {
+    const { serviceWorker, shell } = worker();
+    const opened = await serviceWorker.handle({ action: "start", actor, service, container }) as { sessionId: string };
+    shell.write("one\ntwo\n");
+    const payload = { action: "read", actor, service, sessionId: opened.sessionId, cursor: 0 };
+    const first = await serviceWorker.handle(payload) as { output: string; nextCursor: number; state: string };
+    const replay = await serviceWorker.handle(payload) as { output: string; nextCursor: number; state: string };
+    expect(first.output).toBe("one\ntwo\n");
+    expect(replay.output).toBe(first.output);
+    expect(first.nextCursor).toBe(replay.nextCursor);
+    expect(first.state).toBe("data");
+    await serviceWorker.handle({ action: "close", actor, service, sessionId: opened.sessionId });
+  });
+
+  it("distinguishes idle reads, EOF and failures, with explicit output overrun (#364)", async () => {
+    const { serviceWorker, shell } = worker();
+    const opened = await serviceWorker.handle({ action: "start", actor, service, container }) as { sessionId: string };
+    shell.write(Buffer.alloc(65540, 65));
+    await expect(serviceWorker.handle({ action: "read", actor, service, sessionId: opened.sessionId, cursor: 0 }))
+      .rejects.toThrow("buffer overrun");
+    const buffered = await serviceWorker.handle({ action: "read", actor, service, sessionId: opened.sessionId, cursor: 4 }) as { output: string; nextCursor: number; state: string };
+    expect(buffered.output).toHaveLength(65536);
+    expect(buffered.nextCursor).toBe(65540);
+    expect(buffered.state).toBe("data");
+    shell.end();
+    const eof = await serviceWorker.handle({ action: "read", actor, service, sessionId: opened.sessionId, cursor: 65540 }) as { state: string; finished: boolean };
+    expect(eof).toMatchObject({ state: "eof", finished: true });
+    await serviceWorker.handle({ action: "close", actor, service, sessionId: opened.sessionId });
+  });
+
   it("rejects unauthenticated or malformed internal requests", async () => {
     const { serviceWorker } = worker();
     await expect(serviceWorker.handle({ action: "containers", actor: "<script>", service })).rejects.toThrow("identity");

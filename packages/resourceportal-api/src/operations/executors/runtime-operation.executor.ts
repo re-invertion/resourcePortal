@@ -115,6 +115,9 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     const names = await this.deployedServiceNames(appGroup.id, appGroup.currentDeploymentVersion);
     const deployedName = names.get(singleApp.id);
     if (!deployedName) {
+      if (operation.type === "SINGLE_APP_RESTART") {
+        throw this.error("RestartServiceUnavailable", "No deployed Swarm service exists for SingleApp restart", false);
+      }
       return { resourceId: singleApp.id, result: { runtimeApplied: false } };
     }
     const target = {
@@ -129,10 +132,10 @@ export class RuntimeOperationExecutor implements OperationExecutor {
         singleApp.pendingDeletion ||
         singleApp.desiredReplicas <= 0
       ) {
-        return { resourceId: singleApp.id, result: { restartedServices: 0 } };
+        throw this.error("RestartPreconditionChanged", "SingleApp was stopped or deleted before its queued restart could execute", false);
       }
-      const results = await this.runtime.restartServices([target]);
-      this.assertRuntimeResults(results);
+      const results = await this.runtime.restartServices([target], true);
+      this.assertRuntimeResults(results, true);
       return { resourceId: singleApp.id, result: { restartedServices: 1 } };
     }
 
@@ -178,9 +181,12 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     return names;
   }
 
-  private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>) {
+  private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>, unknownOnTimeout = false) {
     const failed = results.find((result) => result.exitCode !== 0);
     if (failed) {
+      if (unknownOnTimeout && failed.exitCode === 124) {
+        throw this.error("RestartOutcomeUnknown", "Swarm restart did not converge before the runtime command ended; outcome must be inspected before retry", false);
+      }
       throw this.error(
         "RuntimeOperationFailed",
         failed.stderr || `${failed.command} exited with ${failed.exitCode}`,

@@ -33,6 +33,22 @@ describe("tenant terminal Swarm remote routing", () => {
     await dispatcher.handle({ action: "close", actor, service, sessionId });
     await expect(dispatcher.handle({ action: "read", actor, service, sessionId })).rejects.toThrow("not found");
   });
+  it("permits reconnecting readers to replay cursor output after the shell finishes (#364)", async () => {
+    const { dispatcher, send } = router();
+    send.mockImplementation((_agent, payload) => {
+      if (payload.action === "containers") return Promise.resolve({ containers: [container] });
+      if (payload.action === "start") return Promise.resolve({ sessionId, container });
+      if (payload.action === "read") return Promise.resolve({ output: "done", nextCursor: 4, finished: true, state: "data" });
+      return Promise.resolve({ accepted: true });
+    });
+    await dispatcher.handle({ action: "start", actor, service, container });
+    const first = await dispatcher.handle({ action: "read", actor, service, sessionId, cursor: 0 });
+    const replay = await dispatcher.handle({ action: "read", actor, service, sessionId, cursor: 0 });
+    expect(first).toEqual(replay);
+    expect(send).toHaveBeenCalledWith(agent, { action: "read", actor, service, sessionId, cursor: 0 });
+    await dispatcher.handle({ action: "close", actor, service, sessionId });
+  });
+
   it("rejects stolen sessions, incorrect services and containers before remote execution", async () => {
     const { dispatcher, send } = router();
     await expect(dispatcher.handle({ action: "execute", actor, service, container: "f".repeat(12), command: "id" })).rejects.toThrow("No running task");

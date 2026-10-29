@@ -162,7 +162,7 @@ export class TenantMcpProtocolService {
         if (!["containers", "start", "read", "write", "resize", "close", "execute"].includes(action)) throw new BadRequestException("Unsupported terminal action");
         const body = name === "resourceportal_exec_single_app_command"
           ? { command: args.command, container: args.container }
-          : { container: args.container, sessionId: args.sessionId, input: args.input, command: args.command, rows: args.rows, cols: args.cols };
+          : { container: args.container, sessionId: args.sessionId, input: args.input, command: args.command, rows: args.rows, cols: args.cols, cursor: args.cursor };
         return this.executeTenantApiCall(context, name, "POST", `/app-groups/${groupId}/single-apps/${appId}/terminal/${action}`, body);
       }
       case "resourceportal_deploy_app_group":
@@ -1014,7 +1014,7 @@ export class TenantMcpProtocolService {
         inputSchema: this.objectSchema({
           appGroupId: { type: "string", format: "uuid" }, singleAppId: { type: "string", format: "uuid" },
           action: { type: "string", enum: ["containers", "start", "read", "write", "resize", "close"] },
-          container: { type: "string" }, sessionId: { type: "string", format: "uuid" }, input: { type: "string", maxLength: 8192 }, rows: { type: "integer", minimum: 5, maximum: 120 }, cols: { type: "integer", minimum: 20, maximum: 300 },
+          container: { type: "string" }, sessionId: { type: "string", format: "uuid" }, input: { type: "string", maxLength: 8192 }, cursor: { type: "integer", minimum: 0 }, rows: { type: "integer", minimum: 5, maximum: 120 }, cols: { type: "integer", minimum: 20, maximum: 300 },
         }, ["appGroupId", "singleAppId", "action"]),
         outputSchema: apiOutput, securitySchemes,
         annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },

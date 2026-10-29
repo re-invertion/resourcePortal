@@ -29,6 +29,17 @@ export class OperationsWorkerService {
   ) {}
 
   async processNext(workerId: string, leaseSeconds: number) {
+    const staleQueuedRestarts = await this.repository.failStaleQueuedRestarts();
+    for (const operation of staleQueuedRestarts) {
+      const details = { queueAgeMs: Date.now() - operation.createdAt.getTime(), errorCode: operation.errorCode };
+      await this.safeAppendEvent(operation.id, {
+        level: "Error", event: "RestartQueueTimeout",
+        message: "SingleApp restart expired without being claimed by a worker",
+        details,
+      });
+      await this.safePublish(operation, "Failed", "RestartQueueTimeout", details);
+      this.logOperation("warn", "worker.restart.queue_timeout", operation, details);
+    }
     const exhausted = await this.repository.failExhaustedOperations();
     for (const operation of exhausted) {
       const details = {
@@ -60,7 +71,7 @@ export class OperationsWorkerService {
 
     const operation = await this.repository.claimNext(workerId, leaseSeconds);
     if (!operation) {
-      return exhausted[0] ?? null;
+      return staleQueuedRestarts[0] ?? exhausted[0] ?? null;
     }
 
     this.logOperation("log", "worker.operation.started", operation, {

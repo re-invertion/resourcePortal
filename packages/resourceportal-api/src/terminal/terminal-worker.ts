@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 const servicePattern = /^rp_[0-9a-f]{8}(?:_[0-9a-f]{4}){3}_[0-9a-f]{12}_[a-zA-Z0-9_]+$/;
 const maxOutput = 65536;
 const idleMs = 5 * 60_000;
-type Session = { actor: string; service: string; container: string; socket: Duplex; execId: string; output: string; finished: boolean; lastAccess: number };
+type Session = { actor: string; service: string; container: string; socket: Duplex; execId: string; output: Buffer; startCursor: number; nextCursor: number; deliveredCursor: number; finished: boolean; streamError: boolean; lastAccess: number };
+type ExecResult = { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; truncated: boolean; status: "completed" | "failed" | "timed_out" | "transport_error" | "output_truncated" };
 
 // Internal-only terminal broker: the public API resolves tenant ownership and RBAC.
 export class ContainerTerminalWorker {
@@ -63,29 +64,45 @@ export class ContainerTerminalWorker {
     return { socket, execId };
   }
 
-  private async docker(args: string[], timeoutMs = 7000): Promise<string> {
-    return new Promise((resolve, reject) => {
+  private async docker(args: string[], timeoutMs = 7000): Promise<ExecResult> {
+    return new Promise((resolve) => {
       const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
-      let output = "";
-      let finished = false;
-      const complete = (err?: Error) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        if (err) reject(err); else resolve(output);
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let stdoutSize = 0;
+      let stderrSize = 0;
+      let truncated = false;
+      let settled = false;
+      let timedOut = false;
+      let transportError = false;
+      let transportMessage = "";
+      const append = (list: Buffer[], chunk: Buffer, size: number) => {
+        const remaining = Math.max(0, maxOutput - size);
+        if (chunk.length > remaining) truncated = true;
+        if (remaining > 0) list.push(chunk.subarray(0, remaining));
+        return size + chunk.length;
       };
-      const timer = setTimeout(() => { child.kill("SIGKILL"); complete(new Error("Container command timed out")); }, timeoutMs);
-      child.stdout.on("data", (chunk: Buffer) => { output = (output + chunk.toString()).slice(-maxOutput); });
-      child.stderr.on("data", (chunk: Buffer) => { output = (output + chunk.toString()).slice(-maxOutput); });
-      child.on("error", (error) => complete(error));
-      child.on("close", (code) => complete(code === 0 ? undefined : new Error("Container operation unavailable")));
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const exitCode = transportError ? null : timedOut ? 124 : code;
+        const status: ExecResult["status"] = transportError ? "transport_error" : timedOut ? "timed_out" : code === 0 ? (truncated ? "output_truncated" : "completed") : "failed";
+        resolve({ stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8") + (transportMessage ? `\n${transportMessage}` : ""), exitCode, timedOut, truncated, status });
+      };
+      const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
+      child.stdout.on("data", (chunk: Buffer) => { stdoutSize = append(stdout, chunk, stdoutSize); });
+      child.stderr.on("data", (chunk: Buffer) => { stderrSize = append(stderr, chunk, stderrSize); });
+      child.on("error", (error) => { transportError = true; transportMessage = error.message; });
+      child.on("close", finish);
     });
   }
 
   private async containers(service: string): Promise<string[]> {
     if (!servicePattern.test(service)) throw new Error("Invalid service");
-    const output = await this.docker(["ps", "--filter", `label=com.docker.swarm.service.name=${service}`, "--format", "{{.ID}}"]).catch(() => "");
-    return output.split("\n").map((item) => item.trim()).filter((item) => /^[a-f0-9]{12,64}$/.test(item));
+    const result = await this.docker(["ps", "--filter", `label=com.docker.swarm.service.name=${service}`, "--format", "{{.ID}}"]);
+    if (result.status !== "completed" || result.truncated) throw new Error("Container inventory unavailable or incomplete");
+    return result.stdout.split("\n").map((item) => item.trim()).filter((item) => /^[a-f0-9]{12,64}$/.test(item));
   }
 
   private async select(service: string, requested?: unknown): Promise<string> {
@@ -113,7 +130,7 @@ export class ContainerTerminalWorker {
 
   private async waitForOutput(session: Session): Promise<void> {
     // A bounded long-poll avoids a steady flood of empty HTTP reads.
-    if (session.output || session.finished) return;
+    if (session.nextCursor > session.deliveredCursor || session.finished) return;
     await new Promise<void>((resolve) => {
       const complete = () => {
         clearTimeout(timer);
@@ -126,7 +143,7 @@ export class ContainerTerminalWorker {
       session.socket.on("data", complete);
       session.socket.on("close", complete);
       session.socket.on("error", complete);
-      if (session.output || session.finished) complete();
+      if (session.nextCursor > session.deliveredCursor || session.finished) complete();
     });
   }
 
@@ -143,10 +160,18 @@ export class ContainerTerminalWorker {
         const container = await this.select(service, payload.container);
         const { socket, execId } = await this.shell(container);
         const id = randomUUID();
-        const session: Session = { actor, service, container, socket, execId, output: "", finished: false, lastAccess: Date.now() };
+        const session: Session = { actor, service, container, socket, execId, output: Buffer.alloc(0), startCursor: 0, nextCursor: 0, deliveredCursor: 0, finished: false, streamError: false, lastAccess: Date.now() };
         this.sessions.set(id, session);
-        socket.on("data", (chunk: Buffer) => { session.output = (session.output + chunk.toString()).slice(-maxOutput); });
-        socket.on("error", () => { session.finished = true; });
+        socket.on("data", (chunk: Buffer) => {
+          session.output = Buffer.concat([session.output, chunk]);
+          session.nextCursor += chunk.length;
+          if (session.output.length > maxOutput) {
+            const dropped = session.output.length - maxOutput;
+            session.output = session.output.subarray(dropped);
+            session.startCursor += dropped;
+          }
+        });
+        socket.on("error", () => { session.streamError = true; session.finished = true; });
         socket.on("close", () => { session.finished = true; });
         return { sessionId: id, container, idleTimeoutSeconds: idleMs / 1000 };
       } finally {
@@ -156,22 +181,29 @@ export class ContainerTerminalWorker {
     if (action === "execute") {
       if (typeof payload.command !== "string" || !payload.command.trim() || Buffer.byteLength(payload.command) > 4096) throw new Error("Invalid command");
       const container = await this.select(service, payload.container);
-      const output = await this.docker(["exec", "-i", container, "/bin/sh", "-lc", payload.command], 15_000);
-      return { container, output };
+      const result = await this.docker(["exec", "-i", container, "/bin/sh", "-lc", payload.command], 15_000);
+      return { container, ...result, output: result.stdout + result.stderr };
     }
     const id = payload.sessionId;
     const session = this.session(id, actor, service);
     if (action === "read") {
+      const requested = payload.cursor;
+      if (requested !== undefined && (!Number.isSafeInteger(requested) || Number(requested) < 0)) throw new Error("Invalid terminal cursor");
+      const cursor = requested === undefined ? session.deliveredCursor : Number(requested);
+      if (cursor < session.startCursor) throw new Error(`Terminal output buffer overrun: earliest cursor ${session.startCursor}`);
+      if (cursor > session.nextCursor) throw new Error("Terminal cursor is ahead of produced output");
+      session.deliveredCursor = cursor;
       await this.waitForOutput(session);
-      const output = session.output;
-      session.output = "";
+      const output = session.output.subarray(cursor - session.startCursor).toString("utf8");
+      const nextCursor = session.nextCursor;
+      session.deliveredCursor = nextCursor;
       let exitCode: number | null = null;
       if (session.finished) {
         const inspect = await this.engine(`/exec/${session.execId}/json`, "GET").catch(() => null);
         exitCode = inspect && typeof inspect.ExitCode === "number" ? inspect.ExitCode : null;
-        this.close(id as string, session);
       }
-      return { output, finished: session.finished, container: session.container, exitCode };
+      const state = session.streamError ? "error" : output ? "data" : session.finished ? "eof" : "idle";
+      return { output, cursor, nextCursor, state, finished: session.finished, container: session.container, exitCode };
     }
     if (action === "write") {
       if (session.finished) throw new Error("Shell has exited");
