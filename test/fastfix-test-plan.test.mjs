@@ -6,6 +6,7 @@ test("new Gate Swarm sysctl smoke is classified and validated, unknown scripts s
   const plan=selectProfiles(["scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"]);
   assert.deepEqual(plan.profiles, ["networking","workflow"]);
   assert.equal(plan.vpnSmoke,true);
+  assert.equal(plan.swarmSmoke,true);
   assert.throws(()=>selectProfiles(["scripts/run-unregistered-swarm-smoke.sh"]),/unclassified changes/);
 });
 
@@ -23,6 +24,7 @@ test("documentation-only change does not trigger unrelated tests", () => {
   const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md", "packages/resourceportal-api/README.md"]);
   assert.deepEqual(plan.profiles, []);
   assert.equal(plan.vpnSmoke, false);
+  assert.equal(plan.swarmSmoke, false);
 });
 
 test("tenant OIDC and native-login changes select the dedicated identity/federation gate", () => {
@@ -105,6 +107,8 @@ test("Swarm interactive terminal files select explicit security, worker, app and
   for (const needed of ["container-terminal", "security", "worker", "applications", "platform-release", "workflow", "tenant-ux-patch"]) {
     assert.ok(plan.profiles.includes(needed), `${needed} is a required terminal release profile`);
   }
+  assert.equal(plan.vpnSmoke, false, "PTY changes must not be mislabeled as VPN");
+  assert.equal(plan.swarmSmoke, true, "PTY / one-shot exec changes require isolated real Docker Swarm");
   assert.throws(() => selectProfiles(["packages/resourceportal-api/src/terminal-cli/host.ts"]), /unclassified changes/);
 });
 
@@ -550,4 +554,15 @@ test("shared installer image-pull helper requires upgrade and complete installer
   assert.ok(plan.profiles.includes("upgrade-recovery"));
   assert.ok(plan.profiles.includes("installer"));
   assert.ok(plan.profiles.includes("platform-release"));
+});
+
+
+test("terminal release readiness mandates real Swarm while preserving other required gates", async () => {
+  const { readFileSync } = await import("node:fs");
+  const workflow = readFileSync(new URL("../.github/workflows/release-readiness.yml", import.meta.url), "utf8");
+  assert.match(workflow, /swarm_smoke: \$\{\{ steps\.test-plan\.outputs\.swarm_smoke \}\}/);
+  assert.match(workflow, /if: needs\.candidate\.outputs\.mode == 'milestone' \|\| needs\.candidate\.outputs\.swarm_smoke == 'true'/);
+  assert.match(workflow, /if \[\[ "\$MODE" == milestone \|\| "\$SWARM_SMOKE" == true \]\]; then/);
+  assert.match(workflow, /verify_gate swarm "\$SWARM" true/);
+  assert.match(workflow, /verify_gate installer "\$INSTALLER" true/);
 });

@@ -18,6 +18,7 @@ jobs:
     outputs:
       mode: ${{ steps.release-mode.outputs.mode }}
       vpn_smoke: ${{ steps.test-plan.outputs.vpn_smoke }}
+      swarm_smoke: ${{ steps.test-plan.outputs.swarm_smoke }}
       federation_required: ${{ steps.test-plan.outputs.federation_required }}
       installer_required: ${{ steps.test-plan.outputs.installer_required }}
     steps:
@@ -215,7 +216,7 @@ jobs:
   swarm:
     name: Real Swarm gate
     needs: candidate
-    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.vpn_smoke == 'true'
+    if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.swarm_smoke == 'true'
     uses: ./.github/workflows/swarm-integration.yml
     with:
       force_gate: true
@@ -253,6 +254,7 @@ jobs:
           CANDIDATE: ${{ needs.candidate.result }}
           MODE: ${{ needs.candidate.outputs.mode }}
           VPN_SMOKE: ${{ needs.candidate.outputs.vpn_smoke }}
+          SWARM_SMOKE: ${{ needs.candidate.outputs.swarm_smoke }}
           FEDERATION_REQUIRED: ${{ needs.candidate.outputs.federation_required }}
           INSTALLER_REQUIRED: ${{ needs.candidate.outputs.installer_required }}
           SWARM: ${{ needs.swarm.result }}
@@ -275,7 +277,7 @@ jobs:
               exit 1
             fi
           }
-          if [[ "$MODE" == milestone || "$VPN_SMOKE" == true ]]; then
+          if [[ "$MODE" == milestone || "$SWARM_SMOKE" == true ]]; then
             verify_gate swarm "$SWARM" true
           else
             verify_gate swarm "$SWARM" false

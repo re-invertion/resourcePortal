@@ -429,6 +429,9 @@ export function selectProfiles(paths) {
   return {
     profiles: [...profiles].sort(),
     vpnSmoke: profiles.has("networking"),
+    // Force the isolated real-Swarm integration gate for terminal/exec changes,
+    // independently of the VPN-only dataplane smoke selection.
+    swarmSmoke: profiles.has("networking") || profiles.has("container-terminal"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };
@@ -453,6 +456,7 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
   const output = readArg("--github-output");
   if (output) appendFileSync(output, [
     `vpn_smoke=${plan.vpnSmoke}`,
+    `swarm_smoke=${plan.swarmSmoke}`,
     `gpu_smoke=${plan.gpuSmoke}`,
     `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
     `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,
