@@ -37,34 +37,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/next-main-release.mjs --github-output "$GITHUB_OUTPUT"
 
-  milestone-swarm:
-    needs: classify
-    if: needs.classify.outputs.mode == 'milestone'
-    uses: ./.github/workflows/swarm-integration.yml
-    with:
-      force_gate: true
-
-  milestone-federation:
-    needs: classify
-    if: needs.classify.outputs.mode == 'milestone'
-    uses: ./.github/workflows/federation-integration.yml
-    with:
-      force_gate: true
-
-  milestone-installer:
-    needs: classify
-    if: needs.classify.outputs.mode == 'milestone'
-    uses: ./.github/workflows/production-installer.yml
-    with:
-      force_gate: true
-
   publish:
-    needs: [classify, milestone-swarm, milestone-federation, milestone-installer]
-    if: >-
-      always() && needs.classify.result == 'success' &&
-      (needs.milestone-swarm.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-swarm.result == 'skipped')) &&
-      (needs.milestone-federation.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-federation.result == 'skipped')) &&
-      (needs.milestone-installer.result == 'success' || (needs.classify.outputs.mode == 'fastfix' && needs.milestone-installer.result == 'skipped'))
+    needs: classify
+    if: needs.classify.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
