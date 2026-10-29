@@ -21,35 +21,24 @@ test('Fast Fix PR uses scoped validation while all main pushes run full CI',()=>
   assert.doesNotMatch(ci.jobs.validate.if,/\[fastfix\]/);
   assert.ok(ci.on.push.branches.includes('main'));
 });
-test('milestone publishing must wait for Swarm, federation and installer gates',()=>{
-  const release=load('release.yml');
-  const jobs=['milestone-swarm','milestone-federation','milestone-installer'];
-  for(const job of jobs){
-    assert.ok(release.jobs[job].uses.endsWith('.yml'),job);
-    assert.ok(release.jobs.publish.needs.includes(job),job);
-    assert.match(release.jobs.publish.if,new RegExp('needs\\.'+job+'\\.result'));
-    const called=load(release.jobs[job].uses.split('/').at(-1));
-    assert.ok('workflow_call' in called.on,job);
+test('release delegates source and integration validation to pre-merge readiness and exact-SHA main CI',()=>{
+  const release=load('release.yml'), readiness=load('release-readiness.yml');
+  assert.equal(release.jobs.publish.needs,'classify');
+  for(const name of ['milestone-swarm','milestone-federation','milestone-installer']){
+    assert.equal(release.jobs[name],undefined,name);
   }
-});
-test('milestone release runs complete lint, test and build suite',()=>{
-  const release=load('release.yml');
-  const step=release.jobs.publish.steps.find(s=>s.name?.startsWith('Full lint'));
-  assert.ok(step);
-  assert.match(step.run,/npm run lint/);
-  assert.match(step.run,/npm run test/);
-  assert.match(step.run,/npm run build/);
-});
-
-test('called milestone gates cannot be suppressed by fastfix-tag commit messages',()=>{
   for(const name of ['swarm-integration.yml','federation-integration.yml','production-installer.yml']){
-    const workflow=load(name);
-    const job=Object.values(workflow.jobs)[0];
-    assert.match(job.if,/startsWith\(github\.ref, 'refs\/tags\/v'\)/,name);
+    const gate=load(name);
+    assert.ok('workflow_call' in gate.on);
+    assert.ok('workflow_dispatch' in gate.on);
+    assert.ok(!('push' in gate.on),name);
+    assert.ok(!('pull_request' in gate.on),name);
+  }
+  for(const name of ['swarm','federation','installer']){
+    assert.ok(readiness.jobs[name].uses.endsWith('.yml'),name);
+    assert.equal(readiness.jobs[name].with.force_gate,true);
   }
 });
-
-
 test('main publication is automatic, serialized and never allows manual/tag release triggers',()=>{
   const release=load('release.yml');
   assert.ok(release.on.push.branches.includes('main'));
@@ -69,12 +58,9 @@ test('main publication is automatic, serialized and never allows manual/tag rele
   assert.match(ciProof.run,/GITHUB_SHA/);
   assert.match(ciProof.run,/completed:success/);
   assert.match(ciProof.run,/completed:\*/);
-  const patchFull=steps.find(s=>s.name?.startsWith('Recheck complete patch test'));
-  assert.equal(patchFull.if,"steps.release-mode.outputs.mode == 'fastfix'");
-  assert.match(patchFull.run,/npm run test/);
-  assert.match(patchFull.run,/npm run test:installer/);
-  assert.ok(steps.indexOf(ciProof) < steps.indexOf(patchFull));
-  assert.ok(steps.indexOf(patchFull) < steps.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
+  assert.equal(steps.find(s=>s.name?.startsWith('Recheck complete patch test')),undefined);
+  assert.equal(steps.find(s=>s.name?.startsWith('Full lint')),undefined);
+  assert.ok(steps.indexOf(ciProof) < steps.findIndex(s=>s.name?.startsWith('Validate actual RP release images recover')));
   assert.ok(steps.indexOf(ciProof) < steps.indexOf(publish));
 });
 test('automatic rollback is mandatory before merge and any release artifacts',()=>{
