@@ -133,6 +133,13 @@ test("SingleApp restart implementation and regression files select operations, a
   assert.throws(() => selectProfiles(["packages/resourceportal-api/src/operations/other-runtime.ts"]), /unclassified changes/);
 });
 
+test("Worker startup-order regression is explicitly classified for restart safety (#365)", () => {
+  const plan = selectProfiles(["packages/resourceportal-api/src/worker-startup-resync.spec.ts"]);
+  assert.deepEqual(plan.profiles, ["operations", "platform-release", "worker"]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/worker-startup-other.spec.ts"]), /unclassified changes/);
+});
+
 test("security runtime changes select security tests (never silently skipped)", () => {
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });
