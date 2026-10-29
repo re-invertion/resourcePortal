@@ -16,7 +16,9 @@ check_workflow(){
 check_workflow "$repo_root/.github/workflows/ci.yml" 'ResourcePortal CI + Installer' 'CI'
 check_workflow "$repo_root/.github/workflows/swarm-integration.yml" 'Installer + Real Docker Swarm' 'Swarm'
 check_workflow "$repo_root/.github/workflows/federation-integration.yml" 'Installer + Identity Federation' 'Federation'
-check_workflow "$repo_root/.github/workflows/release.yml" 'Installer-Gated Release' 'Release'
+[[ -f "$repo_root/.github/workflows/release.yml" ]] && pass 'Release workflow exists' || fail 'Release workflow exists'
+contains_file "$repo_root/.github/workflows/release.yml" 'name: Installer-Gated Release' 'Release workflow has clear name'
+contains_file "$repo_root/.github/workflows/release.yml" 'Require successful post-merge full CI for this exact main commit' 'Release delegates installer and source validation to exact-SHA main CI'
 check_workflow "$repo_root/.github/workflows/stage20-dev.yml" 'Installer + Web Console Dev' 'Web dev'
 check_workflow "$repo_root/.github/workflows/production-installer.yml" 'Production Installer Quality Gate' 'Dedicated installer'
 
@@ -26,8 +28,10 @@ contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:cli-release' '
 contains_file "$repo_root/.github/workflows/release.yml" 'node scripts/next-main-release.mjs --github-output "$GITHUB_OUTPUT"' 'Release automatically chooses version for every main revision'
 contains_file "$repo_root/scripts/next-main-release.mjs" 'const publishedTag = shell("gh"' 'Release allocator derives version from a verified published source'
 contains_file "$repo_root/scripts/next-main-release.mjs" 'Latest published tag is not an ancestor of main' 'Release fails closed if published source is not an ancestor'
-contains_file "$repo_root/.github/workflows/release.yml" 'node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run' 'Release uses changed-scope validation for patch releases'
-contains_file "$repo_root/.github/workflows/release.yml" "if: steps.release-mode.outputs.mode == 'milestone'" 'Release keeps full installer validation for milestone releases'
+contains_file "$repo_root/.github/workflows/release-readiness.yml" 'Validate affected patch scope without unrelated project-wide functional suites' 'Fastfix changed-scope tests run in pre-merge readiness'
+contains_file "$repo_root/.github/workflows/release-readiness.yml" 'Require complete regression suite for every Fast Fix before merge' 'Fastfix full regression runs in pre-merge readiness'
+contains_file "$repo_root/.github/workflows/release-readiness.yml" "if: needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.installer_required == 'true'" 'Milestone installer validation is required by pre-merge readiness'
+contains_file "$repo_root/.github/workflows/ci.yml" 'npm run test:installer' 'Main exact-SHA CI validates installer before release'
 [[ -f "$repo_root/.github/workflows/fastfix.yml" ]] && pass 'Fastfix workflow exists' || fail 'Fastfix workflow exists'
 contains_file "$repo_root/.github/workflows/fastfix.yml" 'name: ResourcePortal Fast Fix' 'Fastfix workflow has clear name'
 contains_file "$repo_root/.github/workflows/fastfix.yml" "startsWith(github.head_ref, 'fastfix/')" 'Fastfix workflow is limited to fastfix branches'
@@ -37,8 +41,20 @@ contains_file "$repo_root/.github/workflows/fastfix.yml" 'npm run build --worksp
 contains_file "$repo_root/.github/workflows/ci.yml" "if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'fastfix/')" 'Full main CI is never skipped for a fastfix merge'
 contains_file "$repo_root/.github/workflows/release-readiness.yml" 'Require complete regression suite for every Fast Fix before merge' 'Merge Queue requires complete patch regression'
 contains_file "$repo_root/.github/workflows/release.yml" 'Require successful post-merge full CI for this exact main commit' 'Release waits for exact-SHA CI success'
-contains_file "$repo_root/.github/workflows/release.yml" 'Recheck complete patch test and installer suites before publication' 'Release reruns full patch tests before publishing'
-for workflow in federation-integration.yml production-installer.yml swarm-integration.yml; do contains_file "$repo_root/.github/workflows/$workflow" "!contains(github.event.head_commit.message, '[fastfix]')" "$workflow skips expensive main-push job for marked fastfix merges"; done
+if grep -Fq 'Recheck complete patch test and installer suites before publication' "$repo_root/.github/workflows/release.yml"; then
+  fail 'Release does not rerun source validation after exact-SHA CI'
+else
+  pass 'Release does not rerun source validation after exact-SHA CI'
+fi
+contains_file "$repo_root/.github/workflows/release.yml" 'Validate actual RP release images recover before publishing' 'Release still runs real rollback on final images'
+for workflow in federation-integration.yml production-installer.yml swarm-integration.yml; do
+  contains_file "$repo_root/.github/workflows/$workflow" 'workflow_call:' "$workflow remains callable by readiness"
+  if grep -Eq '^  (push|pull_request):' "$repo_root/.github/workflows/$workflow"; then
+    fail "$workflow does not launch redundant standalone PR/main CI"
+  else
+    pass "$workflow does not launch redundant standalone PR/main CI"
+  fi
+done
 contains_file "$repo_root/.github/workflows/federation-integration.yml" 'run: npx playwright install --with-deps chromium' 'Federation uses Playwright from npm ci dependency graph'
 contains_file "$repo_root/.github/workflows/swarm-integration.yml" 'run: npx playwright install --with-deps chromium' 'Swarm smoke uses Playwright from npm ci dependency graph'
 if grep -Fq -- 'npm install --no-save --package-lock=false playwright' "$repo_root/.github/workflows/federation-integration.yml" "$repo_root/.github/workflows/swarm-integration.yml"; then fail 'CI workflows avoid ad-hoc Playwright npm install'; else pass 'CI workflows avoid ad-hoc Playwright npm install'; fi
