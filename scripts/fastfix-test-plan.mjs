@@ -76,7 +76,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/volumes/stage7-volume-lifecycle.spec.ts", "src/volumes/deployed-volume-reference.spec.ts", "src/volumes/stage14-volume-backend.spec.ts", "src/app-groups/volume-attachment-race.spec.ts"],
   ],
   "quota-security": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/app-group-manifest.spec.ts", "src/app-groups/app-group-manifest.service.spec.ts", "src/app-groups/cpu-quota-validation.spec.ts", "src/internal/deployment-cpu-validation.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/app-group-manifest.spec.ts", "src/app-groups/app-group-manifest.service.spec.ts", "src/app-groups/cpu-quota-validation.spec.ts", "src/app-groups/stage11-quota-drift.spec.ts", "src/capacity", "src/internal/deployment-cpu-validation.spec.ts", "src/app-groups/stage15-runtime-capacity.spec.ts"],
   ],
   "registry-validation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/registries/registries.service.spec.ts", "src/registries/registry-ping.spec.ts"],
@@ -203,6 +203,11 @@ const commands = {
 };
 
 const classifiers = [
+  // Capacity admission and tenant quota share a scheduler/resource-limit contract.
+  // Do not let either implementation or new regression fixtures evade patch CI.
+  [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["quota-security"]],
+  [/^packages\/resourceportal-api\/src\/app-groups\/stage11-(?:app-groups\.service|quota-drift\.spec)\.ts$/, ["quota-security", "applications"]],
+
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-identity-immutable\.spec\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],

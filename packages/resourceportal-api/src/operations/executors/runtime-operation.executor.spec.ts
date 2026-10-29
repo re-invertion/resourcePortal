@@ -9,18 +9,19 @@ const appGroupId = "11111111-1111-4111-8111-111111111111";
 const singleAppId = "22222222-2222-4222-8222-222222222222";
 const operation = { type: "SINGLE_APP_RESTART", resourceId: singleAppId, input: { appGroupId } } as OperationRecord;
 
-function fixture(stackConfig: string | null) {
+function fixture(stackConfig: string | null, draftReplicas = 1) {
   const findUnique = vi.fn().mockResolvedValue({
     id: appGroupId,
     runtimeState: RuntimeState.Running,
     currentDeploymentVersion: 1,
-    singleApps: [{ id: singleAppId, name: "test", runtimeState: RuntimeState.Running, pendingDeletion: false, desiredReplicas: 1 }],
+    singleApps: [{ id: singleAppId, name: "test", runtimeState: RuntimeState.Running, pendingDeletion: false, desiredReplicas: draftReplicas }],
   });
   const findFirst = vi.fn().mockResolvedValue(stackConfig === null ? null : { stackConfig });
   const restartServices = vi.fn().mockResolvedValue([{ command: "docker service update", exitCode: 0, stderr: "", stdout: "" }]);
+  const scaleServices = vi.fn().mockResolvedValue([{ command: "docker service scale", exitCode: 0, stderr: "", stdout: "" }]);
   const prisma = { appGroup: { findUnique }, appGroupDeployment: { findFirst } } as unknown as PrismaService;
-  const runtime = { restartServices } as unknown as StackRuntimeService;
-  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices };
+  const runtime = { restartServices, scaleServices } as unknown as StackRuntimeService;
+  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices, scaleServices };
 }
 
 describe("SingleApp restart outcome (#365)", () => {
@@ -48,5 +49,37 @@ describe("SingleApp restart outcome (#365)", () => {
     const { executor, restartServices } = fixture(JSON.stringify({ singleApps: [{ id: singleAppId, name: "test" }] }));
     await expect(executor.execute(operation)).resolves.toMatchObject({ result: { restartedServices: 1 } });
     expect(restartServices).toHaveBeenCalledWith([{ stackName: "rp_11111111_1111_4111_8111_111111111111", serviceName: "test" }], true);
+  });
+});
+
+
+describe("Runtime start reservation consistency (#373 P1)", () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+
+  it("starts SingleApp using deployed replicas, not undeployed draft growth", async () => {
+    const { executor, scaleServices } = fixture(deployed, 10);
+    await expect(executor.execute({ type: "SINGLE_APP_START", resourceId: singleAppId,
+      input: { appGroupId } } as OperationRecord)).resolves.toMatchObject({ result: { replicas: 1 } });
+    expect(scaleServices).toHaveBeenCalledWith([expect.objectContaining({
+      singleAppId, replicas: 1,
+    })]);
+  });
+
+  it("starts AppGroup using the succeeded snapshot even if draft is scaled to zero", async () => {
+    const { executor, scaleServices } = fixture(deployed, 0);
+    await expect(executor.execute({ type: "APP_GROUP_START", resourceId: appGroupId,
+      input: { appGroupId } } as OperationRecord)).resolves.toMatchObject({ result: { scaledServices: 1 } });
+    expect(scaleServices).toHaveBeenCalledWith([expect.objectContaining({
+      singleAppId, replicas: 1,
+    })]);
+  });
+
+  it("fails closed on missing deployed replica count instead of applying a draft", async () => {
+    const { executor, scaleServices } = fixture(JSON.stringify({ singleApps: [{ id: singleAppId, name: "test" }] }), 10);
+    await expect(executor.execute({ type: "SINGLE_APP_START", resourceId: singleAppId,
+      input: { appGroupId } } as OperationRecord)).rejects.toMatchObject({
+        code: "DeploymentSnapshotInvalid", retryable: false,
+      });
+    expect(scaleServices).not.toHaveBeenCalled();
   });
 });

@@ -252,9 +252,9 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
       where: {
         appGroup: { tenantId },
         pendingDeletion: false,
-        id: replacingSingleAppId ? { not: replacingSingleAppId } : undefined,
       },
       select: {
+        id: true,
         cpu: true,
         memoryBytes: true,
         gpu: true,
@@ -274,14 +274,27 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
       { cpu: 0, memoryBytes: 0, gpu: 0, singleApps: 0 },
     );
 
+    const previous = replacingSingleAppId
+      ? currentSingleApps.find((item) => item.id === replacingSingleAppId)
+      : undefined;
+    if (replacingSingleAppId && !previous) {
+      throw new ConflictException("SingleApp quota baseline is unavailable");
+    }
     const requested = {
-      cpu: usage.cpu + nextSingleApp.cpu * nextSingleApp.desiredReplicas,
-      memoryBytes:
-        usage.memoryBytes +
-        nextSingleApp.memoryBytes * nextSingleApp.desiredReplicas,
-      gpu: usage.gpu + nextSingleApp.gpu * nextSingleApp.desiredReplicas,
-      singleApps: usage.singleApps + 1,
+      cpu: usage.cpu - (previous ? Number(previous.cpu) * previous.desiredReplicas : 0)
+        + nextSingleApp.cpu * nextSingleApp.desiredReplicas,
+      memoryBytes: usage.memoryBytes
+        - (previous ? Number(previous.memoryBytes) * previous.desiredReplicas : 0)
+        + nextSingleApp.memoryBytes * nextSingleApp.desiredReplicas,
+      gpu: usage.gpu - (previous ? previous.gpu * previous.desiredReplicas : 0)
+        + nextSingleApp.gpu * nextSingleApp.desiredReplicas,
+      singleApps: usage.singleApps + (previous ? 0 : 1),
     };
+    // A lowered quota can leave existing allocations above the limit.
+    // Do not block metadata/image edits or reductions in that case, but
+    // never allow an increase to an already over-quota resource.
+    const increasing = (resource: keyof typeof requested) =>
+      requested[resource] > usage[resource];
 
     const violations = [
       this.stage11QuotaViolation("cpu", requested.cpu, Number(quota.cpu)),
@@ -296,7 +309,14 @@ export class Stage11AppGroupsService extends Stage3AppGroupsService {
         requested.singleApps,
         quota.maxSingleApps,
       ),
-    ].filter((violation) => violation !== undefined);
+    ].filter((violation) =>
+      violation !== undefined &&
+      (!previous || increasing(
+        violation.resource === "memory"
+          ? "memoryBytes"
+          : violation.resource as keyof typeof requested,
+      )),
+    );
 
     if (violations.length > 0) {
       throw new ForbiddenException({

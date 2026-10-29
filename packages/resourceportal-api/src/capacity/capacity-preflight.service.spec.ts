@@ -131,7 +131,7 @@ describe("Stage 15 capacity preflight", () => {
     });
   });
 
-  it("uses an admitted active deployment instead of the previous succeeded baseline", async () => {
+  it("keeps the previous succeeded allocation until an active smaller rollout completes", async () => {
     platform();
     const otherAppGroupId = "00000000-0000-0000-0000-000000000102";
     findDeployments.mockResolvedValue([
@@ -157,7 +157,7 @@ describe("Stage 15 capacity preflight", () => {
 
     await expect(
       service.admitDeployment(tx, deploymentSnapshot({ cpu: "2" })),
-    ).resolves.toMatchObject({ success: true });
+    ).resolves.toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
   });
 
   it("does not reserve capacity for another deployment still in Validating", async () => {
@@ -422,4 +422,164 @@ describe("Stage 15 capacity preflight", () => {
       errorCode: "PlatformUnavailable",
     });
   });
+
+  it("does not count undeployed draft replica growth as occupied CPU or RAM (#373)", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 4_000_000_000n, memoryBytes: 8n * GiB });
+    const otherAppGroupId = "00000000-0000-0000-0000-000000000113";
+    const otherSingleAppId = "00000000-0000-0000-0000-000000000213";
+    findDeployments.mockResolvedValue([{
+      appGroupId: otherAppGroupId,
+      version: 1,
+      status: DeploymentStatus.Succeeded,
+      phase: DeploymentPhase.Completed,
+      stackConfig: JSON.stringify({
+        ...deploymentSnapshot({ id: otherAppGroupId, cpu: "1", memoryBytes: String(3n * GiB) }),
+        singleApps: [{
+          id: otherSingleAppId,
+          runtimeState: "Running",
+          desiredReplicas: 1,
+          resources: { cpu: "1", memoryBytes: String(3n * GiB), gpu: 1 },
+          volumes: [],
+        }],
+      }),
+    }]);
+    findAppGroup.mockResolvedValue({ runtimeState: "Running" });
+    findSingleApps.mockResolvedValue([{
+      id: otherSingleAppId,
+      runtimeState: "Running",
+      desiredReplicas: 25, // draft-only update; not deployed
+      actualReplicas: 1,
+    }]);
+
+    await expect(service.admitDeployment(tx, deploymentSnapshot({
+      cpu: "1", memoryBytes: String(3n * GiB + GiB / 4n),
+    }))).resolves.toMatchObject({
+      success: true,
+      occupied: { cpuNano: 1_000_000_000n, memoryBytes: 3n * GiB },
+    });
+  });
+
+  it("reserves snapshot replicas when starting a stopped group despite a zero-replica draft", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 2_000_000_000n, memoryBytes: 2n * GiB });
+    const appGroupId = "00000000-0000-0000-0000-000000000114";
+    const singleAppId = "00000000-0000-0000-0000-000000000214";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: { id: appGroupId, tenantId: "00000000-0000-0000-0000-000000000201", runtimeState: "Stopped" },
+        singleApps: [{
+          id: singleAppId,
+          runtimeState: "Running",
+          desiredReplicas: 3,
+          resources: { cpu: "1", memoryBytes: String(GiB), gpu: 0 },
+          volumes: [],
+        }],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([{
+      id: singleAppId, runtimeState: "Running", desiredReplicas: 0, actualReplicas: 0,
+    }]);
+
+    await expect(service.admitRuntimeStart(tx, { appGroupId })).resolves.toMatchObject({
+      success: false,
+      errorCode: "InsufficientCapacity",
+    });
+  });
+
+  it("explains aggregate reserved, requested, and allocatable memory without exposing tenants", async () => {
+    platform({ cpuNano: 4_000_000_000n, memoryBytes: 8_192n });
+    const otherAppGroupId = "00000000-0000-0000-0000-000000000115";
+    findDeployments.mockResolvedValue([{
+      appGroupId: otherAppGroupId,
+      version: 1,
+      status: DeploymentStatus.Succeeded,
+      phase: DeploymentPhase.Completed,
+      stackConfig: serializedSnapshot(deploymentSnapshot({ id: otherAppGroupId, cpu: "1", memoryBytes: "7000" })),
+    }]);
+
+    const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2000" }));
+    expect(result).toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+    if (result.success) throw new Error("expected rejection");
+    expect(result.message).toContain("requested=2000 bytes");
+    expect(result.message).toContain("reserved=7000 bytes");
+    expect(result.message).toContain("allocatable=8192 bytes");
+    expect(result.message).toContain("unreserved=1192 bytes");
+    expect(result.message).not.toContain(otherAppGroupId);
+  });
+
+
+  it("admits a group start at its deployed replica target despite an undeployed draft increase (#373 P1)", async () => {
+    platform({ cpuNano: 2_000_000_000n, memoryBytes: 8_192n });
+    const appGroupId = "00000000-0000-0000-0000-000000000116";
+    const singleAppId = "00000000-0000-0000-0000-000000000216";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: { id: appGroupId, tenantId: "00000000-0000-0000-0000-000000000201", runtimeState: "Stopped" },
+        singleApps: [{
+          id: singleAppId, runtimeState: "Running", desiredReplicas: 1,
+          resources: { cpu: "1", memoryBytes: "1024", gpu: 0 }, volumes: [],
+        }],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps.mockResolvedValue([{
+      id: singleAppId, runtimeState: "Running", desiredReplicas: 10, actualReplicas: 0,
+    }]);
+
+    await expect(service.admitRuntimeStart(tx, { appGroupId })).resolves.toMatchObject({
+      success: true, demand: { cpuNano: 1_000_000_000n, memoryBytes: 1024n },
+    });
+  });
+
+  it("uses deployed replicas for SingleApp start despite an undeployed draft increase (#373 P1)", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 10_000_000_000n, memoryBytes: 3n * GiB });
+    const appGroupId = "00000000-0000-0000-0000-000000000117";
+    const singleAppId = "00000000-0000-0000-0000-000000000217";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: { id: appGroupId, tenantId: "00000000-0000-0000-0000-000000000201", runtimeState: "Running" },
+        singleApps: [{
+          id: singleAppId, runtimeState: "Stopped", desiredReplicas: 1,
+          resources: { cpu: "1", memoryBytes: String(GiB), gpu: 0 }, volumes: [],
+        }],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ runtimeState: "Running" });
+    findSingleApps.mockResolvedValue([{
+      id: singleAppId, runtimeState: "Stopped", desiredReplicas: 4, actualReplicas: 0,
+    }]);
+
+    await expect(service.admitRuntimeStart(tx, { appGroupId, singleAppId })).resolves.toMatchObject({
+      success: true, demand: { cpuNano: 1_000_000_000n, memoryBytes: GiB },
+    });
+  });
+
+  it("retains the admitted snapshot reservation for a subsequent deployment before reconciliation (#373 P1)", async () => {
+    platform({ cpuNano: 10_000_000_000n, memoryBytes: 16_384n });
+    const appGroupId = "00000000-0000-0000-0000-000000000118";
+    const singleAppId = "00000000-0000-0000-0000-000000000218";
+    findDeployments.mockResolvedValue([{
+      appGroupId, version: 1, status: DeploymentStatus.Succeeded,
+      phase: DeploymentPhase.Completed,
+      stackConfig: JSON.stringify({
+        appGroup: { id: appGroupId, tenantId: "00000000-0000-0000-0000-000000000202", runtimeState: "Stopped" },
+        singleApps: [{ id: singleAppId, runtimeState: "Running", desiredReplicas: 1,
+          resources: { cpu: "1", memoryBytes: "1024", gpu: 0 }, volumes: [] }],
+      }),
+    }]);
+    // A start was committed, but the observed replica count is still stale.
+    // The executor must scale only the one deployed replica (tested separately).
+    findAppGroup.mockResolvedValue({ runtimeState: "Running" });
+    findSingleApps.mockResolvedValue([{
+      id: singleAppId, runtimeState: "Running", desiredReplicas: 10, actualReplicas: 0,
+    }]);
+    await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "9", memoryBytes: "1024" })))
+      .resolves.toMatchObject({
+        success: true, occupied: { cpuNano: 1_000_000_000n, memoryBytes: 1024n },
+      });
+  });
+
 });

@@ -216,10 +216,17 @@ export class CapacityPreflightService {
   ): CapacityAdmissionResult {
     const fit = projectedCapacityFits(supply, occupied, demand);
     if (!fit.fits) {
+      const field = fit.resource === "cpu" ? "cpuNano" : "memoryBytes";
+      const unit = fit.resource === "cpu" ? "NanoCPU" : "bytes";
+      const available = supply[field] > occupied[field]
+        ? supply[field] - occupied[field]
+        : 0n;
       return {
         success: false,
         errorCode: "InsufficientCapacity",
-        message: `Insufficient platform ${fit.resource} capacity`,
+        // These are RP-declared resource allocations, NOT live host usage.
+        // Do not disclose other tenants or individual AppGroup identities.
+        message: `Insufficient platform ${fit.resource} capacity (requested=${demand[field]} ${unit}, reserved=${occupied[field]} ${unit}, allocatable=${supply[field]} ${unit}, unreserved=${available} ${unit})`,
       };
     }
 
@@ -384,9 +391,27 @@ export class CapacityPreflightService {
           `Cannot account deployment capacity for AppGroup ${selected.appGroupId}`,
         );
       }
-      const demand = active
+      let demand = active
         ? snapshotDemand(parsed)
         : await this.succeededRuntimeDemand(tx, parsed);
+      if (active && succeeded) {
+        // The preceding successful stack can remain live during a rollout.
+        // Do not release its CPU/RAM reservation merely because a smaller
+        // draft has entered PreparingArtifacts. Retain each resource high-water
+        // mark until the new deployment has actually succeeded.
+        const previous = this.parseSnapshot(succeeded.stackConfig);
+        if (!previous) {
+          return this.platformUnavailable(
+            `Cannot account previous capacity for AppGroup ${succeeded.appGroupId}`,
+          );
+        }
+        const oldDemand = await this.succeededRuntimeDemand(tx, previous);
+        demand = {
+          cpuNano: demand.cpuNano > oldDemand.cpuNano ? demand.cpuNano : oldDemand.cpuNano,
+          memoryBytes: demand.memoryBytes > oldDemand.memoryBytes
+            ? demand.memoryBytes : oldDemand.memoryBytes,
+        };
+      }
       occupied = {
         cpuNano: occupied.cpuNano + demand.cpuNano,
         memoryBytes: occupied.memoryBytes + demand.memoryBytes,
@@ -453,19 +478,15 @@ export class CapacityPreflightService {
         override?.singleAppId === singleApp.id
           ? (override?.singleAppRuntimeState ?? current.runtimeState)
           : current.runtimeState;
-      const deployedReplicas =
-        snapshot.appGroup.runtimeState === "Running" &&
-        singleApp.runtimeState === "Running"
-          ? Math.max(0, singleApp.desiredReplicas)
-          : 0;
+      // Only the last successfully deployed snapshot defines the desired
+      // allocation. A draft replica edit has not reached the Swarm yet.
+      // Runtime start of a previously stopped snapshot must still reserve
+      // the deployed replica count, not bypass admission with zero demand.
+      const deployedReplicas = Math.max(0, singleApp.desiredReplicas);
       const liveRunning =
         appGroupRuntimeState === "Running" && currentRuntimeState === "Running";
       const replicas = liveRunning
-        ? Math.max(
-            deployedReplicas,
-            Math.max(0, current.desiredReplicas),
-            Math.max(0, current.actualReplicas),
-          )
+        ? Math.max(deployedReplicas, Math.max(0, current.actualReplicas))
         : Math.max(0, current.actualReplicas);
       const liveDemand = snapshotDemand({
         appGroup: { runtimeState: "Running" },
