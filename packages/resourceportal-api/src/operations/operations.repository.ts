@@ -115,7 +115,7 @@ export class OperationsRepository {
       WHERE "type" = 'SINGLE_APP_RESTART'
         AND "status" = 'Pending'::"OperationStatus"
         AND "attempt" = 0
-        AND "createdAt" <= NOW() - INTERVAL '10 minutes'
+        AND "nextAttemptAt" <= NOW() - INTERVAL '10 minutes'
       RETURNING *
     `);
   }

@@ -136,6 +136,15 @@ describe("Docker shell broker containment", () => {
     await serviceWorker.handle({ action: "close", actor, service, sessionId: opened.sessionId });
   });
 
+  it("rejects a cursor overrun that occurs while waiting for shell output (#364)", async () => {
+    const { serviceWorker, shell } = worker();
+    const opened = await serviceWorker.handle({ action: "start", actor, service, container }) as { sessionId: string };
+    const pending = serviceWorker.handle({ action: "read", actor, service, sessionId: opened.sessionId, cursor: 0 });
+    shell.write(Buffer.alloc(65540, 65));
+    await expect(pending).rejects.toThrow("buffer overrun");
+    await serviceWorker.handle({ action: "close", actor, service, sessionId: opened.sessionId });
+  });
+
   it("rejects unauthenticated or malformed internal requests", async () => {
     const { serviceWorker } = worker();
     await expect(serviceWorker.handle({ action: "containers", actor: "<script>", service })).rejects.toThrow("identity");

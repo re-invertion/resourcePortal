@@ -194,6 +194,9 @@ export class ContainerTerminalWorker {
       if (cursor > session.nextCursor) throw new Error("Terminal cursor is ahead of produced output");
       session.deliveredCursor = cursor;
       await this.waitForOutput(session);
+      // A burst received while long-polling may evict the requested cursor.
+      // Never acknowledge output that was already dropped from the buffer.
+      if (cursor < session.startCursor) throw new Error(`Terminal output buffer overrun: earliest cursor ${session.startCursor}`);
       const output = session.output.subarray(cursor - session.startCursor).toString("utf8");
       const nextCursor = session.nextCursor;
       session.deliveredCursor = nextCursor;

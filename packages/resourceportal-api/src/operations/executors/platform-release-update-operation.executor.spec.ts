@@ -134,6 +134,7 @@ describe("PlatformReleaseUpdateOperationExecutor", () => {
     });
     const repository = {
       failExhaustedOperations: vi.fn().mockResolvedValue([]),
+      failStaleQueuedRestarts: vi.fn().mockResolvedValue([]),
       claimNext: vi.fn().mockResolvedValue(claimed),
       appendEvent: vi.fn().mockResolvedValue(null),
       heartbeat: vi.fn().mockResolvedValue(claimed),
