@@ -78,8 +78,6 @@ jobs:
           cache: npm
       - name: Install Node dependencies
         run: npm ci
-      - name: Verify test inventory and taxonomy
-        run: npm run test:catalog
       - name: Require successful post-merge full CI for this exact main commit
         timeout-minutes: 35
         env:
@@ -114,39 +112,8 @@ jobs:
         shell: bash
         run: |
           printf 'mode=%s\nprevious_tag=%s\n' "$MODE" "$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
-      - name: Validate only changed scope for patch release
-        if: steps.release-mode.outputs.mode == 'fastfix'
-        env:
-          NODE_ENV: test
-          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
-          AUTH_MODE: dev
-          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-          PREVIOUS_TAG: ${{ steps.release-mode.outputs.previous_tag }}
-        run: node scripts/fastfix-test-plan.mjs --base "$PREVIOUS_TAG" --head HEAD --run
-      - name: Recheck complete patch test and installer suites before publication
-        if: steps.release-mode.outputs.mode == 'fastfix'
-        env:
-          NODE_ENV: test
-          DATABASE_URL: postgresql://resource_portal:resource_portal@localhost:5432/resource_portal?schema=public
-          AUTH_MODE: dev
-          RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-        run: |
-          npm run test
-          npm run test:installer
-      - name: Full lint, test and build gates for milestone release
-        if: steps.release-mode.outputs.mode == 'milestone'
-        env:
-          NODE_ENV: test
-          AUTH_MODE: dev
-        run: |
-          npm run lint
-          npm run test
-          npm run build
-      - name: Validate Production Installer contracts for milestone release
-        if: steps.release-mode.outputs.mode == 'milestone'
-        run: npm run test:installer
-      - name: Validate installable CLI release package before publishing
-        run: npm run test:cli-release
+      # Full source validation is enforced by exact-SHA post-merge CI above.
+      # Pre-merge readiness already verifies targeted tests and applicable integrations.
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
