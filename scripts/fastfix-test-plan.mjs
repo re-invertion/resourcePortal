@@ -103,7 +103,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
   "identity": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
     ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
@@ -340,6 +340,7 @@ const classifiers = [
   [/^config\/observability\//, ["observability"]],
   [/^docker-compose\.yml$/, ["runtime-config"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-groups\.controller\.ts|app-groups\.module\.ts|single-app-logs\.service(\.spec)?\.ts)$/, ["applications"]],
+  [/^packages\/resourceportal-api\/src\/service-identities\//, ["identity", "security"]],
   [/^packages\/resourceportal-api\/src\/identity-providers\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/network-egress\//, ["egress", "networking"]],
   [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],

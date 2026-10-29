@@ -587,3 +587,12 @@ test("capacity and stage11 quota changes select explicit patch regressions (#373
     /unclassified changes/,
   );
 });
+
+test("Service Identity authorization changes require identity and security regressions (#321)", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/service-identities/service-identities.service.ts",
+    "packages/resourceportal-api/src/service-identities/service-identity-credentials.service.ts",
+    "packages/resourceportal-api/src/service-identities/service-identity-role-grants.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["identity", "security"]);
+});
