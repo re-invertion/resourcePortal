@@ -4,6 +4,7 @@ import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../security/encryption.service";
 import { ZitadelServiceIdentityService } from "./zitadel-service-identity.service";
+import { ServiceIdentitiesService } from "./service-identities.service";
 
 type ServiceIdentityCredentialRecord = {
   id: string;
@@ -19,6 +20,7 @@ export class ServiceIdentityCredentialsService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly zitadel: ZitadelServiceIdentityService,
+    private readonly roleAuthorization: ServiceIdentitiesService,
   ) {}
 
   async rotateTenant(
@@ -31,6 +33,9 @@ export class ServiceIdentityCredentialsService {
       select: { name: true },
     });
     if (!tenant) throw new NotFoundException("Tenant not found");
+    // Rotation reveals a credential with every permission of this identity.
+    // Deny rotating higher-privileged identities to prevent owner takeover.
+    await this.roleAuthorization.assertCanManageIdentity(tenantId, serviceIdentityId, actor);
     const identity = await this.getTenantRecord(tenantId, serviceIdentityId);
     return this.rotate(identity, actor, tenantId, tenant.name);
   }

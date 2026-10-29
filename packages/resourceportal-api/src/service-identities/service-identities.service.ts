@@ -1,9 +1,10 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { MembershipStatus, Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -61,13 +62,14 @@ export class ServiceIdentitiesService {
 
   async create(tenantId: string, dto: CreateServiceIdentityDto, actor: AuthenticatedUser) {
     const tenant = await this.ensureTenant(tenantId);
-    await this.validateRoles(dto.roleIds);
+    await this.validateRoles(dto.roleIds, tenantId, actor);
     const id = randomUUID();
     const remote = await this.zitadel.create(id, dto.name, dto.description);
 
     try {
       await this.prisma.$transaction(async (tx) => {
         const roleIds = [...new Set(dto.roleIds)];
+        await this.validateRoles(roleIds, tenantId, actor, tx);
         await tx.serviceIdentity.create({
           data: {
             id,
@@ -126,7 +128,11 @@ export class ServiceIdentitiesService {
     const tenant = await this.ensureTenant(tenantId);
     const current = await this.getRecord(tenantId, serviceIdentityId);
     const roleIds = dto.roleIds ? [...new Set(dto.roleIds)] : undefined;
-    if (roleIds) await this.validateRoles(roleIds);
+    const existingRoleIds = current.roles.map(({ role }) => role.id);
+    // An admin must not be able to modify or take over an owner-privileged
+    // identity, even when the submitted PATCH does not contain roleIds.
+    await this.validateRoles(existingRoleIds, tenantId, actor);
+    if (roleIds) await this.validateRoles(roleIds, tenantId, actor);
 
     const name = dto.name ?? current.name;
     const description = dto.description ?? current.description ?? undefined;
@@ -139,6 +145,8 @@ export class ServiceIdentitiesService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        await this.validateRoles(existingRoleIds, tenantId, actor, tx);
+        if (roleIds) await this.validateRoles(roleIds, tenantId, actor, tx);
         await tx.serviceIdentity.updateMany({
           where: { id: serviceIdentityId, tenantId },
           data: {
@@ -186,8 +194,11 @@ export class ServiceIdentitiesService {
   async delete(tenantId: string, serviceIdentityId: string, actor: AuthenticatedUser) {
     const tenant = await this.ensureTenant(tenantId);
     const current = await this.getRecord(tenantId, serviceIdentityId);
+    const existingRoleIds = current.roles.map(({ role }) => role.id);
+    await this.validateRoles(existingRoleIds, tenantId, actor);
     await this.zitadel.disable(current.zitadelUserId);
     await this.prisma.$transaction(async (tx) => {
+      await this.validateRoles(existingRoleIds, tenantId, actor, tx);
       await tx.serviceIdentity.deleteMany({
         where: { id: serviceIdentityId, tenantId },
       });
@@ -208,6 +219,15 @@ export class ServiceIdentitiesService {
       });
     });
     return { deleted: true };
+  }
+
+  async assertCanManageIdentity(
+    tenantId: string,
+    serviceIdentityId: string,
+    actor: AuthenticatedUser,
+  ) {
+    const record = await this.getRecord(tenantId, serviceIdentityId);
+    await this.validateRoles(record.roles.map(({ role }) => role.id), tenantId, actor);
   }
 
   private async getRecord(tenantId: string, serviceIdentityId: string) {
@@ -257,11 +277,57 @@ export class ServiceIdentitiesService {
     };
   }
 
-  private async validateRoles(roleIds: string[]) {
+  private async validateRoles(
+    roleIds: string[],
+    tenantId: string,
+    actor: AuthenticatedUser,
+    db: Prisma.TransactionClient = this.prisma,
+  ) {
+    if (!actor?.id) {
+      throw new ForbiddenException("Tenant user authorization is required");
+    }
+    // Use the same effective permission sources as TenantContextGuard, not
+    // a caller-supplied role list or the denormalized Role.permissions array.
+    const membership = await db.tenantMembership.findUnique({
+      where: { userId_tenantId: { userId: actor.id, tenantId } },
+      include: {
+        roles: { include: { role: { include: { permissionBindings: true } } } },
+        groupMemberships: {
+          include: {
+            group: {
+              include: {
+                roles: { include: { role: { include: { permissionBindings: true } } } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!membership || membership.status !== MembershipStatus.Active) {
+      throw new ForbiddenException("Active tenant membership is required to grant roles");
+    }
+    const actorPermissions = new Set([
+      ...membership.roles.flatMap(({ role }) =>
+        role.permissionBindings.map((binding) => binding.permissionId)),
+      ...membership.groupMemberships.flatMap(({ group }) =>
+        group.roles.flatMap(({ role }) =>
+          role.permissionBindings.map((binding) => binding.permissionId))),
+    ]);
     const uniqueIds = [...new Set(roleIds)];
-    const roles = await this.prisma.role.findMany({ where: { id: { in: uniqueIds } }, select: { id: true } });
+    const roles = await db.role.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, permissionBindings: { select: { permissionId: true } } },
+    });
     if (roles.length !== uniqueIds.length) {
       throw new NotFoundException("One or more service identity roles do not exist");
+    }
+    if (actorPermissions.has("*")) return;
+    for (const role of roles) {
+      if (role.id === "tenant-owner" ||
+          role.permissionBindings.some(({ permissionId }) =>
+            permissionId === "*" || !actorPermissions.has(permissionId))) {
+        throw new ForbiddenException("Cannot grant or manage a role above your tenant permissions");
+      }
     }
   }
 
