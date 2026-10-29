@@ -72,7 +72,6 @@ type RuntimeDemandOverride = {
   appGroupRuntimeState?: string;
   singleAppId?: string;
   singleAppRuntimeState?: string;
-  includeDraftReplicasForStart?: boolean;
 };
 
 @Injectable()
@@ -140,10 +139,6 @@ export class CapacityPreflightService {
       appGroupRuntimeState: input.singleAppId ? undefined : "Running",
       singleAppId: input.singleAppId,
       singleAppRuntimeState: input.singleAppId ? "Running" : undefined,
-      // RuntimeOperationExecutor scales using the current DB desiredReplicas.
-      // Admission for starts must account for that exact draft target, even
-      // though occupied reservations of OTHER apps must not count drafts.
-      includeDraftReplicasForStart: true,
     });
     if (demand.cpuNano === 0n && demand.memoryBytes === 0n) {
       return {
@@ -491,13 +486,7 @@ export class CapacityPreflightService {
       const liveRunning =
         appGroupRuntimeState === "Running" && currentRuntimeState === "Running";
       const replicas = liveRunning
-        ? Math.max(
-            deployedReplicas,
-            override?.includeDraftReplicasForStart
-              ? Math.max(0, current.desiredReplicas)
-              : 0,
-            Math.max(0, current.actualReplicas),
-          )
+        ? Math.max(deployedReplicas, Math.max(0, current.actualReplicas))
         : Math.max(0, current.actualReplicas);
       const liveDemand = snapshotDemand({
         appGroup: { runtimeState: "Running" },
