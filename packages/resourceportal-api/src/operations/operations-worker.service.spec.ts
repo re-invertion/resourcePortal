@@ -13,6 +13,7 @@ const modulePath = `./${["operations", "worker"].join("-")}.service`;
 
 type RepositoryLike = {
   failExhaustedOperations: () => Promise<OperationRecord[]>;
+  failStaleQueuedRestarts: () => Promise<OperationRecord[]>;
   claimNext: (workerId: string, leaseSeconds: number) => Promise<OperationRecord | null>;
   appendEvent: (
     operationId: string,
@@ -103,6 +104,7 @@ const operation: OperationRecord = {
 function repository(overrides: Partial<RepositoryLike> = {}) {
   return {
     failExhaustedOperations: vi.fn().mockResolvedValue([]),
+    failStaleQueuedRestarts: vi.fn().mockResolvedValue([]),
     claimNext: vi.fn().mockResolvedValue(operation),
     appendEvent: vi.fn().mockResolvedValue(null),
     heartbeat: vi.fn().mockResolvedValue(operation),
@@ -225,6 +227,20 @@ describe("v0.2 OperationsWorkerService", () => {
     await expect(worker.processNext("worker-a", 300)).rejects.toBe(dbFailure);
     expect(repo.markFailed).not.toHaveBeenCalled();
     expect(repo.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("terminalizes a restart which was never claimed within ten minutes (#365)", async () => {
+    const { OperationsWorkerService } = await loadWorkerModule();
+    const stale: OperationRecord = { ...operation, type: "SINGLE_APP_RESTART", status: "Failed",
+      attempt: 0, errorCode: "RestartQueueTimeout", leaseOwner: null, completedAt: new Date() };
+    const repo = repository({
+      failStaleQueuedRestarts: vi.fn().mockResolvedValue([stale]),
+      claimNext: vi.fn().mockResolvedValue(null),
+    });
+    const worker = new OperationsWorkerService(repo, { resolve: vi.fn(() => { throw new Error("Must not run stale restart"); }) });
+    const result = await worker.processNext("worker-a", 300);
+    expect(result?.errorCode).toBe("RestartQueueTimeout");
+    expect(repo.appendEvent).toHaveBeenCalledWith(stale.id, expect.objectContaining({ event: "RestartQueueTimeout" }));
   });
 
   it("terminalizes exhausted expired work before claiming another Operation", async () => {

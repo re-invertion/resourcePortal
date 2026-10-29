@@ -7,7 +7,9 @@ import { startTerminalAgent } from "../src/terminal/terminal-agent.runner";
 const service = "rp_00000000_0000_4000_8000_000000000001_terminal_smoke";
 const actor = "ci-smoke-test";
 function docker(...args: string[]) {
-  const result = spawnSync("docker", args, { encoding: "utf8", timeout: 15_000 });
+  // A force update legitimately waits for a replacement task and must remain bounded.
+  const timeout = args[0] === "service" && args[1] === "update" ? 60_000 : 15_000;
+  const result = spawnSync("docker", args, { encoding: "utf8", timeout });
   if (result.status !== 0) throw new Error(`Docker ${args[0]} failed: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -17,7 +19,7 @@ async function main() {
   if (spawnSync("docker", ["service", "inspect", service], { encoding: "utf8" }).status === 0) {
     throw new Error(`Refusing to overwrite existing smoke service: ${service}`);
   }
-  docker("service", "create", "--detach=true", "--name", service, "--replicas", "1", "alpine:3.20", "sleep", "180");
+  docker("service", "create", "--detach=true", "--name", service, "--replicas", "1", "python:3.12-alpine", "sleep", "240");
   try {
     // Exercise the real HTTP transport between Worker router and node agent,
     // not just a local Docker CLI shell. The CI Swarm is single-node.
@@ -52,11 +54,53 @@ async function main() {
       await delay(200);
     }
     if (!output.includes("RP_TERMINAL_SMOKE_OK")) throw new Error("Interactive PTY did not return command output");
+    const replay = await broker.handle({ action: "read", actor, service, sessionId: started.sessionId, cursor: 0 }) as { output: string; nextCursor: number; state: string };
+    if (!replay.output.includes("RP_TERMINAL_SMOKE_OK") || replay.nextCursor <= 0 || replay.state !== "data") {
+      throw new Error("Interactive Swarm terminal cursor replay lost output");
+    }
+    const idle = await broker.handle({ action: "read", actor, service, sessionId: started.sessionId, cursor: replay.nextCursor }) as { nextCursor: number; state: string };
+    if (idle.nextCursor < replay.nextCursor || !["idle", "data"].includes(idle.state)) {
+      throw new Error("Interactive Swarm terminal returned an invalid cursor while idle");
+    }
     await broker.handle({ action: "close", actor, service, sessionId: started.sessionId });
     await expectFailure(() => broker.handle({ action: "read", actor, service, sessionId: started.sessionId }), "closed session rejected");
     const oneShot = await broker.handle({ action: "execute", actor, service, container, command: "printf RP_SINGLE_COMMAND_OK" }) as { output: string };
     if (!oneShot.output.includes("RP_SINGLE_COMMAND_OK")) throw new Error("Bounded one-shot command did not return output");
-    console.log("Real Docker Swarm interactive terminal smoke passed: private node HTTP, PTY, resize, isolation, close and one-shot command");
+    const cases = [
+      { command: "printf 'short\nsecond\n'", stdout: "short\nsecond\n", exitCode: 0, status: "completed" },
+      { command: "python3 -c 'print(123)'", stdout: "123\n", exitCode: 0, status: "completed" },
+      { command: "echo expected-error >&2; exit 7", stderr: "expected-error\n", exitCode: 7, status: "failed" },
+    ];
+    for (const spec of cases) {
+      const result = await broker.handle({ action: "execute", actor, service, container, command: spec.command }) as {
+        stdout: string; stderr: string; exitCode: number; status: string; truncated: boolean;
+      };
+      if (result.status !== spec.status || result.exitCode !== spec.exitCode || result.truncated ||
+          (spec.stdout !== undefined && result.stdout !== spec.stdout) ||
+          (spec.stderr !== undefined && result.stderr !== spec.stderr)) {
+        throw new Error(`Swarm exec reported an incorrect outcome for ${spec.command}: ${JSON.stringify(result)}`);
+      }
+    }
+    const truncated = await broker.handle({ action: "execute", actor, service, container,
+      command: "head -c 70000 /dev/zero | tr '\\000' x" }) as { status: string; truncated: boolean; stdout: string; exitCode: number };
+    if (truncated.status !== "output_truncated" || !truncated.truncated || truncated.exitCode !== 0 || truncated.stdout.length !== 65536) {
+      throw new Error("Swarm exec silently lost output without reporting truncation");
+    }
+    const timedOut = await broker.handle({ action: "execute", actor, service, container, command: "sleep 30" }) as {
+      status: string; timedOut: boolean; exitCode: number;
+    };
+    if (timedOut.status !== "timed_out" || !timedOut.timedOut || timedOut.exitCode !== 124) {
+      throw new Error("Swarm exec did not report its execution deadline");
+    }
+
+    // A real Swarm force restart must converge and replace its task, never merely enqueue.
+    const beforeRestart = docker("service", "ps", service, "--filter", "desired-state=running", "--format", "{{.ID}}");
+    docker("service", "update", "--force", "--detach=false", service);
+    const afterRestart = docker("service", "ps", service, "--filter", "desired-state=running", "--format", "{{.ID}}");
+    if (!beforeRestart || !afterRestart || beforeRestart === afterRestart) {
+      throw new Error("SingleApp force restart did not converge to a replacement Swarm task");
+    }
+    console.log("Real Docker Swarm exec outcomes, PTY, cursor, and force-restart convergence passed");
     } finally { await new Promise<void>((resolve) => agentServer.close(() => resolve())); }
   } finally {
     docker("service", "rm", service);

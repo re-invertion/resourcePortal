@@ -175,7 +175,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const live=load('tenant-oidc-live.yml');
   assert.ok(live.on.workflow_call);
   assert.match(live.jobs['real-https-project-grants'].steps.find(s=>s.name?.includes('real pinned ZITADEL')).run,/run-tenant-oidc-https-e2e/);
-  const conditionKeys={swarm:'vpn_smoke',federation:'federation_required',installer:'installer_required'};
+  const conditionKeys={swarm:'swarm_smoke',federation:'federation_required',installer:'installer_required'};
   for(const name of ['swarm','federation','installer']){
     assert.equal(gate.jobs[name].with.force_gate,true);
     assert.equal(gate.jobs[name].needs,'candidate');

@@ -168,7 +168,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx", "src/pages/app-group/create-app-wizard.test.tsx"],
   ],
   "tenant-ux-patch": [
@@ -226,6 +226,12 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/terminal\/.*\.ts$/, ["container-terminal", "security", "worker"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-container-terminal\.ts$/, ["container-terminal", "platform-release", "workflow"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/application-terminal\.tsx$/, ["container-terminal", "tenant-ux-patch", "applications"]],
+  // SingleApp restart uses the app admission lock, leased worker operations and
+  // Swarm runtime convergence. Register both implementation and regression files;
+  // do not let Fast Fix skip the real operations and application suites.
+  [/^packages\/resourceportal-api\/src\/app-groups\/(?:app-group-runtime-operations\.service|single-app-restart-dedup\.spec)\.ts$/, ["applications", "operations", "worker"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/runtime-operation\.executor(?:\.spec)?\.ts$/, ["operations", "worker"]],
+  [/^packages\/resourceportal-api\/src\/operations\/(?:operations-worker\.service(?:\.spec)?|operations\.service)\.ts$/, ["operations", "worker"]],
   // LAN Attachment retirements affect durable topology operations and the tenant
   // form/panel surface. Never leave these changes outside Fast Fix selection.
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
@@ -328,7 +334,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/identity-providers\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/network-egress\//, ["egress", "networking"]],
   [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],
-  [/^packages\/resourceportal-api\/src\/operations\/operations\.repository\.ts$/, ["operations"]],
+  [/^packages\/resourceportal-api\/src\/operations\/operations\.repository(?:\.spec)?\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/prisma\/raw-sql-policy\.spec\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
@@ -355,6 +361,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/storage-backends\/storage-command-runner\.service\.ts$/, ["platform-release"]],
   [/^packages\/resourceportal-api\/src\/observability\/worker-runtime-observability/, ["worker"]],
   [/^packages\/resourceportal-api\/src\/(worker-execution.module|worker.runner)\.ts$/, ["worker", "platform-release"]],
+  // Startup-order regression guards the independent operation poller (#365).
+  [/^packages\/resourceportal-api\/src\/worker-startup-resync\.spec\.ts$/, ["worker", "operations", "platform-release"]],
   [/^packages\/resourceportal-api\/(prisma\/|src\/prisma\/seed\.ts)/, ["schema", "networking"]],
   [/^packages\/resourceportal-sdk\//, ["sdk"]],
   [/^packages\/resourceportal-cli\//, ["cli"]],
@@ -421,6 +429,9 @@ export function selectProfiles(paths) {
   return {
     profiles: [...profiles].sort(),
     vpnSmoke: profiles.has("networking"),
+    // Force the isolated real-Swarm integration gate for terminal/exec changes,
+    // independently of the VPN-only dataplane smoke selection.
+    swarmSmoke: profiles.has("networking") || profiles.has("container-terminal"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };
@@ -445,6 +456,7 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
   const output = readArg("--github-output");
   if (output) appendFileSync(output, [
     `vpn_smoke=${plan.vpnSmoke}`,
+    `swarm_smoke=${plan.swarmSmoke}`,
     `gpu_smoke=${plan.gpuSmoke}`,
     `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
     `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,

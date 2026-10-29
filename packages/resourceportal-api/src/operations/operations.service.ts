@@ -82,6 +82,8 @@ export class OperationsService {
     if (
       operation.type === "APP_GROUP_DEPLOY" ||
       operation.type === "APP_GROUP_ROLLBACK" ||
+      (operation.type === "SINGLE_APP_RESTART" &&
+        (operation.errorCode !== "RestartQueueTimeout" || operation.attempt !== 0)) ||
       (operation.status !== "Failed" &&
         operation.status !== "RollbackFailed")
     ) {

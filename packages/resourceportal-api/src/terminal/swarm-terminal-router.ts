@@ -91,7 +91,7 @@ export class SwarmTerminalRouter {
       if (!session || session.actor !== actor || session.service !== service) throw new Error("Terminal session not found");
       session.lastAccess = Date.now();
       const response = await this.send(session.agent, payload);
-      if (action === "close" || (action === "read" && response.finished === true)) this.sessions.delete(payload.sessionId);
+      if (action === "close") this.sessions.delete(payload.sessionId);
       return response;
     }
     throw new Error("Unsupported terminal action");

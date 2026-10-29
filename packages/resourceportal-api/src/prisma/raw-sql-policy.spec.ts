@@ -17,6 +17,9 @@ function sourceFiles(root: string): string[] {
 }
 
 const allowedRawSqlFiles = new Set([
+  // Reviewed SingleApp restart deduplication uses a tenant/resource-bound SELECT
+  // under the capacity admission lock to prevent duplicate Swarm --force calls.
+  "app-groups/app-group-runtime-operations.service.ts",
   // Global GPU allocation advisory lock serializes draft discard with reservations.
   "app-groups/app-groups.service.ts",
   // Global GPU allocation lock protects verified rollout deletion/release.
@@ -71,5 +74,16 @@ describe("raw SQL policy", () => {
       .sort();
 
     expect(actual).toEqual([...allowedRawSqlFiles].sort());
+  });
+
+  it("constrains the reviewed SingleApp restart deduplication query to tenant and app (#365)", () => {
+    const code = readFileSync(resolve(srcRoot, "app-groups/app-group-runtime-operations.service.ts"), "utf8");
+    const query = code.slice(code.indexOf("const activeRestarts = await tx.$queryRaw"), code.indexOf("if (activeRestarts.length)"));
+    expect(query).toContain('"tenantId" = ${tenantId}::uuid');
+    expect(query).toContain('"resourceId" = ${singleAppId}::uuid');
+    expect(query).toContain(`"type" = 'SINGLE_APP_RESTART'`);
+    expect(query).toContain(`"status" IN ('Pending'::"OperationStatus", 'Running'::"OperationStatus")`);
+    expect(query).toContain("ORDER BY");
+    expect(query).toContain("LIMIT 1");
   });
 });

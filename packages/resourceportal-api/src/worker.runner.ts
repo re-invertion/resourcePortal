@@ -205,6 +205,7 @@ async function main() {
   };
   let stopping = false;
   let crashed = false;
+  let operationLoop: Promise<void> | null = null;
 
   await runtimeObservability.started(workerId);
 
@@ -355,6 +356,65 @@ async function main() {
       heartbeatIntervalMs,
     });
 
+    // Handle queued operations independently of slow or stalled reconciliation.
+    // Each loop is serial; lease ownership keeps DB execution exclusive across nodes.
+    // Start operation polling BEFORE potentially expensive startup reconciliation.
+    let operationLoopFailure: unknown = null;
+    operationLoop = (async () => {
+      while (!stopping) {
+        let processed;
+        try {
+          processed = await operations.processNext(workerId, leaseSeconds);
+        } catch (error) {
+          if (once || !isTransientDatabaseConnectivityError(error)) throw error;
+          structuredLog(
+            logger,
+            "warn",
+            serviceName,
+            "worker.database_unavailable",
+            {
+              workerId,
+              error: errorMessage(error),
+              retryInMs: pollIntervalMs,
+            },
+          );
+          await sleep(pollIntervalMs);
+          continue;
+        }
+        if (!processed) {
+          if (once) break;
+          await sleep(pollIntervalMs);
+          continue;
+        }
+
+        await observe(
+          () =>
+            runtimeObservability.operation(
+              workerId,
+              processed.id,
+              processed.status,
+            ),
+          "worker.operation.persist_failed",
+        );
+        structuredLog(logger, "log", serviceName, "worker.operation.processed", {
+          operationId: processed.id,
+          correlationId: operationCorrelationId(processed.input, processed.id),
+          operationType: processed.type,
+          status: processed.status,
+          attempt: processed.attempt,
+          workerId,
+        });
+        if (once) break;
+      }
+    })().catch((error: unknown) => {
+      operationLoopFailure = error;
+      stopping = true;
+    });
+
+    if (once) {
+      await operationLoop;
+      if (operationLoopFailure) throw operationLoopFailure instanceof Error ? operationLoopFailure : new Error(errorMessage(operationLoopFailure));
+    }
     if (!once) {
       await observe(
         () => artifactSecurity.migrateAll(),
@@ -383,7 +443,7 @@ async function main() {
       await startupReconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
     }
 
-    while (!stopping) {
+    while (!stopping && !once) {
       await observe(
         () => runtimeObservability.loop(workerId),
         "worker.loop.persist_failed",
@@ -411,50 +471,10 @@ async function main() {
         await reconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
       }
 
-      let processed;
-      try {
-        processed = await operations.processNext(workerId, leaseSeconds);
-      } catch (error) {
-        if (once || !isTransientDatabaseConnectivityError(error)) throw error;
-        structuredLog(
-          logger,
-          "warn",
-          serviceName,
-          "worker.database_unavailable",
-          {
-            workerId,
-            error: errorMessage(error),
-            retryInMs: pollIntervalMs,
-          },
-        );
-        await sleep(pollIntervalMs);
-        continue;
-      }
-      if (!processed) {
-        if (once) break;
-        await sleep(pollIntervalMs);
-        continue;
-      }
-
-      await observe(
-        () =>
-          runtimeObservability.operation(
-            workerId,
-            processed.id,
-            processed.status,
-          ),
-        "worker.operation.persist_failed",
-      );
-      structuredLog(logger, "log", serviceName, "worker.operation.processed", {
-        operationId: processed.id,
-        correlationId: operationCorrelationId(processed.input, processed.id),
-        operationType: processed.type,
-        status: processed.status,
-        attempt: processed.attempt,
-        workerId,
-      });
-      if (once) break;
+      await sleep(pollIntervalMs);
     }
+    await operationLoop;
+    if (operationLoopFailure) throw operationLoopFailure instanceof Error ? operationLoopFailure : new Error(errorMessage(operationLoopFailure));
   } catch (error) {
     crashed = true;
     const failure = errorMessage(error);
@@ -468,6 +488,9 @@ async function main() {
     });
     throw error;
   } finally {
+    // Stop queue claims before draining an in-flight operation and closing Prisma.
+    stopping = true;
+    if (operationLoop) await operationLoop;
     clearInterval(heartbeat);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);

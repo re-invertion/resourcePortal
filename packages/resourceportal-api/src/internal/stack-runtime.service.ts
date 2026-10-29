@@ -189,6 +189,7 @@ export class StackRuntimeService {
 
   async restartServices(
     services: Array<{ stackName: string; serviceName: string }>,
+    waitForConvergence = false,
   ) {
     const results: RuntimeResult[] = [];
 
@@ -198,6 +199,7 @@ export class StackRuntimeService {
           "service",
           "update",
           "--force",
+          ...(waitForConvergence ? ["--detach=false"] : []),
           `${service.stackName}_${service.serviceName}`,
         ]),
       );

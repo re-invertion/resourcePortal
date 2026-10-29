@@ -103,13 +103,33 @@ export class OperationsRepository {
     return rows[0] ?? null;
   }
 
+  /** Expire never-claimed restarts without performing a potentially duplicated side effect. */
+  async failStaleQueuedRestarts() {
+    return this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
+      UPDATE "Operation"
+      SET "status" = 'Failed'::"OperationStatus",
+          "errorCode" = 'RestartQueueTimeout',
+          "errorMessage" = 'SingleApp restart was not claimed within 10 minutes; no restart was executed',
+          "completedAt" = NOW(), "heartbeatAt" = NOW(),
+          "leaseOwner" = NULL, "leaseExpiresAt" = NULL
+      WHERE "type" = 'SINGLE_APP_RESTART'
+        AND "status" = 'Pending'::"OperationStatus"
+        AND "attempt" = 0
+        AND "nextAttemptAt" <= NOW() - INTERVAL '10 minutes'
+      RETURNING *
+    `);
+  }
+
   async failExhaustedOperations() {
     return this.prisma.$queryRaw<OperationRecord[]>(Prisma.sql`
       UPDATE "Operation"
       SET
         "status" = 'Failed'::"OperationStatus",
-        "errorCode" = 'OperationAttemptsExhausted',
-        "errorMessage" = 'Operation exhausted its execution attempts after retry or worker lease loss',
+        "errorCode" = CASE WHEN "type" = 'SINGLE_APP_RESTART'
+          THEN 'RestartOutcomeUnknown' ELSE 'OperationAttemptsExhausted' END,
+        "errorMessage" = CASE WHEN "type" = 'SINGLE_APP_RESTART'
+          THEN 'SingleApp restart lease expired; execution may have occurred; automatic replay is disabled'
+          ELSE 'Operation exhausted its execution attempts after retry or worker lease loss' END,
         "leaseOwner" = NULL,
         "leaseExpiresAt" = NULL,
         "heartbeatAt" = NOW(),
@@ -284,6 +304,8 @@ export class OperationsRepository {
           'Failed'::"OperationStatus",
           'RollbackFailed'::"OperationStatus"
         )
+        AND ("type" <> 'SINGLE_APP_RESTART' OR
+          ("errorCode" = 'RestartQueueTimeout' AND "attempt" = 0))
       RETURNING *
     `);
     return rows[0] ?? null;

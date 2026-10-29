@@ -191,6 +191,21 @@ describe("Stage 16 OperationsRepository", () => {
     expect(text).toContain("OperationAttemptsExhausted");
   });
 
+  it("expires never-claimed restarts based on their latest enqueue, not immutable creation (#365)", async () => {
+    const { OperationsRepository } = await loadRepositoryModule();
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const repository = new OperationsRepository({ $queryRaw: queryRaw } as unknown as PrismaService) as RepositoryLike & {
+      failStaleQueuedRestarts: () => Promise<OperationRow[]>;
+    };
+    await repository.failStaleQueuedRestarts();
+    const sql = queryRaw.mock.calls[0][0] as { strings?: readonly string[] };
+    const text = sql.strings?.join(" ") ?? "";
+    expect(text).toContain(`"nextAttemptAt" <= NOW() - INTERVAL '10 minutes'`);
+    expect(text).not.toContain(`"createdAt" <= NOW() - INTERVAL '10 minutes'`);
+    expect(text).toContain('"attempt" = 0');
+    expect(text).toContain(`"status" = 'Pending'`);
+  });
+
   it("claim query refuses work whose execution-attempt budget is exhausted", async () => {
     const { OperationsRepository } = await loadRepositoryModule();
     const queryRaw = vi.fn().mockResolvedValue([]);

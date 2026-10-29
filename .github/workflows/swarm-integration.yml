@@ -307,6 +307,7 @@ jobs:
         run: |
           docker pull nginx:alpine
           docker pull alpine:3.20
+          docker pull python:3.12-alpine
           docker network create \
             --driver overlay \
             resourceportal-smoke-control-plane
