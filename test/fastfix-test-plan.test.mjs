@@ -108,6 +108,15 @@ test("Swarm interactive terminal files select explicit security, worker, app and
   assert.throws(() => selectProfiles(["packages/resourceportal-api/src/terminal-cli/host.ts"]), /unclassified changes/);
 });
 
+test("Operation repository regressions are explicitly gated in patch releases (#365)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/operations/operations.repository.ts",
+    "packages/resourceportal-api/src/operations/operations.repository.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["operations"]);
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/operations/operations.repository.other.ts"]), /unclassified changes/);
+});
+
 test("SingleApp restart implementation and regression files select operations, app and worker tests (#365)", () => {
   const paths = [
     "packages/resourceportal-api/src/app-groups/app-group-runtime-operations.service.ts",

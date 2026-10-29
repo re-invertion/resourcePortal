@@ -334,7 +334,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/identity-providers\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/network-egress\//, ["egress", "networking"]],
   [/^packages\/resourceportal-api\/src\/observability\//, ["observability"]],
-  [/^packages\/resourceportal-api\/src\/operations\/operations\.repository\.ts$/, ["operations"]],
+  [/^packages\/resourceportal-api\/src\/operations\/operations\.repository(?:\.spec)?\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/prisma\/raw-sql-policy\.spec\.ts$/, ["operations"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
