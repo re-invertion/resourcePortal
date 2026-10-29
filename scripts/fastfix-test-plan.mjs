@@ -361,6 +361,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/storage-backends\/storage-command-runner\.service\.ts$/, ["platform-release"]],
   [/^packages\/resourceportal-api\/src\/observability\/worker-runtime-observability/, ["worker"]],
   [/^packages\/resourceportal-api\/src\/(worker-execution.module|worker.runner)\.ts$/, ["worker", "platform-release"]],
+  // Startup-order regression guards the independent operation poller (#365).
+  [/^packages\/resourceportal-api\/src\/worker-startup-resync\.spec\.ts$/, ["worker", "operations", "platform-release"]],
   [/^packages\/resourceportal-api\/(prisma\/|src\/prisma\/seed\.ts)/, ["schema", "networking"]],
   [/^packages\/resourceportal-sdk\//, ["sdk"]],
   [/^packages\/resourceportal-cli\//, ["cli"]],
