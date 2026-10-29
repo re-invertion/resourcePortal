@@ -11,7 +11,7 @@ Baseline: main after PR #349, SHA 52202280c92bb536080c5382e2de199dde93d21e.
 - Database enforces unique GPU and SingleApp assignments, with serialized reservation and readiness checks.
 - Real node agent probes NVIDIA runtime in an immutable digest-pinned, unprivileged, read-only and networkless container, then its report must match UUIDs advertised by Swarm named generic resources.
 - Missing, stale, malformed or failed probes never release current assignments.
-- Worker checks exclusive UUID and single-replica state in deployment snapshots. Swarm named generic resource NVIDIA-GPU reserves exact UUID.
+- Worker checks the exclusive UUID, its verified Swarm node and single-replica state in deployment snapshots. Stack Compose reserves one discrete `NVIDIA-GPU` unit and constrains the task to the verified node; `NVIDIA_VISIBLE_DEVICES=<reserved UUID>` selects the exclusively assigned physical device. Named UUID resources remain trusted inventory input, not task-reservation syntax.
 - Workloads without GPUs receive NVIDIA_VISIBLE_DEVICES=void. GPU workloads receive only the exclusive UUID.
 - Draft discard checks all persisted rollout snapshots: any failed attempt containing the GPU SingleApp ID, or an invalid snapshot, retains the reservation rather than risking a still-running orphan task.
 - GPU is released after successful stack --prune and rollout has verified no removed service remains; draft-only applications may be discarded before any deployment.
@@ -24,7 +24,7 @@ Baseline: main after PR #349, SHA 52202280c92bb536080c5382e2de199dde93d21e.
 ## Host preconditions
 
 1. Host NVIDIA driver and nvidia-smi work and expose real GPU-UUID.
-2. NVIDIA Container Toolkit is installed; Docker default runtime on each GPU node is nvidia and Docker --gpus=all can run the immutable pinned probe image. This is required because Swarm named generic resources schedule tasks but do not select a container runtime.
+2. NVIDIA Container Toolkit is installed; Docker default runtime on each GPU node is nvidia and Docker --gpus=all can run the immutable pinned probe image. This is required because Swarm generic-resource capacity and placement do not select a container runtime or physical UUID.
 3. Docker daemon advertises actual UUIDs via node-generic-resources with kind NVIDIA-GPU; labels alone are untrusted.
 4. Installer diagnostics run a read-only NVIDIA host preflight and report driver, default runtime and Swarm named UUID resource state. It never changes Docker or installs drivers, does not block CPU-only installs and does not certify GPU isolation without the runtime probe.
 5. Never silently restart Docker to configure a live single-node Swarm. Such a restart requires a maintenance window and recovery plan.

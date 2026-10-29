@@ -80,6 +80,7 @@ type StackConfigSingleApp = {
     memoryBytes: string;
     gpu: number;
     gpuUuid?: string | null;
+    gpuNodeId?: string | null;
   };
   environment: Record<string, string>;
   variables: Array<{
@@ -859,6 +860,7 @@ export class DeploymentExecutionService {
     for (const app of gpuAllocations) {
       if (app.resources.gpu !== 1 ||
           !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(app.resources.gpuUuid ?? "") ||
+          !/^[a-z0-9]{20,64}$/.test(app.resources.gpuNodeId ?? "") ||
           app.desiredReplicas !== 1 ||
           this.effectiveReplicas(snapshot, app) > 1) {
         return this.validationFailure("GpuNotAvailable",
@@ -871,7 +873,15 @@ export class DeploymentExecutionService {
         select: {
           uuid: true, allocatedSingleAppId: true, allocationState: true,
           observedState: true, lastObservedAt: true,
-          remoteLocation: { select: { status: true, availability: true } },
+          remoteLocation: {
+            select: {
+              swarmNodeId: true,
+              status: true,
+              availability: true,
+              gpuCount: true,
+              lastSeenAt: true,
+            },
+          },
         },
       });
       for (const app of gpuAllocations) {
@@ -880,8 +890,13 @@ export class DeploymentExecutionService {
             device.allocationState !== "Allocated" ||
             device.observedState !== "Available" ||
             !device.lastObservedAt || Date.now() - device.lastObservedAt.getTime() > 120_000 ||
-            device.remoteLocation?.status !== "Ready" ||
-            device.remoteLocation?.availability !== "Active") {
+            !device.remoteLocation ||
+            device.remoteLocation.swarmNodeId !== app.resources.gpuNodeId ||
+            device.remoteLocation.status !== "Ready" ||
+            device.remoteLocation.availability !== "Active" ||
+            device.remoteLocation.gpuCount < 1 ||
+            !device.remoteLocation.lastSeenAt ||
+            Date.now() - device.remoteLocation.lastSeenAt.getTime() > 120_000) {
           return this.validationFailure("GpuNotAvailable",
             "GPU is not exclusively reserved and ready for SingleApp " + app.name);
         }
@@ -1782,10 +1797,13 @@ export class DeploymentExecutionService {
   ) {
     const environment = this.renderEnvironment(singleApp);
     const uuid = singleApp.resources.gpu > 0 ? singleApp.resources.gpuUuid : null;
+    const gpuNodeId = singleApp.resources.gpu > 0 ? singleApp.resources.gpuNodeId : null;
     if (singleApp.resources.gpu > 0 && (
       singleApp.resources.gpu !== 1 ||
       !uuid ||
-      !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(uuid)
+      !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(uuid) ||
+      !gpuNodeId ||
+      !/^[a-z0-9]{20,64}$/.test(gpuNodeId)
     )) {
       throw new ConflictException("GpuNotAvailable");
     }
@@ -1843,17 +1861,20 @@ export class DeploymentExecutionService {
           },
           reservations: uuid ? {
             generic_resources: [{
-              named_resource_spec: { kind: "NVIDIA-GPU", value: uuid },
+              discrete_resource_spec: { kind: "NVIDIA-GPU", value: 1 },
             }],
           } : undefined,
         },
-        // Swarm named generic resources make scheduling UUID-exact.
+        // Swarm task reservations accept discrete generic-resource counts.
+        // The node constraint pins that count to the host that advertised the
+        // exclusively reserved UUID; NVIDIA_VISIBLE_DEVICES selects the device.
         restart_policy: this.renderRestartPolicy(singleApp.restartPolicy),
         update_config: this.renderUpdatePolicy(singleApp.updatePolicy),
         placement: this.withoutUndefined({
-          constraints: storagePlacementConstraints(
-            singleApp.volumes.length > 0,
-          ),
+          constraints: [
+            ...storagePlacementConstraints(singleApp.volumes.length > 0),
+            ...(gpuNodeId ? [`node.id == ${gpuNodeId}`] : []),
+          ],
         }),
         labels: this.renderTraefikLabels(snapshot, singleApp),
       },

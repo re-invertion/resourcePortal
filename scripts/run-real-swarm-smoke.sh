@@ -15,6 +15,57 @@ NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
 test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.storage"}}')" = true
 test "$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "resourceportal.storage.volumes"}}')" = true
 
+GPU_SCHEMA_STACK="rp-gpu-schema-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${BASHPID}"
+GPU_SCHEMA_FILE="$(mktemp)"
+GPU_SCHEMA_SERVICE="${GPU_SCHEMA_STACK}_gpu_schema"
+GPU_SCHEMA_NETWORK="rp-appgroup-00000000-0000-4000-8000-000000000001"
+cleanup_gpu_schema() {
+  docker stack rm "$GPU_SCHEMA_STACK" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    if ! docker service inspect "$GPU_SCHEMA_SERVICE" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  docker network rm "$GPU_SCHEMA_NETWORK" >/dev/null 2>&1 || true
+  rm -f "$GPU_SCHEMA_FILE"
+}
+trap cleanup_gpu_schema EXIT
+if docker network inspect "$GPU_SCHEMA_NETWORK" >/dev/null 2>&1; then
+  echo "GPU schema fixture network unexpectedly exists before validation" >&2
+  exit 1
+fi
+docker network create --driver overlay "$GPU_SCHEMA_NETWORK" >/dev/null
+RP_GPU_SCHEMA_NODE_ID="$NODE_ID" \
+  npm --workspace @resource-portal/api exec -- \
+  ts-node --files scripts/render-nvidia-gpu-stack-fixture.ts >"$GPU_SCHEMA_FILE"
+docker stack config --compose-file "$GPU_SCHEMA_FILE" >/dev/null
+if grep -q "named_resource_spec" "$GPU_SCHEMA_FILE"; then
+  echo "Generated GPU stack still contains unsupported named_resource_spec" >&2
+  exit 1
+fi
+grep -q "discrete_resource_spec" "$GPU_SCHEMA_FILE"
+docker stack deploy --resolve-image never --compose-file "$GPU_SCHEMA_FILE" "$GPU_SCHEMA_STACK" >/dev/null
+gpu_resources="$(docker service inspect "$GPU_SCHEMA_SERVICE" --format '{{json .Spec.TaskTemplate.Resources.Reservations.GenericResources}}')"
+gpu_constraints="$(docker service inspect "$GPU_SCHEMA_SERVICE" --format '{{json .Spec.TaskTemplate.Placement.Constraints}}')"
+grep -F -q '"Kind":"NVIDIA-GPU"' <<<"$gpu_resources"
+grep -F -q '"Value":1' <<<"$gpu_resources"
+grep -F -q "node.id == $NODE_ID" <<<"$gpu_constraints"
+docker stack rm "$GPU_SCHEMA_STACK" >/dev/null
+for _ in $(seq 1 30); do
+  if ! docker service inspect "$GPU_SCHEMA_SERVICE" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if docker service inspect "$GPU_SCHEMA_SERVICE" >/dev/null 2>&1; then
+  echo "GPU schema validation service did not clean up" >&2
+  exit 1
+fi
+docker network rm "$GPU_SCHEMA_NETWORK" >/dev/null
+rm -f "$GPU_SCHEMA_FILE"
+trap - EXIT
+
 npm --workspace @resource-portal/api run smoke:stage14-storage-backend
 npm --workspace @resource-portal/api run smoke:stage13-platform-infrastructure
 npm --workspace @resource-portal/api run smoke:stage15-capacity

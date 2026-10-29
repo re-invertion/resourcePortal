@@ -89,7 +89,10 @@ type DeployableDraft = AppGroup & {
     cpu: Prisma.Decimal;
     memoryBytes: bigint;
     gpu: number;
-    gpuAllocation?: { uuid: string } | null;
+    gpuAllocation?: {
+      uuid: string;
+      remoteLocation?: { swarmNodeId: string } | null;
+    } | null;
     environment: Prisma.JsonValue;
     healthCheck: Prisma.JsonValue;
     entrypoint: string | null;
@@ -2415,7 +2418,12 @@ export class AppGroupsService {
             secrets: {
               orderBy: { name: "asc" },
             },
-            gpuAllocation: { select: { uuid: true } },
+            gpuAllocation: {
+              select: {
+                uuid: true,
+                remoteLocation: { select: { swarmNodeId: true } },
+              },
+            },
           },
         },
       },
@@ -2495,6 +2503,7 @@ export class AppGroupsService {
             memoryBytes: singleApp.memoryBytes.toString(),
             gpu: singleApp.gpu,
             gpuUuid: singleApp.gpuAllocation?.uuid ?? null,
+            gpuNodeId: singleApp.gpuAllocation?.remoteLocation?.swarmNodeId ?? null,
           },
           environment: protectSensitiveEnvironment(this.jsonObjectToRecord(singleApp.environment), this.encryption),
           variables: singleApp.variableAttachments.map((attachment) => ({
