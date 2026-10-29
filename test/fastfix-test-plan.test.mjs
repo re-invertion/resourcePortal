@@ -571,3 +571,19 @@ test("terminal release readiness mandates real Swarm while preserving other requ
   assert.match(workflow, /verify_gate swarm "\$SWARM" true/);
   assert.match(workflow, /verify_gate installer "\$INSTALLER" true/);
 });
+
+
+test("capacity and stage11 quota changes select explicit patch regressions (#373/#370)", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/capacity/capacity-preflight.service.ts",
+    "packages/resourceportal-api/src/capacity/capacity-preflight.service.spec.ts",
+    "packages/resourceportal-api/src/app-groups/stage11-app-groups.service.ts",
+    "packages/resourceportal-api/src/app-groups/stage11-quota-drift.spec.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["applications", "quota-security"]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/app-groups/unregistered-quota.ts"]),
+    /unclassified changes/,
+  );
+});
