@@ -108,6 +108,22 @@ test("Swarm interactive terminal files select explicit security, worker, app and
   assert.throws(() => selectProfiles(["packages/resourceportal-api/src/terminal-cli/host.ts"]), /unclassified changes/);
 });
 
+test("SingleApp restart implementation and regression files select operations, app and worker tests (#365)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/app-groups/app-group-runtime-operations.service.ts",
+    "packages/resourceportal-api/src/app-groups/single-app-restart-dedup.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/runtime-operation.executor.ts",
+    "packages/resourceportal-api/src/operations/executors/runtime-operation.executor.spec.ts",
+    "packages/resourceportal-api/src/operations/operations-worker.service.ts",
+    "packages/resourceportal-api/src/operations/operations-worker.service.spec.ts",
+    "packages/resourceportal-api/src/operations/operations.service.ts",
+  ];
+  const plan = selectProfiles(paths);
+  assert.deepEqual(plan.profiles, ["applications", "operations", "worker"]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/operations/other-runtime.ts"]), /unclassified changes/);
+});
+
 test("security runtime changes select security tests (never silently skipped)", () => {
   assert.deepEqual(selectProfiles(["packages/resourceportal-api/src/security/new-auth.ts"]).profiles, ["security"]);
 });

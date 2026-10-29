@@ -168,7 +168,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/app-group/app-detail.test.tsx", "src/pages/app-group/create-app-wizard.test.tsx"],
   ],
   "tenant-ux-patch": [
@@ -226,6 +226,12 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/terminal\/.*\.ts$/, ["container-terminal", "security", "worker"]],
   [/^packages\/resourceportal-api\/scripts\/smoke-container-terminal\.ts$/, ["container-terminal", "platform-release", "workflow"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/application-terminal\.tsx$/, ["container-terminal", "tenant-ux-patch", "applications"]],
+  // SingleApp restart uses the app admission lock, leased worker operations and
+  // Swarm runtime convergence. Register both implementation and regression files;
+  // do not let Fast Fix skip the real operations and application suites.
+  [/^packages\/resourceportal-api\/src\/app-groups\/(?:app-group-runtime-operations\.service|single-app-restart-dedup\.spec)\.ts$/, ["applications", "operations", "worker"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/runtime-operation\.executor(?:\.spec)?\.ts$/, ["operations", "worker"]],
+  [/^packages\/resourceportal-api\/src\/operations\/(?:operations-worker\.service(?:\.spec)?|operations\.service)\.ts$/, ["operations", "worker"]],
   // LAN Attachment retirements affect durable topology operations and the tenant
   // form/panel surface. Never leave these changes outside Fast Fix selection.
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
