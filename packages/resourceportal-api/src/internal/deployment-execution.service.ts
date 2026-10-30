@@ -807,6 +807,7 @@ export class DeploymentExecutionService {
   private async validateDeploymentSnapshot(deployment: {
     appGroupId: string;
     stackConfig: string | null;
+    rollbackTargetVersion: number | null;
   }) {
     const snapshot = this.parseStackConfig(deployment.stackConfig);
     const appGroup = await this.prisma.appGroup.findUnique({
@@ -822,7 +823,10 @@ export class DeploymentExecutionService {
       return this.validationFailure("AppGroupMissing", "App Group not found");
     }
 
-    if (appGroup.status !== "Ready") {
+    const isRecoveryRollback =
+      appGroup.status === "Error" && deployment.rollbackTargetVersion !== null;
+
+    if (appGroup.status !== "Ready" && !isRecoveryRollback) {
       return this.validationFailure(
         "AppGroupNotReady",
         `App Group status is ${appGroup.status}`,
@@ -1590,6 +1594,12 @@ export class DeploymentExecutionService {
           hasPendingChanges: isExplicitRollback
             ? true
             : appGroup.runtimeDraftRevision !== deployment.sourceDraftRevision,
+          ...(isExplicitRollback
+            ? {
+                status: "Ready",
+                driftStatus: "InSync",
+              }
+            : {}),
         },
       });
 
