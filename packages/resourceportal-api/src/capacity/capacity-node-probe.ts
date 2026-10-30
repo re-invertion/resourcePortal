@@ -113,11 +113,14 @@ function safeCgroupRoot(relative: string) {
   return target;
 }
 
-async function readCgroupForPid(pid: number) {
+type ReadTextFile = (path: string, encoding: "utf8") => Promise<string>;
+
+async function readCgroupForPid(pid: number, readTextFile: ReadTextFile) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
-  const membership = await readFile(HOST_PROC + "/" + pid + "/cgroup", "utf8").catch(
-    () => null,
-  );
+  const membership = await readTextFile(
+    HOST_PROC + "/" + pid + "/cgroup",
+    "utf8",
+  ).catch(() => null);
   if (!membership) return null;
   const unified = membership
     .split("\n")
@@ -129,25 +132,43 @@ async function readCgroupForPid(pid: number) {
   if (!root) return null;
 
   const [currentRaw, peakRaw, eventsRaw, pressureRaw] = await Promise.all([
-    readFile(root + "/memory.current", "utf8").catch(() => "0"),
-    readFile(root + "/memory.peak", "utf8").catch(() => "0"),
-    readFile(root + "/memory.events", "utf8").catch(() => ""),
-    readFile(root + "/memory.pressure", "utf8").catch(() => ""),
+    readTextFile(root + "/memory.current", "utf8").catch(() => null),
+    readTextFile(root + "/memory.peak", "utf8").catch(() => null),
+    readTextFile(root + "/memory.events", "utf8").catch(() => null),
+    readTextFile(root + "/memory.pressure", "utf8").catch(() => null),
   ]);
-  const current = /^\d+$/.test(currentRaw.trim())
-    ? BigInt(currentRaw.trim())
-    : 0n;
-  const peakCandidate = /^\d+$/.test(peakRaw.trim())
-    ? BigInt(peakRaw.trim())
-    : current;
+  if (
+    currentRaw === null ||
+    peakRaw === null ||
+    eventsRaw === null ||
+    pressureRaw === null
+  ) {
+    return null;
+  }
+
+  const currentValue = currentRaw.trim();
+  const peakValue = peakRaw.trim();
+  if (!/^\d+$/.test(currentValue) || !/^\d+$/.test(peakValue)) {
+    return null;
+  }
+  const event = (name: string) => {
+    const match = eventsRaw.match(
+      new RegExp("(?:^|\\n)" + name + "\\s+(\\d+)"),
+    );
+    return match ? BigInt(match[1]) : null;
+  };
+  const oom = event("oom");
+  const oomKill = event("oom_kill");
+  if (oom === null || oomKill === null) return null;
+
+  const current = BigInt(currentValue);
+  const peakCandidate = BigInt(peakValue);
   const peak = peakCandidate > current ? peakCandidate : current;
-  const event = (name: string) =>
-    BigInt(eventsRaw.match(new RegExp("(?:^|\\n)" + name + "\\s+(\\d+)"))?.[1] ?? "0");
   const pressure = parsePressure(pressureRaw);
   return {
     current,
     peak,
-    oom: event("oom") + event("oom_kill"),
+    oom: oom + oomKill,
     someAvg10: pressure.someAvg10,
     fullAvg10: pressure.fullAvg10,
   };
@@ -186,8 +207,18 @@ function parseInspectRows(raw: string) {
   return rows;
 }
 
-export async function probeSwarmNodeCapacity(): Promise<CapacityNodeProbeReport> {
-  const nodeId = await docker(
+export async function probeSwarmNodeCapacity(
+  dependencies: {
+    docker?: (args: string[], timeoutMs: number) => Promise<string | null>;
+    readFile?: ReadTextFile;
+  } = {},
+): Promise<CapacityNodeProbeReport> {
+  const runDocker = dependencies.docker ?? docker;
+  const readTextFile: ReadTextFile =
+    dependencies.readFile ??
+    ((path, encoding) => readFile(path, encoding));
+
+  const nodeId = await runDocker(
     ["info", "--format", "{{.Swarm.NodeID}}"],
     4_000,
   );
@@ -200,9 +231,9 @@ export async function probeSwarmNodeCapacity(): Promise<CapacityNodeProbeReport>
   }
 
   const [meminfoRaw, pressureRaw, containersRaw] = await Promise.all([
-    readFile(HOST_PROC + "/meminfo", "utf8").catch(() => null),
-    readFile(HOST_PROC + "/pressure/memory", "utf8").catch(() => ""),
-    docker(
+    readTextFile(HOST_PROC + "/meminfo", "utf8").catch(() => null),
+    readTextFile(HOST_PROC + "/pressure/memory", "utf8").catch(() => ""),
+    runDocker(
       [
         "ps",
         "--no-trunc",
@@ -233,7 +264,7 @@ export async function probeSwarmNodeCapacity(): Promise<CapacityNodeProbeReport>
   const containerRows = parseContainerRows(containersRaw);
   let inspectRows = new Map<string, { pid: number; startedAt?: string }>();
   if (containerRows.length > 0) {
-    const inspect = await docker(
+    const inspect = await runDocker(
       [
         "inspect",
         "--format",
@@ -242,22 +273,53 @@ export async function probeSwarmNodeCapacity(): Promise<CapacityNodeProbeReport>
       ],
       8_000,
     );
-    if (inspect !== null) inspectRows = parseInspectRows(inspect);
+    if (inspect === null) {
+      return {
+        status: "Unavailable",
+        swarmNodeId: nodeId,
+        reason: "ContainerInspectUnavailable",
+      };
+    }
+    inspectRows = parseInspectRows(inspect);
+    if (
+      inspectRows.size !== containerRows.length ||
+      containerRows.some((row) => !inspectRows.has(row.id))
+    ) {
+      return {
+        status: "Unavailable",
+        swarmNodeId: nodeId,
+        reason: "ContainerInspectIncomplete",
+      };
+    }
   }
 
   const containers: CapacityNodeContainerProbe[] = [];
   for (const row of containerRows) {
     const state = inspectRows.get(row.id);
-    const cgroup = state ? await readCgroupForPid(state.pid) : null;
+    if (!state) {
+      return {
+        status: "Unavailable",
+        swarmNodeId: nodeId,
+        reason: "ContainerInspectIncomplete",
+      };
+    }
+    const cgroup = await readCgroupForPid(state.pid, readTextFile);
+    if (!cgroup) {
+      return {
+        status: "Unavailable",
+        swarmNodeId: nodeId,
+        reason: "ContainerTelemetryUnavailable",
+      };
+    }
     containers.push({
       id: row.id,
       appId: row.appId,
-      startedAt: state?.startedAt,
-      memoryCurrentBytes: (cgroup?.current ?? 0n).toString(),
-      memoryPeakBytes: (cgroup?.peak ?? cgroup?.current ?? 0n).toString(),
-      oomEvents: (cgroup?.oom ?? 0n).toString(),
-      memoryPsiSomeAvg10: cgroup?.someAvg10,
-      memoryPsiFullAvg10: cgroup?.fullAvg10,
+      startedAt: state.startedAt,
+      memoryCurrentBytes: cgroup.current.toString(),
+      memoryPeakBytes: cgroup.peak.toString(),
+      oomEvents: cgroup.oom.toString(),
+      memoryPsiSomeAvg10: cgroup.someAvg10,
+      memoryPsiFullAvg10: cgroup.fullAvg10,
     });
   }
 
