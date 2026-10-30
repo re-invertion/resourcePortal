@@ -121,6 +121,8 @@ describe("explicit rollback completion", () => {
       data: {
         currentDeploymentVersion: 1,
         hasPendingChanges: true,
+        status: "Ready",
+        driftStatus: "InSync",
       },
     });
   });
