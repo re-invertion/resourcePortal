@@ -39,7 +39,7 @@ Full-resolution telemetry is stored as an append-only, versioned JSONL file unde
 
 Each sampling write is append-only and O(1). Once per hour the worker takes an inter-process lock, reloads the latest file, compacts old samples into bounded 5-minute/hourly buckets, writes a temporary file, and atomically renames it. A partial final JSONL line after a crash is ignored on recovery.
 
-The current Capacity policy and the latest aggregate diagnostics snapshot are persisted through the existing `WorkerReconciliationState` PostgreSQL model. This lets the unprivileged API read diagnostics and update safe policy settings without mounting the storage-authoritative host path into the API container. No Prisma schema migration is introduced.
+The current Capacity policy and the latest aggregate diagnostics snapshot are persisted through the existing `WorkerReconciliationState` PostgreSQL model. The worker snapshot includes a bounded admission evidence section with fresh per-node `MemAvailable`/PSI/P99 values and per-application predicted demand. Runtime and deployment admission in the unprivileged API reads that PostgreSQL snapshot; the API never reads or writes the worker's JSONL file and does not mount the storage-authoritative host path. No Prisma schema migration is introduced.
 
 Retention is bounded:
 
@@ -85,11 +85,11 @@ Admission runs under the existing global PostgreSQL capacity advisory lock. This
 
 For RAM, Hybrid:
 
-1. refreshes telemetry;
-2. validates telemetry freshness (90 seconds by default);
+1. reads the latest worker-published admission snapshot from PostgreSQL;
+2. validates snapshot and per-node telemetry freshness (90 seconds by default);
 3. checks Swarm schedulability;
 4. predicts additional growth of already-running workloads;
-5. predicts the requested deployment or replica increase;
+5. predicts the requested deployment or replica increase, scaling historical demand proportionally when replica count changes;
 6. includes admitted deployments already in flight;
 7. preserves the larger of 20% node RAM or the configured minimum system reserve;
 8. blocks on high PSI pressure;

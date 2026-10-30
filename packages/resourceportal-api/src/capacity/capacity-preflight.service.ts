@@ -311,7 +311,7 @@ export class CapacityPreflightService {
 
   private async currentRunningApps(
     tx: Prisma.TransactionClient,
-  ): Promise<Array<{ appId: string; hardLimitBytes: bigint }>> {
+  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number }>> {
     const rows = await tx.singleApp.findMany({
       where: {
         runtimeState: "Running",
@@ -330,6 +330,7 @@ export class CapacityPreflightService {
         appId: item.id,
         hardLimitBytes:
           item.memoryBytes * BigInt(Math.max(0, item.actualReplicas)),
+        replicas: Math.max(0, item.actualReplicas),
       }));
   }
 
