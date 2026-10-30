@@ -174,19 +174,36 @@ async function readCgroupForPid(pid: number, readTextFile: ReadTextFile) {
   };
 }
 
-function parseContainerRows(raw: string) {
-  return raw
+function parseContainerRows(raw: string):
+  | { success: true; rows: Array<{ id: string; appId: string }> }
+  | { success: false; reason: "ContainerInventoryTooLarge" | "ContainerInventoryMalformed" } {
+  const lines = raw
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [id = "", appId = ""] = line.split("\t");
-      return { id, appId };
-    })
-    .filter(
-      (item) => CONTAINER_ID.test(item.id) && APP_ID.test(item.appId),
-    )
-    .slice(0, 512);
+    .filter(Boolean);
+  if (lines.length > 512) {
+    return { success: false, reason: "ContainerInventoryTooLarge" };
+  }
+
+  const rows: Array<{ id: string; appId: string }> = [];
+  const ids = new Set<string>();
+  for (const line of lines) {
+    const parts = line.split("\t");
+    if (parts.length !== 2) {
+      return { success: false, reason: "ContainerInventoryMalformed" };
+    }
+    const [id = "", appId = ""] = parts;
+    if (
+      !CONTAINER_ID.test(id) ||
+      !APP_ID.test(appId) ||
+      ids.has(id)
+    ) {
+      return { success: false, reason: "ContainerInventoryMalformed" };
+    }
+    ids.add(id);
+    rows.push({ id, appId });
+  }
+  return { success: true, rows };
 }
 
 function parseInspectRows(raw: string) {
@@ -261,7 +278,15 @@ export async function probeSwarmNodeCapacity(
     };
   }
 
-  const containerRows = parseContainerRows(containersRaw);
+  const parsedContainerRows = parseContainerRows(containersRaw);
+  if (!parsedContainerRows.success) {
+    return {
+      status: "Unavailable",
+      swarmNodeId: nodeId,
+      reason: parsedContainerRows.reason,
+    };
+  }
+  const containerRows = parsedContainerRows.rows;
   let inspectRows = new Map<string, { pid: number; startedAt?: string }>();
   if (containerRows.length > 0) {
     const inspect = await runDocker(

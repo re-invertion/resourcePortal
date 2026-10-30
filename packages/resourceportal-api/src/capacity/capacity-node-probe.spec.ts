@@ -140,3 +140,48 @@ describe("capacity node probe completeness", () => {
     });
   });
 });
+
+describe("capacity node probe inventory bounds", () => {
+  it("returns unavailable instead of truncating more than 512 running RP containers", async () => {
+    const inventory = Array.from({ length: 513 }, (_, index) => {
+      const id = (index + 1).toString(16).padStart(64, "0");
+      return id + "\t" + appId;
+    }).join("\n");
+    const docker = (args: string[]): Promise<string | null> => {
+      if (args[0] === "info") return Promise.resolve(nodeId);
+      if (args[0] === "ps") return Promise.resolve(inventory);
+      return Promise.resolve(null);
+    };
+
+    await expect(
+      probeSwarmNodeCapacity({ docker, readFile: baseReadFile }),
+    ).resolves.toEqual({
+      status: "Unavailable",
+      swarmNodeId: nodeId,
+      reason: "ContainerInventoryTooLarge",
+    });
+  });
+
+  it("returns unavailable instead of dropping malformed running-container rows", async () => {
+    const docker = (args: string[]): Promise<string | null> => {
+      if (args[0] === "info") return Promise.resolve(nodeId);
+      if (args[0] === "ps") {
+        return Promise.resolve(
+          [
+            containerA + "\t" + appId,
+            "not-a-container-id\t" + appId,
+          ].join("\n"),
+        );
+      }
+      return Promise.resolve(null);
+    };
+
+    await expect(
+      probeSwarmNodeCapacity({ docker, readFile: baseReadFile }),
+    ).resolves.toEqual({
+      status: "Unavailable",
+      swarmNodeId: nodeId,
+      reason: "ContainerInventoryMalformed",
+    });
+  });
+});
