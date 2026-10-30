@@ -88,16 +88,18 @@ export class CapacityPolicyService {
       throw new Error("prediction percentile must be 95 or 99");
     }
     if (
+      !Number.isInteger(input.applicationMarginPercent) ||
       input.applicationMarginPercent < 5 ||
       input.applicationMarginPercent > 50
     ) {
-      throw new Error("application margin must be 5..50 percent");
+      throw new Error("application margin must be an integer from 5..50 percent");
     }
     if (
+      !Number.isInteger(input.nodeSafetyBufferPercent) ||
       input.nodeSafetyBufferPercent < 10 ||
       input.nodeSafetyBufferPercent > 50
     ) {
-      throw new Error("node safety buffer must be 10..50 percent");
+      throw new Error("node safety buffer must be an integer from 10..50 percent");
     }
     if (
       input.maxTelemetryAgeSeconds < 30 ||

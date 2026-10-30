@@ -265,7 +265,7 @@ export class CapacityTelemetryService {
     snapshot: CapacityDeploymentSnapshot;
     runningApps: RunningAppCapacity[];
     inFlightSnapshots: CapacityDeploymentSnapshot[];
-    schedulableNodeCount: bigint;
+    schedulableNodeIds: string[];
   }): Promise<HybridAdmissionEvaluation> {
     await this.restorePolicy();
     const policy = this.policy();
@@ -284,28 +284,42 @@ export class CapacityTelemetryService {
       };
     }
 
-    const latestNodes = evidence.nodes.filter((node) => {
-      const ageMs = Date.now() - Date.parse(node.observedAt);
-      return (
-        Number.isFinite(ageMs) &&
-        ageMs >= 0 &&
-        ageMs <= policy.maxTelemetryAgeSeconds * 1000
-      );
-    });
-    const expectedNodes = Number(input.schedulableNodeCount);
-    const nodeIds = new Set(latestNodes.map((node) => node.nodeId));
+    const expectedNodeIds = new Set(input.schedulableNodeIds);
     if (
-      !Number.isSafeInteger(expectedNodes) ||
-      expectedNodes < 1 ||
-      latestNodes.length !== expectedNodes ||
-      nodeIds.size !== expectedNodes
+      input.schedulableNodeIds.length < 1 ||
+      expectedNodeIds.size !== input.schedulableNodeIds.length
     ) {
+      return {
+        usable: false,
+        reason: "schedulable Swarm node identity inventory is invalid",
+      };
+    }
+
+    const freshByNodeId = new Map(
+      evidence.nodes
+        .filter((node) => {
+          const ageMs = Date.now() - Date.parse(node.observedAt);
+          return (
+            Number.isFinite(ageMs) &&
+            ageMs >= 0 &&
+            ageMs <= policy.maxTelemetryAgeSeconds * 1000
+          );
+        })
+        .map((node) => [node.nodeId, node] as const),
+    );
+    const missingNodeIds = input.schedulableNodeIds.filter(
+      (nodeId) => !freshByNodeId.has(nodeId),
+    );
+    if (missingNodeIds.length > 0) {
       return {
         usable: false,
         reason:
           "authenticated fresh per-node telemetry does not cover every schedulable Swarm node",
       };
     }
+    const latestNodes = input.schedulableNodeIds.map(
+      (nodeId) => freshByNodeId.get(nodeId)!,
+    );
 
     const evidenceByApp = new Map(
       evidence.apps.map((item) => [item.appId, item] as const),

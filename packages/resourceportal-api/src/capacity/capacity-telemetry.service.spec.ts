@@ -6,6 +6,7 @@ import type { MemoryObservation } from "./capacity-hybrid.logic";
 const GiB = 1024n * 1024n * 1024n;
 const nodeA = "ku2gbq2sm1b2khra543dtyxfg";
 const nodeB = "pu2gbq2sm1b2khra543dtyxfh";
+const nodeC = "ru2gbq2sm1b2khra543dtyxfj";
 
 class MemoryStore {
   points: MemoryObservation[] = [];
@@ -222,7 +223,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       snapshot: snapshot() as never,
       runningApps: [],
       inFlightSnapshots: [],
-      schedulableNodeCount: 2n,
+      schedulableNodeIds: [nodeA, nodeB],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
@@ -238,7 +239,23 @@ describe("Hybrid admission from worker-published telemetry", () => {
       snapshot: snapshot() as never,
       runningApps: [],
       inFlightSnapshots: [],
-      schedulableNodeCount: 2n,
+      schedulableNodeIds: [nodeA, nodeB],
+    });
+    expect(result).toMatchObject({ usable: false });
+    if (result.usable) return;
+    expect(result.reason).toContain("does not cover every schedulable");
+  });
+
+  it("does not let an unschedulable reporting node substitute for a missing schedulable node", async () => {
+    const { telemetry } = admissionService([
+      report(nodeA, 20, 5),
+      report(nodeB, 18, 6),
+    ]);
+    const result = await telemetry.evaluateAdmission({
+      snapshot: snapshot() as never,
+      runningApps: [],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA, nodeC],
     });
     expect(result).toMatchObject({ usable: false });
     if (result.usable) return;
@@ -255,7 +272,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       snapshot: snapshot() as never,
       runningApps: [],
       inFlightSnapshots: [],
-      schedulableNodeCount: 1n,
+      schedulableNodeIds: [nodeA],
     });
     expect(result).toEqual({
       usable: false,
@@ -272,7 +289,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
       snapshot: snapshot() as never,
       runningApps: [],
       inFlightSnapshots: [],
-      schedulableNodeCount: 2n,
+      schedulableNodeIds: [nodeA, nodeB],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
@@ -295,7 +312,7 @@ describe("Hybrid admission from worker-published telemetry", () => {
         },
       ],
       inFlightSnapshots: [],
-      schedulableNodeCount: 1n,
+      schedulableNodeIds: [nodeA],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
@@ -318,12 +335,28 @@ describe("Hybrid admission from worker-published telemetry", () => {
         },
       ],
       inFlightSnapshots: [],
-      schedulableNodeCount: 1n,
+      schedulableNodeIds: [nodeA],
     });
     expect(result.usable).toBe(true);
     if (!result.usable) return;
     expect(result.requestedPredictedBytes).toBe(0n);
     expect(result.decision.allowed).toBe(true);
+  });
+});
+
+describe("capacity policy validation", () => {
+  const config = {
+    get: (_key: string, fallback?: unknown) => fallback,
+  };
+
+  it("rejects fractional application and node percentage settings before persistence", () => {
+    const policy = new CapacityPolicyService(config as never);
+    expect(() =>
+      policy.set({ applicationMarginPercent: 15.5 }),
+    ).toThrow(/application margin must be an integer/);
+    expect(() =>
+      policy.set({ nodeSafetyBufferPercent: 20.5 }),
+    ).toThrow(/node safety buffer must be an integer/);
   });
 });
 

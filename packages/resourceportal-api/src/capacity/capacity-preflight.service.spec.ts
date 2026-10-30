@@ -72,6 +72,7 @@ describe("Stage 15 capacity preflight", () => {
     cpuNano?: bigint;
     memoryBytes?: bigint;
     schedulableNodeCount?: bigint;
+    schedulableNodeIds?: string[];
   }) {
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
@@ -81,6 +82,9 @@ describe("Stage 15 capacity preflight", () => {
           availableCpuNano: input?.cpuNano ?? 4_000_000_000n,
           availableMemoryBytes: input?.memoryBytes ?? 8_192n,
           schedulableNodeCount: input?.schedulableNodeCount ?? 1n,
+          schedulableNodeIds:
+            input?.schedulableNodeIds ??
+            ["ku2gbq2sm1b2khra543dtyxfg"],
         },
       ]);
   }
@@ -118,6 +122,22 @@ describe("Stage 15 capacity preflight", () => {
       success: true,
       demand: { cpuNano: 2_000_000_000n, memoryBytes: 2_048n },
     });
+  });
+
+  it("rejects an inconsistent schedulable node identity inventory", async () => {
+    platform({
+      schedulableNodeCount: 2n,
+      schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"],
+    });
+
+    const result = await service.admitDeployment(tx, deploymentSnapshot());
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: "PlatformUnavailable",
+    });
+    if (result.success) return;
+    expect(result.message).toContain("identity inventory is inconsistent");
   });
 
   it("returns InsufficientCapacity when projected CPU cannot fit", async () => {

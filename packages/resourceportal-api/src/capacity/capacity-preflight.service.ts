@@ -60,6 +60,7 @@ type PlatformCapacityRow = {
   availableCpuNano: bigint;
   availableMemoryBytes: bigint;
   schedulableNodeCount: bigint;
+  schedulableNodeIds: string[];
 };
 
 type DeploymentReservationRow = {
@@ -110,7 +111,7 @@ export class CapacityPreflightService {
       platformResult.supply,
       occupiedResult.occupied,
       snapshotDemand(snapshot),
-      platformResult.schedulableNodeCount,
+      platformResult.schedulableNodeIds,
     );
   }
 
@@ -190,7 +191,7 @@ export class CapacityPreflightService {
       platformResult.supply,
       occupiedResult.occupied,
       demand,
-      platformResult.schedulableNodeCount,
+      platformResult.schedulableNodeIds,
     );
   }
 
@@ -206,7 +207,7 @@ export class CapacityPreflightService {
     | {
         success: true;
         supply: CapacityDemand;
-        schedulableNodeCount: bigint;
+        schedulableNodeIds: string[];
       }
     | { success: false; errorCode: "PlatformUnavailable"; message: string }
   > {
@@ -226,6 +227,16 @@ export class CapacityPreflightService {
         "Docker Swarm has no schedulable Remote Location",
       );
     }
+    if (
+      BigInt(platform.schedulableNodeIds.length) !==
+        platform.schedulableNodeCount ||
+      new Set(platform.schedulableNodeIds).size !==
+        platform.schedulableNodeIds.length
+    ) {
+      return this.platformUnavailable(
+        "Docker Swarm schedulable node identity inventory is inconsistent",
+      );
+    }
 
     return {
       success: true,
@@ -233,7 +244,7 @@ export class CapacityPreflightService {
         cpuNano: platform.availableCpuNano,
         memoryBytes: platform.availableMemoryBytes,
       },
-      schedulableNodeCount: platform.schedulableNodeCount,
+      schedulableNodeIds: platform.schedulableNodeIds,
     };
   }
 
@@ -243,7 +254,7 @@ export class CapacityPreflightService {
     supply: CapacityDemand,
     occupied: CapacityDemand,
     demand: CapacityDemand,
-    schedulableNodeCount: bigint,
+    schedulableNodeIds: string[],
   ): Promise<CapacityAdmissionResult> {
     const fit = projectedCapacityFits(supply, occupied, demand);
 
@@ -265,7 +276,7 @@ export class CapacityPreflightService {
         snapshot,
         runningApps,
         inFlightSnapshots,
-        schedulableNodeCount,
+        schedulableNodeIds,
       });
       if (hybrid.usable) {
         if (hybrid.decision.allowed) {
@@ -504,7 +515,16 @@ export class CapacityPreflightService {
             AND r."availability" = 'Active'
             AND r."maintenance" = false
             AND r."health" IN ('Healthy', 'Degraded')
-        )::bigint AS "schedulableNodeCount"
+        )::bigint AS "schedulableNodeCount",
+        COALESCE(
+          ARRAY_AGG(r."swarmNodeId" ORDER BY r."swarmNodeId") FILTER (
+            WHERE r."status" = 'Ready'
+              AND r."availability" = 'Active'
+              AND r."maintenance" = false
+              AND r."health" IN ('Healthy', 'Degraded')
+          ),
+          ARRAY[]::text[]
+        ) AS "schedulableNodeIds"
       FROM "SwarmCluster" c
       LEFT JOIN "RemoteLocation" r ON TRUE
       WHERE c."id" = ${SWARM_CLUSTER_SINGLETON_ID}::uuid
