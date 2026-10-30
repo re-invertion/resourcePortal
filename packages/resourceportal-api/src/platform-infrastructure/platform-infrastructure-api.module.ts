@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { OperationsModule } from "../operations/operations.module";
+import { CapacityModule } from "../capacity/capacity.module";
 import { PrismaModule } from "../prisma/prisma.module";
 import { HostMachineResourceUsageService } from "./host-machine-resource-usage.service";
 import { NvidiaGpuAllocationService } from "./nvidia-gpu-allocation.service";
@@ -9,7 +10,7 @@ import { SwarmInfrastructureReadService } from "./swarm-infrastructure-read.serv
 import { SwarmInfrastructureStore } from "./swarm-infrastructure.store";
 
 @Module({
-  imports: [PrismaModule, OperationsModule],
+  imports: [PrismaModule, OperationsModule, CapacityModule],
   controllers: [PlatformInfrastructureController],
   providers: [
     HostMachineResourceUsageService,

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { CapacityModule } from "./capacity/capacity.module";
+import { CapacityTelemetryReconcilerService } from "./capacity/capacity-telemetry.service";
 import { DomainsModule } from "./domains/domains.module";
 import { DeploymentAuditService } from "./internal/deployment-audit.service";
 import { DeploymentRecoveryService } from "./internal/deployment-recovery.service";
@@ -54,6 +55,7 @@ import { VolumesModule } from "./volumes/volumes.module";
     VolumesModule,
   ],
   providers: [
+    CapacityTelemetryReconcilerService,
     DeploymentAuditService,
     AppGroupDeleteOperationExecutor,
     DeploymentOperationExecutor,

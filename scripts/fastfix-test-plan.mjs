@@ -292,6 +292,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-recovery\.service|stage6-worker-recovery\.spec)\.ts$/, ["recovery-safety", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.service(?:\.spec)?\.ts$/, ["deployment-rollout", "worker"]],
   // Deployment placement labels drive SingleApp-to-Gate routing isolation.
   // Include the actual renderer assertion in targeted networking verification,
   // and retain release/rollback smoke for changes to this contract.

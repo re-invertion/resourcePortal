@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { ContainerTerminalWorker } from "./terminal-worker";
 import { probeSwarmNodeGpuRuntime, preloadPinnedGpuProbeImage } from "../platform-infrastructure/nvidia-gpu-node-probe";
+import { probeSwarmNodeCapacity } from "../capacity/capacity-node-probe";
 
 export function startTerminalAgent(port: number, secret: string) {
   if (!secret || secret.length < 16) throw new Error("Terminal node agent requires authenticated Worker token");
@@ -14,7 +15,7 @@ export function startTerminalAgent(port: number, secret: string) {
         reply.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
         reply.end(JSON.stringify({ message: message ?? "Request denied" }));
       };
-      if (request.method !== "POST" || !["/internal/container-terminal", "/internal/gpu-probe"].includes(request.url ?? "")) return deny(404);
+      if (request.method !== "POST" || !["/internal/container-terminal", "/internal/gpu-probe", "/internal/capacity-probe"].includes(request.url ?? "")) return deny(404);
       const provided = typeof request.headers["x-internal-token"] === "string" ? request.headers["x-internal-token"] : "";
       const actual = Buffer.from(secret);
       const candidate = Buffer.from(provided);
@@ -23,6 +24,14 @@ export function startTerminalAgent(port: number, secret: string) {
         // Only the authenticated infrastructure Worker can request a bounded
         // local probe. No caller-supplied image, target, command or arguments.
         const result = await probeSwarmNodeGpuRuntime();
+        reply.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        reply.end(JSON.stringify(result));
+        return;
+      }
+      if (request.url === "/internal/capacity-probe") {
+        // Read-only node telemetry. The request accepts no caller-supplied
+        // path, command, container or process selector.
+        const result = await probeSwarmNodeCapacity();
         reply.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
         reply.end(JSON.stringify(result));
         return;
