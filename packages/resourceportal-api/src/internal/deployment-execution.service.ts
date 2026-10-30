@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from "@nestjs/common";
@@ -30,6 +31,7 @@ import { StackApplyService } from "./stack-apply.service";
 import { StackConfigProvisionerService } from "./stack-config-provisioner.service";
 import { StackRegistryAuthService, type RegistryLogin } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
+import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
 import {
   renderRuntimeVolumeMount,
@@ -172,6 +174,8 @@ function escapeComposeInterpolation(value: unknown): unknown {
 
 @Injectable()
 export class DeploymentExecutionService {
+  private readonly logger = new Logger(DeploymentExecutionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly capacityAdmission: CapacityDeploymentAdmissionService,
@@ -184,6 +188,7 @@ export class DeploymentExecutionService {
     private readonly encryption: EncryptionService,
     private readonly secretStorage: SecretStorageService,
     @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly runtimeDrift?: RuntimeDriftReconcilerService,
   ) {}
 
   async heartbeatDeployment(deploymentId: string, dto: HeartbeatDeploymentDto) {
@@ -1616,6 +1621,19 @@ export class DeploymentExecutionService {
 
       return next;
     });
+
+    if (this.runtimeDrift) {
+      try {
+        await this.runtimeDrift.reconcileOne(deployment.appGroupId);
+      } catch (error) {
+        this.logger.warn(
+          "Post-rollout runtime observation failed for AppGroup " +
+            deployment.appGroupId +
+            ": " +
+            (error instanceof Error ? error.message : "unknown error"),
+        );
+      }
+    }
 
     return mapAppGroupDeployment(completed);
   }

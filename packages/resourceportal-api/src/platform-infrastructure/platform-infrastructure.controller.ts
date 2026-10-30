@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -14,6 +15,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import { PlatformAdminGuard } from "../auth/platform-admin.guard";
 import { AuthenticatedUser } from "../auth/types";
 import { OperationsService } from "../operations/operations.service";
+import { CapacityTelemetryService } from "../capacity/capacity-telemetry.service";
 import { RequestPlatformUpdateDto } from "./dto/request-platform-update.dto";
 import { SetRemoteLocationMaintenanceDto } from "./dto/set-maintenance.dto";
 import { PlatformReleaseService } from "./platform-release.service";
@@ -27,6 +29,7 @@ export class PlatformInfrastructureController {
     private readonly service: SwarmInfrastructureReadService,
     private readonly operations: OperationsService,
     private readonly releases: PlatformReleaseService,
+    private readonly capacity: CapacityTelemetryService,
     @Optional() private readonly gpu?: NvidiaGpuAllocationService,
   ) {}
 
@@ -73,6 +76,22 @@ export class PlatformInfrastructureController {
   @Get("resource-usage")
   getResourceUsage() {
     return this.service.getResourceUsage();
+  }
+
+  @Get("capacity")
+  getCapacityDiagnostics() {
+    return this.capacity.diagnostics();
+  }
+
+  @Patch("capacity/settings")
+  async updateCapacitySettings(@Body() body: Record<string, unknown>) {
+    try {
+      return await this.capacity.updatePolicy(body);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : "Invalid capacity settings",
+      );
+    }
   }
 
   @Get("remote-locations/:remoteLocationId")

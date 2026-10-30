@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
   DeploymentPhase,
   DeploymentStatus,
@@ -10,6 +10,8 @@ import {
   type CapacityDemand,
   type CapacitySnapshotSingleApp,
 } from "./capacity.logic";
+import { CapacityPolicyService } from "./capacity-policy.service";
+import { CapacityTelemetryService } from "./capacity-telemetry.service";
 
 const CAPACITY_LOCK_NAMESPACE = "resourceportal:capacity:swarm";
 const SWARM_CLUSTER_SINGLETON_ID = "00000000-0000-0000-0000-000000000013";
@@ -76,6 +78,11 @@ type RuntimeDemandOverride = {
 
 @Injectable()
 export class CapacityPreflightService {
+  constructor(
+    @Optional() private readonly telemetry?: CapacityTelemetryService,
+    @Optional() private readonly policy?: CapacityPolicyService,
+  ) {}
+
   async admitDeployment(
     tx: Prisma.TransactionClient,
     snapshot: CapacityDeploymentSnapshot,
@@ -98,9 +105,12 @@ export class CapacityPreflightService {
     }
 
     return this.fitAdmission(
+      tx,
+      snapshot,
       platformResult.supply,
       occupiedResult.occupied,
       snapshotDemand(snapshot),
+      platformResult.schedulableNodeCount,
     );
   }
 
@@ -165,9 +175,12 @@ export class CapacityPreflightService {
     }
 
     return this.fitAdmission(
+      tx,
+      snapshot,
       platformResult.supply,
       occupiedResult.occupied,
       demand,
+      platformResult.schedulableNodeCount,
     );
   }
 
@@ -180,7 +193,11 @@ export class CapacityPreflightService {
   private async availablePlatformSupply(
     tx: Prisma.TransactionClient,
   ): Promise<
-    | { success: true; supply: CapacityDemand }
+    | {
+        success: true;
+        supply: CapacityDemand;
+        schedulableNodeCount: bigint;
+      }
     | { success: false; errorCode: "PlatformUnavailable"; message: string }
   > {
     const platform = await this.platformCapacity(tx);
@@ -206,36 +223,131 @@ export class CapacityPreflightService {
         cpuNano: platform.availableCpuNano,
         memoryBytes: platform.availableMemoryBytes,
       },
+      schedulableNodeCount: platform.schedulableNodeCount,
     };
   }
 
-  private fitAdmission(
+  private async fitAdmission(
+    tx: Prisma.TransactionClient,
+    snapshot: CapacityDeploymentSnapshot,
+    supply: CapacityDemand,
+    occupied: CapacityDemand,
+    demand: CapacityDemand,
+    schedulableNodeCount: bigint,
+  ): Promise<CapacityAdmissionResult> {
+    const fit = projectedCapacityFits(supply, occupied, demand);
+
+    // CPU remains strict in every mode. Hybrid only changes how physical RAM
+    // safety is evaluated; it never relaxes CPU or GPU/quota protections.
+    if (!fit.fits && fit.resource === "cpu") {
+      return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
+    }
+
+    if (
+      this.telemetry &&
+      this.policy?.current().mode === "Hybrid"
+    ) {
+      const [runningApps, inFlightSnapshots] = await Promise.all([
+        this.currentRunningApps(tx),
+        this.inFlightSnapshots(tx, snapshot.appGroup.id),
+      ]);
+      const hybrid = await this.telemetry.evaluateAdmission({
+        snapshot,
+        runningApps,
+        inFlightSnapshots,
+        schedulableNodeCount,
+      });
+      if (hybrid.usable) {
+        if (hybrid.decision.allowed) {
+          return { success: true, demand, occupied, supply };
+        }
+        const d = hybrid.decision;
+        return {
+          success: false,
+          errorCode: "InsufficientCapacity",
+          message:
+            "Insufficient platform memory capacity in Hybrid mode (" +
+            "reason=" + d.reason +
+            ", memAvailable=" + d.nodeMemoryAvailableBytes + " bytes" +
+            ", predictedExistingGrowth=" + d.predictedExistingGrowthBytes + " bytes" +
+            ", requestedPredicted=" + d.requestedPredictedBytes + " bytes" +
+            ", inFlightPredicted=" + d.inFlightPredictedBytes + " bytes" +
+            ", safetyReserve=" + d.safetyReserveBytes + " bytes" +
+            ", remainingAfterAdmission=" + d.remainingAfterAdmissionBytes + " bytes)",
+        };
+      }
+      // No guessing: missing/stale/incomplete Hybrid telemetry falls back to
+      // the pre-existing declared-reservation admission policy.
+    }
+
+    if (fit.fits) {
+      return { success: true, demand, occupied, supply };
+    }
+    return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
+  }
+
+  private strictCapacityFailure(
+    resource: "cpu" | "memory",
     supply: CapacityDemand,
     occupied: CapacityDemand,
     demand: CapacityDemand,
   ): CapacityAdmissionResult {
-    const fit = projectedCapacityFits(supply, occupied, demand);
-    if (!fit.fits) {
-      const field = fit.resource === "cpu" ? "cpuNano" : "memoryBytes";
-      const unit = fit.resource === "cpu" ? "NanoCPU" : "bytes";
-      const available = supply[field] > occupied[field]
-        ? supply[field] - occupied[field]
-        : 0n;
-      return {
-        success: false,
-        errorCode: "InsufficientCapacity",
-        // These are RP-declared resource allocations, NOT live host usage.
-        // Do not disclose other tenants or individual AppGroup identities.
-        message: `Insufficient platform ${fit.resource} capacity (requested=${demand[field]} ${unit}, reserved=${occupied[field]} ${unit}, allocatable=${supply[field]} ${unit}, unreserved=${available} ${unit})`,
-      };
-    }
-
+    const field = resource === "cpu" ? "cpuNano" : "memoryBytes";
+    const unit = resource === "cpu" ? "NanoCPU" : "bytes";
+    const available = supply[field] > occupied[field]
+      ? supply[field] - occupied[field]
+      : 0n;
     return {
-      success: true,
-      demand,
-      occupied,
-      supply,
+      success: false,
+      errorCode: "InsufficientCapacity",
+      message:
+        "Insufficient platform " + resource +
+        " capacity (requested=" + demand[field] + " " + unit +
+        ", reserved=" + occupied[field] + " " + unit +
+        ", allocatable=" + supply[field] + " " + unit +
+        ", unreserved=" + available + " " + unit + ")",
     };
+  }
+
+  private async currentRunningApps(
+    tx: Prisma.TransactionClient,
+  ): Promise<Array<{ appId: string; hardLimitBytes: bigint }>> {
+    const rows = await tx.singleApp.findMany({
+      where: {
+        runtimeState: "Running",
+        pendingDeletion: false,
+        appGroup: { runtimeState: "Running" },
+      },
+      select: {
+        id: true,
+        memoryBytes: true,
+        actualReplicas: true,
+      },
+    });
+    return rows
+      .filter((item) => item.actualReplicas > 0)
+      .map((item) => ({
+        appId: item.id,
+        hardLimitBytes:
+          item.memoryBytes * BigInt(Math.max(0, item.actualReplicas)),
+      }));
+  }
+
+  private async inFlightSnapshots(
+    tx: Prisma.TransactionClient,
+    excludedAppGroupId: string,
+  ): Promise<CapacityDeploymentSnapshot[]> {
+    const rows = await tx.appGroupDeployment.findMany({
+      where: {
+        appGroupId: { not: excludedAppGroupId },
+        status: DeploymentStatus.Deploying,
+        phase: { in: Array.from(ADMITTED_PHASES) },
+      },
+      select: { stackConfig: true },
+    });
+    return rows
+      .map((row) => this.parseSnapshot(row.stackConfig))
+      .filter((row): row is CapacityDeploymentSnapshot => row !== null);
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {

@@ -86,6 +86,10 @@ describe("explicit rollback completion", () => {
       }),
     };
 
+    const runtimeDrift = {
+      reconcileOne: vi.fn().mockResolvedValue("InSync"),
+    };
+
     const service = new DeploymentExecutionService(
       prisma,
       undefined as never,
@@ -97,6 +101,8 @@ describe("explicit rollback completion", () => {
       undefined as never,
       undefined as never,
       undefined as never,
+      undefined,
+      runtimeDrift as never,
     );
 
     const result = await (
@@ -123,5 +129,6 @@ describe("explicit rollback completion", () => {
         hasPendingChanges: true,
       },
     });
+    expect(runtimeDrift.reconcileOne).toHaveBeenCalledWith("app-group-1");
   });
 });

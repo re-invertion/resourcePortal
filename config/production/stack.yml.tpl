@@ -337,6 +337,8 @@ services:
       - rp_internal_worker_token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
     networks:
       - rp-control
     deploy:

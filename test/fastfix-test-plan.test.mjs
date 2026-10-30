@@ -589,6 +589,13 @@ test("capacity and stage11 quota changes select explicit patch regressions (#373
   );
 });
 
+test("runtime drift refresh changes require deployment rollout and worker regressions (#373)", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/internal/runtime-drift-reconciler.service.ts",
+  ]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "worker"]);
+});
+
 test("Service Identity authorization changes require identity and security regressions (#321)", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/src/service-identities/service-identities.service.ts",
