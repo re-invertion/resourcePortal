@@ -431,3 +431,114 @@ exit 91
   assert.equal(mismatchedChild.pushed, false);
   assert.match(mismatchedChild.result.stderr, /differs from rollback-tested image/);
 });
+
+
+test("partially published OCI release recovery audit proves immutable images and fails closed", async () => {
+  const { createHash } = await import("node:crypto");
+  const { auditInterruptedRelease } = await import("../scripts/audit-v02129-release-recovery.mjs");
+  const digest = (data) => "sha256:" + createHash("sha256").update(data).digest("hex");
+  const serialize = (value) => JSON.stringify(value);
+  const configDigest = "sha256:" + "a".repeat(64);
+  const attestationRaw = serialize({ schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: "sha256:" + "b".repeat(64) },
+  });
+  const attestationDigest = digest(attestationRaw);
+  const runnableRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: configDigest },
+  });
+  const runnableDigest = digest(runnableRaw);
+  const indexRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: runnableDigest,
+        platform: { os: "linux", architecture: "amd64" } },
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: attestationDigest,
+        platform: { os: "unknown", architecture: "unknown" },
+        annotations: { "vnd.docker.reference.type": "attestation-manifest",
+          "vnd.docker.reference.digest": runnableDigest } },
+    ],
+  });
+  const indexDigest = digest(indexRaw);
+  const expected = {
+    sourceSha: "a".repeat(40), previousTag: "v0.2.128", version: "v0.2.129",
+    apiIndex: indexDigest, apiManifest: runnableDigest, attestation: attestationDigest,
+    apiConfig: configDigest,
+  };
+  const json = (body, status = 200, headers = {}) =>
+    new Response(JSON.stringify(body), { status, headers });
+  const raw = (body, d) =>
+    new Response(body, { status: 200, headers: { "docker-content-digest": d } });
+  const routes = new Map([
+    ["https://api.github.com/repos/re-invertion/resourcePortal/branches/main",
+      json({ commit: { sha: expected.sourceSha } })],
+    ["https://api.github.com/repos/re-invertion/resourcePortal/releases/latest",
+      json({ tag_name: expected.previousTag })],
+    ["https://api.github.com/repos/re-invertion/resourcePortal/releases/tags/v0.2.129",
+      new Response(null, { status: 404 })],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-api:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129",
+      raw(indexRaw, indexDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + runnableDigest,
+      raw(runnableRaw, runnableDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + attestationDigest,
+      raw(attestationRaw, attestationDigest)],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-web:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-postgres:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-web/manifests/v0.2.129",
+      new Response(null, { status: 404 })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-postgres/manifests/v0.2.129",
+      new Response(null, { status: 404 })],
+  ]);
+  function mockFetch(overrides = {}) {
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      assert.equal(options?.method ?? "GET", "GET", "audit may only make reads");
+      calls.push(url);
+      const response = overrides[url] || routes.get(url);
+      assert.ok(response, "unexpected recovery URL " + url);
+      return response.clone();
+    };
+    return { fetchImpl, calls };
+  }
+  const success = mockFetch();
+  const result = await auditInterruptedRelease(success.fetchImpl, expected);
+  assert.equal(result.github.mainSha, expected.sourceSha);
+  assert.equal(result.api.indexDigest, indexDigest);
+  assert.equal(result.api.configDigest, configDigest);
+  assert.equal(result.canPublishFromThisAudit, false);
+  assert.deepEqual(result.otherImages, { web: "absent", postgres: "absent" });
+  assert.equal(success.calls.length, routes.size);
+  assert(!success.calls.some((url) => url.includes("upload") || url.includes("tags/create")));
+
+  const mainUrl = "https://api.github.com/repos/re-invertion/resourcePortal/branches/main";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [mainUrl]: json({commit:{sha:"f".repeat(40)}}) }).fetchImpl, expected),
+    /main drifted/);
+
+  const indexUrl = "https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw, "sha256:" + "f".repeat(64)) }).fetchImpl, expected),
+    /registry digest mismatch/);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw + " ", indexDigest) }).fetchImpl, expected),
+    /registry response bytes do not hash/);
+
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch().fetchImpl, { ...expected, apiConfig:"sha256:"+"c".repeat(64) }),
+    /rollback-tested API config digest differs/);
+
+  const webUrl = "https://ghcr.io/v2/re-invertion/resourceportal-web/manifests/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [webUrl]: json({mediaType:"application/vnd.oci.image.index.v1+json"}) }).fetchImpl, expected),
+    /unexpected pre-existing web image/);
+
+  const releaseUrl = "https://api.github.com/repos/re-invertion/resourcePortal/releases/tags/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [releaseUrl]: json({tag_name:"v0.2.129"}) }).fetchImpl, expected),
+    /already published/);
+});

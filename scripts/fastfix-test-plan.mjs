@@ -336,6 +336,7 @@ const classifiers = [
   [/^scripts\/run-automatic-rollback-smoke\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/rollback-zitadel-runtime\.sh$/, ["platform-release", "workflow"]],
   [/^scripts\/publish-tested-release-image\.sh$/, ["platform-release", "workflow"]],
+  [/^scripts\/audit-v02129-release-recovery\.mjs$/, ["platform-release", "workflow"]],
   [/^test\/installer\/test-remote-lan-gate-agent\.py$/, ["networking", "platform-release"]],
   // Managed Gate migration tests run in patch CI as well as privileged real Swarm;
   // unknown root Python files still fail closed instead of being skipped.
