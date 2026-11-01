@@ -20,7 +20,7 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
-test("Device VPN dataplane smoke streams the client key to root wg without namespace file opens", async () => {
+test("Device VPN dataplane smoke copies the client key into a root-owned /run file", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
@@ -28,9 +28,14 @@ test("Device VPN dataplane smoke streams the client key to root wg without names
   );
   assert.match(
     source,
-    /cat "\$KEYDIR\/client-a\.key" \| sudo -n ip netns exec "\$CLIENT_NS"[\s\S]*wg set rp-device-vpn[\s\S]*private-key \/proc\/self\/fd\/0/,
+    /CLIENT_KEY_ROOT="\$\(cat "\$KEYDIR\/client-a\.key" \| sudo -n sh -ceu '[\s\S]*mktemp \/run\/rp-device-vpn-client-key\.XXXXXX[\s\S]*cat > "\$key"[\s\S]*printf "%s" "\$key"[\s\S]*'\)"/,
   );
-  assert.doesNotMatch(source, /mktemp \/tmp\/rp-device-vpn-client-key\.XXXXXX/);
+  assert.match(
+    source,
+    /wg set rp-device-vpn[\s\S]*private-key "\$CLIENT_KEY_ROOT"/,
+  );
+  assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
+  assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
   assert.doesNotMatch(source, /private-key \/dev\/stdin/);
   assert.doesNotMatch(
     source,
@@ -38,18 +43,19 @@ test("Device VPN dataplane smoke streams the client key to root wg without names
   );
 });
 
-test("Remote LAN dataplane smoke streams both WireGuard private keys through stdin", async () => {
+test("Remote LAN dataplane smoke uses root-owned /run files for both WireGuard private keys", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-remote-lan-l2-dhcp-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.equal(
-    source.match(/private-key \/proc\/self\/fd\/0/g)?.length,
-    2,
-  );
-  assert.match(source, /cat "\$TMP\/s\.key" \| sudo -n ip netns exec "\$RP"/);
-  assert.match(source, /cat "\$TMP\/c\.key" \| sudo -n ip netns exec "\$GATE"/);
+  assert.match(source, /mktemp \/run\/rp-l2-server-key\.XXXXXX/);
+  assert.match(source, /mktemp \/run\/rp-l2-client-key\.XXXXXX/);
+  assert.match(source, /wg set wg0 private-key "\$SERVER_KEY_ROOT"/);
+  assert.match(source, /wg set rp-gate private-key "\$CLIENT_KEY_ROOT"/);
+  assert.match(source, /sudo -n rm -f "\$SERVER_KEY_ROOT"/);
+  assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
+  assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
   assert.doesNotMatch(source, /private-key "\$TMP\/(?:s|c)\.key"/);
 });
 

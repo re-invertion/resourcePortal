@@ -33,6 +33,7 @@ CLIENT_NS="rp-dvpn-client-${RUN_ID}"
 VH="dvuh${RUN_ID}"
 VC="dvuc${RUN_ID}"
 KEYDIR="/tmp/rp-device-vpn-e2e-${RUN_ID}"
+CLIENT_KEY_ROOT=""
 STACK_YAML="${KEYDIR}/device-vpn.yml"
 NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
 OLD_CP_LABEL="$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.control-plane"}}')"
@@ -87,6 +88,9 @@ cleanup() {
     docker node update --label-add "rp.node.control-plane=$OLD_CP_LABEL" "$NODE_ID" >/dev/null 2>&1 || true
   else
     docker node update --label-rm rp.node.control-plane "$NODE_ID" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${CLIENT_KEY_ROOT:-}" ]; then
+    sudo -n rm -f "$CLIENT_KEY_ROOT" >/dev/null 2>&1 || true
   fi
   rm -rf "$KEYDIR"
 }
@@ -199,9 +203,15 @@ sudo -n ip netns exec "$CLIENT_NS" ip link set "$VC" up
 
 sudo -n ip netns exec "$CLIENT_NS" ip link add rp-device-vpn type wireguard
 sudo -n ip netns exec "$CLIENT_NS" ip addr add "${CLIENT_A}/32" dev rp-device-vpn
-cat "$KEYDIR/client-a.key" | sudo -n ip netns exec "$CLIENT_NS" \
+CLIENT_KEY_ROOT="$(cat "$KEYDIR/client-a.key" | sudo -n sh -ceu '
+  umask 077
+  key="$(mktemp /run/rp-device-vpn-client-key.XXXXXX)"
+  cat > "$key"
+  printf "%s" "$key"
+')"
+sudo -n ip netns exec "$CLIENT_NS" \
   wg set rp-device-vpn \
-    private-key /proc/self/fd/0 \
+    private-key "$CLIENT_KEY_ROOT" \
     peer "$SERVER_PUB" \
     endpoint "${UNDERLAY_HOST_IP}:$PORT" \
     allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR" \
