@@ -157,19 +157,31 @@ export class CapacityTelemetryService {
   async observeNow(): Promise<MemoryObservation[]> {
     const observedAt = new Date().toISOString();
     const reports = await this.nodeProbe.collect();
-    if (reports.length === 0) {
-      throw new Error("authenticated Swarm capacity telemetry is unavailable");
+    const schedulableNodeIds = await this.schedulableNodeIds();
+    const reportByNodeId = new Map(
+      reports.map((report) => [report.swarmNodeId, report] as const),
+    );
+    const missingNodeIds = schedulableNodeIds.filter(
+      (nodeId) => !reportByNodeId.has(nodeId),
+    );
+    if (missingNodeIds.length > 0) {
+      throw new Error(
+        "authenticated Swarm capacity telemetry does not cover every schedulable node",
+      );
     }
+    const coveredReports = schedulableNodeIds.map(
+      (nodeId) => reportByNodeId.get(nodeId)!,
+    );
 
-    const totalBytes = reports.reduce(
+    const totalBytes = coveredReports.reduce(
       (sum, report) => sum + BigInt(report.memoryTotalBytes),
       0n,
     );
-    const availableBytes = reports.reduce(
+    const availableBytes = coveredReports.reduce(
       (sum, report) => sum + BigInt(report.memoryAvailableBytes),
       0n,
     );
-    const containers = reports.flatMap((report) =>
+    const containers = coveredReports.flatMap((report) =>
       report.containers.map((container) => ({ report, container })),
     );
     const byApp = new Map<string, typeof containers>();
@@ -201,8 +213,8 @@ export class CapacityTelemetryService {
       points.push({
         observedAt,
         nodeId:
-          reports.length === 1
-            ? reports[0].swarmNodeId
+          coveredReports.length === 1
+            ? coveredReports[0].swarmNodeId
             : "cluster",
         appId,
         containerId: group
@@ -235,7 +247,7 @@ export class CapacityTelemetryService {
       });
     }
 
-    for (const report of reports) {
+    for (const report of coveredReports) {
       const current = report.containers.reduce(
         (sum, item) => sum + BigInt(item.memoryCurrentBytes),
         0n,
@@ -508,22 +520,7 @@ export class CapacityTelemetryService {
       });
       return diagnostics;
     } catch (error) {
-      const completedAt = new Date();
-      await this.prisma.workerReconciliationState.updateMany({
-        where: { workerId, key: "capacityTelemetry" },
-        data: {
-          lastStartedAt: startedAt,
-          lastCompletedAt: completedAt,
-          lastFailureAt: completedAt,
-          lastDurationMs: Math.max(
-            0,
-            completedAt.getTime() - startedAt.getTime(),
-          ),
-          lastError:
-            error instanceof Error ? error.message : "Unknown capacity telemetry error",
-          failureCount: { increment: 1 },
-        },
-      });
+      await this.invalidatePublishedAdmissionEvidence(workerId, error, startedAt);
       throw error;
     }
   }
@@ -725,6 +722,57 @@ export class CapacityTelemetryService {
         recentOomEvents: item.recentOomEvents.toString(),
       })),
     };
+  }
+
+  private async schedulableNodeIds() {
+    const rows = await this.prisma.remoteLocation.findMany({
+      where: {
+        status: "Ready",
+        availability: "Active",
+        maintenance: false,
+        health: { in: ["Healthy", "Degraded"] },
+      },
+      select: { swarmNodeId: true },
+      orderBy: { swarmNodeId: "asc" },
+    });
+    const nodeIds = rows.map((row) => row.swarmNodeId);
+    if (
+      nodeIds.length < 1 ||
+      new Set(nodeIds).size !== nodeIds.length
+    ) {
+      throw new Error("schedulable Swarm node identity inventory is unavailable");
+    }
+    return nodeIds;
+  }
+
+  async invalidatePublishedAdmissionEvidence(
+    workerId: string,
+    error: unknown,
+    startedAt = new Date(),
+  ) {
+    const completedAt = new Date();
+    const lastError =
+      error instanceof Error ? error.message : "Unknown capacity telemetry error";
+    const lastResult = this.jsonValue({
+      unavailable: true,
+      reason: lastError,
+      admissionEvidence: null,
+    });
+    await this.prisma.workerReconciliationState.updateMany({
+      where: { workerId, key: "capacityTelemetry" },
+      data: {
+        lastStartedAt: startedAt,
+        lastCompletedAt: completedAt,
+        lastFailureAt: completedAt,
+        lastDurationMs: Math.max(
+          0,
+          completedAt.getTime() - startedAt.getTime(),
+        ),
+        lastResult,
+        lastError,
+        failureCount: { increment: 1 },
+      },
+    });
   }
 
   private incrementalPrediction(
@@ -983,18 +1031,33 @@ export class CapacityTelemetryReconcilerService
   async collect(force = false) {
     if (this.running) return;
     this.running = true;
+    const startedAt = new Date();
+    const workerId =
+      this.config.get<string>("WORKER_ID", "production-worker") ??
+      "production-worker";
+    let publicationStarted = false;
     try {
       await this.telemetry.restorePolicy();
       const intervalMs =
         this.telemetry.policy().telemetryIntervalSeconds * 1000;
       if (!force && Date.now() - this.lastCollectedAt < intervalMs) return;
       await this.telemetry.observeNow();
-      const workerId =
-        this.config.get<string>("WORKER_ID", "production-worker") ??
-        "production-worker";
+      publicationStarted = true;
       await this.telemetry.publishDiagnostics(workerId);
       this.lastCollectedAt = Date.now();
     } catch (error) {
+      if (!publicationStarted) {
+        await this.telemetry
+          .invalidatePublishedAdmissionEvidence(workerId, error, startedAt)
+          .catch((invalidationError) => {
+            this.logger.warn(
+              "Capacity telemetry invalidation failed: " +
+                (invalidationError instanceof Error
+                  ? invalidationError.message
+                  : "unknown error"),
+            );
+          });
+      }
       this.logger.warn(
         "Capacity telemetry collection failed: " +
           (error instanceof Error ? error.message : "unknown error"),

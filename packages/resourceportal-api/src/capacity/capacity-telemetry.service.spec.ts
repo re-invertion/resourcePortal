@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { CapacityPolicyService } from "./capacity-policy.service";
-import { CapacityTelemetryService } from "./capacity-telemetry.service";
+import {
+  CapacityTelemetryReconcilerService,
+  CapacityTelemetryService,
+} from "./capacity-telemetry.service";
 import type { MemoryObservation } from "./capacity-hybrid.logic";
 
 const GiB = 1024n * 1024n * 1024n;
@@ -341,6 +344,121 @@ describe("Hybrid admission from worker-published telemetry", () => {
     if (!result.usable) return;
     expect(result.requestedPredictedBytes).toBe(0n);
     expect(result.decision.allowed).toBe(true);
+  });
+});
+
+describe("worker collection completeness", () => {
+  const config = {
+    get: (key: string, fallback?: unknown) =>
+      key === "WORKER_ID" ? "worker-1" : fallback,
+  };
+
+  it("does not append partial app telemetry when a schedulable node is missing", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    const prisma = {
+      remoteLocation: {
+        findMany: vi.fn(() =>
+          Promise.resolve([
+            { swarmNodeId: nodeA },
+            { swarmNodeId: nodeB },
+          ]),
+        ),
+      },
+      workerReconciliationState: {
+        findFirst: vi.fn(() => Promise.resolve(null)),
+      },
+    };
+    const nodeProbe = {
+      collect: vi.fn(() => Promise.resolve([report(nodeA, 20, 5)])),
+    };
+    const telemetry = new CapacityTelemetryService(
+      store as never,
+      policy,
+      prisma as never,
+      nodeProbe as never,
+    );
+
+    await expect(telemetry.observeNow()).rejects.toThrow(
+      /does not cover every schedulable node/,
+    );
+    expect(store.points).toEqual([]);
+  });
+
+  it("invalidates fresh published evidence immediately when a whole node probe is missing", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    let lastResult: Record<string, unknown> = {
+      admissionEvidence: publishedEvidence(
+        [report(nodeA, 20, 5), report(nodeB, 18, 6)],
+        [appEvidence("existing-app", 2, 4, 2)],
+      ),
+    };
+    const lastSuccessAt = new Date();
+    const updateMany = vi.fn((query: { data?: { lastResult?: unknown } }) => {
+      if (query.data?.lastResult && typeof query.data.lastResult === "object") {
+        lastResult = query.data.lastResult as Record<string, unknown>;
+      }
+      return Promise.resolve({ count: 1 });
+    });
+    const prisma = {
+      remoteLocation: {
+        findMany: vi.fn(() =>
+          Promise.resolve([
+            { swarmNodeId: nodeA },
+            { swarmNodeId: nodeB },
+          ]),
+        ),
+      },
+      workerReconciliationState: {
+        findFirst: vi.fn((query: { where?: { key?: string } }) =>
+          Promise.resolve(
+            query.where?.key === "capacityTelemetry"
+              ? { lastResult, lastSuccessAt }
+              : null,
+          ),
+        ),
+        updateMany,
+      },
+    };
+    const nodeProbe = {
+      collect: vi.fn(() => Promise.resolve([report(nodeA, 20, 5)])),
+    };
+    const telemetry = new CapacityTelemetryService(
+      store as never,
+      policy,
+      prisma as never,
+      nodeProbe as never,
+    );
+    const reconciler = new CapacityTelemetryReconcilerService(
+      telemetry,
+      config as never,
+    );
+
+    await reconciler.collect(true);
+
+    expect(updateMany).toHaveBeenCalledOnce();
+    expect(lastResult).toMatchObject({
+      unavailable: true,
+      admissionEvidence: null,
+    });
+
+    const result = await telemetry.evaluateAdmission({
+      snapshot: snapshot() as never,
+      runningApps: [
+        {
+          appId: "existing-app",
+          hardLimitBytes: 4n * GiB,
+          replicas: 2,
+        },
+      ],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA, nodeB],
+    });
+    expect(result).toEqual({
+      usable: false,
+      reason: "fresh worker-published Hybrid admission telemetry is unavailable",
+    });
   });
 });
 
