@@ -310,9 +310,25 @@ test("retired Codespaces, quota fixtures and browser Swarm E2E have explicit pat
   ]);
   assert.deepEqual(plan.profiles, [
     "identity", "platform-release", "release-fixtures",
-    "tenant-access", "workflow",
+    "swarm-smoke-fixtures", "tenant-access", "workflow",
   ]);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("privileged real-Swarm smoke fixtures force targeted regression and real Swarm", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/scripts/privileged-smoke-worker.ts",
+    "packages/resourceportal-api/scripts/privileged-smoke-worker.spec.ts",
+    "packages/resourceportal-api/scripts/smoke-stage14-storage-backend.ts",
+  ]);
+  assert.deepEqual(plan.profiles, [
+    "platform-release",
+    "release-fixtures",
+    "swarm-smoke-fixtures",
+    "tenant-access",
+  ]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.equal(plan.swarmSmoke, true);
 });
 
 test("unregistered release fixtures still fail closed", () => {
