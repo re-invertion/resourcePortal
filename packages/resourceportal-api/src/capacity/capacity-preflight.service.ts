@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import {
   DeploymentPhase,
   DeploymentStatus,
@@ -10,6 +10,8 @@ import {
   type CapacityDemand,
   type CapacitySnapshotSingleApp,
 } from "./capacity.logic";
+import { CapacityPolicyService } from "./capacity-policy.service";
+import { CapacityTelemetryService } from "./capacity-telemetry.service";
 
 const CAPACITY_LOCK_NAMESPACE = "resourceportal:capacity:swarm";
 const SWARM_CLUSTER_SINGLETON_ID = "00000000-0000-0000-0000-000000000013";
@@ -58,6 +60,7 @@ type PlatformCapacityRow = {
   availableCpuNano: bigint;
   availableMemoryBytes: bigint;
   schedulableNodeCount: bigint;
+  schedulableNodeIds: string[];
 };
 
 type DeploymentReservationRow = {
@@ -76,6 +79,11 @@ type RuntimeDemandOverride = {
 
 @Injectable()
 export class CapacityPreflightService {
+  constructor(
+    @Optional() private readonly telemetry?: CapacityTelemetryService,
+    @Optional() private readonly policy?: CapacityPolicyService,
+  ) {}
+
   async admitDeployment(
     tx: Prisma.TransactionClient,
     snapshot: CapacityDeploymentSnapshot,
@@ -98,9 +106,12 @@ export class CapacityPreflightService {
     }
 
     return this.fitAdmission(
+      tx,
+      snapshot,
       platformResult.supply,
       occupiedResult.occupied,
       snapshotDemand(snapshot),
+      platformResult.schedulableNodeIds,
     );
   }
 
@@ -135,11 +146,21 @@ export class CapacityPreflightService {
       );
     }
 
-    const demand = await this.succeededRuntimeDemand(tx, snapshot, {
+    const runtimeOverride: RuntimeDemandOverride = {
       appGroupRuntimeState: input.singleAppId ? undefined : "Running",
       singleAppId: input.singleAppId,
       singleAppRuntimeState: input.singleAppId ? "Running" : undefined,
-    });
+    };
+    const demand = await this.succeededRuntimeDemand(
+      tx,
+      snapshot,
+      runtimeOverride,
+    );
+    const admissionSnapshot = await this.runtimeStartAdmissionSnapshot(
+      tx,
+      snapshot,
+      runtimeOverride,
+    );
     if (demand.cpuNano === 0n && demand.memoryBytes === 0n) {
       return {
         success: true,
@@ -165,9 +186,12 @@ export class CapacityPreflightService {
     }
 
     return this.fitAdmission(
+      tx,
+      admissionSnapshot,
       platformResult.supply,
       occupiedResult.occupied,
       demand,
+      platformResult.schedulableNodeIds,
     );
   }
 
@@ -180,7 +204,11 @@ export class CapacityPreflightService {
   private async availablePlatformSupply(
     tx: Prisma.TransactionClient,
   ): Promise<
-    | { success: true; supply: CapacityDemand }
+    | {
+        success: true;
+        supply: CapacityDemand;
+        schedulableNodeIds: string[];
+      }
     | { success: false; errorCode: "PlatformUnavailable"; message: string }
   > {
     const platform = await this.platformCapacity(tx);
@@ -199,6 +227,16 @@ export class CapacityPreflightService {
         "Docker Swarm has no schedulable Remote Location",
       );
     }
+    if (
+      BigInt(platform.schedulableNodeIds.length) !==
+        platform.schedulableNodeCount ||
+      new Set(platform.schedulableNodeIds).size !==
+        platform.schedulableNodeIds.length
+    ) {
+      return this.platformUnavailable(
+        "Docker Swarm schedulable node identity inventory is inconsistent",
+      );
+    }
 
     return {
       success: true,
@@ -206,36 +244,264 @@ export class CapacityPreflightService {
         cpuNano: platform.availableCpuNano,
         memoryBytes: platform.availableMemoryBytes,
       },
+      schedulableNodeIds: platform.schedulableNodeIds,
     };
   }
 
-  private fitAdmission(
+  private async fitAdmission(
+    tx: Prisma.TransactionClient,
+    snapshot: CapacityDeploymentSnapshot,
+    supply: CapacityDemand,
+    occupied: CapacityDemand,
+    demand: CapacityDemand,
+    schedulableNodeIds: string[],
+  ): Promise<CapacityAdmissionResult> {
+    const fit = projectedCapacityFits(supply, occupied, demand);
+
+    // CPU remains strict in every mode. Hybrid only changes how physical RAM
+    // safety is evaluated; it never relaxes CPU or GPU/quota protections.
+    if (!fit.fits && fit.resource === "cpu") {
+      return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
+    }
+
+    if (
+      this.telemetry &&
+      this.policy?.current().mode === "Hybrid"
+    ) {
+      const [runningApps, inFlightSnapshots] = await Promise.all([
+        this.currentRunningApps(tx),
+        this.inFlightSnapshots(tx, snapshot.appGroup.id),
+      ]);
+      const hybrid = await this.telemetry.evaluateAdmission({
+        snapshot,
+        runningApps,
+        inFlightSnapshots,
+        schedulableNodeIds,
+      });
+      if (hybrid.usable) {
+        if (hybrid.decision.allowed) {
+          return { success: true, demand, occupied, supply };
+        }
+        const d = hybrid.decision;
+        return {
+          success: false,
+          errorCode: "InsufficientCapacity",
+          message:
+            "Insufficient platform memory capacity in Hybrid mode (" +
+            "reason=" + d.reason +
+            ", memAvailable=" + d.nodeMemoryAvailableBytes + " bytes" +
+            ", predictedExistingGrowth=" + d.predictedExistingGrowthBytes + " bytes" +
+            ", requestedPredicted=" + d.requestedPredictedBytes + " bytes" +
+            ", inFlightPredicted=" + d.inFlightPredictedBytes + " bytes" +
+            ", safetyReserve=" + d.safetyReserveBytes + " bytes" +
+            ", remainingAfterAdmission=" + d.remainingAfterAdmissionBytes + " bytes)",
+        };
+      }
+      // No guessing: missing/stale/incomplete Hybrid telemetry falls back to
+      // the pre-existing declared-reservation admission policy.
+    }
+
+    if (fit.fits) {
+      return { success: true, demand, occupied, supply };
+    }
+    return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
+  }
+
+  private strictCapacityFailure(
+    resource: "cpu" | "memory",
     supply: CapacityDemand,
     occupied: CapacityDemand,
     demand: CapacityDemand,
   ): CapacityAdmissionResult {
-    const fit = projectedCapacityFits(supply, occupied, demand);
-    if (!fit.fits) {
-      const field = fit.resource === "cpu" ? "cpuNano" : "memoryBytes";
-      const unit = fit.resource === "cpu" ? "NanoCPU" : "bytes";
-      const available = supply[field] > occupied[field]
-        ? supply[field] - occupied[field]
-        : 0n;
+    const field = resource === "cpu" ? "cpuNano" : "memoryBytes";
+    const unit = resource === "cpu" ? "NanoCPU" : "bytes";
+    const available = supply[field] > occupied[field]
+      ? supply[field] - occupied[field]
+      : 0n;
+    return {
+      success: false,
+      errorCode: "InsufficientCapacity",
+      message:
+        "Insufficient platform " + resource +
+        " capacity (requested=" + demand[field] + " " + unit +
+        ", reserved=" + occupied[field] + " " + unit +
+        ", allocatable=" + supply[field] + " " + unit +
+        ", unreserved=" + available + " " + unit + ")",
+    };
+  }
+
+  private async runtimeStartAdmissionSnapshot(
+    tx: Prisma.TransactionClient,
+    snapshot: CapacityDeploymentSnapshot,
+    override: RuntimeDemandOverride,
+  ): Promise<CapacityDeploymentSnapshot> {
+    const singleAppIds = snapshot.singleApps
+      .map((singleApp) => singleApp.id)
+      .filter((id): id is string => typeof id === "string");
+    if (singleAppIds.length !== snapshot.singleApps.length) {
       return {
-        success: false,
-        errorCode: "InsufficientCapacity",
-        // These are RP-declared resource allocations, NOT live host usage.
-        // Do not disclose other tenants or individual AppGroup identities.
-        message: `Insufficient platform ${fit.resource} capacity (requested=${demand[field]} ${unit}, reserved=${occupied[field]} ${unit}, allocatable=${supply[field]} ${unit}, unreserved=${available} ${unit})`,
+        ...snapshot,
+        appGroup: {
+          ...snapshot.appGroup,
+          runtimeState:
+            override.appGroupRuntimeState ?? snapshot.appGroup.runtimeState,
+        },
+        singleApps: snapshot.singleApps.map((singleApp) => ({
+          ...singleApp,
+          runtimeState:
+            override.singleAppId === singleApp.id
+              ? (override.singleAppRuntimeState ?? singleApp.runtimeState)
+              : singleApp.runtimeState,
+        })),
       };
     }
 
+    const [appGroup, currentSingleApps] = await Promise.all([
+      tx.appGroup.findUnique({
+        where: { id: snapshot.appGroup.id },
+        select: { runtimeState: true },
+      }),
+      tx.singleApp.findMany({
+        where: {
+          appGroupId: snapshot.appGroup.id,
+          id: { in: singleAppIds },
+        },
+        select: {
+          id: true,
+          runtimeState: true,
+          actualReplicas: true,
+        },
+      }),
+    ]);
+    const currentById = new Map(
+      currentSingleApps.map((singleApp) => [singleApp.id, singleApp]),
+    );
+    const appGroupRuntimeState =
+      override.appGroupRuntimeState ??
+      appGroup?.runtimeState ??
+      snapshot.appGroup.runtimeState;
+
     return {
-      success: true,
-      demand,
-      occupied,
-      supply,
+      ...snapshot,
+      appGroup: {
+        ...snapshot.appGroup,
+        runtimeState: appGroupRuntimeState,
+      },
+      singleApps: snapshot.singleApps.map((singleApp) => {
+        const current = singleApp.id
+          ? currentById.get(singleApp.id)
+          : undefined;
+        const runtimeState =
+          override.singleAppId === singleApp.id
+            ? (override.singleAppRuntimeState ??
+              current?.runtimeState ??
+              singleApp.runtimeState)
+            : (current?.runtimeState ?? singleApp.runtimeState);
+        const observedReplicas = Math.max(
+          0,
+          current?.actualReplicas ?? 0,
+        );
+        const deployedReplicas = Math.max(0, singleApp.desiredReplicas);
+        const runnable =
+          appGroupRuntimeState === "Running" && runtimeState === "Running";
+        return {
+          ...singleApp,
+          runtimeState: runnable ? "Running" : "Stopped",
+          desiredReplicas: runnable
+            ? Math.max(deployedReplicas, observedReplicas)
+            : observedReplicas,
+        };
+      }),
     };
+  }
+
+  private async currentRunningApps(
+    tx: Prisma.TransactionClient,
+  ): Promise<Array<{ appId: string; hardLimitBytes: bigint; replicas: number }>> {
+    const rows = await tx.singleApp.findMany({
+      where: {
+        runtimeState: "Running",
+        pendingDeletion: false,
+        appGroup: { runtimeState: "Running" },
+      },
+      select: {
+        id: true,
+        appGroupId: true,
+        memoryBytes: true,
+        desiredReplicas: true,
+        actualReplicas: true,
+      },
+    });
+    if (rows.length === 0) return [];
+
+    const appGroupIds = [...new Set(rows.map((item) => item.appGroupId))];
+    const deployments = await tx.appGroupDeployment.findMany({
+      where: {
+        appGroupId: { in: appGroupIds },
+        status: DeploymentStatus.Succeeded,
+      },
+      orderBy: { version: "desc" },
+      select: {
+        appGroupId: true,
+        version: true,
+        stackConfig: true,
+      },
+    });
+    const latestSeen = new Set<string>();
+    const deployedByApp = new Map<
+      string,
+      { replicas: number; memoryBytes: bigint }
+    >();
+    for (const deployment of deployments) {
+      if (latestSeen.has(deployment.appGroupId)) continue;
+      latestSeen.add(deployment.appGroupId);
+      const parsed = this.parseSnapshot(deployment.stackConfig);
+      if (!parsed) continue;
+      for (const singleApp of parsed.singleApps) {
+        if (!singleApp.id) continue;
+        try {
+          deployedByApp.set(singleApp.id, {
+            replicas: Math.max(0, singleApp.desiredReplicas),
+            memoryBytes: BigInt(singleApp.resources.memoryBytes),
+          });
+        } catch {
+          // Fall back to the current row below. Admission remains conservative.
+        }
+      }
+    }
+
+    return rows.flatMap((item) => {
+      const deployed = deployedByApp.get(item.id);
+      const replicas = Math.max(
+        0,
+        item.actualReplicas,
+        deployed?.replicas ?? item.desiredReplicas,
+      );
+      if (replicas <= 0) return [];
+      const memoryBytes = deployed?.memoryBytes ?? item.memoryBytes;
+      return [{
+        appId: item.id,
+        hardLimitBytes: memoryBytes * BigInt(replicas),
+        replicas,
+      }];
+    });
+  }
+
+  private async inFlightSnapshots(
+    tx: Prisma.TransactionClient,
+    excludedAppGroupId: string,
+  ): Promise<CapacityDeploymentSnapshot[]> {
+    const rows = await tx.appGroupDeployment.findMany({
+      where: {
+        appGroupId: { not: excludedAppGroupId },
+        status: DeploymentStatus.Deploying,
+        phase: { in: Array.from(ADMITTED_PHASES) },
+      },
+      select: { stackConfig: true },
+    });
+    return rows
+      .map((row) => this.parseSnapshot(row.stackConfig))
+      .filter((row): row is CapacityDeploymentSnapshot => row !== null);
   }
 
   private async platformCapacity(tx: Prisma.TransactionClient) {
@@ -249,7 +515,16 @@ export class CapacityPreflightService {
             AND r."availability" = 'Active'
             AND r."maintenance" = false
             AND r."health" IN ('Healthy', 'Degraded')
-        )::bigint AS "schedulableNodeCount"
+        )::bigint AS "schedulableNodeCount",
+        COALESCE(
+          ARRAY_AGG(r."swarmNodeId" ORDER BY r."swarmNodeId") FILTER (
+            WHERE r."status" = 'Ready'
+              AND r."availability" = 'Active'
+              AND r."maintenance" = false
+              AND r."health" IN ('Healthy', 'Degraded')
+          ),
+          ARRAY[]::text[]
+        ) AS "schedulableNodeIds"
       FROM "SwarmCluster" c
       LEFT JOIN "RemoteLocation" r ON TRUE
       WHERE c."id" = ${SWARM_CLUSTER_SINGLETON_ID}::uuid

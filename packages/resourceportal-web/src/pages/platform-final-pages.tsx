@@ -195,7 +195,20 @@ export function PlatformInfrastructurePage() {
   });
   const backends = useApi<unknown>("/api/platform/storage-backends", []);
   const usage = useApi<Row>("/api/platform/resource-usage");
+  const capacity = useApi<Row>("/api/platform/capacity");
   const release = useApi<Row>("/api/platform/release");
+  const [capacitySettings, setCapacitySettings] = useState({
+    mode: "Hybrid",
+    telemetryIntervalSeconds: "30",
+    exactRetentionDays: "7",
+    predictionWindowDays: "30",
+    rareEventRetentionDays: "90",
+    predictionPercentile: "99",
+    applicationMarginPercent: "15",
+    nodeSafetyBufferPercent: "20",
+    maxTelemetryAgeSeconds: "90",
+    minimumSystemReserveMiB: "1024",
+  });
   const [busy, setBusy] = useState<string>();
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateConfirmation, setUpdateConfirmation] = useState("");
@@ -203,6 +216,22 @@ export function PlatformInfrastructurePage() {
   const updateOperation = useApi<Row>(updateOperationId ? `/api/platform/operations/${encodeURIComponent(updateOperationId)}` : undefined);
   useEffect(()=>{if(!updateOperationId)return;const handle=window.setInterval(()=>void updateOperation.reload(),4000);return()=>window.clearInterval(handle);},[updateOperationId,updateOperation.reload]);
   useEffect(()=>{const status=text(updateOperation.data?.status,"");if(!updateOperationId||!["Succeeded","Failed","RolledBack","RollbackFailed"].includes(status))return;if(status==="Succeeded")toast.success("ResourcePortal update completed.");else toast.error(`ResourcePortal update ended with ${status}. Verify the current version and operation events.`);setUpdateOperationId(undefined);void release.reload();},[updateOperationId,updateOperation.data?.status]);
+  useEffect(()=>{
+    const policy=asRecord(capacity.data?.policy);
+    if(!Object.keys(policy).length)return;
+    setCapacitySettings({
+      mode:text(policy.mode,"Hybrid"),
+      telemetryIntervalSeconds:String(numberOf(policy.telemetryIntervalSeconds,30)),
+      exactRetentionDays:String(numberOf(policy.exactRetentionDays,7)),
+      predictionWindowDays:String(numberOf(policy.predictionWindowDays,30)),
+      rareEventRetentionDays:String(numberOf(policy.rareEventRetentionDays,90)),
+      predictionPercentile:String(numberOf(policy.predictionPercentile,99)),
+      applicationMarginPercent:String(numberOf(policy.applicationMarginPercent,15)),
+      nodeSafetyBufferPercent:String(numberOf(policy.nodeSafetyBufferPercent,20)),
+      maxTelemetryAgeSeconds:String(numberOf(policy.maxTelemetryAgeSeconds,90)),
+      minimumSystemReserveMiB:String(Math.round(numberOf(policy.minimumSystemReserveBytes,1073741824)/1048576)),
+    });
+  },[capacity.data]);
   const remoteRows = items<Row>(remotes.data); const backendRows = items<Row>(backends.data); const gpuRows = items<Row>(gpuDevices.data); const gpuTenantRows = items<Row>(gpuTenants.data);
   const selectedGpuTenant = gpuTenantRows.find((item)=>idOf(item)===gpuTenantId);
   const needsBaseGpuQuota = Boolean(gpuTenantId) && Boolean(selectedGpuTenant) &&
@@ -225,6 +254,32 @@ export function PlatformInfrastructurePage() {
   async function run(label: string, path: string, reload?: () => Promise<void>) { setBusy(label); try { await apiRequest(path, { method: "POST" }); if (reload) await reload(); toast.success(`${label} completed.`); } catch (error) { toast.error(`${label} failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function setStorageMaintenance(row: Row, enabled: boolean) { const id = idOf(row); if (!id) return; const label = enabled ? "Enter storage maintenance" : "Exit storage maintenance"; setBusy(label); try { await apiRequest(`/api/platform/storage-backends/${encodeURIComponent(id)}/maintenance`, { method: "PATCH", body: { enabled } }); await backends.reload(); toast.success(enabled ? "Storage backend entered maintenance." : "Storage backend left maintenance."); } catch (error) { toast.error(`Storage backend maintenance update failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function requestPlatformUpdate() { const targetVersion=text(release.data?.latestVersion,""); if(!targetVersion)return; setBusy("Update ResourcePortal"); try { const operation=await apiRequest<Row>("/api/platform/release/update",{method:"POST",body:{targetVersion,confirmation:updateConfirmation}}); if(typeof operation.id==="string")setUpdateOperationId(operation.id);window.dispatchEvent(new Event("rp-upgrade-started"));setUpdateOpen(false); setUpdateConfirmation(""); toast.success(`ResourcePortal update to v${targetVersion} started. The UI may reconnect while services roll out.`); } catch(error){ toast.error(`ResourcePortal update failed to start: ${readableError(error)}`); } finally { setBusy(undefined); } }
+  async function saveCapacitySettings() {
+    setBusy("Save capacity policy");
+    try {
+      await apiRequest("/api/platform/capacity/settings", {
+        method: "PATCH",
+        body: {
+          mode: capacitySettings.mode,
+          telemetryIntervalSeconds: Number(capacitySettings.telemetryIntervalSeconds),
+          exactRetentionDays: Number(capacitySettings.exactRetentionDays),
+          predictionWindowDays: Number(capacitySettings.predictionWindowDays),
+          rareEventRetentionDays: Number(capacitySettings.rareEventRetentionDays),
+          predictionPercentile: Number(capacitySettings.predictionPercentile),
+          applicationMarginPercent: Number(capacitySettings.applicationMarginPercent),
+          nodeSafetyBufferPercent: Number(capacitySettings.nodeSafetyBufferPercent),
+          maxTelemetryAgeSeconds: Number(capacitySettings.maxTelemetryAgeSeconds),
+          minimumSystemReserveBytes: String(Number(capacitySettings.minimumSystemReserveMiB) * 1048576),
+        },
+      });
+      await capacity.reload();
+      toast.success("Capacity policy updated.");
+    } catch (error) {
+      toast.error("Capacity policy update failed: " + readableError(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
   const swarmRow = asRecord(swarm.data); const swarmState = text(valueOf(swarmRow, "health", "status"), "Unknown");
   const usageRow = asRecord(usage.data);
   const cpuUsed = numberOf(usageRow.cpuUsedNano, 0) / 1_000_000_000;
@@ -237,6 +292,12 @@ export function PlatformInfrastructurePage() {
   const gpuTotal = numberOf(usageRow.gpuTotal, 0);
   const liveUsageAvailable = usageRow.liveUsageAvailable === true;
   const liveUsageReason = text(usageRow.liveUsageReason, "Live host usage unavailable");
+  const capacityRow = asRecord(capacity.data);
+  const capacityNode = asRecord(capacityRow.latestNode);
+  const capacityNodes = items<Row>(capacityRow.nodes);
+  const capacityPredictions = items<Row>(capacityRow.predictions);
+  const capacityPolicy = asRecord(capacityRow.policy);
+  const capacityTelemetryState = asRecord(capacityRow.telemetryState);
   const pct = (used: number, total: number) => total > 0 ? `${Math.round((used / total) * 100)}% used` : "Capacity unavailable";
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Infrastructure" description="Swarm health, remote locations and storage backends using platform infrastructure APIs." actions={<Button variant="primary" disabled={busy === "Reconcile Swarm cluster"} onClick={() => void run("Reconcile Swarm cluster", "/api/platform/swarm-cluster/reconcile", swarm.reload)}>Reconcile Swarm cluster</Button>} />
@@ -254,6 +315,71 @@ export function PlatformInfrastructurePage() {
       <MetricCard label="GPU usage" value={`${gpuUsed} / ${gpuTotal}`} detail={pct(gpuUsed, gpuTotal)} loading={usage.loading} error={usage.error} />
     </section>
     <div className="mt-6 space-y-6">
+      <Card className="overflow-hidden">
+        <SectionTitle eyebrow="Capacity" title="Capacity & Predictions" description="Physical memory, hard limits, predicted demand, deployment reservations and Hybrid safety controls." action={<Button size="sm" onClick={()=>void capacity.reload()}>Refresh capacity</Button>} />
+        {capacity.error ? <div className="p-5"><ErrorCard label="Capacity diagnostics" error={capacity.error} retry={capacity.reload}/></div> : <div className="space-y-5 p-5">
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Capacity prediction summary">
+            <MetricCard label="Physical RAM available" value={capacityRow.physicalMemoryAvailableBytes ? formatBytes(capacityRow.physicalMemoryAvailableBytes) : "Unavailable"} detail={capacityRow.physicalMemoryTotalBytes ? "of "+formatBytes(capacityRow.physicalMemoryTotalBytes)+" total" : "No fresh node telemetry"} loading={capacity.loading} />
+            <MetricCard label="Hard limits" value={formatBytes(capacityRow.hardLimitBytes)} detail="Running container hard-limit total" loading={capacity.loading} />
+            <MetricCard label="Predicted demand" value={formatBytes(capacityRow.predictedDemandBytes)} detail={"Worst-node same-time P99 "+formatBytes(capacityRow.nodePredictedP99Bytes)} loading={capacity.loading} />
+            <MetricCard label="Real headroom" value={formatBytes(capacityRow.minimumNodeHeadroomBytes)} detail="Minimum node headroom after safety reserve" loading={capacity.loading} />
+            <MetricCard label="Safety reserve" value={formatBytes(capacityRow.safetyReserveBytes)} detail={String(numberOf(capacityPolicy.nodeSafetyBufferPercent,20))+"% node buffer · "+String(Array.isArray(capacityRow.activeDeploymentReservations)?capacityRow.activeDeploymentReservations.length:0)+" active deployment reservation(s)"} loading={capacity.loading} />
+          </section>
+          <DetailList columns={3} items={[
+            {label:"Mode",value:<StatusBadge tone={text(capacityPolicy.mode)==="Hybrid"?"success":"warning"}>{text(capacityPolicy.mode,"Unknown")}</StatusBadge>},
+            {label:"Telemetry confidence",value:capacityPredictions.length?String(Math.round(Math.min(...capacityPredictions.map((item)=>numberOf(item.confidence,0)))*100))+"% minimum":"No application history"},
+            {label:"Samples retained",value:String(numberOf(capacityRow.observations,0))},
+            {label:"Fresh observation",value:formatDate(capacityNode.observedAt)},
+            {label:"Worker snapshot",value:formatDate(capacityTelemetryState.lastSuccessAt)},
+          ]}/>
+          <div>
+            <h3 className="text-sm font-semibold text-[#172033]">Swarm nodes</h3>
+            <div className="mt-3 overflow-hidden rounded-lg border border-[#E1E7F0]">
+              <DataTable embedded className="rounded-none border-0" loading={capacity.loading} columns={[
+                {key:"node",label:"Node ID"},{key:"available",label:"MemAvailable"},{key:"total",label:"Physical RAM"},{key:"psi",label:"PSI avg10"},{key:"observed",label:"Observed"}
+              ]} rows={capacityNodes.map((item)=>({key:text(item.nodeId),cells:{
+                node:<code className="text-xs">{text(item.nodeId)}</code>,
+                available:formatBytes(item.nodeMemoryAvailableBytes),
+                total:formatBytes(item.nodeMemoryTotalBytes),
+                psi:"some "+String(numberOf(item.memoryPsiSomeAvg10,0).toFixed(2))+" · full "+String(numberOf(item.memoryPsiFullAvg10,0).toFixed(2)),
+                observed:formatDate(item.observedAt),
+              }}))} empty={<EmptyState title="No fresh node telemetry" description="Hybrid falls back to Strict when authenticated telemetry does not cover every schedulable Swarm node."/>}/>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[#172033]">Application predictions</h3>
+            <div className="mt-3 overflow-hidden rounded-lg border border-[#E1E7F0]">
+              <DataTable embedded className="rounded-none border-0" loading={capacity.loading} columns={[
+                {key:"app",label:"Application ID"},{key:"predicted",label:"Predicted"},{key:"p99",label:"P99"},{key:"peak",label:"7d peak"},{key:"confidence",label:"Confidence"},{key:"oom",label:"OOM events"}
+              ]} rows={capacityPredictions.map((item)=>({key:text(item.appId),cells:{
+                app:<code className="text-xs">{text(item.appId)}</code>,
+                predicted:formatBytes(item.predictedBytes),
+                p99:formatBytes(item.p99Bytes),
+                peak:formatBytes(item.max7dBytes),
+                confidence:String(Math.round(numberOf(item.confidence,0)*100))+"%",
+                oom:text(item.recentOomEvents,"0"),
+              }}))} empty={<EmptyState title="No prediction history yet" description="Hybrid starts conservatively from fresh telemetry and improves confidence as 7/30/90-day history accumulates."/>}/>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[#172033]">Capacity policy</h3>
+            <p className="mt-1 text-xs text-[#718096]">Settings are validated server-side against safe ranges. Strict remains available as the fail-safe comparison mode.</p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <Field label="Mode"><Select value={capacitySettings.mode} onChange={(e)=>setCapacitySettings((v)=>({...v,mode:e.target.value}))}><option value="Hybrid">Hybrid</option><option value="Strict">Strict</option></Select></Field>
+              <Field label="Telemetry (sec)"><NumberInput min={10} max={300} value={capacitySettings.telemetryIntervalSeconds} onChange={(e)=>setCapacitySettings((v)=>({...v,telemetryIntervalSeconds:e.target.value}))}/></Field>
+              <Field label="Exact history (days)"><NumberInput min={1} max={7} value={capacitySettings.exactRetentionDays} onChange={(e)=>setCapacitySettings((v)=>({...v,exactRetentionDays:e.target.value}))}/></Field>
+              <Field label="Prediction window (days)"><NumberInput min={7} max={30} value={capacitySettings.predictionWindowDays} onChange={(e)=>setCapacitySettings((v)=>({...v,predictionWindowDays:e.target.value}))}/></Field>
+              <Field label="Rare history (days)"><NumberInput min={30} max={90} value={capacitySettings.rareEventRetentionDays} onChange={(e)=>setCapacitySettings((v)=>({...v,rareEventRetentionDays:e.target.value}))}/></Field>
+              <Field label="Prediction percentile"><Select value={capacitySettings.predictionPercentile} onChange={(e)=>setCapacitySettings((v)=>({...v,predictionPercentile:e.target.value}))}><option value="99">P99</option><option value="95">P95</option></Select></Field>
+              <Field label="App margin (%)"><NumberInput min={5} max={50} value={capacitySettings.applicationMarginPercent} onChange={(e)=>setCapacitySettings((v)=>({...v,applicationMarginPercent:e.target.value}))}/></Field>
+              <Field label="Node buffer (%)"><NumberInput min={10} max={50} value={capacitySettings.nodeSafetyBufferPercent} onChange={(e)=>setCapacitySettings((v)=>({...v,nodeSafetyBufferPercent:e.target.value}))}/></Field>
+              <Field label="Max telemetry age (sec)"><NumberInput min={30} max={300} value={capacitySettings.maxTelemetryAgeSeconds} onChange={(e)=>setCapacitySettings((v)=>({...v,maxTelemetryAgeSeconds:e.target.value}))}/></Field>
+              <Field label="Min system reserve (MiB)"><NumberInput min={256} max={32768} value={capacitySettings.minimumSystemReserveMiB} onChange={(e)=>setCapacitySettings((v)=>({...v,minimumSystemReserveMiB:e.target.value}))}/></Field>
+            </div>
+            <div className="mt-4 flex justify-end"><Button variant="primary" disabled={busy==="Save capacity policy"} onClick={()=>void saveCapacitySettings()}>{busy==="Save capacity policy"?"Saving…":"Save capacity policy"}</Button></div>
+          </div>
+        </div>}
+      </Card>
       <Card className="overflow-hidden"><SectionTitle eyebrow="Release" title="ResourcePortal version" description="Current deployment and latest stable release." action={<Button variant="primary" disabled={Boolean(busy)||release.loading||release.data?.updateEligible!==true} onClick={()=>{setUpdateConfirmation("");setUpdateOpen(true);}}>Update ResourcePortal</Button>} /><div className="space-y-4 p-5">{release.error?<ErrorCard label="Release status" error={release.error} retry={release.reload}/>:<><DetailList columns={3} items={[{label:"Current version",value:text(release.data?.currentVersion,"Unknown")},{label:"Latest version",value:text(release.data?.latestVersion,"Unavailable")},{label:"Automatic rollback",value:release.data?.automaticRollbackAvailable===true?"Available":release.data?.rollbackPolicy?"Unavailable ("+text(release.data.rollbackPolicy)+")":"Unknown"}]}/>{release.data?.updateEligible===true?<Callout tone="warning" title="Update available">The update runs through the production installer in an independent updater container. The control plane can restart while the update is in progress.</Callout>:null}{release.data?.updateAvailable===true && release.data?.updateEligible!==true?<Callout tone="warning" title="Update blocked: source version unsupported">The latest release manifest does not certify this installation as a supported upgrade source. Supported sources: {Array.isArray(release.data?.supportedFromVersions)&&release.data.supportedFromVersions.length ? release.data.supportedFromVersions.join(", ") : "Not verified"}. Reason: {text(release.data?.sourceSupportReason,"Unknown")}. No upgrade can be started from this UI until compatibility is confirmed.</Callout>:null}{release.data?.updateEligible===true?<p className="text-xs text-[#526070]">Upgrade compatible: source v{text(release.data?.currentVersion)} is supported by the v{text(release.data?.latestVersion)} release manifest. Supported source versions: {Array.isArray(release.data?.supportedFromVersions) ? release.data.supportedFromVersions.join(", ") : "Unavailable"}.</p>:null}{release.data?.releaseFeedAvailable===false?<Callout tone="warning" title="Release feed unavailable">The current version remains available. Retry when the release feed is reachable; manual CLI fallback is not required.</Callout>:null}</>}</div></Card>
       <Card className="overflow-hidden">
         <SectionTitle eyebrow="Compute policy" title="Tenant GPU permissions" description="Platform Admin grants exclusive physical GPU quota. Lowering quota below active allocations is rejected." />

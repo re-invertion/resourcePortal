@@ -1,6 +1,10 @@
 import { NestFactory } from "@nestjs/core";
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
+import {
+  privilegedSmokeCommandArgs,
+  privilegedSmokeWorkerArgs,
+} from "./privileged-smoke-worker";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -202,10 +206,16 @@ async function reconcileVolumeUsageOnce() {
     // The volume usage reconciler calls the same secure, root-owned storage
     // adapter as the production worker. Never weaken adapter permissions for
     // an E2E smoke running from the unprivileged CI job.
-    const result = await command("sudo", [
-      "-E", process.execPath, npmExecPath,
-      "run", "smoke:volume-lifecycle", "--", "--reconcile-usage-once",
-    ]);
+    const result = await command(
+      "sudo",
+      privilegedSmokeCommandArgs(process.env, process.execPath, [
+        npmExecPath,
+        "run",
+        "smoke:volume-lifecycle",
+        "--",
+        "--reconcile-usage-once",
+      ]),
+    );
     const output = [result.stdout.trim(), result.stderr.trim()]
       .filter(Boolean).join("\n");
     if (output) console.log(output);
@@ -292,7 +302,7 @@ async function runOperationWorkerOnce() {
   const result = privileged
     ? await command(
         "sudo",
-        ["-E", process.execPath, npmExecPath!, "run", "worker"],
+        privilegedSmokeWorkerArgs(workerEnv, process.execPath, npmExecPath!),
         workerEnv,
       )
     : await command("npm", ["run", "worker"], workerEnv);

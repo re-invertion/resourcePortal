@@ -54,6 +54,23 @@ export class RuntimeDriftReconcilerService {
     return this.reconcileCandidates(appGroups, maintenanceState.enabled);
   }
 
+  async reconcileOne(appGroupId: string) {
+    const [appGroup, maintenanceState] = await Promise.all([
+      this.prisma.appGroup.findUnique({
+        where: { id: appGroupId },
+        include: this.appGroupInclude(),
+      }),
+      this.maintenance.getState(),
+    ]);
+    if (!appGroup || appGroup.currentDeploymentVersion === null) {
+      return "Unknown" as const;
+    }
+    return this.reconcileAppGroup(
+      appGroup,
+      maintenanceState.enabled,
+    );
+  }
+
   async reconcileAll(pageSize = 100) {
     const safePageSize = Math.min(500, Math.max(1, Math.floor(pageSize)));
     const maintenanceState = await this.maintenance.getState();

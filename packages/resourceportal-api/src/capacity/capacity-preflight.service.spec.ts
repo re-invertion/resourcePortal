@@ -72,6 +72,7 @@ describe("Stage 15 capacity preflight", () => {
     cpuNano?: bigint;
     memoryBytes?: bigint;
     schedulableNodeCount?: bigint;
+    schedulableNodeIds?: string[];
   }) {
     queryRaw
       .mockResolvedValueOnce([{ locked: true }])
@@ -81,6 +82,9 @@ describe("Stage 15 capacity preflight", () => {
           availableCpuNano: input?.cpuNano ?? 4_000_000_000n,
           availableMemoryBytes: input?.memoryBytes ?? 8_192n,
           schedulableNodeCount: input?.schedulableNodeCount ?? 1n,
+          schedulableNodeIds:
+            input?.schedulableNodeIds ??
+            ["ku2gbq2sm1b2khra543dtyxfg"],
         },
       ]);
   }
@@ -118,6 +122,22 @@ describe("Stage 15 capacity preflight", () => {
       success: true,
       demand: { cpuNano: 2_000_000_000n, memoryBytes: 2_048n },
     });
+  });
+
+  it("rejects an inconsistent schedulable node identity inventory", async () => {
+    platform({
+      schedulableNodeCount: 2n,
+      schedulableNodeIds: ["ku2gbq2sm1b2khra543dtyxfg"],
+    });
+
+    const result = await service.admitDeployment(tx, deploymentSnapshot());
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: "PlatformUnavailable",
+    });
+    if (result.success) return;
+    expect(result.message).toContain("identity inventory is inconsistent");
   });
 
   it("returns InsufficientCapacity when projected CPU cannot fit", async () => {
@@ -580,6 +600,222 @@ describe("Stage 15 capacity preflight", () => {
       .resolves.toMatchObject({
         success: true, occupied: { cpuNano: 1_000_000_000n, memoryBytes: 1024n },
       });
+  });
+
+  it("passes an effective deployed AppGroup start target to Hybrid admission", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 10_000_000_000n, memoryBytes: 32n * GiB });
+    const appGroupId = "00000000-0000-0000-0000-000000000119";
+    const singleAppId = "00000000-0000-0000-0000-000000000219";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000201",
+          runtimeState: "Stopped",
+        },
+        singleApps: [{
+          id: singleAppId,
+          runtimeState: "Running",
+          desiredReplicas: 3,
+          resources: { cpu: "1", memoryBytes: String(GiB), gpu: 0 },
+          volumes: [],
+        }],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ runtimeState: "Stopped" });
+    findSingleApps
+      .mockResolvedValueOnce([{
+        id: singleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 10,
+        actualReplicas: 0,
+      }])
+      .mockResolvedValueOnce([{
+        id: singleAppId,
+        runtimeState: "Running",
+        actualReplicas: 0,
+      }])
+      .mockResolvedValueOnce([]);
+
+    let capturedSnapshot: CapacityDeploymentSnapshot | undefined;
+    const evaluateAdmission = vi.fn(
+      (input: { snapshot: CapacityDeploymentSnapshot }) => {
+        capturedSnapshot = input.snapshot;
+        return Promise.resolve({
+          usable: true,
+          decision: { allowed: true },
+          predictions: [],
+          requestedPredictedBytes: 3n * GiB,
+          reason: "test",
+        });
+      },
+    );
+    service = new CapacityPreflightService(
+      { evaluateAdmission } as never,
+      { current: () => ({ mode: "Hybrid" }) } as never,
+    );
+
+    await expect(
+      service.admitRuntimeStart(tx, { appGroupId }),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(evaluateAdmission).toHaveBeenCalledOnce();
+    expect(capturedSnapshot).toMatchObject({
+      appGroup: { runtimeState: "Running" },
+      singleApps: [{
+        id: singleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 3,
+      }],
+    });
+  });
+
+  it("passes an effective deployed SingleApp start target to Hybrid admission", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 10_000_000_000n, memoryBytes: 32n * GiB });
+    const appGroupId = "00000000-0000-0000-0000-000000000120";
+    const singleAppId = "00000000-0000-0000-0000-000000000220";
+    findLatestDeployment.mockResolvedValue({
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: appGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000201",
+          runtimeState: "Running",
+        },
+        singleApps: [{
+          id: singleAppId,
+          runtimeState: "Stopped",
+          desiredReplicas: 2,
+          resources: { cpu: "1", memoryBytes: String(GiB), gpu: 0 },
+          volumes: [],
+        }],
+      }),
+    });
+    findAppGroup.mockResolvedValue({ runtimeState: "Running" });
+    findSingleApps
+      .mockResolvedValueOnce([{
+        id: singleAppId,
+        runtimeState: "Stopped",
+        desiredReplicas: 7,
+        actualReplicas: 0,
+      }])
+      .mockResolvedValueOnce([{
+        id: singleAppId,
+        runtimeState: "Stopped",
+        actualReplicas: 0,
+      }])
+      .mockResolvedValueOnce([]);
+
+    let capturedSnapshot: CapacityDeploymentSnapshot | undefined;
+    const evaluateAdmission = vi.fn(
+      (input: { snapshot: CapacityDeploymentSnapshot }) => {
+        capturedSnapshot = input.snapshot;
+        return Promise.resolve({
+          usable: true,
+          decision: { allowed: true },
+          predictions: [],
+          requestedPredictedBytes: 2n * GiB,
+          reason: "test",
+        });
+      },
+    );
+    service = new CapacityPreflightService(
+      { evaluateAdmission } as never,
+      { current: () => ({ mode: "Hybrid" }) } as never,
+    );
+
+    await expect(
+      service.admitRuntimeStart(tx, { appGroupId, singleAppId }),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(capturedSnapshot).toMatchObject({
+      appGroup: { runtimeState: "Running" },
+      singleApps: [{
+        id: singleAppId,
+        runtimeState: "Running",
+        desiredReplicas: 2,
+      }],
+    });
+  });
+
+  it("retains a committed runtime start in the Hybrid baseline until replicas are observed", async () => {
+    const GiB = 1_073_741_824n;
+    platform({ cpuNano: 20_000_000_000n, memoryBytes: 32n * GiB });
+    const startedGroupId = "00000000-0000-0000-0000-000000000121";
+    const startedAppId = "00000000-0000-0000-0000-000000000221";
+    const deployed = {
+      appGroupId: startedGroupId,
+      version: 1,
+      status: DeploymentStatus.Succeeded,
+      phase: DeploymentPhase.Completed,
+      stackConfig: JSON.stringify({
+        appGroup: {
+          id: startedGroupId,
+          tenantId: "00000000-0000-0000-0000-000000000202",
+          runtimeState: "Stopped",
+        },
+        singleApps: [{
+          id: startedAppId,
+          runtimeState: "Running",
+          desiredReplicas: 1,
+          resources: { cpu: "1", memoryBytes: String(GiB), gpu: 0 },
+          volumes: [],
+        }],
+      }),
+    };
+    findDeployments
+      .mockResolvedValueOnce([deployed])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([deployed]);
+    findAppGroup.mockResolvedValue({ runtimeState: "Running" });
+    findSingleApps
+      .mockResolvedValueOnce([{
+        id: startedAppId,
+        runtimeState: "Running",
+        desiredReplicas: 10,
+        actualReplicas: 0,
+      }])
+      .mockResolvedValueOnce([{
+        id: startedAppId,
+        appGroupId: startedGroupId,
+        memoryBytes: 10n * GiB,
+        desiredReplicas: 10,
+        actualReplicas: 0,
+      }]);
+
+    const evaluateAdmission = vi.fn().mockResolvedValue({
+      usable: true,
+      decision: { allowed: true },
+      predictions: [],
+      requestedPredictedBytes: 0n,
+      reason: "test",
+    });
+    service = new CapacityPreflightService(
+      { evaluateAdmission } as never,
+      { current: () => ({ mode: "Hybrid" }) } as never,
+    );
+
+    await expect(
+      service.admitDeployment(
+        tx,
+        deploymentSnapshot({
+          id: "00000000-0000-0000-0000-000000000122",
+          cpu: "1",
+          memoryBytes: String(GiB),
+        }),
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(evaluateAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runningApps: [{
+          appId: startedAppId,
+          hardLimitBytes: GiB,
+          replicas: 1,
+        }],
+      }),
+    );
   });
 
 });

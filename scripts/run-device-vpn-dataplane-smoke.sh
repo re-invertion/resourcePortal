@@ -34,6 +34,7 @@ VH="dvuh${RUN_ID}"
 VC="dvuc${RUN_ID}"
 KEYDIR="/tmp/rp-device-vpn-e2e-${RUN_ID}"
 STACK_YAML="${KEYDIR}/device-vpn.yml"
+CLIENT_KEY_APPARMOR=""
 NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"
 OLD_CP_LABEL="$(docker node inspect "$NODE_ID" --format '{{index .Spec.Labels "rp.node.control-plane"}}')"
 
@@ -88,11 +89,14 @@ cleanup() {
   else
     docker node update --label-rm rp.node.control-plane "$NODE_ID" >/dev/null 2>&1 || true
   fi
+  if [ -n "$CLIENT_KEY_APPARMOR" ]; then
+    sudo -n rm -f -- "$CLIENT_KEY_APPARMOR" >/dev/null 2>&1 || true
+  fi
   rm -rf "$KEYDIR"
 }
 trap cleanup EXIT
 
-for cmd in docker ip wg iptables curl jq; do
+for cmd in docker ip nsenter wg iptables curl jq; do
   command -v "$cmd" >/dev/null 2>&1 || fail "missing command: $cmd"
 done
 [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" = "active" ] || fail "Docker Swarm is not active"
@@ -199,7 +203,19 @@ sudo -n ip netns exec "$CLIENT_NS" ip link set "$VC" up
 
 sudo -n ip netns exec "$CLIENT_NS" ip link add rp-device-vpn type wireguard
 sudo -n ip netns exec "$CLIENT_NS" ip addr add "${CLIENT_A}/32" dev rp-device-vpn
-sudo -n ip netns exec "$CLIENT_NS" wg set rp-device-vpn   private-key "$KEYDIR/client-a.key"   peer "$SERVER_PUB"   endpoint "${UNDERLAY_HOST_IP}:$PORT"   allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR"   persistent-keepalive 5
+# Ubuntu 26.04's wg AppArmor profile only permits key-file reads below
+# /etc/wireguard; /tmp, /run and /dev/stdin all fail with fopen EACCES.
+sudo -n mkdir -p /etc/wireguard
+CLIENT_KEY_APPARMOR="$(sudo -n mktemp /etc/wireguard/rp-device-vpn-smoke.XXXXXXXX)"
+cat "$KEYDIR/client-a.key" | sudo -n tee "$CLIENT_KEY_APPARMOR" >/dev/null
+sudo -n chmod 0600 "$CLIENT_KEY_APPARMOR"
+sudo -n nsenter --net="/run/netns/$CLIENT_NS" -- \
+  wg set rp-device-vpn \
+    private-key "$CLIENT_KEY_APPARMOR" \
+    peer "$SERVER_PUB" \
+    endpoint "${UNDERLAY_HOST_IP}:$PORT" \
+    allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR" \
+    persistent-keepalive 5
 sudo -n ip netns exec "$CLIENT_NS" ip link set rp-device-vpn up
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_A_CIDR" dev rp-device-vpn
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_B_CIDR" dev rp-device-vpn

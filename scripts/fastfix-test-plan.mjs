@@ -158,6 +158,9 @@ const commands = {
     ["bash", "test/installer/test-workflows.sh"],
     ["bash", "test/installer/test-core.sh"],
   ],
+  "swarm-smoke-fixtures": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "scripts/privileged-smoke-worker.spec.ts"],
+  ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
     ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
@@ -292,6 +295,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-recovery\.service|stage6-worker-recovery\.spec)\.ts$/, ["recovery-safety", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
+  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.service(?:\.spec)?\.ts$/, ["deployment-rollout", "worker"]],
   // Deployment placement labels drive SingleApp-to-Gate routing isolation.
   // Include the actual renderer assertion in targeted networking verification,
   // and retain release/rollback smoke for changes to this contract.
@@ -320,7 +324,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],
   [/^packages\/resourceportal-api\/README\.md$/, []],
   [/^README\.md$/, ["workflow"]],
-  [/^packages\/resourceportal-api\/scripts\/smoke-(deploy|stage11-quota-concurrency|stage15-capacity|stage16-operations|volume-lifecycle)\.ts$/, ["release-fixtures", "tenant-access", "platform-release"]],
+  [/^packages\/resourceportal-api\/scripts\/smoke-(deploy|stage11-quota-concurrency|stage14-storage-backend|stage15-capacity|stage16-operations|volume-lifecycle)\.ts$/, ["release-fixtures", "swarm-smoke-fixtures", "tenant-access", "platform-release"]],
+  [/^packages\/resourceportal-api\/scripts\/privileged-smoke-worker(?:\.spec)?\.ts$/, ["release-fixtures", "swarm-smoke-fixtures", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
   [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
   [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release"]],
@@ -443,7 +448,11 @@ export function selectProfiles(paths) {
     vpnSmoke: profiles.has("networking"),
     // Force the isolated real-Swarm integration gate for terminal/exec changes,
     // independently of the VPN-only dataplane smoke selection.
-    swarmSmoke: profiles.has("networking") || profiles.has("container-terminal") || profiles.has("gpu-security"),
+    swarmSmoke:
+      profiles.has("networking") ||
+      profiles.has("container-terminal") ||
+      profiles.has("gpu-security") ||
+      profiles.has("swarm-smoke-fixtures"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };

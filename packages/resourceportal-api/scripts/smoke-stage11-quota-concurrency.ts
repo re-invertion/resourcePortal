@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
+import { privilegedSmokeWorkerArgs } from "./privileged-smoke-worker";
 
 const prisma = new PrismaClient();
 const apiBaseUrl = (
@@ -289,7 +290,7 @@ async function runOperationWorkers(count: number, label: string) {
       return privileged
         ? command(
             "sudo",
-            ["-E", process.execPath, npmExecPath!, "run", "worker"],
+            privilegedSmokeWorkerArgs(workerEnv, process.execPath, npmExecPath!),
             workerEnv,
           )
         : command("npm", ["run", "worker"], workerEnv);
