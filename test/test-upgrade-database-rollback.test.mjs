@@ -218,8 +218,9 @@ test("release publishes the exact previously tested local API/Web/Postgres image
   assert.match(testedImagePublication, /docker tag "\$candidate" "\$published"/);
   assert.match(testedImagePublication, /docker push "\$published"/);
   assert.match(testedImagePublication, /tested_id/);
-  assert.match(testedImagePublication, /docker image inspect --format '\{\{\.Id\}\}' "\$ref"/);
-  assert.doesNotMatch(testedImagePublication, /docker build|buildx build/);
+  assert.match(testedImagePublication, /docker buildx imagetools inspect --raw/);
+  assert.match(testedImagePublication, /\.config\.digest/);
+  assert.doesNotMatch(testedImagePublication, /docker build(?:\s|$)|docker buildx build/);
 });
 
 test("release rollback cannot bypass healthy local Swarm task discovery using standalone database containers", () => {
@@ -268,4 +269,121 @@ test("rollback service readiness fails closed when Docker service inspect report
   ].join("\n");
   const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+});
+
+
+test("GHCR image publisher uses registry config digest, never local RepoDigests[0], and preserves existing tags", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, delimiter } = await import("node:path");
+
+  const id = "sha256:" + "a".repeat(64);
+  const digest = "sha256:" + "b".repeat(64);
+  const otherId = "sha256:" + "c".repeat(64);
+  const fakeDocker = String.raw`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$MOCK_LOG"
+if [[ "$1" == image && "$2" == inspect ]]; then
+  printf '%s\n' "$MOCK_IMAGE_ID"
+  exit 0
+fi
+if [[ "$1" == tag ]]; then exit 0; fi
+if [[ "$1" == push ]]; then
+  touch "$MOCK_PUSHED"
+  echo "Pushed image"
+  exit 0
+fi
+if [[ "$1" == buildx && "$2" == imagetools && "$3" == inspect ]]; then
+  if [[ "$4" == --raw ]]; then
+    if [[ "$MOCK_REMOTE_CONFIG" == index ]]; then
+      echo '{"schemaVersion":2,"manifests":[]}'
+    else
+      printf '{"schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_REMOTE_CONFIG"
+    fi
+    exit 0
+  fi
+  if [[ "$MOCK_MODE" == unavailable ]]; then
+    echo "unauthorized: authentication required" >&2
+    exit 1
+  fi
+  if [[ "$MOCK_MODE" == existing || -f "$MOCK_PUSHED" ]]; then
+    echo "Name: ghcr.io/re-invertion/resourceportal-api:v0.2.130"
+    echo "MediaType: application/vnd.docker.distribution.manifest.v2+json"
+    printf 'Digest: %s\n' "$MOCK_DIGEST"
+    exit 0
+  fi
+  echo "ghcr.io/re-invertion/resourceportal-api:v0.2.130: not found" >&2
+  exit 1
+fi
+echo "Unexpected fake Docker command: $*" >&2
+exit 91
+`;
+
+  function run(mode, config = id) {
+    const dir = mkdtempSync(join(tmpdir(), "rp-release-digest-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "docker"), fakeDocker);
+      chmodSync(join(bin, "docker"), 0o755);
+      const logfile = join(dir, "commands.log");
+      const pushed = join(dir, "pushed");
+      const output = join(dir, "output");
+      const result = spawnSync("bash", ["scripts/publish-tested-release-image.sh", "api", "v0.2.130"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: bin + delimiter + process.env.PATH,
+          GITHUB_REPOSITORY_OWNER: "re-invertion",
+          GITHUB_OUTPUT: output,
+          MOCK_LOG: logfile,
+          MOCK_PUSHED: pushed,
+          MOCK_IMAGE_ID: id,
+          MOCK_REMOTE_CONFIG: config,
+          MOCK_DIGEST: digest,
+          MOCK_MODE: mode,
+        },
+      });
+      return {
+        result,
+        pushed: existsSync(pushed),
+        output: existsSync(output) ? readFileSync(output, "utf8") : "",
+        commands: readFileSync(logfile, "utf8"),
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const fresh = run("missing");
+  assert.equal(fresh.result.status, 0, fresh.result.stderr);
+  assert.equal(fresh.pushed, true);
+  assert.equal(fresh.output, "digest=" + digest + "\n");
+  assert.match(fresh.commands, /buildx imagetools inspect --raw ghcr.io\/re-invertion\/resourceportal-api@sha256:/);
+
+  const reused = run("existing");
+  assert.equal(reused.result.status, 0, reused.result.stderr);
+  assert.equal(reused.pushed, false, "already-published identical image must never be pushed again");
+  assert.equal(reused.output, "digest=" + digest + "\n");
+
+  const conflict = run("existing", otherId);
+  assert.notEqual(conflict.result.status, 0);
+  assert.equal(conflict.pushed, false, "must not overwrite a conflicting existing registry tag");
+  assert.match(conflict.result.stderr, /differs from rollback-tested image/);
+
+  const unavailable = run("unavailable");
+  assert.notEqual(unavailable.result.status, 0);
+  assert.equal(unavailable.pushed, false, "registry/auth errors must never allow a push");
+  assert.match(unavailable.result.stderr, /Cannot determine whether/);
+
+  const corrupted = run("missing", otherId);
+  assert.notEqual(corrupted.result.status, 0);
+  assert.equal(corrupted.pushed, true);
+  assert.match(corrupted.result.stderr, /differs from rollback-tested image/);
+  assert.equal(corrupted.output, "", "must not emit a digest when verification fails");
+
+  const multiArch = run("existing", "index");
+  assert.notEqual(multiArch.result.status, 0);
+  assert.equal(multiArch.pushed, false);
+  assert.match(multiArch.result.stderr, /no single-platform config digest/);
 });
