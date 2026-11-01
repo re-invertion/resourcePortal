@@ -28,7 +28,7 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
-for binary in ip wg dnsmasq busybox python3 ping; do
+for binary in ip nsenter wg dnsmasq busybox python3 ping; do
   command -v "$binary" >/dev/null || fail "missing $binary"
 done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,9 +101,11 @@ CLIENT_KEY_ROOT="$(cat "$TMP/c.key" | sudo -n sh -ceu '
   cat > "$key"
   printf "%s" "$key"
 ')"
-ns "$RP" wg set wg0 private-key "$SERVER_KEY_ROOT" listen-port 55051 \
+sudo -n nsenter --net="/run/netns/$RP" -- \
+  wg set wg0 private-key "$SERVER_KEY_ROOT" listen-port 55051 \
   peer "$(cat "$TMP/c.pub")" allowed-ips "$CL_IP/32" endpoint 172.31.90.2:55052
-ns "$GATE" wg set rp-gate private-key "$CLIENT_KEY_ROOT" listen-port 55052 \
+sudo -n nsenter --net="/run/netns/$GATE" -- \
+  wg set rp-gate private-key "$CLIENT_KEY_ROOT" listen-port 55052 \
   peer "$(cat "$TMP/s.pub")" allowed-ips "$SV_IP/32" endpoint 172.31.90.1:55051
 ns "$RP" ip addr add "$SV_IP/30" dev wg0
 ns "$GATE" ip addr add "$CL_IP/30" dev rp-gate

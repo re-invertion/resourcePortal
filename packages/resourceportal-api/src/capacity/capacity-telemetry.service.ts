@@ -396,7 +396,10 @@ export class CapacityTelemetryService {
           )
         : running.hardLimitBytes;
       currentPredictionByApp.set(running.appId, predictedBytes);
-      const confidence = observed?.confidence ?? 0;
+      const confidence =
+        observed && running.replicas <= observed.replicas
+          ? observed.confidence
+          : 0;
       const appOom = observed?.recentOomEvents ?? 0n;
       predictions.push({
         appId: running.appId,

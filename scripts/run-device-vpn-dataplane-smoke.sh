@@ -96,7 +96,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for cmd in docker ip wg iptables curl jq; do
+for cmd in docker ip nsenter wg iptables curl jq; do
   command -v "$cmd" >/dev/null 2>&1 || fail "missing command: $cmd"
 done
 [ "$(docker info --format '{{.Swarm.LocalNodeState}}')" = "active" ] || fail "Docker Swarm is not active"
@@ -209,7 +209,7 @@ CLIENT_KEY_ROOT="$(cat "$KEYDIR/client-a.key" | sudo -n sh -ceu '
   cat > "$key"
   printf "%s" "$key"
 ')"
-sudo -n ip netns exec "$CLIENT_NS" \
+sudo -n nsenter --net="/run/netns/$CLIENT_NS" -- \
   wg set rp-device-vpn \
     private-key "$CLIENT_KEY_ROOT" \
     peer "$SERVER_PUB" \

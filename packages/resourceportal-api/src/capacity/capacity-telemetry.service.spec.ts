@@ -323,6 +323,28 @@ describe("Hybrid admission from worker-published telemetry", () => {
     expect(result.decision.allowed).toBe(true);
   });
 
+  it("does not correlation-discount replica growth that telemetry has not observed yet", async () => {
+    const { telemetry } = admissionService(
+      [report(nodeA, 16, 1)],
+      [appEvidence("existing-app", 1, 12, 1)],
+    );
+    const result = await telemetry.evaluateAdmission({
+      snapshot: snapshot(1, "new-app", 1) as never,
+      runningApps: [
+        {
+          appId: "existing-app",
+          hardLimitBytes: 12n * GiB,
+          replicas: 6,
+        },
+      ],
+      inFlightSnapshots: [],
+      schedulableNodeIds: [nodeA],
+    });
+    expect(result.usable).toBe(true);
+    if (!result.usable) return;
+    expect(result.decision.predictedExistingGrowthBytes).toBe(5n * GiB);
+  });
+
   it("does not reserve hard-limit growth twice when replica count is unchanged", async () => {
     const { telemetry } = admissionService(
       [report(nodeA, 16, 1)],

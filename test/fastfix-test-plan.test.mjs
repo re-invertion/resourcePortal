@@ -32,7 +32,7 @@ test("Device VPN dataplane smoke copies the client key into a root-owned /run fi
   );
   assert.match(
     source,
-    /wg set rp-device-vpn[\s\S]*private-key "\$CLIENT_KEY_ROOT"/,
+    /nsenter --net="\/run\/netns\/\$CLIENT_NS" --[\s\S]*wg set rp-device-vpn[\s\S]*private-key "\$CLIENT_KEY_ROOT"/,
   );
   assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
   assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
@@ -51,8 +51,14 @@ test("Remote LAN dataplane smoke uses root-owned /run files for both WireGuard p
   );
   assert.match(source, /mktemp \/run\/rp-l2-server-key\.XXXXXX/);
   assert.match(source, /mktemp \/run\/rp-l2-client-key\.XXXXXX/);
-  assert.match(source, /wg set wg0 private-key "\$SERVER_KEY_ROOT"/);
-  assert.match(source, /wg set rp-gate private-key "\$CLIENT_KEY_ROOT"/);
+  assert.match(
+    source,
+    /nsenter --net="\/run\/netns\/\$RP" --[\s\S]*wg set wg0 private-key "\$SERVER_KEY_ROOT"/,
+  );
+  assert.match(
+    source,
+    /nsenter --net="\/run\/netns\/\$GATE" --[\s\S]*wg set rp-gate private-key "\$CLIENT_KEY_ROOT"/,
+  );
   assert.match(source, /sudo -n rm -f "\$SERVER_KEY_ROOT"/);
   assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
   assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
