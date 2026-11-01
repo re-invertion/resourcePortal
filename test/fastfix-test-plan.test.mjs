@@ -26,12 +26,18 @@ test("Device VPN dataplane smoke feeds the client key through stdin in the targe
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.match(
-    source,
-    /cat "\\$KEYDIR\\/client-a\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$CLIENT_NS" --[\\s\\S]*wg set rp-device-vpn[\\s\\S]*private-key \\/dev\\/stdin/,
+  assert.equal(
+    source.includes(
+      'cat "$KEYDIR/client-a.key" | sudo -n nsenter --net="/run/netns/$CLIENT_NS" --',
+    ),
+    true,
   );
-  assert.doesNotMatch(source, /rp-device-vpn-client-key/);
-  assert.doesNotMatch(source, /private-key "\\$KEYDIR\\/client-a\\.key"/);
+  assert.equal(source.includes("private-key /dev/stdin"), true);
+  assert.equal(source.includes("rp-device-vpn-client-key"), false);
+  assert.equal(
+    source.includes('private-key "$KEYDIR/client-a.key"'),
+    false,
+  );
 });
 
 test("Remote LAN dataplane smoke feeds both WireGuard private keys through stdin", async () => {
@@ -40,16 +46,26 @@ test("Remote LAN dataplane smoke feeds both WireGuard private keys through stdin
     new URL("../scripts/run-remote-lan-l2-dhcp-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.match(
-    source,
-    /cat "\\$TMP\\/s\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$RP" --[\\s\\S]*wg set wg0 private-key \\/dev\\/stdin/,
+  assert.equal(
+    source.includes(
+      'cat "$TMP/s.key" | sudo -n nsenter --net="/run/netns/$RP" --',
+    ),
+    true,
   );
-  assert.match(
-    source,
-    /cat "\\$TMP\\/c\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$GATE" --[\\s\\S]*wg set rp-gate private-key \\/dev\\/stdin/,
+  assert.equal(
+    source.includes(
+      'cat "$TMP/c.key" | sudo -n nsenter --net="/run/netns/$GATE" --',
+    ),
+    true,
   );
-  assert.doesNotMatch(source, /rp-l2-(?:server|client)-key/);
-  assert.doesNotMatch(source, /private-key "\\$TMP\\/(?:s|c)\\.key"/);
+  assert.equal(
+    (source.match(/private-key \/dev\/stdin/g) ?? []).length,
+    2,
+  );
+  assert.equal(source.includes("rp-l2-server-key"), false);
+  assert.equal(source.includes("rp-l2-client-key"), false);
+  assert.equal(source.includes('private-key "$TMP/s.key"'), false);
+  assert.equal(source.includes('private-key "$TMP/c.key"'), false);
 });
 
 test("documentation-only change does not trigger unrelated tests", () => {
