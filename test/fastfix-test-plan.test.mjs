@@ -20,6 +20,22 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
+test("Device VPN dataplane smoke passes the client private key through stdin inside sudo netns", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(
+    new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /wg set rp-device-vpn\s+private-key \/dev\/stdin[\s\S]*< "\$KEYDIR\/client-a\.key"/,
+  );
+  assert.doesNotMatch(
+    source,
+    /wg set rp-device-vpn\s+private-key "\$KEYDIR\/client-a\.key"/,
+  );
+});
+
 test("documentation-only change does not trigger unrelated tests", () => {
   const plan = selectProfiles(["docs/advanced-networking-resourceportalgate.md", "packages/resourceportal-api/README.md"]);
   assert.deepEqual(plan.profiles, []);

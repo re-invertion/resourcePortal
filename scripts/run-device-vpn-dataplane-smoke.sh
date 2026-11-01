@@ -199,7 +199,7 @@ sudo -n ip netns exec "$CLIENT_NS" ip link set "$VC" up
 
 sudo -n ip netns exec "$CLIENT_NS" ip link add rp-device-vpn type wireguard
 sudo -n ip netns exec "$CLIENT_NS" ip addr add "${CLIENT_A}/32" dev rp-device-vpn
-sudo -n ip netns exec "$CLIENT_NS" wg set rp-device-vpn   private-key "$KEYDIR/client-a.key"   peer "$SERVER_PUB"   endpoint "${UNDERLAY_HOST_IP}:$PORT"   allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR"   persistent-keepalive 5
+sudo -n ip netns exec "$CLIENT_NS" wg set rp-device-vpn   private-key /dev/stdin   peer "$SERVER_PUB"   endpoint "${UNDERLAY_HOST_IP}:$PORT"   allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR"   persistent-keepalive 5 < "$KEYDIR/client-a.key"
 sudo -n ip netns exec "$CLIENT_NS" ip link set rp-device-vpn up
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_A_CIDR" dev rp-device-vpn
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_B_CIDR" dev rp-device-vpn
