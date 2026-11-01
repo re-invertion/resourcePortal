@@ -30,6 +30,7 @@ export type MemoryObservation = {
   observedAt: string;
   nodeId: string;
   appId?: string;
+  replicaCount?: number;
   containerId?: string;
   containerStartedAt?: string;
   memoryCurrentBytes: bigint;

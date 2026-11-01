@@ -4,8 +4,6 @@ set -euo pipefail
 export PATH="/usr/sbin:/sbin:$PATH"
 APP="rpa-$"; APP2="rp2-$"; RP="rpr-$"; GATE="rpg-$"; LAN="rpl-$"
 TMP="$(mktemp -d)"
-SERVER_KEY_ROOT=""
-CLIENT_KEY_ROOT=""
 MAC="02:aa:bb:cc:dd:ee"; MAC2="02:aa:bb:cc:dd:ef"
 APP_IP="10.200.42.12"; RP_IP="10.200.42.20"
 APP2_IP="10.200.43.12"; RP2_IP="10.200.43.20"
@@ -19,12 +17,6 @@ cleanup() {
     sudo -n ip netns pids "$net" 2>/dev/null | xargs -r sudo -n kill >/dev/null 2>&1 || true
     sudo -n ip netns del "$net" >/dev/null 2>&1 || true
   done
-  if [ -n "${SERVER_KEY_ROOT:-}" ]; then
-    sudo -n rm -f "$SERVER_KEY_ROOT" >/dev/null 2>&1 || true
-  fi
-  if [ -n "${CLIENT_KEY_ROOT:-}" ]; then
-    sudo -n rm -f "$CLIENT_KEY_ROOT" >/dev/null 2>&1 || true
-  fi
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -89,23 +81,11 @@ wg genkey | tee "$TMP/s.key" | wg pubkey > "$TMP/s.pub"
 wg genkey | tee "$TMP/c.key" | wg pubkey > "$TMP/c.pub"
 ns "$RP" ip link add wg0 type wireguard
 ns "$GATE" ip link add rp-gate type wireguard
-SERVER_KEY_ROOT="$(cat "$TMP/s.key" | sudo -n sh -ceu '
-  umask 077
-  key="$(mktemp /run/rp-l2-server-key.XXXXXX)"
-  cat > "$key"
-  printf "%s" "$key"
-')"
-CLIENT_KEY_ROOT="$(cat "$TMP/c.key" | sudo -n sh -ceu '
-  umask 077
-  key="$(mktemp /run/rp-l2-client-key.XXXXXX)"
-  cat > "$key"
-  printf "%s" "$key"
-')"
-sudo -n nsenter --net="/run/netns/$RP" -- \
-  wg set wg0 private-key "$SERVER_KEY_ROOT" listen-port 55051 \
+cat "$TMP/s.key" | sudo -n nsenter --net="/run/netns/$RP" -- \
+  wg set wg0 private-key /dev/stdin listen-port 55051 \
   peer "$(cat "$TMP/c.pub")" allowed-ips "$CL_IP/32" endpoint 172.31.90.2:55052
-sudo -n nsenter --net="/run/netns/$GATE" -- \
-  wg set rp-gate private-key "$CLIENT_KEY_ROOT" listen-port 55052 \
+cat "$TMP/c.key" | sudo -n nsenter --net="/run/netns/$GATE" -- \
+  wg set rp-gate private-key /dev/stdin listen-port 55052 \
   peer "$(cat "$TMP/s.pub")" allowed-ips "$SV_IP/32" endpoint 172.31.90.1:55051
 ns "$RP" ip addr add "$SV_IP/30" dev wg0
 ns "$GATE" ip addr add "$CL_IP/30" dev rp-gate

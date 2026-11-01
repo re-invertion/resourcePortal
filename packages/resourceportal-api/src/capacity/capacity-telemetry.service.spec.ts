@@ -446,6 +446,7 @@ describe("worker collection completeness", () => {
     const points = await telemetry.observeNow();
     const appPoint = points.find((point) => point.appId === "existing-app");
     expect(appPoint?.memoryCurrentBytes).toBe(2n * GiB);
+    expect(appPoint?.replicaCount).toBe(2);
     expect(appPoint?.containerId.split(",")).toHaveLength(2);
     expect(points.filter((point) => point.appId === undefined)).toHaveLength(1);
     expect(
@@ -594,6 +595,7 @@ describe("worker admission evidence publication", () => {
         observedAt: now,
         nodeId: nodeA,
         appId: "existing-app",
+        replicaCount: 1,
         containerId: "aaaaaaaaaaaa",
         containerStartedAt: new Date(Date.now() - 60_000).toISOString(),
         memoryCurrentBytes: 1n * GiB,
@@ -670,6 +672,72 @@ describe("worker admission evidence publication", () => {
         },
       ],
     });
+    expect(upsert).toHaveBeenCalledOnce();
+  });
+
+  it("publishes the replica count validated with the memory sample even if the database advances before publication", async () => {
+    const store = new MemoryStore();
+    const config = {
+      get: (_key: string, fallback?: unknown) => fallback,
+    };
+    const policy = new CapacityPolicyService(config as never);
+    const singleAppFindMany = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: "existing-app",
+          name: "Existing",
+          memoryBytes: 2n * GiB,
+          actualReplicas: 1,
+          desiredReplicas: 1,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "existing-app",
+          name: "Existing",
+          memoryBytes: 2n * GiB,
+          actualReplicas: 6,
+          desiredReplicas: 6,
+        },
+      ]);
+    const upsert = vi.fn(() => Promise.resolve({}));
+    const prisma = {
+      singleApp: { findMany: singleAppFindMany },
+      remoteLocation: {
+        findMany: () => Promise.resolve([{ swarmNodeId: nodeA }]),
+      },
+      appGroupDeployment: {
+        findMany: () => Promise.resolve([]),
+      },
+      workerReconciliationState: {
+        upsert,
+        updateMany: () => Promise.resolve({ count: 0 }),
+      },
+    };
+    const telemetry = new CapacityTelemetryService(
+      store as never,
+      policy,
+      prisma as never,
+      {
+        collect: vi.fn(() => Promise.resolve([report(nodeA, 20, 1)])),
+      } as never,
+    );
+
+    const observations = await telemetry.observeNow();
+    expect(
+      observations.find((point) => point.appId === "existing-app")?.replicaCount,
+    ).toBe(1);
+
+    const diagnostics = await telemetry.publishDiagnostics("worker-1");
+    expect(diagnostics.admissionEvidence.apps).toEqual([
+      expect.objectContaining({
+        appId: "existing-app",
+        replicas: 1,
+        hardLimitBytes: (2n * GiB).toString(),
+      }),
+    ]);
+    expect(singleAppFindMany).toHaveBeenCalledTimes(2);
     expect(upsert).toHaveBeenCalledOnce();
   });
 });

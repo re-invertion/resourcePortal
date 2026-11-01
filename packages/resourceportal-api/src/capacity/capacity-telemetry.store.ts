@@ -224,10 +224,20 @@ export class CapacityTelemetryStore {
     }
     const optionalBigInt = (raw: unknown) =>
       typeof raw === "string" && /^\d+$/.test(raw) ? BigInt(raw) : undefined;
+    const replicaCount =
+      point.replicaCount === undefined
+        ? undefined
+        : typeof point.replicaCount === "number" &&
+            Number.isSafeInteger(point.replicaCount) &&
+            point.replicaCount >= 0
+          ? point.replicaCount
+          : null;
+    if (replicaCount === null) return null;
     return {
       observedAt: point.observedAt,
       nodeId: point.nodeId,
       appId: typeof point.appId === "string" ? point.appId : undefined,
+      replicaCount,
       containerId:
         typeof point.containerId === "string" ? point.containerId : undefined,
       containerStartedAt:

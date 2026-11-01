@@ -20,7 +20,7 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
-test("Device VPN dataplane smoke copies the client key into a root-owned /run file", async () => {
+test("Device VPN dataplane smoke feeds the client key through stdin in the target network namespace", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
@@ -28,41 +28,28 @@ test("Device VPN dataplane smoke copies the client key into a root-owned /run fi
   );
   assert.match(
     source,
-    /CLIENT_KEY_ROOT="\$\(cat "\$KEYDIR\/client-a\.key" \| sudo -n sh -ceu '[\s\S]*mktemp \/run\/rp-device-vpn-client-key\.XXXXXX[\s\S]*cat > "\$key"[\s\S]*printf "%s" "\$key"[\s\S]*'\)"/,
+    /cat "\\$KEYDIR\\/client-a\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$CLIENT_NS" --[\\s\\S]*wg set rp-device-vpn[\\s\\S]*private-key \\/dev\\/stdin/,
   );
-  assert.match(
-    source,
-    /nsenter --net="\/run\/netns\/\$CLIENT_NS" --[\s\S]*wg set rp-device-vpn[\s\S]*private-key "\$CLIENT_KEY_ROOT"/,
-  );
-  assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
-  assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
-  assert.doesNotMatch(source, /private-key \/dev\/stdin/);
-  assert.doesNotMatch(
-    source,
-    /wg set rp-device-vpn\s+private-key "\$KEYDIR\/client-a\.key"/,
-  );
+  assert.doesNotMatch(source, /rp-device-vpn-client-key/);
+  assert.doesNotMatch(source, /private-key "\\$KEYDIR\\/client-a\\.key"/);
 });
 
-test("Remote LAN dataplane smoke uses root-owned /run files for both WireGuard private keys", async () => {
+test("Remote LAN dataplane smoke feeds both WireGuard private keys through stdin", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-remote-lan-l2-dhcp-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.match(source, /mktemp \/run\/rp-l2-server-key\.XXXXXX/);
-  assert.match(source, /mktemp \/run\/rp-l2-client-key\.XXXXXX/);
   assert.match(
     source,
-    /nsenter --net="\/run\/netns\/\$RP" --[\s\S]*wg set wg0 private-key "\$SERVER_KEY_ROOT"/,
+    /cat "\\$TMP\\/s\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$RP" --[\\s\\S]*wg set wg0 private-key \\/dev\\/stdin/,
   );
   assert.match(
     source,
-    /nsenter --net="\/run\/netns\/\$GATE" --[\s\S]*wg set rp-gate private-key "\$CLIENT_KEY_ROOT"/,
+    /cat "\\$TMP\\/c\\.key" \\| sudo -n nsenter --net="\\/run\\/netns\\/\\$GATE" --[\\s\\S]*wg set rp-gate private-key \\/dev\\/stdin/,
   );
-  assert.match(source, /sudo -n rm -f "\$SERVER_KEY_ROOT"/);
-  assert.match(source, /sudo -n rm -f "\$CLIENT_KEY_ROOT"/);
-  assert.doesNotMatch(source, /private-key \/proc\/self\/fd\/0/);
-  assert.doesNotMatch(source, /private-key "\$TMP\/(?:s|c)\.key"/);
+  assert.doesNotMatch(source, /rp-l2-(?:server|client)-key/);
+  assert.doesNotMatch(source, /private-key "\\$TMP\\/(?:s|c)\\.key"/);
 });
 
 test("documentation-only change does not trigger unrelated tests", () => {

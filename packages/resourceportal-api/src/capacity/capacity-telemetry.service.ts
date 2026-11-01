@@ -258,6 +258,7 @@ export class CapacityTelemetryService {
             ? reports[0].swarmNodeId
             : "cluster",
         appId,
+        replicaCount: observedReplicaCounts.get(appId),
         containerId: group
           .map((item) => item.container.id)
           .sort()
@@ -627,6 +628,35 @@ export class CapacityTelemetryService {
         policy,
       );
     });
+    const sampledReplicaCounts = new Map<string, number>();
+    const admissionPredictions = runningApps.map((app) => {
+      const history = histories.get(app.id) ?? [];
+      const latestSample = [...history].sort(
+        (left, right) =>
+          Date.parse(right.observedAt) - Date.parse(left.observedAt),
+      )[0];
+      const sampleAgeMs = latestSample
+        ? Date.now() - Date.parse(latestSample.observedAt)
+        : Number.NaN;
+      const replicas = latestSample?.replicaCount;
+      if (
+        replicas === undefined ||
+        !Number.isSafeInteger(replicas) ||
+        replicas <= 0 ||
+        !Number.isFinite(sampleAgeMs) ||
+        sampleAgeMs < 0 ||
+        sampleAgeMs > policy.maxTelemetryAgeSeconds * 1000
+      ) {
+        return null;
+      }
+      sampledReplicaCounts.set(app.id, replicas);
+      return predictAppMemory(
+        app.id,
+        history,
+        app.memoryBytes * BigInt(replicas),
+        policy,
+      );
+    });
 
     const nodeWindowSince =
       Date.now() - policy.predictionWindowDays * 86_400_000;
@@ -733,11 +763,8 @@ export class CapacityTelemetryService {
         generatedAt: new Date().toISOString(),
         nodes: admissionNodes,
         apps: runningApps.flatMap((app, index) => {
-          const replicas = Math.max(
-            0,
-            app.actualReplicas || app.desiredReplicas,
-          );
-          const prediction = predictions[index];
+          const replicas = sampledReplicaCounts.get(app.id) ?? 0;
+          const prediction = admissionPredictions[index];
           if (replicas <= 0 || !prediction) return [];
           return [{
             appId: app.id,

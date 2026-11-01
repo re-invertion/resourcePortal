@@ -19,6 +19,7 @@ function observation(
     observedAt,
     nodeId: "node-a",
     appId: "app-a",
+    replicaCount: 1,
     containerId: "container-a",
     containerStartedAt: new Date(
       Date.parse(observedAt) - 60_000,
@@ -57,6 +58,7 @@ describe("CapacityTelemetryStore", () => {
         observation(now),
         observation(now, {
           appId: undefined,
+          replicaCount: undefined,
           containerId: undefined,
           containerStartedAt: undefined,
           memoryCurrentBytes: 8n * GiB,
@@ -70,6 +72,7 @@ describe("CapacityTelemetryStore", () => {
     const nodes = await instance.latestNodes();
     expect(app).toHaveLength(1);
     expect(app[0].memoryCurrentBytes).toBe(2n * GiB);
+    expect(app[0].replicaCount).toBe(1);
     expect(app[0].startupPeakBytes).toBe(3n * GiB);
     expect(nodes).toHaveLength(1);
     expect(nodes[0].nodeMemoryAvailableBytes).toBe(40n * GiB);
