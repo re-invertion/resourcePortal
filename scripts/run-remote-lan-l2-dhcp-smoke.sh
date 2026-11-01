@@ -81,9 +81,11 @@ wg genkey | tee "$TMP/s.key" | wg pubkey > "$TMP/s.pub"
 wg genkey | tee "$TMP/c.key" | wg pubkey > "$TMP/c.pub"
 ns "$RP" ip link add wg0 type wireguard
 ns "$GATE" ip link add rp-gate type wireguard
-ns "$RP" wg set wg0 private-key "$TMP/s.key" listen-port 55051 \
+cat "$TMP/s.key" | sudo -n ip netns exec "$RP" \
+  wg set wg0 private-key /proc/self/fd/0 listen-port 55051 \
   peer "$(cat "$TMP/c.pub")" allowed-ips "$CL_IP/32" endpoint 172.31.90.2:55052
-ns "$GATE" wg set rp-gate private-key "$TMP/c.key" listen-port 55052 \
+cat "$TMP/c.key" | sudo -n ip netns exec "$GATE" \
+  wg set rp-gate private-key /proc/self/fd/0 listen-port 55052 \
   peer "$(cat "$TMP/s.pub")" allowed-ips "$SV_IP/32" endpoint 172.31.90.1:55051
 ns "$RP" ip addr add "$SV_IP/30" dev wg0
 ns "$GATE" ip addr add "$CL_IP/30" dev rp-gate

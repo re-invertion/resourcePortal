@@ -586,6 +586,7 @@ describe("worker admission evidence publication", () => {
         nodeId: nodeA,
         memoryCurrentBytes: 1n * GiB,
         memoryPeakBytes: 1n * GiB,
+        startupPeakBytes: 3n * GiB,
         oomEvents: 0n,
         nodeMemoryAvailableBytes: 20n * GiB,
         nodeMemoryTotalBytes: 32n * GiB,
@@ -625,6 +626,12 @@ describe("worker admission evidence publication", () => {
       { collect: vi.fn() } as never,
     );
     const diagnostics = await telemetry.publishDiagnostics("worker-1");
+    expect(diagnostics.nodes).toEqual([
+      expect.objectContaining({
+        nodeId: nodeA,
+        startupPeakBytes: (3n * GiB).toString(),
+      }),
+    ]);
     expect(diagnostics.admissionEvidence).toMatchObject({
       nodes: [
         {

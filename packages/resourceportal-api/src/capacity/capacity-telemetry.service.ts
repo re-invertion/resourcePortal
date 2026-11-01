@@ -1038,6 +1038,7 @@ export class CapacityTelemetryService {
       nodeMemoryAvailableBytes:
         point.nodeMemoryAvailableBytes?.toString() ?? null,
       nodeMemoryTotalBytes: point.nodeMemoryTotalBytes?.toString() ?? null,
+      startupPeakBytes: point.startupPeakBytes?.toString() ?? null,
     };
   }
 }

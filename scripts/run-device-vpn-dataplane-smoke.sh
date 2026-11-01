@@ -199,18 +199,13 @@ sudo -n ip netns exec "$CLIENT_NS" ip link set "$VC" up
 
 sudo -n ip netns exec "$CLIENT_NS" ip link add rp-device-vpn type wireguard
 sudo -n ip netns exec "$CLIENT_NS" ip addr add "${CLIENT_A}/32" dev rp-device-vpn
-sudo -n ip netns exec "$CLIENT_NS" sh -ceu '
-  umask 077
-  key="$(mktemp /tmp/rp-device-vpn-client-key.XXXXXX)"
-  trap "rm -f \"$key\"" EXIT HUP INT TERM
-  cat > "$key"
+cat "$KEYDIR/client-a.key" | sudo -n ip netns exec "$CLIENT_NS" \
   wg set rp-device-vpn \
-    private-key "$key" \
-    peer "$1" \
-    endpoint "$2" \
-    allowed-ips "$3" \
+    private-key /proc/self/fd/0 \
+    peer "$SERVER_PUB" \
+    endpoint "${UNDERLAY_HOST_IP}:$PORT" \
+    allowed-ips "$STABLE_A_CIDR,$STABLE_B_CIDR" \
     persistent-keepalive 5
-' sh "$SERVER_PUB" "${UNDERLAY_HOST_IP}:$PORT" "$STABLE_A_CIDR,$STABLE_B_CIDR" < "$KEYDIR/client-a.key"
 sudo -n ip netns exec "$CLIENT_NS" ip link set rp-device-vpn up
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_A_CIDR" dev rp-device-vpn
 sudo -n ip netns exec "$CLIENT_NS" ip route replace "$STABLE_B_CIDR" dev rp-device-vpn

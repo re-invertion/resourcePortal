@@ -20,21 +20,37 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
-test("Device VPN dataplane smoke materializes the client key as a root-owned namespace temp file", async () => {
+test("Device VPN dataplane smoke streams the client key to root wg without namespace file opens", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.match(source, /mktemp \/tmp\/rp-device-vpn-client-key\.XXXXXX/);
-  assert.match(source, /cat > "\$key"/);
-  assert.match(source, /wg set rp-device-vpn[\s\S]*private-key "\$key"/);
-  assert.match(source, /< "\$KEYDIR\/client-a\.key"/);
+  assert.match(
+    source,
+    /cat "\$KEYDIR\/client-a\.key" \| sudo -n ip netns exec "\$CLIENT_NS"[\s\S]*wg set rp-device-vpn[\s\S]*private-key \/proc\/self\/fd\/0/,
+  );
+  assert.doesNotMatch(source, /mktemp \/tmp\/rp-device-vpn-client-key\.XXXXXX/);
   assert.doesNotMatch(source, /private-key \/dev\/stdin/);
   assert.doesNotMatch(
     source,
     /wg set rp-device-vpn\s+private-key "\$KEYDIR\/client-a\.key"/,
   );
+});
+
+test("Remote LAN dataplane smoke streams both WireGuard private keys through stdin", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(
+    new URL("../scripts/run-remote-lan-l2-dhcp-smoke.sh", import.meta.url),
+    "utf8",
+  );
+  assert.equal(
+    source.match(/private-key \/proc\/self\/fd\/0/g)?.length,
+    2,
+  );
+  assert.match(source, /cat "\$TMP\/s\.key" \| sudo -n ip netns exec "\$RP"/);
+  assert.match(source, /cat "\$TMP\/c\.key" \| sudo -n ip netns exec "\$GATE"/);
+  assert.doesNotMatch(source, /private-key "\$TMP\/(?:s|c)\.key"/);
 });
 
 test("documentation-only change does not trigger unrelated tests", () => {
