@@ -20,50 +20,35 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
-test("Device VPN dataplane smoke feeds the client key through stdin in the target network namespace", async () => {
+test("Device VPN smoke uses AppArmor-approved, root-owned /etc/wireguard private key", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.equal(
-    source.includes(
-      'cat "$KEYDIR/client-a.key" | sudo -n nsenter --net="/run/netns/$CLIENT_NS" --',
-    ),
-    true,
-  );
-  assert.equal(source.includes("private-key /dev/stdin"), true);
-  assert.equal(source.includes("rp-device-vpn-client-key"), false);
-  assert.equal(
-    source.includes('private-key "$KEYDIR/client-a.key"'),
-    false,
-  );
+  assert.equal(source.includes('sudo -n mktemp /etc/wireguard/rp-device-vpn-smoke.XXXXXXXX'), true);
+  assert.equal(source.includes('sudo -n chmod 0600 "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('wg set rp-device-vpn'), true);
+  assert.equal(source.includes('private-key "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('sudo -n rm -f -- "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('private-key /dev/stdin'), false);
+  assert.equal(source.includes('private-key "$KEYDIR/client-a.key"'), false);
 });
 
-test("Remote LAN dataplane smoke feeds both WireGuard private keys through stdin", async () => {
+test("Remote LAN smoke uses AppArmor-approved root-owned keys with cleanup", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-remote-lan-l2-dhcp-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.equal(
-    source.includes(
-      'cat "$TMP/s.key" | sudo -n nsenter --net="/run/netns/$RP" --',
-    ),
-    true,
-  );
-  assert.equal(
-    source.includes(
-      'cat "$TMP/c.key" | sudo -n nsenter --net="/run/netns/$GATE" --',
-    ),
-    true,
-  );
-  assert.equal(
-    (source.match(/private-key \/dev\/stdin/g) ?? []).length,
-    2,
-  );
-  assert.equal(source.includes("rp-l2-server-key"), false);
-  assert.equal(source.includes("rp-l2-client-key"), false);
+  assert.equal(source.includes('sudo -n mktemp /etc/wireguard/rp-l2-server-smoke.XXXXXXXX'), true);
+  assert.equal(source.includes('sudo -n mktemp /etc/wireguard/rp-l2-client-smoke.XXXXXXXX'), true);
+  assert.equal(source.includes('sudo -n chmod 0600 "$SERVER_KEY_APPARMOR" "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('wg set wg0 private-key "$SERVER_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('wg set rp-gate private-key "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('sudo -n rm -f -- "$SERVER_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('sudo -n rm -f -- "$CLIENT_KEY_APPARMOR"'), true);
+  assert.equal(source.includes('private-key /dev/stdin'), false);
   assert.equal(source.includes('private-key "$TMP/s.key"'), false);
   assert.equal(source.includes('private-key "$TMP/c.key"'), false);
 });
