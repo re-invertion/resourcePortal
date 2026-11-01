@@ -20,16 +20,17 @@ test("patch VPN release selects related API, UI, installer and real dataplane sm
   assert.deepEqual(plan.profiles, ["installer", "networking", "web-console"]);
 });
 
-test("Device VPN dataplane smoke passes the client private key through stdin inside sudo netns", async () => {
+test("Device VPN dataplane smoke materializes the client key as a root-owned namespace temp file", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(
     new URL("../scripts/run-device-vpn-dataplane-smoke.sh", import.meta.url),
     "utf8",
   );
-  assert.match(
-    source,
-    /wg set rp-device-vpn\s+private-key \/dev\/stdin[\s\S]*< "\$KEYDIR\/client-a\.key"/,
-  );
+  assert.match(source, /mktemp \/tmp\/rp-device-vpn-client-key\.XXXXXX/);
+  assert.match(source, /cat > "\$key"/);
+  assert.match(source, /wg set rp-device-vpn[\s\S]*private-key "\$key"/);
+  assert.match(source, /< "\$KEYDIR\/client-a\.key"/);
+  assert.doesNotMatch(source, /private-key \/dev\/stdin/);
   assert.doesNotMatch(
     source,
     /wg set rp-device-vpn\s+private-key "\$KEYDIR\/client-a\.key"/,
