@@ -157,7 +157,17 @@ export class CapacityTelemetryService {
   async observeNow(): Promise<MemoryObservation[]> {
     const observedAt = new Date().toISOString();
     const reports = await this.nodeProbe.collect();
-    const schedulableNodeIds = await this.schedulableNodeIds();
+    const [schedulableNodeIds, runningReplicaRows] = await Promise.all([
+      this.schedulableNodeIds(),
+      this.prisma.singleApp.findMany({
+        where: {
+          runtimeState: "Running",
+          pendingDeletion: false,
+          appGroup: { runtimeState: "Running" },
+        },
+        select: { id: true, actualReplicas: true },
+      }),
+    ]);
     const reportByNodeId = new Map(
       reports.map((report) => [report.swarmNodeId, report] as const),
     );
@@ -181,9 +191,40 @@ export class CapacityTelemetryService {
       (sum, report) => sum + BigInt(report.memoryAvailableBytes),
       0n,
     );
-    const containers = coveredReports.flatMap((report) =>
+    const containers = reports.flatMap((report) =>
       report.containers.map((container) => ({ report, container })),
     );
+    const expectedReplicaCounts = new Map(
+      runningReplicaRows.map((app) => [
+        app.id,
+        Math.max(0, app.actualReplicas),
+      ] as const),
+    );
+    const observedReplicaCounts = new Map<string, number>();
+    const observedContainerIds = new Set<string>();
+    for (const { container } of containers) {
+      if (observedContainerIds.has(container.id)) {
+        throw new Error("application replica telemetry contains duplicate containers");
+      }
+      observedContainerIds.add(container.id);
+      if (!expectedReplicaCounts.has(container.appId)) {
+        throw new Error(
+          "application replica telemetry does not match observed runtime replicas",
+        );
+      }
+      observedReplicaCounts.set(
+        container.appId,
+        (observedReplicaCounts.get(container.appId) ?? 0) + 1,
+      );
+    }
+    for (const [appId, expectedReplicas] of expectedReplicaCounts) {
+      if ((observedReplicaCounts.get(appId) ?? 0) !== expectedReplicas) {
+        throw new Error(
+          "application replica telemetry does not match observed runtime replicas",
+        );
+      }
+    }
+
     const byApp = new Map<string, typeof containers>();
     for (const entry of containers) {
       const group = byApp.get(entry.container.appId) ?? [];
@@ -213,8 +254,8 @@ export class CapacityTelemetryService {
       points.push({
         observedAt,
         nodeId:
-          coveredReports.length === 1
-            ? coveredReports[0].swarmNodeId
+          reports.length === 1
+            ? reports[0].swarmNodeId
             : "cluster",
         appId,
         containerId: group

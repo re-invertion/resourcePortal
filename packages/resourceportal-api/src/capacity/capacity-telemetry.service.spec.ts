@@ -69,9 +69,9 @@ function report(
       currentGiB > 0
         ? [
             {
-              id: swarmNodeId
+              id: Buffer.from(swarmNodeId, "utf8")
+                .toString("hex")
                 .slice(0, 12)
-                .replace(/[^a-f0-9]/g, "a")
                 .padEnd(12, "a"),
               appId: "existing-app",
               startedAt: new Date(Date.now() - 86_400_000).toISOString(),
@@ -357,6 +357,11 @@ describe("worker collection completeness", () => {
     const store = new MemoryStore();
     const policy = new CapacityPolicyService(config as never);
     const prisma = {
+      singleApp: {
+        findMany: vi.fn(() =>
+          Promise.resolve([{ id: "existing-app", actualReplicas: 1 }]),
+        ),
+      },
       remoteLocation: {
         findMany: vi.fn(() =>
           Promise.resolve([
@@ -385,6 +390,81 @@ describe("worker collection completeness", () => {
     expect(store.points).toEqual([]);
   });
 
+  it("includes replicas on a paused node in application aggregation while excluding it from headroom", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    const prisma = {
+      singleApp: {
+        findMany: vi.fn(() =>
+          Promise.resolve([{ id: "existing-app", actualReplicas: 2 }]),
+        ),
+      },
+      remoteLocation: {
+        findMany: vi.fn(() => Promise.resolve([{ swarmNodeId: nodeA }])),
+      },
+      workerReconciliationState: {
+        findFirst: vi.fn(() => Promise.resolve(null)),
+      },
+    };
+    const nodeProbe = {
+      collect: vi.fn(() =>
+        Promise.resolve([
+          report(nodeA, 20, 1),
+          report(nodeB, 18, 1),
+        ]),
+      ),
+    };
+    const telemetry = new CapacityTelemetryService(
+      store as never,
+      policy,
+      prisma as never,
+      nodeProbe as never,
+    );
+
+    const points = await telemetry.observeNow();
+    const appPoint = points.find((point) => point.appId === "existing-app");
+    expect(appPoint?.memoryCurrentBytes).toBe(2n * GiB);
+    expect(appPoint?.containerId.split(",")).toHaveLength(2);
+    expect(points.filter((point) => point.appId === undefined)).toHaveLength(1);
+    expect(
+      points.find(
+        (point) => point.appId === undefined && point.nodeId === nodeB,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("fails closed when observed application containers do not cover actualReplicas", async () => {
+    const store = new MemoryStore();
+    const policy = new CapacityPolicyService(config as never);
+    const prisma = {
+      singleApp: {
+        findMany: vi.fn(() =>
+          Promise.resolve([{ id: "existing-app", actualReplicas: 2 }]),
+        ),
+      },
+      remoteLocation: {
+        findMany: vi.fn(() => Promise.resolve([{ swarmNodeId: nodeA }])),
+      },
+      workerReconciliationState: {
+        findFirst: vi.fn(() => Promise.resolve(null)),
+      },
+    };
+    const nodeProbe = {
+      collect: vi.fn(() => Promise.resolve([report(nodeA, 20, 1)])),
+    };
+    const telemetry = new CapacityTelemetryService(
+      store as never,
+      policy,
+      prisma as never,
+      nodeProbe as never,
+    );
+
+    await expect(telemetry.observeNow()).rejects.toThrow(
+      /does not match observed runtime replicas/,
+    );
+    expect(store.points).toEqual([]);
+  });
+
   it("invalidates fresh published evidence immediately when a whole node probe is missing", async () => {
     const store = new MemoryStore();
     const policy = new CapacityPolicyService(config as never);
@@ -402,6 +482,11 @@ describe("worker collection completeness", () => {
       return Promise.resolve({ count: 1 });
     });
     const prisma = {
+      singleApp: {
+        findMany: vi.fn(() =>
+          Promise.resolve([{ id: "existing-app", actualReplicas: 1 }]),
+        ),
+      },
       remoteLocation: {
         findMany: vi.fn(() =>
           Promise.resolve([
