@@ -32,8 +32,57 @@ verify_remote() {
     fail "Registry did not return a valid digest for $published"
   raw="$(docker buildx imagetools inspect --raw "$repo@$digest")" ||
     fail "Unable to retrieve published $role manifest by immutable digest"
+
+  local media_type child_digest
+  media_type="$(jq -er '.mediaType | select(type == "string")' <<<"$raw")" ||
+    fail "Registry response has no manifest media type for $published"
+
+  case "$media_type" in
+    application/vnd.oci.image.index.v1+json|application/vnd.docker.distribution.manifest.list.v2+json)
+      # Docker BuildKit emits an OCI index containing an amd64 image manifest
+      # plus an attestation manifest (unknown/unknown). The outer pushed digest
+      # is the index digest, NOT the runnable image manifest's digest.
+      # Refuse additional runnable platforms, unrelated attestations and
+      # unknown descriptors rather than signing an ambiguous registry index.
+      child_digest="$(jq -er '
+        . as $index
+        | [.manifests[]? | select(
+            .platform.os == "linux" and .platform.architecture == "amd64"
+            and (.mediaType == "application/vnd.oci.image.manifest.v1+json"
+              or .mediaType == "application/vnd.docker.distribution.manifest.v2+json")
+            and (.digest | type == "string" and test("^sha256:[a-f0-9]{64}$"))
+          )] as $runnable
+        | if ($index.manifests | type) != "array"
+             or ($runnable | length) != 1
+             or ([$index.manifests[] | select(
+                  (.digest == $runnable[0].digest and
+                   .platform.os == "linux" and .platform.architecture == "amd64")
+                  or
+                  (.platform.os == "unknown" and .platform.architecture == "unknown"
+                   and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                   and .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                   and .annotations["vnd.docker.reference.digest"] == $runnable[0].digest
+                   and (.digest | type == "string" and test("^sha256:[a-f0-9]{64}$")))
+                )] | length) != ($index.manifests | length)
+          then empty
+          else $runnable[0].digest end
+      ' <<<"$raw")" ||
+        fail "Published $role OCI index has ambiguous runnable images or invalid attestations"
+      [[ "$child_digest" =~ ^sha256:[a-f0-9]{64}$ ]] ||
+        fail "Published $role OCI index has an invalid runnable manifest digest"
+      raw="$(docker buildx imagetools inspect --raw "$repo@$child_digest")" ||
+        fail "Cannot inspect published $role runnable image manifest by digest"
+      media_type="$(jq -er '.mediaType' <<<"$raw")" ||
+        fail "Published $role runnable manifest has no media type"
+      ;;
+  esac
+  case "$media_type" in
+    application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json) ;;
+    *) fail "Published $role has unsupported or ambiguous image manifest media type: $media_type" ;;
+  esac
+
   config="$(jq -er '.config.digest | select(type == "string")' <<<"$raw")" ||
-    fail "Published $role image has no single-platform config digest"
+    fail "Published $role runnable image manifest has no config digest"
   [[ "$config" =~ ^sha256:[a-f0-9]{64}$ ]] ||
     fail "Published $role image has an invalid config digest"
   [[ "$config" == "$tested_id" ]] ||

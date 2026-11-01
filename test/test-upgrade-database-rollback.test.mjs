@@ -280,6 +280,8 @@ test("GHCR image publisher uses registry config digest, never local RepoDigests[
   const id = "sha256:" + "a".repeat(64);
   const digest = "sha256:" + "b".repeat(64);
   const otherId = "sha256:" + "c".repeat(64);
+  const childDigest = "sha256:" + "d".repeat(64);
+  const attestationDigest = "sha256:" + "e".repeat(64);
   const fakeDocker = String.raw`#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$MOCK_LOG"
@@ -296,9 +298,30 @@ fi
 if [[ "$1" == buildx && "$2" == imagetools && "$3" == inspect ]]; then
   if [[ "$4" == --raw ]]; then
     if [[ "$MOCK_REMOTE_CONFIG" == index ]]; then
-      echo '{"schemaVersion":2,"manifests":[]}'
+      echo '{"mediaType":"application/vnd.oci.image.index.v1+json","schemaVersion":2,"manifests":[]}'
+    elif [[ "$MOCK_REMOTE_CONFIG" == attested* ]]; then
+      if [[ "$5" == *"$MOCK_CHILD_DIGEST" ]]; then
+        if [[ "$MOCK_REMOTE_CONFIG" == attested_conflict ]]; then
+          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_OTHER_ID"
+        else
+          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_IMAGE_ID"
+        fi
+      else
+        printf '{"mediaType":"application/vnd.oci.image.index.v1+json","schemaVersion":2,"manifests":['
+        printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"linux","architecture":"amd64"}}' "$MOCK_CHILD_DIGEST"
+        if [[ "$MOCK_REMOTE_CONFIG" == attested_multiarch ]]; then
+          printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"linux","architecture":"arm64"}}' "$MOCK_ATTEST_DIGEST"
+        else
+          if [[ "$MOCK_REMOTE_CONFIG" == attested_badref ]]; then
+            printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"unknown","architecture":"unknown"},"annotations":{"vnd.docker.reference.type":"attestation-manifest","vnd.docker.reference.digest":"%s"}}' "$MOCK_ATTEST_DIGEST" "$MOCK_ATTEST_DIGEST"
+          else
+            printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"unknown","architecture":"unknown"},"annotations":{"vnd.docker.reference.type":"attestation-manifest","vnd.docker.reference.digest":"%s"}}' "$MOCK_ATTEST_DIGEST" "$MOCK_CHILD_DIGEST"
+          fi
+        fi
+        printf ']}\n'
+      fi
     else
-      printf '{"schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_REMOTE_CONFIG"
+      printf '{"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}\n' "$MOCK_REMOTE_CONFIG"
     fi
     exit 0
   fi
@@ -341,6 +364,9 @@ exit 91
           MOCK_PUSHED: pushed,
           MOCK_IMAGE_ID: id,
           MOCK_REMOTE_CONFIG: config,
+          MOCK_CHILD_DIGEST: childDigest,
+          MOCK_ATTEST_DIGEST: attestationDigest,
+          MOCK_OTHER_ID: otherId,
           MOCK_DIGEST: digest,
           MOCK_MODE: mode,
         },
@@ -382,8 +408,26 @@ exit 91
   assert.match(corrupted.result.stderr, /differs from rollback-tested image/);
   assert.equal(corrupted.output, "", "must not emit a digest when verification fails");
 
-  const multiArch = run("existing", "index");
-  assert.notEqual(multiArch.result.status, 0);
-  assert.equal(multiArch.pushed, false);
-  assert.match(multiArch.result.stderr, /no single-platform config digest/);
+  const attestedFresh = run("missing", "attested");
+  assert.equal(attestedFresh.result.status, 0, attestedFresh.result.stderr);
+  assert.equal(attestedFresh.pushed, true);
+  assert.equal(attestedFresh.output, "digest=" + digest + "\n", "preserve outer OCI index digest");
+  assert.match(attestedFresh.commands, new RegExp("imagetools inspect --raw ghcr.io/re-invertion/resourceportal-api@" + childDigest));
+
+  const attestedExisting = run("existing", "attested");
+  assert.equal(attestedExisting.result.status, 0, attestedExisting.result.stderr);
+  assert.equal(attestedExisting.pushed, false);
+  assert.equal(attestedExisting.output, "digest=" + digest + "\n");
+
+  for (const indexMode of ["index", "attested_multiarch", "attested_badref"]) {
+    const invalid = run("existing", indexMode);
+    assert.notEqual(invalid.result.status, 0, indexMode + ": invalid OCI index should fail closed");
+    assert.equal(invalid.pushed, false, "invalid OCI index must not cause overwrite");
+    assert.match(invalid.result.stderr, /ambiguous runnable images or invalid attestations/);
+  }
+
+  const mismatchedChild = run("existing", "attested_conflict");
+  assert.notEqual(mismatchedChild.result.status, 0);
+  assert.equal(mismatchedChild.pushed, false);
+  assert.match(mismatchedChild.result.stderr, /differs from rollback-tested image/);
 });
