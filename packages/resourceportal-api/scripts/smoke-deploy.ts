@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { spawn } from "node:child_process";
+import { privilegedSmokeWorkerArgs } from "./privileged-smoke-worker";
 import { existsSync, readFileSync } from "node:fs";
 
 type JsonObject = Record<string, unknown>;
@@ -493,7 +494,7 @@ async function runOperationWorkerOnce() {
   const result = privileged
     ? await command(
         "sudo",
-        ["-E", process.execPath, npmExecPath!, "run", "worker"],
+        privilegedSmokeWorkerArgs(workerEnv, process.execPath, npmExecPath!),
         workerEnv,
       )
     : await command("npm", ["run", "worker"], workerEnv);
