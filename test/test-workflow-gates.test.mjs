@@ -139,7 +139,7 @@ test('Merge Queue requires full regression and applicable Fast Fix integration g
   const gate=load('release-readiness.yml');
   assert.ok('merge_group' in gate.on);
   assert.ok('pull_request' in gate.on);
-  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','federation','installer','tenant-oidc']);
+  assert.deepEqual(gate.jobs['release-ready'].needs,['candidate','swarm','capacity-docker29','federation','installer','tenant-oidc']);
   const candidate=gate.jobs.candidate;
   assert.match(candidate.steps.find(s=>s.name?.startsWith('Validate all source')).if,/milestone/);
   const scoped=candidate.steps.find(s=>s.name?.startsWith('Validate affected patch'));
@@ -296,4 +296,26 @@ test("v0.2.131 recovery preserves protected gates and pins the failed main, GHCR
     assert.ok(readiness.jobs.candidate.steps.some(x => x.name?.startsWith(name)), name);
   }
   assert.doesNotMatch(step.run, /continue-on-error|force-push|workflow_dispatch/);
+});
+
+
+test('Docker 29 private cgroup capacity must pass real Swarm before any merge (#384)',()=>{
+  const readiness=load('release-readiness.yml');
+  const gate=readiness.jobs['capacity-docker29'];
+  assert.ok(gate, 'Docker 29 capacity job missing');
+  assert.match(gate.if,/capacity_smoke/);
+  const setup=gate.steps.find(s=>s.name?.includes('Docker Engine 29'));
+  assert.ok(setup);
+  assert.equal(setup.with.version,'v29.8.0');
+  assert.equal(setup.with['set-host'],true);
+  assert.ok(gate.steps.some(s=>s.run?.includes('scripts/run-capacity-private-cgroup-swarm-smoke.sh')));
+  const required=readiness.jobs['release-ready'];
+  assert.ok(required.needs.includes('capacity-docker29'));
+  const check=required.steps[0];
+  assert.match(check.run,/verify_gate capacity-docker29 "\$CAPACITY" true/);
+  assert.ok(check.env.CAPACITY_SMOKE);
+  assert.ok(check.env.CAPACITY);
+  const stockSwarm=load('swarm-integration.yml');
+  assert.ok(!stockSwarm.jobs['real-swarm'].steps.some(s=>s.run?.includes('scripts/run-capacity-private-cgroup-swarm-smoke.sh')),
+    'Docker 29 regression must run on pinned daemon, not arbitrary stock runner');
 });
