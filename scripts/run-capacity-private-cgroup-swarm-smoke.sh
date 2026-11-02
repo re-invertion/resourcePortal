@@ -47,10 +47,20 @@ fi
 
 # The API candidate is built by the caller. Isolate PID/cgroup namespaces just
 # like terminal-agent, while exposing only read-only host proc and cgroup mounts.
-docker run --rm -i --user 0:0 --pid=private --cgroupns=private \
+# A pinned Docker daemon may use an action-created socket, not /var/run/docker.sock.
+engine_socket="${DOCKER_HOST:-$(docker context inspect --format '{{(index .Endpoints "docker").Host}}' "$(docker context show)")}"
+case "$engine_socket" in
+  unix://*) engine_socket="${engine_socket#unix://}" ;;
+  *) echo "Docker29 capacity smoke requires a local Unix socket" >&2; exit 1 ;;
+esac
+if [[ ! -S "$engine_socket" ]]; then
+  echo "Docker29 local daemon socket is missing" >&2
+  exit 1
+fi
+docker run --rm -i --user 0:0 --cgroupns=private \
   --mount type=bind,source=/proc,target=/host/proc,readonly \
   --mount type=bind,source=/sys/fs/cgroup,target=/host/sys/fs/cgroup,readonly \
-  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
+  --mount type=bind,source="$engine_socket",target=/var/run/docker.sock,readonly \
   --env NODE_ENV=test \
   --entrypoint node resourceportal-vpn-e2e:current - <<'NODE'
 const assert = require('node:assert/strict');

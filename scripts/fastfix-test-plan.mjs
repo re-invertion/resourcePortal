@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const commands = {
+  "capacity-smoke": [["bash", "-n", "scripts/run-capacity-private-cgroup-swarm-smoke.sh"]],
   // GPU changes require real physical Swarm proof in addition to unit tests.
   "gpu-security": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--",
@@ -209,7 +210,7 @@ const classifiers = [
   // Capacity admission and tenant quota share a scheduler/resource-limit contract.
   // Do not let either implementation or new regression fixtures evade patch CI.
   // Capacity sampling is a runtime cgroup/Swarm contract, not just a unit-test surface.
-  [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["quota-security", "swarm-smoke-fixtures"]],
+  [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["capacity-smoke", "quota-security", "swarm-smoke-fixtures"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/stage11-(?:app-groups\.service|quota-drift\.spec)\.ts$/, ["quota-security", "applications"]],
 
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
@@ -226,7 +227,7 @@ const classifiers = [
   [/^scripts\/test-nvidia-gpu-swarm\.sh$/, ["gpu-security", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/render-nvidia-gpu-stack-fixture\.ts$/, ["gpu-security", "workflow"]],
   [/^scripts\/run-real-swarm-smoke\.sh$/, ["gpu-security", "platform-release", "workflow"]],
-  [/^scripts\/run-capacity-private-cgroup-swarm-smoke\.sh$/, ["swarm-smoke-fixtures", "workflow"]],
+  [/^scripts\/run-capacity-private-cgroup-swarm-smoke\.sh$/, ["capacity-smoke", "swarm-smoke-fixtures", "workflow"]],
   [/^test\/installer\/test-gpu-readiness\.sh$/, ["gpu-security", "installer"]],
   [/^test\/installer\/test-gpu-swarm-gate-safety\.sh$/, ["gpu-security", "installer"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-runtime\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
@@ -459,6 +460,7 @@ export function selectProfiles(paths) {
       profiles.has("container-terminal") ||
       profiles.has("gpu-security") ||
       profiles.has("swarm-smoke-fixtures"),
+    capacitySmoke: profiles.has("capacity-smoke"),
     gpuSmoke: profiles.has("gpu-security"),
     changedPaths: [...paths],
   };
@@ -485,6 +487,7 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
     `vpn_smoke=${plan.vpnSmoke}`,
     `swarm_smoke=${plan.swarmSmoke}`,
     `gpu_smoke=${plan.gpuSmoke}`,
+    `capacity_smoke=${plan.capacitySmoke}`,
     `federation_required=${plan.profiles.some((p) => ["identity", "mcp-oauth", "tenant-access", "security"].includes(p))}`,
     `installer_required=${plan.profiles.some((p) => ["installer", "platform-release", "runtime-config", "workflow"].includes(p))}`,
     "",

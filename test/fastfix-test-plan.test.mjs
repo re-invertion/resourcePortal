@@ -630,7 +630,7 @@ test("capacity and stage11 quota changes select explicit patch regressions (#373
     "packages/resourceportal-api/src/app-groups/stage11-app-groups.service.ts",
     "packages/resourceportal-api/src/app-groups/stage11-quota-drift.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["applications", "quota-security", "swarm-smoke-fixtures"]);
+  assert.deepEqual(plan.profiles, ["applications", "capacity-smoke", "quota-security", "swarm-smoke-fixtures"]);
   assert.equal(plan.swarmSmoke, true, "capacity changes require a real Swarm gate");
   assert.equal(plan.vpnSmoke, false);
   assert.throws(
@@ -669,10 +669,23 @@ test("Docker 29 private-cgroup capacity regression cannot be skipped by Fast Fix
     "packages/resourceportal-api/src/capacity/capacity-node-probe.ts",
     "packages/resourceportal-api/src/capacity/capacity-node-probe.spec.ts",
   ]);
-  assert.deepEqual(code.profiles, ["quota-security", "swarm-smoke-fixtures"]);
+  assert.deepEqual(code.profiles, ["capacity-smoke", "quota-security", "swarm-smoke-fixtures"]);
+  assert.equal(code.capacitySmoke, true, "Docker29 job must be explicitly required");
   assert.equal(code.swarmSmoke, true);
   assert.equal(code.vpnSmoke, false);
   const smoke = selectProfiles(["scripts/run-capacity-private-cgroup-swarm-smoke.sh"]);
   assert.equal(smoke.swarmSmoke, true);
-  assert.deepEqual(smoke.profiles, ["swarm-smoke-fixtures", "workflow"]);
+  assert.deepEqual(smoke.profiles, ["capacity-smoke", "swarm-smoke-fixtures", "workflow"]);
+  assert.equal(smoke.capacitySmoke, true);
+});
+
+
+test("private-cgroup real Swarm smoke uses supported Docker namespace flags (#384)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const script = readFileSync(new URL("../scripts/run-capacity-private-cgroup-swarm-smoke.sh", import.meta.url), "utf8");
+  assert.match(script, /--cgroupns=private/);
+  assert.doesNotMatch(script, /--pid=private/);
+  assert.match(script, /--mount type=bind,source=\/proc,target=\/host\/proc,readonly/);
+  assert.match(script, /--mount type=bind,source=\/sys\/fs\/cgroup,target=\/host\/sys\/fs\/cgroup,readonly/);
+  assert.match(script, /assert\.equal\(report\.status, 'Observed'/);
 });

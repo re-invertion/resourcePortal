@@ -19,6 +19,7 @@ jobs:
       mode: ${{ steps.release-mode.outputs.mode }}
       vpn_smoke: ${{ steps.test-plan.outputs.vpn_smoke }}
       swarm_smoke: ${{ steps.test-plan.outputs.swarm_smoke }}
+      capacity_smoke: ${{ steps.test-plan.outputs.capacity_smoke }}
       federation_required: ${{ steps.test-plan.outputs.federation_required }}
       installer_required: ${{ steps.test-plan.outputs.installer_required }}
     steps:
@@ -250,6 +251,42 @@ jobs:
     with:
       force_gate: true
 
+  capacity-docker29:
+    name: Docker 29 private cgroup capacity gate
+    needs: candidate
+    if: needs.candidate.outputs.capacity_smoke == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned Docker 29 on its own clean daemon. General Swarm integration
+      # keeps using the runner's stock Docker daemon; never mutate it mid-job.
+      - name: Start isolated Docker Engine 29.8.0
+        uses: docker/setup-docker-action@v5
+        with:
+          version: v29.8.0
+          context: rp-capacity29
+          set-host: true
+          daemon-config: |
+            {"exec-opts":["native.cgroupdriver=systemd"]}
+      - name: Start real Docker 29 Swarm
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker version
+          test "$(docker version --format '{{.Server.Version}}')" = 29.8.0
+          test "$(docker info --format '{{.CgroupVersion}} {{.CgroupDriver}}')" = '2 systemd'
+          docker swarm init
+          test "$(docker info --format '{{.Swarm.LocalNodeState}}')" = active
+      - name: Build API candidate under Docker 29
+        run: docker build --tag resourceportal-vpn-e2e:current .
+      - name: Prove authenticated private-cgroup node capacity telemetry
+        timeout-minutes: 7
+        run: bash scripts/run-capacity-private-cgroup-swarm-smoke.sh
+      - name: Leave isolated Swarm
+        if: always()
+        run: docker swarm leave --force || true
+
   federation:
     name: Federation and browser gate
     needs: candidate
@@ -276,7 +313,7 @@ jobs:
     name: Required release readiness
     runs-on: ubuntu-latest
     if: always()
-    needs: [candidate, swarm, federation, installer, tenant-oidc]
+    needs: [candidate, swarm, capacity-docker29, federation, installer, tenant-oidc]
     steps:
       - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
@@ -284,9 +321,11 @@ jobs:
           MODE: ${{ needs.candidate.outputs.mode }}
           VPN_SMOKE: ${{ needs.candidate.outputs.vpn_smoke }}
           SWARM_SMOKE: ${{ needs.candidate.outputs.swarm_smoke }}
+          CAPACITY_SMOKE: ${{ needs.candidate.outputs.capacity_smoke }}
           FEDERATION_REQUIRED: ${{ needs.candidate.outputs.federation_required }}
           INSTALLER_REQUIRED: ${{ needs.candidate.outputs.installer_required }}
           SWARM: ${{ needs.swarm.result }}
+          CAPACITY: ${{ needs.capacity-docker29.result }}
           FEDERATION: ${{ needs.federation.result }}
           INSTALLER: ${{ needs.installer.result }}
           TENANT_OIDC: ${{ needs.tenant-oidc.result }}
@@ -310,6 +349,11 @@ jobs:
             verify_gate swarm "$SWARM" true
           else
             verify_gate swarm "$SWARM" false
+          fi
+          if [[ "$CAPACITY_SMOKE" == true ]]; then
+            verify_gate capacity-docker29 "$CAPACITY" true
+          else
+            verify_gate capacity-docker29 "$CAPACITY" false
           fi
           if [[ "$MODE" == milestone || "$FEDERATION_REQUIRED" == true ]]; then
             verify_gate federation "$FEDERATION" true
