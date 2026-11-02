@@ -196,27 +196,38 @@ describe("private cgroup namespace resolution", () => {
     return Promise.resolve(null);
   };
   const realpath = (path: string) => Promise.resolve(path);
-  function readFor(membership: string, procs = "123\n") {
+  function readFor(membership: string) {
     return async (path: string) => {
       if (path.endsWith("/123/cgroup")) return `0::${membership}\n`;
-      if (path.endsWith("/cgroup.procs")) return procs;
+      if (path.endsWith("/cgroup.procs")) throw new Error("PID namespace hides host process IDs");
       return baseReadFile(path);
     };
   }
-  it("maps Docker 29 sibling scope only when the matching PID is present", async () => {
+  it("maps Docker 29 sibling scope without relying on host PID visibility in cgroup.procs", async () => {
     const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile: readFor(`/../docker-${containerA}.scope`), realpath });
     expect(result.status).toBe("Observed");
     if (result.status === "Observed") expect(result.containers[0]?.memoryCurrentBytes).toBe("1073741824");
   });
-  it("rejects traversal, wrong scope ID and absent PID", async () => {
-    for (const [membership, procs] of [
-      [`/../../docker-${containerA}.scope`, "123"],
-      [`/../docker-${containerB}.scope`, "123"],
-      [`/../docker-${containerA}.scope`, "456"],
+  it("rejects traversal and mismatched Docker container identity", async () => {
+    for (const membership of [
+      `/../../docker-${containerA}.scope`,
+      `/../docker-${containerB}.scope`,
     ]) {
-      const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile: readFor(membership, procs), realpath });
+      const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile: readFor(membership), realpath });
       expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
     }
+  });
+  it("rejects mid-sample membership changes even with unchanged Docker inspect", async () => {
+    let reads = 0;
+    const readFile = async (path: string): Promise<string> => {
+      if (path.endsWith("/123/cgroup")) {
+        reads += 1;
+        return reads === 1 ? `0::/../docker-${containerA}.scope\n` : `0::/../docker-${containerB}.scope\n`;
+      }
+      return baseReadFile(path);
+    };
+    const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile, realpath });
+    expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
   });
   it("rejects symlink escape and unexpected cgroup parent", async () => {
     const result = await probeSwarmNodeCapacity({

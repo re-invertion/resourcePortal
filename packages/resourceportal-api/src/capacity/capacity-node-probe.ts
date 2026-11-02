@@ -119,24 +119,21 @@ type RealPath = (path: string) => Promise<string>;
 
 // A private cgroup namespace renders a sibling scope as /../docker-ID.scope.
 // Never normalize that path: resolve only the canonical Docker systemd scope,
-// and prove membership with the host cgroup.procs before reading metrics.
+// and verify the exact Docker ID via the inspected PID membership.
 async function resolvePrivateScope(
-  membership: string, containerId: string, pid: number,
-  readTextFile: ReadTextFile, canonicalize: RealPath,
+  membership: string, containerId: string, canonicalize: RealPath,
 ): Promise<string | null> {
   if (!FULL_CONTAINER_ID.test(containerId) ||
       membership !== `/../docker-${containerId}.scope`) return null;
   const root = resolve(HOST_CGROUP);
   const candidate = resolve(root, "system.slice", `docker-${containerId}.scope`);
-  const [realRoot, realCandidate, procs] = await Promise.all([
+  const [realRoot, realCandidate] = await Promise.all([
     canonicalize(root).catch(() => null),
     canonicalize(candidate).catch(() => null),
-    readTextFile(candidate + "/cgroup.procs", "utf8").catch(() => null),
   ]);
-  if (!realRoot || !realCandidate || !procs ||
+  if (!realRoot || !realCandidate ||
       !realCandidate.startsWith(realRoot + "/") ||
       realCandidate !== realRoot + `/system.slice/docker-${containerId}.scope`) return null;
-  if (!procs.split(/\s+/).some(value => value === String(pid))) return null;
   return realCandidate;
 }
 
@@ -155,7 +152,7 @@ async function readCgroupForPid(pid: number, containerId: string, readTextFile: 
   if (!unified) return null;
   const relative = unified.slice(3);
   const candidate = safeCgroupRoot(relative) ??
-    await resolvePrivateScope(relative, containerId, pid, readTextFile, canonicalize);
+    await resolvePrivateScope(relative, containerId, canonicalize);
   if (!candidate) return null;
   const realRoot = await canonicalize(resolve(HOST_CGROUP)).catch(() => null);
   const root = await canonicalize(candidate).catch(() => null);
@@ -173,6 +170,15 @@ async function readCgroupForPid(pid: number, containerId: string, readTextFile: 
     eventsRaw === null ||
     pressureRaw === null
   ) {
+    return null;
+  }
+
+  // A PID can be recycled or its cgroup can change mid-sample. Re-read
+  // the host procfs membership before accepting values from this scope.
+  const membershipAfter = await readTextFile(
+    HOST_PROC + "/" + pid + "/cgroup", "utf8",
+  ).catch(() => null);
+  if (!membershipAfter || !membershipAfter.split("\n").some(line => line.trim() === unified)) {
     return null;
   }
 
