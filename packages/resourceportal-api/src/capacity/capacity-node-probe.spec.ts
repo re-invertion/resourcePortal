@@ -189,13 +189,13 @@ describe("capacity node probe inventory bounds", () => {
 
 describe("private cgroup namespace resolution", () => {
   const scope = `/system.slice/docker-${containerA}.scope`;
-  const mockDocker = async (args: string[]) => {
-    if (args[0] === "info") return nodeId;
-    if (args[0] === "ps") return `${containerA}\t${appId}`;
-    if (args[0] === "inspect") return `${containerA}\t123\t2026-11-02T12:00:00.000Z`;
-    return null;
+  const mockDocker = (args: string[]): Promise<string | null> => {
+    if (args[0] === "info") return Promise.resolve(nodeId);
+    if (args[0] === "ps") return Promise.resolve(`${containerA}\t${appId}`);
+    if (args[0] === "inspect") return Promise.resolve(`${containerA}\t123\t2026-11-02T12:00:00.000Z`);
+    return Promise.resolve(null);
   };
-  const realpath = async (path: string) => path;
+  const realpath = (path: string) => Promise.resolve(path);
   function readFor(membership: string, procs = "123\n") {
     return async (path: string) => {
       if (path.endsWith("/123/cgroup")) return `0::${membership}\n`;
@@ -222,7 +222,7 @@ describe("private cgroup namespace resolution", () => {
     const result = await probeSwarmNodeCapacity({
       docker: mockDocker,
       readFile: readFor(`/../docker-${containerA}.scope`),
-      realpath: async path => path.endsWith(scope) ? "/outside/docker.scope" : path,
+      realpath: path => Promise.resolve(path.endsWith(scope) ? "/outside/docker.scope" : path),
     });
     expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
   });
