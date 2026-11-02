@@ -48,9 +48,18 @@ async function jsonResponse(fetchImpl, url, options = {}, permittedStatuses = [2
   return { status: response.status, body, response, bytes };
 }
 
-export async function auditInterruptedRelease(fetchImpl = fetch, expected = RECOVERY) {
+export async function auditInterruptedRelease(
+  fetchImpl = fetch, expected = RECOVERY,
+  githubToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN,
+) {
   const base = "https://api.github.com/repos/" + repo;
-  const githubHeaders = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+  // CI's GITHUB_TOKEN avoids shared anonymous GitHub API rate limits (403).
+  // Never forward this credential to GHCR: registry reads use pull-only tokens.
+  const githubHeaders = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    ...(githubToken ? { Authorization: "Bearer " + githubToken } : {}),
+  };
   const branch = await jsonResponse(fetchImpl, base + "/branches/main", { headers: githubHeaders });
   const observedMain = branch.body?.commit?.sha;
   assert(observedMain === expected.sourceSha,

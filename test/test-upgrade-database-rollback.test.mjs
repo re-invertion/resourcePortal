@@ -500,7 +500,7 @@ test("partially published OCI release recovery audit proves immutable images and
     const calls = [];
     const fetchImpl = async (url, options) => {
       assert.equal(options?.method ?? "GET", "GET", "audit may only make reads");
-      calls.push(url);
+      calls.push({ url, options });
       const response = overrides[url] || routes.get(url);
       assert.ok(response, "unexpected recovery URL " + url);
       return response.clone();
@@ -508,14 +508,29 @@ test("partially published OCI release recovery audit proves immutable images and
     return { fetchImpl, calls };
   }
   const success = mockFetch();
-  const result = await auditInterruptedRelease(success.fetchImpl, expected);
+  const result = await auditInterruptedRelease(success.fetchImpl, expected, "test-ci-token");
+  for (const { url, options } of success.calls) {
+    if (url.startsWith("https://api.github.com/")) {
+      assert.equal(options.headers.Authorization, "Bearer test-ci-token",
+        "GitHub API reads must use the workflow token to avoid anonymous 403");
+    } else {
+      assert.notEqual(options?.headers?.Authorization, "Bearer test-ci-token",
+        "never leak the GitHub token to GHCR");
+    }
+  }
   assert.equal(result.github.mainSha, expected.sourceSha);
   assert.equal(result.api.indexDigest, indexDigest);
   assert.equal(result.api.configDigest, configDigest);
   assert.equal(result.canPublishFromThisAudit, false);
   assert.deepEqual(result.otherImages, { web: "absent", postgres: "absent" });
   assert.equal(success.calls.length, routes.size);
-  assert(!success.calls.some((url) => url.includes("upload") || url.includes("tags/create")));
+  assert(!success.calls.some(({ url }) => url.includes("upload") || url.includes("tags/create")));
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({
+      ["https://api.github.com/repos/re-invertion/resourcePortal/branches/main"]:
+        new Response(null, { status: 403 }),
+    }).fetchImpl, expected, "test-ci-token"),
+    /Unexpected HTTP 403/, "GitHub permission/rate-limit failures must still fail closed");
 
   const mainUrl = "https://api.github.com/repos/re-invertion/resourcePortal/branches/main";
   await assert.rejects(
