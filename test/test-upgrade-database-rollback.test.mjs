@@ -304,7 +304,7 @@ if [[ "$1" == buildx && "$2" == imagetools && "$3" == inspect ]]; then
         if [[ "$MOCK_REMOTE_CONFIG" == attested_conflict ]]; then
           printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_OTHER_ID"
         else
-          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_IMAGE_ID"
+          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_MANIFEST_CONFIG_ID"
         fi
       else
         printf '{"mediaType":"application/vnd.oci.image.index.v1+json","schemaVersion":2,"manifests":['
@@ -342,7 +342,7 @@ echo "Unexpected fake Docker command: $*" >&2
 exit 91
 `;
 
-  function run(mode, config = id) {
+  function run(mode, config = id, candidateId = id, configId = id) {
     const dir = mkdtempSync(join(tmpdir(), "rp-release-digest-"));
     try {
       const bin = join(dir, "bin");
@@ -362,7 +362,8 @@ exit 91
           GITHUB_OUTPUT: output,
           MOCK_LOG: logfile,
           MOCK_PUSHED: pushed,
-          MOCK_IMAGE_ID: id,
+          MOCK_IMAGE_ID: candidateId,
+          MOCK_MANIFEST_CONFIG_ID: configId,
           MOCK_REMOTE_CONFIG: config,
           MOCK_CHILD_DIGEST: childDigest,
           MOCK_ATTEST_DIGEST: attestationDigest,
@@ -395,7 +396,7 @@ exit 91
   const conflict = run("existing", otherId);
   assert.notEqual(conflict.result.status, 0);
   assert.equal(conflict.pushed, false, "must not overwrite a conflicting existing registry tag");
-  assert.match(conflict.result.stderr, /differs from rollback-tested image/);
+  assert.match(conflict.result.stderr, /differ.*from rollback-tested image/);
 
   const unavailable = run("unavailable");
   assert.notEqual(unavailable.result.status, 0);
@@ -405,7 +406,7 @@ exit 91
   const corrupted = run("missing", otherId);
   assert.notEqual(corrupted.result.status, 0);
   assert.equal(corrupted.pushed, true);
-  assert.match(corrupted.result.stderr, /differs from rollback-tested image/);
+  assert.match(corrupted.result.stderr, /differ.*from rollback-tested image/);
   assert.equal(corrupted.output, "", "must not emit a digest when verification fails");
 
   const attestedFresh = run("missing", "attested");
@@ -419,6 +420,20 @@ exit 91
   assert.equal(attestedExisting.pushed, false);
   assert.equal(attestedExisting.output, "digest=" + digest + "\n");
 
+  // Docker 29 containerd image store reports the OCI index digest as .Id.
+  // This differs from the runnable manifest's image config digest.
+  const indexIdentityPush = run("missing", "attested", digest, id);
+  assert.equal(indexIdentityPush.result.status, 0, indexIdentityPush.result.stderr);
+  assert.equal(indexIdentityPush.pushed, true);
+  assert.equal(indexIdentityPush.output, "digest=" + digest + "\n");
+  const indexIdentityReuse = run("existing", "attested", digest, id);
+  assert.equal(indexIdentityReuse.result.status, 0, indexIdentityReuse.result.stderr);
+  assert.equal(indexIdentityReuse.pushed, false);
+  const badIndexIdentity = run("existing", "attested", otherId, id);
+  assert.notEqual(badIndexIdentity.result.status, 0);
+  assert.equal(badIndexIdentity.pushed, false);
+  assert.match(badIndexIdentity.result.stderr, /both differ from rollback-tested image/);
+
   for (const indexMode of ["index", "attested_multiarch", "attested_badref"]) {
     const invalid = run("existing", indexMode);
     assert.notEqual(invalid.result.status, 0, indexMode + ": invalid OCI index should fail closed");
@@ -429,7 +444,7 @@ exit 91
   const mismatchedChild = run("existing", "attested_conflict");
   assert.notEqual(mismatchedChild.result.status, 0);
   assert.equal(mismatchedChild.pushed, false);
-  assert.match(mismatchedChild.result.stderr, /differs from rollback-tested image/);
+  assert.match(mismatchedChild.result.stderr, /differ.*from rollback-tested image/);
 });
 
 

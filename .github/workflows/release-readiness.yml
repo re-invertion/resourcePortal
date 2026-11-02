@@ -41,12 +41,28 @@ jobs:
           previous_sha="$(git rev-list -n 1 "$previous_tag")"
           main_sha="$(git rev-parse origin/main)"
           if [[ "$previous_sha" != "$main_sha" ]]; then
+            # ONE-TIME V0.2.131 RELEASE RECOVERY: PR #382 passed all
+            # protected merge gates, but Docker 29 identified the local
+            # candidate by OCI index digest while the post-push verifier
+            # erroneously required image config digest. v0.2.130 API was
+            # already pushed. Accept ONLY the exact reviewed repair tree,
+            # retaining ALL source, rollback, integration and signing gates.
+            if [[ "$previous_tag" == "v0.2.128" &&
+                  "$previous_sha" == "34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0" &&
+                  "$main_sha" == "98f9e94b2b4bcf55cbf791dc38be4a4a6028cb26" ]]; then
+              node scripts/release-backlog-131.mjs
+              node scripts/audit-v02130-release-recovery.mjs
+              if gh release view "v0.2.131" >/dev/null 2>&1; then
+                echo "Recovery target v0.2.131 is already published; refusing reuse." >&2
+                exit 1
+              fi
+              echo "::notice::Strict v0.2.131 recovery of Docker 29 OCI identity; all rollback and signing gates remain."
             # ONE-TIME V0.2.130 RELEASE RECOVERY: old main SHA was merged
             # after protected gates, but v0.2.129 publication ended after its
             # API OCI-index push. User approved a new signed, rollback-tested
             # release without mutating that registry tag. Admit ONLY the exact
             # reviewed PR #382 file tree; retain every subsequent gate.
-            if [[ "$previous_tag" == "v0.2.128" &&
+            elif [[ "$previous_tag" == "v0.2.128" &&
                   "$previous_sha" == "34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0" &&
                   "$main_sha" == "0ae0827bfc2a0971a4ffd37becbe0e61438b32e7" ]]; then
               node scripts/release-backlog-recovery.mjs

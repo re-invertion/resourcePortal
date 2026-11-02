@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { releaseMode } from "./release-validation-mode.mjs";
 import { BACKLOG, verifyBacklogCheckout } from "./release-backlog-recovery.mjs";
+import { BACKLOG_131, verify131Checkout } from "./release-backlog-131.mjs";
 
 const parse = (tag) => /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag)?.slice(1).map(Number);
 
@@ -68,6 +69,16 @@ if (process.argv[1]?.endsWith("/next-main-release.mjs")) {
       "--jq", ".assets | map(.name)",
     ]));
     plan = alreadyPublishedMainRelease(publishedTag, publishedCommit, target, publishedAssets);
+  } else if (publishedTag === BACKLOG_131.publishedTag &&
+             publishedCommit === BACKLOG_131.publishedSha &&
+             target !== BACKLOG_131.blockedMainSha &&
+             spawnSync("git", ["merge-base", "--is-ancestor", BACKLOG_131.blockedMainSha, target]).status === 0) {
+    // The v0.2.130 release partially published its API image but failed on
+    // Docker 29 OCI-index identity. The protected, independently audited
+    // recovery uses v0.2.131; neither existing orphan tag may be repushed.
+    const recoveryTag = verify131Checkout(publishedTag, publishedCommit, tags);
+    const classified = releaseMode(recoveryTag, [publishedTag], milestones);
+    plan = { version: recoveryTag.slice(1), previousTag: publishedTag, mode: classified.mode };
   } else if (publishedTag === BACKLOG.publishedTag &&
              publishedCommit === BACKLOG.publishedSha &&
              target !== BACKLOG.blockedMainSha &&

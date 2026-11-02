@@ -64,3 +64,40 @@ release. Any other source/tag/tree or a pre-existing `v0.2.130` Git tag
 fails closed. Once `v0.2.130` is officially published, the exception is
 automatically inert because the published source tag will no longer be
 `v0.2.128`. This operation does not deploy a running RP installation.
+
+
+## One-time v0.2.131 repair for Docker 29 OCI index image identity
+
+PR #382 successfully passed protected merge queue and exact-main-SHA CI at
+`98f9e94b2b4bcf55cbf791dc38be4a4a6028cb26`, but the post-merge
+Installer-Gated Release run #41429203520 failed **after** publishing API
+`v0.2.130` (OCI index
+`sha256:d3129b935abe2d1a0ecd0b429f0d497eed61899e0587fa604096585ef1fbf80d`).
+Docker 29's containerd image store returned the *OCI index* digest for the
+rollback-tested image's `.Id`. The previous publisher assumed it always
+returned the runnable manifest's *config* digest
+`sha256:6a34ad2fdcc8301d4f83734575be30e184184277d5f8bd4f876c0adeb6215a59`.
+Those are different immutable descriptors of the same locally tested image.
+The child manifest is
+`sha256:90b9f6f317d0d33295a02393993aacadbfccd862907799f4a3b81ba140319392`;
+BuildKit attestation is
+`sha256:272d09c4d34ed3611e525abef8b2d9c42554e0c4d231195191d419a49ac799d3`.
+
+The repaired publisher verifies all allowed OCI descriptors and accepts the
+tested local identity only when it exactly matches either the verified index
+digest or the verified runnable-image config digest. All other mismatches
+fail closed; no rebuild occurs after the real rollback gate.
+
+Because `v0.2.130` was partially pushed and no official signed release was
+created, do **not** rerun the old SHA or rewrite its API tag. A second
+strict one-time exception requires previous official `v0.2.128` at SHA
+`34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0`, precisely unpublished
+main `98f9e94b2b4bcf55cbf791dc38be4a4a6028cb26`, a closed set of
+approved PR file paths, pinned publisher/audit blob SHA-1, and a read-only
+cryptographic audit of the original `v0.2.130` OCI index and absent
+Web/PostgreSQL tags. It allocates only fresh `v0.2.131` in pre-merge and
+post-merge signing; neither `v0.2.129` nor `v0.2.130` is rewritten.
+Dependency audit, full lint/test/build, installer/CLI, real rollback,
+scope-required Swarm, merge queue, exact-SHA full main CI and signed OIDC
+provenance are unmodified and mandatory. This is publication only: no
+production deployment.
