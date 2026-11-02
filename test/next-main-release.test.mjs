@@ -57,3 +57,22 @@ test("one-time v0.2.130 recovery requires exact old main, reviewed paths and imm
   assert.throws(() => verifyBacklogCandidate({ ...valid, versionTags: ["v0.2.130"] }),
   /already has a Git tag/);
 });
+
+
+test("v0.2.131 one-time Docker 29 recovery only accepts reviewed source SHA, tree, and image blob", async () => {
+  const { BACKLOG_131, verify131Candidate } = await import("../scripts/release-backlog-131.mjs");
+  const valid = {
+    publishedTag: BACKLOG_131.publishedTag, publishedSha: BACKLOG_131.publishedSha,
+    sourceIsAncestor: true, paths: [...BACKLOG_131.allowedPaths],
+    blobs: { ...BACKLOG_131.immutableBlobs }, versionTags: [BACKLOG_131.publishedTag],
+  };
+  assert.equal(verify131Candidate(valid), "v0.2.131");
+  assert.throws(() => verify131Candidate({ ...valid, publishedTag: "v0.2.130" }), /wrong published source tag/);
+  assert.throws(() => verify131Candidate({ ...valid, publishedSha: "f".repeat(40) }), /wrong published source SHA/);
+  assert.throws(() => verify131Candidate({ ...valid, sourceIsAncestor: false }), /not ancestor/);
+  assert.throws(() => verify131Candidate({ ...valid, paths: [...valid.paths, "src/unsafe.ts"] }), /file set/);
+  assert.throws(() => verify131Candidate({ ...valid, paths: valid.paths.slice(1) }), /file set/);
+  assert.throws(() => verify131Candidate({ ...valid,
+    blobs: { ...valid.blobs, "scripts/publish-tested-release-image.sh": "f".repeat(40) } }), /immutable recovery blob mismatch/);
+  assert.throws(() => verify131Candidate({ ...valid, versionTags: ["v0.2.131"] }), /already tagged/);
+});

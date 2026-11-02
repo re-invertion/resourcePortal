@@ -85,8 +85,13 @@ verify_remote() {
     fail "Published $role runnable image manifest has no config digest"
   [[ "$config" =~ ^sha256:[a-f0-9]{64}$ ]] ||
     fail "Published $role image has an invalid config digest"
-  [[ "$config" == "$tested_id" ]] ||
-    fail "Registry $role manifest config $config differs from rollback-tested image $tested_id"
+  # Classic Docker stores image config.digest as .Id; Docker 29 with the
+  # containerd image store can expose the enclosing OCI index digest as .Id.
+  # Both are immutable references to the same tested image after the strict
+  # single-runnable-platform and attestation checks above. No other match
+  # (including tag, layer or child manifest alone) may pass.
+  [[ "$config" == "$tested_id" || "$digest" == "$tested_id" ]] ||
+    fail "Registry $role OCI index $digest and image config $config both differ from rollback-tested image $tested_id"
   printf '%s\n' "$digest"
 }
 

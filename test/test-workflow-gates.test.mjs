@@ -273,3 +273,27 @@ test("v0.2.130 interrupted main recovery is exact-source, tree-checked and does 
     "full gate absent: " + command);
   assert.ok(gate.jobs.candidate.steps.some((x) => /rollback/i.test(x.name)));
 });
+
+
+test("v0.2.131 recovery preserves protected gates and pins the failed main, GHCR and Docker identity fix", () => {
+  const readiness = load("release-readiness.yml");
+  const step = readiness.jobs.candidate.steps.find(x => x.name?.startsWith("Block merges while the previous main release is unpublished"));
+  assert.ok(step);
+  for (const val of [
+    "v0.2.128", "34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0",
+    "98f9e94b2b4bcf55cbf791dc38be4a4a6028cb26",
+    "node scripts/release-backlog-131.mjs", "node scripts/audit-v02130-release-recovery.mjs",
+    'gh release view "v0.2.131"', "node scripts/next-main-release.mjs --github-output",
+  ]) assert.ok(step.run.includes(val), "missing recovery proof " + val);
+  const allocator = readFileSync(new URL("../scripts/next-main-release.mjs", import.meta.url), "utf8");
+  assert.match(allocator, /verify131Checkout/);
+  assert.match(allocator, /publishedCommit === BACKLOG_131\.publishedSha/);
+  assert.match(allocator, /target !== BACKLOG_131\.blockedMainSha/);
+  const source = readFileSync(new URL("../scripts/release-backlog-131.mjs", import.meta.url), "utf8");
+  assert.match(source, /"scripts\/publish-tested-release-image\.sh": "874c352/);
+  assert.match(source, /"scripts\/audit-v02130-release-recovery\.mjs": "1a74d77/);
+  for (const name of ["Require complete regression suite for every Fast Fix before merge", "Require verified automatic rollback"]) {
+    assert.ok(readiness.jobs.candidate.steps.some(x => x.name?.startsWith(name)), name);
+  }
+  assert.doesNotMatch(step.run, /continue-on-error|force-push|workflow_dispatch/);
+});
