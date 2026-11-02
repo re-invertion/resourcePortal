@@ -41,13 +41,26 @@ jobs:
           previous_sha="$(git rev-list -n 1 "$previous_tag")"
           main_sha="$(git rev-parse origin/main)"
           if [[ "$previous_sha" != "$main_sha" ]]; then
+            # ONE-TIME V0.2.130 RELEASE RECOVERY: old main SHA was merged
+            # after protected gates, but v0.2.129 publication ended after its
+            # API OCI-index push. User approved a new signed, rollback-tested
+            # release without mutating that registry tag. Admit ONLY the exact
+            # reviewed PR #382 file tree; retain every subsequent gate.
+            if [[ "$previous_tag" == "v0.2.128" &&
+                  "$previous_sha" == "34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0" &&
+                  "$main_sha" == "0ae0827bfc2a0971a4ffd37becbe0e61438b32e7" ]]; then
+              node scripts/release-backlog-recovery.mjs
+              node scripts/audit-v02129-release-recovery.mjs
+              if gh release view "v0.2.130" >/dev/null 2>&1; then
+                echo "Recovery target v0.2.130 is already published; refusing reuse." >&2
+                exit 1
+              fi
+              echo "::notice::Pinned #382 recovery to v0.2.130; v0.2.129 images are immutable and all rollback gates remain."
             # ONE-TIME SECURITY RECOVERY: #349 passed protected merge checks,
             # but npm audit correctly prevented its post-merge publication.
             # Only the exact reviewed dependency patch for #356 can recover
             # the backlog. No other unpublished main commit or file is allowed.
-            # Existing lint, full tests, rollback, Swarm, signing and
-            # post-merge audit gates continue to execute without overrides.
-            if [[ "$previous_tag" == "v0.2.118" &&
+            elif [[ "$previous_tag" == "v0.2.118" &&
                   "$previous_sha" == "e3155f1cb3e77a28a513f9e6f305d2cd4f03c754" &&
                   "$main_sha" == "52202280c92bb536080c5382e2de199dde93d21e" ]]; then
               recovery_diff="$(git diff --name-only "$main_sha" HEAD | LC_ALL=C sort)"

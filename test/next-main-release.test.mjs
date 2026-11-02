@@ -27,3 +27,33 @@ test("a published SHA with incomplete release assets fails closed", () => {
   const sha = "a".repeat(40);
   assert.throws(() => alreadyPublishedMainRelease("v0.2.80", sha, sha, ["SHA256SUMS"]), /incomplete/);
 });
+
+test("one-time v0.2.130 recovery requires exact old main, reviewed paths and immutable blobs", async () => {
+  const { BACKLOG, verifyBacklogCandidate } = await import("../scripts/release-backlog-recovery.mjs");
+  const valid = {
+    publishedTag: BACKLOG.publishedTag,
+    publishedSha: BACKLOG.publishedSha,
+    changedPaths: [...BACKLOG.allowedPaths],
+    blobs: { ...BACKLOG.immutableBlobs },
+    sourceIsAncestor: true,
+    versionTags: [BACKLOG.publishedTag],
+  };
+  assert.equal(verifyBacklogCandidate(valid), "v0.2.130");
+  assert.throws(() => verifyBacklogCandidate({ ...valid, publishedTag: "v0.2.129" }),
+    /wrong published source tag/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid, publishedSha: "f".repeat(40) }),
+    /wrong published source SHA/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid, sourceIsAncestor: false }),
+    /not an ancestor/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid,
+    changedPaths: [...valid.changedPaths, "packages/resourceportal-api/src/unsafe.ts"] }),
+  /candidate file set/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid,
+    changedPaths: valid.changedPaths.filter((x) => x !== "scripts/publish-tested-release-image.sh") }),
+  /candidate file set/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid,
+    blobs: { ...valid.blobs, "scripts/publish-tested-release-image.sh": "f".repeat(40) } }),
+  /reviewed file content differs/);
+  assert.throws(() => verifyBacklogCandidate({ ...valid, versionTags: ["v0.2.130"] }),
+  /already has a Git tag/);
+});

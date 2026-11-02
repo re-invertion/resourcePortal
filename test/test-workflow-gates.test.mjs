@@ -241,3 +241,35 @@ test("NVIDIA hardware acceptance is manual after a normally certified release", 
   const mandatoryRollback=readiness.jobs.candidate.steps.find(step=>step.name?.startsWith("Require verified automatic rollback"));
   assert.match(mandatoryRollback.run,/--require-automatic/);
 });
+
+test("v0.2.130 interrupted main recovery is exact-source, tree-checked and does not bypass full gates", () => {
+  const gate = load("release-readiness.yml");
+  const step = gate.jobs.candidate.steps.find((x) =>
+    x.name?.startsWith("Block merges while the previous main release is unpublished"));
+  for (const value of [
+    "v0.2.128",
+    "34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0",
+    "0ae0827bfc2a0971a4ffd37becbe0e61438b32e7",
+    "node scripts/release-backlog-recovery.mjs",
+    "node scripts/audit-v02129-release-recovery.mjs",
+    'gh release view "v0.2.130"',
+    'node scripts/next-main-release.mjs --github-output',
+  ]) assert.ok(step.run.includes(value), "recovery guard missing: " + value);
+  assert.doesNotMatch(step.run, /continue-on-error|force-push|--force|workflow_dispatch/);
+  const classifier = readFileSync(new URL("../scripts/next-main-release.mjs", import.meta.url), "utf8");
+  assert.match(classifier, /verifyBacklogCheckout/);
+  assert.match(classifier, /publishedCommit === BACKLOG\.publishedSha/);
+  assert.match(classifier, /target !== BACKLOG\.blockedMainSha/);
+  assert.match(classifier, /releaseMode\(recoveryTag/);
+  const recovery = readFileSync(new URL("../scripts/release-backlog-recovery.mjs", import.meta.url), "utf8");
+  assert.match(recovery, /v0\.2\.129/);
+  assert.match(recovery, /v0\.2\.130/);
+  assert.match(recovery, /"scripts\/publish-tested-release-image\.sh": "db77813/);
+  assert.match(recovery, /"scripts\/audit-v02129-release-recovery\.mjs": "7bd74ef/);
+  for (const command of [
+    "npm audit --audit-level=high", "npm run lint", "npm run test",
+    "npm run build", "npm run test:installer", "npm run test:cli-release",
+  ]) assert.ok(gate.jobs.candidate.steps.some((x) => x.run?.includes(command)),
+    "full gate absent: " + command);
+  assert.ok(gate.jobs.candidate.steps.some((x) => /rollback/i.test(x.name)));
+});
