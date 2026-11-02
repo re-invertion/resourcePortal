@@ -35,3 +35,32 @@ Verify **with a negative test**: an administrator and a contributor attempt a di
 This procedure greatly reduces the risk of a merge that cannot be published, but GitHub cannot make a merge plus an external GHCR/GitHub Release publication a single atomic transaction. Network/registry outages can still leave `main` temporarily unpublished; the required next-merge gate is what contains this situation.
 
 Full pre-merge Swarm smoke is not the same as a successful upgrade from a previously published ResourcePortal version with production-like data. That compatibility gate should be extended with a disposable previous-release-to-candidate upgrade/recovery E2E before the system is treated as fully proven. Do not claim database rollback is tested solely from Git diff.
+
+
+## One-time v0.2.129 publication backlog recovery via v0.2.130
+
+After PR #381 merged at main SHA `0ae0827bfc2a0971a4ffd37becbe0e61438b32e7`,
+the official release workflow passed exact-SHA full CI and real rollback testing,
+but failed immediately after pushing API `v0.2.129`. The pushed attested OCI index
+is `sha256:e05c01256b9bc5c697fe751155503cffef2ade5623d266df0e41064cd1d3e982`.
+The Web/PostgreSQL `v0.2.129` tags and signed GitHub Release do not exist.
+The original publish script cannot safely be rerun because it unconditionally
+pushes the API tag before checking the registry digest.
+
+With explicit owner authorization, PR #382 carries a **single-use, SHA- and
+file-tree-scoped** recovery. Pre-merge readiness requires the published source
+`v0.2.128` at `34bbb1a0b918fb46b71c988fe79c22ee6bf7cca0`, precisely the
+unpublished main SHA above, only the reviewed PR #382 files, pinned image-publisher
+and audit blobs, and a live read-only cryptographic GHCR manifest audit.
+The version allocator independently rechecks the same exact tree and chooses
+`v0.2.130`, never `v0.2.129`, on both PR/merge-group and post-merge main.
+The recovery never rewrites or reuses `v0.2.129`. A second failed execution of the original release workflow on 2026-11-02 08:22 UTC had already changed its mutable API tag to OCI index `sha256:6747f5d34930c37f99a261dfd8ac323a1a0e2eab72f70debe85b70c5a6d4e49b`; both this digest and the original `sha256:e05c01256b9bc5c697fe751155503cffef2ade5623d266df0e41064cd1d3e982` are pinned and independently verified by the read-only audit. Any further unknown tag movement blocks recovery.
+
+This exception does **not** waive dependency audit, full lint/test/build,
+installer/CLI validation, merge queue, exact-main-SHA post-merge CI, real
+rollback/restore from `v0.2.128`, image digest verification or signed GitHub
+OIDC release provenance. All those gates must pass for the new `v0.2.130`
+release. Any other source/tag/tree or a pre-existing `v0.2.130` Git tag
+fails closed. Once `v0.2.130` is officially published, the exception is
+automatically inert because the published source tag will no longer be
+`v0.2.128`. This operation does not deploy a running RP installation.

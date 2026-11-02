@@ -3,6 +3,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { releaseMode } from "./release-validation-mode.mjs";
+import { BACKLOG, verifyBacklogCheckout } from "./release-backlog-recovery.mjs";
 
 const parse = (tag) => /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag)?.slice(1).map(Number);
 
@@ -67,6 +68,17 @@ if (process.argv[1]?.endsWith("/next-main-release.mjs")) {
       "--jq", ".assets | map(.name)",
     ]));
     plan = alreadyPublishedMainRelease(publishedTag, publishedCommit, target, publishedAssets);
+  } else if (publishedTag === BACKLOG.publishedTag &&
+             publishedCommit === BACKLOG.publishedSha &&
+             target !== BACKLOG.blockedMainSha &&
+             spawnSync("git", ["merge-base", "--is-ancestor", BACKLOG.blockedMainSha, target]).status === 0) {
+    // The original v0.2.129 image exists only partially in GHCR. Never
+    // publish another image under that version or mutate the old tag.
+    // The same pinned tree is validated both in pre-merge readiness and
+    // in the automatic post-merge release on the immutable main SHA.
+    const recoveryTag = verifyBacklogCheckout(publishedTag, publishedCommit, tags);
+    const classified = releaseMode(recoveryTag, [publishedTag], milestones);
+    plan = { version: recoveryTag.slice(1), previousTag: publishedTag, mode: classified.mode };
   } else {
     plan = nextMainRelease(tags, publishedTag, milestones);
   }

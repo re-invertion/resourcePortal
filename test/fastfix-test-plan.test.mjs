@@ -491,7 +491,7 @@ test("unclassified changes still fail closed despite cross-cutting profiles", ()
 });
 
 test("release rollback guard and Swarm smoke cannot be omitted from Fast Fix selection", () => {
-  const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh", "scripts/rollback-zitadel-runtime.sh", "scripts/publish-tested-release-image.sh"]);
+  const plan = selectProfiles(["scripts/release-rollback-policy.mjs", "scripts/run-automatic-rollback-smoke.sh", "scripts/rollback-zitadel-runtime.sh", "scripts/publish-tested-release-image.sh", "scripts/audit-v02129-release-recovery.mjs", "scripts/release-backlog-recovery.mjs"]);
   assert.deepEqual(plan.profiles, ["platform-release", "workflow"]);
 });
 

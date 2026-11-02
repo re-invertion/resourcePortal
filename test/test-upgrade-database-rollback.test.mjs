@@ -218,8 +218,9 @@ test("release publishes the exact previously tested local API/Web/Postgres image
   assert.match(testedImagePublication, /docker tag "\$candidate" "\$published"/);
   assert.match(testedImagePublication, /docker push "\$published"/);
   assert.match(testedImagePublication, /tested_id/);
-  assert.match(testedImagePublication, /docker image inspect --format '\{\{\.Id\}\}' "\$ref"/);
-  assert.doesNotMatch(testedImagePublication, /docker build|buildx build/);
+  assert.match(testedImagePublication, /docker buildx imagetools inspect --raw/);
+  assert.match(testedImagePublication, /\.config\.digest/);
+  assert.doesNotMatch(testedImagePublication, /docker build(?:\s|$)|docker buildx build/);
 });
 
 test("release rollback cannot bypass healthy local Swarm task discovery using standalone database containers", () => {
@@ -268,4 +269,370 @@ test("rollback service readiness fails closed when Docker service inspect report
   ].join("\n");
   const result = spawnSync("bash", ["-euo", "pipefail", "-c", script], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+});
+
+
+test("GHCR image publisher uses registry config digest, never local RepoDigests[0], and preserves existing tags", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join, delimiter } = await import("node:path");
+
+  const id = "sha256:" + "a".repeat(64);
+  const digest = "sha256:" + "b".repeat(64);
+  const otherId = "sha256:" + "c".repeat(64);
+  const childDigest = "sha256:" + "d".repeat(64);
+  const attestationDigest = "sha256:" + "e".repeat(64);
+  const fakeDocker = String.raw`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$MOCK_LOG"
+if [[ "$1" == image && "$2" == inspect ]]; then
+  printf '%s\n' "$MOCK_IMAGE_ID"
+  exit 0
+fi
+if [[ "$1" == tag ]]; then exit 0; fi
+if [[ "$1" == push ]]; then
+  touch "$MOCK_PUSHED"
+  echo "Pushed image"
+  exit 0
+fi
+if [[ "$1" == buildx && "$2" == imagetools && "$3" == inspect ]]; then
+  if [[ "$4" == --raw ]]; then
+    if [[ "$MOCK_REMOTE_CONFIG" == index ]]; then
+      echo '{"mediaType":"application/vnd.oci.image.index.v1+json","schemaVersion":2,"manifests":[]}'
+    elif [[ "$MOCK_REMOTE_CONFIG" == attested* ]]; then
+      if [[ "$5" == *"$MOCK_CHILD_DIGEST" ]]; then
+        if [[ "$MOCK_REMOTE_CONFIG" == attested_conflict ]]; then
+          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_OTHER_ID"
+        else
+          printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","schemaVersion":2,"config":{"digest":"%s"}}\n' "$MOCK_IMAGE_ID"
+        fi
+      else
+        printf '{"mediaType":"application/vnd.oci.image.index.v1+json","schemaVersion":2,"manifests":['
+        printf '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"linux","architecture":"amd64"}}' "$MOCK_CHILD_DIGEST"
+        if [[ "$MOCK_REMOTE_CONFIG" == attested_multiarch ]]; then
+          printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"linux","architecture":"arm64"}}' "$MOCK_ATTEST_DIGEST"
+        else
+          if [[ "$MOCK_REMOTE_CONFIG" == attested_badref ]]; then
+            printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"unknown","architecture":"unknown"},"annotations":{"vnd.docker.reference.type":"attestation-manifest","vnd.docker.reference.digest":"%s"}}' "$MOCK_ATTEST_DIGEST" "$MOCK_ATTEST_DIGEST"
+          else
+            printf ',{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"%s","platform":{"os":"unknown","architecture":"unknown"},"annotations":{"vnd.docker.reference.type":"attestation-manifest","vnd.docker.reference.digest":"%s"}}' "$MOCK_ATTEST_DIGEST" "$MOCK_CHILD_DIGEST"
+          fi
+        fi
+        printf ']}\n'
+      fi
+    else
+      printf '{"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"%s"}}\n' "$MOCK_REMOTE_CONFIG"
+    fi
+    exit 0
+  fi
+  if [[ "$MOCK_MODE" == unavailable ]]; then
+    echo "unauthorized: authentication required" >&2
+    exit 1
+  fi
+  if [[ "$MOCK_MODE" == existing || -f "$MOCK_PUSHED" ]]; then
+    echo "Name: ghcr.io/re-invertion/resourceportal-api:v0.2.130"
+    echo "MediaType: application/vnd.docker.distribution.manifest.v2+json"
+    printf 'Digest: %s\n' "$MOCK_DIGEST"
+    exit 0
+  fi
+  echo "ghcr.io/re-invertion/resourceportal-api:v0.2.130: not found" >&2
+  exit 1
+fi
+echo "Unexpected fake Docker command: $*" >&2
+exit 91
+`;
+
+  function run(mode, config = id) {
+    const dir = mkdtempSync(join(tmpdir(), "rp-release-digest-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "docker"), fakeDocker);
+      chmodSync(join(bin, "docker"), 0o755);
+      const logfile = join(dir, "commands.log");
+      const pushed = join(dir, "pushed");
+      const output = join(dir, "output");
+      const result = spawnSync("bash", ["scripts/publish-tested-release-image.sh", "api", "v0.2.130"], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: bin + delimiter + process.env.PATH,
+          GITHUB_REPOSITORY_OWNER: "re-invertion",
+          GITHUB_OUTPUT: output,
+          MOCK_LOG: logfile,
+          MOCK_PUSHED: pushed,
+          MOCK_IMAGE_ID: id,
+          MOCK_REMOTE_CONFIG: config,
+          MOCK_CHILD_DIGEST: childDigest,
+          MOCK_ATTEST_DIGEST: attestationDigest,
+          MOCK_OTHER_ID: otherId,
+          MOCK_DIGEST: digest,
+          MOCK_MODE: mode,
+        },
+      });
+      return {
+        result,
+        pushed: existsSync(pushed),
+        output: existsSync(output) ? readFileSync(output, "utf8") : "",
+        commands: readFileSync(logfile, "utf8"),
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const fresh = run("missing");
+  assert.equal(fresh.result.status, 0, fresh.result.stderr);
+  assert.equal(fresh.pushed, true);
+  assert.equal(fresh.output, "digest=" + digest + "\n");
+  assert.match(fresh.commands, /buildx imagetools inspect --raw ghcr.io\/re-invertion\/resourceportal-api@sha256:/);
+
+  const reused = run("existing");
+  assert.equal(reused.result.status, 0, reused.result.stderr);
+  assert.equal(reused.pushed, false, "already-published identical image must never be pushed again");
+  assert.equal(reused.output, "digest=" + digest + "\n");
+
+  const conflict = run("existing", otherId);
+  assert.notEqual(conflict.result.status, 0);
+  assert.equal(conflict.pushed, false, "must not overwrite a conflicting existing registry tag");
+  assert.match(conflict.result.stderr, /differs from rollback-tested image/);
+
+  const unavailable = run("unavailable");
+  assert.notEqual(unavailable.result.status, 0);
+  assert.equal(unavailable.pushed, false, "registry/auth errors must never allow a push");
+  assert.match(unavailable.result.stderr, /Cannot determine whether/);
+
+  const corrupted = run("missing", otherId);
+  assert.notEqual(corrupted.result.status, 0);
+  assert.equal(corrupted.pushed, true);
+  assert.match(corrupted.result.stderr, /differs from rollback-tested image/);
+  assert.equal(corrupted.output, "", "must not emit a digest when verification fails");
+
+  const attestedFresh = run("missing", "attested");
+  assert.equal(attestedFresh.result.status, 0, attestedFresh.result.stderr);
+  assert.equal(attestedFresh.pushed, true);
+  assert.equal(attestedFresh.output, "digest=" + digest + "\n", "preserve outer OCI index digest");
+  assert.match(attestedFresh.commands, new RegExp("imagetools inspect --raw ghcr.io/re-invertion/resourceportal-api@" + childDigest));
+
+  const attestedExisting = run("existing", "attested");
+  assert.equal(attestedExisting.result.status, 0, attestedExisting.result.stderr);
+  assert.equal(attestedExisting.pushed, false);
+  assert.equal(attestedExisting.output, "digest=" + digest + "\n");
+
+  for (const indexMode of ["index", "attested_multiarch", "attested_badref"]) {
+    const invalid = run("existing", indexMode);
+    assert.notEqual(invalid.result.status, 0, indexMode + ": invalid OCI index should fail closed");
+    assert.equal(invalid.pushed, false, "invalid OCI index must not cause overwrite");
+    assert.match(invalid.result.stderr, /ambiguous runnable images or invalid attestations/);
+  }
+
+  const mismatchedChild = run("existing", "attested_conflict");
+  assert.notEqual(mismatchedChild.result.status, 0);
+  assert.equal(mismatchedChild.pushed, false);
+  assert.match(mismatchedChild.result.stderr, /differs from rollback-tested image/);
+});
+
+
+test("partially published OCI release recovery audit proves immutable images and fails closed", async () => {
+  const { createHash } = await import("node:crypto");
+  const { auditInterruptedRelease } = await import("../scripts/audit-v02129-release-recovery.mjs");
+  const digest = (data) => "sha256:" + createHash("sha256").update(data).digest("hex");
+  const serialize = (value) => JSON.stringify(value);
+  const configDigest = "sha256:" + "a".repeat(64);
+  const attestationRaw = serialize({ schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: "sha256:" + "b".repeat(64) },
+  });
+  const attestationDigest = digest(attestationRaw);
+  const runnableRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: configDigest },
+  });
+  const runnableDigest = digest(runnableRaw);
+  const indexRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: runnableDigest,
+        platform: { os: "linux", architecture: "amd64" } },
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: attestationDigest,
+        platform: { os: "unknown", architecture: "unknown" },
+        annotations: { "vnd.docker.reference.type": "attestation-manifest",
+          "vnd.docker.reference.digest": runnableDigest } },
+    ],
+  });
+  const indexDigest = digest(indexRaw);
+  const expected = {
+    sourceSha: "a".repeat(40), previousTag: "v0.2.128", version: "v0.2.129",
+    apiIndex: indexDigest, apiManifest: runnableDigest, attestation: attestationDigest,
+    apiConfig: configDigest,
+  };
+  const json = (body, status = 200, headers = {}) =>
+    new Response(JSON.stringify(body), { status, headers });
+  const raw = (body, d) =>
+    new Response(body, { status: 200, headers: { "docker-content-digest": d } });
+  const routes = new Map([
+    ["https://api.github.com/repos/re-invertion/resourcePortal/branches/main",
+      json({ commit: { sha: expected.sourceSha } })],
+    ["https://api.github.com/repos/re-invertion/resourcePortal/releases/latest",
+      json({ tag_name: expected.previousTag })],
+    ["https://api.github.com/repos/re-invertion/resourcePortal/releases/tags/v0.2.129",
+      new Response(null, { status: 404 })],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-api:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129",
+      raw(indexRaw, indexDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + indexDigest,
+      raw(indexRaw, indexDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + runnableDigest,
+      raw(runnableRaw, runnableDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + attestationDigest,
+      raw(attestationRaw, attestationDigest)],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-web:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/token?scope=repository:re-invertion/resourceportal-postgres:pull&service=ghcr.io",
+      json({ token: "test-readonly-token" })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-web/manifests/v0.2.129",
+      new Response(null, { status: 404 })],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-postgres/manifests/v0.2.129",
+      new Response(null, { status: 404 })],
+  ]);
+  function mockFetch(overrides = {}) {
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      assert.equal(options?.method ?? "GET", "GET", "audit may only make reads");
+      calls.push({ url, options });
+      const response = overrides[url] || routes.get(url);
+      assert.ok(response, "unexpected recovery URL " + url);
+      return response.clone();
+    };
+    return { fetchImpl, calls };
+  }
+  const success = mockFetch();
+  const result = await auditInterruptedRelease(success.fetchImpl, expected, "test-ci-token");
+  for (const { url, options } of success.calls) {
+    if (url.startsWith("https://api.github.com/")) {
+      assert.equal(options.headers.Authorization, "Bearer test-ci-token",
+        "GitHub API reads must use the workflow token to avoid anonymous 403");
+    } else {
+      assert.notEqual(options?.headers?.Authorization, "Bearer test-ci-token",
+        "never leak the GitHub token to GHCR");
+    }
+  }
+  assert.equal(result.github.mainSha, expected.sourceSha);
+  assert.equal(result.api.indexDigest, indexDigest);
+  assert.equal(result.api.configDigest, configDigest);
+  assert.equal(result.canPublishFromThisAudit, false);
+  assert.deepEqual(result.otherImages, { web: "absent", postgres: "absent" });
+  assert.equal(success.calls.length, routes.size);
+  assert(!success.calls.some(({ url }) => url.includes("upload") || url.includes("tags/create")));
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({
+      ["https://api.github.com/repos/re-invertion/resourcePortal/branches/main"]:
+        new Response(null, { status: 403 }),
+    }).fetchImpl, expected, "test-ci-token"),
+    /Unexpected HTTP 403/, "GitHub permission/rate-limit failures must still fail closed");
+
+  const mainUrl = "https://api.github.com/repos/re-invertion/resourcePortal/branches/main";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [mainUrl]: json({commit:{sha:"f".repeat(40)}}) }).fetchImpl, expected),
+    /main drifted/);
+
+  const indexUrl = "https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw, "sha256:" + "f".repeat(64)) }).fetchImpl, expected),
+    /registry response bytes do not hash/);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw + " ", indexDigest) }).fetchImpl, expected),
+    /registry response bytes do not hash/);
+
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch().fetchImpl, { ...expected, apiConfig:"sha256:"+"c".repeat(64) }),
+    /rollback-tested API config digest differs/);
+
+  const webUrl = "https://ghcr.io/v2/re-invertion/resourceportal-web/manifests/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [webUrl]: json({mediaType:"application/vnd.oci.image.index.v1+json"}) }).fetchImpl, expected),
+    /unexpected pre-existing web image/);
+
+  const releaseUrl = "https://api.github.com/repos/re-invertion/resourcePortal/releases/tags/v0.2.129";
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [releaseUrl]: json({tag_name:"v0.2.129"}) }).fetchImpl, expected),
+    /already published/);
+
+  // The old GitHub release job was re-run with the SAME SHA and repushed a
+  // different attested OCI index under the orphaned v0.2.129 tag. Accept
+  // exactly the two pinned attempts as evidence, never an unknown rewrite.
+  const rerunConfig = "sha256:" + "c".repeat(64);
+  const rerunAttestationRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: "sha256:" + "d".repeat(64) },
+  });
+  const rerunAttestation = digest(rerunAttestationRaw);
+  const rerunImageRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: rerunConfig },
+  });
+  const rerunManifest = digest(rerunImageRaw);
+  const rerunIndexRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: rerunManifest,
+        platform: { os: "linux", architecture: "amd64" } },
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: rerunAttestation,
+        platform: { os: "unknown", architecture: "unknown" },
+        annotations: { "vnd.docker.reference.type": "attestation-manifest",
+          "vnd.docker.reference.digest": rerunManifest } },
+    ],
+  });
+  const rerunIndex = digest(rerunIndexRaw);
+  const rerunExpected = { ...expected, rerun: {
+    apiIndex: rerunIndex, apiManifest: rerunManifest,
+    attestation: rerunAttestation, apiConfig: rerunConfig,
+  } };
+  const rerunOverrides = {
+    [indexUrl]: raw(rerunIndexRaw, rerunIndex),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunIndex]:
+      raw(rerunIndexRaw, rerunIndex),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+      raw(rerunImageRaw, rerunManifest),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunAttestation]:
+      raw(rerunAttestationRaw, rerunAttestation),
+  };
+  const verifiedRerun = await auditInterruptedRelease(mockFetch(rerunOverrides).fetchImpl, rerunExpected);
+  assert.equal(verifiedRerun.api.orphanTagRewrittenByFailedRerun, true);
+  assert.equal(verifiedRerun.api.observedOrphanTagDigest, rerunIndex);
+  assert.equal(verifiedRerun.api.indexDigest, indexDigest,
+    "original index remains the immutable release proof");
+  assert.equal(verifiedRerun.canPublishFromThisAudit, false);
+
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch(rerunOverrides).fetchImpl, expected),
+    /registry digest mismatch/);
+  const unknownIndex = "sha256:" + "f".repeat(64);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(rerunIndexRaw, unknownIndex) }).fetchImpl, rerunExpected),
+    /registry response bytes do not hash/);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({
+      ...rerunOverrides,
+      ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+        raw(rerunImageRaw, unknownIndex),
+    }).fetchImpl, rerunExpected),
+    /registry digest mismatch/);
+
+  const originalTagOverrides = { ...rerunOverrides, [indexUrl]: raw(indexRaw, indexDigest) };
+  const bothVerifiedWithOriginalTag = await auditInterruptedRelease(
+    mockFetch(originalTagOverrides).fetchImpl, rerunExpected);
+  assert.equal(bothVerifiedWithOriginalTag.api.orphanTagRewrittenByFailedRerun, false);
+  assert.equal(bothVerifiedWithOriginalTag.api.observedOrphanTagDigest, indexDigest);
+
+  const unavailableRerunEvidence = {
+    ...originalTagOverrides,
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+      new Response(null, { status: 404 }),
+  };
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch(unavailableRerunEvidence).fetchImpl, rerunExpected),
+    /Unexpected HTTP 404/,
+    "missing attempt-2 evidence must block even when mutable tag points to attempt 1");
 });
