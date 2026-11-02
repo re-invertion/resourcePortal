@@ -373,18 +373,6 @@ export async function probeSwarmNodeCapacity(
         reason: "ContainerTelemetryUnavailable",
       };
     }
-    // Container may have restarted while its counters were being read.
-    // Revalidate the exact Docker identity/PID/start time before publishing.
-    const freshInspect = await runDocker(
-      ["inspect", "--format", "{{.Id}}\t{{.State.Pid}}\t{{.State.StartedAt}}", row.id],
-      4_000,
-    );
-    const refreshed = freshInspect ? parseInspectRows(freshInspect) : null;
-    const freshState = refreshed?.get(row.id);
-    if (refreshed?.size !== 1 || !freshState || freshState.pid !== state.pid ||
-        freshState.startedAt !== state.startedAt) {
-      return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerIdentityChanged" };
-    }
     containers.push({
       id: row.id,
       appId: row.appId,
@@ -395,6 +383,35 @@ export async function probeSwarmNodeCapacity(
       memoryPsiSomeAvg10: cgroup.someAvg10,
       memoryPsiFullAvg10: cgroup.fullAvg10,
     });
+  }
+
+  // Revalidate every sampled Docker identity in one batch. A separate CLI
+  // invocation per replica can exceed the authenticated probe's 12s deadline.
+  // Reject the entire sample if any container restarted or disappeared.
+  if (containerRows.length > 0) {
+    const freshInspect = await runDocker(
+      [
+        "inspect",
+        "--format",
+        "{{.Id}}\t{{.State.Pid}}\t{{.State.StartedAt}}",
+        ...containerRows.map((row) => row.id),
+      ],
+      8_000,
+    );
+    const refreshed = freshInspect === null ? null : parseInspectRows(freshInspect);
+    if (
+      !refreshed ||
+      refreshed.size !== containerRows.length ||
+      containerRows.some((row) => {
+        const before = inspectRows.get(row.id);
+        const after = refreshed.get(row.id);
+        return !before || !after ||
+          before.pid !== after.pid ||
+          before.startedAt !== after.startedAt;
+      })
+    ) {
+      return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerIdentityChanged" };
+    }
   }
 
   const pressure = parsePressure(pressureRaw);
