@@ -126,10 +126,10 @@ export async function auditInterruptedRelease(fetchImpl = fetch, expected = RECO
   };
 
   await verifyKnownImage(expected, "original failed attempt");
-  if (observedTagDigest !== expected.apiIndex) {
-    // This precise second manifest is independently pinned to the *same*
-    // GitHub workflow run attempt 2 and cannot be silently swapped again.
-    assert(expected.rerun, "unapproved orphan tag rewrite");
+  // The mutable tag is evidence, never a selector for which immutable proof
+  // is required. When attempt 2 is pinned, prove BOTH attempts on every run,
+  // even if an operator moves the tag back to attempt 1.
+  if (expected.rerun) {
     await verifyKnownImage(expected.rerun, "failed rerun attempt 2");
   }
 

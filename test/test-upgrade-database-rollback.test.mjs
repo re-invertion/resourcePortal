@@ -604,4 +604,20 @@ test("partially published OCI release recovery audit proves immutable images and
         raw(rerunImageRaw, unknownIndex),
     }).fetchImpl, rerunExpected),
     /registry digest mismatch/);
+
+  const originalTagOverrides = { ...rerunOverrides, [indexUrl]: raw(indexRaw, indexDigest) };
+  const bothVerifiedWithOriginalTag = await auditInterruptedRelease(
+    mockFetch(originalTagOverrides).fetchImpl, rerunExpected);
+  assert.equal(bothVerifiedWithOriginalTag.api.orphanTagRewrittenByFailedRerun, false);
+  assert.equal(bothVerifiedWithOriginalTag.api.observedOrphanTagDigest, indexDigest);
+
+  const unavailableRerunEvidence = {
+    ...originalTagOverrides,
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+      new Response(null, { status: 404 }),
+  };
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch(unavailableRerunEvidence).fetchImpl, rerunExpected),
+    /Unexpected HTTP 404/,
+    "missing attempt-2 evidence must block even when mutable tag points to attempt 1");
 });
