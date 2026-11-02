@@ -488,6 +488,35 @@ describe("worker collection completeness", () => {
     expect(store.points).toEqual([]);
   });
 
+  it("persists a safe missing-replica count without claiming label migration is certain", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const prisma = {
+      singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 2 }]) },
+      remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
+      workerReconciliationState: { findFirst: vi.fn().mockResolvedValue(null), upsert },
+    };
+    const nodeProbe = { collect: vi.fn().mockResolvedValue([report(nodeA, 20, 1)]) };
+    const telemetry = new CapacityTelemetryService(
+      new MemoryStore() as never,
+      new CapacityPolicyService(config as never),
+      prisma as never,
+      nodeProbe as never,
+    );
+    const reconciler = new CapacityTelemetryReconcilerService(telemetry, config as never);
+    await reconciler.collect(true);
+    expect(upsert).toHaveBeenCalledOnce();
+    expect(upsert.mock.calls[0]?.[0].create).toMatchObject({
+      lastResult: {
+        unavailable: true,
+        reasonCode: "IncompleteReplicaCoverageCheckLegacyLabels",
+        missingReplicaCount: 1,
+        admissionEvidence: null,
+      },
+      failureCount: 1,
+    });
+    expect(JSON.stringify(upsert.mock.calls[0]?.[0])).not.toContain("existing-app");
+  });
+
   it("invalidates fresh published evidence immediately when a whole node probe is missing", async () => {
     const store = new MemoryStore();
     const policy = new CapacityPolicyService(config as never);
@@ -498,11 +527,12 @@ describe("worker collection completeness", () => {
       ),
     };
     const lastSuccessAt = new Date();
-    const updateMany = vi.fn((query: { data?: { lastResult?: unknown } }) => {
-      if (query.data?.lastResult && typeof query.data.lastResult === "object") {
-        lastResult = query.data.lastResult as Record<string, unknown>;
+    const upsert = vi.fn((query: { update?: { lastResult?: unknown }; create?: { lastResult?: unknown } }) => {
+      const result = query.update?.lastResult ?? query.create?.lastResult;
+      if (result && typeof result === "object") {
+        lastResult = result as Record<string, unknown>;
       }
-      return Promise.resolve({ count: 1 });
+      return Promise.resolve({});
     });
     const prisma = {
       singleApp: {
@@ -526,7 +556,7 @@ describe("worker collection completeness", () => {
               : null,
           ),
         ),
-        updateMany,
+        upsert,
       },
     };
     const nodeProbe = {
@@ -545,7 +575,8 @@ describe("worker collection completeness", () => {
 
     await reconciler.collect(true);
 
-    expect(updateMany).toHaveBeenCalledOnce();
+    expect(upsert).toHaveBeenCalledOnce();
+    expect(upsert.mock.calls[0]?.[0].create).toMatchObject({ failureCount: 1, lastResult: { unavailable: true, admissionEvidence: null } });
     expect(lastResult).toMatchObject({
       unavailable: true,
       admissionEvidence: null,
