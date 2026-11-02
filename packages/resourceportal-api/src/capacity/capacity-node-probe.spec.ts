@@ -246,22 +246,22 @@ describe("batched capacity identity revalidation", () => {
       pid: index + 1000,
     }));
     let inspectCalls = 0;
-    const docker = async (args: string[]): Promise<string | null> => {
-      if (args[0] === "info") return nodeId;
-      if (args[0] === "ps") return rows.map(row => row.id + "\t" + appId).join("\n");
+    const docker = (args: string[]): Promise<string | null> => {
+      if (args[0] === "info") return Promise.resolve(nodeId);
+      if (args[0] === "ps") return Promise.resolve(rows.map(row => row.id + "\t" + appId).join("\n"));
       if (args[0] === "inspect") {
         inspectCalls += 1;
         expect(args.slice(3)).toEqual(rows.map(row => row.id));
         const sampled = inspectCalls === 2 && changed === "missing" ? rows.slice(1) : rows;
-        return sampled.map((row, index) => [
+        return Promise.resolve(sampled.map((row, index) => [
           row.id,
           String(row.pid + (inspectCalls === 2 && changed === "pid" && index === 0 ? 1 : 0)),
           inspectCalls === 2 && changed === "start" && index === 0
             ? "2026-11-02T13:00:00.000Z"
             : "2026-11-02T12:00:00.000Z",
-        ].join("\t")).join("\n");
+        ].join("\t")).join("\n"));
       }
-      return null;
+      return Promise.resolve(null);
     };
     const readFile = (path: string): Promise<string> => {
       const match = /\/(\d+)\/cgroup$/.exec(path);
