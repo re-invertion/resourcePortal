@@ -238,3 +238,61 @@ describe("private cgroup namespace resolution", () => {
     expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
   });
 });
+
+describe("batched capacity identity revalidation", () => {
+  function fixture(count: number, changed: "none" | "pid" | "start" | "missing" = "none") {
+    const rows = Array.from({ length: count }, (_, index) => ({
+      id: (index + 1).toString(16).padStart(64, "0"),
+      pid: index + 1000,
+    }));
+    let inspectCalls = 0;
+    const docker = async (args: string[]): Promise<string | null> => {
+      if (args[0] === "info") return nodeId;
+      if (args[0] === "ps") return rows.map(row => row.id + "\t" + appId).join("\n");
+      if (args[0] === "inspect") {
+        inspectCalls += 1;
+        expect(args.slice(3)).toEqual(rows.map(row => row.id));
+        const sampled = inspectCalls === 2 && changed === "missing" ? rows.slice(1) : rows;
+        return sampled.map((row, index) => [
+          row.id,
+          String(row.pid + (inspectCalls === 2 && changed === "pid" && index === 0 ? 1 : 0)),
+          inspectCalls === 2 && changed === "start" && index === 0
+            ? "2026-11-02T13:00:00.000Z"
+            : "2026-11-02T12:00:00.000Z",
+        ].join("\t")).join("\n");
+      }
+      return null;
+    };
+    const readFile = (path: string): Promise<string> => {
+      const match = /\/(\d+)\/cgroup$/.exec(path);
+      if (match) return Promise.resolve(`0::/docker/${match[1]}\n`);
+      return baseReadFile(path);
+    };
+    return {
+      docker,
+      readFile,
+      realpath: (path: string) => Promise.resolve(path),
+      inspectCount: () => inspectCalls,
+    };
+  }
+
+  it("uses only two Docker inspect invocations for 256 replicas", async () => {
+    const sample = fixture(256);
+    const report = await probeSwarmNodeCapacity(sample);
+    expect(report.status).toBe("Observed");
+    if (report.status === "Observed") expect(report.containers).toHaveLength(256);
+    expect(sample.inspectCount()).toBe(2);
+  });
+
+  it.each(["pid", "start", "missing"] as const)(
+    "fails closed when post-sample Docker identity changes (%s)",
+    async change => {
+      const sample = fixture(32, change);
+      await expect(probeSwarmNodeCapacity(sample)).resolves.toMatchObject({
+        status: "Unavailable",
+        reason: "ContainerIdentityChanged",
+      });
+      expect(sample.inspectCount()).toBe(2);
+    },
+  );
+});
