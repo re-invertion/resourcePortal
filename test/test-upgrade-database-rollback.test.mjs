@@ -481,6 +481,8 @@ test("partially published OCI release recovery audit proves immutable images and
       json({ token: "test-readonly-token" })],
     ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129",
       raw(indexRaw, indexDigest)],
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + indexDigest,
+      raw(indexRaw, indexDigest)],
     ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + runnableDigest,
       raw(runnableRaw, runnableDigest)],
     ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + attestationDigest,
@@ -523,7 +525,7 @@ test("partially published OCI release recovery audit proves immutable images and
   const indexUrl = "https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/v0.2.129";
   await assert.rejects(
     auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw, "sha256:" + "f".repeat(64)) }).fetchImpl, expected),
-    /registry digest mismatch/);
+    /registry response bytes do not hash/);
   await assert.rejects(
     auditInterruptedRelease(mockFetch({ [indexUrl]: raw(indexRaw + " ", indexDigest) }).fetchImpl, expected),
     /registry response bytes do not hash/);
@@ -541,4 +543,65 @@ test("partially published OCI release recovery audit proves immutable images and
   await assert.rejects(
     auditInterruptedRelease(mockFetch({ [releaseUrl]: json({tag_name:"v0.2.129"}) }).fetchImpl, expected),
     /already published/);
+
+  // The old GitHub release job was re-run with the SAME SHA and repushed a
+  // different attested OCI index under the orphaned v0.2.129 tag. Accept
+  // exactly the two pinned attempts as evidence, never an unknown rewrite.
+  const rerunConfig = "sha256:" + "c".repeat(64);
+  const rerunAttestationRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: "sha256:" + "d".repeat(64) },
+  });
+  const rerunAttestation = digest(rerunAttestationRaw);
+  const rerunImageRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { digest: rerunConfig },
+  });
+  const rerunManifest = digest(rerunImageRaw);
+  const rerunIndexRaw = serialize({
+    schemaVersion: 2, mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: rerunManifest,
+        platform: { os: "linux", architecture: "amd64" } },
+      { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: rerunAttestation,
+        platform: { os: "unknown", architecture: "unknown" },
+        annotations: { "vnd.docker.reference.type": "attestation-manifest",
+          "vnd.docker.reference.digest": rerunManifest } },
+    ],
+  });
+  const rerunIndex = digest(rerunIndexRaw);
+  const rerunExpected = { ...expected, rerun: {
+    apiIndex: rerunIndex, apiManifest: rerunManifest,
+    attestation: rerunAttestation, apiConfig: rerunConfig,
+  } };
+  const rerunOverrides = {
+    [indexUrl]: raw(rerunIndexRaw, rerunIndex),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunIndex]:
+      raw(rerunIndexRaw, rerunIndex),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+      raw(rerunImageRaw, rerunManifest),
+    ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunAttestation]:
+      raw(rerunAttestationRaw, rerunAttestation),
+  };
+  const verifiedRerun = await auditInterruptedRelease(mockFetch(rerunOverrides).fetchImpl, rerunExpected);
+  assert.equal(verifiedRerun.api.orphanTagRewrittenByFailedRerun, true);
+  assert.equal(verifiedRerun.api.observedOrphanTagDigest, rerunIndex);
+  assert.equal(verifiedRerun.api.indexDigest, indexDigest,
+    "original index remains the immutable release proof");
+  assert.equal(verifiedRerun.canPublishFromThisAudit, false);
+
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch(rerunOverrides).fetchImpl, expected),
+    /registry digest mismatch/);
+  const unknownIndex = "sha256:" + "f".repeat(64);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({ [indexUrl]: raw(rerunIndexRaw, unknownIndex) }).fetchImpl, rerunExpected),
+    /registry response bytes do not hash/);
+  await assert.rejects(
+    auditInterruptedRelease(mockFetch({
+      ...rerunOverrides,
+      ["https://ghcr.io/v2/re-invertion/resourceportal-api/manifests/" + rerunManifest]:
+        raw(rerunImageRaw, unknownIndex),
+    }).fetchImpl, rerunExpected),
+    /registry digest mismatch/);
 });

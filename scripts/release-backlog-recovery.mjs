@@ -15,7 +15,7 @@ export const BACKLOG = Object.freeze({
   // reviewed and tested independently before this recovery exception.
   immutableBlobs: Object.freeze({
     "scripts/publish-tested-release-image.sh": "db77813fb3411e086820b479a003364af1e92290",
-    "scripts/audit-v02129-release-recovery.mjs": "7bd74ef4772c7a340f8f1fdcdc8067bd5175924d",
+    "scripts/audit-v02129-release-recovery.mjs": "1c90a8e8b3babc97bf87f4b9a5c312ed37656e36",
   }),
   allowedPaths: Object.freeze([
     ".github/workflows/release-readiness.yml",

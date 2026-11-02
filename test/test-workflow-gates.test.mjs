@@ -265,7 +265,7 @@ test("v0.2.130 interrupted main recovery is exact-source, tree-checked and does 
   assert.match(recovery, /v0\.2\.129/);
   assert.match(recovery, /v0\.2\.130/);
   assert.match(recovery, /"scripts\/publish-tested-release-image\.sh": "db77813/);
-  assert.match(recovery, /"scripts\/audit-v02129-release-recovery\.mjs": "7bd74ef/);
+  assert.match(recovery, /"scripts\/audit-v02129-release-recovery\.mjs": "1c90a8e/);
   for (const command of [
     "npm audit --audit-level=high", "npm run lint", "npm run test",
     "npm run build", "npm run test:installer", "npm run test:cli-release",

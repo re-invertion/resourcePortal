@@ -54,7 +54,7 @@ unpublished main SHA above, only the reviewed PR #382 files, pinned image-publis
 and audit blobs, and a live read-only cryptographic GHCR manifest audit.
 The version allocator independently rechecks the same exact tree and chooses
 `v0.2.130`, never `v0.2.129`, on both PR/merge-group and post-merge main.
-The existing `v0.2.129` registry manifest is never rewritten or reused.
+The recovery never rewrites or reuses `v0.2.129`. A second failed execution of the original release workflow on 2026-11-02 08:22 UTC had already changed its mutable API tag to OCI index `sha256:6747f5d34930c37f99a261dfd8ac323a1a0e2eab72f70debe85b70c5a6d4e49b`; both this digest and the original `sha256:e05c01256b9bc5c697fe751155503cffef2ade5623d266df0e41064cd1d3e982` are pinned and independently verified by the read-only audit. Any further unknown tag movement blocks recovery.
 
 This exception does **not** waive dependency audit, full lint/test/build,
 installer/CLI validation, merge queue, exact-main-SHA post-merge CI, real
