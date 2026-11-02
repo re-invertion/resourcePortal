@@ -339,6 +339,10 @@ jobs:
       - name: Build VPN dataplane smoke image
         run: docker build --tag resourceportal-vpn-e2e:current .
 
+      - name: Verify authenticated capacity telemetry on Docker 29 private cgroup namespace
+        timeout-minutes: 6
+        run: bash scripts/run-capacity-private-cgroup-swarm-smoke.sh
+
       - name: Install Remote LAN L2 DHCP smoke prerequisites
         run: |
           sudo apt-get update -y

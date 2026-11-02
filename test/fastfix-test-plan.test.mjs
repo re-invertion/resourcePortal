@@ -630,7 +630,8 @@ test("capacity and stage11 quota changes select explicit patch regressions (#373
     "packages/resourceportal-api/src/app-groups/stage11-app-groups.service.ts",
     "packages/resourceportal-api/src/app-groups/stage11-quota-drift.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["applications", "quota-security"]);
+  assert.deepEqual(plan.profiles, ["applications", "quota-security", "swarm-smoke-fixtures"]);
+  assert.equal(plan.swarmSmoke, true, "capacity changes require a real Swarm gate");
   assert.equal(plan.vpnSmoke, false);
   assert.throws(
     () => selectProfiles(["packages/resourceportal-api/src/app-groups/unregistered-quota.ts"]),
@@ -660,4 +661,18 @@ test("ResourceBot billing concurrency fixes require billing and security regress
     "packages/resourceportal-api/src/resource-bot/resource-bot-reservation-concurrency.spec.ts",
   ]);
   assert.deepEqual(plan.profiles, ["resource-bot", "security"]);
+});
+
+
+test("Docker 29 private-cgroup capacity regression cannot be skipped by Fast Fix", () => {
+  const code = selectProfiles([
+    "packages/resourceportal-api/src/capacity/capacity-node-probe.ts",
+    "packages/resourceportal-api/src/capacity/capacity-node-probe.spec.ts",
+  ]);
+  assert.deepEqual(code.profiles, ["quota-security", "swarm-smoke-fixtures"]);
+  assert.equal(code.swarmSmoke, true);
+  assert.equal(code.vpnSmoke, false);
+  const smoke = selectProfiles(["scripts/run-capacity-private-cgroup-swarm-smoke.sh"]);
+  assert.equal(smoke.swarmSmoke, true);
+  assert.deepEqual(smoke.profiles, ["swarm-smoke-fixtures", "workflow"]);
 });

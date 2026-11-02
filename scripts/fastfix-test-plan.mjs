@@ -208,7 +208,8 @@ const commands = {
 const classifiers = [
   // Capacity admission and tenant quota share a scheduler/resource-limit contract.
   // Do not let either implementation or new regression fixtures evade patch CI.
-  [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["quota-security"]],
+  // Capacity sampling is a runtime cgroup/Swarm contract, not just a unit-test surface.
+  [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["quota-security", "swarm-smoke-fixtures"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/stage11-(?:app-groups\.service|quota-drift\.spec)\.ts$/, ["quota-security", "applications"]],
 
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
@@ -225,6 +226,7 @@ const classifiers = [
   [/^scripts\/test-nvidia-gpu-swarm\.sh$/, ["gpu-security", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/render-nvidia-gpu-stack-fixture\.ts$/, ["gpu-security", "workflow"]],
   [/^scripts\/run-real-swarm-smoke\.sh$/, ["gpu-security", "platform-release", "workflow"]],
+  [/^scripts\/run-capacity-private-cgroup-swarm-smoke\.sh$/, ["swarm-smoke-fixtures", "workflow"]],
   [/^test\/installer\/test-gpu-readiness\.sh$/, ["gpu-security", "installer"]],
   [/^test\/installer\/test-gpu-swarm-gate-safety\.sh$/, ["gpu-security", "installer"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-runtime\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
