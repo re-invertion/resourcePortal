@@ -185,3 +185,45 @@ describe("capacity node probe inventory bounds", () => {
     });
   });
 });
+
+
+describe("private cgroup namespace resolution", () => {
+  const scope = `/system.slice/docker-${containerA}.scope`;
+  const mockDocker = async (args: string[]) => {
+    if (args[0] === "info") return nodeId;
+    if (args[0] === "ps") return `${containerA}\t${appId}`;
+    if (args[0] === "inspect") return `${containerA}\t123\t2026-11-02T12:00:00.000Z`;
+    return null;
+  };
+  const realpath = async (path: string) => path;
+  function readFor(membership: string, procs = "123\n") {
+    return async (path: string) => {
+      if (path.endsWith("/123/cgroup")) return `0::${membership}\n`;
+      if (path.endsWith("/cgroup.procs")) return procs;
+      return baseReadFile(path);
+    };
+  }
+  it("maps Docker 29 sibling scope only when the matching PID is present", async () => {
+    const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile: readFor(`/../docker-${containerA}.scope`), realpath });
+    expect(result.status).toBe("Observed");
+    if (result.status === "Observed") expect(result.containers[0]?.memoryCurrentBytes).toBe("1073741824");
+  });
+  it("rejects traversal, wrong scope ID and absent PID", async () => {
+    for (const [membership, procs] of [
+      [`/../../docker-${containerA}.scope`, "123"],
+      [`/../docker-${containerB}.scope`, "123"],
+      [`/../docker-${containerA}.scope`, "456"],
+    ]) {
+      const result = await probeSwarmNodeCapacity({ docker: mockDocker, readFile: readFor(membership, procs), realpath });
+      expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
+    }
+  });
+  it("rejects symlink escape and unexpected cgroup parent", async () => {
+    const result = await probeSwarmNodeCapacity({
+      docker: mockDocker,
+      readFile: readFor(`/../docker-${containerA}.scope`),
+      realpath: async path => path.endsWith(scope) ? "/outside/docker.scope" : path,
+    });
+    expect(result).toMatchObject({ status: "Unavailable", reason: "ContainerTelemetryUnavailable" });
+  });
+});

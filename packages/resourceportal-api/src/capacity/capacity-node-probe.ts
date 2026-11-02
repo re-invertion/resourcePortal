@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export type CapacityNodeContainerProbe = {
@@ -31,6 +31,7 @@ export type CapacityNodeProbeReport =
 
 const NODE_ID = /^[a-z0-9]{20,64}$/;
 const CONTAINER_ID = /^[a-f0-9]{12,64}$/;
+const FULL_CONTAINER_ID = /^[a-f0-9]{64}$/;
 const APP_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const HOST_PROC = process.env.RESOURCEPORTAL_HOST_PROC_ROOT || "/host/proc";
 const HOST_CGROUP =
@@ -114,8 +115,33 @@ function safeCgroupRoot(relative: string) {
 }
 
 type ReadTextFile = (path: string, encoding: "utf8") => Promise<string>;
+type RealPath = (path: string) => Promise<string>;
 
-async function readCgroupForPid(pid: number, readTextFile: ReadTextFile) {
+// A private cgroup namespace renders a sibling scope as /../docker-ID.scope.
+// Never normalize that path: resolve only the canonical Docker systemd scope,
+// and prove membership with the host cgroup.procs before reading metrics.
+async function resolvePrivateScope(
+  membership: string, containerId: string, pid: number,
+  readTextFile: ReadTextFile, canonicalize: RealPath,
+): Promise<string | null> {
+  if (!FULL_CONTAINER_ID.test(containerId) ||
+      membership !== `/../docker-${containerId}.scope`) return null;
+  const root = resolve(HOST_CGROUP);
+  const candidate = resolve(root, "system.slice", `docker-${containerId}.scope`);
+  const [realRoot, realCandidate, procs] = await Promise.all([
+    canonicalize(root).catch(() => null),
+    canonicalize(candidate).catch(() => null),
+    readTextFile(candidate + "/cgroup.procs", "utf8").catch(() => null),
+  ]);
+  if (!realRoot || !realCandidate || !procs ||
+      !realCandidate.startsWith(realRoot + "/") ||
+      realCandidate !== realRoot + `/system.slice/docker-${containerId}.scope`) return null;
+  if (!procs.split(/\s+/).some(value => value === String(pid))) return null;
+  return realCandidate;
+}
+
+
+async function readCgroupForPid(pid: number, containerId: string, readTextFile: ReadTextFile, canonicalize: RealPath) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const membership = await readTextFile(
     HOST_PROC + "/" + pid + "/cgroup",
@@ -128,8 +154,12 @@ async function readCgroupForPid(pid: number, readTextFile: ReadTextFile) {
     .find((line) => /^0::\//.test(line));
   if (!unified) return null;
   const relative = unified.slice(3);
-  const root = safeCgroupRoot(relative);
-  if (!root) return null;
+  const candidate = safeCgroupRoot(relative) ??
+    await resolvePrivateScope(relative, containerId, pid, readTextFile, canonicalize);
+  if (!candidate) return null;
+  const realRoot = await canonicalize(resolve(HOST_CGROUP)).catch(() => null);
+  const root = await canonicalize(candidate).catch(() => null);
+  if (!realRoot || !root || !root.startsWith(realRoot + "/")) return null;
 
   const [currentRaw, peakRaw, eventsRaw, pressureRaw] = await Promise.all([
     readTextFile(root + "/memory.current", "utf8").catch(() => null),
@@ -228,6 +258,7 @@ export async function probeSwarmNodeCapacity(
   dependencies: {
     docker?: (args: string[], timeoutMs: number) => Promise<string | null>;
     readFile?: ReadTextFile;
+    realpath?: RealPath;
   } = {},
 ): Promise<CapacityNodeProbeReport> {
   const runDocker = dependencies.docker ?? docker;
@@ -328,13 +359,25 @@ export async function probeSwarmNodeCapacity(
         reason: "ContainerInspectIncomplete",
       };
     }
-    const cgroup = await readCgroupForPid(state.pid, readTextFile);
+    const cgroup = await readCgroupForPid(state.pid, row.id, readTextFile, dependencies.realpath ?? realpath);
     if (!cgroup) {
       return {
         status: "Unavailable",
         swarmNodeId: nodeId,
         reason: "ContainerTelemetryUnavailable",
       };
+    }
+    // Container may have restarted while its counters were being read.
+    // Revalidate the exact Docker identity/PID/start time before publishing.
+    const freshInspect = await runDocker(
+      ["inspect", "--format", "{{.Id}}\t{{.State.Pid}}\t{{.State.StartedAt}}", row.id],
+      4_000,
+    );
+    const refreshed = freshInspect ? parseInspectRows(freshInspect) : null;
+    const freshState = refreshed?.get(row.id);
+    if (refreshed?.size !== 1 || !freshState || freshState.pid !== state.pid ||
+        freshState.startedAt !== state.startedAt) {
+      return { status: "Unavailable", swarmNodeId: nodeId, reason: "ContainerIdentityChanged" };
     }
     containers.push({
       id: row.id,
