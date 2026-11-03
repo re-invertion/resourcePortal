@@ -8,6 +8,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { DeploymentPhase, DeploymentStatus, Prisma } from "@prisma/client";
 import { stringify } from "yaml";
+import { isDeepStrictEqual } from "node:util";
 import { CapacityDeploymentAdmissionService } from "../capacity/capacity-deployment-admission.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { isDomainPublishable } from "../domains/domain-publication";
@@ -928,7 +929,11 @@ export class DeploymentExecutionService {
     }
 
     const domainFailure = await this.validateDomains(snapshot);
-    if (domainFailure) {
+    if (domainFailure && !(
+      (domainFailure.errorCode === "DomainOwnershipNotVerified" ||
+       domainFailure.errorCode === "DomainUnavailable") &&
+      await this.isStoppedResourceOnlyUpdate(deployment, snapshot, appGroup)
+    )) {
       return domainFailure;
     }
 
@@ -1082,6 +1087,71 @@ export class DeploymentExecutionService {
     }
 
     return null;
+  }
+
+  /**
+   * Stopped services publish no routes or tasks, so unchanged stale domains
+   * must not prevent adjusting only their CPU/RAM reservations. Require the
+   * last successful deployed snapshot to match in every other respect; all
+   * initial/changed-domain/running/rollback deployments still verify domains.
+   */
+  private async isStoppedResourceOnlyUpdate(
+    deployment: { appGroupId: string; rollbackTargetVersion: number | null },
+    snapshot: StackConfigSnapshot,
+    appGroup: {
+      id: string;
+      tenantId: string;
+      runtimeState: string;
+      currentDeploymentVersion: number | null;
+    },
+  ): Promise<boolean> {
+    if (deployment.rollbackTargetVersion !== null ||
+        appGroup.runtimeState !== "Stopped" ||
+        snapshot.appGroup.runtimeState !== "Stopped" ||
+        snapshot.appGroup.id !== appGroup.id ||
+        snapshot.appGroup.tenantId !== appGroup.tenantId ||
+        appGroup.currentDeploymentVersion === null) {
+      return false;
+    }
+
+    const previous = await this.prisma.appGroupDeployment.findUnique({
+      where: {
+        appGroupId_version: {
+          appGroupId: deployment.appGroupId,
+          version: appGroup.currentDeploymentVersion,
+        },
+      },
+      select: { status: true, stackConfig: true },
+    });
+    if (previous?.status !== "Succeeded" || !previous.stackConfig) return false;
+
+    let original: StackConfigSnapshot;
+    try {
+      original = this.parseStackConfig(previous.stackConfig);
+    } catch {
+      return false;
+    }
+    if (original.appGroup?.runtimeState !== "Stopped" ||
+        !Array.isArray(original.singleApps) ||
+        original.singleApps.length !== snapshot.singleApps.length ||
+        original.singleApps.some((app) => !app || !app.resources)) return false;
+
+    const withoutCpuAndRam = (value: StackConfigSnapshot) => ({
+      ...value,
+      note: undefined,
+      appGroup: { ...value.appGroup, runtimeDraftRevision: undefined },
+      singleApps: value.singleApps.map((app) => ({
+        ...app,
+        resources: { ...app.resources, cpu: undefined, memoryBytes: undefined },
+      })),
+    });
+
+    // Fail closed for ANY additional edit (including domain, GPU, runtime,
+    // secrets, registry, volumes, network or endpoint changes).
+    return isDeepStrictEqual(withoutCpuAndRam(original), withoutCpuAndRam(snapshot)) &&
+      snapshot.singleApps.some((app, index) =>
+        app.resources.cpu !== original.singleApps[index].resources.cpu ||
+        app.resources.memoryBytes !== original.singleApps[index].resources.memoryBytes);
   }
 
   private async validateDomains(snapshot: StackConfigSnapshot) {
@@ -1975,6 +2045,9 @@ export class DeploymentExecutionService {
     snapshot: StackConfigSnapshot,
     singleApp: StackConfigSingleApp,
   ) {
+    // A stopped service must not claim a hostname in Traefik even if it
+    // retains an old domain attachment for a later verified reactivation.
+    if (this.effectiveReplicas(snapshot, singleApp) === 0) return undefined;
     return renderTraefikLabels(singleApp, {
       certResolver: this.config?.get<string>("TRAEFIK_CERT_RESOLVER"),
       swarmNetwork: appGroupNetworkName(snapshot.appGroup.id),

@@ -417,10 +417,21 @@ test("security issue patches cannot skip quota, worker or registry SSRF regressi
     "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/deployment-cpu-validation.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout", "quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "domains", "quota-security", "registry-auth", "registry-validation", "worker"]);
   assert.equal(plan.vpnSmoke, false);
 });
 
+
+test("stopped-resource domain bypass has explicit release regression coverage (#377)", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
+    "packages/resourceportal-api/src/internal/deployment-stopped-resource-domain.spec.ts",
+  ]);
+  assert.ok(plan.profiles.includes("domains"));
+  assert.ok(plan.profiles.includes("deployment-rollout"));
+  assert.ok(plan.profiles.includes("quota-security"));
+  assert.equal(plan.vpnSmoke, false);
+});
 
 test("custom-domain ownership changes select deployment and ingress regression coverage", () => {
   const plan = selectProfiles([

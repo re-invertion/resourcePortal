@@ -172,7 +172,7 @@ const commands = {
   ],
   "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
   "domains": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "applications": [
@@ -328,7 +328,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
-  [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "domains", "quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-stopped-resource-domain\.spec\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-cpu-validation\.spec\.ts$/, ["quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],
   [/^packages\/resourceportal-api\/README\.md$/, []],
