@@ -107,6 +107,33 @@ describe("node-local proof of GPU container absence (#378)", () => {
     });
   });
 
+  it("accepts a CPU-only Docker container with omitted Env", async () => {
+    answers.push({ text: SWARM_NODE_ID }, { text: containerId }, {
+      text: JSON.stringify({
+        State: { Running: true },
+        Config: { Labels: null },
+        HostConfig: { DeviceRequests: null, Devices: null },
+      }),
+    });
+    await expect(probeSwarmNodeGpuContainerUsage()).resolves.toMatchObject({
+      swarmNodeId: SWARM_NODE_ID, status: "Verified", busyAnyGpu: false, containers: [],
+    });
+  });
+
+  it("fails closed if Docker returns malformed nonarray Env", async () => {
+    answers.push({ text: SWARM_NODE_ID }, { text: containerId }, {
+      text: JSON.stringify({
+        State: { Running: true },
+        Config: { Env: { MALFORMED: true }, Labels: null },
+        HostConfig: { DeviceRequests: null, Devices: null },
+      }),
+    });
+    await expect(probeSwarmNodeGpuContainerUsage()).resolves.toMatchObject({
+      swarmNodeId: SWARM_NODE_ID, status: "Unavailable",
+      reason: "GpuContainerInspectInvalid",
+    });
+  });
+
   it("detects an active RP GPU task by pinned UUID and service identity", async () => {
     answers.push({ text: SWARM_NODE_ID }, { text: containerId }, {
       text: JSON.stringify({

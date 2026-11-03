@@ -169,8 +169,9 @@ export class DockerSwarmInfrastructureService {
         if (typeof kind !== "string" || kind === "NVIDIA-GPU") return false;
       }
       const config = spec.ContainerSpec as Record<string, unknown> | undefined;
-      if (!config || !Array.isArray(config.Env)) return false;
-      for (const env of config.Env) {
+      if (!config ||
+          (config.Env !== undefined && config.Env !== null && !Array.isArray(config.Env))) return false;
+      for (const env of (config.Env ?? []) as unknown[]) {
         if (typeof env !== "string") return false;
         if (!env.startsWith("NVIDIA_VISIBLE_DEVICES=")) continue;
         const value = env.slice("NVIDIA_VISIBLE_DEVICES=".length);

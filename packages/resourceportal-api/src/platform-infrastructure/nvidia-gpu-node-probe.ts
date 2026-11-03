@@ -160,7 +160,8 @@ export async function probeSwarmNodeGpuContainerUsage(): Promise<SwarmGpuNodeUsa
     }
     const config = container.Config as Record<string, unknown> | undefined;
     const host = container.HostConfig as Record<string, unknown> | undefined;
-    if (!config || !host || !Array.isArray(config.Env)) {
+    if (!config || !host ||
+        (config.Env !== undefined && config.Env !== null && !Array.isArray(config.Env))) {
       return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
     }
     const labels = config.Labels as Record<string, unknown> | undefined;
@@ -168,7 +169,7 @@ export async function probeSwarmNodeGpuContainerUsage(): Promise<SwarmGpuNodeUsa
     const serviceName = typeof rawService === "string" && /^[a-zA-Z0-9_-]{1,180}$/.test(rawService)
       ? rawService : null;
     const uuids = new Set<string>();
-    const gpuEnv = (config.Env as unknown[]).filter(
+    const gpuEnv = ((config.Env ?? []) as unknown[]).filter(
       (entry): entry is string => typeof entry === "string" &&
         entry.startsWith("NVIDIA_VISIBLE_DEVICES="),
     );

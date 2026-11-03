@@ -159,6 +159,27 @@ describe("Swarm-wide GPU service reservation fence", () => {
         Resources: { Reservations: {} },
       }) });
     expect(await docker.verifyNoGpuSwarmServiceReservations()).toBe(true);
+    // Docker legitimately omits Env entirely for ordinary CPU-only services.
+    run.mockReset().mockResolvedValueOnce({ exitCode: 0, stdout: "d".repeat(25) })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify({
+        ContainerSpec: {},
+        Resources: { Reservations: {} },
+      }) });
+    expect(await docker.verifyNoGpuSwarmServiceReservations()).toBe(true);
+    // null is also a valid absent list.
+    run.mockReset().mockResolvedValueOnce({ exitCode: 0, stdout: "d".repeat(25) })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify({
+        ContainerSpec: { Env: null },
+        Resources: { Reservations: {} },
+      }) });
+    expect(await docker.verifyNoGpuSwarmServiceReservations()).toBe(true);
+    // Malformed non-array data is not absence proof.
+    run.mockReset().mockResolvedValueOnce({ exitCode: 0, stdout: "d".repeat(25) })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: JSON.stringify({
+        ContainerSpec: { Env: { UNKNOWN: "value" } },
+        Resources: { Reservations: {} },
+      }) });
+    expect(await docker.verifyNoGpuSwarmServiceReservations()).toBe(false);
   });
 });
 
