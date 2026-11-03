@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planHash, serviceName, validateLegacyService } from "./capacity-legacy-label-migration";
+import { assertExpectedRolloutSpec, assertPublishedNamesUnchanged, planHash, serviceName, validateLegacyService } from "./capacity-legacy-label-migration";
 
 type Live = Parameters<typeof validateLegacyService>[0];
 type Identity = Parameters<typeof validateLegacyService>[1];
@@ -50,6 +50,21 @@ describe("legacy Hybrid Capacity label migration validation", () => {
     const live = runtime();
     live.Spec.Mode = { Replicated: { Replicas: 0 } };
     expect(() => validateLegacyService(live, identity, "registry.local/app:1")).toThrow("Only active replicated");
+  });
+  it("rejects pending draft renames before mapping a live service to an immutable SingleApp ID", () => {
+    expect(() => assertPublishedNamesUnchanged(true)).toThrow("pending draft changes");
+    expect(() => assertPublishedNamesUnchanged(false)).not.toThrow();
+  });
+  it("accepts non-consecutive Swarm versions but rejects concurrent spec changes", () => {
+    const expected = runtime();
+    const current = runtime();
+    current.Version.Index = 57; // Swarm assigns shared-store versions, not 42 + 1.
+    expect(() => assertExpectedRolloutSpec(current, expected.Spec, 42)).not.toThrow();
+    current.Spec.TaskTemplate.ContainerSpec.Image = "registry.local/other:1";
+    expect(() => assertExpectedRolloutSpec(current, expected.Spec, 42)).toThrow("service spec");
+    current.Spec = structuredClone(expected.Spec);
+    current.Version.Index = 42;
+    expect(() => assertExpectedRolloutSpec(current, expected.Spec, 42)).toThrow("did not advance");
   });
   it("hashes all plan coordinates deterministically to force fresh approval", () => {
     expect(planHash([])).toMatch(/^[a-f0-9]{64}$/);
