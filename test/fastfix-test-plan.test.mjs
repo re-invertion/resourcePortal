@@ -615,6 +615,25 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
   assert.throws(() => selectProfiles(["scripts/unregistered-nvidia-test.sh"]), /unclassified changes/);
 });
 
+test("GPU stale recovery, node proof, worker drift and admin action all require GPU Swarm security (#378)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/platform-infrastructure/nvidia-gpu-recovery.spec.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/swarm-infrastructure.service.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/docker-swarm-infrastructure.service.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/platform-infrastructure.module.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/platform-infrastructure.controller.ts",
+    "packages/resourceportal-api/src/internal/runtime-drift-reconciler.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/infrastructure-operation.executor.ts",
+    "packages/resourceportal-api/src/operations/operation.types.ts",
+  ];
+  const plan = selectProfiles(paths);
+  for (const profile of ["gpu-security", "platform-release", "worker", "operations", "deployment-rollout"]) {
+    assert.ok(plan.profiles.includes(profile), profile + " required");
+  }
+  assert.equal(plan.gpuSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
+});
+
 test("shared installer image-pull helper requires upgrade and complete installer coverage (#366)", () => {
   const plan = selectProfiles(["scripts/installer/common.sh"]);
   assert.ok(plan.profiles.includes("upgrade-recovery"));
@@ -654,7 +673,7 @@ test("runtime drift refresh changes require deployment rollout and worker regres
   const plan = selectProfiles([
     "packages/resourceportal-api/src/internal/runtime-drift-reconciler.service.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "gpu-security", "worker"]);
 });
 
 test("Service Identity authorization changes require identity and security regressions (#321)", () => {

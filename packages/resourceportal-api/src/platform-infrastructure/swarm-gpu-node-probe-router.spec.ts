@@ -54,3 +54,49 @@ describe("authenticated multi-node NVIDIA observations", () => {
     ]);
   });
 });
+
+describe("authenticated GPU recovery usage proof (#378)", () => {
+  beforeEach(() => {
+    vi.mocked(lookup).mockResolvedValue([
+      { address: "10.0.0.11", family: 4 },
+      { address: "10.0.0.12", family: 4 },
+    ] as never);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("preserves explicit NVIDIA runtime failure reasons from the agent", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      Promise.resolve(new Response(JSON.stringify(url.includes(".11:")
+        ? { status: "Unavailable", swarmNodeId: id,
+            reason: "NvidiaNotDefaultRuntime" }
+        : { status: "Unavailable", swarmNodeId: "ku2gbq2sm1b2khra543dtyxfh",
+            reason: "GpuProbeImageNotInstalled" }), { status: 200 }))));
+    expect(await makeRouter().collect()).toEqual([
+      { status: "Unavailable", swarmNodeId: id, devices: [],
+        reason: "NvidiaNotDefaultRuntime" },
+      { status: "Unavailable", swarmNodeId: "ku2gbq2sm1b2khra543dtyxfh",
+        devices: [], reason: "GpuProbeImageNotInstalled" },
+    ]);
+  });
+
+  it("returns authenticated node-local GPU containers without unverified peers", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      Promise.resolve(new Response(JSON.stringify(url.includes(".11:")
+        ? { swarmNodeId: id, status: "Verified", busyAnyGpu: false,
+            containers: [{ serviceName: "rp_group_gpu_app", uuid: gpu.uuid }] }
+        : { swarmNodeId: "ku2gbq2sm1b2khra543dtyxfh", status: "Verified",
+            busyAnyGpu: false, containers: [{ uuid: "invalid", serviceName: null }] }),
+      { status: 200 }))));
+    expect(await makeRouter().collectUsage()).toEqual([
+      { swarmNodeId: id, status: "Verified", busyAnyGpu: false,
+        containers: [{ serviceName: "rp_group_gpu_app", uuid: gpu.uuid }] },
+    ]);
+  });
+
+  it("rejects duplicate agent identities for recovery proofs", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      swarmNodeId: id, status: "Verified", busyAnyGpu: false, containers: [],
+    }), { status: 200 }))));
+    expect(await makeRouter().collectUsage()).toEqual([]);
+  });
+});

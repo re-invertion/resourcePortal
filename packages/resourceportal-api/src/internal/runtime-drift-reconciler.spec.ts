@@ -187,3 +187,90 @@ describe("RuntimeDriftReconcilerService observed state", () => {
     });
   });
 });
+
+describe("GPU SingleApp observed health follows node-local tasks (#378)", () => {
+  const uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const nodeId = "ku2gbq2sm1b2khra543dtyxfg";
+  const serviceName = "rp_11111111_1111_4111_8111_111111111111_web_api";
+  const gpuSnapshot = JSON.stringify({
+    singleApps: [{
+      id: singleAppId, name: "web-api", image: "registry.example.test/web:3",
+      desiredReplicas: 1, resources: { gpu: 1, gpuUuid: uuid, gpuNodeId: nodeId },
+    }],
+  });
+
+  function setup(reports: unknown[]) {
+    const appUpdate = vi.fn().mockResolvedValue({ count: 1 });
+    const groupUpdate = vi.fn().mockResolvedValue({});
+    const tx = {
+      singleApp: { updateMany: appUpdate },
+      appGroup: { update: groupUpdate },
+    };
+    const prisma = {
+      appGroup: {
+        findMany: vi.fn().mockResolvedValue([candidate()]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      appGroupDeployment: {
+        findFirst: vi.fn().mockResolvedValue({ stackConfig: gpuSnapshot }),
+      },
+      $transaction: vi.fn((callback: (client: typeof tx) => Promise<unknown>) =>
+        callback(tx)),
+    };
+    const manager = {
+      inspectStackServices: vi.fn().mockResolvedValue([{
+        name: serviceName, image: "registry.example.test/web:3",
+        runningReplicas: 1, desiredReplicas: 1,
+      }]),
+    };
+    const probe = { collectUsage: vi.fn().mockResolvedValue(reports) };
+    const reconciler = new RuntimeDriftReconcilerService(
+      prisma as never, manager as never, maintenance(), probe as never,
+    );
+    return { reconciler, appUpdate, groupUpdate, prisma, probe };
+  }
+
+  it("overrides stale manager 1/1 with zero verified running GPU containers", async () => {
+    const { reconciler, appUpdate, groupUpdate } = setup([{
+      status: "Verified", swarmNodeId: nodeId, busyAnyGpu: false, containers: [],
+    }]);
+    expect(await reconciler.reconcileBatch()).toEqual({
+      scanned: 1, inSync: 1, drifted: 0, unknown: 0,
+    });
+    const appCall: unknown = appUpdate.mock.calls[0]?.[0];
+    const groupCall: unknown = groupUpdate.mock.calls[0]?.[0];
+    expect(appCall).toMatchObject({
+      data: { actualReplicas: 0, health: HealthState.Unhealthy },
+    });
+    expect(groupCall).toMatchObject({ data: { health: HealthState.Unhealthy } });
+  });
+
+  it("keeps Healthy only when the actual GPU container UUID and service are observed", async () => {
+    const { reconciler, appUpdate } = setup([{
+      status: "Verified", swarmNodeId: nodeId, busyAnyGpu: false,
+      containers: [{ serviceName, uuid }],
+    }]);
+    await reconciler.reconcileBatch();
+    const appCall: unknown = appUpdate.mock.calls[0]?.[0];
+    expect(appCall).toMatchObject({
+      data: { actualReplicas: 1, health: HealthState.Healthy },
+    });
+  });
+
+  it("marks GPU health Unknown instead of reporting Healthy when agent evidence is absent", async () => {
+    const { reconciler, appUpdate, groupUpdate, prisma } = setup([]);
+    expect(await reconciler.reconcileBatch()).toEqual({
+      scanned: 1, inSync: 0, drifted: 0, unknown: 1,
+    });
+    expect(appUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { health: HealthState.Unknown },
+    }));
+    expect(groupUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { driftStatus: "Unknown", health: HealthState.Unknown },
+    }));
+    // Do not forge an observed zero: preserve old count for freshness/UI checks.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const appCall: unknown = appUpdate.mock.calls[0]?.[0];
+    expect(appCall).not.toMatchObject({ data: { actualReplicas: 0 } });
+  });
+});

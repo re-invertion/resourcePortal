@@ -135,6 +135,51 @@ export class DockerSwarmInfrastructureService {
     return result.exitCode === 0;
   }
 
+  /**
+   * A GPU reservation cannot be released while ANY Swarm service can still
+   * schedule a GPU task, even if it presently has zero running replicas.
+   * This deliberately treats unknown/malformed service specs as unsafe.
+   */
+  async verifyNoGpuSwarmServiceReservations(): Promise<boolean> {
+    const list = await this.runDocker(["service", "ls", "-q"]);
+    if (list.exitCode !== 0) return false;
+    const ids = list.stdout.split("\n").map((id) => id.trim()).filter(Boolean);
+    if (ids.length > 512 || new Set(ids).size !== ids.length ||
+        ids.some((id) => !/^[a-z0-9]{20,40}$/i.test(id))) return false;
+    for (const id of ids) {
+      const inspected = await this.runDocker([
+        "service", "inspect", id, "--format", "{{json .Spec.TaskTemplate}}",
+      ]);
+      if (inspected.exitCode !== 0 || !inspected.stdout) return false;
+      let spec: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(inspected.stdout);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+        spec = parsed as Record<string, unknown>;
+      } catch { return false; }
+      const resources = spec.Resources as Record<string, unknown> | undefined;
+      const reservations = resources?.Reservations as Record<string, unknown> | undefined;
+      const generic = reservations?.GenericResources;
+      if (generic !== undefined && !Array.isArray(generic)) return false;
+      for (const entry of (generic ?? []) as unknown[]) {
+        if (!entry || typeof entry !== "object") return false;
+        const data = entry as Record<string, unknown>;
+        const kind = (data.NamedResourceSpec as Record<string, unknown> | undefined)?.Kind ??
+          (data.DiscreteResourceSpec as Record<string, unknown> | undefined)?.Kind;
+        if (typeof kind !== "string" || kind === "NVIDIA-GPU") return false;
+      }
+      const config = spec.ContainerSpec as Record<string, unknown> | undefined;
+      if (!config || !Array.isArray(config.Env)) return false;
+      for (const env of config.Env) {
+        if (typeof env !== "string") return false;
+        if (!env.startsWith("NVIDIA_VISIBLE_DEVICES=")) continue;
+        const value = env.slice("NVIDIA_VISIBLE_DEVICES=".length);
+        if (value !== "" && value !== "none" && value !== "void") return false;
+      }
+    }
+    return true;
+  }
+
   private runDocker(args: string[]): Promise<RuntimeResult> {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
     const timeoutMs = this.config.get<number>(

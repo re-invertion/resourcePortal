@@ -11,6 +11,8 @@ export class InfrastructureOperationExecutor implements OperationExecutor {
   readonly types = [
     "SWARM_RECONCILE",
     "SWARM_NODE_MAINTENANCE",
+    "SWARM_GPU_DIAGNOSE",
+    "SWARM_GPU_RECOVER",
     "STORAGE_BACKEND_VALIDATE",
   ] as const satisfies readonly OperationType[];
 
@@ -23,6 +25,17 @@ export class InfrastructureOperationExecutor implements OperationExecutor {
     switch (operation.type) {
       case "SWARM_RECONCILE":
         return { result: await this.swarm.reconcile() };
+      case "SWARM_GPU_DIAGNOSE": {
+        const resourceId = this.requireResourceId(operation);
+        return { resourceId, result: await this.swarm.diagnoseGpu(resourceId) };
+      }
+      case "SWARM_GPU_RECOVER": {
+        const resourceId = this.requireResourceId(operation);
+        const releaseIfUnavailable = this.booleanInput(operation, "releaseIfUnavailable");
+        return { resourceId, result: await this.swarm.recoverGpu(
+          resourceId, this.actor(operation), releaseIfUnavailable,
+        ) };
+      }
       case "SWARM_NODE_MAINTENANCE": {
         const resourceId = this.requireResourceId(operation);
         const enabled = this.booleanInput(operation, "enabled");

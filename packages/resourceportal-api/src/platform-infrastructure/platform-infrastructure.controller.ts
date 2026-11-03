@@ -68,6 +68,46 @@ export class PlatformInfrastructureController {
     return this.gpu.listInventory();
   }
 
+  @Post("gpu-devices/:gpuUuid/diagnose")
+  diagnoseGpu(
+    @Param("gpuUuid") gpuUuid: string,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    this.assertGpuUuid(gpuUuid);
+    return this.operations.enqueue({
+      type: "SWARM_GPU_DIAGNOSE", tenantId: null,
+      resourceType: "GpuDevice", resourceId: gpuUuid,
+      actor, input: {}, maxAttempts: 1,
+    });
+  }
+
+  @Post("gpu-devices/:gpuUuid/recover")
+  recoverGpu(
+    @Param("gpuUuid") gpuUuid: string,
+    @Body() body: { releaseIfUnavailable?: boolean },
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    this.assertGpuUuid(gpuUuid);
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+        Object.keys(body).some((key) => key !== "releaseIfUnavailable") ||
+        (body.releaseIfUnavailable !== undefined &&
+          typeof body.releaseIfUnavailable !== "boolean")) {
+      throw new BadRequestException("InvalidGpuRecoveryInput");
+    }
+    return this.operations.enqueue({
+      type: "SWARM_GPU_RECOVER", tenantId: null,
+      resourceType: "GpuDevice", resourceId: gpuUuid,
+      actor, input: { releaseIfUnavailable: body.releaseIfUnavailable === true },
+      maxAttempts: 1,
+    });
+  }
+
+  private assertGpuUuid(gpuUuid: string) {
+    if (!/^GPU-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(gpuUuid)) {
+      throw new BadRequestException("InvalidGpuUuid");
+    }
+  }
+
   @Get("remote-locations")
   listRemoteLocations() {
     return this.service.listRemoteLocations();

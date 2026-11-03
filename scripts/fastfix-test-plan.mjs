@@ -15,6 +15,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--",
       "src/platform-infrastructure/nvidia-gpu-observation.spec.ts",
       "src/platform-infrastructure/nvidia-gpu-node-probe.spec.ts",
+      "src/platform-infrastructure/nvidia-gpu-recovery.spec.ts",
       "src/platform-infrastructure/swarm-gpu-node-probe-router.spec.ts",
       "src/platform-infrastructure/nvidia-gpu-allocation.service.spec.ts",
       "src/internal/nvidia-gpu-swarm-render.spec.ts",
@@ -25,6 +26,7 @@ const commands = {
       "src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
       "src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
       "src/internal/nvidia-gpu-release-admission.spec.ts",
+      "src/internal/runtime-drift-reconciler.spec.ts",
       "src/operations/executors/app-group-delete-operation.executor.spec.ts"],
     ["bash", "-n", "scripts/test-nvidia-gpu-swarm.sh"],
     ["bash", "test/installer/test-gpu-readiness.sh"],
@@ -225,6 +227,13 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/explicit-rollback-completion\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
 
   [/^packages\/resourceportal-api\/src\/platform-infrastructure\/(?:nvidia-gpu-|swarm-gpu-node-probe-router)/, ["gpu-security", "platform-release"]],
+  // GPU recovery touches worker observation, admin authorization and the
+  // global Swarm reservation fence; all paths require real GPU security gates.
+  [/^packages\/resourceportal-api\/src\/platform-infrastructure\/(?:docker-swarm-infrastructure\.service|swarm-infrastructure\.service|platform-infrastructure\.(?:module|controller))\.ts$/, ["gpu-security", "platform-release", "worker"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/infrastructure-operation\.executor\.ts$/, ["gpu-security", "operations", "platform-release"]],
+  [/^packages\/resourceportal-api\/src\/operations\/operation\.types\.ts$/, ["gpu-security", "operations", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.spec\.ts$/, ["gpu-security", "deployment-rollout", "worker"]],
+
   [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:swarm-render|deployment-validation)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-app-group-teardown\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/allocate-gpu\.dto\.ts$/, ["gpu-security", "applications"]],
@@ -304,7 +313,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-recovery\.service|stage6-worker-recovery\.spec)\.ts$/, ["recovery-safety", "registry-auth"]],
   [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.pagination\.spec\.ts$/, ["recovery-safety"]],
-  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.service(?:\.spec)?\.ts$/, ["deployment-rollout", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/runtime-drift-reconciler\.service(?:\.spec)?\.ts$/, ["deployment-rollout", "gpu-security", "worker"]],
   // Deployment placement labels drive SingleApp-to-Gate routing isolation.
   // Include the actual renderer assertion in targeted networking verification,
   // and retain release/rollback smoke for changes to this contract.

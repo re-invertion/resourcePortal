@@ -109,3 +109,109 @@ export async function probeSwarmNodeGpuRuntime(): Promise<SwarmGpuNodeProbe> {
   }
   return { status: "Observed", swarmNodeId: nodeId, devices };
 }
+
+/** Container-only GPU occupancy proof on a trusted Swarm node.
+ *
+ * No user supplied commands or selection are accepted. A failed Docker query
+ * yields Unavailable, NEVER "idle". The observed set is read-only metadata.
+ */
+export type SwarmGpuNodeUsage =
+  | { swarmNodeId: string; status: "Verified"; busyAnyGpu: boolean;
+      containers: Array<{ serviceName: string | null; uuid: string }> }
+  | { swarmNodeId: string | null; status: "Unavailable"; reason: string };
+
+const GPU_UUID_PATTERN = /^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
+
+export async function probeSwarmNodeGpuContainerUsage(): Promise<SwarmGpuNodeUsage> {
+  const swarmNodeId = await docker(["info", "--format", "{{.Swarm.NodeID}}"], 4000);
+  if (!swarmNodeId || !NODE_ID.test(swarmNodeId)) {
+    return { status: "Unavailable", swarmNodeId: null, reason: "SwarmNodeIdentityUnavailable" };
+  }
+  const output = await docker(["ps", "--no-trunc", "--format", "{{.ID}}"], 5000);
+  if (output === null) {
+    return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInventoryUnavailable" };
+  }
+  const ids = output.split("\n").map((id) => id.trim()).filter(Boolean);
+  if (ids.length > 256 || new Set(ids).size !== ids.length ||
+      ids.some((id) => !CONTAINER_ID_PATTERN.test(id))) {
+    return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInventoryInvalid" };
+  }
+
+  let busyAnyGpu = false;
+  const containers: Array<{ serviceName: string | null; uuid: string }> = [];
+  for (const id of ids) {
+    const raw = await docker(["inspect", "--format", "{{json .}}", id], 4000);
+    if (!raw) {
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectUnavailable" };
+    }
+    let container: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid");
+      container = parsed as Record<string, unknown>;
+    } catch {
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
+    }
+    const state = container.State as Record<string, unknown> | undefined;
+    if (state?.Running !== true) {
+      // The Docker inventory raced a container transition: fail closed.
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInventoryChanged" };
+    }
+    const config = container.Config as Record<string, unknown> | undefined;
+    const host = container.HostConfig as Record<string, unknown> | undefined;
+    if (!config || !host || !Array.isArray(config.Env)) {
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
+    }
+    const labels = config.Labels as Record<string, unknown> | undefined;
+    const rawService = labels?.["com.docker.swarm.service.name"];
+    const serviceName = typeof rawService === "string" && /^[a-zA-Z0-9_-]{1,180}$/.test(rawService)
+      ? rawService : null;
+    const uuids = new Set<string>();
+    const gpuEnv = (config.Env as unknown[]).filter(
+      (entry): entry is string => typeof entry === "string" &&
+        entry.startsWith("NVIDIA_VISIBLE_DEVICES="),
+    );
+    for (const entry of gpuEnv) {
+      const names = entry.slice("NVIDIA_VISIBLE_DEVICES=".length);
+      if (names === "all") busyAnyGpu = true;
+      else if (names !== "void" && names !== "none" && names !== "") {
+        for (const uuid of names.split(",")) {
+          if (!GPU_UUID_PATTERN.test(uuid.trim())) busyAnyGpu = true;
+          else uuids.add(uuid.trim());
+        }
+      }
+    }
+    const requests = host.DeviceRequests;
+    if (requests !== undefined && requests !== null && !Array.isArray(requests)) {
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
+    }
+    for (const request of (requests ?? []) as unknown[]) {
+      if (!request || typeof request !== "object") {
+        return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
+      }
+      const data = request as Record<string, unknown>;
+      const capabilities = JSON.stringify(data.Capabilities ?? []);
+      if (data.Driver === "nvidia" || capabilities.includes('"gpu"')) {
+        if (!Array.isArray(data.DeviceIDs) || data.DeviceIDs.length === 0) busyAnyGpu = true;
+        else for (const uuid of data.DeviceIDs) {
+          if (typeof uuid !== "string" || !GPU_UUID_PATTERN.test(uuid)) busyAnyGpu = true;
+          else uuids.add(uuid);
+        }
+      }
+    }
+    if (host.Devices !== undefined && host.Devices !== null &&
+        !Array.isArray(host.Devices)) {
+      return { status: "Unavailable", swarmNodeId, reason: "GpuContainerInspectInvalid" };
+    }
+    if (Array.isArray(host.Devices) &&
+        host.Devices.some((device: unknown) => {
+          if (!device || typeof device !== "object") return true;
+          const value = device as Record<string, unknown>;
+          return typeof value.PathOnHost !== "string" ||
+            /^\/dev\/nvidia(?:[0-9]+|ctl|uvm.*)$/.test(value.PathOnHost);
+        })) busyAnyGpu = true;
+    for (const uuid of uuids) containers.push({ serviceName, uuid });
+  }
+  return { status: "Verified", swarmNodeId, busyAnyGpu, containers };
+}
