@@ -281,6 +281,19 @@ export class NvidiaGpuAllocationService {
         select: { id: true },
       });
       if (active) throw new ConflictException("GpuDeploymentInProgress");
+      // A successful deployment can be reapplied as an automatic rollback
+      // without a fresh GPU ownership check. Until rollback is fenced at
+      // apply time, fail closed rather than releasing a historically used UUID.
+      const historicalRollbackTarget = await tx.appGroupDeployment.findFirst({
+        where: {
+          appGroupId: app.appGroupId,
+          status: "Succeeded",
+        },
+        select: { id: true },
+      });
+      if (historicalRollbackTarget) {
+        throw new ConflictException("GpuHistoricalRollbackTargetRequiresFencing");
+      }
       const claimed = await tx.gpuDevice.updateMany({
         where: {
           uuid: gpuUuid,
