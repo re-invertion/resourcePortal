@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isZitadelNoChangesResponse } from "./zitadel-api-response";
+import { isRetryableMcpReconcileRequest, retryMcpStartupRequest } from "./zitadel-mcp-startup-retry";
 import { deriveFederationAttestationSecret } from "../src/auth/federation-attestation-secret";
 import { buildFederationActionScript } from "../src/auth/federation-action-script";
 import {
@@ -714,11 +715,17 @@ async function zitadelApi<T>(
     headers["x-zitadel-orgid"] = organizationId;
   }
 
-  const response = await fetch(`${issuerUrl}${path}`, {
+  const send = (signal?: AbortSignal) => fetch(`${issuerUrl}${path}`, {
     method,
     headers,
     body: JSON.stringify(body),
+    signal,
   });
+  // POST client creation is deliberately excluded: a timed-out mutation might
+  // already have committed. Search and update requests are safe to replay.
+  const response = mcpOauthOnlyBootstrap && isRetryableMcpReconcileRequest(path, method)
+    ? await retryMcpStartupRequest((signal) => send(signal))
+    : await send();
   const text = await response.text();
   const payload = text ? (JSON.parse(text) as unknown) : {};
 

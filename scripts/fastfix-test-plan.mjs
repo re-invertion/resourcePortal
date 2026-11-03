@@ -77,6 +77,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/volumes/stage7-volume-lifecycle.spec.ts", "src/volumes/deployed-volume-reference.spec.ts", "src/volumes/stage14-volume-backend.spec.ts", "src/app-groups/volume-attachment-race.spec.ts"],
   ],
   "quota-security": [
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "scripts/capacity-legacy-label-migration.spec.ts"],
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/app-group-manifest.spec.ts", "src/app-groups/app-group-manifest.service.spec.ts", "src/app-groups/cpu-quota-validation.spec.ts", "src/app-groups/stage11-quota-drift.spec.ts", "src/capacity", "src/internal/deployment-cpu-validation.spec.ts", "src/app-groups/stage15-runtime-capacity.spec.ts"],
   ],
   "registry-validation": [
@@ -148,6 +149,7 @@ const commands = {
     ["bash", "test/installer/test-core.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
+    ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
   // fixtures now also have explicit regression checks in patch releases.
@@ -202,6 +204,7 @@ const commands = {
     ["bash", "test/installer/test-packaging.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
+    ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
     ["node", "--test", "test/test-release-rollback-policy.test.mjs", "test/test-upgrade-database-rollback.test.mjs"],
   ],
 };
@@ -211,6 +214,8 @@ const classifiers = [
   // Do not let either implementation or new regression fixtures evade patch CI.
   // Capacity sampling is a runtime cgroup/Swarm contract, not just a unit-test surface.
   [/^packages\/resourceportal-api\/src\/capacity\/.*\.ts$/, ["capacity-smoke", "quota-security", "swarm-smoke-fixtures"]],
+  [/^packages\/resourceportal-api\/scripts\/capacity-legacy-label-migration(?:\.spec)?\.ts$/, ["capacity-smoke", "quota-security", "deployment-rollout", "swarm-smoke-fixtures"]],
+  [/^packages\/resourceportal-api\/scripts\/zitadel-mcp-startup-retry(?:\.spec)?\.ts$/, ["identity", "installer", "security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/stage11-(?:app-groups\.service|quota-drift\.spec)\.ts$/, ["quota-security", "applications"]],
 
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
@@ -293,6 +298,7 @@ const classifiers = [
   [/^scripts\/installer\/(target-upgrade|recovery)\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^scripts\/upgrade-recovery-from-0\.2\.78\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^test\/installer\/test-(target-upgrade|upgrade-preflight|upgrade-recovery)\.test\.mjs$/, ["upgrade-recovery"]],
+  [/^test\/installer\/test-zitadel-admin-readiness\.test\.mjs$/, ["installer", "workflow", "identity"]],
   [/^packages\/resourceportal-web\/src\/App\.test\.tsx$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing-preflight\.guard(?:\.spec)?|billing-worker\.service|deployed-compute-allocation(?:\.spec)?)\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-api\/src\/disaster-recovery\/.*\.ts$/, ["recovery-safety"]],

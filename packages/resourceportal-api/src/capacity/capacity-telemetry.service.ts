@@ -72,6 +72,14 @@ export type HybridAdmissionEvaluation =
       reason: string;
     };
 
+/** Counts only: tenant identities must not leak via capacity/admission diagnostics. */
+class IncompleteReplicaTelemetryError extends Error {
+  constructor(readonly missingReplicaCount: number) {
+    super("application replica telemetry does not match observed runtime replicas");
+    this.name = "IncompleteReplicaTelemetryError";
+  }
+}
+
 @Injectable()
 export class CapacityTelemetryService {
   private readonly logger = new Logger(CapacityTelemetryService.name);
@@ -217,12 +225,17 @@ export class CapacityTelemetryService {
         (observedReplicaCounts.get(container.appId) ?? 0) + 1,
       );
     }
+    let missingReplicaCount = 0;
+    let unexpectedReplicaCount = 0;
     for (const [appId, expectedReplicas] of expectedReplicaCounts) {
-      if ((observedReplicaCounts.get(appId) ?? 0) !== expectedReplicas) {
-        throw new Error(
-          "application replica telemetry does not match observed runtime replicas",
-        );
-      }
+      const observed = observedReplicaCounts.get(appId) ?? 0;
+      missingReplicaCount += Math.max(0, expectedReplicas - observed);
+      unexpectedReplicaCount += Math.max(0, observed - expectedReplicas);
+    }
+    if (missingReplicaCount > 0 || unexpectedReplicaCount > 0) {
+      // Missing samples can be caused by legacy task labels or another probe
+      // coverage issue; do not claim migration is certainly required.
+      throw new IncompleteReplicaTelemetryError(missingReplicaCount);
     }
 
     const byApp = new Map<string, typeof containers>();
@@ -827,11 +840,30 @@ export class CapacityTelemetryService {
     const lastResult = this.jsonValue({
       unavailable: true,
       reason: lastError,
+      reasonCode: error instanceof IncompleteReplicaTelemetryError
+        ? "IncompleteReplicaCoverageCheckLegacyLabels"
+        : "TelemetryUnavailable",
+      missingReplicaCount: error instanceof IncompleteReplicaTelemetryError
+        ? error.missingReplicaCount
+        : undefined,
       admissionEvidence: null,
     });
-    await this.prisma.workerReconciliationState.updateMany({
-      where: { workerId, key: "capacityTelemetry" },
-      data: {
+    // Persist the failure even on a fresh instance with no previously published sample.
+    // An absent diagnostics row must never make missing capacity telemetry appear healthy.
+    await this.prisma.workerReconciliationState.upsert({
+      where: { workerId_key: { workerId, key: "capacityTelemetry" } },
+      create: {
+        workerId,
+        key: "capacityTelemetry",
+        lastStartedAt: startedAt,
+        lastCompletedAt: completedAt,
+        lastFailureAt: completedAt,
+        lastDurationMs: Math.max(0, completedAt.getTime() - startedAt.getTime()),
+        lastResult,
+        lastError,
+        failureCount: 1,
+      },
+      update: {
         lastStartedAt: startedAt,
         lastCompletedAt: completedAt,
         lastFailureAt: completedAt,

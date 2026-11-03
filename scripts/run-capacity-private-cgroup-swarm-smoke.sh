@@ -28,10 +28,62 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Exercise the migration boundary: a legacy workload initially has no
+# container identity labels, even though it is a real running Swarm service.
 docker service create --detach=true \
   --name "$service" --replicas 2 \
-  --container-label "resourceportal.single-app-id=$app_id" \
   alpine:3.20 sleep 300 >/dev/null
+
+ready=0
+for _ in $(seq 1 90); do
+  replicas="$(docker service ls --filter "name=$service" --format '{{.Replicas}}')"
+  if [[ "$replicas" == '2/2' ]]; then ready=2; break; fi
+  sleep 1
+done
+if [[ "$ready" != 2 ]]; then
+  docker service ps --no-trunc "$service" >&2 || true
+  echo "Legacy Capacity E2E did not start two unlabeled replicas" >&2
+  exit 1
+fi
+if docker service inspect "$service" --format '{{json .Spec.TaskTemplate.ContainerSpec.Labels}}' | grep -Fq 'resourceportal.single-app-id'; then
+  echo 'Legacy Capacity E2E fixture unexpectedly already has task labels' >&2
+  exit 1
+fi
+
+# The same Docker Engine optimistic-version API used by the controlled
+# migration must preserve the full spec and add only the container task label.
+engine_socket="${DOCKER_HOST:-$(docker context inspect --format '{{(index .Endpoints "docker").Host}}' "$(docker context show)")}"
+case "$engine_socket" in
+  unix://*) engine_socket="${engine_socket#unix://}" ;;
+  *) echo 'Capacity migration E2E requires a local Unix socket' >&2; exit 1 ;;
+esac
+[[ -S "$engine_socket" ]] || { echo 'Capacity migration E2E has no Docker socket' >&2; exit 1; }
+RP_CAPACITY_SERVICE="$service" RP_CAPACITY_LABEL="$app_id" RP_DOCKER_SOCKET="$engine_socket" node <<'NODE'
+const http = require('node:http');
+const assert = require('node:assert/strict');
+const socketPath = process.env.RP_DOCKER_SOCKET;
+async function call(method,path,body) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return await new Promise((resolve,reject) => {
+    const request = http.request({ socketPath,method,path:`/v1.43${path}`,headers: payload ? {'content-type':'application/json','content-length':Buffer.byteLength(payload)} : {}},response=>{
+      const chunks=[]; response.on('data',chunk=>chunks.push(chunk));
+      response.on('end',()=>{ if(response.statusCode<200||response.statusCode>=300) return reject(Error(`Docker update HTTP ${response.statusCode}`)); const data=Buffer.concat(chunks).toString(); resolve(data?JSON.parse(data):null); });
+      response.on('error',reject);
+    });
+    request.on('error',reject); request.end(payload);
+  });
+}
+(async()=>{
+  const live=await call('GET',`/services/${encodeURIComponent(process.env.RP_CAPACITY_SERVICE)}`);
+  assert.ok(live.Version.Index>0);
+  assert.ok(!live.Spec.TaskTemplate.ContainerSpec.Labels?.['resourceportal.single-app-id']);
+  const preserved=JSON.stringify(live.Spec);
+  live.Spec.TaskTemplate.ContainerSpec.Labels={...live.Spec.TaskTemplate.ContainerSpec.Labels,'resourceportal.single-app-id':process.env.RP_CAPACITY_LABEL};
+  const changed=JSON.stringify(live.Spec);
+  assert.notEqual(preserved,changed);
+  await call('POST',`/services/${live.ID}/update?version=${live.Version.Index}`,live.Spec);
+})().catch(e=>{console.error(e);process.exitCode=1});
+NODE
 
 ready=0
 for _ in $(seq 1 90); do
@@ -48,11 +100,6 @@ fi
 # The API candidate is built by the caller. Isolate PID/cgroup namespaces just
 # like terminal-agent, while exposing only read-only host proc and cgroup mounts.
 # A pinned Docker daemon may use an action-created socket, not /var/run/docker.sock.
-engine_socket="${DOCKER_HOST:-$(docker context inspect --format '{{(index .Endpoints "docker").Host}}' "$(docker context show)")}"
-case "$engine_socket" in
-  unix://*) engine_socket="${engine_socket#unix://}" ;;
-  *) echo "Docker29 capacity smoke requires a local Unix socket" >&2; exit 1 ;;
-esac
 if [[ ! -S "$engine_socket" ]]; then
   echo "Docker29 local daemon socket is missing" >&2
   exit 1
