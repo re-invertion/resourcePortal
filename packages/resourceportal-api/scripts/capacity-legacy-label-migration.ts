@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, openSync, closeSync, writeSync, constants as fsConstants } from "node:fs";
 import http from "node:http";
+import { isDeepStrictEqual } from "node:util";
 import { PrismaClient } from "@prisma/client";
 import { parse as parseYaml } from "yaml";
 
@@ -77,6 +78,22 @@ export function validateLegacyService(
   return live.Spec.TaskTemplate.ContainerSpec.Labels?.[LABEL] === entry.singleAppId ? "skip" : "migrate";
 }
 
+/** A draft name is not a published Swarm service identity. Fail closed on pending edits. */
+export function assertPublishedNamesUnchanged(hasPendingChanges: boolean): void {
+  assert(!hasPendingChanges, "AppGroup has pending draft changes; migrate only the published deployment");
+}
+
+/** Swarm object versions are globally assigned, not consecutive per service. */
+export function assertExpectedRolloutSpec(
+  current: DockerService,
+  expectedSpec: DockerService["Spec"],
+  previousVersion: number,
+): void {
+  assert(Number.isSafeInteger(current.Version.Index) && current.Version.Index > previousVersion,
+    "Swarm service version did not advance after migration update");
+  assert(isDeepStrictEqual(current.Spec, expectedSpec), "Another Swarm update changed the service spec during migration");
+}
+
 export function planHash(entries: MigrationPlanEntry[]): string {
   return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
 }
@@ -139,6 +156,9 @@ async function safePlan(db: PrismaClient, groupId?: string): Promise<MigrationPl
   const entries: MigrationPlanEntry[] = [];
   const serviceNames = new Set<string>();
   for (const group of groups) {
+    // Draft SingleApp names can be different from those in the published stack.
+    // Do not guess immutable IDs from live service names while edits are pending.
+    assertPublishedNamesUnchanged(group.hasPendingChanges);
     const published = await db.appGroupDeployment.findFirst({
       where: { appGroupId: group.id, version: group.currentDeploymentVersion!, status: "Succeeded" },
       select: { renderedStack: true },
@@ -179,8 +199,9 @@ function appendAudit(fd: number, entry: Record<string, unknown>): void {
 
 async function applyOne(db: PrismaClient, entry: MigrationPlanEntry, fd: number): Promise<void> {
   // Recheck both the database deployment lease and immutable Swarm spec version immediately before mutation.
-  const group = await db.appGroup.findUnique({ where: { id: entry.appGroupId }, select: { tenantId: true, currentDeploymentVersion: true } });
-  assert(group?.tenantId === entry.tenantId && group.currentDeploymentVersion === entry.deploymentVersion, "Published AppGroup deployment changed");
+  const group = await db.appGroup.findUnique({ where: { id: entry.appGroupId }, select: { tenantId: true, currentDeploymentVersion: true, hasPendingChanges: true, runtimeState: true } });
+  assert(group?.tenantId === entry.tenantId && group.currentDeploymentVersion === entry.deploymentVersion && group.runtimeState === "Running", "Published AppGroup deployment changed");
+  assertPublishedNamesUnchanged(group.hasPendingChanges);
   const active = await db.appGroupDeployment.count({
     where: { appGroupId: entry.appGroupId, status: { in: [...ACTIVE_DEPLOYMENTS] } },
   });
@@ -199,8 +220,8 @@ async function applyOne(db: PrismaClient, entry: MigrationPlanEntry, fd: number)
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 4_000));
     const current = await getService(entry.serviceId);
-    assert(current.Version.Index === entry.serviceVersion + 1, "Another Swarm update changed the service during migration");
-    assert(current.Spec.TaskTemplate.ContainerSpec.Labels?.[LABEL] === entry.singleAppId, "Migration label was overwritten");
+    assert(current.ID === entry.serviceId, "Service identity changed during migration");
+    assertExpectedRolloutSpec(current, newSpec, entry.serviceVersion);
     const state = current.UpdateStatus?.State;
     if (state === "paused" || state === "rollback_started" || state === "rollback_paused" || state === "rollback_completed") {
       throw new Error(`Swarm migration rollout did not converge: ${state}`);
