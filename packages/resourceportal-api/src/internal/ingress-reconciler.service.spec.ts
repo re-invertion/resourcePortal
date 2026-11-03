@@ -139,6 +139,31 @@ describe("IngressReconcilerService v0.2 single App Group network", () => {
     );
   });
 
+  it.each(["AppGroup", "SingleApp"] as const)(
+    "does not restore public labels on stopped %s during periodic ingress reconciliation",
+    async (stoppedKind) => {
+      const group = deployedAppGroup();
+      const stopped = stoppedKind === "AppGroup"
+        ? { ...group, runtimeState: "Stopped" }
+        : { ...group, runtimeState: "Running", singleApps: group.singleApps.map((app) => ({
+            ...app,
+            runtimeState: "Stopped",
+          })) };
+      const { runtime, service } = serviceFor([stopped]);
+
+      await service.reconcileBatch();
+      const networkName = `rp-appgroup-${group.id}`;
+      expect(runtime.reconcileAppGroupNetwork).toHaveBeenCalledWith({
+        networkName,
+        traefikRequired: false,
+      });
+      expect(runtime.reconcileTraefikLabels).toHaveBeenCalledWith({
+        serviceName: "rp_11111111_1111_4111_8111_111111111111_web_app",
+        desiredLabels: {},
+      });
+    },
+  );
+
   it("keeps every tenant service on rp-appgroup and joins Traefik only for public groups", async () => {
     const appGroup = deployedAppGroup();
     const { runtime, service } = serviceFor([appGroup]);
