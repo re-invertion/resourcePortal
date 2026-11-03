@@ -489,7 +489,7 @@ describe("worker collection completeness", () => {
   });
 
   it("persists a safe missing-replica count without claiming label migration is certain", async () => {
-    const upsert = vi.fn((_query: { create: { lastResult: unknown; failureCount: number }; update: { lastResult: unknown } }) => Promise.resolve({}));
+    const upsert = vi.fn((query: { create: { lastResult: unknown; failureCount: number }; update: { lastResult: unknown } }) => Promise.resolve(query.create));
     const prisma = {
       singleApp: { findMany: vi.fn().mockResolvedValue([{ id: "existing-app", actualReplicas: 2 }]) },
       remoteLocation: { findMany: vi.fn().mockResolvedValue([{ swarmNodeId: nodeA }]) },
