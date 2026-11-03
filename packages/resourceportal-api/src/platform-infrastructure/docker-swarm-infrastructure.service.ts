@@ -145,7 +145,7 @@ export class DockerSwarmInfrastructureService {
     if (list.exitCode !== 0) return false;
     const ids = list.stdout.split("\n").map((id) => id.trim()).filter(Boolean);
     if (ids.length > 512 || new Set(ids).size !== ids.length ||
-        ids.some((id) => !/^[a-z0-9]{20,40}$/i.test(id))) return false;
+        ids.some((id) => !/^[a-z0-9]{12,40}$/i.test(id))) return false;
     for (const id of ids) {
       const inspected = await this.runDocker([
         "service", "inspect", id, "--format", "{{json .Spec.TaskTemplate}}",
