@@ -95,6 +95,16 @@ describe("stopped App Group resource-only update with stale domain (#377)", () =
     expect(stack.services.web.deploy.labels).toBeUndefined();
   });
 
+  it("ignores independent DNS and certificate health drift during a stopped CPU/RAM-only update", async () => {
+    const { validate } = worker();
+    const next = snapshot();
+    next.appGroup.runtimeDraftRevision = 2;
+    next.singleApps[0].resources.memoryBytes = "536870912";
+    next.singleApps[0].httpEndpoints[0].domains[0].dnsStatus = "Invalid";
+    next.singleApps[0].httpEndpoints[0].domains[0].certificateStatus = "Error";
+    await expect(validate(next)).resolves.toEqual({ success: true });
+  });
+
   it("requires current ownership again when the group is started", async () => {
     const { prisma, validate } = worker();
     const next = snapshot();

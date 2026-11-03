@@ -57,9 +57,14 @@ export class IngressReconcilerService {
         ...singleApp,
         httpEndpoints: singleApp.httpEndpoints.map((endpoint) => ({
           ...endpoint,
-          domains: endpoint.domains.filter((domain) =>
-            isDomainPublishable(domain, appGroup.tenantId),
-          ),
+          // Do not republish stopped-service routes after stack deployment.
+          // A stopped App Group/SingleApp must never claim a public hostname.
+          domains: appGroup.runtimeState === "Stopped" ||
+            singleApp.runtimeState === "Stopped"
+            ? []
+            : endpoint.domains.filter((domain) =>
+                isDomainPublishable(domain, appGroup.tenantId),
+              ),
         })),
       }));
       const groupRequiresIngress = publishableApps.some((singleApp) =>

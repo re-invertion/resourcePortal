@@ -1143,6 +1143,16 @@ export class DeploymentExecutionService {
       singleApps: value.singleApps.map((app) => ({
         ...app,
         resources: { ...app.resources, cpu: undefined, memoryBytes: undefined },
+        // These are observed health values refreshed independently of user edits.
+        // Retain the domain id, hostname, TLS setting, endpoint and everything else.
+        httpEndpoints: app.httpEndpoints.map((endpoint) => ({
+          ...endpoint,
+          domains: endpoint.domains.map((domain) => ({
+            ...domain,
+            dnsStatus: undefined,
+            certificateStatus: undefined,
+          })),
+        })),
       })),
     });
 
