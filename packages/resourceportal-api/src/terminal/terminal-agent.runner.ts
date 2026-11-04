@@ -21,8 +21,10 @@ export function startTerminalAgent(port: number, secret: string) {
       try {
         const chunks: Buffer[] = [];
         let bytes = 0;
-        for await (const chunk of request) {
-          const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        for await (const data of request) {
+          const chunk: unknown = data;
+          if (typeof chunk !== "string" && !Buffer.isBuffer(chunk)) return deny(400);
+          const part: Buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
           bytes += part.length;
           if (bytes > 16384) return deny(413);
           chunks.push(part);
