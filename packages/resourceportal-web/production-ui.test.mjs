@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -72,4 +74,46 @@ describe("Web console anti-clickjacking response headers", () => {
     expect(nosniffHeader).toBeGreaterThan(legacyHeader);
     expect(staticHandler).toBeGreaterThan(nosniffHeader);
   });
+});
+
+describe("live Web response headers", () => {
+  it("serves anti-clickjacking headers over actual HTTP for document and static responses", async () => {
+    const listener = createServer();
+    await new Promise((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const port = listener.address().port;
+    await new Promise((resolve) => listener.close(resolve));
+    const child = spawn(process.execPath, ["server.mjs"], {
+      cwd: packageRoot,
+      env: { ...process.env, NODE_ENV: "development", HOST: "127.0.0.1", PORT: String(port) },
+      stdio: "ignore",
+    });
+    try {
+      let ready = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (child.exitCode !== null) throw new Error("Web server exited before accepting HTTP requests");
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
+          if (response.status < 500) { ready = true; break; }
+        } catch { /* Vite is still starting */ }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(ready).toBe(true);
+      for (const pathname of ["/", "/index.html", "/src/entry-client.tsx", "/does-not-exist"]) {
+        const response = await fetch(`http://127.0.0.1:${port}${pathname}`, { signal: AbortSignal.timeout(5000) });
+        expect(response.headers.get("content-security-policy"), pathname).toBe("frame-ancestors 'none'");
+        expect(response.headers.get("x-frame-options"), pathname).toBe("DENY");
+        expect(response.headers.get("x-content-type-options"), pathname).toBe("nosniff");
+      }
+    } finally {
+      child.kill("SIGTERM");
+      await Promise.race([
+        new Promise((resolve) => child.once("exit", resolve)),
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }
+  }, 25000);
 });
