@@ -308,6 +308,7 @@ test("security and infrastructure hardening selects explicit release gates", () 
     "security",
     "tenant-access",
     "web-proxy",
+    "web-response-headers",
   ]);
 });
 
