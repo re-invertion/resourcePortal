@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { assertEncryptedTerminalOverlay, signedAgentHeaders } from "./terminal-agent-security";
 import { ContainerTerminalWorker } from "./terminal-worker";
 
 type TerminalRequest = Record<string, unknown>;
@@ -10,7 +11,7 @@ const idPattern = /^[a-f0-9]{12,64}$/;
 /**
  * Routes an authenticated tenant terminal session to the actual Swarm node.
  * The API enforces tenant ownership and RBAC; internal node agents only accept
- * the private Worker secret on the control-plane overlay (no published port).
+ * single-use MACs on an encrypted private overlay (no published port).
  * Session mapping is deliberately ephemeral; a Worker restart closes the UI
  * session rather than reattaching to an unverifiable process on another node.
  */
@@ -27,6 +28,7 @@ export class SwarmTerminalRouter {
   }
 
   private async agents(): Promise<Agent[]> {
+    await assertEncryptedTerminalOverlay(this.stack);
     const name = `tasks.${this.stack}_terminal-agent`;
     const addresses = await lookup(name, { all: true, family: 4 }).catch(() => []);
     return [...new Set(addresses.map((a) => a.address))].filter((a) => /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a))
@@ -37,9 +39,12 @@ export class SwarmTerminalRouter {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), payload.action === "execute" ? 18_000 : 8500);
     try {
-      const response = await fetch(`${agent.base}/internal/container-terminal`, {
-        method: "POST", headers: { "content-type": "application/json", "x-internal-token": this.token },
-        body: JSON.stringify(payload), signal: controller.signal,
+      const path = "/internal/container-terminal";
+      const body = JSON.stringify(payload);
+      const headers = signedAgentHeaders(this.token, path, body, agent.address);
+      const response = await fetch(`${agent.base}${path}`, {
+        method: "POST", headers: { "content-type": "application/json", ...headers },
+        body, signal: controller.signal,
       });
       const result: unknown = await response.json();
       if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Invalid terminal agent response");

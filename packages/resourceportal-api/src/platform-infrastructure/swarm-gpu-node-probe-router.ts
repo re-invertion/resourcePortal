@@ -1,3 +1,4 @@
+import { signedAgentHeaders } from "../terminal/terminal-agent-security";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { lookup } from "node:dns/promises";
@@ -61,7 +62,7 @@ export class SwarmGpuNodeProbeRouter {
       try {
         const response = await fetch("http://" + address + ":3102/internal/gpu-probe", {
           method: "POST",
-          headers: { "x-internal-token": token, "content-type": "application/json" },
+          headers: { ...signedAgentHeaders(token, "/internal/gpu-probe", "{}", address), "content-type": "application/json" },
           body: "{}",
           signal: controller.signal,
         });
@@ -118,7 +119,7 @@ export class SwarmGpuNodeProbeRouter {
       try {
         const response = await fetch("http://" + address + ":3102/internal/gpu-usage", {
           method: "POST",
-          headers: { "x-internal-token": token, "content-type": "application/json" },
+          headers: { ...signedAgentHeaders(token, "/internal/gpu-usage", "{}", address), "content-type": "application/json" },
           body: "{}",
           signal: controller.signal,
         });

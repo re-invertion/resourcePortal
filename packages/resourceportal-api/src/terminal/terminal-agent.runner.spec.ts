@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { startTerminalAgent } from "./terminal-agent.runner";
+import { signedAgentHeaders } from "./terminal-agent-security";
 
 let server: Server | undefined;
 afterEach(async () => { if (server) await new Promise<void>((resolve) => server!.close(() => resolve())); server = undefined; });
@@ -22,8 +23,12 @@ describe("private Swarm terminal agent HTTP security", () => {
       { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
     );
     expect(capacityForbidden.status).toBe(403);
-    const permitted = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-internal-token": "some-very-long-internal-worker-token" }, body: JSON.stringify({ actor: "<invalid>", service: "host", action: "containers" }) });
+    const body = JSON.stringify({ actor: "<invalid>", service: "host", action: "containers" });
+    const headers = signedAgentHeaders("some-very-long-internal-worker-token", "/internal/container-terminal", body, "127.0.0.1");
+    const permitted = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
     expect(permitted.status).toBe(422);
+    const replay = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+    expect(replay.status).toBe(403);
     expect(await permitted.json()).toMatchObject({ message: "Invalid terminal identity" });
   });
 });

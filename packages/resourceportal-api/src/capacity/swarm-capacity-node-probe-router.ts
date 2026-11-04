@@ -1,3 +1,4 @@
+import { signedAgentHeaders } from "../terminal/terminal-agent-security";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { lookup } from "node:dns/promises";
@@ -112,7 +113,7 @@ export class SwarmCapacityNodeProbeRouter {
             {
               method: "POST",
               headers: {
-                "x-internal-token": token,
+                ...signedAgentHeaders(token, "/internal/capacity-probe", "{}", address),
                 "content-type": "application/json",
               },
               body: "{}",

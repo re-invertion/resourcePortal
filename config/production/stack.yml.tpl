@@ -4,6 +4,13 @@ networks:
   rp-control:
     driver: overlay
     attachable: false
+  # Dedicated encrypted overlay for privileged node-agent traffic.
+  # This is a NEW network during upgrades: do not mutate the legacy rp-control.
+  rp-terminal-secure:
+    driver: overlay
+    attachable: false
+    driver_opts:
+      encrypted: "true"
   rp-ingress:
     driver: overlay
     attachable: false
@@ -208,6 +215,7 @@ services:
       RESOURCE_ENCRYPTION_KEY_FILE: /run/secrets/rp_encryption_key
       AUTH_COOKIE_SECRET_FILE: /run/secrets/rp_cookie_secret
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
+      INTERNAL_LOG_WORKER_URL: http://worker-secure:3101
       OIDC_CLIENT_SECRET_FILE: /run/secrets/rp_oidc_client_secret
       ZITADEL_MANAGEMENT_TOKEN_FILE: /run/secrets/rp_zitadel_management_token
       ZITADEL_ORGANIZATION_ID: __ZITADEL_ORGANIZATION_ID__
@@ -245,6 +253,7 @@ services:
     networks:
       - rp-control
       - rp-web-api
+      - rp-terminal-secure
     deploy:
       replicas: __API_REPLICAS__ # RP_API_REPLICAS
       placement:
@@ -309,7 +318,10 @@ services:
       - /mnt/resourceportal/secrets:/mnt/resourceportal/secrets:ro
       - /mnt/resourceportal/platform:/mnt/resourceportal/platform
     networks:
-      - rp-control
+      rp-control: {}
+      rp-terminal-secure:
+        aliases:
+          - worker-secure
     deploy:
       replicas: __WORKER_REPLICAS__ # RP_WORKER_REPLICAS
       placement:
@@ -324,13 +336,14 @@ services:
 
   # Swarm-wide authenticated container shell broker: one private agent per node.
   # Never publish port 3102; the API enforces tenant RBAC and the Worker routes
-  # an HMAC-bound session across the private rp-control overlay network.
+  # short-lived, destination-bound signed commands over rp-terminal-secure.
   terminal-agent:
     image: __API_IMAGE__
     user: "0"
     command: ["node", "dist/src/terminal/terminal-agent.runner.js"]
     environment:
       NODE_ENV: production
+      RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME: __STACK_NAME__
       INTERNAL_WORKER_TOKEN_FILE: /run/secrets/rp_internal_worker_token
       RESOURCEPORTAL_TERMINAL_NODE_PORT: "3102"
     secrets:
@@ -340,7 +353,7 @@ services:
       - /proc:/host/proc:ro
       - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
     networks:
-      - rp-control
+      - rp-terminal-secure
     deploy:
       mode: global
       resources:
