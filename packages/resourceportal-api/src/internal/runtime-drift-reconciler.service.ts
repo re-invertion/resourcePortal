@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { SwarmGpuNodeProbeRouter } from "../platform-infrastructure/swarm-gpu-node-probe-router";
 import { DeploymentStatus, HealthState, RuntimeState } from "@prisma/client";
 import {
   deriveAppGroupDriftStatus,
@@ -16,6 +17,7 @@ type DriftSnapshot = {
     name: string;
     image: string;
     desiredReplicas: number;
+    resources?: { gpu?: number; gpuUuid?: string | null; gpuNodeId?: string | null };
   }>;
 };
 
@@ -44,6 +46,7 @@ export class RuntimeDriftReconcilerService {
     private readonly prisma: PrismaService,
     private readonly stackRuntime: StackRuntimeService,
     private readonly maintenance: PlatformMaintenanceService,
+    @Optional() private readonly gpuProbe?: SwarmGpuNodeProbeRouter,
   ) {}
 
   async reconcileBatch(limit = 50) {
@@ -222,7 +225,48 @@ export class RuntimeDriftReconcilerService {
       return "Unknown" as const;
     }
 
-    const driftStatus = deriveAppGroupDriftStatus(expected, observed);
+    // Docker manager's service replica summary can temporarily remain 1/1
+    // after the actual GPU task/container vanished. A trusted node-local
+    // running-container census must corroborate GPU replicas before reporting
+    // them Healthy. Never treat an unavailable agent as zero actual tasks.
+    const gpuApps = snapshot.singleApps.filter((app) =>
+      (app.resources?.gpu ?? 0) > 0 &&
+      expected.some((item) =>
+        item.name === stackName + "_" + this.serviceName(app.name) &&
+        item.desiredReplicas > 0));
+    let confirmedObserved = observed;
+    if (gpuApps.length > 0) {
+      const reports = await this.gpuProbe?.collectUsage().catch(() => []) ?? [];
+      const evidence = gpuApps.map((app) => {
+        const uuid = app.resources?.gpuUuid;
+        const nodeId = app.resources?.gpuNodeId;
+        if (!uuid || !nodeId) return null;
+        const matching = reports.filter((report) => report.swarmNodeId === nodeId);
+        if (matching.length !== 1 || matching[0].status !== "Verified" ||
+            matching[0].busyAnyGpu) return null;
+        const serviceName = stackName + "_" + this.serviceName(app.name);
+        return {
+          serviceName,
+          running: matching[0].containers.filter((item) =>
+            item.serviceName === serviceName &&
+            item.uuid.toLowerCase() === uuid.toLowerCase()).length,
+        };
+      });
+      if (evidence.some((item) => item === null)) {
+        await this.markGpuObservationUnknown(appGroup.id, gpuApps.map((app) => app.id));
+        return "Unknown" as const;
+      }
+      const verifiedByName = new Map(evidence.filter(
+        (item): item is { serviceName: string; running: number } => item !== null,
+      ).map((item) => [item.serviceName, item.running]));
+      confirmedObserved = observed.map((service) => {
+        const containers = verifiedByName.get(service.name);
+        return containers === undefined ? service :
+          { ...service, runningReplicas: Math.min(service.runningReplicas, containers) };
+      });
+    }
+
+    const driftStatus = deriveAppGroupDriftStatus(expected, confirmedObserved);
     if (driftStatus === "Unknown") {
       await this.setUnknown(appGroup.id);
       return driftStatus;
@@ -231,11 +275,24 @@ export class RuntimeDriftReconcilerService {
       appGroup.id,
       snapshot,
       expected,
-      observed,
+      confirmedObserved,
       driftStatus,
       new Date(),
     );
     return driftStatus;
+  }
+
+  private async markGpuObservationUnknown(appGroupId: string, gpuAppIds: string[]) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.singleApp.updateMany({
+        where: { appGroupId, id: { in: gpuAppIds } },
+        data: { health: HealthState.Unknown },
+      });
+      await tx.appGroup.update({
+        where: { id: appGroupId },
+        data: { driftStatus: "Unknown", health: HealthState.Unknown },
+      });
+    });
   }
 
   private async persistObservation(

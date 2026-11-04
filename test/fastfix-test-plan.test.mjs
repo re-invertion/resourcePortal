@@ -417,7 +417,8 @@ test("security issue patches cannot skip quota, worker or registry SSRF regressi
     "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/deployment-cpu-validation.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout", "domains", "quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "domains", "gpu-security", "quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.equal(plan.gpuSmoke, true);
   assert.equal(plan.vpnSmoke, false);
 });
 
@@ -598,6 +599,8 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
     "packages/resourceportal-api/src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-release-admission.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-rollback-ownership.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
     "packages/resourceportal-web/src/pages/platform-gpu-permissions.test.tsx",
     "scripts/test-nvidia-gpu-swarm.sh",
@@ -613,6 +616,25 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
   assert.ok(plan.profiles.includes("gpu-security"));
   assert.ok(plan.profiles.includes("platform-release"));
   assert.throws(() => selectProfiles(["scripts/unregistered-nvidia-test.sh"]), /unclassified changes/);
+});
+
+test("GPU stale recovery, node proof, worker drift and admin action all require GPU Swarm security (#378)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/platform-infrastructure/nvidia-gpu-recovery.spec.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/swarm-infrastructure.service.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/docker-swarm-infrastructure.service.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/platform-infrastructure.module.ts",
+    "packages/resourceportal-api/src/platform-infrastructure/platform-infrastructure.controller.ts",
+    "packages/resourceportal-api/src/internal/runtime-drift-reconciler.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/infrastructure-operation.executor.ts",
+    "packages/resourceportal-api/src/operations/operation.types.ts",
+  ];
+  const plan = selectProfiles(paths);
+  for (const profile of ["gpu-security", "platform-release", "worker", "operations", "deployment-rollout"]) {
+    assert.ok(plan.profiles.includes(profile), profile + " required");
+  }
+  assert.equal(plan.gpuSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
 });
 
 test("shared installer image-pull helper requires upgrade and complete installer coverage (#366)", () => {
@@ -654,7 +676,7 @@ test("runtime drift refresh changes require deployment rollout and worker regres
   const plan = selectProfiles([
     "packages/resourceportal-api/src/internal/runtime-drift-reconciler.service.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "gpu-security", "worker"]);
 });
 
 test("Service Identity authorization changes require identity and security regressions (#321)", () => {

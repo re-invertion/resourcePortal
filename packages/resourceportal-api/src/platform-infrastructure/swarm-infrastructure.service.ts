@@ -187,6 +187,114 @@ export class SwarmInfrastructureService {
     };
   }
 
+  /**
+   * Live, evidence-based explanation of a stale GPU. This is executed by the
+   * infrastructure Worker; API controllers never call Docker directly.
+   */
+  async diagnoseGpu(gpuUuid: string) {
+    if (!/^GPU-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(gpuUuid)) {
+      throw new ConflictException("InvalidGpuUuid");
+    }
+    if (!this.gpuAllocation || !this.gpuProbe) {
+      throw new ServiceUnavailableException("GpuVerificationUnavailable");
+    }
+    const inventory = await this.gpuAllocation.listInventory();
+    const device = inventory.find((gpu) => gpu.uuid.toLowerCase() === gpuUuid.toLowerCase());
+    if (!device) throw new NotFoundException("GpuNotFound");
+    const [nodes, reports] = await Promise.all([
+      this.docker.listNodes(), this.gpuProbe.collect(),
+    ]);
+    const nodeId = device.node?.swarmNodeId;
+    const node = nodes?.find((item) => item.swarmNodeId === nodeId);
+    const report = reports.find((item) => item.swarmNodeId === nodeId);
+    const reasons: string[] = [];
+    if (!nodes) reasons.push("SwarmNodeInventoryUnavailable");
+    else if (!node) reasons.push("GpuSwarmNodeMissing");
+    else {
+      if (node.status !== "Ready" || node.availability !== "Active") {
+        reasons.push("GpuNodeNotSchedulable");
+      }
+      if (!(node.gpuUuids ?? []).some((uuid) =>
+        uuid.toLowerCase() === gpuUuid.toLowerCase())) {
+        reasons.push("NvidiaNamedGenericResourceMissing");
+      }
+    }
+    if (!report) reasons.push("GpuProbeReportMissing");
+    else if (report.status !== "Observed") reasons.push(report.reason);
+    else if (!report.devices.some((gpu) =>
+      gpu.uuid.toLowerCase() === gpuUuid.toLowerCase())) reasons.push("GpuProbeUuidMismatch");
+    else if (node && report.devices.length !== (node.gpuUuids ?? []).length) {
+      reasons.push("GpuProbeGenericResourceCountMismatch");
+    } else if (node && report.devices.some((gpu) =>
+      !(node.gpuUuids ?? []).some((uuid) => uuid.toLowerCase() === gpu.uuid.toLowerCase()))) {
+      reasons.push("GpuProbeGenericResourceUuidMismatch");
+    }
+    if (device.observedState !== "Available") reasons.push("GpuObservationUnavailable");
+    if (node && device.node &&
+        node.swarmNodeId !== device.node.swarmNodeId) reasons.push("GpuNodeIdentityMismatch");
+    return {
+      uuid: device.uuid, observedState: device.observedState,
+      allocationState: device.allocationState,
+      allocatedSingleAppId: device.allocatedSingleAppId,
+      nodeId: nodeId ?? null,
+      gpuCount: node?.gpuUuids?.length ?? 0,
+      reasonCodes: [...new Set(reasons)],
+      verified: reasons.length === 0,
+    };
+  }
+
+  /**
+   * Admin-only recovery operation. A fresh successful probe restores a
+   * same-owner assignment without changing its UUID or tenant. Releasing an
+   * unavailable card requires an explicit operator flag and POSITIVE proof
+   * that the entire Swarm has no runnable GPU services and every authenticated
+   * node reports zero GPU containers. Unknown evidence blocks release.
+   */
+  async recoverGpu(
+    gpuUuid: string, actor: AuthenticatedUser, releaseIfUnavailable = false,
+  ) {
+    if (!this.gpuAllocation || !this.gpuProbe) {
+      throw new ServiceUnavailableException("GpuRecoveryUnavailable");
+    }
+    await this.reconcile();
+    const diagnosis = await this.diagnoseGpu(gpuUuid);
+    if (diagnosis.verified) {
+      return { status: "ReadyForRedeploy", diagnosis, ownershipPreserved: true };
+    }
+    if (!releaseIfUnavailable) {
+      return { status: "VerificationFailed", diagnosis, ownershipPreserved: true };
+    }
+    if (!diagnosis.allocatedSingleAppId) {
+      return { status: "NotAllocated", diagnosis, ownershipPreserved: true };
+    }
+    // No runtime probe, stale agent or missing node can prove workload absence.
+    const nodes = await this.docker.listNodes();
+    if (!nodes?.length || nodes.length > 128 ||
+        nodes.some((node) => node.status !== "Ready" || node.availability !== "Active")) {
+      throw new ConflictException("GpuAllNodesMustBeVerifiedForRelease");
+    }
+    const reports = await this.gpuProbe.collectUsage();
+    if (reports.length !== nodes.length ||
+        nodes.some((node) => {
+          const matches = reports.filter((report) => report.swarmNodeId === node.swarmNodeId);
+          if (matches.length !== 1) return true;
+          const report = matches[0];
+          return report.status !== "Verified" || report.busyAnyGpu ||
+            report.containers.some((container) =>
+              container.uuid.toLowerCase() === gpuUuid.toLowerCase());
+        })) {
+      throw new ConflictException("GpuContainerCleanupNotVerified");
+    }
+    if (!await this.docker.verifyNoGpuSwarmServiceReservations()) {
+      throw new ConflictException("GpuSwarmServiceStillReservesGpu");
+    }
+    const released = await this.gpuAllocation.adminReleaseStaleGpu(
+      diagnosis.uuid, true, actor,
+    );
+    return { status: released.released ? "StaleAllocationReleased" : "AlreadyReleased",
+      diagnosis, released };
+  }
+
   async setMaintenance(
     remoteLocationId: string,
     enabled: boolean,

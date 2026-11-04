@@ -236,6 +236,86 @@ export class NvidiaGpuAllocationService {
   }
 
   /**
+   * Only the authenticated infrastructure Worker may call this after a
+   * complete node-local and Swarm-wide no-GPU-workloads proof. The reservation
+   * stays owned unless every DB and runtime fence is satisfied.
+   */
+  async adminReleaseStaleGpu(
+    gpuUuid: string, verifiedNoWorkloads: boolean, actor: AuthenticatedUser,
+  ) {
+    if (!GPU_UUID.test(gpuUuid)) throw new ConflictException("InvalidGpuUuid");
+    if (!verifiedNoWorkloads) throw new ConflictException("GpuRuntimeCleanupRequired");
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(2026, 10427) IS NULL AS "locked"`;
+      const device = await tx.gpuDevice.findUnique({
+        where: { uuid: gpuUuid },
+        select: { allocatedSingleAppId: true, allocationState: true, observedState: true },
+      });
+      if (!device) throw new NotFoundException("GpuNotFound");
+      if (!device.allocatedSingleAppId) return { released: false, uuid: gpuUuid };
+      if (device.allocationState !== "Allocated" || device.observedState === "Available") {
+        throw new ConflictException("GpuRecoveryStateChanged");
+      }
+      const app = await tx.singleApp.findUnique({
+        where: { id: device.allocatedSingleAppId },
+        select: {
+          id: true, gpu: true, runtimeState: true, appGroupId: true,
+          appGroup: {
+            select: {
+              runtimeState: true, tenantId: true, status: true,
+              tenant: { select: { name: true } },
+            },
+          },
+        },
+      });
+      if (!app || app.runtimeState !== "Stopped" ||
+          app.appGroup.runtimeState !== "Stopped" ||
+          app.appGroup.status === "Deleting") {
+        throw new ConflictException("GpuStopOwnerBeforeRelease");
+      }
+      const active = await tx.appGroupDeployment.findFirst({
+        where: {
+          appGroupId: app.appGroupId,
+          status: { in: ["Pending", "Deploying", "RollingBack"] },
+        },
+        select: { id: true },
+      });
+      if (active) throw new ConflictException("GpuDeploymentInProgress");
+      // Successful historical snapshots are safe to retain: every GPU-backed
+      // artifact apply, including rollback and worker recovery, now verifies
+      // current exclusive UUID ownership before it reaches Docker.
+      // In-flight deployment/rollback remains fenced by the active query above.
+      const claimed = await tx.gpuDevice.updateMany({
+        where: {
+          uuid: gpuUuid,
+          allocatedSingleAppId: app.id,
+          allocationState: "Allocated",
+          observedState: { not: "Available" },
+        },
+        data: {
+          allocatedSingleAppId: null, allocationState: "Free", allocatedAt: null,
+        },
+      });
+      if (claimed.count !== 1) throw new ConflictException("GpuRecoveryStateChanged");
+      await tx.singleApp.update({ where: { id: app.id }, data: { gpu: 0 } });
+      await tx.appGroup.update({
+        where: { id: app.appGroupId },
+        data: { hasPendingChanges: true, runtimeDraftRevision: { increment: 1 } },
+      });
+      await tx.auditLogEntry.create({
+        data: {
+          tenantId: app.appGroup.tenantId, tenantName: app.appGroup.tenant.name,
+          actor: actor.id, actorName: actor.displayName,
+          action: "gpu.admin.stale_release", resourceType: "SingleApp",
+          resourceId: app.id, result: "Success", correlationId: randomUUID(),
+          changes: { gpuUuid, reason: "VerifiedIdleAndUnavailable" },
+        },
+      });
+      return { released: true, uuid: gpuUuid, singleAppId: app.id };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  /**
    * The controller must never call this with client-supplied proof. A trusted
    * deployment reconciler must first verify removal of all containers using
    * the old UUID, including rollback targets. A stopped app is NOT cleanup.

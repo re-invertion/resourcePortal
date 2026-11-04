@@ -18,6 +18,6 @@ import { SwarmInfrastructureStore } from "./swarm-infrastructure.store";
     SwarmInfrastructureService,
     SwarmInfrastructureStore,
   ],
-  exports: [SwarmInfrastructureService],
+  exports: [SwarmInfrastructureService, SwarmGpuNodeProbeRouter],
 })
 export class PlatformInfrastructureModule {}
