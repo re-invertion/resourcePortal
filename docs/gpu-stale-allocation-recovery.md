@@ -50,6 +50,16 @@ GPU to another tenant. If release succeeds, the SingleApp GPU draft is set
 to zero; the administrator must repair host GPU verification, then explicitly
 reserve the UUID again and deploy through the normal validated flow.
 
+A successful historical deployment remains available for rollback, but its
+saved GPU UUID is **not** a continuing reservation. Before applying any
+GPU-backed deployment artifact (normal deployment, automatic rollback or
+worker-recovered rollback), the Worker must recheck live exclusive allocation
+to that SingleApp and a fresh matching Swarm GPU observation. A rollback to
+a UUID released or reassigned to a different tenant fails with
+`GpuRollbackOwnershipNotVerified` before running Docker. Existing successful
+deployment history alone no longer blocks an otherwise verified administrative
+stale release. Active deployments and rollbacks still block release.
+
 The Runtime Drift Worker corroborates manager replica counts with an
 authenticated node-local GPU task census. A missing GPU task overrides a stale
 1/1 manager summary as `actualReplicas=0`/`Unhealthy`; unknown probe

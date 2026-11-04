@@ -382,6 +382,23 @@ describe("GPU recovery transactional audit and idempotency (#378)", () => {
     });
   });
 
+  it("releases verified stale GPU even when a historical successful artifact exists", async () => {
+    const { tx, service } = database();
+    tx.appGroupDeployment.findFirst.mockImplementation((query: {
+      where: { status?: string | { in: string[] } };
+    }) => Promise.resolve(
+      query.where.status === "Succeeded" ? { id: "historical-gpu-deployment" } : null,
+    ));
+    const actor = { id: "admin-id", displayName: "Platform Admin" } as never;
+    await expect(service.adminReleaseStaleGpu(uuid, true, actor)).resolves.toMatchObject({
+      released: true, uuid,
+    });
+    // Historical artifacts remain intact; every attempt to apply one must
+    // independently prove its CURRENT GPU ownership before reaching Docker.
+    expect(tx.appGroupDeployment.findFirst).toHaveBeenCalledTimes(1);
+    expect(tx.gpuDevice.updateMany).toHaveBeenCalledOnce();
+  });
+
   it("is idempotent on a previously released GPU", async () => {
     const { tx, service } = database({ alreadyFree: true });
     await expect(service.adminReleaseStaleGpu(uuid, true, {} as never)).resolves.toEqual({

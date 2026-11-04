@@ -474,6 +474,69 @@ export class DeploymentExecutionService {
     );
   }
 
+  /**
+   * Immutable historical artifacts can be replayed by both automatic rollback
+   * and worker recovery. Verify current exclusive ownership immediately before
+   * every GPU-backed stack apply, not only at initial deployment admission.
+   * The release path refuses to run while a deployment/rollback is active.
+   */
+  private async verifyGpuArtifactOwnership(
+    snapshot: StackConfigSnapshot,
+    appGroupId: string,
+  ): Promise<boolean> {
+    if (!Array.isArray(snapshot.singleApps)) return false;
+    const gpuApps: StackConfigSingleApp[] = [];
+    for (const app of snapshot.singleApps) {
+      if (!app || typeof app !== "object") return false;
+      const gpu = app.resources?.gpu;
+      if (gpu === undefined || gpu === 0) continue;
+      if (gpu !== 1 ||
+          typeof app.id !== "string" || !app.id ||
+          !/^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(app.resources.gpuUuid ?? "") ||
+          !/^[a-z0-9]{20,64}$/.test(app.resources.gpuNodeId ?? "") ||
+          app.desiredReplicas !== 1) return false;
+      gpuApps.push(app);
+    }
+    if (gpuApps.length === 0) return true;
+    if (snapshot.appGroup?.id !== appGroupId ||
+        new Set(gpuApps.map((app) => app.resources.gpuUuid)).size !== gpuApps.length) {
+      return false;
+    }
+    try {
+      const devices = await this.prisma.gpuDevice.findMany({
+        where: { uuid: { in: gpuApps.map((app) => app.resources.gpuUuid!) } },
+        select: {
+          uuid: true, allocatedSingleAppId: true, allocationState: true,
+          observedState: true, lastObservedAt: true,
+          remoteLocation: {
+            select: {
+              swarmNodeId: true, status: true, availability: true,
+              gpuCount: true, lastSeenAt: true,
+            },
+          },
+        },
+      });
+      if (devices.length !== gpuApps.length) return false;
+      return gpuApps.every((app) => {
+        const device = devices.find((row) => row.uuid === app.resources.gpuUuid);
+        return !!device && device.allocatedSingleAppId === app.id &&
+          device.allocationState === "Allocated" &&
+          device.observedState === "Available" &&
+          !!device.lastObservedAt && Date.now() - device.lastObservedAt.getTime() <= 120_000 &&
+          !!device.remoteLocation &&
+          device.remoteLocation.swarmNodeId === app.resources.gpuNodeId &&
+          device.remoteLocation.status === "Ready" &&
+          device.remoteLocation.availability === "Active" &&
+          device.remoteLocation.gpuCount >= 1 &&
+          !!device.remoteLocation.lastSeenAt &&
+          Date.now() - device.remoteLocation.lastSeenAt.getTime() <= 120_000;
+      });
+    } catch {
+      // Missing data or transient infrastructure errors are never ownership proof.
+      return false;
+    }
+  }
+
   private async applyWithScopedRegistryAuth(
     snapshot: StackConfigSnapshot,
     params: {
@@ -483,6 +546,15 @@ export class DeploymentExecutionService {
       appGroupId: string;
     },
   ) {
+    if (!await this.verifyGpuArtifactOwnership(snapshot, params.appGroupId)) {
+      return {
+        command: "verify exclusive GPU ownership",
+        stackName: params.stackName,
+        exitCode: 1,
+        stdout: "",
+        stderr: "GpuRollbackOwnershipNotVerified",
+      };
+    }
     const resolved = await this.resolveRegistryLogins(snapshot);
     if (!resolved.success) {
       return {

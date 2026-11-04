@@ -26,6 +26,7 @@ const commands = {
       "src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
       "src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
       "src/internal/nvidia-gpu-release-admission.spec.ts",
+      "src/internal/nvidia-gpu-rollback-ownership.spec.ts",
       "src/internal/runtime-drift-reconciler.spec.ts",
       "src/operations/executors/app-group-delete-operation.executor.spec.ts"],
     ["bash", "-n", "scripts/test-nvidia-gpu-swarm.sh"],
@@ -222,7 +223,7 @@ const classifiers = [
 
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-(?:draft-discard(?:\.spec)?|deployment-snapshot\.spec)\.ts$/, ["gpu-security", "applications"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/nvidia-gpu-identity-immutable\.spec\.ts$/, ["gpu-security", "applications"]],
-  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/internal\/nvidia-gpu-(?:rollout-cleanup|release-admission|rollback-ownership)\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/stack-rollout\.service\.ts$/, ["gpu-security", "deployment-rollout"]],
   [/^packages\/resourceportal-api\/src\/internal\/explicit-rollback-completion\.spec\.ts$/, ["gpu-security", "deployment-rollout"]],
 
@@ -337,7 +338,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
-  [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "domains", "quota-security", "registry-auth", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "domains", "gpu-security", "quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-stopped-resource-domain\.spec\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-cpu-validation\.spec\.ts$/, ["quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/registries\/(registries\.service(\.spec)?\.ts|registry-ping(\.spec)?\.ts)$/, ["registry-validation"]],

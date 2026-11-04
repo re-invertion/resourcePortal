@@ -417,7 +417,8 @@ test("security issue patches cannot skip quota, worker or registry SSRF regressi
     "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/deployment-cpu-validation.spec.ts",
   ]);
-  assert.deepEqual(plan.profiles, ["deployment-rollout", "domains", "quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.deepEqual(plan.profiles, ["deployment-rollout", "domains", "gpu-security", "quota-security", "registry-auth", "registry-validation", "worker"]);
+  assert.equal(plan.gpuSmoke, true);
   assert.equal(plan.vpnSmoke, false);
 });
 
@@ -598,6 +599,8 @@ test("GPU change is classified and requires physical NVIDIA Swarm security gate"
     "packages/resourceportal-api/src/app-groups/nvidia-gpu-identity-immutable.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-rollout-cleanup.spec.ts",
     "packages/resourceportal-api/src/internal/nvidia-gpu-release-admission.spec.ts",
+    "packages/resourceportal-api/src/internal/nvidia-gpu-rollback-ownership.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-execution.service.ts",
     "packages/resourceportal-api/src/internal/stack-rollout.service.ts",
     "packages/resourceportal-web/src/pages/platform-gpu-permissions.test.tsx",
     "scripts/test-nvidia-gpu-swarm.sh",
