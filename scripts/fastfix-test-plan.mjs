@@ -113,6 +113,10 @@ const commands = {
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
     ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
   ],
+  "web-response-headers": [
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "production-ui.test.mjs", "proxy-target.test.mjs"],
+    ["node", "--check", "packages/resourceportal-web/server.mjs"],
+  ],
   "web-proxy": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "proxy-target.test.mjs"],
     ["node", "--check", "packages/resourceportal-web/server.mjs"],
@@ -379,6 +383,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/resource-bot\/resource-bot-(?:billing\.service|reservation-concurrency\.spec)\.ts$/, ["resource-bot", "security"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
+  [/^packages\/resourceportal-web\/(?:server|production-ui\.test)\.mjs$/, ["web-response-headers", "web-proxy"]],
   [/^packages\/resourceportal-web\/(server|proxy-target(\.test)?)\.mjs$/, ["web-proxy"]],
   [/^packages\/resourceportal-api\/src\/networking\//, ["networking"]],
   [/^packages\/resourceportal-api\/src\/security\//, ["security"]],
