@@ -56,3 +56,20 @@ describe("production Web Console styling", () => {
     expect(shell).toContain("bg-[#1769E0]");
   });
 });
+
+
+describe("Web console anti-clickjacking response headers", () => {
+  it("sets framing and MIME-sniffing protection before HTML and static handlers", () => {
+    const server = read("server.mjs");
+    const proxyBoundary = server.indexOf("if (isApiProxyPath(url.pathname))");
+    const framingHeader = server.indexOf('response.setHeader("content-security-policy", "frame-ancestors \'none\'")');
+    const legacyHeader = server.indexOf('response.setHeader("x-frame-options", "DENY")');
+    const nosniffHeader = server.indexOf('response.setHeader("x-content-type-options", "nosniff")');
+    const staticHandler = server.indexOf("if (production) {", proxyBoundary);
+    expect(proxyBoundary).toBeGreaterThan(-1);
+    expect(framingHeader).toBeGreaterThan(proxyBoundary);
+    expect(legacyHeader).toBeGreaterThan(framingHeader);
+    expect(nosniffHeader).toBeGreaterThan(legacyHeader);
+    expect(staticHandler).toBeGreaterThan(nosniffHeader);
+  });
+});
