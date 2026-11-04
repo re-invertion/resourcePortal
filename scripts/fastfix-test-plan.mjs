@@ -242,6 +242,7 @@ const classifiers = [
   [/^scripts\/test-nvidia-gpu-swarm\.sh$/, ["gpu-security", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/render-nvidia-gpu-stack-fixture\.ts$/, ["gpu-security", "workflow"]],
   [/^scripts\/run-real-swarm-smoke\.sh$/, ["gpu-security", "platform-release", "workflow"]],
+  [/^scripts\/run-terminal-encrypted-swarm-smoke\.sh$/, ["container-terminal", "platform-release", "workflow"]],
   [/^scripts\/run-capacity-private-cgroup-swarm-smoke\.sh$/, ["capacity-smoke", "swarm-smoke-fixtures", "workflow"]],
   [/^test\/installer\/test-gpu-readiness\.sh$/, ["gpu-security", "installer"]],
   [/^test\/installer\/test-gpu-swarm-gate-safety\.sh$/, ["gpu-security", "installer"]],

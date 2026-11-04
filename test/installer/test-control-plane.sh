@@ -277,6 +277,17 @@ worker_section="$(sed -n '/^  worker:/,/^  dr-reconciliation:/p' <<<"$final")"
 web_section="$(sed -n '/^  web:/,/^  egress-guard:/p' <<<"$final")"
 traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
 contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
+contains "$final" '  rp-terminal-secure:' 'terminal node communication has dedicated overlay'
+contains "$final" '      encrypted: "true"' 'node communication overlay requests Swarm dataplane encryption'
+contains "$api_section" '      - rp-terminal-secure' 'API connects to worker over encrypted overlay'
+contains "$api_section" 'INTERNAL_LOG_WORKER_URL: http://worker-secure:3101' 'API routes secrets to private worker alias'
+contains "$worker_section" '      rp-terminal-secure:' 'Worker connects to encrypted terminal overlay'
+contains "$worker_section" '          - worker-secure' 'Worker secure alias is isolated to its overlay'
+terminal_agent_section="$(sed -n '/^  terminal-agent:/,/^  dr-reconciliation:/p' <<<"$final")"
+contains "$terminal_agent_section" '      - rp-terminal-secure' 'node agent uses encrypted overlay'
+not_contains "$terminal_agent_section" '      - rp-control' 'node agent cannot fall back to plaintext control overlay'
+contains "$terminal_agent_section" 'RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME: resourceportal-control-plane' 'node agent verifies the intended Swarm overlay name'
+
 not_contains "$api_section" '      - rp-ingress' 'API is not directly reachable from the public ingress overlay'
 contains "$web_section" '      - rp-ingress' 'Web remains reachable from Traefik ingress'
 contains "$web_section" 'traefik.swarm.network=resourceportal-control-plane_rp-ingress' 'Web pins Traefik service discovery to the shared ingress overlay'

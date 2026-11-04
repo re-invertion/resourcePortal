@@ -1,7 +1,7 @@
-/** Swarm global worker-node terminal agent. Only reachable on rp-control overlay. */
+/** Swarm global worker-node terminal agent. Only reachable on the encrypted dedicated overlay. */
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { timingSafeEqual } from "node:crypto";
+import { AgentRequestVerifier, assertEncryptedTerminalOverlay } from "./terminal-agent-security";
 import { ContainerTerminalWorker } from "./terminal-worker";
 import { probeSwarmNodeGpuRuntime, probeSwarmNodeGpuContainerUsage, preloadPinnedGpuProbeImage } from "../platform-infrastructure/nvidia-gpu-node-probe";
 import { probeSwarmNodeCapacity } from "../capacity/capacity-node-probe";
@@ -9,6 +9,7 @@ import { probeSwarmNodeCapacity } from "../capacity/capacity-node-probe";
 export function startTerminalAgent(port: number, secret: string) {
   if (!secret || secret.length < 16) throw new Error("Terminal node agent requires authenticated Worker token");
   const terminal = new ContainerTerminalWorker();
+  const verifier = new AgentRequestVerifier(secret);
   const server = createServer((request, reply) => {
     void (async () => {
       const deny = (status: number, message?: string) => {
@@ -16,10 +17,24 @@ export function startTerminalAgent(port: number, secret: string) {
         reply.end(JSON.stringify({ message: message ?? "Request denied" }));
       };
       if (request.method !== "POST" || !["/internal/container-terminal", "/internal/gpu-probe", "/internal/gpu-usage", "/internal/capacity-probe"].includes(request.url ?? "")) return deny(404);
-      const provided = typeof request.headers["x-internal-token"] === "string" ? request.headers["x-internal-token"] : "";
-      const actual = Buffer.from(secret);
-      const candidate = Buffer.from(provided);
-      if (candidate.length !== actual.length || !timingSafeEqual(candidate, actual)) return deny(403);
+      let body = "";
+      try {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        for await (const data of request) {
+          const chunk: unknown = data;
+          if (typeof chunk !== "string" && !Buffer.isBuffer(chunk)) return deny(400);
+          const part: Buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+          bytes += part.length;
+          if (bytes > 16384) return deny(413);
+          chunks.push(part);
+        }
+        // A multi-byte shell command can straddle TCP packets. Decode only
+        // after assembling the exact signed UTF-8 body.
+        body = Buffer.concat(chunks).toString("utf8");
+      } catch { return deny(400); }
+      if (!verifier.verify(request.headers, request.method, request.url ?? "", body, request.socket.localAddress))
+        return deny(403);
       if (request.url === "/internal/gpu-probe") {
         // Only the authenticated infrastructure Worker can request a bounded
         // local probe. No caller-supplied image, target, command or arguments.
@@ -44,12 +59,7 @@ export function startTerminalAgent(port: number, secret: string) {
         reply.end(JSON.stringify(result));
         return;
       }
-      let body = "";
       try {
-        for await (const chunk of request) {
-          body += String(chunk);
-          if (Buffer.byteLength(body) > 16384) return deny(413);
-        }
         const value: unknown = JSON.parse(body);
         if (!value || typeof value !== "object" || Array.isArray(value)) return deny(400);
         const result = await terminal.handle(value as Record<string, unknown>);
@@ -74,7 +84,13 @@ if (require.main === module) {
   if (!file) throw new Error("INTERNAL_WORKER_TOKEN_FILE is required");
   const port = Number(process.env.RESOURCEPORTAL_TERMINAL_NODE_PORT ?? "3102");
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Invalid terminal node port");
-  const server = startTerminalAgent(port, readFileSync(file, "utf8").trim());
-  process.on("SIGTERM", () => server.close());
-  console.log("ResourcePortal terminal node agent started on internal overlay port");
+  const stack = process.env.RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME ?? "resourceportal-control-plane";
+  void assertEncryptedTerminalOverlay(stack).then(() => {
+    const server = startTerminalAgent(port, readFileSync(file, "utf8").trim());
+    process.on("SIGTERM", () => server.close());
+    console.log("ResourcePortal terminal node agent started on verified encrypted overlay");
+  }).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : "Unverified terminal agent network");
+    process.exitCode = 1;
+  });
 }

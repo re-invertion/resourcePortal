@@ -9,6 +9,7 @@ if grep -RInE "/rp/volumes|/rp/secrets|/mnt/resourceportal-storage|CephFS Volume
 fi
 
 bash scripts/validate-swarm-ci.sh
+bash scripts/run-terminal-encrypted-swarm-smoke.sh
 
 test -d "${RESOURCE_VOLUME_RUNTIME_ROOT:-/mnt/resourceportal/volumes}"
 NODE_ID="$(docker info --format '{{.Swarm.NodeID}}')"

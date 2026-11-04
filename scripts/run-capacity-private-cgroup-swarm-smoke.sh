@@ -115,6 +115,7 @@ const { execFileSync } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { readFileSync, realpathSync } = require('node:fs');
 const { startTerminalAgent } = require('./dist/src/terminal/terminal-agent.runner.js');
+const { signedAgentHeaders } = require('./dist/src/terminal/terminal-agent-security.js');
 const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 8000 }).trim();
 
 async function run() {
@@ -140,9 +141,16 @@ async function run() {
     const url = 'http://127.0.0.1:3102/internal/capacity-probe';
     const denied = await fetch(url, {method: 'POST', headers: {'x-internal-token': 'incorrect'}});
     assert.equal(denied.status, 403, 'capacity probe must reject unauthenticated requests');
-    const response = await fetch(url, {method: 'POST', headers: {'x-internal-token': token}});
+    // The privileged node agent must not accept reusable bearer credentials.
+    // Bind a single-use MAC to the exact read-only probe body, endpoint, and
+    // destination address; prove that an identical replay is rejected.
+    const body = '{}';
+    const headers = signedAgentHeaders(token, '/internal/capacity-probe', body, '127.0.0.1');
+    const response = await fetch(url, {method: 'POST', headers, body});
     assert.equal(response.status, 200);
     const report = await response.json();
+    const replay = await fetch(url, {method: 'POST', headers, body});
+    assert.equal(replay.status, 403, 'capacity probe must reject a replayed signature');
     assert.equal(report.status, 'Observed', JSON.stringify(report));
     assert.equal(report.containers.length, 2);
     assert.deepEqual(report.containers.map(c => c.id).sort(), ids.sort());
