@@ -165,6 +165,12 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  // The Web console is a separate HTML origin from the API. Apply framing
+  // protection before Vite, static assets, SSR, or error handlers respond.
+  response.setHeader("content-security-policy", "frame-ancestors 'none'");
+  response.setHeader("x-frame-options", "DENY");
+  response.setHeader("x-content-type-options", "nosniff");
+
   if (production) {
     void serveProductionAsset(request, response, url.pathname).then((served) => {
       if (!served) void renderDocument(request, response, url);

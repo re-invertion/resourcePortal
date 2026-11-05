@@ -2,6 +2,19 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
+test("Web anti-clickjacking server and regression fixture select security header checks", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-web/server.mjs",
+    "packages/resourceportal-web/production-ui.test.mjs",
+  ]);
+  assert.deepEqual(plan.profiles, ["web-proxy", "web-response-headers"]);
+  assert.equal(plan.vpnSmoke, false);
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/unregistered-response-header.test.mjs"]),
+    /unclassified changes/,
+  );
+});
+
 test("new Gate Swarm sysctl smoke is classified and validated, unknown scripts still fail closed", () => {
   const plan=selectProfiles(["scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"]);
   assert.deepEqual(plan.profiles, ["networking","workflow"]);
@@ -295,6 +308,7 @@ test("security and infrastructure hardening selects explicit release gates", () 
     "security",
     "tenant-access",
     "web-proxy",
+    "web-response-headers",
   ]);
 });
 
