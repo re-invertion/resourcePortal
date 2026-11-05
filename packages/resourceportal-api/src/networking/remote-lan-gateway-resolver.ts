@@ -1,6 +1,7 @@
 import { containsIpv4, parseIpv4Cidr } from "./network-addressing";
 import type { GateRuntimeConfig } from "./gate-runtime.types";
 import type { GatewayL2Input } from "./remote-lan-gateway-plan";
+import { boundLanSource } from "./remote-lan-source-guard";
 
 export type GatewayInterface = { name: string; address: string };
 const SERVICE = /^rp_[a-zA-Z0-9_]+$/;
@@ -51,6 +52,7 @@ export function planGatewayRuntimeAttachments(
         overlayInterface: gateway.name,
         macAddress: item.macAddress,
       },
+      source: boundLanSource(item),
       wireguard: {
         side: "resourceportal",
         attachmentId: item.attachmentId,

@@ -11,7 +11,7 @@ TOKEN=""
 INTERVAL=30
 UPLINK_DEVICE=""
 SKIP_MANAGED_UPLINK=0
-AGENT_VERSION="gate-l2-v2"
+AGENT_VERSION="gate-l2-v3"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
@@ -57,7 +57,7 @@ if [ ! -s "$PRIVATE_KEY" ]; then umask 077; wg genkey > "$PRIVATE_KEY"; fi
 chmod 0600 "$PRIVATE_KEY"
 PUBLIC_KEY="$(wg pubkey < "$PRIVATE_KEY")"
 PAYLOAD="$(jq -cn --arg token "$TOKEN" --arg key "$PUBLIC_KEY" \
-  '{token:$token,publicKey:$key,agentVersion:"gate-l2-v2"}')"
+  '{token:$token,publicKey:$key,agentVersion:"gate-l2-v3"}')"
 RESPONSE="$(curl -fsS --max-time 20 -H 'content-type: application/json' -X POST \
   --data "$PAYLOAD" "$API_URL/networking/gates/enroll")" || die "LAN enrollment failed"
 AGENT_TOKEN="$(printf '%s' "$RESPONSE" | jq -er .agentToken)"
@@ -198,7 +198,7 @@ while :; do
   OBSERVED_DIAG="$(printf '%s' "$OBSERVED_RESULT" | jq -c '.diagnostic')"
   APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
   HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson diag "$OBSERVED_DIAG" --argjson applied "$APPLIED_AT" \
-    '{agentVersion:"gate-l2-v2",lanObservation:$observation,lanAttachmentProofs:$l2,lanProofDiagnostic:$diag} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v2"}'
+    '{agentVersion:"gate-l2-v3",lanObservation:$observation,lanAttachmentProofs:$l2,lanProofDiagnostic:$diag} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v3"}'
   if RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
     -H 'content-type: application/json' -X POST \
     --data "$HEARTBEAT" \

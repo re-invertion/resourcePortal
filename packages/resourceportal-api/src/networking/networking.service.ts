@@ -1020,7 +1020,7 @@ export class NetworkingService {
     if (!this.wireGuard.isPublicKey(dto.publicKey)) {
       throw new BadRequestException("Invalid WireGuard public key");
     }
-    if (!["gate-l2-v1","gate-l2-v2"].includes(dto.agentVersion))
+    if (!["gate-l2-v1","gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion))
       throw new BadRequestException("Only certified RP Gate LAN Attachment agents can enroll");
 
     const agentToken = randomBytes(32).toString("base64url");
@@ -1058,7 +1058,7 @@ export class NetworkingService {
 
   async gateHeartbeat(authorization: string | undefined, dto: GateHeartbeatDto) {
     const gate = await this.authenticateGateAgent(authorization, true);
-    if (!["gate-l2-v1","gate-l2-v2"].includes(dto.agentVersion))
+    if (!["gate-l2-v1","gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion))
       throw new BadRequestException("RP Gate must use a certified LAN Attachment protocol");
     if (dto.agentVersion === "gate-l2-v1" && dto.lanObservation)
       throw new BadRequestException("Legacy Gate may not advertise managed LAN");
@@ -1113,17 +1113,17 @@ export class NetworkingService {
       data: {
         agentVersion: dto.agentVersion,
         observedLan, observedLanAt: dto.lanObservation ? new Date() : null,
-        observedL2: dto.agentVersion === "gate-l2-v2"
+        observedL2: ["gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion)
           ? bound as unknown as Prisma.InputJsonValue : Prisma.DbNull,
-        observedL2At: dto.agentVersion === "gate-l2-v2" ? new Date() : null,
-        observedL2Diagnostic: dto.agentVersion === "gate-l2-v2" ? {
+        observedL2At: ["gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion) ? new Date() : null,
+        observedL2Diagnostic: ["gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion) ? {
           reasonCode: supplied.length > bound.length ? "proof_filtered_by_api" :
             dto.lanProofDiagnostic?.reasonCode ?? "unknown_legacy_agent",
           rawCount: supplied.length,
           acceptedCount: bound.length,
           errorCode: dto.lanProofDiagnostic?.errorCode ?? "none",
         } : Prisma.DbNull,
-        observedL2AppliedAt: dto.agentVersion === "gate-l2-v2" && dto.lanAppliedAtMs
+        observedL2AppliedAt: ["gate-l2-v2","gate-l2-v3"].includes(dto.agentVersion) && dto.lanAppliedAtMs
           ? new Date(dto.lanAppliedAtMs) : null,
         lastSeenAt: new Date(),
       },
@@ -1134,7 +1134,7 @@ export class NetworkingService {
 
   async gateAgentConfig(authorization: string | undefined) {
     const gate = await this.authenticateGateAgent(authorization, false);
-    if (!["gate-l2-v1","gate-l2-v2"].includes(gate.agentVersion ?? ""))
+    if (!["gate-l2-v1","gate-l2-v2","gate-l2-v3"].includes(gate.agentVersion ?? ""))
       throw new UnauthorizedException("Legacy RP Gate agent must be upgraded");
     const full = await this.prisma.resourcePortalGate.findUniqueOrThrow({
       where: { id: gate.id },
@@ -1146,11 +1146,13 @@ export class NetworkingService {
   private agentConfig(gate: {
     id: string;
     tenantId: string;
+    agentVersion?: string | null;
     remoteLanAttachments?: Array<{
       id: string; tenantId: string; gateId: string; singleAppId: string; networkId: string;
       lanInterface: string; lanCidr: string; macAddress: string; status: string;
       uplinkMode: string; addressMode: string; configurationRevision: number;
       staticAddress: string | null; staticGateway: string | null;
+      dhcpAddress: string | null; leaseExpiresAt: Date | null;
     }>;
     serverPublicKey: string | null;
     serverListenPort: number | null;
@@ -1162,7 +1164,9 @@ export class NetworkingService {
     if (!gate.serverPublicKey || !gate.serverListenPort ||
         !gate.clientTunnelAddress || !gate.serverTunnelAddress)
       throw new ConflictException("RP Gate L2 underlay is not enrolled");
-    const grants = (gate.remoteLanAttachments ?? [])
+    // Older Gate agent code has MAC-only nftables filters. Revoke it until
+    // gate-l2-v3 is installed; merely sending a new JSON field is unsafe.
+    const grants = (gate.agentVersion === "gate-l2-v3" ? gate.remoteLanAttachments ?? [] : [])
       .filter(item => item.tenantId === gate.tenantId && item.gateId === gate.id &&
         ["Provisioning","Active"].includes(item.status))
       .map(item => ({
@@ -1172,6 +1176,8 @@ export class NetworkingService {
         uplinkMode: item.uplinkMode, addressMode: item.addressMode,
         configurationRevision: item.configurationRevision,
         staticAddress: item.staticAddress, staticGateway: item.staticGateway,
+        status: item.status, verifiedAddress: item.status === "Active" ? item.dhcpAddress : null,
+        leaseExpiresAt: item.status === "Active" ? item.leaseExpiresAt?.toISOString() ?? null : null,
       }))
       .sort((x,y) => x.id.localeCompare(y.id));
     return {

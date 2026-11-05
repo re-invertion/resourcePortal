@@ -85,11 +85,11 @@ describe("remote LAN control-plane desired state", () => {
   it("requires fresh authenticated LAN observation before granting managed Static",async()=>{
     const {p,service}=fixture();
     p.resourcePortalGate.findFirst.mockResolvedValue({
-      id:gateId,agentVersion:"gate-l2-v2",observedLanAt:new Date(),
+      id:gateId,agentVersion:"gate-l2-v3",observedLanAt:new Date(),
       observedLan:{protocol:1,gateId,segmentId:createHash("sha256").update(gateId+":eth0:192.168.50.0/24").digest("hex").slice(0,24),
         physicalInterface:"eth0",bridge:managedBridgeName(gateId,"eth0"),
         networkCidr:"192.168.50.0/24",gateway:"192.168.50.1",
-        state:"Ready",observedAt:new Date().toISOString(),agentVersion:"gate-l2-v2"}
+        state:"Ready",observedAt:new Date().toISOString(),agentVersion:"gate-l2-v3"}
     });
     const record=await service.create(tenantId,{...input,uplinkMode:"ManagedSharedUplink",
       addressMode:"Static",staticAddress:"192.168.50.25/24",staticGateway:"192.168.50.1"},actor);
@@ -100,7 +100,7 @@ describe("remote LAN control-plane desired state", () => {
       .rejects.toBeInstanceOf(BadRequestException);
     await expect(service.create(tenantId,{...input,uplinkMode:"ManagedSharedUplink",
       lanCidr:"192.168.51.0/24"},actor)).rejects.toBeInstanceOf(BadRequestException);
-    p.resourcePortalGate.findFirst.mockResolvedValue({id:gateId,agentVersion:"gate-l2-v2",
+    p.resourcePortalGate.findFirst.mockResolvedValue({id:gateId,agentVersion:"gate-l2-v3",
       observedLanAt:new Date(Date.now()-120000)});
     await expect(service.create(tenantId,{...input,uplinkMode:"ManagedSharedUplink"},actor))
       .rejects.toBeInstanceOf(BadRequestException);
@@ -112,7 +112,7 @@ describe("remote LAN control-plane desired state", () => {
       singleAppId,gateId,lanInterface:"eth0",lanCidr:input.lanCidr,
       uplinkMode:"ManagedSharedUplink",addressMode:"Static",
       staticAddress:"192.168.50.25/24",staticGateway:"192.168.50.1",
-      status:"Active",gate:{agentVersion:"gate-l2-v2"}
+      status:"Active",gate:{agentVersion:"gate-l2-v3"}
     });
     const result=await service.updateAddressing(tenantId,
       "aaaaaaaa-bbbb-4ccc-8ddd-111111111111",{addressMode:"DHCP"},actor);

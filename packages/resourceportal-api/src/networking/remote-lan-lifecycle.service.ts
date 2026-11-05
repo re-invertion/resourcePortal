@@ -54,7 +54,7 @@ export class RemoteLanLifecycleService {
         row.singleApp.appGroup.tenantId === row.tenantId &&
         row.gate.revokedAt === null &&
         row.gate.status === "Ready" &&
-        ["gate-l2-v1","gate-l2-v2"].includes(row.gate.agentVersion ?? "") &&
+        row.gate.agentVersion === "gate-l2-v3" &&
         row.network.status === "Ready" &&
         row.singleApp.pendingDeletion === false &&
         row.singleApp.desiredReplicas === 1 &&
@@ -133,7 +133,7 @@ export class RemoteLanLifecycleService {
     for(const row of rows) {
       const gate=row.gate;
       const gateFresh=gate.tenantId===row.tenantId&&
-        gate.agentVersion==="gate-l2-v2"&&gate.status==="Ready"&&
+        gate.agentVersion==="gate-l2-v3"&&gate.status==="Ready"&&
         !gate.revokedAt&&gate.observedL2At!==null&&
         now-gate.observedL2At.getTime()<=REMOTE_LAN_PROOF_MAX_AGE_MS&&
         gate.observedL2At.getTime()<=now+5000&&

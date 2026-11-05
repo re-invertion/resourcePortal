@@ -14,7 +14,7 @@ input.gretapDevice="rp-l2-"+createHash("sha256").update(
 describe("Gate application L2 bridge ingress filter",()=>{
   it("enforces MAC, VLAN, IPv6, DHCP server and STP restrictions before bridge membership",()=>{
     const cmds=remoteLanIngressFilterPlan(input);
-    expect(cmds).toHaveLength(7);
+    expect(cmds).toHaveLength(14);
     const flat=JSON.stringify(cmds);
     expect(flat).toContain("02:aa:bb:cc:dd:ee");
     expect(flat).toContain("vlan");

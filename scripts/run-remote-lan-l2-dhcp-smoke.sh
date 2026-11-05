@@ -28,7 +28,7 @@ cleanup() {
   rm -rf "$TMP"
 }
 trap cleanup EXIT
-for binary in ip nsenter wg dnsmasq busybox python3 ping; do
+for binary in ip nsenter wg dnsmasq busybox python3 ping nft; do
   command -v "$binary" >/dev/null || fail "missing $binary"
 done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,6 +60,42 @@ print("rp-a-"+h[:4].hex(),"rp-l2-"+h[:4].hex(),
 PY
 )
 BRIDGE2="rp-b-$(echo "$APP2_DEV" | cut -c6-)"
+# Use the actual production Gate agent nft generator in disposable netns.
+# Provisioning permits DHCP and ARP probes only; Active permits the confirmed
+# address; no policy grants any other source on the customer's LAN.
+gate_source_policy() {
+  local attachment="$1" address="$2" mode="$3" expiry="$4"
+  ns "$GATE" env RP_NFT_AGENT="$REPO_ROOT/packages/resourceportal-api/src/networking/gate-lan-agent.py" \
+    RP_NFT_ATTACHMENT="$attachment" RP_NFT_ADDRESS="$address" RP_NFT_MODE="$mode" \
+    RP_NFT_EXPIRY="$expiry" python3 - <<'PY_GATE_NFT'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("rp_gate_source_smoke", os.environ["RP_NFT_AGENT"])
+mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
+spec.loader.exec_module(mod)
+gate, tenant = "aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+aid = os.environ["RP_NFT_ATTACHMENT"]
+tunnel, _, chain, _ = mod.names(gate, tenant, aid, "eth1")
+stage, address, expiry = os.environ["RP_NFT_MODE"], os.environ["RP_NFT_ADDRESS"], os.environ["RP_NFT_EXPIRY"]
+item = {"lanCidr":"192.168.90.0/24", "addressMode":"Static" if stage=="Static" else "DHCP",
+        "status": "Provisioning" if stage=="Provisioning" else "Active",
+        "staticAddress":address+"/24" if stage=="Static" else None,
+        "verifiedAddress":address if stage=="Active" else None,
+        "leaseExpiresAt":expiry if stage=="Active" else None}
+if stage != "Provisioning":
+    mod.nft_remove(chain)
+mod.nft_install(chain, tunnel, "02:aa:bb:cc:dd:ef" if aid.endswith("bbbbbbbbbbbb") else "02:aa:bb:cc:dd:ee", item)
+PY_GATE_NFT
+}
+SOURCE_AID="aaaaaaaa-bbbb-4ccc-8ddd-aaaaaaaaaaaa"
+SOURCE_BID="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
+source_expiry() {
+  python3 - "$1" <<'PY_EXPIRY'
+from datetime import datetime, timezone, timedelta
+import sys
+print((datetime.now(timezone.utc)+timedelta(seconds=int(sys.argv[1]))).isoformat())
+PY_EXPIRY
+}
 for net in "$APP" "$APP2" "$RP" "$GATE" "$LAN"; do
   sudo -n ip netns add "$net"
   ns "$net" ip link set lo up
@@ -128,6 +164,7 @@ ns "$RP" ip link set "$WAN_DEV" master "$BRIDGE"
 ns "$RP" ip link set "$BRIDGE" up
 ns "$GATE" ip link add "$WAN_DEV" type gretap local "$CL_IP" remote "$SV_IP" key "$WAN_KEY" dev rp-gate ttl 64
 ns "$GATE" ip link set "$WAN_DEV" mtu 1280 up
+gate_source_policy "$SOURCE_AID" "" "Provisioning" ""
 ns "$GATE" ip link add "$GATE_BRIDGE" type bridge stp_state 1
 ns "$GATE" ip link set "$WAN_DEV" master "$GATE_BRIDGE"
 ns "$GATE" ip link set eth1 master "$GATE_BRIDGE"
@@ -149,6 +186,7 @@ ns "$RP" ip link set "$WAN2_DEV" master "$BRIDGE2"
 ns "$RP" ip link set "$BRIDGE2" up
 ns "$GATE" ip link add "$WAN2_DEV" type gretap local "$CL_IP" remote "$SV_IP" key "$WAN2_KEY" dev rp-gate ttl 64
 ns "$GATE" ip link set "$WAN2_DEV" mtu 1280 up
+gate_source_policy "$SOURCE_BID" "" "Provisioning" ""
 ns "$GATE" ip link set "$WAN2_DEV" master "$GATE_BRIDGE"
 # STP is intentionally enabled on both bridges to prevent remote L2 loops.
 # A freshly created Linux STP port starts in blocking/listening/learning and
@@ -251,11 +289,75 @@ if [ "$server_lease" -ne 1 ]; then
 fi
 log "PASS customer DHCP server recorded application MAC and expected IP"
 log "PASS stable MAC and remote LAN DHCP"
+gate_source_policy "$SOURCE_AID" "192.168.90.23" "Active" "$(source_expiry 240)"
 ns "$APP" ping -c 3 -W 2 -I "$APP_DEV" 192.168.90.1 ||
   fail "application cannot reach remote LAN"
 ns "$APP" ip -4 neigh show dev "$APP_DEV" | grep -q "192.168.90.1" ||
   fail "application did not learn remote LAN ARP"
 log "PASS Ethernet ARP and LAN IP"
+# Send a raw ARP reply with the *assigned Ethernet MAC* and capture on
+# customer's physical LAN. Verify the same instrumentation sees the valid
+# lease's ARP while a gateway-impersonation ARP does not cross the tunnel.
+assert_arp_sender() {
+  local advertised="$1" expected="$2"
+  local ready="$TMP/arp-capture-ready"
+  rm -f "$ready"
+  ns "$LAN" env RP_ARP_READY="$ready" RP_ARP_SOURCE="$advertised" python3 - <<'PY_ARP_CAPTURE' &
+import os, socket, sys, time
+sock=socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0806))
+sock.bind(("lan0", 0))
+sock.settimeout(0.75)
+open(os.environ["RP_ARP_READY"], "w").close()
+source=socket.inet_aton(os.environ["RP_ARP_SOURCE"])
+mac=bytes.fromhex("02aabbccddee")
+end=time.monotonic()+4
+while time.monotonic()<end:
+    try:
+        packet=sock.recv(4096)
+    except socket.timeout:
+        continue
+    if (len(packet)>=42 and packet[12:14]==b"\x08\x06" and
+        packet[6:12]==mac and packet[22:28]==mac and
+        packet[28:32]==source):
+        sys.exit(0)
+sys.exit(1)
+PY_ARP_CAPTURE
+  local capture_pid="$!"
+  local capture_ready=0
+  for attempt in $(seq 1 35); do
+    if [ -e "$ready" ]; then capture_ready=1; break; fi
+    sleep 0.1
+  done
+  [ "$capture_ready" -eq 1 ] || fail "ARP capture could not start"
+  ns "$APP" env RP_ARP_IF="$APP_DEV" RP_ARP_SOURCE="$advertised" python3 - <<'PY_ARP_SENDER'
+import os, socket, struct, time
+mac=bytes.fromhex("02aabbccddee")
+src=socket.inet_aton(os.environ["RP_ARP_SOURCE"])
+eth=b"\xff"*6+mac+b"\x08\x06"
+arp=struct.pack("!HHBBH",1,0x800,6,4,2)+mac+src+b"\x00"*6+src
+sock=socket.socket(socket.AF_PACKET,socket.SOCK_RAW)
+sock.bind((os.environ["RP_ARP_IF"],0))
+for _ in range(3):
+    sock.send(eth+arp)
+    time.sleep(0.15)
+PY_ARP_SENDER
+  if wait "$capture_pid"; then
+    [ "$expected" = "pass" ] || fail "forged gateway ARP reached physical LAN"
+  else
+    [ "$expected" = "drop" ] || fail "valid leased ARP did not reach physical LAN"
+  fi
+}
+assert_arp_sender "192.168.90.23" "pass"
+assert_arp_sender "192.168.90.1" "drop"
+log "PASS real WireGuard/Gate path permits own ARP but rejects gateway identity spoof"
+# A second IPv4 address on the SAME approved MAC must never pass the Gate
+# source policy. Without the fix this ping succeeds through the L2 tunnel.
+ns "$APP" ip addr add 192.168.90.100/24 dev "$APP_DEV"
+if ns "$APP" ping -c 2 -W 1 -I 192.168.90.100 192.168.90.1 >/dev/null 2>&1; then
+  fail "forged IPv4 source crossed the customer's LAN"
+fi
+ns "$APP" ip addr del 192.168.90.100/24 dev "$APP_DEV"
+log "PASS verified DHCP lease rejects forged IPv4 source"
 
 # Independently lease and route a second application MAC over a separate
 # tenant overlay and GRETAP key, sharing only the customer-facing Gate bridge.
@@ -268,6 +370,7 @@ ns "$APP2" ip -4 -o addr show dev "$APP2_DEV" | grep -q '192.168.90.24/' ||
   fail "second application did not receive its reserved customer DHCP IP"
 awk -v mac="$MAC2" 'tolower($2)==tolower(mac) && $3=="192.168.90.24"{found=1} END{exit !found}' "$TMP/dnsmasq.leases" ||
   fail "customer DHCP server did not record the second application MAC"
+gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 240)"
 ns "$APP2" ping -c 3 -W 2 -I "$APP2_DEV" 192.168.90.1 ||
   fail "second application cannot reach customer LAN"
 ns "$APP" ip -4 -o addr show dev "$APP_DEV" | grep -q '192.168.90.23/' ||
@@ -289,6 +392,7 @@ ns "$APP" ip -4 addr del 192.168.90.23/24 dev "$APP_DEV"
 ns "$APP" busybox arping -D -f -c 3 -w 5 -I "$APP_DEV" 192.168.90.50 ||
   fail "static IPv4 duplicate detection failed on customer LAN"
 ns "$APP" ip -4 addr add 192.168.90.50/24 dev "$APP_DEV"
+gate_source_policy "$SOURCE_AID" "192.168.90.50" "Static" ""
 ns "$APP" ip -4 route replace default via 192.168.90.254 dev "$APP_DEV" table 20015
 ns "$APP" ip -4 rule add pref 18015 from 192.168.90.50/32 lookup 20015
 [ "$(ns "$APP" ip -4 route show default)" = "$original_main" ] ||
@@ -311,6 +415,14 @@ if ns "$APP" ping -c 1 -W 2 -I "$APP_DEV" 192.168.90.1 >/dev/null 2>&1; then
 fi
 ns "$APP2" ping -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 ||
   fail "revoking the first attachment disrupted the independent second app"
+# nft timed set must drop even the formerly valid IP when the validated
+# lease expires, with no live controller heartbeat or reconciliation.
+gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 4)"
+sleep 5
+if ns "$APP2" ping -c 1 -W 1 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+  fail "expired DHCP source authorization remained usable"
+fi
+log "PASS kernel lease timeout denies stale IPv4"
 log "PASS per-app revocation leaves other customer's app tunnel connected"
 ns "$GATE" ip link delete "$WAN2_DEV"
 if ns "$APP2" ping -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then

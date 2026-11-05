@@ -200,21 +200,84 @@ def is_handshake_recent(expected_peer: str):
     return 0 <= age < MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS
 
 
-def nft_install(chain: str, tunnel: str, mac: str):
-    # Create the owner-specific per-attachment ingress filter BEFORE the
-    # GRETAP endpoint is attached to the customer's bridge.
+def bound_source(item: dict):
+    """A verified backend lease or an explicitly granted static IP; never subnet-wide."""
+    net = ipaddress.ip_network(item["lanCidr"], strict=True)
+    address_mode = item.get("addressMode", "DHCP")
+    if address_mode == "Static":
+        if item.get("status") not in ("Provisioning", "Active"):
+            return None
+        raw = item.get("staticAddress")
+        if not isinstance(raw, str):
+            return None
+        try:
+            ip = ipaddress.ip_interface(raw)
+        except ValueError:
+            return None
+        if ip.version != 4 or ip.network != net:
+            return None
+        timeout = None
+    elif address_mode == "DHCP" and item.get("status") == "Active":
+        raw = item.get("verifiedAddress")
+        expiry = item.get("leaseExpiresAt")
+        if not isinstance(raw, str) or not isinstance(expiry, str):
+            return None
+        try:
+            ip = ipaddress.ip_interface(raw + "/32")
+            deadline = datetime.fromisoformat(expiry.replace("Z", "+00:00")).timestamp()
+        except (ValueError, OverflowError):
+            return None
+        seconds = int(deadline - time.time())
+        if seconds <= 1 or seconds > 90 * 86400:
+            return None
+        timeout = seconds
+    else:
+        return None
+    if ip.version != 4 or ip.ip not in net or ip.ip in (net.network_address, net.broadcast_address):
+        return None
+    return str(ip.ip), timeout
+
+
+def nft_install(chain: str, tunnel: str, mac: str, item: dict):
+    # A failed setup never attaches the tunnel to the physical LAN.
+    source = bound_source(item)
+    source_set = "rpip_" + chain[3:]
     call("nft", "add", "table", "bridge", "rp_lan", ignore=True)
     call("nft", "add", "chain", "bridge", "rp_lan", chain,
          "{", "type", "filter", "hook", "forward", "priority", "-300", ";",
          "policy", "accept", ";", "}")
-    for tail in [
+    if source is not None and source[1] is not None:
+        call("nft", "add", "set", "bridge", "rp_lan", source_set,
+             "{", "type", "ipv4_addr", ";", "flags", "timeout", ";", "}")
+        call("nft", "add", "element", "bridge", "rp_lan", source_set,
+             "{", source[0], "timeout", str(source[1]) + "s", "}")
+    rules = [
         ("ether", "saddr", "!=", mac.lower(), "drop"),
         ("ether", "type", "vlan", "drop"),
         ("ether", "type", "0x88a8", "drop"),
         ("ether", "type", "ip6", "drop"),
         ("ether", "daddr", "01:80:c2:00:00:00", "drop"),
         ("ether", "type", "ip", "udp", "sport", "67", "drop"),
-    ]:
+        ("ether", "type", "arp", "arp", "saddr", "ether", "!=", mac.lower(), "drop"),
+        ("ether", "type", "arp", "arp", "saddr", "ip", "0.0.0.0",
+         "arp", "operation", "request", "accept"),
+        ("ether", "type", "arp", "arp", "saddr", "ip", "0.0.0.0", "drop"),
+        ("ether", "type", "ip", "ip", "saddr", "0.0.0.0", "udp", "sport", "68",
+         "udp", "dport", "67", "accept"),
+    ]
+    permitted = None
+    if source is not None:
+        permitted = source[0] if source[1] is None else "@" + source_set
+    if permitted:
+        rules += [
+            ("ether", "type", "arp", "arp", "saddr", "ip", "!=", permitted, "drop"),
+            ("ether", "type", "ip", "ip", "saddr", "!=", permitted, "drop"),
+        ]
+    else:
+        rules += [("ether", "type", "arp", "drop"),
+                  ("ether", "type", "ip", "drop")]
+    rules.append(("ether", "type", "!=", "{", "arp", ",", "ip", "}", "drop"))
+    for tail in rules:
         call("nft", "add", "rule", "bridge", "rp_lan", chain,
              "iifname", tunnel, *tail)
 
@@ -222,6 +285,7 @@ def nft_install(chain: str, tunnel: str, mac: str):
 def nft_remove(chain: str):
     call("nft", "flush", "chain", "bridge", "rp_lan", chain, ignore=True)
     call("nft", "delete", "chain", "bridge", "rp_lan", chain, ignore=True)
+    call("nft", "delete", "set", "bridge", "rp_lan", "rpip_" + chain[3:], ignore=True)
 
 
 def reconcile(config: dict, current: dict):
@@ -283,7 +347,10 @@ def reconcile(config: dict, current: dict):
         new[a] = {"lanInterface": physical, "macAddress": mac, "singleAppId": item["singleAppId"],
                   "networkId": item["networkId"], "lanCidr": str(cidr), "uplinkMode": mode,
                   "addressMode": address_mode, "staticAddress": static_addr,
-                  "staticGateway": static_gateway, "configurationRevision": revision}
+                  "staticGateway": static_gateway, "configurationRevision": revision,
+                  "status": item.get("status"),
+                  "verifiedAddress": item.get("verifiedAddress"),
+                  "leaseExpiresAt": item.get("leaseExpiresAt")}
     # Reject conflicting addressing before any privileged L2 mutation.
     static_ips = [item["staticAddress"] for item in new.values() if item["addressMode"] == "Static"]
     if len(static_ips) != len(set(static_ips)):
@@ -307,6 +374,9 @@ def reconcile(config: dict, current: dict):
             previous.setdefault("staticAddress", None)
             previous.setdefault("staticGateway", None)
             previous.setdefault("configurationRevision", 1)
+            previous.setdefault("status", None)
+            previous.setdefault("verifiedAddress", None)
+            previous.setdefault("leaseExpiresAt", None)
             if a in old and previous == item:
                 # Revalidate kernel state: durable desired state is not proof
                 # that a tunnel survived a Gate restart or host reboot.
@@ -327,7 +397,12 @@ def reconcile(config: dict, current: dict):
                 # revision; never leave stale bridged privileges in place.
                 previous_revision = old[a].get("configurationRevision", 1)
                 revision = item.get("configurationRevision", 1)
-                if not isinstance(revision, int) or revision <= previous_revision:
+                policy_only = all(previous.get(field) == item.get(field) for field in (
+                    "lanInterface", "macAddress", "singleAppId", "networkId", "lanCidr",
+                    "uplinkMode", "addressMode", "staticAddress", "staticGateway",
+                    "configurationRevision"))
+                if not isinstance(revision, int) or (
+                    revision <= previous_revision and not policy_only):
                     raise ValueError("Changed attachment requires a newer revision")
                 remove_one(gate, tenant, a, old[a], new, old)
                 old.pop(a, None)
@@ -375,7 +450,7 @@ def apply_one(gate: str, tenant: str, aid: str, item: dict, client: str, server:
              "local", client, "remote", server, "key", key, "dev", WG, "ttl", "64")
         call("ip", "link", "set", "dev", tunnel, "mtu", "1280")
         call("ip", "link", "set", "dev", tunnel, "up")
-        nft_install(chain, tunnel, item["macAddress"])
+        nft_install(chain, tunnel, item["macAddress"], item)
         call("ip", "link", "set", "dev", tunnel, "master", bridge)
         call("bridge", "link", "set", "dev", tunnel, "isolated", "on", "hairpin", "off")
     except Exception:
@@ -450,7 +525,7 @@ def observed_managed_segment() -> dict:
         "netmask": str(host.network.netmask),
         "gateway": route["gateway"], "discoveryMethod": "host-verified",
         "observedAt": datetime.now(timezone.utc).isoformat(),
-        "agentVersion": "gate-l2-v2", "capabilities": ["ManagedSharedUplink", "LANDiscoveryV1"],
+        "agentVersion": "gate-l2-v3", "capabilities": ["ManagedSharedUplink", "LANDiscoveryV1"],
         "state": "Ready",
     }
 
