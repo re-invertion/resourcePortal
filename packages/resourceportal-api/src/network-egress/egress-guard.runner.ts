@@ -8,6 +8,8 @@ import {
   hasAuthoritativeEgressPolicy,
   installedDeniedDestinations,
   DEFAULT_EGRESS_POLICY,
+  EgressSnapshotFreshnessTracker,
+  type EgressPolicyFreshness,
   renderAtomicEgressRules,
   shouldPreserveExistingFirewallState,
   tenantWorkloads,
@@ -26,6 +28,7 @@ const reconcileMs = readPositiveInt(
 let stopping = false;
 let lastDigest = "";
 let lastAppliedPolicy: ReturnType<typeof decodeEgressPolicy> | undefined;
+const snapshotFreshness = new EgressSnapshotFreshnessTracker();
 let eventProcess: ChildProcess | undefined;
 let wakeReconcile: (() => void) | undefined;
 
@@ -49,8 +52,26 @@ async function main() {
   let consecutiveFailures = 0;
   while (!stopping) {
     try {
-      await reconcile();
-      consecutiveFailures = 0;
+      const freshness = await reconcile();
+      const diagnostic = snapshotFreshness.observe(freshness);
+      if (diagnostic.event === "missing") {
+        logger.warn(
+          "EGRESS_POLICY_SNAPSHOT_MISSING status=degraded: authoritative policy snapshot unavailable or invalid; " +
+          "keeping mandatory deny rules and extending retained denies to changed tenant addresses; " +
+          "this is NOT successful authoritative convergence",
+        );
+      } else if (diagnostic.event === "still_missing") {
+        logger.warn(
+          `EGRESS_POLICY_SNAPSHOT_MISSING status=degraded durationMs=${diagnostic.durationMs}: ` +
+          "workload deny rules remain enforced, but policy freshness is unverified",
+        );
+      } else if (diagnostic.event === "restored") {
+        logger.log(
+          `EGRESS_POLICY_SNAPSHOT_RESTORED status=authoritative outageMs=${diagnostic.durationMs}`,
+        );
+      }
+      // A safely protected outage must never count as policy convergence.
+      if (freshness === "authoritative") consecutiveFailures = 0;
     } catch (error) {
       consecutiveFailures += 1;
       logger.error(error instanceof Error ? error.message : String(error));
@@ -66,15 +87,16 @@ async function main() {
   logger.log("Stopping egress guard");
 }
 
-async function reconcile() {
+async function reconcile(): Promise<EgressPolicyFreshness> {
   const encodedPolicy = process.env[EGRESS_POLICY_ENV];
-  if (!hasAuthoritativeEgressPolicy(encodedPolicy) && (await hasExistingPolicyState())) {
+  const authoritative = hasAuthoritativeEgressPolicy(encodedPolicy);
+  if (!authoritative && (await hasExistingPolicyState())) {
     // Keep all existing deny rules and extend them to newly arrived tenant
     // workloads while an authoritative snapshot is temporarily unavailable.
     // Never flush/rebuild using a weaker policy or leave new IPs unprotected.
     await preserveAndExtendDeniedWorkloads(lastAppliedPolicy ?? DEFAULT_EGRESS_POLICY);
     lastDigest = ""; // Always reconcile when the authoritative policy returns.
-    return;
+    return "degraded";
   }
   const policy = decodeEgressPolicy(encodedPolicy);
   const [containersRaw, gatewayRaw] = await Promise.all([
@@ -94,7 +116,7 @@ async function reconcile() {
     `:${workloads
       .map((item) => `${item.containerId}:${item.ipv4 ?? ""}:${item.ipv6 ?? ""}`)
       .join(",")}`;
-  if (digest === lastDigest) return;
+  if (digest === lastDigest) return authoritative ? "authoritative" : "degraded";
 
   const ipv6ToolAvailable = await commandExists("ip6tables");
   if (ipv6Rules.length > 0 && !ipv6ToolAvailable) {
@@ -116,9 +138,12 @@ async function reconcile() {
   }
   lastDigest = digest;
   lastAppliedPolicy = policy;
-  logger.log(
-    `Applied network policy revision=${policy.revision} enabled=${policy.enabled} workloads=${workloads.length} firewallRules=${ipv4Rules.length + ipv6Rules.length}`,
-  );
+  if (authoritative) {
+    logger.log(
+      `Applied network policy revision=${policy.revision} enabled=${policy.enabled} workloads=${workloads.length} firewallRules=${ipv4Rules.length + ipv6Rules.length}`,
+    );
+  }
+  return authoritative ? "authoritative" : "degraded";
 }
 
 async function preserveAndExtendDeniedWorkloads(
