@@ -1,7 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawn } from "node:child_process";
-import { encodeEgressPolicy, egressPolicyDigest } from "./egress-guard.logic";
+import { encodeEgressPolicy, egressPolicyDigest, hasAuthoritativeEgressPolicy } from "./egress-guard.logic";
 import {
   EGRESS_GUARD_SERVICE_SUFFIX,
   EGRESS_POLICY_ENV,
@@ -16,6 +16,8 @@ type CommandResult = {
 
 @Injectable()
 export class NetworkEgressReconcilerService {
+  private readonly logger = new Logger(NetworkEgressReconcilerService.name);
+
   constructor(
     private readonly egress: NetworkEgressService,
     private readonly config: ConfigService,
@@ -51,15 +53,27 @@ export class NetworkEgressReconcilerService {
     }
     const prefix = `${EGRESS_POLICY_ENV}=`;
     const current = env.find((item) => item.startsWith(prefix));
+    // The worker sees the old and new Swarm service specs. The local guard
+    // cannot observe a recovery when service update restarts its container.
+    const recoveredMissingSnapshot = !hasAuthoritativeEgressPolicy(
+      current?.slice(prefix.length),
+    );
     if (current === `${prefix}${encoded}`) {
       return {
         changed: false,
+        recoveredMissingSnapshot: false,
         revision: policy.revision,
         enabled: policy.enabled,
         digest: egressPolicyDigest(policy),
       };
     }
 
+    if (recoveredMissingSnapshot) {
+      this.logger.warn(
+        "EGRESS_POLICY_SNAPSHOT_MISSING status=degraded source=worker: " +
+        "egress-guard service spec has no valid authoritative snapshot; reattaching policy",
+      );
+    }
     const args = ["service", "update"];
     if (current) args.push("--env-rm", EGRESS_POLICY_ENV);
     args.push("--env-add", `${EGRESS_POLICY_ENV}=${encoded}`, serviceName);
@@ -71,8 +85,18 @@ export class NetworkEgressReconcilerService {
           `Unable to update ${serviceName} egress policy`,
       );
     }
+    if (recoveredMissingSnapshot) {
+      // This survives a guard restart because it is emitted by the worker
+      // after Docker confirmed the environment update. Do not claim that
+      // the restarted guard has already applied every dataplane rule.
+      this.logger.log(
+        "EGRESS_POLICY_SNAPSHOT_RESTORED status=reattached source=worker: " +
+        "authoritative policy is present in the service spec; awaiting guard convergence",
+      );
+    }
     return {
       changed: true,
+      recoveredMissingSnapshot,
       revision: policy.revision,
       enabled: policy.enabled,
       digest: egressPolicyDigest(policy),

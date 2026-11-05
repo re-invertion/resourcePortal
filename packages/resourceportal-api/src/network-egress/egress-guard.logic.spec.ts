@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_EGRESS_POLICY,
+  EgressSnapshotFreshnessTracker,
   appGroupIdFromLabels,
   decodeEgressPolicy,
   encodeEgressPolicy,
@@ -241,5 +242,46 @@ describe("policy-snapshot validity (#217)", () => {
     expect(hasAuthoritativeEgressPolicy("bad-base64")).toBe(false);
     expect(hasAuthoritativeEgressPolicy(Buffer.from(JSON.stringify({ ...DEFAULT_EGRESS_POLICY, version: 1 })).toString("base64"))).toBe(false);
     expect(hasAuthoritativeEgressPolicy(encodeEgressPolicy(DEFAULT_EGRESS_POLICY))).toBe(true);
+  });
+});
+
+describe("egress policy freshness observability (#217)", () => {
+  it("reports the first missing snapshot, periodic outage, and authoritative recovery", () => {
+    const tracker = new EgressSnapshotFreshnessTracker(60_000);
+    expect(tracker.observe("authoritative", 10_000)).toEqual({
+      freshness: "authoritative", event: null, durationMs: 0,
+    });
+    expect(tracker.observe("degraded", 11_000)).toEqual({
+      freshness: "degraded", event: "missing", durationMs: 0,
+    });
+    expect(tracker.observe("degraded", 15_000)).toEqual({
+      freshness: "degraded", event: null, durationMs: 4_000,
+    });
+    expect(tracker.observe("degraded", 71_000)).toEqual({
+      freshness: "degraded", event: "still_missing", durationMs: 60_000,
+    });
+    expect(tracker.observe("degraded", 71_001)).toEqual({
+      freshness: "degraded", event: null, durationMs: 60_001,
+    });
+    expect(tracker.observe("authoritative", 75_000)).toEqual({
+      freshness: "authoritative", event: "restored", durationMs: 64_000,
+    });
+    expect(tracker.observe("authoritative", 76_000)).toEqual({
+      freshness: "authoritative", event: null, durationMs: 0,
+    });
+    expect(tracker.observe("degraded", 77_000)).toEqual({
+      freshness: "degraded", event: "missing", durationMs: 0,
+    });
+  });
+
+  it("never reports a negative outage duration when the clock moves backwards", () => {
+    const tracker = new EgressSnapshotFreshnessTracker();
+    tracker.observe("degraded", 30_000);
+    expect(tracker.observe("degraded", 29_000)).toMatchObject({
+      freshness: "degraded", durationMs: 0,
+    });
+    expect(tracker.observe("authoritative", 25_000)).toEqual({
+      freshness: "authoritative", event: "restored", durationMs: 0,
+    });
   });
 });

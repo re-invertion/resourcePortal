@@ -196,6 +196,45 @@ function isPolicy(value: unknown): value is NetworkEgressPolicySnapshot {
   );
 }
 
+/**
+ * Outage status for the local guard, not the worker's desired-policy rollout.
+ * A fail-closed fallback can protect traffic while still being DEGRADATED:
+ * it has not converged to an authoritative policy snapshot.
+ */
+export type EgressPolicyFreshness = "authoritative" | "degraded";
+
+export class EgressSnapshotFreshnessTracker {
+  private missingSinceMs: number | null = null;
+  private lastWarningAtMs: number | null = null;
+
+  constructor(private readonly reminderIntervalMs = 60_000) {}
+
+  observe(freshness: EgressPolicyFreshness, nowMs = Date.now()) {
+    if (!Number.isFinite(nowMs)) throw new Error("Invalid egress snapshot observation time");
+    if (freshness === "authoritative") {
+      const since = this.missingSinceMs;
+      this.missingSinceMs = null;
+      this.lastWarningAtMs = null;
+      const event: "restored" | null = since === null ? null : "restored";
+      return {
+        freshness, event,
+        durationMs: since === null ? 0 : Math.max(0, nowMs - since),
+      };
+    }
+
+    const firstMissing = this.missingSinceMs === null;
+    const since = this.missingSinceMs ?? nowMs;
+    if (firstMissing) this.missingSinceMs = nowMs;
+    const elapsed = Math.max(0, nowMs - since);
+    const repeatDue = this.lastWarningAtMs === null ||
+      nowMs - this.lastWarningAtMs >= this.reminderIntervalMs;
+    if (repeatDue) this.lastWarningAtMs = nowMs;
+    const event: "missing" | "still_missing" | null =
+      firstMissing ? "missing" : repeatDue ? "still_missing" : null;
+    return { freshness, event, durationMs: elapsed };
+  }
+}
+
 /** Recover deny destinations from installed rules while the snapshot is unavailable.
  * This permits a restarted guard to extend CUSTOM CIDR restrictions to new IPs
  * without erasing the still-active deny rules for existing workloads.
