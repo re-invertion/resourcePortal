@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lanIngressRules, type BoundLanSource } from "./remote-lan-source-guard";
 
 /**
  * nftables bridge-family ingress policy for an RP-owned, per-app GRETAP
@@ -14,6 +15,7 @@ export type RemoteLanIngressFilter = {
   gateId: string;
   gretapDevice: string;
   allowedMac: string;
+  source?: BoundLanSource | null;
 };
 type NftCommand = readonly [binary: "nft", args: readonly string[]];
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,25 +42,18 @@ export function remoteLanFilterTableSetup(): NftCommand {
 export function remoteLanIngressFilterPlan(input: RemoteLanIngressFilter): NftCommand[] {
   const chain = remoteLanIngressChain(input);
   const iface = input.gretapDevice;
-  const prefix = ["add","rule","bridge","rp_lan",chain,"iifname",iface];
   return [
     ["nft",["add","chain","bridge","rp_lan",chain,
       "{","type","filter","hook","forward","priority","-300",";","policy","accept",";","}"]],
-    // Fail closed for all packets not carrying the one assigned application MAC.
-    ["nft",[...prefix,"ether","saddr","!=" ,input.allowedMac.toLowerCase(),"drop"]],
-    // Do not permit VLAN hopping, including provider-tagged frames.
-    ["nft",[...prefix,"ether","type","vlan","drop"]],
-    ["nft",[...prefix,"ether","type","0x88a8","drop"]],
-    // Initial feature supports IPv4 DHCP only. Never accept IPv6 RAs from apps.
-    ["nft",[...prefix,"ether","type","ip6","drop"]],
-    // A tenant application must not advertise itself as a LAN DHCP server.
-    ["nft",[...prefix,"ether","type","ip","udp","sport","67","drop"]],
-    // Never allow an app to inject spanning-tree BPDUs into the physical LAN.
-    ["nft",[...prefix,"ether","daddr","01:80:c2:00:00:00","drop"]],
+    ...lanIngressRules("rp_lan", chain, iface, input.allowedMac, input.source ?? null),
   ];
 }
 
 /** Only delete the chain matching this exact attachment; never flush a shared table. */
 export function remoteLanIngressFilterCleanup(input: RemoteLanIngressFilter): NftCommand[] {
-  return [["nft",["delete","chain","bridge","rp_lan",remoteLanIngressChain(input)]]];
+  const chain = remoteLanIngressChain(input);
+  return [
+    ["nft",["delete","chain","bridge","rp_lan",chain]],
+    ["nft",["delete","set","bridge","rp_lan","rpip_" + chain.slice(3)]],
+  ];
 }

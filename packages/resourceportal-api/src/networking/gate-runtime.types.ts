@@ -7,6 +7,12 @@ export type GateRuntimeLanAttachment = {
   overlayCidr: string;
   serviceName: string;
   macAddress: string;
+  lanCidr?: string;
+  addressMode?: "DHCP" | "Static";
+  staticAddress?: string | null;
+  status?: string;
+  verifiedAddress?: string | null;
+  leaseExpiresAt?: string | null;
 };
 /**
  * Authenticated encrypted L2 underlay and app-scoped bridge grants only.

@@ -201,7 +201,7 @@ describe("Gate task network-namespace forwarding contract", () => {
     expect(service.dockerCalls.some(x=>x.args.includes("--sysctl-add"))).toBe(true);
   });
   it("blocks the actual Gate reconcile before Ready when isolation is absent", async () => {
-    const gate={...readyGate,agentVersion:"gate-l2-v1",remoteLanAttachments: [{
+    const gate={...readyGate,agentVersion:"gate-l2-v3",remoteLanAttachments: [{
       id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
       tenantId:readyGate.tenantId,gateId:readyGate.id,
       networkId:"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
@@ -228,7 +228,7 @@ describe("GateRuntimeReconcilerService", () => {
   it("attaches a Gate to a remote application's overlay without any Site VPN link", async () => {
     const networkId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
     const gate = {
-      ...readyGate, networks: [], agentVersion:"gate-l2-v1",
+      ...readyGate, networks: [], agentVersion:"gate-l2-v3",
       remoteLanAttachments: [{
         id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
         tenantId:readyGate.tenantId,
@@ -266,7 +266,7 @@ describe("GateRuntimeReconcilerService", () => {
     const { service, runtime, secrets } = fixture([{
       ...readyGate, agentVersion:"gate-l2-v1", remoteLanAttachments: [],
     }]);
-    await expect(service.reconcile()).resolves.toMatchObject({ready:1,failed:0});
+    await expect(service.reconcile()).resolves.toMatchObject({ready:0,pending:1,failed:0});
     expect(runtime.reconcileTenantNetwork).not.toHaveBeenCalled();
     expect(secrets.provisionSecrets).not.toHaveBeenCalled();
     expect(service.dockerCalls.map(call => call.args)).toContainEqual([

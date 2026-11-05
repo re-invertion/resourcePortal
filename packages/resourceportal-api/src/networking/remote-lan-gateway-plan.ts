@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appGretapCommands, type AppL2Tunnel } from "./remote-lan-app-dataplane";
 import { gretapSetupCommands, type RemoteLanTunnel } from "./remote-lan-l2-transport";
+import { lanIngressRules, type BoundLanSource } from "./remote-lan-source-guard";
 
 /**
  * Plan for a single RP gateway container's private per-app bridge.
@@ -13,6 +14,7 @@ import { gretapSetupCommands, type RemoteLanTunnel } from "./remote-lan-l2-trans
 export type GatewayL2Input = {
   app: AppL2Tunnel;
   wireguard: RemoteLanTunnel;
+  source?: BoundLanSource | null;
 };
 export type GatewayL2Command = readonly [
   binary: "ip" | "nft",
@@ -54,17 +56,7 @@ export function gatewayL2SetupPlan(input: GatewayL2Input): GatewayL2Command[] {
     ["nft",["add","chain","bridge","rp_lan_gw",chain,
       "{","type","filter","hook","forward","priority","-300",";","policy","accept",";","}"]],
   ];
-  const start=["add","rule","bridge","rp_lan_gw",chain,"iifname",appDev];
-  for (const suffix of [
-    ["ether","saddr","!=",mac,"drop"],
-    ["ether","type","vlan","drop"],
-    ["ether","type","0x88a8","drop"],
-    ["ether","type","ip6","drop"],
-    ["ether","type","ip","udp","sport","67","drop"],
-    ["ether","daddr","01:80:c2:00:00:00","drop"],
-  ]) {
-    commands.push(["nft",[...start,...suffix]]);
-  }
+  commands.push(...lanIngressRules("rp_lan_gw", chain, appDev, mac, input.source ?? null));
   commands.push(
     ["ip",["link","set","dev",appDev,"master",bridge]],
     ["ip",["link","set","dev",wireguardDev,"master",bridge]],
@@ -87,5 +79,6 @@ export function gatewayL2CleanupPlan(input: GatewayL2Input): GatewayL2Command[] 
     ["ip",["link","delete",bridge]],
     ["nft",["flush","chain","bridge","rp_lan_gw",chain]],
     ["nft",["delete","chain","bridge","rp_lan_gw",chain]],
+    ["nft",["delete","set","bridge","rp_lan_gw","rpip_" + chain.slice(3)]],
   ];
 }

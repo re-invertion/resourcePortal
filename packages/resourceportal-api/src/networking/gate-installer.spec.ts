@@ -46,7 +46,7 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(script).not.toContain("__RP_SHELL_EXPAND__");
     expect(script).not.toContain("__RP_GATE_LAN_PYTHON__");
     expect(script).toContain("systemctl restart resourceportal-gate.service");
-    expect(script.match(/AGENT_VERSION="gate-l2-v2"/g)).toHaveLength(1);
+    expect(script.match(/AGENT_VERSION="gate-l2-v3"/g)).toHaveLength(1);
   });
   it("accepts real Gate v2 subnet/mask/capabilities without whitelisting arbitrary properties",()=>{
     const gateId="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb";
@@ -72,9 +72,9 @@ describe("RP Gate LAN Attachments-only installer", () => {
       gateway:"999.999.999.999"}})).not.toEqual([]);
   });
   it("sends only machine-bound enrollment and heartbeat credentials", () => {
-    expect(script).toContain('agentVersion:"gate-l2-v2"');
+    expect(script).toContain('agentVersion:"gate-l2-v3"');
     expect(agent).toContain('authorization: Bearer $AGENT_TOKEN');
-    expect(agent).toContain('agentVersion:"gate-l2-v2",lanObservation:$observation');
+    expect(agent).toContain('agentVersion:"gate-l2-v3",lanObservation:$observation');
     expect(agent).toContain('(.lanAttachments|length)<=64');
     expect(agent).toContain('.gateId==$gate');
     expect(script).not.toContain("lanCidrs:$lanCidrs");

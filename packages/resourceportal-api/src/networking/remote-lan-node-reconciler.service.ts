@@ -180,7 +180,7 @@ export class RemoteLanNodeReconcilerService {
           row.gate.revokedAt || row.gate.status !== "Ready" ||
           row.network.status !== "Ready" || row.singleApp.pendingDeletion ||
           row.singleApp.desiredReplicas !== 1 ||
-          !["gate-l2-v1","gate-l2-v2"].includes(row.gate.agentVersion ?? "") ||
+          row.gate.agentVersion !== "gate-l2-v3" ||
           !row.gate.serverTunnelAddress || !row.gate.clientTunnelAddress)
         throw new Error("Remote LAN attachment lacks certified Gate, app or network authorization");
 

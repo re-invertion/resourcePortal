@@ -16,7 +16,7 @@ const row={
   id:attachmentId, tenantId, gateId, networkId, singleAppId:appId,
   macAddress:"02:aa:bb:cc:dd:ee", lanCidr:"192.168.50.0/24",
   createdAt:new Date(), status:"Provisioning",
-  gate: {id:gateId,tenantId,status:"Ready",revokedAt:null,agentVersion:"gate-l2-v1",
+  gate: {id:gateId,tenantId,status:"Ready",revokedAt:null,agentVersion:"gate-l2-v3",
     serverTunnelAddress:"100.96.1.1/30",clientTunnelAddress:"100.96.1.2/30"},
   network:{id:networkId,tenantId,status:"Ready",swarmNetworkName:networkName,
     overlayCidr:"10.200.42.0/24"},

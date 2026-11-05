@@ -64,10 +64,52 @@ class GateLanAgentTest(unittest.TestCase):
         tunnel,bridge,chain,key=agent.names(GATE,TENANT,ATTACHMENT,"eth1")
         tunnel_join=[i for i in join_indices if actions[i][4]==tunnel][0]
         nft_rules=[i for i,cmd in enumerate(actions) if cmd[:4]==("nft","add","rule","bridge")]
-        self.assertEqual(len(nft_rules),6)
+        self.assertEqual(len(nft_rules),13)
         self.assertTrue(all(i<tunnel_join for i in nft_rules))
         self.assertEqual(sum(1 for cmd in actions if cmd[:4]==("ip","link","set","dev") and
                              cmd[4]=="eth0"),0)
+
+    def test_dhcp_bootstrap_is_not_unrestricted_lan_access(self):
+        actions = []
+        with patch.object(agent, "call", side_effect=lambda *args, **kwargs:
+                          actions.append(args) or ""):
+            agent.nft_install("rp_abcdef123456", "rp-l2-11111111", ITEM["macAddress"], ITEM)
+        rules = [cmd for cmd in actions if cmd[:4] == ("nft", "add", "rule", "bridge")]
+        self.assertTrue(any(cmd[-4:] == ("ether", "type", "arp", "drop") for cmd in rules))
+        self.assertTrue(any(cmd[-4:] == ("ether", "type", "ip", "drop") for cmd in rules))
+        self.assertTrue(any(cmd[-5:] == ("saddr", "ether", "!=", ITEM["macAddress"], "drop")
+                            for cmd in rules))
+        self.assertTrue(any(cmd[-10:] == ("ip", "saddr", "0.0.0.0", "udp",
+                            "sport", "68", "udp", "dport", "67", "accept")
+                            for cmd in rules))
+        self.assertFalse(any(cmd[:3] == ("nft", "add", "set") for cmd in actions))
+
+    def test_verified_dhcp_lease_is_ip_bound_and_expires_in_kernel(self):
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        item = {**ITEM, "addressMode": "DHCP", "status": "Active",
+                "verifiedAddress": "192.168.50.25",
+                "leaseExpiresAt": (now + timedelta(hours=1)).isoformat()}
+        actions = []
+        with patch.object(agent, "call", side_effect=lambda *args, **kwargs:
+                          actions.append(args) or ""):
+            agent.nft_install("rp_abcdef123456", "rp-l2-11111111", ITEM["macAddress"], item)
+        self.assertTrue(any(cmd[:3] == ("nft", "add", "set") and
+                            "timeout" in cmd for cmd in actions))
+        self.assertTrue(any(cmd[:3] == ("nft", "add", "element") and
+                            "192.168.50.25" in cmd for cmd in actions))
+        self.assertTrue(any("@rpip_abcdef123456" in cmd for cmd in actions))
+        expired = {**item, "leaseExpiresAt": (now - timedelta(seconds=1)).isoformat()}
+        self.assertIsNone(agent.bound_source(expired))
+        self.assertIsNone(agent.bound_source({**item,"verifiedAddress":"192.168.50.1",
+                                            "lanCidr":"192.168.51.0/24"}))
+
+    def test_static_source_is_scoped_to_exact_granted_address(self):
+        item = {**ITEM, "uplinkMode":"ManagedSharedUplink",
+                "addressMode":"Static", "status":"Provisioning",
+                "staticAddress":"192.168.50.25/24", "staticGateway":"192.168.50.1"}
+        self.assertEqual(agent.bound_source(item), ("192.168.50.25", None))
+        self.assertIsNone(agent.bound_source({**item, "staticAddress":"192.168.50.25/25"}))
 
     def test_revocation_does_not_disconnect_other_apps_from_shared_bridge(self):
         tun,br,chain,_=agent.names(GATE,TENANT,ATTACHMENT,"eth1")

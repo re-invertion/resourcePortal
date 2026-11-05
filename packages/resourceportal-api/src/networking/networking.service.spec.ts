@@ -681,8 +681,17 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
       .rejects.toThrow(/certified LAN Attachment/);
     const desired=await service.gateHeartbeat("Bearer "+gateToken,{agentVersion:"gate-l2-v1"});
     expect(desired.lanAttachmentProtocol).toBe(1);
-    expect(desired.allowedIps).toEqual(["100.96.0.1/32"]);
-    expect(desired.lanAttachments).toEqual([expect.objectContaining({
+    // The old Gate MUST receive no live LAN grants from the upgraded API.
+    expect(desired.allowedIps).toEqual([]);
+    expect(desired.lanAttachments).toEqual([]);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue({
+      ...currentGate,agentVersion:"gate-l2-v3",
+    });
+    const upgraded=await service.gateHeartbeat("Bearer "+gateToken,{
+      agentVersion:"gate-l2-v3",
+    });
+    expect(upgraded.allowedIps).toEqual(["100.96.0.1/32"]);
+    expect(upgraded.lanAttachments).toEqual([expect.objectContaining({
       singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
       macAddress:"02:aa:bb:cc:dd:ee",
     })]);

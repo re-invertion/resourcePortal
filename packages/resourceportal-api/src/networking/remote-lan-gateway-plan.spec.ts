@@ -27,7 +27,7 @@ describe("RP Gateway app-to-customer L2 bridge",()=>{
     const cmd=gatewayL2SetupPlan(input);
     const firstMaster=cmd.findIndex(x=>x[1].includes("master"));
     const rules=cmd.map((x,i)=>({x,i})).filter(x=>x.x[0]==="nft"&&x.x[1][1]==="rule");
-    expect(rules).toHaveLength(6);
+    expect(rules).toHaveLength(13);
     expect(rules.every(x=>x.i<firstMaster)).toBe(true);
     expect(JSON.stringify(cmd)).toContain("02:aa:bb:cc:dd:ee");
     expect(JSON.stringify(cmd)).toContain("rp_lan_gw");
@@ -47,7 +47,7 @@ describe("RP Gateway app-to-customer L2 bridge",()=>{
   });
   it("cleanup restricts itself to three RP-owned L2 links and one firewall chain",()=>{
     const commands=gatewayL2CleanupPlan(input);
-    expect(commands).toHaveLength(5);
+    expect(commands).toHaveLength(6);
     expect(commands.slice(0,3).every(x=>x[0]==="ip"&&x[1][0]==="link")).toBe(true);
     expect(JSON.stringify(commands)).not.toContain("eth1");
     expect(JSON.stringify(commands)).not.toContain("wg0");

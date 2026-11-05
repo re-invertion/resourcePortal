@@ -89,7 +89,7 @@ export class GateRuntimeReconcilerService {
         }
         if (!gate.publicKey || !gate.serverPrivateKeyCiphertext ||
             !gate.serverListenPort || !gate.serverTunnelAddress ||
-            !gate.clientTunnelAddress || !["gate-l2-v1","gate-l2-v2"].includes(gate.agentVersion ?? "")) {
+            !gate.clientTunnelAddress || gate.agentVersion !== "gate-l2-v3") {
           // A legacy Gate must NEVER receive any L2 grant. Remove the
           // previous stack/route surface before requiring re-enrollment.
           await this.removeStack(gateStackName(gate.id));
@@ -157,6 +157,14 @@ export class GateRuntimeReconcilerService {
             serviceName: "rp_" + attachment.singleApp.appGroupId.replaceAll("-", "_") +
               "_" + attachment.singleApp.name.replaceAll("-", "_"),
             macAddress: attachment.macAddress,
+            lanCidr: attachment.lanCidr,
+            addressMode: attachment.addressMode as "DHCP" | "Static",
+            staticAddress: attachment.staticAddress,
+            status: attachment.status,
+            // Only the trusted activation reconciler may populate these fields.
+            verifiedAddress: attachment.status === "Active" ? attachment.dhcpAddress : null,
+            leaseExpiresAt: attachment.status === "Active"
+              ? attachment.leaseExpiresAt?.toISOString() ?? null : null,
           })),
           networks: [...networks.values()].map(network => ({
             ...network, attachments: [] as Array<{ id: string; address: string }>,
