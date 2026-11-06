@@ -113,3 +113,84 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     await waitFor(() => expect(calls.some(c => c.url.endsWith("/groups/g-admin/roles") && c.init?.method === "POST" && JSON.parse(String(c.init.body)).roleId === "tenant-admin")).toBe(true));
   });
 });
+
+it("removes group-inherited admin controls after revocation and refreshes member projection", async () => {
+  let groupRoleEnabled = true;
+  let groupMemberEnabled = true;
+  let membershipsReads = 0;
+  const baseGroup = { id: "g-dev", name: "Developers", description: "",
+    members: [{ ...viewer, id: "m-operator" }], roles: [{ id: "r-manage", name: "Manager",
+      permissions: ["group.role.manage", "group.member.manage"] }] };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input); const method = init?.method ?? "GET";
+    if (url.endsWith("/memberships") && method === "GET") {
+      membershipsReads++;
+      return json([{ ...viewer, userId: "operator", id: "m-operator",
+        groups: groupRoleEnabled ? [{ id: "g-dev", name: "Developers",
+          roles: [{ id: "r-manage", name: "Manager", permissions: ["group.role.manage", "group.member.manage"] }] }] : [] }]);
+    }
+    if (url.endsWith("/groups") && method === "GET") return json([{
+      ...baseGroup, members: groupMemberEnabled ? baseGroup.members : [],
+      roles: groupRoleEnabled ? baseGroup.roles : [],
+    }]);
+    if (url.endsWith("/groups/g-dev/roles/r-manage") && method === "DELETE") {
+      groupRoleEnabled = false;
+      return json({ success: true });
+    }
+    if (url.endsWith("/roles")) return json(roleList.concat(baseGroup.roles));
+    if (url.endsWith("/invitations")) return json([]);
+    return json({});
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantAdministrationPage tenantId="t1" userId="operator" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+  expect(screen.getByText(/inherited: Manager/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove role Manager from Developers" }));
+  const confirmation = await screen.findByRole("dialog", { name: "Remove Manager from group?" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Remove role" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url,init]) =>
+    String(url).endsWith("/groups/g-dev/roles/r-manage") && init?.method === "DELETE")).toBe(true));
+  await waitFor(() => {
+    expect(membershipsReads).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/inherited: Manager/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage" })).toBeNull();
+  });
+  expect(screen.getByText(/Granting a role gives ResourcePortal rights/)).toBeTruthy();
+});
+
+it("refreshes memberships after group deletion so inherited permissions do not remain visible", async () => {
+  let groupPresent = true;
+  let membershipReads = 0;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input); const method = init?.method ?? "GET";
+    if (url.endsWith("/memberships") && method === "GET") {
+      membershipReads++;
+      return json([
+        { ...owner, groups: groupPresent ? [{ id: "g-dev", name: "Developers",
+          roles: [{ id: "tenant-admin", name: "Admin", permissions: ["membership.update"] }] }] : [] },
+        viewer,
+      ]);
+    }
+    if (url.endsWith("/groups") && method === "GET") return json(groupPresent ? [{
+      id: "g-dev", name: "Developers", description: "", members: [], roles: [{ id: "tenant-admin", name: "Admin", permissions: ["membership.update"] }],
+    }] : []);
+    if (url.endsWith("/groups/g-dev") && method === "DELETE") {
+      groupPresent = false;
+      return json({ deleted: true });
+    }
+    if (url.endsWith("/roles")) return json(roleList);
+    if (url.endsWith("/invitations")) return json([]);
+    return json({});
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantAdministrationPage tenantId="t1" userId="user-owner" />);
+  expect(await screen.findByText(/inherited: Admin/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Delete Developers" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Delete group Developers?" }))
+    .getByRole("button", { name: "Delete group" }));
+  await waitFor(() => expect(groupPresent).toBe(false));
+  await waitFor(() => {
+    expect(membershipReads).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/inherited: Admin/)).toBeNull();
+  });
+});

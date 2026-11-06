@@ -47,7 +47,16 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
   const inviteRows = items<R>(invitations.data);
   const groupRows = items<R>(groups.data);
   const current = memberRows.find(m => m.userId === userId);
-  const can = (permission: string) => mayManageAccess(current, permission);
+  // Permissions are a live server projection. Never present a stale
+  // management control while the backing memberships/groups snapshot is
+  // refreshing or unavailable after an access mutation.
+  const can = (permission: string) =>
+    !memberships.loading && !memberships.error &&
+    !groups.loading && !groups.error &&
+    mayManageAccess(current, permission);
+  const refreshEffectiveAccess = async () => {
+    await Promise.all([groups.reload(), memberships.reload()]);
+  };
   const [inviteOpen, setInviteOpen] = useState(section === "invite");
   const [invite, setInvite] = useState({ email: "", roleId: "" });
   const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
@@ -140,7 +149,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     try {
       await action(
         () => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(editingMembership))}`, { method: "PATCH", body: { roleIds: memberRoles, status: memberStatus } }),
-        memberships.reload,
+        refreshEffectiveAccess,
         "Membership access saved. Identity grants may need reconciliation.",
       );
       setEditingMembership(undefined);
@@ -164,7 +173,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
   async function groupMutation(path: string, method: "POST" | "DELETE", body?: R) {
     if (!editingGroup) return;
     try {
-      await action(() => apiRequest(path, { method, ...(body ? { body } : {}) }), groups.reload, "Group access updated.");
+      await action(() => apiRequest(path, { method, ...(body ? { body } : {}) }), refreshEffectiveAccess, "Group access updated.");
       // Keep the selected group detail in sync, including roles and members.
       const refreshed = await apiRequest<unknown>(`${root}/groups`);
       const g = items<R>(refreshed).find(row => idOf(row) === idOf(editingGroup));
@@ -215,7 +224,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
                 {can("membership.update") ? <Button size="sm" onClick={() => beginMember(m)}>Edit access</Button> : null}
                 {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" disabled={working} ariaLabel={`Remove membership of ${memberName(m)}`} confirmTitle={`Remove ${memberName(m)} from this tenant?`}
                   confirmDescription="Removes tenant membership and revokes the subject's ResourcePortal tenant grants. The last owner cannot be removed."
-                  confirmLabel="Remove access" onConfirm={() => action(() => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(m))}`, { method: "DELETE" }), memberships.reload, "Membership removed.")}>
+                  confirmLabel="Remove access" onConfirm={() => action(() => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(m))}`, { method: "DELETE" }), refreshEffectiveAccess, "Membership removed.")}>
                   <TrashIcon size={14}/>
                 </ConfirmActionButton> : null}
               </div>,
@@ -279,7 +288,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
             actions:<div className="flex gap-2">{can("group.update") || can("group.member.manage") || can("group.role.manage") ? <Button size="sm" onClick={() => beginGroup(g)}>Manage</Button> : null}
               {can("group.delete") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete ${text(g.name)}`}
                 confirmTitle={`Delete group ${text(g.name)}?`} confirmDescription="All inherited permissions through this group will be lost." confirmLabel="Delete group"
-                onConfirm={() => action(() => apiRequest(`${root}/groups/${encodeURIComponent(idOf(g))}`, { method: "DELETE" }), groups.reload, "Group deleted.")}><TrashIcon size={14}/></ConfirmActionButton> : null}</div>,
+                onConfirm={() => action(() => apiRequest(`${root}/groups/${encodeURIComponent(idOf(g))}`, { method: "DELETE" }), refreshEffectiveAccess, "Group deleted.")}><TrashIcon size={14}/></ConfirmActionButton> : null}</div>,
           }}))}
           empty={<EmptyState icon={<UsersIcon />} title="No groups" description="Create a group to assign members and inherited roles."/>}/>
       </Card>
@@ -304,7 +313,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
           <h3 className="font-semibold">Members ({items<R>(editingGroup.members).length})</h3>
           <div className="divide-y divide-[#E1E7F0]">{items<R>(editingGroup.members).map(m => <div key={idOf(m)} className="flex items-center justify-between gap-2 py-2">
             <span className="text-sm">{memberName(m)}</span>
-            {can("group.member.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" confirmTitle={`Remove ${memberName(m)} from group?`} confirmDescription="Inherited access through this group will be revoked." confirmLabel="Remove member"
+            {can("group.member.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Remove member ${memberName(m)} from ${text(editingGroup.name)}`} confirmTitle={`Remove ${memberName(m)} from group?`} confirmDescription="Inherited access through this group will be revoked." confirmLabel="Remove member"
               onConfirm={() => groupMutation(`${groupPath}/members/${encodeURIComponent(idOf(m))}`, "DELETE")}>Remove</ConfirmActionButton> : null}
           </div>)}</div>
           {can("group.member.manage") ? <div className="mt-3 flex gap-2"><Select aria-label="Select group member" value={newGroupMember} onChange={e => setNewGroupMember(e.target.value)}><option value="">Select tenant member</option>{memberRows.filter(m => m.status === "Active" && !items<R>(editingGroup.members).some(row => idOf(row) === idOf(m))).map(m => <option key={idOf(m)} value={idOf(m)}>{memberName(m)}</option>)}</Select>
@@ -314,7 +323,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
           <h3 className="font-semibold">Inherited roles ({items<R>(editingGroup.roles).length})</h3>
           <div className="divide-y divide-[#E1E7F0]">{items<R>(editingGroup.roles).map(role => <div key={idOf(role)} className="flex items-center justify-between gap-2 py-2">
             <span className="text-sm">{roleName(role)}</span>
-            {can("group.role.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" confirmTitle={`Remove ${roleName(role)} from group?`} confirmDescription="This removes the role from every group member's inherited access." confirmLabel="Remove role"
+            {can("group.role.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Remove role ${roleName(role)} from ${text(editingGroup.name)}`} confirmTitle={`Remove ${roleName(role)} from group?`} confirmDescription="This removes the role from every group member's inherited access." confirmLabel="Remove role"
               onConfirm={() => groupMutation(`${groupPath}/roles/${encodeURIComponent(idOf(role))}`, "DELETE")}>Remove</ConfirmActionButton> : null}
           </div>)}</div>
           {can("group.role.manage") ? <div className="mt-3 flex gap-2"><Select aria-label="Select group role" value={newGroupRole} onChange={e => setNewGroupRole(e.target.value)}><option value="">Select role</option>{roles.filter(r => !items<R>(editingGroup.roles).some(item => idOf(item) === idOf(r))).map(role => <option key={idOf(role)} value={idOf(role)}>{roleName(role)}</option>)}</Select>
