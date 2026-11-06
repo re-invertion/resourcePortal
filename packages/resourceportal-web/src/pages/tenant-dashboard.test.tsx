@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TenantDashboard } from "./tenant-dashboard";
 
@@ -37,12 +37,14 @@ describe("TenantDashboard", () => {
 
     expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
     const applications = screen.getByTestId("metric-applications");
-    expect(within(applications).getByText("3")).toBeTruthy();
+    // The heading mounts before independent panel fetches settle. Await the
+    // actual data rather than treating a legitimate skeleton as a failure.
+    expect(await within(applications).findByText("3")).toBeTruthy();
     expect(within(applications).getByText(/across 2 App Groups/i)).toBeTruthy();
     const runtime = screen.getByTestId("metric-runtime");
-    expect(within(runtime).getByText("1")).toBeTruthy();
-    expect(screen.getByTestId("metric-balance").textContent).toContain("0 credits");
-    expect(screen.getByTestId("metric-storage").textContent).toContain("3 GB / 10 GB");
+    expect(await within(runtime).findByText("1")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("metric-balance").textContent).toContain("0 credits"));
+    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("3 GB / 10 GB"));
   });
 
   it("matches the Penpot overview hierarchy without changing tenant API semantics", async () => {
@@ -58,7 +60,7 @@ describe("TenantDashboard", () => {
     expect(within(quickActions).getByRole("link", { name: /^domains$/i }).getAttribute("href")).toBe("/tenants/t1/domains");
 
     const applications = screen.getByTestId("metric-applications");
-    expect(within(applications).getByText("3")).toBeTruthy();
+    expect(await within(applications).findByText("3")).toBeTruthy();
     expect(within(applications).getByText(/across 2 App Groups/i)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Recent App Groups" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Recent activity" })).toBeTruthy();

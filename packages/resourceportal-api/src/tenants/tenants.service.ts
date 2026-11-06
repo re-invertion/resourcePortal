@@ -56,6 +56,40 @@ export class TenantsService {
           some: {
             userId,
             status: "Active",
+            // An application-only identity may have an active membership
+            // without any ResourcePortal read permissions. Never return
+            // tenant metadata, billing or other members on membership alone.
+            // Evaluate effective RolePermission bindings (not legacy arrays).
+            OR: [
+              {
+                roles: {
+                  some: {
+                    role: {
+                      permissionBindings: {
+                        some: { permissionId: { in: ["tenant.read", "*"] } },
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                groupMemberships: {
+                  some: {
+                    group: {
+                      roles: {
+                        some: {
+                          role: {
+                            permissionBindings: {
+                              some: { permissionId: { in: ["tenant.read", "*"] } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
           },
         },
       },

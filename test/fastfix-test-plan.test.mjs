@@ -809,3 +809,15 @@ test("Platform Security Ops UI changes trigger scoped platform, audit, operation
     }
   }
 });
+
+
+test("zero-permission tenant boundary updates require tenant, security and MCP regressions (#398)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/tenants/tenants.service.ts",
+    "packages/resourceportal-api/src/tenants/tenants.service.spec.ts",
+    "packages/resourceportal-api/src/auth/tenant-context.guard.ts",
+    "packages/resourceportal-api/src/auth/stage2-permission-model.spec.ts",
+  ];
+  const plan = selectProfiles(paths);
+  assert.deepEqual(plan.profiles, ["mcp-oauth", "security", "tenant-access"]);
+});
