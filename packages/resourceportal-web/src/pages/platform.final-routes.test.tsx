@@ -50,7 +50,7 @@ describe("Platform Admin final routes", () => {
     ["billing", "Billing"],
     ["resource-bot", "AI & ResourceBot"],
     ["dns", "DNS & Domains"],
-    ["network-egress", "Infrastructure"],
+    ["network-egress", "Network Egress"],
     ["security", "Security & operations"],
     ["maintenance", "Maintenance"],
     ["mcp", "Platform Admin MCP"],

@@ -490,33 +490,6 @@ export function PlatformIdentityPage() {
 
 export { PlatformBillingPage } from "./platform-billing";
 
-export function PlatformSecurityPage() {
-  return <main>
-    <PageHeader
-      eyebrow="Platform Admin"
-      title="Security & operations"
-      description="Platform-level security controls only. Tenant operations and audit data remain isolated inside each tenant."
-    />
-    <Callout tone="info" title="Tenant security data is private">
-      Platform Admin does not receive tenant operations, audit events, application activity or retry controls. Access to those records requires an explicit membership in that tenant.
-    </Callout>
-    <Card className="mt-6 overflow-hidden">
-      <SectionTitle
-        eyebrow="Isolation"
-        title="No platform-wide tenant event feed"
-        description="ResourcePortal intentionally avoids aggregating tenant audit and operation records into Platform Admin. Usage charts are the only tenant-level aggregate exposed globally."
-      />
-      <div className="p-5">
-        <EmptyState
-          icon={<LockIcon />}
-          title="Tenant data remains tenant-scoped"
-          description="Open the tenant from a normal tenant membership when you are explicitly authorized to inspect its operations or audit trail."
-        />
-      </div>
-    </Card>
-  </main>;
-}
-
 export function PlatformMaintenancePage() {
   const maintenance = useApi<Row>("/api/platform/maintenance"); const [enabled, setEnabled] = useState(false); const [reason, setReason] = useState(""); const [confirmOpen, setConfirmOpen] = useState(false); const [saving, setSaving] = useState(false);
   useEffect(() => { if (!maintenance.data) return; setEnabled(bool(maintenance.data.enabled)); setReason(text(maintenance.data.reason, "")); }, [maintenance.data]);
