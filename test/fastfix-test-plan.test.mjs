@@ -787,3 +787,13 @@ test("issue 399 console RBAC, activity scoping, status mapping and new regressio
   assert.ok(source.includes("src/components/status-tone.test.tsx"));
 });
 function awaitReadFile() { return readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8"); }
+
+test("runtime editor helpers and regression tests must trigger application runtime/quotas and UI gates", () => {
+  const paths = [
+    "packages/resourceportal-web/src/pages/app-group/advanced-runtime-controls.tsx",
+    "packages/resourceportal-web/src/pages/app-group/application-runtime-fields.ts",
+    "packages/resourceportal-web/src/pages/app-group/application-runtime-fields.test.ts",
+  ];
+  const result = selectProfiles(paths);
+  assert.deepEqual(result.profiles, ["deployment-rollout", "quota-security", "reactive-web-state"]);
+});

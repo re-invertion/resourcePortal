@@ -164,3 +164,78 @@ it("loads GPU inventory from the tenant-level collection endpoint", async () => 
     String(input).includes("/app-groups/ag1/gpu-devices"),
   )).toBe(false);
 });
+it("sends only advanced runtime properties, not environment, secret or compute state", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) return json([{
+      id: "app1", name: "runner", image: "nginx:latest", cpu: "2",
+      environment: { TOKEN: "not-for-PATCH" }, command: ["node", "--keep"],
+      readOnlyRootFilesystem: true,
+      healthCheck: { command: "true", intervalSeconds: 30 },
+      restartPolicy: { condition: "any", delaySeconds: 5 },
+      updatePolicy: { parallelism: 1, delaySeconds: 10, order: "start-first" },
+    }]);
+    if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body))); return json({});
+    }
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
+  expect((await screen.findByRole("textbox", { name: "Command argument 1" }) as HTMLInputElement).value).toBe("node");
+  expect(screen.getByRole("checkbox", { name: /Read-only root filesystem/ })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Add argument" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Command argument 3" }), { target: { value: "two words" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].command).toEqual(["node", "--keep", "two words"]);
+  expect(patches[0].readOnlyRootFilesystem).toBe(true);
+  expect(patches[0].healthCheck).toMatchObject({ command: "true", intervalSeconds: 30 });
+  for (const key of ["cpu", "memoryBytes", "environment", "secrets", "image", "registryId", "name", "desiredReplicas"]) {
+    expect(patches[0]).not.toHaveProperty(key);
+  }
+});
+
+it("rejects invalid CPU without issuing a PATCH and aligns the minimum with DTO", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) return json([{
+      id: "app1", name: "runner", image: "nginx:latest", cpu: "0.5",
+      memoryBytes: "536870912", desiredReplicas: 1,
+    }]);
+    if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body))); return json({});
+    }
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="compute" />);
+  const cpuInput = await screen.findByRole("spinbutton", { name: "CPU cores" });
+  expect((cpuInput as HTMLInputElement).min).toBe("0.01");
+  fireEvent.change(cpuInput, { target: { value: "0" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save compute" }));
+  expect(patches).toHaveLength(0);
+  fireEvent.change(cpuInput, { target: { value: "0.01" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save compute" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toEqual({ cpu: 0.01, memoryBytes: 536870912, desiredReplicas: 1, runtimeState: "Running" });
+});
+
+it("rejects an enabled health check without a command", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) return json([{
+      id: "app1", name: "runner", image: "nginx:latest", readOnlyRootFilesystem: false,
+    }]);
+    if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body))); return json({});
+    }
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Enable health check" }));
+  expect(screen.getByRole("textbox", { name: "Health check shell command" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
+  expect(patches).toHaveLength(0);
+});

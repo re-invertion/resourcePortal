@@ -62,7 +62,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/volume-operation-tracker.test.ts", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "reactive-web-state": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/app-group/application-runtime-fields.test.ts", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
   ],
   "storage-isolation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
@@ -345,6 +345,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/volumes\/volume-usage-reconciler\.service(?:\.spec)?\.ts$/, ["volume-operations"]],
   [/^packages\/resourceportal-web\/src\/hooks\/use-api(?:\.test)?\.tsx?$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-edit(?:\.test)?\.tsx$/, ["reactive-web-state"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:advanced-runtime-controls\.tsx|application-runtime-fields(?:\.test)?\.ts)$/, ["reactive-web-state", "quota-security", "deployment-rollout"]],
   [/^packages\/resourceportal-web\/src\/pages\/(?:billing-funding-ui\.test\.tsx|machine-credential-rotation\.test\.tsx|tenant-resources\.tsx)$/, ["reactive-web-state"]],
   [/^packages\/resourceportal-web\/src\/pages\/volume-operation-tracker(?:\.test)?\.ts$/, ["volume-operations"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/local-filesystem-storage-adapter\.service(\.spec)?\.ts$/, ["storage-isolation"]],
