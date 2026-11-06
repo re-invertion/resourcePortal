@@ -797,3 +797,15 @@ test("runtime editor helpers and regression tests must trigger application runti
   const result = selectProfiles(paths);
   assert.deepEqual(result.profiles, ["deployment-rollout", "quota-security", "reactive-web-state"]);
 });
+
+test("Platform Security Ops UI changes trigger scoped platform, audit, operations and worker security suites (#399)", () => {
+  for (const file of [
+    "packages/resourceportal-web/src/pages/platform-security-ops.tsx",
+    "packages/resourceportal-web/src/pages/platform-security-ops.test.tsx",
+  ]) {
+    const result = selectProfiles([file]);
+    for (const expected of ["platform-admin-ui", "operations", "security", "observability"]) {
+      assert.ok(result.profiles.includes(expected), expected + " missing for " + file);
+    }
+  }
+});

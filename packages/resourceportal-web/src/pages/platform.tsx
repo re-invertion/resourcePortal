@@ -4,6 +4,8 @@ import { PlatformResourceBotPage } from "./platform-resource-bot";
 import { PlatformBillingPage } from "./platform-billing";
 import { PlatformSettingsPage } from "./platform-settings";
 import { PlatformBugReportsPage } from "./platform-bug-reports";
+import { PlatformSecurityPage } from "./platform-security-ops";
+import { PlatformNetworkEgressPage } from "./platform-network-egress";
 import { PlatformMcpPage } from "./platform-mcp";
 import { PlatformCredentialsPage, PlatformIdentityProvidersPage } from "./platform-identity-pages";
 import {
@@ -11,7 +13,6 @@ import {
   PlatformInfrastructurePage,
   PlatformMaintenancePage,
   PlatformOverviewPage,
-  PlatformSecurityPage,
   PlatformTenantsPage,
   PlatformUsersPage,
 } from "./platform-final-pages";
@@ -30,8 +31,8 @@ export function PlatformPage({ section, segments }: { section: string; resourceI
   }
   if (section === "resource-bot") return <PlatformResourceBotPage />;
   if (section === "dns") return <PlatformDnsPage />;
-  if (section === "network-egress") return <PlatformInfrastructurePage />;
-  if (section === "security" || section === "operations" || section === "audit") return <PlatformSecurityPage />;
+  if (section === "network-egress") return <PlatformNetworkEgressPage />;
+  if (section === "security" || section === "operations" || section === "audit" || section === "worker") return <PlatformSecurityPage section={section} />;
   if (section === "maintenance") return <PlatformMaintenancePage />;
   if (section === "bug-reports") return <PlatformBugReportsPage />;
   if (section === "mcp") return <PlatformMcpPage />;

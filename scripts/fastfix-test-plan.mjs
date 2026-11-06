@@ -205,7 +205,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/bug-reports/bug-reports.service.spec.ts", "src/mcp/admin-mcp-protocol.service.spec.ts"],
   ],
   "platform-admin-ui": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx", "src/pages/platform-security-ops.test.tsx", "src/pages/platform-network-egress.test.tsx"],
   ],
   "platform-release": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/platform-infrastructure/platform-release.service.spec.ts", "src/operations/executors/platform-release-update-operation.executor.spec.ts"],
@@ -437,6 +437,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-detail(\.test)?\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/create-app-wizard\.test\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/(platform|platform-final-pages|platform-mcp|platform\.final-routes\.test)\.tsx$/, ["platform-admin-ui", "platform-release"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-security-ops(?:\.test)?\.tsx$/, ["platform-admin-ui", "operations", "security", "observability"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-network-egress(?:\.test)?\.tsx$/, ["platform-admin-ui", "egress"]],
   [/^packages\/resourceportal-web\/src\/components\/shell\.tsx$/, ["platform-admin-ui"]],
   [/^packages\/resourceportal-web\/src\/pages\/(device-vpn|tenant-networking|help)/, ["web-console"]],
   [/^packages\/resourceportal-web\/src\/components\/tenant-section-tabs\.tsx$/, ["web-console"]],
