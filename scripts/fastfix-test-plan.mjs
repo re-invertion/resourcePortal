@@ -397,6 +397,10 @@ const classifiers = [
   // ResourceBot billing idempotency is a cross-replica financial security boundary.
   [/^packages\/resourceportal-api\/src\/resource-bot\/resource-bot-(?:billing\.service|reservation-concurrency\.spec)\.ts$/, ["resource-bot", "security"]],
   [/^packages\/resourceportal-api\/src\/resource-bot\//, ["resource-bot"]],
+  // Permissionless tenant identities must never inherit RP authorization
+  // from bare membership, even on older routes without a permission decorator.
+  [/^packages\/resourceportal-api\/src\/tenants\/tenants\.service(\.spec)?\.ts$/, ["tenant-access", "security"]],
+  [/^packages\/resourceportal-api\/src\/auth\/(tenant-context\.guard|stage2-permission-model)(\.spec)?\.ts$/, ["tenant-access", "security", "mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/tenants\//, ["tenant-access"]],
   [/^packages\/resourceportal-web\/(?:server|production-ui\.test)\.mjs$/, ["web-response-headers", "web-proxy"]],
   [/^packages\/resourceportal-web\/(server|proxy-target(\.test)?)\.mjs$/, ["web-proxy"]],

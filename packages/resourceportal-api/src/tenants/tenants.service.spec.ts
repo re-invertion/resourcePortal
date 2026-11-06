@@ -129,15 +129,52 @@ describe("TenantsService tenant inventories", () => {
     );
 
     await service.listTenants("user-1");
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          memberships: {
-            some: { userId: "user-1", status: "Active" },
+    const query = findMany.mock.calls[0]?.[0] as unknown as {
+      where: {
+        memberships: {
+          some: { userId: string; status: string; OR: unknown[] };
+        };
+      };
+    };
+    expect(query).toMatchObject({
+      where: { memberships: { some: { userId: "user-1", status: "Active" } } },
+    });
+
+    // The endpoint returns billing, auth policy and the membership roster.
+    // An active but zero-permission membership must never satisfy this query.
+    const auth = query.where.memberships.some;
+    expect(auth.OR).toEqual([
+      {
+        roles: {
+          some: {
+            role: {
+              permissionBindings: {
+                some: { permissionId: { in: ["tenant.read", "*"] } },
+              },
+            },
           },
         },
-      }),
-    );
+      },
+      {
+        groupMemberships: {
+          some: {
+            group: {
+              roles: {
+                some: {
+                  role: {
+                    permissionBindings: {
+                      some: { permissionId: { in: ["tenant.read", "*"] } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(auth.OR).not.toContainEqual({ roles: { some: {} } });
+    expect(auth.OR).not.toContainEqual({ groupMemberships: { some: {} } });
   });
 
   it("returns a sanitized global tenant inventory for Platform Admin", async () => {

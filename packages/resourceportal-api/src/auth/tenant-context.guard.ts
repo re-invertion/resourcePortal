@@ -121,7 +121,10 @@ export class TenantContextGuard implements CanActivate {
       permissions,
     };
 
-    if (requiredPermissions?.length && permissions.length === 0) {
+    // A role-free or zero-permission membership is not an RP access grant.
+    // This also protects older tenant routes that predate @RequirePermissions:
+    // do not let App Consumer identities enumerate infrastructure there.
+    if (permissions.length === 0) {
       throw new ForbiddenException("No tenant permissions assigned");
     }
 

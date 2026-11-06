@@ -18,7 +18,9 @@ function fixture(authenticatedIdpId?: string | null) {
   const prisma = {
     tenantMembership: { findUnique: vi.fn().mockResolvedValue({
       id: "membership-1", status: MembershipStatus.Active,
-      roles: [], groupMemberships: [],
+      // IDP tests model an RP member, not an App Consumer with no RP roles.
+      roles: [{ role: { permissionBindings: [{ permission: { id: "tenant.read" } }] } }],
+      groupMemberships: [],
     }) },
     tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue({
       requireTenantIdentityProvider: true,
@@ -65,7 +67,7 @@ describe("tenant IDP requirement is enforced on every tenant API request (#238)"
     await expect(f.guard.canActivate(f.context)).resolves.toBe(true);
     expect(f.request).toMatchObject({
       tenantContext: {
-        tenantId: "tenant-1", membershipId: "membership-1", permissions: [],
+        tenantId: "tenant-1", membershipId: "membership-1", permissions: ["tenant.read"],
       },
     });
   });

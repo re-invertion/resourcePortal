@@ -72,6 +72,64 @@ describe("Stage 2 Permission model", () => {
     });
   });
 
+  it("rejects zero-permission tenant memberships even on legacy routes with no explicit @RequirePermissions", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
+    const userId = "2694b58e-578d-4360-a3e1-eb907320b873";
+    const request = { params: { tenantId }, user: { id: userId } };
+    const memberLookup = vi.fn().mockResolvedValue({
+      id: "158e191e-967a-4fe9-9480-3ea28010a714",
+      status: MembershipStatus.Active,
+      roles: [{ role: { permissionBindings: [] } }],
+      groupMemberships: [],
+    });
+    const prisma = {
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
+      tenantMembership: { findUnique: memberLookup },
+    } as unknown as PrismaService;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue(undefined),
+    } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+
+    await expect(guard.canActivate(contextFor(request))).rejects.toThrow(
+      "No tenant permissions assigned",
+    );
+    expect(memberLookup).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId_tenantId: { userId, tenantId } },
+    }));
+  });
+
+  it("allows genuinely authorized RP members on legacy routes, including inherited group permissions", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
+    const prisma = {
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
+      tenantMembership: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "158e191e-967a-4fe9-9480-3ea28010a714",
+          status: MembershipStatus.Active,
+          roles: [{ role: { permissionBindings: [] } }],
+          groupMemberships: [{
+            group: {
+              roles: [{
+                role: { permissionBindings: [{ permission: { id: "billing.read" } }] },
+              }],
+            },
+          }],
+        }),
+      },
+    } as unknown as PrismaService;
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(undefined) } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+    const request = {
+      params: { tenantId },
+      user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
+    };
+    await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
+    expect(request).toMatchObject({
+      tenantContext: { permissions: ["billing.read"] },
+    });
+  });
+
   it("resolves service identity permissions through RolePermission instead of the legacy Role array", async () => {
     const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
     const serviceIdentityId = "8c8d0ea9-e0b2-4c13-935f-7e04ec03f8ff";
