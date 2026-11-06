@@ -163,7 +163,7 @@ function PlatformAudit() {
         <div className="md:col-span-3 flex flex-wrap items-center gap-3">
           <Button type="submit">Apply filters</Button>
           <a href={platformAuditQuery(applied, undefined, "csv")} download="audit-log-platform.csv" className="rounded-md border border-[#B9C5D6] px-3 py-2 text-sm font-semibold text-[#0F56A7]">Export platform CSV</a>
-          <Button size="sm" disabled={page.loading} onClick={() => void page.reload()}>Refresh</Button>
+          <Button type="button" size="sm" disabled={page.loading} onClick={() => void page.reload()}>Refresh</Button>
         </div>
       </form>
     </Card>

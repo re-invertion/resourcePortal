@@ -85,6 +85,43 @@ it("filters and exports only platform audit data using server platform endpoint"
   expect(requests.some(x => x.startsWith("/api/tenants/"))).toBe(false);
 });
 
+it("refreshes only the applied audit query without submitting draft filters or resetting pagination", async () => {
+  const requests: string[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.startsWith("/api/platform/audit-log?")) {
+      const second = url.includes("cursor=page-2");
+      return json({
+        items: [{
+          id: second ? "audit-second" : "audit-first",
+          tenantId: null, action: second ? "platform_second" : "platform_first",
+          actor: "admin", resourceType: "PlatformConfig", result: "Success", timestamp: op.createdAt,
+        }],
+        nextCursor: second ? null : "page-2",
+      });
+    }
+    return json({}, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<PlatformPage section="audit" />);
+  expect(await screen.findByText("platform_first")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByText("platform_second")).toBeTruthy();
+  const actorInput = screen.getByRole("textbox", { name: "Filter platform audit by actor" }) as HTMLInputElement;
+  fireEvent.change(actorInput, { target: { value: "not-applied" } });
+  const callsBefore = requests.length;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(requests.length).toBeGreaterThan(callsBefore));
+  await waitFor(() => expect(screen.getByText("platform_second")).toBeTruthy());
+  expect(requests[requests.length - 1]).toContain("cursor=page-2");
+  expect(requests[requests.length - 1]).not.toContain("not-applied");
+  expect(actorInput.value).toBe("not-applied");
+  expect(screen.getByRole("link", { name: "Export platform CSV" }).getAttribute("href"))
+    .not.toContain("not-applied");
+  expect((screen.getByRole("button", { name: "Previous page" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
 it("reflects degraded worker health and never invents healthy status when unavailable", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     if (String(input) === "/api/platform/observability/diagnostics") return json({
