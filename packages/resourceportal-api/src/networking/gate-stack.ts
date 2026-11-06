@@ -21,6 +21,15 @@ export type GateStackInput = {
   remoteLanAttachments: GateRuntimeLanAttachment[];
 };
 
+/** Swarm service spec is immutable across proof refreshes. Runtime source grants
+ * are delivered to the already-running gateway through its local Docker control
+ * channel; ephemeral Active/lease fields MUST NOT enter service env or digest.
+ * The bootstrap DHCP policy is empty (fail closed until a fresh proof arrives).
+ */
+export function stableGatewayAttachment(app: GateRuntimeLanAttachment): GateRuntimeLanAttachment {
+  return { ...app, status: "Provisioning", verifiedAddress: null, leaseExpiresAt: null };
+}
+
 /** Only app-scoped Ethernet grants enter the runtime config. No routed LAN CIDRs. */
 export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
   return {
@@ -31,7 +40,7 @@ export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
     peerPublicKey: input.peerPublicKey,
     privateKeyPath: "/run/secrets/gate-private-key",
     rpOverlayCidrs: [...input.networks.map(network => network.overlayCidr)].sort(),
-    remoteLanAttachments: [...input.remoteLanAttachments].sort((a,b) =>
+    remoteLanAttachments: input.remoteLanAttachments.map(stableGatewayAttachment).sort((a,b) =>
       a.attachmentId.localeCompare(b.attachmentId)),
   };
 }
@@ -39,7 +48,7 @@ export function gateRuntimeConfig(input: GateStackInput): GateRuntimeConfig {
 export function gateStackDigest(input: GateStackInput) {
   const canonical = {
     ...input,
-    remoteLanAttachments: [...input.remoteLanAttachments].sort((a,b) =>
+    remoteLanAttachments: input.remoteLanAttachments.map(stableGatewayAttachment).sort((a,b) =>
       a.attachmentId.localeCompare(b.attachmentId)),
     networks: [...input.networks].sort((a,b) => a.id.localeCompare(b.id)),
   };
@@ -84,7 +93,15 @@ export function renderGateStack(input: GateStackInput) {
             "resourceportal.gate.digest": digest,
           },
           placement: {
-            constraints: ["node.labels.rp.node.control-plane == true"],
+            // Worker uses its local Docker socket to apply short-lived
+            // source policy. Place the gateway only on the same certified
+            // authoritative control-plane/storage node class.
+            constraints: [
+              "node.labels.rp.node.control-plane == true",
+              "node.labels.rp.node.storage == true",
+              "node.labels.resourceportal.storage.authoritative == true",
+              "node.labels.resourceportal.storage.volumes == true",
+            ],
           },
           restart_policy: { condition: "any" },
         },

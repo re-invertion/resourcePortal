@@ -75,14 +75,17 @@ class GateLanAgentTest(unittest.TestCase):
                           actions.append(args) or ""):
             agent.nft_install("rp_abcdef123456", "rp-l2-11111111", ITEM["macAddress"], ITEM)
         rules = [cmd for cmd in actions if cmd[:4] == ("nft", "add", "rule", "bridge")]
-        self.assertTrue(any(cmd[-4:] == ("ether", "type", "arp", "drop") for cmd in rules))
-        self.assertTrue(any(cmd[-4:] == ("ether", "type", "ip", "drop") for cmd in rules))
+        self.assertTrue(any(cmd[-3:] == ("!=", "@rpip_abcdef123456", "drop")
+                            and "arp" in cmd for cmd in rules))
+        self.assertTrue(any(cmd[-3:] == ("!=", "@rpip_abcdef123456", "drop")
+                            and "ip" in cmd for cmd in rules))
         self.assertTrue(any(cmd[-5:] == ("saddr", "ether", "!=", ITEM["macAddress"], "drop")
                             for cmd in rules))
         self.assertTrue(any(cmd[-10:] == ("ip", "saddr", "0.0.0.0", "udp",
                             "sport", "68", "udp", "dport", "67", "accept")
                             for cmd in rules))
-        self.assertFalse(any(cmd[:3] == ("nft", "add", "set") for cmd in actions))
+        self.assertTrue(any(cmd[:3] == ("nft", "add", "set") for cmd in actions))
+        self.assertFalse(any(cmd[:3] == ("nft", "add", "element") for cmd in actions))
 
     def test_verified_dhcp_lease_is_ip_bound_and_expires_in_kernel(self):
         from datetime import datetime, timezone, timedelta
@@ -125,6 +128,34 @@ class GateLanAgentTest(unittest.TestCase):
                              {ATTACHMENT:ITEM})
         self.assertFalse(any(cmd[0]=="ip" and cmd[-1]=="nomaster" for cmd in actions))
         self.assertFalse(any(cmd==("ip","link","delete",br) for cmd in actions))
+
+    def test_proof_promotion_refreshes_nft_without_recreating_physical_gate_tunnel(self):
+        from unittest.mock import patch
+        old_item = {**ITEM, "uplinkMode": "DedicatedUnnumbered",
+                    "addressMode": "DHCP", "staticAddress": None,
+                    "staticGateway": None, "configurationRevision": 1,
+                    "status": "Provisioning", "verifiedAddress": None,
+                    "leaseExpiresAt": None}
+        active = {**old_item, "status": "Active", "verifiedAddress": "192.168.50.25",
+                  "leaseExpiresAt": "2035-01-01T00:00:00+00:00"}
+        current = {"gateId": GATE, "tenantId": TENANT,
+                   "attachments": {ATTACHMENT: dict(old_item)}}
+        tunnel, bridge, chain, _ = agent.names(GATE, TENANT, ATTACHMENT, "eth1")
+        observed = [{"ifname": bridge, "ifindex": 42,
+                     "ifalias": "rp-lan:" + GATE + ":eth1"},
+                    {"ifname": tunnel, "master": bridge}]
+        with patch.object(agent, "device_state", return_value=(observed, ADDR, ROUTES)), \
+             patch.object(agent, "is_handshake_recent", return_value=True), \
+             patch.object(agent, "nft_refresh_source") as refresh, \
+             patch.object(agent, "apply_one") as apply, \
+             patch.object(agent, "remove_one") as remove:
+            result = agent.reconcile({**CONF, "lanAttachments": [active]}, current)
+        refresh.assert_called_once()
+        self.assertEqual(refresh.call_args.args[0], chain)
+        self.assertEqual(refresh.call_args.args[1]["verifiedAddress"], active["verifiedAddress"])
+        apply.assert_not_called()
+        remove.assert_not_called()
+        self.assertEqual(result["attachments"][ATTACHMENT]["status"], "Active")
 
     def test_l2_handshake_is_bound_to_exact_rp_public_key(self):
         rp_key = "A" * 43 + "="

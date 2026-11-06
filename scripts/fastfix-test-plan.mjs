@@ -138,7 +138,9 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
   ],
   "worker": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/observability/worker-runtime-observability.service.spec.ts", "src/worker-startup-resync.spec.ts", "src/worker-one-shot-schedulers.spec.ts", "src/networking/device-vpn-runtime-reconciler.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/observability/worker-runtime-observability.service.spec.ts",  "src/worker-startup-resync.spec.ts", "src/worker-one-shot-schedulers.spec.ts",
+      "src/worker-reconcile-lane.spec.ts", "src/volumes/volume-usage-reconciler.service.spec.ts",
+      "src/networking/device-vpn-runtime-reconciler.service.spec.ts"],
   ],
   "schema": [
     ["npm", "--workspace", "@resource-portal/api", "exec", "--", "prisma", "validate", "--schema", "prisma/schema.prisma"],
@@ -407,6 +409,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/operations\/operation\.types\.ts$/, ["worker", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/storage-backends\/storage-command-runner\.service\.ts$/, ["platform-release"]],
   [/^packages\/resourceportal-api\/src\/observability\/worker-runtime-observability/, ["worker"]],
+  [/^packages\/resourceportal-api\/src\/worker-reconcile-lane(\.spec)?\.ts$/, ["worker", "networking"]],
+  [/^packages\/resourceportal-api\/src\/volumes\/volume-usage-reconciler\.service(\.spec)?\.ts$/, ["worker", "volume-operations"]],
   [/^packages\/resourceportal-api\/src\/(worker-execution.module|worker.runner)\.ts$/, ["worker", "platform-release"]],
   // Startup-order regression guards the independent operation poller (#365).
   [/^packages\/resourceportal-api\/src\/worker-startup-resync\.spec\.ts$/, ["worker", "operations", "platform-release"]],

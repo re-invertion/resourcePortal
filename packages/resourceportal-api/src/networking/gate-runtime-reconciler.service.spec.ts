@@ -13,9 +13,27 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
   readonly capabilityResults: string[] = [];
   sysctlValue: string | null = null;
   applySysctlUpdate = true;
+  simulateSwarm = false;
+  deployedDigest: string | null = null;
 
   protected override runDocker(args: string[], stdin?: string) {
     this.dockerCalls.push({ args, stdin });
+    if (this.simulateSwarm) {
+      if (args[0] === "service" && args[1] === "inspect" &&
+          args.at(-1)?.includes("resourceportal.gate.digest"))
+        return Promise.resolve({ exitCode: this.deployedDigest ? 0 : 1,
+          stdout: this.deployedDigest ?? "", stderr: "" });
+      if (args[0] === "stack" && args[1] === "deploy") {
+        const digest = stdin?.match(/resourceportal\.gate\.digest:\s+([a-f0-9]{64})/);
+        if (!digest) throw new Error("Expected rendered Gate Swarm digest");
+        this.deployedDigest = digest[1];
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+      }
+      if (args[0] === "ps")
+        return Promise.resolve({ exitCode: 0, stdout: "abcdef123456", stderr: "" });
+      if (args[0] === "exec")
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    }
     // The test's fake Swarm implements the effective capability inspection.
     if (args[0] === "service" && args[1] === "inspect" &&
         args.at(-1)?.includes("CapabilityAdd")) {
@@ -260,6 +278,45 @@ describe("GateRuntimeReconcilerService", () => {
       networkId,
       macAddress:"02:aa:bb:cc:dd:ee",
     })]);
+  });
+
+  it("does not redeploy the same Gateway Swarm task after Active/proof/lease promotion", async () => {
+    const networkId="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const row={
+      id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+      tenantId:readyGate.tenantId,gateId:readyGate.id,
+      singleAppId:"99999999-9999-4999-8999-999999999999", networkId,
+      macAddress:"02:aa:bb:cc:dd:ee",configurationRevision:9,
+      lanCidr:"192.168.50.0/24",addressMode:"DHCP", staticAddress:null,
+      status:"Provisioning",dhcpAddress:null as string|null,leaseExpiresAt:null as Date|null,
+      lastVerifiedAt:null as Date|null,
+      singleApp:{name:"sensor",appGroupId:"88888888-8888-4888-8888-888888888888",
+        desiredReplicas:1,pendingDeletion:false,appGroup:{tenantId:readyGate.tenantId}},
+      network:{id:networkId,tenantId:readyGate.tenantId,
+        swarmNetworkName:"rp-network-"+networkId, overlayCidr:"10.200.40.0/24"},
+    };
+    const gate={...readyGate,agentVersion:"gate-l2-v3",remoteLanAttachments:[row]};
+    const {service}=fixture([gate]);
+    service.simulateSwarm=true;
+    service.sysctlValue="0";
+    expect((await service.reconcile()).ready).toBe(1);
+    const firstDigest=service.deployedDigest;
+    expect(service.dockerCalls.filter(call=>call.args[0]==="stack"&&call.args[1]==="deploy")).toHaveLength(1);
+    row.status="Active";
+    row.dhcpAddress="192.168.50.25";
+    row.leaseExpiresAt=new Date(Date.now()+3_600_000);
+    row.lastVerifiedAt=new Date();
+    expect((await service.reconcile()).ready).toBe(1);
+    expect(service.deployedDigest).toBe(firstDigest);
+    expect(service.dockerCalls.filter(call=>call.args[0]==="stack"&&call.args[1]==="deploy")).toHaveLength(1);
+    const policies=service.dockerCalls.filter(call=>call.args[0]==="exec");
+    expect(policies).toHaveLength(2);
+    const latest=JSON.parse(policies[1].stdin??"{}") as {
+      grants: Array<{verifiedAddress:string;status:string;configurationRevision:number}>;
+    };
+    expect(latest.grants[0]).toMatchObject({
+      status:"Active",verifiedAddress:"192.168.50.25",configurationRevision:9,
+    });
   });
 
   it("revokes old hosted routed gateway services when no LAN Attachment is authorized", async () => {

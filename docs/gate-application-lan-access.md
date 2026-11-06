@@ -70,3 +70,15 @@ The new fields include a Prisma migration; the automatic release policy **forbid
 ## Device VPN
 
 Device VPN is distinct: each user device obtains its own WireGuard configuration with a unique /32 address. Only its selected RP tenant Network prefixes are authorized; it does not attach a customer's entire LAN and never inherits access from LAN Attachment. Keep Device VPN's existing enrollment, audit, isolation and revocation behavior unchanged.
+
+### Gateway stability troubleshooting (#396)
+
+Gateway task ID/digest changes after *only* a DHCP lease or attachment status
+refresh point to a control-plane feedback loop, not a user-authorized rollout.
+The current design keeps the Swarm transport spec stable and updates exact
+source-address `nftables` sets from short-lived, worker-verified proofs.
+A lost handshake, expired or incorrect address, revocation, or unverified
+Gate/Node identity still denies non-bootstrap IPv4/ARP. The critical
+reconciliation lane is independent of slow volume usage measurements.
+For the safe diagnostic steps, failure modes, test and rollback commands
+see [the issue #396 engineering runbook](remote-lan-attachment-architecture.md#gateway-proof-refresh-and-critical-worker-scheduling-issue-396).

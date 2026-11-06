@@ -35,6 +35,7 @@ type Stack = {
     ports:Array<{target:number;published:number;protocol:string;mode:string}>;
     cap_add:string[];command:string[];environment:Record<string,string>;
     sysctls: Record<string,string>;
+    deploy: { placement: { constraints: string[] } };
     volumes?:unknown;
   }};
   networks: Record<string,{external:boolean;name:string}>;
@@ -57,7 +58,7 @@ describe("LAN Attachments-only Gateway stack rendering",()=>{
   it("publishes only app-scoped L2 grants, never Site-level routing or stable DNAT",()=>{
     const runtime=gateRuntimeConfig(input);
     expect(runtime.rpOverlayCidrs).toEqual([app.overlayCidr]);
-    expect(runtime.remoteLanAttachments).toEqual([app]);
+    expect(runtime.remoteLanAttachments).toEqual([expect.objectContaining(app)]);
     expect(JSON.stringify(runtime)).not.toMatch(/allowLanToRp|allowRpToLan|peerLanCidrs|mappings|applicationAccessMode|discoveryRules/);
     expect(renderGateStack(input)).not.toMatch(/RP-GATE-FWD|iptables|site-vpn/);
   });
@@ -67,6 +68,25 @@ describe("LAN Attachments-only Gateway stack rendering",()=>{
     expect(gateStackDigest(reversed)).toBe(gateStackDigest(input));
     const altered={...input,remoteLanAttachments:[{...app,macAddress:"02:aa:bb:cc:dd:ff"}]};
     expect(gateStackDigest(altered)).not.toBe(gateStackDigest(input));
+  });
+  it("places the local-policy Gateway on the same authoritative node class as the worker",()=>{
+    const stack=parse(renderGateStack(input)) as Stack;
+    expect(stack.services.gateway.deploy.placement.constraints).toEqual(expect.arrayContaining([
+      "node.labels.rp.node.control-plane == true",
+      "node.labels.rp.node.storage == true",
+      "node.labels.resourceportal.storage.authoritative == true",
+      "node.labels.resourceportal.storage.volumes == true",
+    ]));
+  });
+  it("does not change gateway task digest or environment on proof-only state changes",()=>{
+    const awaiting={...app,addressMode:"DHCP" as const,lanCidr:"192.168.60.0/24",status:"Provisioning",verifiedAddress:null,leaseExpiresAt:null};
+    const active={...awaiting,status:"Active",verifiedAddress:"192.168.60.52",leaseExpiresAt:new Date(Date.now()+3600000).toISOString()};
+    const first={...input,remoteLanAttachments:[awaiting]};
+    const second={...input,remoteLanAttachments:[active]};
+    expect(gateStackDigest(first)).toBe(gateStackDigest(second));
+    const before=parse(renderGateStack(first)) as Stack;
+    const after=parse(renderGateStack(second)) as Stack;
+    expect(before.services.gateway.environment).toEqual(after.services.gateway.environment);
   });
   it("disables bridging for empty grant snapshots while retaining tunnel identity",()=>{
     const disabled={...input,remoteLanAttachments:[]};

@@ -232,12 +232,15 @@ export class StorageBackendsService {
     await this.localFilesystem.deleteVolume(backend, storagePath);
   }
 
-  async measureUsedSize(volumeId: string, storagePath: string) {
+  async measureUsedSize(volumeId: string, storagePath: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const backend = await this.store.requireForVolume(volumeId);
     const usedSize = await this.localFilesystem.measureUsedSize(
       backend,
       storagePath,
+      signal,
     );
+    signal?.throwIfAborted();
     await this.publishBackendMetric(backend);
     return usedSize;
   }

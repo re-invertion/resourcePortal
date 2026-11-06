@@ -103,3 +103,90 @@ validated automatic DB restore. Do not bypass it by relabeling as Fast Fix.
   exist; migration leaves no old secrets or operational links.
 - Release: signed, SHA-pinned automatic release after required merge queue,
   full regression and verified database rollback. No manual bypass.
+
+## Gateway proof refresh and critical worker scheduling (issue #396)
+
+**Gateway transport configuration vs observed proof.** Swarm's gateway
+`RP_GATE_CONFIG_B64` and `resourceportal.gate.digest` contain only
+authorized, revisioned topology, identity, address mode and explicit static
+IPv4 policy. `status`, DHCP `verifiedAddress`, `leaseExpiresAt` and
+`lastVerifiedAt` are deliberately excluded from service-spec comparison.
+An ordinary `Provisioning → Active` transition or successful proof refresh
+must not update the service spec, generate a new Swarm gateway task or restart
+WireGuard/GRETAP. A change to tenant/Gate/network, MAC, attachment revision,
+network policy or other actual transport configuration still demands a
+controlled, fail-closed rollout.
+
+**Dynamic source enforcement.** The trusted worker uses Docker's local
+container exec channel to send a short-lived, identity-bound snapshot to
+`remote-lan-gateway-policy.runner.ts` inside the *already running*
+gateway. The gateway rejects mismatched Gate, tenant, attachment, network,
+MAC, configuration revision, stale timestamp and duplicate grants. Policy
+is written as a mode-0600 atomic replacement in the gateway's private
+`/run` filesystem and is never exposed on a new network port, API endpoint
+or bind mount. Snapshots are read again before each runtime bridge
+reconciliation; leases are bounded by the authenticated 45-second proof
+freshness limit **and** the actual DHCP expiry. An empty, missing, expired
+or invalid DHCP grant keeps the `nftables` IPv4 source set empty; only
+DHCP bootstrap and RFC5227 ARP probes pass. An authenticated static IPv4
+grant remains bounded to its explicit address. Source-set changes are
+performed with a single `nft -f` transaction, without detaching the
+existing GRETAP ports; transaction failure revokes the RP-owned tunnel.
+
+The *physical* `gate-l2-v3` agent applies the same dynamic set update
+when only verified status, IP or lease changes. It still verifies the
+exact WireGuard peer/handshake, LAN ownership, tenant, MAC, revision and
+host-management bridge safety. A true revisioned topology change remains
+a fail-closed detach/recreate. The updated Gate agent must be installed
+through the supported Gate update procedure **after** the corresponding RP
+release; never overwrite a production Gate or Raspberry Pi during CI.
+Older Gate binaries may still detach their local tunnel during a policy
+refresh until they are upgraded.
+
+**Worker concurrency.** A dedicated serial lane begins critical
+`gateRuntime → remoteLanLifecycle → remoteLanNode + Activation`
+reconciliation before unrelated startup volume scans. The background lane
+continues to own volume/certificate/ingress/drift work. Each critical
+reconciler is single-flight: no unbounded queue and no overlapping invocation
+within a worker. Execution errors are reported independently and subsequent
+cycles recover; SIGTERM aborts new cycles. Volume traversal checks the abort
+signal between filesystem operations. Existing reconciliation duration,
+success and error observations remain in the worker database, while
+structured events `worker.critical_reconcile.scheduler_delay` include
+`delayMs`, `missedCycles`, and (on overrun) `durationMs`.
+`WORKER_ONCE` still disables background reconciliation.
+
+### Diagnostic procedure (read-only)
+
+1. Record the exact RP version and Gate agent version, attachment revision,
+   status and timestamps. Check for a *real* authenticated WireGuard peer
+   handshake plus Gate-side and Node-side proofs; do not infer validity from
+   a UI `Active` label.
+2. Compare the gateway's Swarm task IDs across several worker cycles with
+   `docker service ps --no-trunc <gateway-service>`. Read only its
+   `resourceportal.gate.digest` label with `docker service inspect`.
+   A state-only proof refresh should not change either.
+3. Correlate `worker.critical_reconcile.scheduler_delay` and normal
+   `worker.reconcile.*` duration/error logs with timestamped
+   `volumeUsage` runs. A multi-minute volume scan must not suppress Gate,
+   Node or Activation cycles.
+4. On a disposable test system check `nft list set bridge rp_lan_gw <set>`
+   and the physical Gate's `rp_lan` source set during DHCP bootstrap,
+   Active, renewal, changed address and expiry. Reject traffic from any
+   unauthorized source, including after proof expiry. Do not manually edit
+   production `nftables` or set the attachment status in SQL.
+5. Test a genuine policy revision and Swarm task replacement separately,
+   verifying convergence only after fresh proof. During an authorized rollout,
+   transient `Provisioning` is correct; synthetic `Active` is forbidden.
+6. Validate in isolated real Swarm with WireGuard, GRETAP and customer-side
+   DHCP or Static IPv4 using `scripts/run-remote-lan-l2-dhcp-smoke.sh`,
+   `scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh` and release
+   readiness / automatic rollback gates. Unit tests, including a simulated
+   365-second filesystem scan, are not substitutes for packet-level proof.
+
+**Rollback:** no database schema migration is required for this change.
+Rollback to the immediately preceding *officially published* RP release
+must pass the mandatory image-level rollback smoke. New dynamic policy and
+Gateway agent behaviour are release-coupled; verify the supported Gate-agent
+upgrade/rollback instructions before any live host work. Production RP and
+physical Gate updates are explicitly outside the agent's release task.

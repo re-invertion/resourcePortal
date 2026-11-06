@@ -14,7 +14,11 @@ input.gretapDevice="rp-l2-"+createHash("sha256").update(
 describe("Gate application L2 bridge ingress filter",()=>{
   it("enforces MAC, VLAN, IPv6, DHCP server and STP restrictions before bridge membership",()=>{
     const cmds=remoteLanIngressFilterPlan(input);
-    expect(cmds).toHaveLength(14);
+    expect(cmds).toHaveLength(15);
+    // The exact-source set exists before any DHCP lease is authorized;
+    // the empty set is deny-by-default, yet can be refreshed atomically.
+    expect(cmds.some(([binary,args])=>binary==="nft" &&
+      args[0]==="add" && args[1]==="set" && args[2]==="bridge")).toBe(true);
     const flat=JSON.stringify(cmds);
     expect(flat).toContain("02:aa:bb:cc:dd:ee");
     expect(flat).toContain("vlan");

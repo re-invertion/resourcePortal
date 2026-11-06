@@ -33,6 +33,11 @@ function names(input: GatewayL2Input) {
   return { bridge: "rp-b-" + hash.slice(0,8), chain: "rp_" + hash.slice(0,12) };
 }
 
+/** Authoritative source-set name derived from the tenant/Gate/attachment identity. */
+export function gatewayL2SourceSet(input: GatewayL2Input): string {
+  return "rpip_" + names(input).chain.slice(3);
+}
+
 export function gatewayL2SetupPlan(input: GatewayL2Input): GatewayL2Command[] {
   const { bridge, chain } = names(input);
   const app = appGretapCommands(input.app);
@@ -79,6 +84,6 @@ export function gatewayL2CleanupPlan(input: GatewayL2Input): GatewayL2Command[] 
     ["ip",["link","delete",bridge]],
     ["nft",["flush","chain","bridge","rp_lan_gw",chain]],
     ["nft",["delete","chain","bridge","rp_lan_gw",chain]],
-    ["nft",["delete","set","bridge","rp_lan_gw","rpip_" + chain.slice(3)]],
+    ["nft",["delete","set","bridge","rp_lan_gw",gatewayL2SourceSet(input)]],
   ];
 }

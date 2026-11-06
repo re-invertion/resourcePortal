@@ -27,6 +27,7 @@ import { OperationsWorkerService } from "./operations/operations-worker.service"
 import { DeploymentArtifactSecurityMigrationService } from "./security/deployment-artifact-security-migration.service";
 import { LegacySecretMigrationService } from "./security/legacy-secret-migration.service";
 import { VolumeUsageReconcilerService } from "./volumes/volume-usage-reconciler.service";
+import { runReconcileLane } from "./worker-reconcile-lane";
 import { isTransientDatabaseConnectivityError } from "./prisma/database-connectivity";
 import { WorkerModule } from "./worker.module";
 
@@ -206,6 +207,8 @@ async function main() {
   let stopping = false;
   let crashed = false;
   let operationLoop: Promise<void> | null = null;
+  let criticalLoop: Promise<void> | null = null;
+  const workerAbort = new AbortController();
 
   await runtimeObservability.started(workerId);
 
@@ -233,6 +236,7 @@ async function main() {
       workerId,
     });
     stopping = true;
+    workerAbort.abort();
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
@@ -264,8 +268,11 @@ async function main() {
   async function reconcile(
     key: WorkerReconcileKey,
     task: () => Promise<unknown>,
+    laneScheduled = false,
   ) {
-    if (Date.now() < next[key]) return;
+    // The critical lane already enforces cadence and single-flight execution.
+    // Rechecking legacy next[key] here would silently halve the lane cadence.
+    if (!laneScheduled && Date.now() < next[key]) return;
     const startedAt = new Date();
     try {
       const result = await task();
@@ -416,6 +423,40 @@ async function main() {
       if (operationLoopFailure) throw operationLoopFailure instanceof Error ? operationLoopFailure : new Error(errorMessage(operationLoopFailure));
     }
     if (!once) {
+      // Start before startup resync: a 365-second volume walk MUST NOT delay
+      // Gate policy, Node discovery or fail-closed Activation decisions.
+      // This lane is serial and disjoint from the slow background lane.
+      criticalLoop = runReconcileLane([
+        { key: "gateRuntime", intervalMs: intervals.gateRuntime,
+          run: () => reconcile("gateRuntime", () => gateRuntime.reconcile(), true) },
+        { key: "remoteLanLifecycle", intervalMs: intervals.remoteLanLifecycle,
+          run: () => reconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile(), true) },
+        { key: "remoteLanNode", intervalMs: intervals.remoteLanNode,
+          run: () => reconcile("remoteLanNode", async () => {
+            try {
+              const result = await remoteLanNode.reconcile();
+              await remoteLanLifecycle.reconcileActivation(true);
+              return result;
+            } catch (error) {
+              await remoteLanLifecycle.reconcileActivation(false);
+              throw error;
+            }
+          }, true) },
+      ], {
+        signal: workerAbort.signal,
+        pollIntervalMs,
+        onMetric: metric => {
+          if (metric.delayMs > pollIntervalMs || metric.missedCycles) {
+            structuredLog(logger, "warn", serviceName, "worker.critical_reconcile.scheduler_delay", {
+              workerId, ...metric,
+            });
+          }
+        },
+        onError: (key, error) => structuredLog(logger, "warn", serviceName,
+          "worker.critical_reconcile.unexpected_error", {
+            workerId, key, error: errorMessage(error),
+          }),
+      });
       await observe(
         () => artifactSecurity.migrateAll(),
         "worker.startup_artifact_security_migration.failed",
@@ -425,21 +466,9 @@ async function main() {
       );
       await startupReconcile("ingress", () => ingress.reconcileBatch());
       await startupReconcile("drift", () => drift.reconcileAll());
-      await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch());
+      await startupReconcile("volumeUsage", () => volumeUsage.reconcileBatch(200, workerAbort.signal));
       await startupReconcile("legacySecrets", () => legacySecrets.migrateAll());
       await startupReconcile("egressPolicy", () => egressPolicy.reconcile());
-      await startupReconcile("gateRuntime", () => gateRuntime.reconcile());
-      await startupReconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
-      await startupReconcile("remoteLanNode", async () => {
-        try {
-          const result=await remoteLanNode.reconcile();
-          await remoteLanLifecycle.reconcileActivation(true);
-          return result;
-        } catch(error) {
-          await remoteLanLifecycle.reconcileActivation(false);
-          throw error;
-        }
-      });
       await startupReconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
     }
 
@@ -453,21 +482,9 @@ async function main() {
         await reconcile("certificate", () => certificates.reconcileBatch());
         await reconcile("ingress", () => ingress.reconcileBatch());
         await reconcile("drift", () => drift.reconcileBatch());
-        await reconcile("volumeUsage", () => volumeUsage.reconcileBatch());
+        await reconcile("volumeUsage", () => volumeUsage.reconcileBatch(200, workerAbort.signal));
         await reconcile("legacySecrets", () => legacySecrets.migrateAll());
         await reconcile("egressPolicy", () => egressPolicy.reconcile());
-        await reconcile("gateRuntime", () => gateRuntime.reconcile());
-        await reconcile("remoteLanLifecycle", () => remoteLanLifecycle.reconcile());
-        await reconcile("remoteLanNode", async () => {
-          try {
-            const result=await remoteLanNode.reconcile();
-            await remoteLanLifecycle.reconcileActivation(true);
-            return result;
-          } catch(error) {
-            await remoteLanLifecycle.reconcileActivation(false);
-            throw error;
-          }
-        });
         await reconcile("deviceVpnRuntime", () => deviceVpnRuntime.reconcile());
       }
 
@@ -490,7 +507,9 @@ async function main() {
   } finally {
     // Stop queue claims before draining an in-flight operation and closing Prisma.
     stopping = true;
+    workerAbort.abort();
     if (operationLoop) await operationLoop;
+    if (criticalLoop) await criticalLoop;
     clearInterval(heartbeat);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);

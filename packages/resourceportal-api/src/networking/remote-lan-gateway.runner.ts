@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { spawnSync } from "node:child_process";
 import { networkInterfaces } from "node:os";
+import { applyGateLeaseSnapshot, readGateLeaseSnapshot } from "./remote-lan-gateway-policy";
 import { RemoteLanGatewayController } from "./remote-lan-gateway-controller";
 import { setupRemoteLanGateway } from "./remote-lan-gateway-startup";
 import { requireEffectiveCapabilities } from "./runtime-capabilities";
@@ -13,8 +14,8 @@ let stopping = false;
 process.once("SIGTERM", () => { stopping = true; });
 process.once("SIGINT", () => { stopping = true; });
 
-function run(command: string, args: string[], allowFailure = false) {
-  const result = spawnSync(command, args, { encoding: "utf8", timeout: 12000 });
+function run(command: string, args: string[], allowFailure = false, stdin?: string) {
+  const result = spawnSync(command, args, { encoding: "utf8", timeout: 12000, input: stdin });
   if (result.status !== 0 && !allowFailure)
     throw new Error(command + " operation failed: " + (result.stderr || result.error?.message));
   return { status: result.status ?? 1, stdout: (result.stdout ?? "").trim(),
@@ -58,7 +59,8 @@ async function main() {
           [item.serviceName, tasks(item.serviceName)]));
         // No arbitrary Site VPN route can grant Ethernet bridging. Revoke
         // previously active bridges on any invalid or ambiguous task state.
-        const count = controller.reconcile(config, known, byService,
+        const current = applyGateLeaseSnapshot(config, readGateLeaseSnapshot());
+        const count = controller.reconcile(current, known, byService,
           process.env.RP_REMOTE_LAN_GATEWAY_ENABLED === "true");
         logger.log("Remote LAN Gateway active attachments=" + count);
       } catch (error) {
