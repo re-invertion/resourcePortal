@@ -47,6 +47,25 @@ describe("scoped SingleApp PATCH payloads", () => {
       expect(patch).not.toHaveProperty(name);
     }
   });
+  it("preserves fractional restart windows when saving unrelated advanced settings", () => {
+    const configured = { ...app, restartPolicy: { ...app.restartPolicy, windowSeconds: 0.5 } };
+    const state = initialAdvancedRuntime(configured);
+    expect(state.restartWindow).toBe("0.5");
+    state.readOnlyRootFilesystem = true;
+    expect(advancedApplicationPatch(legacy, state, configured).restartPolicy).toEqual({
+      ...configured.restartPolicy, windowSeconds: 0.5,
+    });
+    state.restartWindow = "1.25";
+    expect(advancedApplicationPatch(legacy, state, configured).restartPolicy).toEqual({
+      ...configured.restartPolicy, windowSeconds: 1.25,
+    });
+    state.restartWindow = "-0.5";
+    expect(() => advancedApplicationPatch(legacy, state, configured)).toThrow(/Restart window/);
+    state.restartWindow = "Infinity";
+    expect(() => advancedApplicationPatch(legacy, state, configured)).toThrow(/Restart window/);
+    state.restartWindow = "not-a-number";
+    expect(() => advancedApplicationPatch(legacy, state, configured)).toThrow(/Restart window/);
+  });
   it("can explicitly clear health checks, optional restart limits and command arguments", () => {
     const state = initialAdvancedRuntime(app);
     state.command = []; state.healthEnabled = false; state.restartMaxAttempts = ""; state.restartWindow = "";

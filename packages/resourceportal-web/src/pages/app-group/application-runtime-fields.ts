@@ -48,6 +48,11 @@ function numeric(value: unknown, fallback: number): number {
 function optionalInteger(value: unknown): string {
   return Number.isInteger(value) && typeof value === "number" ? String(value) : "";
 }
+function optionalNonnegativeNumber(value: unknown): string {
+  // The Swarm renderer accepts fractional second durations for restart
+  // windows; do not erase an existing value during an unrelated PATCH.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(value) : "";
+}
 function validNumber(name: string, value: number, min: number, max: number, integer = false) {
   if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
     throw new Error(`${name} must be a ${integer ? "whole " : ""}number between ${min} and ${max}.`);
@@ -70,7 +75,7 @@ export function initialAdvancedRuntime(app: Obj): AdvancedRuntimeEdit {
     restartCondition: typeof restart.condition === "string" ? restart.condition : "any",
     restartDelay: numeric(restart.delaySeconds, 5),
     restartMaxAttempts: optionalInteger(restart.maxAttempts),
-    restartWindow: optionalInteger(restart.windowSeconds),
+    restartWindow: optionalNonnegativeNumber(restart.windowSeconds),
     updateParallelism: numeric(update.parallelism, 1),
     updateDelay: numeric(update.delaySeconds, 10),
     updateOrder: typeof update.order === "string" ? update.order : "start-first",
@@ -104,6 +109,15 @@ function optionalNonNegativeInteger(label: string, value: string): number | unde
   validNumber(label, n, 0, 2147483647, true);
   return n;
 }
+function optionalNonNegativeSeconds(label: string, value: string): number | undefined {
+  if (value.trim() === "") return undefined;
+  if (!/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) {
+    throw new Error(`${label} must be a nonnegative number of seconds.`);
+  }
+  const n = Number(value);
+  validNumber(label, n, 0, 2147483647);
+  return n;
+}
 export function advancedApplicationPatch(
   legacy: LegacyAdvancedEdit,
   advanced: AdvancedRuntimeEdit,
@@ -128,7 +142,7 @@ export function advancedApplicationPatch(
   }
   const restartPolicy: Obj = { ...objectField(app.restartPolicy), condition: advanced.restartCondition, delaySeconds: advanced.restartDelay };
   const maxAttempts = optionalNonNegativeInteger("Restart max attempts", advanced.restartMaxAttempts);
-  const windowSeconds = optionalNonNegativeInteger("Restart window", advanced.restartWindow);
+  const windowSeconds = optionalNonNegativeSeconds("Restart window", advanced.restartWindow);
   if (maxAttempts === undefined) delete restartPolicy.maxAttempts;
   else restartPolicy.maxAttempts = maxAttempts;
   if (windowSeconds === undefined) delete restartPolicy.windowSeconds;
