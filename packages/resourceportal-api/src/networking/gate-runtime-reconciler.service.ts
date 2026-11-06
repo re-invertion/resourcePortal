@@ -11,6 +11,7 @@ import {
   gateStackName,
 } from "./network-runtime-names";
 import { gateStackDigest, renderGateStack } from "./gate-stack";
+import type { GateLeaseGrant } from "./remote-lan-gateway-policy";
 
 type DockerResult = {
   exitCode: number;
@@ -157,6 +158,7 @@ export class GateRuntimeReconcilerService {
             serviceName: "rp_" + attachment.singleApp.appGroupId.replaceAll("-", "_") +
               "_" + attachment.singleApp.name.replaceAll("-", "_"),
             macAddress: attachment.macAddress,
+            configurationRevision: attachment.configurationRevision,
             lanCidr: attachment.lanCidr,
             addressMode: attachment.addressMode as "DHCP" | "Static",
             staticAddress: attachment.staticAddress,
@@ -179,6 +181,23 @@ export class GateRuntimeReconcilerService {
               "Unable to deploy Remote LAN Gateway runtime");
         }
         await this.ensureGatewayCapabilities(gate.id, true);
+        // A source-identity proof is never sent in the Swarm service spec:
+        // Docker exec delivers the short-lived grant to the running task.
+        // Missing task is safe: DHCP remains denied until the next cycle.
+        await this.syncGatewayLeases(gate.id, attachments.map(attachment => ({
+          attachmentId: attachment.id,
+          tenantId: attachment.tenantId,
+          gateId: gate.id,
+          networkId: attachment.networkId,
+          macAddress: attachment.macAddress,
+          configurationRevision: attachment.configurationRevision,
+          status: attachment.status,
+          verifiedAddress: attachment.status === "Active" ? attachment.dhcpAddress : null,
+          leaseExpiresAt: attachment.status === "Active"
+            ? attachment.leaseExpiresAt?.toISOString() ?? null : null,
+          lastVerifiedAt: attachment.status === "Active"
+            ? attachment.lastVerifiedAt?.toISOString() ?? null : null,
+        })));
         await this.prisma.resourcePortalGate.update({
           where: { id: gate.id }, data: { status: "Ready", lastError: null },
         });
@@ -301,6 +320,28 @@ export class GateRuntimeReconcilerService {
           !/^[a-z0-9_.]+$/.test(k) || typeof v !== "string"))
       throw new Error("Malformed Remote LAN Gateway sysctl inspection");
     return (parsed as Record<string,string>)["net.ipv4.ip_forward"];
+  }
+
+  private async syncGatewayLeases(gateId: string, grants: GateLeaseGrant[]) {
+    const service = gateStackName(gateId) + "_gateway";
+    const tasks = await this.runDocker([
+      "ps", "--filter", "label=com.docker.swarm.service.name=" + service,
+      "--format", "{{.ID}}",
+    ]);
+    if (tasks.exitCode !== 0)
+      throw new Error("Unable to locate running Gate gateway task: " + tasks.stderr);
+    const containers = tasks.stdout.split(/\s+/).filter(Boolean);
+    if (containers.length === 0) return false;
+    if (containers.length !== 1 || !containers.every(id => /^[0-9a-f]{12,64}$/.test(id)))
+      throw new Error("Ambiguous running Gate gateway task");
+    const applied = await this.runDocker([
+      "exec", "-i", containers[0], "node",
+      "dist/src/networking/remote-lan-gateway-policy.runner.js",
+    ], JSON.stringify({ gateId, issuedAt: new Date().toISOString(), grants }));
+    if (applied.exitCode !== 0)
+      throw new Error("Unable to synchronize verified LAN source policy: " +
+        (applied.stderr || applied.stdout).slice(0, 500));
+    return true;
   }
 
   private async currentGateDigest(gateId: string) {

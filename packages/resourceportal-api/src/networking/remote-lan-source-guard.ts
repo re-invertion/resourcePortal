@@ -49,11 +49,16 @@ export function lanIngressRules(
   const rules: Array<readonly ["nft", readonly string[]]> = [];
   const add = (...tail: string[]) => rules.push(["nft", [...prefix, ...tail]]);
   const sourceSet = "rpip_" + chain.slice(3);
-  if (source?.timeoutSeconds !== undefined) {
-    rules.push(["nft", ["add", "set", "bridge", table, sourceSet,
-      "{", "type", "ipv4_addr", ";", "flags", "timeout", ";", "}"]]);
+  // A stable, always-present IPv4 set allows an authorized proof/lease to
+  // change WITHOUT detaching the GRETAP transport or replacing Swarm tasks.
+  // An empty set drops all non-bootstrap ARP/IPv4. Kernel timeouts continue
+  // enforcing lease expiry even if control-plane reconciliation stops.
+  rules.push(["nft", ["add", "set", "bridge", table, sourceSet,
+    "{", "type", "ipv4_addr", ";", "flags", "timeout", ";", "}"]]);
+  if (source) {
     rules.push(["nft", ["add", "element", "bridge", table, sourceSet,
-      "{", source.ip, "timeout", source.timeoutSeconds + "s", "}"]]);
+      "{", source.ip, ...(source.timeoutSeconds === undefined
+        ? [] : ["timeout", source.timeoutSeconds + "s"]), "}"]]);
   }
   add("ether", "saddr", "!=", mac.toLowerCase(), "drop");
   add("ether", "type", "vlan", "drop");
@@ -67,16 +72,8 @@ export function lanIngressRules(
   add("ether", "type", "arp", "arp", "saddr", "ip", "0.0.0.0", "drop");
   add("ether", "type", "ip", "ip", "saddr", "0.0.0.0", "udp", "sport", "68",
     "udp", "dport", "67", "accept");
-  const permitted = source
-    ? (source.timeoutSeconds === undefined ? source.ip : "@" + sourceSet)
-    : null;
-  if (permitted) {
-    add("ether", "type", "arp", "arp", "saddr", "ip", "!=", permitted, "drop");
-    add("ether", "type", "ip", "ip", "saddr", "!=", permitted, "drop");
-  } else {
-    add("ether", "type", "arp", "drop");
-    add("ether", "type", "ip", "drop");
-  }
+  add("ether", "type", "arp", "arp", "saddr", "ip", "!=", "@" + sourceSet, "drop");
+  add("ether", "type", "ip", "ip", "saddr", "!=", "@" + sourceSet, "drop");
   add("ether", "type", "!=", "{", "arp", ",", "ip", "}", "drop");
   return rules;
 }

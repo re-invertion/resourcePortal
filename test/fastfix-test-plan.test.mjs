@@ -15,6 +15,21 @@ test("Web anti-clickjacking server and regression fixture select security header
   );
 });
 
+test("issue 396 scheduler and volume isolation cannot bypass networking and worker Fast Fix gates", () => {
+  const files = [
+    "packages/resourceportal-api/src/worker-reconcile-lane.ts",
+    "packages/resourceportal-api/src/worker-reconcile-lane.spec.ts",
+    "packages/resourceportal-api/src/volumes/volume-usage-reconciler.service.ts",
+    "packages/resourceportal-api/src/networking/remote-lan-gateway-policy.ts",
+    "packages/resourceportal-api/src/networking/remote-lan-gateway-policy.runner.ts",
+  ];
+  const plan = selectProfiles(files);
+  for(const required of ["networking", "worker", "volume-operations"])
+    assert.ok(plan.profiles.includes(required));
+  assert.equal(plan.vpnSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
+});
+
 test("new Gate Swarm sysctl smoke is classified and validated, unknown scripts still fail closed", () => {
   const plan=selectProfiles(["scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"]);
   assert.deepEqual(plan.profiles, ["networking","workflow"]);

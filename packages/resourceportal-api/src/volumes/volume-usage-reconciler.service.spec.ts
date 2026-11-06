@@ -4,6 +4,26 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { StorageBackendsService } from "../storage-backends/storage-backends.service";
 
 describe("Volume usage cursor sweep (#270)", () => {
+  it("aborts an in-flight usage sweep without advancing to other volumes or committing stale measurements", async () => {
+    const controller = new AbortController();
+    const rows=[
+      {id:"a",storagePath:"/vol/a",usedSizeBytes:0n},
+      {id:"b",storagePath:"/vol/b",usedSizeBytes:0n},
+    ];
+    const findMany=vi.fn().mockResolvedValue(rows);
+    const update=vi.fn();
+    const measureUsedSize=vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve(100n);
+    });
+    const service=new VolumeUsageReconcilerService(
+      {volume:{findMany,update}} as unknown as PrismaService,
+      {measureUsedSize} as unknown as StorageBackendsService,
+    );
+    await expect(service.reconcileBatch(200,controller.signal)).rejects.toThrow();
+    expect(measureUsedSize).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+  });
   it("eventually measures a newer volume beyond a full stable batch, including an old failing volume", async () => {
     const volumes = [
       { id: "a", storagePath: "/vol/a", usedSizeBytes: 0n },

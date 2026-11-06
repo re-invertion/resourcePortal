@@ -65,6 +65,33 @@ describe("RP Gateway authenticated remote LAN reconciliation",()=>{
     expect(f.controller.reconcile(config,interfaces,tasks,true)).toBe(1);
     expect(f.commands.filter(c=>c.includes("link add")).length).toBe(3);
   });
+  it("reprograms verified source atomically without recreating the gateway bridge or GRETAP",()=> {
+    const f=host();
+    const dhcp={...attachment,lanCidr:"192.168.60.0/24",addressMode:"DHCP" as const,
+      status:"Provisioning"};
+    const pending={...config,remoteLanAttachments:[dhcp]};
+    f.controller.reconcile(pending,interfaces,tasks,true);
+    const active={...config,remoteLanAttachments:[{...dhcp,status:"Active",
+      verifiedAddress:"192.168.60.51",leaseExpiresAt:new Date(Date.now()+3600000).toISOString()}]};
+    expect(f.controller.reconcile(active,interfaces,tasks,true)).toBe(1);
+    expect(f.commands.filter(x=>x.includes("link add"))).toHaveLength(3);
+    expect(f.commands.filter(x=>x.includes("link delete"))).toHaveLength(0);
+    expect(f.commands.filter(x=>x.includes("nft -f -"))).toHaveLength(1);
+    expect(f.controller.reconcile(pending,interfaces,tasks,true)).toBe(1);
+    expect(f.commands.filter(x=>x.includes("nft -f -"))).toHaveLength(2);
+    expect(f.commands.filter(x=>x.includes("link delete"))).toHaveLength(0);
+  });
+  it("revokes the transport if an atomic source policy update fails",()=> {
+    const f=host((binary,args)=>binary==="nft"&&args[0]==="-f");
+    const dhcp={...attachment,lanCidr:"192.168.60.0/24",addressMode:"DHCP" as const,
+      status:"Provisioning"};
+    const pending={...config,remoteLanAttachments:[dhcp]};
+    f.controller.reconcile(pending,interfaces,tasks,true);
+    const active={...config,remoteLanAttachments:[{...dhcp,status:"Active",
+      verifiedAddress:"192.168.60.51",leaseExpiresAt:new Date(Date.now()+3600000).toISOString()}]};
+    expect(()=>f.controller.reconcile(active,interfaces,tasks,true)).toThrow(/Injected/);
+    expect(f.devices).toHaveLength(0);
+  });
   it("deletes both tunnels on revocation, and no other physical device",()=>{
     const f=host();
     f.controller.reconcile(config,interfaces,tasks,true);

@@ -14,7 +14,8 @@ export class VolumeUsageReconcilerService {
   // a measurement fails; a subsequent batch wraps around after the last ID.
   private lastAttemptedVolumeId: string | null = null;
 
-  async reconcileBatch(limit = 200) {
+  async reconcileBatch(limit = 200, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const safeLimit = Math.max(1, Math.min(2_000, Math.floor(limit) || 200));
     const select = { id: true, storagePath: true, usedSizeBytes: true } as const;
     const query = (after: string | null) =>
@@ -32,12 +33,15 @@ export class VolumeUsageReconcilerService {
     let updated = 0;
     let failed = 0;
     for (const volume of volumes) {
+      signal?.throwIfAborted();
       this.lastAttemptedVolumeId = volume.id;
       try {
         const usedSizeBytes = await this.storage.measureUsedSize(
           volume.id,
           volume.storagePath,
+          ...(signal ? [signal] : []),
         );
+        signal?.throwIfAborted();
         if (usedSizeBytes !== volume.usedSizeBytes) {
           await this.prisma.volume.update({
             where: { id: volume.id },
@@ -46,6 +50,7 @@ export class VolumeUsageReconcilerService {
           updated += 1;
         }
       } catch {
+        signal?.throwIfAborted();
         failed += 1;
       }
     }

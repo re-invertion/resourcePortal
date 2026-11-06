@@ -7,6 +7,7 @@ export type GateRuntimeLanAttachment = {
   overlayCidr: string;
   serviceName: string;
   macAddress: string;
+  configurationRevision?: number;
   lanCidr?: string;
   addressMode?: "DHCP" | "Static";
   staticAddress?: string | null;

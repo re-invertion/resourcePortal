@@ -1,12 +1,12 @@
 import type { GateRuntimeConfig } from "./gate-runtime.types";
 import {
-  gatewayL2CleanupPlan, gatewayL2SetupPlan, type GatewayL2Input, type GatewayL2Command,
+  gatewayL2CleanupPlan, gatewayL2SetupPlan, gatewayL2SourceSet, type GatewayL2Input, type GatewayL2Command,
 } from "./remote-lan-gateway-plan";
 import {
   planGatewayRuntimeAttachments, type GatewayInterface,
 } from "./remote-lan-gateway-resolver";
 
-type Run = (program: string, args: string[], allowFailure?: boolean) =>
+type Run = (program: string, args: string[], allowFailure?: boolean, stdin?: string) =>
   { status: number; stdout: string; stderr: string };
 
 type Link = {
@@ -34,7 +34,33 @@ export class RemoteLanGatewayController {
   }
 
   private fingerprint(input: GatewayL2Input) {
-    return JSON.stringify(input);
+    // Source grants can be refreshed without destroying Ethernet transport.
+    return JSON.stringify({ ...input, source: null });
+  }
+
+  private sourceFingerprint(input: GatewayL2Input) {
+    return JSON.stringify(input.source ?? null);
+  }
+
+  private updateSource(input: GatewayL2Input) {
+    const set = gatewayL2SourceSet(input);
+    // nft -f is transactional: lease/source changes cannot expose a chain
+    // with the old and new source both accepted, or a half-installed rule.
+    const lines = ["flush set bridge rp_lan_gw " + set];
+    const source = input.source;
+    if (source) {
+      lines.push("add element bridge rp_lan_gw " + set +
+        " { " + source.ip +
+        (source.timeoutSeconds === undefined ? "" : " timeout " + source.timeoutSeconds + "s") + " }");
+    }
+    try {
+      this.run("nft", ["-f", "-"], false, lines.join("\n") + "\n");
+    } catch (error) {
+      // If the batch fails, the old source must not stay authorized.
+      try { this.detach(input); } catch { throw new Error("Gateway lease update and revocation failed", { cause: error }); }
+      this.active.delete(input.app.attachmentId);
+      throw error;
+    }
   }
 
   private owner(input: GatewayL2Input): boolean {
@@ -169,7 +195,13 @@ export class RemoteLanGatewayController {
     const lookup = new Map(desired.map(input=>[input.app.attachmentId,input]));
     for (const [id,previous] of this.active) {
       const next = lookup.get(id);
-      if (next && this.fingerprint(next) === previous.fingerprint) continue;
+      if (next && this.fingerprint(next) === previous.fingerprint) {
+        if (this.sourceFingerprint(next) !== this.sourceFingerprint(previous.input)) {
+          this.updateSource(next);
+          this.active.set(id, { input: next, fingerprint: previous.fingerprint });
+        }
+        continue;
+      }
       this.detach(previous.input);
       this.active.delete(id);
     }

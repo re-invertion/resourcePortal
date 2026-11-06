@@ -116,10 +116,13 @@ export class LocalFilesystemStorageAdapterService {
   async measureUsedSize(
     backend: LocalFilesystemBackendDescriptor,
     storagePath: string,
+    signal?: AbortSignal,
   ) {
+    signal?.throwIfAborted();
     this.assertPrivilegedMutation();
     await this.secureTenantParent(backend, storagePath, false);
-    return this.measureDirectory(this.localPath(backend, storagePath));
+    signal?.throwIfAborted();
+    return this.measureDirectory(this.localPath(backend, storagePath), signal);
   }
 
   private async secureTenantParent(
@@ -386,7 +389,8 @@ export class LocalFilesystemStorageAdapterService {
     return value === "xfs" || value === "ext4";
   }
 
-  private async measureDirectory(path: string): Promise<bigint> {
+  private async measureDirectory(path: string, signal?: AbortSignal): Promise<bigint> {
+    signal?.throwIfAborted();
     let names: string[];
     try {
       names = await readdir(path);
@@ -397,6 +401,7 @@ export class LocalFilesystemStorageAdapterService {
 
     let total = 0n;
     for (const name of names) {
+      signal?.throwIfAborted();
       const child = posix.join(path, name);
       let details;
       try {
@@ -406,7 +411,7 @@ export class LocalFilesystemStorageAdapterService {
         throw error;
       }
       if (details.isSymbolicLink()) continue;
-      if (details.isDirectory()) total += await this.measureDirectory(child);
+      if (details.isDirectory()) total += await this.measureDirectory(child, signal);
       else if (details.isFile()) total += BigInt(details.size);
     }
     return total;

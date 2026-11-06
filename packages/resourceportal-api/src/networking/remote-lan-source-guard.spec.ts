@@ -17,8 +17,8 @@ describe("verified LAN L2 source isolation",()=>{
     ]) expect(boundLanSource(invalid,now)).toBeNull();
     const rules=lanIngressRules("rp_lan","rp_123456789abc","rp-l2-12345678",
       "02:aa:bb:cc:dd:ee",null).map(x=>x[1].join(" ")).join("\n");
-    expect(rules).toContain("ether type arp drop");
-    expect(rules).toContain("ether type ip drop");
+    expect(rules).toContain("arp saddr ip != @rpip_123456789abc drop");
+    expect(rules).toContain("ip saddr != @rpip_123456789abc drop");
     expect(rules).toContain("arp saddr ether != 02:aa:bb:cc:dd:ee drop");
     expect(rules).toContain("arp saddr ip 0.0.0.0 arp operation request accept");
     expect(rules).toContain("ip saddr 0.0.0.0 udp sport 68 udp dport 67 accept");

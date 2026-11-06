@@ -29,8 +29,9 @@ DEVICE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$")
 MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS = 150
 
 
-def call(*argv: str, ignore: bool = False) -> str:
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=15, check=False)
+def call(*argv: str, ignore: bool = False, input_text: str | None = None) -> str:
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=15, check=False,
+                            input=input_text)
     if result.returncode and not ignore:
         raise RuntimeError("%s failed: %s" % (argv[0], result.stderr.strip()[:350]))
     return result.stdout.strip()
@@ -246,11 +247,14 @@ def nft_install(chain: str, tunnel: str, mac: str, item: dict):
     call("nft", "add", "chain", "bridge", "rp_lan", chain,
          "{", "type", "filter", "hook", "forward", "priority", "-300", ";",
          "policy", "accept", ";", "}")
-    if source is not None and source[1] is not None:
-        call("nft", "add", "set", "bridge", "rp_lan", source_set,
-             "{", "type", "ipv4_addr", ";", "flags", "timeout", ";", "}")
+    # Always install the same empty-by-default IP set. New verified sources
+    # are updated transactionally; a status/lease refresh cannot reattach L2.
+    call("nft", "add", "set", "bridge", "rp_lan", source_set,
+         "{", "type", "ipv4_addr", ";", "flags", "timeout", ";", "}")
+    if source is not None:
         call("nft", "add", "element", "bridge", "rp_lan", source_set,
-             "{", source[0], "timeout", str(source[1]) + "s", "}")
+             "{", source[0], *(
+                 ("timeout", str(source[1]) + "s") if source[1] is not None else ()), "}")
     rules = [
         ("ether", "saddr", "!=", mac.lower(), "drop"),
         ("ether", "type", "vlan", "drop"),
@@ -265,21 +269,28 @@ def nft_install(chain: str, tunnel: str, mac: str, item: dict):
         ("ether", "type", "ip", "ip", "saddr", "0.0.0.0", "udp", "sport", "68",
          "udp", "dport", "67", "accept"),
     ]
-    permitted = None
-    if source is not None:
-        permitted = source[0] if source[1] is None else "@" + source_set
-    if permitted:
-        rules += [
-            ("ether", "type", "arp", "arp", "saddr", "ip", "!=", permitted, "drop"),
-            ("ether", "type", "ip", "ip", "saddr", "!=", permitted, "drop"),
-        ]
-    else:
-        rules += [("ether", "type", "arp", "drop"),
-                  ("ether", "type", "ip", "drop")]
+    rules += [
+        ("ether", "type", "arp", "arp", "saddr", "ip", "!=", "@" + source_set, "drop"),
+        ("ether", "type", "ip", "ip", "saddr", "!=", "@" + source_set, "drop"),
+    ]
     rules.append(("ether", "type", "!=", "{", "arp", ",", "ip", "}", "drop"))
     for tail in rules:
         call("nft", "add", "rule", "bridge", "rp_lan", chain,
              "iifname", tunnel, *tail)
+
+
+def nft_refresh_source(chain: str, item: dict):
+    # Immutable transport, atomic kernel update. Never authorize an entire
+    # subnet; absence/expiry of a verified lease leaves an empty set.
+    source = bound_source(item)
+    source_set = "rpip_" + chain[3:]
+    commands = ["flush set bridge rp_lan " + source_set]
+    if source is not None:
+        commands.append("add element bridge rp_lan " + source_set + " { " +
+                        source[0] +
+                        (" timeout " + str(source[1]) + "s" if source[1] is not None else "") +
+                        " }")
+    call("nft", "-f", "-", input_text="\n".join(commands) + "\n")
 
 
 def nft_remove(chain: str):
@@ -404,6 +415,25 @@ def reconcile(config: dict, current: dict):
                 if not isinstance(revision, int) or (
                     revision <= previous_revision and not policy_only):
                     raise ValueError("Changed attachment requires a newer revision")
+                if policy_only:
+                    tunnel, bridge, chain, _ = names(gate, tenant, a, item["lanInterface"])
+                    links, _, _ = device_state()
+                    port = next((link for link in links if link.get("ifname") == tunnel), None)
+                    owner = next((link for link in links if link.get("ifname") == bridge), None)
+                    if not owner or owner.get("ifalias") != "rp-lan:" + gate + ":" + item["lanInterface"] or \
+                            not port or port.get("master") not in (bridge, owner.get("ifindex")):
+                        raise ValueError("Gate tunnel ownership changed during lease refresh")
+                    try:
+                        nft_refresh_source(chain, item)
+                    except Exception:
+                        # Transaction rejected: never allow the old source
+                        # to remain authorized after revocation/lease change.
+                        remove_one(gate, tenant, a, old[a], new, old)
+                        old.pop(a, None)
+                        save_state({"gateId": gate, "tenantId": tenant, "attachments": old})
+                        raise
+                    old[a] = item
+                    continue
                 remove_one(gate, tenant, a, old[a], new, old)
                 old.pop(a, None)
                 save_state({"gateId": gate, "tenantId": tenant, "attachments": old})
