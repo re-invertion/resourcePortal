@@ -193,6 +193,8 @@ const commands = {
       "src/pages/applications.test.tsx", "src/pages/app-group/route.test.tsx",
       "src/pages/app-group/create-app-wizard.test.tsx", "src/pages/app-group/app-detail.test.tsx",
       "src/pages/app-group/networking.test.tsx", "src/pages/app-group/config-code-preview.test.tsx", "src/pages/tenant-access-pages.test.tsx",
+      "src/components/status-tone.test.tsx", "src/pages/app-group/activity-scope.test.ts", "src/pages/app-group/activity.test.tsx",
+      "src/pages/tenant-access-management.test.tsx",
       "src/pages/tenant-dashboard.test.tsx", "src/pages/tenant-settings.test.tsx",
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
@@ -301,15 +303,24 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/billing\/billing-voucher-codes\.spec\.ts$/, ["billing-correctness"]],
   [/^packages\/resourceportal-web\/src\/(?:App\.tsx|components\/billing-usage-charts\.tsx)$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/lib\/(?:billing-display|compute-estimate|role-capabilities)(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
-  [/^packages\/resourceportal-web\/src\/pages\/(?:applications|tenant-dashboard|tenant-access-pages|tenant-branding|tenant-operation-fixes|domain-assignment|network-status-display)(?:\.test)?\.tsx?$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/(?:applications|tenant-dashboard|tenant-branding|tenant-operation-fixes|domain-assignment|network-status-display)(?:\.test)?\.tsx?$/, ["tenant-ux-patch"]],
   // Tenant volume reads and detailed attachments exercise the actual backend
   // volume suite as well as the tenant storage component regression.
   [/^packages\/resourceportal-api\/src\/volumes\/volume-read\.service(?:\.spec)?\.ts$/, ["volume-operations"]],
   // New syntax-aware config preview and MCP catalog safeguards must never
   // silently skip frontend regression checks on fast-fix releases.
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:config|config-code-preview\.test)\.tsx$/, ["tenant-ux-patch"]],
+  // Issue #399: exact status mapping, tenant operation scope and RBAC UI
+  // are release-critical; new executable files must not evade changed-path coverage.
+  [/^packages\/resourceportal-web\/src\/components\/status-tone(?:\.test)?\.tsx?$/, ["tenant-ux-patch", "security"]],
+  [/^packages\/resourceportal-web\/src\/components\/(?:design-system\/primitives|ui)\.tsx$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:activity(?:\.test)?|activity-scope(?:\.test)?)(?:\.ts|\.tsx)$/, ["applications", "operations", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-edit\.tsx$/, ["applications", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-access-(?:pages|management)(?:\.test)?\.tsx$/, ["tenant-access", "security", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.test\.tsx$/, ["tenant-ux-patch", "mcp-oauth"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant\.tsx$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant\.final-routes\.test\.tsx$/, ["tenant-access", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-usability\.test\.tsx$/, ["tenant-access", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:create-app-wizard\.tsx|(?:application-navigation|layout|networking|route)(?:\.test)?\.tsx)$/, ["tenant-ux-patch"]],
   [/^scripts\/installer\/common\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],
   [/^scripts\/installer\/(target-upgrade|recovery)\.sh$/, ["upgrade-recovery", "platform-release", "installer"]],

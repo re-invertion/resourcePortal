@@ -162,3 +162,16 @@ it("only shows tenant MCP tools and keeps protocol metadata under compact Detail
   const details=screen.getByText("Details").closest("details");
   expect(details?.open).toBe(false);
 });
+
+it("does not render MCP content or a phantom zero-tool catalog in Branding", async () => {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    calls.push(String(input));
+    return json([]);
+  }));
+  render(<TenantSettingsPage tenantId="test-tenant" section="branding" />);
+  expect(await screen.findByRole("heading", { name: "Tenant settings" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Model Context Protocol (MCP)" })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Available Tenant MCP tools" })).toBeNull();
+  expect(calls.some(path => path.includes("/mcp-settings/catalog"))).toBe(false);
+});

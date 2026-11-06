@@ -3,7 +3,7 @@ import { ApplicationsPage } from "./applications";
 import { CreateAppGroupPage } from "./app-group-create";
 import { ImportAppGroupPage } from "./app-group-import";
 import { AppGroupRoute } from "./app-group/route";
-import { TenantAccess, TenantBilling } from "./tenant-resources";
+import { TenantBilling } from "./tenant-resources";
 import { TenantVolumesPage, TenantVolumeDetailPage, TenantRegistriesPage, TenantRegistryDetailPage, TenantDomainsPage, TenantDomainDetailPage } from "./tenant-storage-pages";
 import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 import { TenantIdentitySsoPage } from "./tenant-identity-sso";
@@ -20,7 +20,7 @@ type TenantPageProps = {
   userId: string;
 };
 
-export function TenantPage({ tenantId, section, resourceId, segments = [] }: TenantPageProps) {
+export function TenantPage({ tenantId, section, resourceId, segments = [], userId }: TenantPageProps) {
   if (section === "overview") return <TenantDashboard tenantId={tenantId} />;
   if (section === "applications") {
     if (segments[0] === "new") return <CreateAppGroupPage tenantId={tenantId} />;
@@ -30,7 +30,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "app-groups") return (segments.length || resourceId) ? <AppGroupRoute tenantId={tenantId} segments={segments.length ? segments : [resourceId!]} /> : <ApplicationsPage tenantId={tenantId} />;
   if (section === "storage-networking" || section === "storage") return <TenantVolumesPage tenantId={tenantId} />;
   if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} />;
-  if (section === "access") return <TenantAccess tenantId={tenantId} />;
+  if (section === "access") return <TenantAdministrationPage tenantId={tenantId} userId={userId} section="overview" />;
   if (section === "activity") {
     const view = segments[0] === "audit" ? "audit" : "operations";
     const operationId = view === "operations" ? segments[1] : undefined;
@@ -44,7 +44,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [] }: Ten
   if (section === "volumes") return resourceId && resourceId !== "new" ? <TenantVolumeDetailPage tenantId={tenantId} volumeId={resourceId} /> : <TenantVolumesPage tenantId={tenantId} createImmediately={segments[0] === "new" || resourceId === "new"} />;
   if (section === "registries") return resourceId ? <TenantRegistryDetailPage tenantId={tenantId} registryId={resourceId} /> : <TenantRegistriesPage tenantId={tenantId} />;
   if (section === "domains") return resourceId ? <TenantDomainDetailPage tenantId={tenantId} domainId={resourceId} /> : <TenantDomainsPage tenantId={tenantId} />;
-  if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} section={segments[0]} />;
+  if (section === "administration") return <TenantAdministrationPage tenantId={tenantId} userId={userId} section={segments[0]} />;
   if (section === "credentials") return <TenantCredentialsPage tenantId={tenantId} />;
   if (section === "identity-sso") return <TenantIdentitySsoPage tenantId={tenantId} />;
   if (section === "audit") return <TenantAuditPage tenantId={tenantId} />;

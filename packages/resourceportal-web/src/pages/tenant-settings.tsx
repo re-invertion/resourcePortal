@@ -247,7 +247,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
             </Button>
           </div>
         </div>
-      </Card> : <>
+      </Card> : activeSection === "mcp" ? <>
       <Card id="mcp" className="overflow-hidden">
         <div className="flex items-start gap-3 border-b border-[#E1E7F0] px-5 py-4">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]"><SettingsIcon size={18} /></span>
@@ -344,7 +344,7 @@ export function TenantSettingsPage({ tenantId, section = "resource-bot" }: { ten
         </div>
       </Card>
       <Card className="mt-6 overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Available Tenant MCP tools</h2><p className="mt-1 text-xs text-[#718096]">Current tenant-scoped tool catalog. {tenantMcpTools.length} tools.</p></div>{catalog.loading?<p className="p-5 text-sm">Loading tools…</p>:catalog.error?<p className="p-5 text-sm text-[#B42318]">Tool catalog unavailable.</p>:<div className="max-h-[480px] divide-y divide-[#E1E7F0] overflow-y-auto">{tenantMcpTools.map(tool=><div key={tool.name} className="px-5 py-3"><strong className="block break-all text-[13px]">{tool.name}</strong><p className="mt-1 text-xs text-[#526070]">{tool.description}</p></div>)}</div>}</Card>
-      </>}
+      </> : null}
     </main>
   );
 }

@@ -1,13 +1,11 @@
+import { semanticStatusTone } from "./status-tone";
 import type { ReactNode } from "react";
 
 export type StatusTone = "positive" | "warning" | "negative" | "neutral";
 
 export function statusTone(value: string): StatusTone {
-  const normalized = value.replace(/[^a-z]/gi, "").toLowerCase();
-  if (["healthy", "ready", "running", "succeeded", "success", "active", "insync", "available", "completed", "complete", "valid", "verified"].includes(normalized)) return "positive";
-  if (["failed", "error", "unhealthy", "blocked", "suspended", "drifted", "invalid", "disconnected", "removed", "rollbackfailed"].includes(normalized)) return "negative";
-  if (["stopped", "pending", "unknown", "degraded", "maintenance", "paused", "validating", "deploying", "rollingback"].includes(normalized)) return "warning";
-  return "neutral";
+  const tone = semanticStatusTone(value);
+  return tone === "success" ? "positive" : tone === "danger" ? "negative" : tone === "warning" ? "warning" : "neutral";
 }
 
 export function StatusBadge({ children, tone }: { children: string; tone?: StatusTone }) {

@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
@@ -751,3 +752,38 @@ test("private-cgroup real Swarm smoke uses supported Docker namespace flags (#38
   assert.match(script, /--mount type=bind,source=\/sys\/fs\/cgroup,target=\/host\/sys\/fs\/cgroup,readonly/);
   assert.match(script, /assert\.equal\(report\.status, 'Observed'/);
 });
+
+test("issue 399 console RBAC, activity scoping, status mapping and new regressions cannot escape Fast Fix coverage", () => {
+  const files = [
+    "packages/resourceportal-web/src/components/status-tone.ts",
+    "packages/resourceportal-web/src/components/status-tone.test.tsx",
+    "packages/resourceportal-web/src/components/design-system/primitives.tsx",
+    "packages/resourceportal-web/src/components/ui.tsx",
+    "packages/resourceportal-web/src/pages/app-group/activity.tsx",
+    "packages/resourceportal-web/src/pages/app-group/activity.test.tsx",
+    "packages/resourceportal-web/src/pages/app-group/activity-scope.ts",
+    "packages/resourceportal-web/src/pages/app-group/activity-scope.test.ts",
+    "packages/resourceportal-web/src/pages/app-group/app-detail.tsx",
+    "packages/resourceportal-web/src/pages/app-group/app-edit.tsx",
+    "packages/resourceportal-web/src/pages/tenant-access-pages.tsx",
+    "packages/resourceportal-web/src/pages/tenant-access-pages.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant-access-management.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant.final-routes.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant-usability.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant-settings.tsx",
+    "packages/resourceportal-web/src/pages/tenant-settings.test.tsx",
+    "packages/resourceportal-web/src/pages/tenant.tsx",
+  ];
+  const plan = selectProfiles(files);
+  for (const profile of ["applications", "operations", "tenant-access", "security", "tenant-ux-patch", "mcp-oauth"]) {
+    assert.ok(plan.profiles.includes(profile), `Missing ${profile}`);
+  }
+  assert.equal(plan.vpnSmoke, false);
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/pages/unregistered-risky-ui.tsx"]), /unclassified changes/);
+  const source = String(awaitReadFile());
+  assert.ok(source.includes("src/pages/app-group/activity-scope.test.ts"));
+  assert.ok(source.includes("src/pages/app-group/activity.test.tsx"));
+  assert.ok(source.includes("src/pages/tenant-access-management.test.tsx"));
+  assert.ok(source.includes("src/components/status-tone.test.tsx"));
+});
+function awaitReadFile() { return readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8"); }
