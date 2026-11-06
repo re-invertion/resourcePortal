@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { apiRequest } from "../api/client";
-import { Button, Callout, Card, ConfirmActionButton, DataTable, EmptyState, Field, KeyIcon, LockIcon, PageHeader, PlusIcon, Select, StatusText, TextInput, TrashIcon, UsersIcon, statusTone } from "../components/design-system";
+import { Button, Callout, Card, ConfirmActionButton, ErrorState, DataTable, EmptyState, Field, KeyIcon, LockIcon, PageHeader, PlusIcon, Select, StatusText, TextInput, TrashIcon, UsersIcon, statusTone } from "../components/design-system";
 import { idOf, items, text, useApi } from "../hooks/use-api";
 import { toast } from "../components/toast";
 import { capabilityStatus, inviteCapabilities } from "../lib/role-capabilities";
@@ -11,17 +11,328 @@ function roleName(role:R){return text(role.displayName,text(role.name,"Role"));}
 function roleOptions(roles:R[]){return roles.map(r=><option key={idOf(r)} value={idOf(r)}>{roleName(r)}</option>)}
 function invitationLink(token:string){const path=`/invitations/${encodeURIComponent(token)}`;return typeof window==="undefined"?path:new URL(path,window.location.origin).toString();}
 
-export function TenantAdministrationPage({tenantId,section}:{tenantId:string;section?:string}){
- const root=`/api/tenants/${encodeURIComponent(tenantId)}`;const memberships=useApi<unknown>(`${root}/memberships`);const invitations=useApi<unknown>(`${root}/invitations`);const rolesQ=useApi<unknown>(`${root}/roles`);const groups=useApi<unknown>(`${root}/groups`);const roles=items<R>(rolesQ.data);
- const [inviteOpen,setInviteOpen]=useState(section==="invite");const [invite,setInvite]=useState({email:"",roleId:""});const [generatedInvite,setGeneratedInvite]=useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();const [groupOpen,setGroupOpen]=useState(false);const [group,setGroup]=useState({name:"",description:""});const [working,setWorking]=useState(false);
- async function createInvite(){if(!invite.email||!invite.roleId)return;setWorking(true);try{const created=await apiRequest<R>(`${root}/invitations`,{method:"POST",body:{email:invite.email,roleIds:[invite.roleId]}});const token=text(created.token);if(!token)throw new Error("Invitation token was not returned.");const delivery=(created.emailDelivery??{}) as R;const emailSent=delivery.sent===true;setGeneratedInvite({email:invite.email,link:invitationLink(token),emailSent,deliveryAttempted:delivery.attempted===true,deliveryReason:text(delivery.reason,"")});setInviteOpen(false);setInvite({email:"",roleId:""});await invitations.reload();toast.success(emailSent?"Invitation email sent.":"Invitation link generated.");}catch(c){toast.errorFrom(c,"Invitation could not be created.");}finally{setWorking(false);}}
- async function regenerateInvite(item:R){setWorking(true);try{const updated=await apiRequest<R>(`${root}/invitations/${encodeURIComponent(idOf(item))}/resend`,{method:"POST"});const token=text(updated.token);if(!token)throw new Error("Invitation token was not returned.");const delivery=(updated.emailDelivery??{}) as R;const emailSent=delivery.sent===true;setGeneratedInvite({email:text(updated.email,text(item.email,"Invited user")),link:invitationLink(token),emailSent,deliveryAttempted:delivery.attempted===true,deliveryReason:text(delivery.reason,"")});await invitations.reload();toast.success(emailSent?"Invitation email resent.":"New invitation link generated.");}catch(c){toast.errorFrom(c,"Invitation could not be regenerated.");}finally{setWorking(false);}}
- async function copyInvitationLink(){if(!generatedInvite)return;try{await navigator.clipboard.writeText(generatedInvite.link);toast.success("Invitation link copied.");}catch{toast.error("Copy failed. Select the invitation link and copy it manually.");}}
- async function createGroup(){if(!group.name)return;setWorking(true);try{await apiRequest(`${root}/groups`,{method:"POST",body:{name:group.name,description:group.description||undefined}});setGroupOpen(false);setGroup({name:"",description:""});await groups.reload();toast.success("Group created.");}catch(c){toast.errorFrom(c,"Group could not be created.");}finally{setWorking(false);}}
- async function del(path:string,reload:()=>Promise<unknown>){try{await apiRequest(path,{method:"DELETE"});await reload();toast.success("Access resource deleted.");}catch(c){toast.errorFrom(c,"Delete failed.");}}
- const memberRows=items<R>(memberships.data),inviteRows=items<R>(invitations.data),groupRows=items<R>(groups.data);
- return <main><PageHeader eyebrow="Tenant security" title="Access management" description="Memberships, invitations, roles and groups. Tenant SSO settings are managed separately." actions={<Button variant="primary" onClick={()=>setInviteOpen(true)}><PlusIcon size={15}/>Invite user</Button>}/><AccessTabs tenantId={tenantId} active="administration"/>{generatedInvite?<Card className="mb-5 border-[#A9D6B6] p-5"><h2 className="font-semibold">{generatedInvite.emailSent?"Invitation sent":"Invitation link ready"}</h2><p className="mt-1 text-sm text-[#5B6678]">{generatedInvite.emailSent?<>ResourcePortal sent an invitation email to <strong>{generatedInvite.email}</strong>. Keep the link below as a fallback.</>:generatedInvite.deliveryAttempted?<>The invitation was created, but SMTP delivery failed{generatedInvite.deliveryReason?<>: <strong>{generatedInvite.deliveryReason}</strong></>:null}. Share the link manually with <strong>{generatedInvite.email}</strong>.</>:<>SMTP delivery is disabled or unavailable. Share this link manually with <strong>{generatedInvite.email}</strong>.</>}</p><code className="mt-4 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{generatedInvite.link}</code><div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="primary" onClick={()=>void copyInvitationLink()}>Copy invitation link</Button><Button size="sm" onClick={()=>setGeneratedInvite(undefined)}>Done</Button></div><div className="mt-4"><Callout tone="warning" title="Treat this link like a credential">Generating a new link for the same invitation invalidates the previous token.</Callout></div></Card>:null}{inviteOpen?<Card className="mb-5 grid gap-4 p-5 md:grid-cols-2"><Field label="Email" required><TextInput type="email" value={invite.email} onChange={e=>setInvite({...invite,email:e.target.value})}/></Field><Field label="Role" required><Select value={invite.roleId} onChange={e=>setInvite({...invite,roleId:e.target.value})}><option value="">Select role by name</option>{roleOptions(roles)}</Select></Field>{invite.roleId ? <div className="md:col-span-2 rounded-lg border border-[#D7E0EC] bg-[#F8FAFD] p-4" aria-label="Selected role permissions"><h3 className="text-sm font-semibold">{roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}</h3><p className="mt-1 text-xs text-[#718096]">Verify the access this role grants before sending the invitation.</p><dl className="mt-3 grid gap-2 sm:grid-cols-2">{inviteCapabilities.map(cap => <div key={cap.name} className="flex justify-between gap-3 text-xs"><dt>{cap.name}</dt><dd className="font-semibold">{capabilityStatus(roles.find(role => idOf(role) === invite.roleId), cap.permission)}</dd></div>)}</dl></div> : null}
-<div className="flex gap-2 md:col-span-2"><ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working||!invite.email||!invite.roleId} confirmTitle="Confirm invitation" confirmDescription={"Invite "+invite.email+" as "+roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})+"?"} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton><Button onClick={()=>setInviteOpen(false)}>Cancel</Button></div></Card>:null}<div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,.8fr)]"><Card className="min-w-0 overflow-hidden"><div className="border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Memberships</h2></div><DataTable embedded loading={memberships.loading} columns={[{key:"member",label:"Member"},{key:"status",label:"Status"},{key:"roles",label:"Roles"}]} rows={memberRows.map(m=>({key:idOf(m),cells:{member:<div className="min-w-0 max-w-[220px]"><strong className="block truncate">{text(m.displayName,text((m.user as R|undefined)?.displayName,text(m.email,text((m.user as R|undefined)?.email,"Member"))))}</strong><span className="block break-all text-xs text-[#718096]">{text(m.email,text((m.user as R|undefined)?.email,""))}</span></div>,status:<StatusText tone={statusTone(m.status)}>{text(m.status,"Active")}</StatusText>,roles:<span className="block max-w-[180px] break-words">{Array.isArray(m.roles)?(m.roles as R[]).map(roleName).join(", "):"—"}</span>}}))} empty={<EmptyState icon={<UsersIcon/>} title="No memberships" description="Invite a user to grant tenant access."/>}/></Card><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><h2 className="font-semibold">Invitations</h2><Button size="sm" variant="ghost" onClick={()=>setInviteOpen(true)}>Invite</Button></div><div className="divide-y divide-[#E1E7F0]">{inviteRows.map(i=><div key={idOf(i)} className="flex items-center justify-between gap-3 px-5 py-3"><div className="min-w-0"><strong className="block truncate text-[13px]">{text(i.email)}</strong><span className="text-xs text-[#718096]">{text(i.status,"Pending")}</span></div><div className="flex shrink-0 items-center gap-1"><Button size="sm" variant="ghost" disabled={working} onClick={()=>void regenerateInvite(i)}>Generate new link</Button><ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete invitation ${text(i.email)}`} confirmTitle={`Revoke invitation for ${text(i.email)}?`} confirmDescription="The invitation will no longer be usable. You can send a new invitation later if needed." confirmLabel="Revoke invitation" onConfirm={()=>del(`${root}/invitations/${encodeURIComponent(idOf(i))}`,invitations.reload)}><TrashIcon size={15}/></ConfirmActionButton></div></div>)}{!inviteRows.length&&!invitations.loading?<div className="p-5"><EmptyState title="No pending invitations" description="New invitations will appear here until they are accepted or revoked."/></div>:null}</div></Card></div><div className="mt-6 grid gap-6 xl:grid-cols-2"><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-[#E1E7F0] px-5 py-4"><div><h2 className="font-semibold">Groups</h2><p className="text-xs text-[#718096]">Named collections used for access organization.</p></div><Button size="sm" onClick={()=>setGroupOpen(true)}><PlusIcon size={14}/>Add group</Button></div>{groupOpen?<div className="grid gap-3 border-b border-[#E1E7F0] bg-[#F8FAFD] p-4 sm:grid-cols-2"><Field label="Name"><TextInput value={group.name} onChange={e=>setGroup({...group,name:e.target.value})}/></Field><Field label="Description"><TextInput value={group.description} onChange={e=>setGroup({...group,description:e.target.value})}/></Field><div className="flex gap-2 sm:col-span-2"><Button size="sm" variant="primary" disabled={working||!group.name} onClick={()=>void createGroup()}>Create group</Button><Button size="sm" onClick={()=>setGroupOpen(false)}>Cancel</Button></div></div>:null}<DataTable embedded loading={groups.loading} columns={[{key:"name",label:"Group"},{key:"description",label:"Description"},{key:"actions",label:""}]} rows={groupRows.map(g=>({key:idOf(g),cells:{name:<strong>{text(g.name)}</strong>,description:text(g.description,"—"),actions:<ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete ${text(g.name)}`} confirmTitle={`Delete group ${text(g.name)}?`} confirmDescription="This removes the tenant access group. Existing assignments are subject to backend deletion rules." confirmLabel="Delete group" onConfirm={()=>del(`${root}/groups/${encodeURIComponent(idOf(g))}`,groups.reload)}><TrashIcon size={15}/></ConfirmActionButton>}}))} empty={<EmptyState icon={<UsersIcon/>} title="No groups" description="Create a group when tenant access needs a reusable organizational boundary."/>}/></Card><Card className="overflow-hidden p-5"><h2 className="font-semibold">Identity &amp; SSO</h2><p className="mt-2 text-sm text-[#5B6678]">Manage tenant-issued OIDC clients from Identity &amp; SSO. ResourcePortal native login remains the tenant access method.</p><a className="mt-3 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a></Card></div></main>;
+/** Effective permissions are for UI affordances only. Every write is still enforced by the tenant-scoped backend guards. */
+export function mayManageAccess(
+  membership: R | undefined,
+  permission: string,
+): boolean {
+  if (!membership || membership.status !== "Active") return false;
+  const direct = items<R>(membership.roles);
+  const inherited = items<R>(membership.groups).flatMap(group => items<R>(group.roles));
+  return [...direct, ...inherited].some(role => {
+    const permissions = Array.isArray(role.permissions) ? role.permissions : [];
+    return permissions.includes("*") || permissions.includes(permission);
+  });
+}
+function memberName(m: R): string {
+  const u = (m.user ?? {}) as R;
+  return text(u.displayName, text(u.email, text(m.userId, "Member")));
+}
+function membershipRoleIds(m: R): string[] {
+  return items<R>(m.roles).map(idOf);
+}
+
+export function TenantAdministrationPage({ tenantId, section, userId }: {
+  tenantId: string;
+  section?: string;
+  userId?: string;
+}) {
+  const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
+  const memberships = useApi<unknown>(`${root}/memberships`);
+  const invitations = useApi<unknown>(`${root}/invitations`);
+  const rolesQ = useApi<unknown>(`${root}/roles`);
+  const groups = useApi<unknown>(`${root}/groups`);
+  const roles = items<R>(rolesQ.data);
+  const memberRows = items<R>(memberships.data);
+  const inviteRows = items<R>(invitations.data);
+  const groupRows = items<R>(groups.data);
+  const current = memberRows.find(m => m.userId === userId);
+  // Permissions are a live server projection. Never present a stale
+  // management control while the backing memberships/groups snapshot is
+  // refreshing or unavailable after an access mutation.
+  const can = (permission: string) =>
+    !memberships.loading && !memberships.error &&
+    !groups.loading && !groups.error &&
+    mayManageAccess(current, permission);
+  const refreshEffectiveAccess = async () => {
+    await Promise.all([groups.reload(), memberships.reload()]);
+  };
+  const [inviteOpen, setInviteOpen] = useState(section === "invite");
+  const [invite, setInvite] = useState({ email: "", roleId: "" });
+  const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [group, setGroup] = useState({ name: "", description: "" });
+  const [working, setWorking] = useState(false);
+  const [editingMembership, setEditingMembership] = useState<R>();
+  const [memberRoles, setMemberRoles] = useState<string[]>([]);
+  const [memberStatus, setMemberStatus] = useState("Active");
+  const [editingGroup, setEditingGroup] = useState<R>();
+  const [groupEdit, setGroupEdit] = useState({ name: "", description: "" });
+  const [newGroupMember, setNewGroupMember] = useState("");
+  const [newGroupRole, setNewGroupRole] = useState("");
+
+  async function action(request: () => Promise<unknown>, reload: () => Promise<unknown>, message: string) {
+    setWorking(true);
+    try {
+      await request();
+      await reload();
+      toast.success(message);
+    } catch (error) {
+      toast.errorFrom(error, "The access change could not be completed.");
+      throw error;
+    } finally {
+      setWorking(false);
+    }
+  }
+  async function createInvite() {
+    if (!can("membership.invite") || !invite.email.trim() || !invite.roleId) return;
+    setWorking(true);
+    try {
+      const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: { email: invite.email.trim(), roleIds: [invite.roleId] } });
+      const token = text(created.token);
+      if (!token) throw new Error("Invitation token was not returned.");
+      const delivery = (created.emailDelivery ?? {}) as R;
+      setGeneratedInvite({
+        email: text(created.email, invite.email), link: invitationLink(token),
+        emailSent: delivery.sent === true, deliveryAttempted: delivery.attempted === true,
+        deliveryReason: text(delivery.reason, ""),
+      });
+      await invitations.reload();
+      setInviteOpen(false);
+      toast.success(delivery.sent === true ? "Invitation email sent." : "Invitation link generated.");
+    } catch (error) {
+      toast.errorFrom(error, "Invitation could not be created.");
+    } finally { setWorking(false); }
+  }
+  async function regenerateInvite(item: R) {
+    if (!can("membership.invite")) return;
+    setWorking(true);
+    try {
+      const updated = await apiRequest<R>(`${root}/invitations/${encodeURIComponent(idOf(item))}/resend`, { method: "POST" });
+      const token = text(updated.token);
+      if (!token) throw new Error("Invitation token was not returned.");
+      const delivery = (updated.emailDelivery ?? {}) as R;
+      setGeneratedInvite({
+        email: text(updated.email, text(item.email, "Invited user")),
+        link: invitationLink(token), emailSent: delivery.sent === true,
+        deliveryAttempted: delivery.attempted === true, deliveryReason: text(delivery.reason, ""),
+      });
+      await invitations.reload();
+      toast.success(delivery.sent === true ? "Invitation email resent." : "New invitation link generated.");
+    } catch (error) { toast.errorFrom(error, "Invitation could not be regenerated."); }
+    finally { setWorking(false); }
+  }
+  async function copyInvitationLink() {
+    if (!generatedInvite) return;
+    try { await navigator.clipboard.writeText(generatedInvite.link); toast.success("Invitation link copied."); }
+    catch { toast.error("Copy failed. Select the invitation link and copy it manually."); }
+  }
+  async function createGroup() {
+    if (!can("group.create") || !group.name.trim()) return;
+    setWorking(true);
+    try {
+      await apiRequest(`${root}/groups`, { method: "POST", body: { name: group.name.trim(), description: group.description } });
+      setGroupOpen(false);
+      setGroup({ name: "", description: "" });
+      await groups.reload();
+      toast.success("Group created.");
+    } catch (error) { toast.errorFrom(error, "Group could not be created."); }
+    finally { setWorking(false); }
+  }
+  function beginMember(m: R) {
+    setEditingMembership(m);
+    setMemberRoles(membershipRoleIds(m));
+    setMemberStatus(text(m.status, "Active"));
+  }
+  async function saveMembership() {
+    if (!editingMembership || !can("membership.update") || !memberRoles.length) return;
+    try {
+      await action(
+        () => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(editingMembership))}`, { method: "PATCH", body: { roleIds: memberRoles, status: memberStatus } }),
+        refreshEffectiveAccess,
+        "Membership access saved. Identity grants may need reconciliation.",
+      );
+      setEditingMembership(undefined);
+    } catch { /* Error has already been reported; preserve edits. */ }
+  }
+  function beginGroup(g: R) {
+    setEditingGroup(g);
+    setGroupEdit({ name: text(g.name, ""), description: text(g.description, "") });
+    setNewGroupMember(""); setNewGroupRole("");
+  }
+  async function saveGroup() {
+    if (!editingGroup || !can("group.update") || !groupEdit.name.trim()) return;
+    try {
+      await action(
+        () => apiRequest(`${root}/groups/${encodeURIComponent(idOf(editingGroup))}`, { method: "PATCH", body: { name: groupEdit.name.trim(), description: groupEdit.description } }),
+        groups.reload, "Group updated.",
+      );
+      setEditingGroup(undefined);
+    } catch { /* Preserve current changes. */ }
+  }
+  async function groupMutation(path: string, method: "POST" | "DELETE", body?: R) {
+    if (!editingGroup) return;
+    try {
+      await action(() => apiRequest(path, { method, ...(body ? { body } : {}) }), refreshEffectiveAccess, "Group access updated.");
+      // Keep the selected group detail in sync, including roles and members.
+      const refreshed = await apiRequest<unknown>(`${root}/groups`);
+      const g = items<R>(refreshed).find(row => idOf(row) === idOf(editingGroup));
+      if (g) setEditingGroup(g);
+      setNewGroupMember(""); setNewGroupRole("");
+    } catch { /* Keep detail open for retry. */ }
+  }
+
+  const accessError = memberships.error || invitations.error || rolesQ.error || groups.error;
+  const groupPath = editingGroup ? `${root}/groups/${encodeURIComponent(idOf(editingGroup))}` : "";
+
+  return <main>
+    <PageHeader eyebrow="Tenant security" title={section === "overview" ? "Access" : "Access management"}
+      description="Manage ResourcePortal memberships, inherited group permissions and invitations. OAuth application access is a separate entitlement, not the Viewer role."
+      actions={can("membership.invite") ? <Button variant="primary" onClick={() => setInviteOpen(true)}><PlusIcon size={15}/>Invite user</Button> : undefined}
+    />
+    <AccessTabs tenantId={tenantId} active={section === "overview" ? "overview" : "administration"} />
+    {accessError ? <ErrorState title="Access data could not be loaded" error={accessError} retry={() => void Promise.all([memberships.reload(), invitations.reload(), rolesQ.reload(), groups.reload()])} /> : null}
+    {generatedInvite ? <Card className="mb-5 p-5">
+      <h2 className="font-semibold">{generatedInvite.emailSent ? "Invitation sent" : "Invitation link ready"}</h2>
+      <p className="mt-2 text-sm">{generatedInvite.emailSent ? "Invitation email was sent." : "SMTP delivery is disabled or unavailable. Share this single-use link securely."}</p>
+      <code className="mt-4 block break-all rounded-md bg-[#F3F6FA] p-3 text-xs">{generatedInvite.link}</code>
+      <div className="mt-3 flex gap-2"><Button size="sm" onClick={() => void copyInvitationLink()}>Copy invitation link</Button><Button size="sm" onClick={() => setGeneratedInvite(undefined)}>Done</Button></div>
+      <Callout tone="warning" title="Treat this link as a credential">Regenerating an invitation revokes its previous link.</Callout>
+    </Card> : null}
+    {inviteOpen && can("membership.invite") ? <Card className="mb-5 grid gap-4 p-5 md:grid-cols-2">
+      <Field label="Email" required><TextInput type="email" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} /></Field>
+      <Field label="ResourcePortal role" required><Select value={invite.roleId} onChange={e => setInvite({ ...invite, roleId: e.target.value })}><option value="">Select a role</option>{roleOptions(roles)}</Select></Field>
+      {invite.roleId ? <div className="md:col-span-2 text-xs text-[#526070]">Selected RP role: {roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}. This is not external-application SSO access.</div> : null}
+      <div className="flex gap-2 md:col-span-2">
+        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || !invite.email || !invite.roleId} confirmTitle="Confirm invitation"
+          confirmDescription={`Invite ${invite.email} with the selected ResourcePortal role?`} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
+        <Button onClick={() => setInviteOpen(false)}>Cancel</Button>
+      </div>
+    </Card> : null}
+    <div className="grid gap-6 xl:grid-cols-[1.3fr_.7fr]">
+      <Card className="overflow-hidden">
+        <div className="border-b border-[#E1E7F0] p-4"><h2 className="font-semibold">Memberships</h2><p className="text-xs text-[#718096]">Direct and inherited access are shown separately.</p></div>
+        <DataTable embedded loading={memberships.loading} columns={[{ key: "member", label: "Member" }, { key: "status", label: "Status" }, { key: "roles", label: "Direct roles / Groups" }, { key: "actions", label: "" }]}
+          rows={memberRows.map(m => ({
+            key: idOf(m), cells: {
+              member: <div className="max-w-56 min-w-0"><strong className="block truncate">{memberName(m)}</strong><span className="block break-all text-xs text-[#718096]">{text(((m.user ?? {}) as R).email, "")}</span></div>,
+              status: <StatusText tone={statusTone(m.status)}>{text(m.status, "Unknown")}</StatusText>,
+              roles: <div className="min-w-0 text-xs"><strong className="block">{items<R>(m.roles).map(roleName).join(", ") || "No direct role"}</strong>
+                {items<R>(m.groups).map(g => <span key={idOf(g)} className="block text-[#526070]">{text(g.name)} (inherited: {items<R>(g.roles).map(roleName).join(", ") || "none"})</span>)}
+              </div>,
+              actions: <div className="flex flex-wrap gap-1">
+                {can("membership.update") ? <Button size="sm" onClick={() => beginMember(m)}>Edit access</Button> : null}
+                {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" disabled={working} ariaLabel={`Remove membership of ${memberName(m)}`} confirmTitle={`Remove ${memberName(m)} from this tenant?`}
+                  confirmDescription="Removes tenant membership and revokes the subject's ResourcePortal tenant grants. The last owner cannot be removed."
+                  confirmLabel="Remove access" onConfirm={() => action(() => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(m))}`, { method: "DELETE" }), refreshEffectiveAccess, "Membership removed.")}>
+                  <TrashIcon size={14}/>
+                </ConfirmActionButton> : null}
+              </div>,
+            },
+          }))}
+          empty={<EmptyState icon={<UsersIcon />} title="No memberships" description="Invite a tenant member with explicit RP roles." />}
+        />
+      </Card>
+      <Card className="overflow-hidden">
+        <div className="border-b border-[#E1E7F0] p-4"><h2 className="font-semibold">Invitations</h2></div>
+        <div className="divide-y divide-[#E1E7F0]">
+          {inviteRows.map(i => <div key={idOf(i)} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+            <div><strong className="block text-sm">{text(i.email)}</strong><span className="text-xs text-[#718096]">Pending</span></div>
+            <div className="flex gap-1">
+              {can("membership.invite") ? <Button size="sm" onClick={() => void regenerateInvite(i)} disabled={working}>Generate new link</Button> : null}
+              {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete invitation ${text(i.email)}`} confirmTitle={`Revoke invitation for ${text(i.email)}?`} confirmDescription="The old invitation link becomes invalid."
+                confirmLabel="Revoke invitation" onConfirm={() => action(() => apiRequest(`${root}/invitations/${encodeURIComponent(idOf(i))}`, { method: "DELETE" }), invitations.reload, "Invitation revoked.")}><TrashIcon size={14}/></ConfirmActionButton> : null}
+            </div>
+          </div>)}
+          {!inviteRows.length && !invitations.loading ? <EmptyState title="No pending invitations" /> : null}
+        </div>
+      </Card>
+    </div>
+
+    {editingMembership ? <Card className="my-6 p-5">
+      <h2 className="font-semibold">Edit access: {memberName(editingMembership)}</h2>
+      <p className="mt-1 text-xs text-[#526070]">Changes to membership are audited and validated by the server, including owner protection. Group-inherited roles cannot be removed here.</p>
+      <div className="mt-4 grid gap-5 sm:grid-cols-2">
+        <fieldset><legend className="mb-2 text-sm font-semibold">Direct ResourcePortal roles</legend>
+          {roles.map(role => <label key={idOf(role)} className="flex items-start gap-2 py-2 text-sm">
+            <input type="checkbox" checked={memberRoles.includes(idOf(role))}
+              onChange={e => setMemberRoles(prev => e.target.checked ? [...prev, idOf(role)] : prev.filter(id => id !== idOf(role)))} />
+            <span><strong>{roleName(role)}</strong><span className="block max-w-md break-words text-xs text-[#718096]">{Array.isArray(role.permissions) ? role.permissions.join(", ") : "Permissions unavailable"}</span></span>
+          </label>)}
+        </fieldset>
+        <div><Field label="Membership status"><Select value={memberStatus} onChange={e => setMemberStatus(e.target.value)}><option value="Active">Active</option><option value="Suspended">Suspended</option></Select></Field>
+          <p className="mt-2 text-xs text-[#526070]">Suspending access also invalidates associated tenant OIDC grants through the backend.</p>
+        </div>
+      </div>
+      <div className="mt-4 flex gap-2">
+        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || memberRoles.length === 0}
+          confirmTitle="Save membership access?" confirmDescription="This changes the selected member's direct roles and/or active status." confirmLabel="Save access" onConfirm={saveMembership}>Save access</ConfirmActionButton>
+        <Button onClick={() => setEditingMembership(undefined)}>Cancel</Button>
+      </div>
+    </Card> : null}
+
+    <div className="mt-6 grid gap-6 xl:grid-cols-2">
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#E1E7F0] px-4 py-3"><h2 className="font-semibold">Groups</h2>
+          {can("group.create") ? <Button size="sm" onClick={() => setGroupOpen(true)}><PlusIcon size={14}/>Create group</Button> : null}
+        </div>
+        {groupOpen && can("group.create") ? <div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-2">
+          <Field label="Name" required><TextInput value={group.name} onChange={e => setGroup({ ...group, name: e.target.value })}/></Field>
+          <Field label="Description"><TextInput value={group.description} onChange={e => setGroup({ ...group, description: e.target.value })}/></Field>
+          <div className="flex gap-2 sm:col-span-2"><Button size="sm" variant="primary" disabled={working || !group.name.trim()} onClick={() => void createGroup()}>Create group</Button><Button size="sm" onClick={() => setGroupOpen(false)}>Cancel</Button></div>
+        </div> : null}
+        <DataTable embedded loading={groups.loading} columns={[{key:"name",label:"Group"}, {key:"roles",label:"Roles / members"}, {key:"actions",label:""}]}
+          rows={groupRows.map(g => ({key:idOf(g),cells:{
+            name:<div><strong>{text(g.name)}</strong><span className="block text-xs text-[#718096]">{text(g.description,"No description")}</span></div>,
+            roles:<span className="text-xs">{items<R>(g.roles).map(roleName).join(", ") || "No roles"} · {items<R>(g.members).length} members</span>,
+            actions:<div className="flex gap-2">{can("group.update") || can("group.member.manage") || can("group.role.manage") ? <Button size="sm" onClick={() => beginGroup(g)}>Manage</Button> : null}
+              {can("group.delete") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete ${text(g.name)}`}
+                confirmTitle={`Delete group ${text(g.name)}?`} confirmDescription="All inherited permissions through this group will be lost." confirmLabel="Delete group"
+                onConfirm={() => action(() => apiRequest(`${root}/groups/${encodeURIComponent(idOf(g))}`, { method: "DELETE" }), refreshEffectiveAccess, "Group deleted.")}><TrashIcon size={14}/></ConfirmActionButton> : null}</div>,
+          }}))}
+          empty={<EmptyState icon={<UsersIcon />} title="No groups" description="Create a group to assign members and inherited roles."/>}/>
+      </Card>
+      <Card className="p-5">
+        <h2 className="font-semibold">Built-in ResourcePortal roles</h2>
+        <p className="mt-2 text-xs text-[#526070]">These role definitions are read-only. Granting a role gives ResourcePortal rights, not external OAuth client entitlements.</p>
+        <div className="mt-4 divide-y divide-[#E1E7F0]">{roles.map(role => <div key={idOf(role)} className="py-3"><strong className="text-sm">{roleName(role)}</strong><p className="mt-1 break-words text-xs text-[#718096]">{Array.isArray(role.permissions) ? role.permissions.join(", ") : "Permissions unavailable"}</p></div>)}</div>
+        <a className="mt-4 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a>
+      </Card>
+    </div>
+
+    {editingGroup ? <Card className="mt-6 p-5">
+      <h2 className="text-lg font-semibold">Group: {text(editingGroup.name)}</h2>
+      <p className="mt-1 text-xs text-[#526070]">Group membership and role assignments affect inherited ResourcePortal permissions. All changes are validated and audited server-side.</p>
+      {can("group.update") ? <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Field label="Group name" required><TextInput value={groupEdit.name} onChange={e => setGroupEdit({...groupEdit,name:e.target.value})}/></Field>
+        <Field label="Description"><TextInput value={groupEdit.description} onChange={e => setGroupEdit({...groupEdit,description:e.target.value})}/></Field>
+        <div className="sm:col-span-2"><ConfirmActionButton size="sm" triggerVariant="primary" confirmVariant="primary" disabled={working || !groupEdit.name.trim()} confirmTitle="Update group details?" confirmDescription="Changes are audited." confirmLabel="Update group" onConfirm={saveGroup}>Save group</ConfirmActionButton></div>
+      </div> : null}
+      <div className="mt-5 grid gap-5 md:grid-cols-2">
+        <div>
+          <h3 className="font-semibold">Members ({items<R>(editingGroup.members).length})</h3>
+          <div className="divide-y divide-[#E1E7F0]">{items<R>(editingGroup.members).map(m => <div key={idOf(m)} className="flex items-center justify-between gap-2 py-2">
+            <span className="text-sm">{memberName(m)}</span>
+            {can("group.member.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Remove member ${memberName(m)} from ${text(editingGroup.name)}`} confirmTitle={`Remove ${memberName(m)} from group?`} confirmDescription="Inherited access through this group will be revoked." confirmLabel="Remove member"
+              onConfirm={() => groupMutation(`${groupPath}/members/${encodeURIComponent(idOf(m))}`, "DELETE")}>Remove</ConfirmActionButton> : null}
+          </div>)}</div>
+          {can("group.member.manage") ? <div className="mt-3 flex gap-2"><Select aria-label="Select group member" value={newGroupMember} onChange={e => setNewGroupMember(e.target.value)}><option value="">Select tenant member</option>{memberRows.filter(m => m.status === "Active" && !items<R>(editingGroup.members).some(row => idOf(row) === idOf(m))).map(m => <option key={idOf(m)} value={idOf(m)}>{memberName(m)}</option>)}</Select>
+            <Button size="sm" disabled={working || !newGroupMember} onClick={() => void groupMutation(`${groupPath}/members`, "POST", { membershipId: newGroupMember })}>Add</Button></div> : null}
+        </div>
+        <div>
+          <h3 className="font-semibold">Inherited roles ({items<R>(editingGroup.roles).length})</h3>
+          <div className="divide-y divide-[#E1E7F0]">{items<R>(editingGroup.roles).map(role => <div key={idOf(role)} className="flex items-center justify-between gap-2 py-2">
+            <span className="text-sm">{roleName(role)}</span>
+            {can("group.role.manage") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Remove role ${roleName(role)} from ${text(editingGroup.name)}`} confirmTitle={`Remove ${roleName(role)} from group?`} confirmDescription="This removes the role from every group member's inherited access." confirmLabel="Remove role"
+              onConfirm={() => groupMutation(`${groupPath}/roles/${encodeURIComponent(idOf(role))}`, "DELETE")}>Remove</ConfirmActionButton> : null}
+          </div>)}</div>
+          {can("group.role.manage") ? <div className="mt-3 flex gap-2"><Select aria-label="Select group role" value={newGroupRole} onChange={e => setNewGroupRole(e.target.value)}><option value="">Select role</option>{roles.filter(r => !items<R>(editingGroup.roles).some(item => idOf(item) === idOf(r))).map(role => <option key={idOf(role)} value={idOf(role)}>{roleName(role)}</option>)}</Select>
+            <Button size="sm" disabled={working || !newGroupRole} onClick={() => void groupMutation(`${groupPath}/roles`, "POST", { roleId: newGroupRole })}>Add</Button></div> : null}
+        </div>
+      </div>
+      <div className="mt-5 flex justify-between"><a className="text-sm text-[#0F56A7] underline" href={`/tenants/${encodeURIComponent(tenantId)}/audit`}>Audit history</a><Button onClick={() => setEditingGroup(undefined)}>Close</Button></div>
+    </Card> : null}
+  </main>;
 }
 
 export function TenantCredentialsPage({tenantId}:{tenantId:string}){

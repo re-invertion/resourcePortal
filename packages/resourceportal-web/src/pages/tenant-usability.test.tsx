@@ -111,7 +111,10 @@ describe("guided access and routing", () => {
   it("uses invitations for normal user onboarding instead of asking for a user ID", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/memberships")) return json([]);
+      if (url.endsWith("/memberships")) return json([{
+        id: "member-u", userId: "u", status: "Active", user: { id: "u", email: "owner@example.com" },
+        roles: [{ id: "owner", name: "Tenant Owner", permissions: ["*"] }], groups: [],
+      }]);
       if (url.endsWith("/roles")) return json([{ id: "viewer", name: "Viewer" }]);
       if (url.endsWith("/invitations")) return json([]);
       if (url.endsWith("/groups")) return json([]);

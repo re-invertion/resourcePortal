@@ -58,7 +58,13 @@ it("renders domain detail from the real domain detail endpoint with friendly ass
 });
 
 it.each([["administration","Invite user"],["credentials","Create OAuth application"]])("uses final access manager for %s",async(section,action)=>{
- vi.stubGlobal("fetch",vi.fn(async()=>json([])));
+ vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+  if (String(input).endsWith("/memberships")) return json([{
+    id:"m-owner", userId:"u1", status:"Active", user:{id:"u1", email:"owner@example.com"},
+    roles:[{id:"tenant-owner",name:"Tenant Owner",permissions:["*"]}], groups:[],
+  }]);
+  return json([]);
+ }));
  render(<TenantPage tenantId="t1" section={section} userId="u1"/>);
  expect(await screen.findByRole("button",{name:action})).toBeTruthy();
 });
@@ -95,4 +101,13 @@ it("routes tenant settings to MCP administration", async () => {
  render(<TenantPage tenantId="t1" section="settings" segments={["mcp"]} userId="u1"/>);
  expect(await screen.findByRole("heading",{name:"Tenant settings"})).toBeTruthy();
  expect(screen.getByText("Model Context Protocol (MCP)")).toBeTruthy();
+});
+it("opens Access directly on members and invitations without an intermediary summary", async () => {
+ vi.stubGlobal("fetch",vi.fn(async()=>json([])));
+ render(<TenantPage tenantId="t1" section="access" userId="u1"/>);
+ expect(await screen.findByRole("heading",{name:"Access"})).toBeTruthy();
+ expect(screen.getByRole("heading",{name:"Memberships"})).toBeTruthy();
+ expect(screen.getByRole("heading",{name:"Invitations"})).toBeTruthy();
+ expect(screen.getByRole("link",{name:"Members & invitations"}).getAttribute("aria-current")).toBe("page");
+ expect(screen.queryByText("No tenant identity providers configured.")).toBeNull();
 });

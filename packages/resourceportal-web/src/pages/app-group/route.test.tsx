@@ -87,3 +87,8 @@ it("keeps legacy Health URLs functional through the canonical application Overvi
   expect(within(navigation).queryByRole("link", { name: "Health" })).toBeNull();
   expect(within(navigation).getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
 });
+it("makes environment editable from the configuration subsection and Overview", async () => {
+  render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1", "edit", "configuration"]} />);
+  expect(await screen.findByRole("navigation", { name: "Configuration subsections" })).toBeTruthy();
+  expect(within(screen.getByRole("navigation", { name: "Configuration subsections" })).getByRole("link", { name: "Environment variables" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/environment");
+});
