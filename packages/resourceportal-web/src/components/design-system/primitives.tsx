@@ -68,12 +68,35 @@ export function Dialog({ open, title, description, children, actions, onClose, d
     const formControl = body?.querySelector<HTMLElement>('input:not([type="hidden"]):not(.sr-only):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]');
     const fallback = dialog?.querySelector<HTMLElement>('[data-dialog-initial-focus], button:not([disabled]), input:not([type="hidden"]):not(.sr-only):not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]');
     (formControl ?? fallback)?.focus();
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
+    const focusableSelector = 'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
+      .filter((element) => element.getClientRects().length > 0 || element === document.activeElement);
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { onCloseRef.current(); return; }
+      if (event.key !== "Tab" || !dialog) return;
+      const elements = focusable();
+      if (elements.length === 0) { event.preventDefault(); dialog.focus(); return; }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    const containFocus = (event: FocusEvent) => {
+      if (dialog && !dialog.contains(event.target as Node)) (focusable()[0] ?? dialog).focus();
+    };
     document.addEventListener("keydown", key);
-    return () => { document.removeEventListener("keydown", key); previous?.focus?.(); };
+    document.addEventListener("focusin", containFocus);
+    return () => {
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("focusin", containFocus);
+      previous?.focus?.();
+    };
   }, [open]);
   if (!open) return null;
-  const dialog = <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0E1A2B]/45 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}><div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descId : undefined} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg min-w-0 overflow-y-auto rounded-xl border border-[#D7E0EC] bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-[#E1E7F0] p-5"><div><h2 id={titleId} className={cx("text-lg font-semibold", danger ? "text-[#A92317]" : "text-[#172033]")}>{title}</h2>{description ? <p id={descId} className="mt-1 text-sm text-[#5B6678]">{description}</p> : null}</div><IconButton label="Close dialog" onClick={() => onCloseRef.current()}><XIcon /></IconButton></header>{children ? <div data-dialog-body className="p-5">{children}</div> : null}{actions ? <footer className="flex justify-end gap-2 border-t border-[#E1E7F0] bg-[#F8FAFD] p-4">{actions}</footer> : null}</div></div>;
+  const dialog = <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0E1A2B]/45 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}><div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descId : undefined} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg min-w-0 overflow-y-auto rounded-xl border border-[#D7E0EC] bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-[#E1E7F0] p-5"><div><h2 id={titleId} className={cx("text-lg font-semibold", danger ? "text-[#A92317]" : "text-[#172033]")}>{title}</h2>{description ? <p id={descId} className="mt-1 text-sm text-[#5B6678]">{description}</p> : null}</div><IconButton label="Close dialog" onClick={() => onCloseRef.current()}><XIcon /></IconButton></header>{children ? <div data-dialog-body className="p-5">{children}</div> : null}{actions ? <footer className="flex justify-end gap-2 border-t border-[#E1E7F0] bg-[#F8FAFD] p-4">{actions}</footer> : null}</div></div>;
   return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }
 
