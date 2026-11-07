@@ -70,7 +70,7 @@ export function Dialog({ open, title, description, children, actions, onClose, d
     (formControl ?? fallback)?.focus();
     const focusableSelector = 'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
-      .filter((element) => element.getClientRects().length > 0 || element === document.activeElement);
+      .filter((element) => !element.hidden && getComputedStyle(element).display !== "none" && getComputedStyle(element).visibility !== "hidden");
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape") { onCloseRef.current(); return; }
       if (event.key !== "Tab" || !dialog) return;
