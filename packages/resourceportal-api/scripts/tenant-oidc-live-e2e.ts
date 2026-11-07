@@ -250,6 +250,9 @@ async function main() {
 
       // The original (different) OAuth client in the SAME ZITADEL project must
       // continue working, with no project-wide authorization regression.
+      // Do not mistake events from its earlier code exchange/first refresh
+      // for proof that THIS allowed refresh traversed the signed Action.
+      const beforeAllowedRefresh = gate.events().length;
       const allowedRefresh = await fetch(discovery.token_endpoint, {
         method: "POST",
         headers: {
@@ -268,8 +271,9 @@ async function main() {
       };
       assert.ok(rotated.access_token, "Allowed client refresh returned no access token");
       separateAllowed.refreshToken = rotated.refresh_token ?? separateAllowed.refreshToken;
-      assert.ok(gate.events().some(e => e.userId === userAId && e.clientId === web.clientId &&
-        e.decision === "allow"), "Allowed client refresh never traversed the Action");
+      assert.ok(gate.events().slice(beforeAllowedRefresh).some(e =>
+        e.userId === userAId && e.clientId === web.clientId && e.decision === "allow"),
+      "Allowed client refresh did not invoke the signed Action for that refresh request");
 
       await runOidcAuthorizationE2E({
         issuer, projectId: projectB, foreignProjectId: projectA,
