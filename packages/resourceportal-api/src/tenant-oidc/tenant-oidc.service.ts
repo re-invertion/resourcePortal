@@ -128,6 +128,13 @@ export class TenantOidcService {
         const appConsumerGateCertified =
           this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
           this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+        // Flags alone do NOT prove that ZITADEL invokes our webhook. If an
+        // operator forgot to bind the execution, project grants would bypass
+        // the per-client allowlist for every OAuth application in the tenant.
+        // Verify the live target, signing key and exclusive execution first.
+        if (appConsumerGateCertified) {
+          await this.zitadel.verifyAppConsumerActionsV2Gate();
+        }
         const members = await tx.tenantMembership.findMany({
           where: {
             tenantId,

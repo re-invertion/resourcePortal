@@ -41,8 +41,36 @@ describe("validateEnv", () => {
     const valid = { ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
       RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
       RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "mock-isolated-hmac-key-32-or-more-characters",
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "123456789",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/api/app-consumer-actions/preaccesstoken",
+      ZITADEL_MANAGEMENT_TOKEN: "read-only-test-pat",
+      ZITADEL_ORGANIZATION_ID: "org-1",
+      OIDC_ISSUER_URL: "https://auth.example.com",
     };
     expect(validateEnv(valid)).toBe(valid);
+  });
+
+  it("rejects enabling App User login with an unbound, ambiguous or non-HTTPS ZITADEL target", () => {
+    const certified = {
+      ...validBaseEnv,
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "an-isolated-signature-key-longer-than-32-bytes",
+      ZITADEL_MANAGEMENT_TOKEN: "read-only-test-pat",
+      ZITADEL_ORGANIZATION_ID: "org-1",
+      OIDC_ISSUER_URL: "https://auth.example.com",
+    };
+    expect(() => validateEnv({ ...certified })).toThrow(
+      "RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID is required",
+    );
+    expect(() => validateEnv({ ...certified,
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "not-a-number",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "http://rp.example.com/api/app-consumer-actions/preaccesstoken",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID must be a ZITADEL target ID");
+    expect(() => validateEnv({ ...certified,
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "12345",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/other",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL must be the exact secure callback URL");
   });
 
   it("rejects unsupported auth modes", () => {

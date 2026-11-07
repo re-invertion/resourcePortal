@@ -1,5 +1,6 @@
 import { MembershipStatus, TenantStatus, UserStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import type { ConfigService } from "@nestjs/config";
 import type { PrismaService } from "../prisma/prisma.service";
 import { TenantOidcService } from "./tenant-oidc.service";
 import type { ZitadelTenantProjectService } from "./zitadel-tenant-project.service";
@@ -7,7 +8,7 @@ import type { ZitadelTenantProjectService } from "./zitadel-tenant-project.servi
 const tenantId = "tenant-a";
 const nativeIssuer = "https://auth.example.com";
 
-function fixture() {
+function fixture(configValues: Record<string, string> = {}) {
   const project = {
     issuer: nativeIssuer,
     createProject: vi.fn().mockResolvedValue("123"),
@@ -17,6 +18,7 @@ function fixture() {
     }),
     ensureMemberRole: vi.fn().mockResolvedValue(undefined),
     verifyIssuerSecurity: vi.fn().mockResolvedValue(undefined),
+    verifyAppConsumerActionsV2Gate: vi.fn().mockResolvedValue(undefined),
     verifyMemberGrant: vi.fn().mockResolvedValue(undefined),
     assignMember: vi.fn().mockResolvedValue("grant-new"),
     findExistingMemberGrant: vi.fn().mockResolvedValue(null),
@@ -55,6 +57,7 @@ function fixture() {
   const service = new TenantOidcService(
     prisma as unknown as PrismaService,
     project as unknown as ZitadelTenantProjectService,
+    { get: (key: string) => configValues[key] } as ConfigService,
   );
   return { service, prisma, project, provider };
 }
@@ -105,6 +108,47 @@ describe("Tenant OIDC management fails closed", () => {
       }),
     );
     expect(f.project.assignMember).not.toHaveBeenCalled();
+  });
+
+  it("verifies the LIVE signed target before including App Users in tenant-wide upstream grants", async () => {
+    const f = fixture({
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+    });
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{
+      userId: "app-consumer-1", status: MembershipStatus.Active,
+      user: { identities: [{
+        issuer: nativeIssuer, providerType: "zitadel",
+        externalSubject: "zitadel-app-user", identityProviderId: null,
+      }] },
+    }]);
+    await f.service.reconcileGrants(tenantId);
+    expect(f.project.verifyAppConsumerActionsV2Gate).toHaveBeenCalledOnce();
+    expect(f.project.verifyAppConsumerActionsV2Gate.mock.invocationCallOrder[0])
+      .toBeLessThan(f.project.assignMember.mock.invocationCallOrder[0]);
+    const [membershipQuery] = f.prisma.tenantMembership.findMany.mock.calls[0] as [
+      { where: Record<string, unknown> },
+    ];
+    expect(membershipQuery.where).not.toHaveProperty("appConsumer");
+    expect(f.project.assignMember).toHaveBeenCalledWith("zitadel-app-user", "123");
+  });
+
+  it("never grants an App Consumer tenant-wide role when the live Action binding is missing", async () => {
+    const f = fixture({
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+    });
+    f.project.verifyAppConsumerActionsV2Gate.mockRejectedValue(
+      new Error("App Consumer Actions V2 execution binding not verified"),
+    );
+    await expect(f.service.reconcileGrants(tenantId)).rejects.toThrow("execution binding not verified");
+    expect(f.prisma.tenantMembership.findMany).not.toHaveBeenCalled();
+    expect(f.project.assignMember).not.toHaveBeenCalled();
+    const updates = f.prisma.tenantOidcProvider.updateMany.mock.calls as Array<[
+      { data: { enabled: boolean; status: string } },
+    ]>;
+    expect(updates.some(([row]) =>
+      row.data.status === "ReconciliationFailed" && row.data.enabled === false)).toBe(true);
   });
 
   it("revokes grants when membership is no longer active", async () => {

@@ -28,6 +28,13 @@ describe("loadSecretFiles", () => {
     });
   });
 
+  it("loads the App Consumer webhook signing key from an allow-listed secret file", () => {
+    const key = "app-consumer-webhook-signing-key-must-stay-secret";
+    const path = secretFile(key + "\n");
+    const env = { RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE: path };
+    expect(loadSecretFiles(env).RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY).toBe(key);
+  });
+
   it("keeps a direct secret value when both direct and *_FILE are set", () => {
     const path = secretFile("from-file\n");
     const env = {

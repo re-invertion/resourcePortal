@@ -19,6 +19,25 @@ export function validateEnv(config: Env) {
       errors.push("App Consumer Actions V2 requires explicit isolated HTTPS certification");
     }
     requireMinLength(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY", 32);
+    requireValue(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID");
+    requireValue(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL");
+    requireValue(config, errors, "ZITADEL_MANAGEMENT_TOKEN");
+    requireValue(config, errors, "ZITADEL_ORGANIZATION_ID");
+    requireValue(config, errors, "OIDC_ISSUER_URL");
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID &&
+        !/^[0-9]{1,64}$/.test(config.RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID)) {
+      errors.push("RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID must be a ZITADEL target ID");
+    }
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL) {
+      let safe = false;
+      try {
+        const url = new URL(config.RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL);
+        safe = url.protocol === "https:" && Boolean(url.hostname) &&
+          !url.username && !url.password && !url.search && !url.hash &&
+          url.pathname === "/api/app-consumer-actions/preaccesstoken";
+      } catch { /* Missing or malformed callback cannot authorize App Users. */ }
+      if (!safe) errors.push("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL must be the exact secure callback URL");
+    }
   }
 
   if (!supportedAuthModes.has(authMode)) {

@@ -109,3 +109,40 @@ signed Actions V2 request. The execution management API uses the bare name
 rejects real logins. The production callback requires the exact namespaced
 identifier; missing, bare or different functions fail closed. This was
 identified through the real HTTPS CI integration and regression-tested.
+
+## Production action binding verification (draft)
+
+A set of environment booleans is not proof that a shared ZITADEL project
+enforces per-client authorization. Before reconciling *any* App Consumer into
+the tenant's upstream `rp.tenant.member` project role, RP reads the live
+ZITADEL Actions V2 target (`GET /v2/actions/targets/{id}`) and the complete
+execution list (`POST /v2/actions/executions/search`), requiring the following
+exact binding:
+
+- `RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID` is the returned target ID.
+- `RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL` matches its HTTPS endpoint at
+  `/api/app-consumer-actions/preaccesstoken` with no query, fragment or
+  embedded credentials.
+- The target uses `PAYLOAD_TYPE_JSON`, `restWebhook`, and
+  `interruptOnError: true` (not async or noninterrupting execution).
+- Its currently returned signing key matches the RP-managed
+  `RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY` in constant time. Store it in an
+  installer-managed Docker secret and supply the application with
+  `RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE`, not logs or command lines.
+- Exactly one discovered `preaccesstoken` function execution calls only
+  the expected target. Incomplete pagination, multiple targets, absent
+  execution, wrong signing key or upstream errors block reconciliation.
+
+The ZITADEL management token must have read access to Actions targets and
+executions (`action.target.read`, `action.execution.read`), besides the
+usual tenant-project management permissions. No production target is created
+or changed by this verifier, and both feature flags still default to off.
+
+**Important operational limitation:** this is an *activation-time* read-only
+check. A later deletion or modification of the remote execution could again
+allow existing project-wide grants to bypass the callback. A production
+rollout still needs continuous drift detection, safe revocation of existing
+App Consumer project grants on verification failure, external target/secret
+provisioning and rotation, actual HTTPS callback reachability and explicit
+source-to-target database restore certification. A green CI probe, or setting
+both flags manually, does not satisfy that release DoD.
