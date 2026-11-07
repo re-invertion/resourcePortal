@@ -1,7 +1,9 @@
 import {
-  ArrayNotEmpty,
   IsArray,
   IsEmail,
+  IsOptional,
+  ArrayUnique,
+  IsUUID,
   IsString,
   MaxLength,
 } from "class-validator";
@@ -12,7 +14,12 @@ export class CreateTenantInvitationDto {
   email!: string;
 
   @IsArray()
-  @ArrayNotEmpty()
   @IsString({ each: true })
   roleIds!: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID("4", { each: true })
+  oauthApplicationIds?: string[];
 }

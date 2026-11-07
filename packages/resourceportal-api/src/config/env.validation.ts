@@ -14,6 +14,13 @@ export function validateEnv(config: Env) {
 
   requireValue(config, errors, "DATABASE_URL");
 
+  if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true") {
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED !== "true") {
+      errors.push("App Consumer Actions V2 requires explicit isolated HTTPS certification");
+    }
+    requireMinLength(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY", 32);
+  }
+
   if (!supportedAuthModes.has(authMode)) {
     errors.push("AUTH_MODE must be one of: dev, oidc, zitadel");
   }

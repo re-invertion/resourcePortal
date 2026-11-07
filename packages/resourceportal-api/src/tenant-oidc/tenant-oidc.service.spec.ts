@@ -94,6 +94,19 @@ describe("Tenant OIDC management fails closed", () => {
     expect(f.prisma.$transaction).toHaveBeenCalledOnce();
   });
 
+  it("excludes App Consumers from project-wide grants until a certified client gate is active", async () => {
+    const f = fixture();
+    await f.service.reconcileGrants(tenantId);
+    expect(f.prisma.tenantMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId, appConsumer: { is: null },
+        }) as Record<string, unknown>,
+      }),
+    );
+    expect(f.project.assignMember).not.toHaveBeenCalled();
+  });
+
   it("revokes grants when membership is no longer active", async () => {
     const f = fixture();
     f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{

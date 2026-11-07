@@ -16,6 +16,27 @@ test("Web anti-clickjacking server and regression fixture select security header
   );
 });
 
+test("issue 398 App Consumer Actions, grant model, and config changes require identity and security regressions", () => {
+  const files = [
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.module.ts",
+    "packages/resourceportal-api/src/config/env.validation.ts",
+    "packages/resourceportal-api/src/config/env.validation.spec.ts",
+  ];
+  const plan = selectProfiles(files);
+  for(const profile of ["identity","security","tenant-access","schema"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/not-certified-client-gate.ts"]),
+    /unclassified changes/,
+  );
+});
+
 test("issue 396 scheduler and volume isolation cannot bypass networking and worker Fast Fix gates", () => {
   const files = [
     "packages/resourceportal-api/src/worker-reconcile-lane.ts",
