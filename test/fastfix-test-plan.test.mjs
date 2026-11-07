@@ -37,6 +37,21 @@ test("issue 398 App Consumer Actions, grant model, and config changes require id
   );
 });
 
+test("App Consumer signing-key secret-file loader is security-classified and unknown config files fail closed (#398)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/config/secret-file-loader.ts",
+    "packages/resourceportal-api/src/config/secret-file-loader.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
+  for (const path of paths) {
+    assert.deepEqual(selectProfiles([path]).profiles, ["identity", "security"]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/config/secret-file-loader.other.spec.ts"]),
+    /unclassified changes/,
+  );
+});
+
 test("issue 399 search and deployment history retain classified Fast Fix regression coverage", () => {
   const plan = selectProfiles([
     "packages/resourceportal-web/src/components/shell.test.tsx",

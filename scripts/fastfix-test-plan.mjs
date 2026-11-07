@@ -282,6 +282,10 @@ const classifiers = [
   // migration: the DB restore release gate still blocks an unsafe release.
   [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
   [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
+  // Signed ZITADEL webhook secrets loaded from *_FILE are authentication
+  // boundaries. Changes to the allow-list or its regression fixture require
+  // identity and API security coverage, never a generic unclassified skip.
+  [/^packages\/resourceportal-api\/src\/config\/secret-file-loader(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.
