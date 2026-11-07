@@ -15,6 +15,8 @@ import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-p
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
 import { startActionProof } from "./tenant-oidc-actions-v2-proof";
+import { AppConsumersService } from "../src/app-consumers/app-consumers.service";
+import { AppConsumerActionService } from "../src/app-consumers/app-consumer-action.service";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -208,6 +210,13 @@ async function main() {
     }, projectB);
     assert.ok(foreignWeb.clientId && foreignWeb.clientSecret);
     ownedApps.push({ id: foreignWeb.applicationId, projectId: projectB });
+    const foreignDeniedWeb = await clients.provision({
+      name: "Second tenant scoped Web " + suffix, type: "Web",
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+      postLogoutRedirectUris: ["https://localhost:8443/logout"],
+    }, projectB);
+    assert.ok(foreignDeniedWeb.clientId && foreignDeniedWeb.clientSecret);
+    ownedApps.push({ id: foreignDeniedWeb.applicationId, projectId: projectB });
 
     const gate = await startActionProof({ api, issuer, testUserId: userAId, testProjectId: projectA });
     try {
@@ -288,6 +297,185 @@ async function main() {
         "same-project allow and independent-tenant allow");
     } finally {
       await gate.close();
+    }
+
+    // Full #398 test: real RP app consumer and grant rows, four real ZITADEL
+    // OAuth client IDs in two separate tenant projects, signed Actions V2
+    // preaccesstoken on real OAuth refresh. Unlike the preceding #404 proof,
+    // authorization decisions come from the production Prisma-backed service.
+    const consumerService = new AppConsumersService(prisma as unknown as PrismaService);
+    const members = await Promise.all([
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userA.id, tenantId: tenantA.id } },
+      }),
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userB.id, tenantId: tenantB.id } },
+      }),
+    ]);
+    const apps = await Promise.all([
+      { remote: web, tenantId: tenantA.id, projectId: projectA, actorId: userA.id, name: "Consumer A allowed" },
+      { remote: secondWeb, tenantId: tenantA.id, projectId: projectA, actorId: userA.id, name: "Consumer A denied" },
+      { remote: foreignWeb, tenantId: tenantB.id, projectId: projectB, actorId: userB.id, name: "Consumer B allowed" },
+      { remote: foreignDeniedWeb, tenantId: tenantB.id, projectId: projectB, actorId: userB.id, name: "Consumer B denied" },
+    ].map(({ remote, tenantId, projectId, actorId, name }) =>
+      prisma.oAuthApplication.create({ data: {
+        tenantId, name, type: "Web",
+        redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+        postLogoutRedirectUris: ["https://localhost:8443/logout"],
+        zitadelApplicationId: remote.applicationId,
+        zitadelProjectId: projectId, clientId: remote.clientId,
+        createdBy: actorId, updatedBy: actorId,
+      } }),
+    ));
+    await Promise.all(members.map((member, index) => prisma.tenantAppConsumer.create({ data: {
+      tenantId: index === 0 ? tenantA.id : tenantB.id,
+      membershipId: member.id, createdBy: index === 0 ? userA.id : userB.id,
+    } })));
+    const grantedA = await prisma.tenantAppClientGrant.create({ data: {
+      membershipId: members[0].id, tenantId: tenantA.id,
+      oauthApplicationId: apps[0].id, createdBy: userA.id, updatedBy: userA.id,
+    } });
+    await prisma.tenantAppClientGrant.create({ data: {
+      membershipId: members[1].id, tenantId: tenantB.id,
+      oauthApplicationId: apps[2].id, createdBy: userB.id, updatedBy: userB.id,
+    } });
+
+    // Matrix: A can use only tenant-A client 1, B only tenant-B client 1.
+    // All other 6 subject/client combinations must fail closed. No test-only
+    // grant matrix substitutes for these actual persisted records.
+    for (const [subject, allowedClient] of [
+      [userAId, web.clientId],
+      [userBId, foreignWeb.clientId],
+    ] as const) {
+      for (const client of [web, secondWeb, foreignWeb, foreignDeniedWeb]) {
+        assert.equal(
+          await consumerService.mayIssueClientToken(issuer, subject, client.clientId),
+          client.clientId === allowedClient,
+          "SECURITY: isolated App Consumer exact subject/client/tenant grant mismatch",
+        );
+      }
+    }
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId), false);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId), false);
+
+    // Obtain pre-existing tokens for the ungranted apps BEFORE installing
+    // the production-policy target, so their refreshes exercise actual denial.
+    const denyAToken = await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, foreignProjectId: projectB,
+      clientId: secondWeb.clientId, clientSecret: secondWeb.clientSecret,
+      userId: userAId, userName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+    });
+    const denyBToken = await runOidcAuthorizationE2E({
+      issuer, projectId: projectB, foreignProjectId: projectA,
+      clientId: foreignDeniedWeb.clientId, clientSecret: foreignDeniedWeb.clientSecret,
+      userId: userBId, userName: "oidc-live-" + suffix + "-b",
+      password: "E2e!Test-" + suffix + "-b", skipLogout: true,
+    });
+
+    // The live target's signing key is returned by ZITADEL at creation.
+    // Use exactly that key for the production validator, not a fixture secret.
+    let currentSigningKey = "";
+    const actionConfig = { get: (key: string) => ({
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: currentSigningKey,
+      OIDC_ISSUER_URL: issuer,
+      OIDC_CLIENT_ID: "rp-native-client-not-in-this-e2e",
+    } as Record<string, string>)[key] } as unknown as ConfigService;
+    const realAuthorization = new AppConsumerActionService(actionConfig, consumerService);
+    const consumerGate = await startActionProof({
+      api, issuer, testUserId: userAId, testProjectId: projectA,
+      targetName: "rp-398-real-prisma-client-grants-" + suffix,
+      async authorize(raw, signature, signingKey) {
+        currentSigningKey = signingKey;
+        await realAuthorization.authorize(raw, signature);
+      },
+    });
+    const refreshClient = async (clientId: string, clientSecret: string, refreshToken: string) =>
+      fetch(discovery.token_endpoint!, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Basic " + Buffer.from(clientId + ":" + clientSecret).toString("base64"),
+        },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }),
+        signal: AbortSignal.timeout(20_000),
+      });
+    let suspendedB = false;
+    try {
+      // Real signed approval for both isolated tenants.
+      const allowA = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      });
+      const allowB = await runOidcAuthorizationE2E({
+        issuer, projectId: projectB, foreignProjectId: projectA,
+        clientId: foreignWeb.clientId, clientSecret: foreignWeb.clientSecret,
+        userId: userBId, userName: "oidc-live-" + suffix + "-b",
+        password: "E2e!Test-" + suffix + "-b", skipLogout: true,
+      });
+      const allowARefresh = await refreshClient(web.clientId, web.clientSecret, allowA.refreshToken);
+      assert.equal(allowARefresh.status, 200, "Authorized tenant A client refresh failed");
+      const rotatedA = await allowARefresh.json() as { refresh_token?: string };
+      assert.ok(rotatedA.refresh_token, "ZITADEL did not issue a rotated allowed-A refresh token");
+      const allowBRefresh = await refreshClient(foreignWeb.clientId, foreignWeb.clientSecret, allowB.refreshToken);
+      assert.equal(allowBRefresh.status, 200, "Authorized tenant B client refresh failed");
+      const rotatedB = await allowBRefresh.json() as { refresh_token?: string };
+      assert.ok(rotatedB.refresh_token, "ZITADEL did not issue a rotated allowed-B refresh token");
+
+      for (const [remote, tokenResult] of [
+        [secondWeb, denyAToken], [foreignDeniedWeb, denyBToken],
+      ] as const) {
+        assert.ok(remote.clientSecret, "Live Web OAuth client must have a secret");
+        const response = await refreshClient(
+          remote.clientId, remote.clientSecret, tokenResult.refreshToken,
+        );
+        assert.ok(!response.ok, "SECURITY: ungranted App Consumer client refreshed successfully");
+        assert.ok(consumerGate.events().some(event =>
+          event.clientId === remote.clientId && event.decision === "deny"),
+        "SECURITY: ungranted client refresh bypassed the signed Actions V2 policy");
+      }
+      for (const clientId of [web.clientId, foreignWeb.clientId]) {
+        assert.ok(consumerGate.events().some(event =>
+          event.clientId === clientId && event.decision === "allow"),
+        "SECURITY: valid App Consumer client did not traverse signed Actions V2");
+      }
+
+      // Revocation must stop fresh tokens, not only hide a UI grant.
+      await prisma.tenantAppClientGrant.update({
+        where: { id: grantedA.id }, data: { enabled: false, updatedBy: userA.id },
+      });
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userAId, web.clientId), false);
+      const beforeRevoked = consumerGate.events().length;
+      const revoked = await refreshClient(web.clientId, web.clientSecret, rotatedA.refresh_token);
+      assert.ok(!revoked.ok, "SECURITY: RP grant revocation allowed token refresh");
+      assert.ok(consumerGate.events().slice(beforeRevoked).some(event =>
+        event.clientId === web.clientId && event.userId === userAId && event.decision === "deny"),
+      "SECURITY: revoked grant did not deny its freshly rotated refresh in signed Actions V2");
+
+      await prisma.tenantMembership.update({
+        where: { id: members[1].id }, data: { status: MembershipStatus.Suspended },
+      });
+      suspendedB = true;
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userBId, foreignWeb.clientId), false);
+      const beforeSuspended = consumerGate.events().length;
+      const suspended = await refreshClient(foreignWeb.clientId, foreignWeb.clientSecret, rotatedB.refresh_token);
+      assert.ok(!suspended.ok, "SECURITY: suspended consumer refreshed OAuth token");
+      assert.ok(consumerGate.events().slice(beforeSuspended).some(event =>
+        event.clientId === foreignWeb.clientId && event.userId === userBId && event.decision === "deny"),
+      "SECURITY: suspended consumer did not deny its rotated refresh in signed Actions V2");
+
+      console.log("PASS: real signed production App Consumer authorization, 2 users x 2 client IDs per tenant x 2 tenants; revoke and suspended refresh denied.");
+    } finally {
+      if (suspendedB) {
+        await prisma.tenantMembership.update({
+          where: { id: members[1].id }, data: { status: MembershipStatus.Active },
+        });
+      }
+      await consumerGate.close();
     }
 
     await tenants.revokeGrantBeforeMembershipRemoval(tenantA.id, userA.id);

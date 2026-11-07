@@ -37,6 +37,10 @@ export async function startActionProof(input: {
   issuer: string;
   testUserId: string;
   testProjectId: string;
+  targetName?: string;
+  // Optional production-service test policy. The HTTP listener stays CI-only,
+  // but delegated authorization uses real RP Prisma grants and signed bytes.
+  authorize?: (raw: Buffer, signature: string, signingKey: string) => Promise<void>;
 }) {
   assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, "true");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
@@ -85,8 +89,18 @@ export async function startActionProof(input: {
       const clientId = payload.application?.client_id ?? null;
       // This probe is only authoritative for its one ephemeral user. Absent
       // client identity is always DENIED for this user; never infer by email.
-      const denied = userId === input.testUserId &&
+      let denied = userId === input.testUserId &&
         (!clientId || clientId === deniedClientId);
+      if (input.authorize) {
+        // Invoke the actual server authorization service, never an unsigned
+        // fixture policy. A rejection or database exception denies issuance.
+        try {
+          await input.authorize(raw, signature as string, signingKey);
+          denied = false;
+        } catch {
+          denied = true;
+        }
+      }
       events.push({ userId, clientId, decision: denied ? "deny" : "allow" });
       response.writeHead(denied ? 403 : 200, {
         "content-type": "application/json",
@@ -102,7 +116,7 @@ export async function startActionProof(input: {
   try {
     const target = await input.api<{ id?: string; signingKey?: string }>(
       "POST", "/v2/actions/targets",
-      { name: "rp-398-ephemeral-client-gate-proof", endpoint: "http://localhost:8090/action",
+      { name: input.targetName ?? "rp-398-ephemeral-client-gate-proof", endpoint: "http://localhost:8090/action",
         timeout: "5s", restWebhook: { interruptOnError: true },
         payloadType: "PAYLOAD_TYPE_JSON" },
     );

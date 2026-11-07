@@ -80,3 +80,23 @@ RP native login client. Unrelated existing RP users and first-time native
 registration retain normal login; a database error denies instead of bypassing
 the check. This does not replace an isolated real-ZITADEL grant-matrix E2E or
 production provisioning/certification of the webhook target.
+
+## Extended isolated Actions V2 proof in draft
+
+The existing isolated `tenant-oidc-live-e2e.ts` now includes a second,
+independent ZITADEL Actions V2 target that delegates signed webhook bodies to
+the production `AppConsumerActionService` backed by real Prisma
+`TenantAppConsumer`, `OAuthApplication` and `TenantAppClientGrant` rows.
+It checks both subjects across four OAuth client IDs belonging to two
+independent tenant projects (two clients per tenant), an authorized refresh
+for each, denial for ungranted clients, grant revocation on a *rotated* refresh
+token, suspended membership denial and refusal of the RP native client.
+Each negative refresh must be observed at the signed target; a generic 4xx
+response is not accepted as proof of authorization enforcement.
+
+The target and credentials live only on the isolated CI host and are detached
+before test cleanup. This test is NOT permission to register the live production
+webhook: production target creation/secret rotation, existing external OAuth
+client migration, and fail-safe activation are independent release blockers
+until explicitly implemented and certified. Review exact CI run results and
+the approved source-to-target database restore before declaring DoD.
