@@ -16,6 +16,18 @@ test("Web anti-clickjacking server and regression fixture select security header
   );
 });
 
+test("shared creation form draft preservation triggers reactive Web and tenant UI regressions", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/forms.tsx",
+    "packages/resourceportal-web/src/components/forms.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["reactive-web-state", "tenant-ux-patch"]);
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/components/forms-unknown.tsx"]),
+    /unclassified changes/,
+  );
+});
+
 test("issue 398 App Consumer Actions, grant model, and config changes require identity and security regressions", () => {
   const files = [
     "packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts",

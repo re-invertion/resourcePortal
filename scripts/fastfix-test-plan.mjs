@@ -280,6 +280,9 @@ const classifiers = [
   // tenant isolation, signed Actions V2 and startup fail-closed regression.
   // These paths cannot be treated as generic UI when introduced by a schema
   // migration: the DB restore release gate still blocks an unsafe release.
+  // Creation-form hydration can reset an administrator's edits between
+  // validation and submit; always run actual Web state and tenant UI tests.
+  [/^packages\/resourceportal-web\/src\/components\/forms(?:\.test)?\.tsx$/, ["reactive-web-state", "tenant-ux-patch"]],
   [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
   [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Signed ZITADEL webhook secrets loaded from *_FILE are authentication

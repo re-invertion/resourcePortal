@@ -128,6 +128,39 @@ export async function startActionProof(input: {
       targets: [target.id],
     });
 
+    // Certify management read-back on the ACTUAL pinned ZITADEL container,
+    // not merely successful POST/PUT or mocked API shapes. Production gate
+    // verification uses these same two management endpoints and fields.
+    const readBack = await input.api<{ target?: {
+      id?: string; endpoint?: string; signingKey?: string;
+      payloadType?: string; restWebhook?: { interruptOnError?: boolean };
+    } }>("GET", "/v2/actions/targets/" + target.id);
+    assert.ok(readBack.target, "Isolated Action target metadata is missing");
+    assert.equal(readBack.target.id, target.id, "Isolated Action target readback lost its ID");
+    assert.equal(readBack.target.endpoint, "http://localhost:8090/action",
+      "Isolated Action target endpoint was modified during setup");
+    assert.equal(readBack.target.signingKey, signingKey,
+      "Isolated Action target signing key differs from creation response");
+    assert.equal(readBack.target.payloadType, "PAYLOAD_TYPE_JSON",
+      "Isolated Action target is not signed JSON");
+    assert.equal(readBack.target.restWebhook?.interruptOnError, true,
+      "Isolated Action target does not interrupt on authorization denial");
+    const executions = await input.api<{ pagination?: { totalResult?: string | number };
+      executions?: Array<{
+        condition?: { function?: { name?: string } };
+        targets?: string[];
+      }>;
+    }>("POST", "/v2/actions/executions/search", { pagination: { limit: 100 } });
+    assert.ok(Array.isArray(executions.executions), "Isolated Action execution list is missing");
+    assert.equal(Number(executions.pagination?.totalResult), executions.executions.length,
+      "Isolated Action execution search is incomplete");
+    const configured = executions.executions.filter(e =>
+      e.condition?.function?.name === "preaccesstoken");
+    assert.equal(configured.length, 1, "Isolated preaccesstoken execution is not unique");
+    assert.deepEqual(configured[0].targets, [target.id],
+      "Isolated signed Action target is not the sole preaccesstoken execution");
+    console.log("PASS: real ZITADEL Actions V2 target signing metadata and execution readback");
+
     let closed = false;
     return {
       events: () => events.map(e => ({ ...e })),
