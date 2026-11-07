@@ -64,3 +64,10 @@ remaining sections are implemented and verified.
 - This patch does not touch the Prisma schema or migrations. Publishing still
   requires the full monorepo lint/test/build, installer/CLI gates, exact-SHA
   CI, merge queue, and real isolated rollback proof per AGENTS.md.
+
+## Follow-up implementation
+
+The later incremental #399 navigation, operational deployment history and
+global search changes are described in
+[console-remaining-399.md](console-remaining-399.md). This separate scope is
+not a declaration of full umbrella #399 completion.

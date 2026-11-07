@@ -25,7 +25,7 @@ it("allows Platform Admin to grant GPU quota without entering tenant-private wor
     return Promise.resolve(json([]));
   });
   vi.stubGlobal("fetch", fetcher);
-  render(<PlatformPage section="infrastructure" />);
+  render(<PlatformPage section="infrastructure" segments={["gpus"]} />);
   expect(await screen.findByRole("heading", { name: "Tenant GPU permissions" })).toBeTruthy();
   await screen.findByRole("option", { name: "Research" });
   fireEvent.change(screen.getByLabelText("GPU quota tenant"), { target: { value: tenantId } });
@@ -51,7 +51,7 @@ it("requires an explicit complete base quota before granting GPUs to a new tenan
     return Promise.resolve(json([]));
   });
   vi.stubGlobal("fetch", fetcher);
-  render(<PlatformPage section="infrastructure" />);
+  render(<PlatformPage section="infrastructure" segments={["gpus"]} />);
   await screen.findByRole("option", { name: "New tenant" });
   fireEvent.change(screen.getByLabelText("GPU quota tenant"), { target: { value: tenantId } });
   expect(await screen.findByText(/does not yet have any resource quota/)).toBeTruthy();
