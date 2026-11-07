@@ -35,4 +35,36 @@ describe("ConfirmActionButton", () => {
     expect(screen.queryByRole("dialog", { name: "Discard pending changes?" })).toBeNull();
     expect(nativeConfirm).not.toHaveBeenCalled();
   });
+  it("keeps keyboard focus inside the dialog and restores the trigger on close", () => {
+    render(
+      <div>
+        <button type="button">Background action</button>
+        <ConfirmActionButton confirmTitle="Confirm changes?" onConfirm={vi.fn()}>
+          Open confirmation
+        </ConfirmActionButton>
+      </div>,
+    );
+    const trigger = screen.getByRole("button", { name: "Open confirmation" });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Confirm changes?" });
+    const close = screen.getByRole("button", { name: "Close dialog" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    const confirm = screen.getByRole("button", { name: "Confirm" });
+    expect(document.activeElement).toBe(close);
+
+    confirm.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+
+    close.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm);
+
+    screen.getByRole("button", { name: "Background action" }).focus();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    fireEvent.click(cancel);
+    expect(document.activeElement).toBe(trigger);
+  });
+
 });
