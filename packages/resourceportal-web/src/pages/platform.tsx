@@ -21,7 +21,11 @@ export function PlatformPage({ section, segments }: { section: string; resourceI
   if (section === "overview") return <PlatformOverviewPage />;
   if (section === "tenants") return <PlatformTenantsPage />;
   if (section === "users") return <PlatformUsersPage />;
-  if (section === "infrastructure" || section === "storage-backends") return <PlatformInfrastructurePage />;
+  if (section === "infrastructure" || section === "storage-backends") {
+    const requested = section === "storage-backends" ? "storage" : segments?.[0] === "storage-backends" ? "storage" : segments?.[0];
+    const known = ["overview", "swarm", "capacity", "gpus", "storage", "locations", "updates"];
+    return <PlatformInfrastructurePage section={known.includes(requested ?? "") ? requested as "overview" | "swarm" | "capacity" | "gpus" | "storage" | "locations" | "updates" : "overview"} />;
+  }
   if (section === "identity") return <PlatformIdentityPage />;
   if (section === "identity-providers") return <PlatformIdentityProvidersPage />;
   if (section === "credentials") return <PlatformCredentialsPage />;

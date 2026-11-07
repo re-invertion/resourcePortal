@@ -17,7 +17,7 @@ function tenantItems(route: Extract<AppRoute, { kind: "tenant" }>): NavItem[] {
   const appActive = route.section === "applications" || route.section === "app-groups";
   const storageActive = ["storage-networking", "storage", "volumes", "registries"].includes(route.section);
   const networkingActive = ["networking", "domains"].includes(route.section);
-  const accessActive = ["access", "administration", "credentials", "identity-providers", "groups"].includes(route.section);
+  const accessActive = ["access", "administration", "credentials", "identity-providers", "identity-sso", "groups"].includes(route.section);
   const activityActive = ["activity", "operations", "audit"].includes(route.section);
   return [
     { label: "Overview", href: tenantHref(tenant, "overview"), icon: <HomeIcon />, active: route.section === "overview" },
@@ -36,7 +36,7 @@ function platformItems(route: Extract<AppRoute, { kind: "platform" }>): NavItem[
     { label: "Overview", href: platformHref("overview"), icon: <HomeIcon />, active: route.section === "overview" },
     { label: "Tenants", href: platformHref("tenants"), icon: <UsersIcon />, active: route.section === "tenants" },
     { label: "Users", href: platformHref("users"), icon: <UsersIcon />, active: route.section === "users" },
-    { label: "Infrastructure", href: "/platform/infrastructure/storage-backends", icon: <NetworkIcon />, active: ["infrastructure", "storage-backends"].includes(route.section) },
+    { label: "Infrastructure", href: "/platform/infrastructure", icon: <NetworkIcon />, active: ["infrastructure", "storage-backends"].includes(route.section) },
     { label: "Identity providers", href: platformHref("identity-providers"), icon: <UsersIcon />, active: ["identity", "identity-providers"].includes(route.section) },
     { label: "Credentials", href: platformHref("credentials"), icon: <KeyIcon />, active: route.section === "credentials" },
     { label: "Billing", href: platformHref("billing"), icon: <BillingIcon />, active: route.section === "billing" },
@@ -96,16 +96,21 @@ function tenantSearchNavigation(tenantId: string): SearchItem[] {
     item("overview", "Overview", "Tenant dashboard and resource summary", "overview", "dashboard home"),
     item("applications", "Applications", "App Groups and deployed applications", "applications", "apps containers workloads app groups"),
     { id: "nav-create-app-group", label: "Create App Group", description: "Create a new deployment workspace", href: tenantHref(tenantId, "applications", "new"), category: "Action", keywords: "new application group create" },
+    { id:"nav-environment", label:"Environment variables", description:"Open an application, then Configuration / Environment", href:tenantHref(tenantId,"applications"), category:"Navigation", keywords:"env environment variable secret config singleapp" },
     item("storage", "Storage", "Persistent volumes and container registries", "storage", "volumes disks registries"),
     item("networking", "Networking", "Private Networks, ResourcePortalGate, domains and routing", "networking", "network vpn gate wireguard topology domains"),
+    { id:"nav-lan", label:"LAN attachments", description:"Gate-backed private Ethernet app attachments", href:tenantHref(tenantId,"networking","lan"), category:"Navigation", keywords:"lan attachment dhcp ethernet l2" },
+    { id:"nav-gates", label:"RP Gates", description:"Enroll and manage remote LAN gateways", href:tenantHref(tenantId,"networking","gates"), category:"Navigation", keywords:"gateway gate device re-enroll" },
+    { id:"nav-device-vpn", label:"Device VPN", description:"Device WireGuard access", href:tenantHref(tenantId,"networking","vpn"), category:"Navigation", keywords:"device wireguard vpn" },
+    { id:"nav-network-topology", label:"Network topology", description:"Network connections, table and graph", href:tenantHref(tenantId,"networking","topology"), category:"Navigation", keywords:"network graph flow connections" },
     item("volumes", "Volumes", "Persistent tenant storage", "volumes", "disk storage persistent"),
     item("registries", "Registries", "Container image registries", "registries", "docker image registry"),
     item("domains", "Domains", "Managed and custom domains", "domains", "dns hostname tls"),
     item("billing", "Billing", "Credits, quota and vouchers", "billing", "credits voucher balance quota"),
-    item("access", "Access", "Memberships and tenant access", "access", "users members permissions"),
-    item("credentials", "Credentials", "Tenant credentials", "credentials", "keys secrets"),
-    item("identity", "Identity providers", "Tenant SSO and identity providers", "identity-providers", "sso login authentication"),
-    item("groups", "Groups", "Tenant identity groups", "groups", "users membership"),
+    item("access", "Access", "Memberships, invitations and tenant access", "access", "users members permissions invitations"),
+    item("roles", "Roles & groups", "View role permissions and manage tenant groups", "administration", "roles groups users membership permissions inherited"),
+    item("credentials", "Service identities", "Tenant machine credentials and service accounts", "credentials", "machine credentials api keys service identities"),
+    item("identity", "Application SSO", "Manage outbound OAuth applications and tenant OIDC", "identity-sso", "sso login authentication oauth oidc applications identity"),
     { id: "nav-activity", label: "Activity", description: "Operations and audit activity", href: tenantHref(tenantId, "activity", "operations"), category: "Navigation", keywords: "events jobs" },
     { id: "nav-operations", label: "Operations", description: "Runtime and background operations", href: tenantHref(tenantId, "activity", "operations"), category: "Navigation", keywords: "jobs deploy runtime" },
     { id: "nav-audit", label: "Audit log", description: "Tenant audit history", href: tenantHref(tenantId, "activity", "audit"), category: "Navigation", keywords: "events history log" },
@@ -119,7 +124,11 @@ function platformSearchNavigation(): SearchItem[] {
     { id: "platform-overview", label: "Platform Overview", description: "Platform administration dashboard", href: platformHref("overview"), category: "Navigation", keywords: "dashboard home" },
     { id: "platform-tenants", label: "Tenants", description: "View tenant inventory", href: platformHref("tenants"), category: "Navigation", keywords: "organizations workspaces" },
     { id: "platform-users", label: "Users", description: "View ResourcePortal users", href: platformHref("users"), category: "Navigation", keywords: "accounts people directory" },
-    { id: "platform-storage", label: "Storage backends", description: "Platform storage infrastructure", href: "/platform/infrastructure/storage-backends", category: "Navigation", keywords: "infrastructure storage" },
+    { id: "platform-storage", label: "Storage backends", description: "Platform storage infrastructure", href: "/platform/infrastructure/storage", category: "Navigation", keywords: "infrastructure storage" },
+    ...([["swarm","Swarm & nodes","compute cluster"],["capacity","Capacity & predictions","memory ram usage prediction"],["gpus","GPUs","nvidia quota hardware"],["locations","Remote locations","remote nodes sites"],["updates","RP Updates","release upgrade rollback"]] as const).map(([section,label,keywords]) => ({
+      id:`platform-infrastructure-${section}`,label,description:"Platform Infrastructure",
+      href:`/platform/infrastructure/${section}`,category:"Navigation",keywords,
+    })),
     { id: "platform-identity", label: "Identity providers", description: "Platform authentication providers", href: platformHref("identity-providers"), category: "Navigation", keywords: "sso auth login" },
     { id: "platform-credentials", label: "Credentials", description: "Platform credentials", href: platformHref("credentials"), category: "Navigation", keywords: "keys secrets" },
     { id: "platform-billing", label: "Billing", description: "Vouchers, prices and credit adjustments", href: platformHref("billing"), category: "Navigation", keywords: "credits vouchers balance payments correction" },
@@ -271,7 +280,7 @@ function QuickSearch({ route, showPlatformAdmin }: { route: Extract<AppRoute, { 
           if (event.key === "Escape") { event.preventDefault(); setOpen(false); inputRef.current?.blur(); }
         }}
       />
-      <kbd className="hidden shrink-0 rounded border border-[#D7E0EC] bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#718096] 2xl:inline">⌘K</kbd>
+      <kbd className="hidden shrink-0 rounded border border-[#D7E0EC] bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#718096] 2xl:inline">Ctrl/⌘ K</kbd>
     </div>
 
     {open ? <div id="global-search-results" role="listbox" className="rp-search-results absolute left-0 right-0 top-[44px] z-[70] max-h-[min(420px,68vh)] overflow-y-auto rounded-xl border border-[#E3EAF3] bg-white/98 p-2 shadow-[0_14px_36px_rgba(15,23,42,0.14)] backdrop-blur-sm">
