@@ -199,7 +199,7 @@ it("filters and searches the Platform Admin user directory", async () => {
 
 it("requires an explicit typed confirmation before starting a ResourcePortal update", async () => {
   const fetchMock = installApi();
-  render(<PlatformPage section="infrastructure" />);
+  render(<PlatformPage section="infrastructure" segments={["updates"]} />);
 
   const update = await screen.findByRole("button", { name: "Update ResourcePortal" });
   fireEvent.click(update);

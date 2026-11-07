@@ -16,6 +16,19 @@ test("Web anti-clickjacking server and regression fixture select security header
   );
 });
 
+test("issue 399 search and deployment history retain classified Fast Fix regression coverage", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-web/src/components/shell.test.tsx",
+    "packages/resourceportal-web/src/pages/app-group/deployments.tsx",
+    "packages/resourceportal-web/src/pages/app-group/deployments.test.tsx",
+    "packages/resourceportal-web/src/pages/platform-usability.test.tsx",
+  ]);
+  for (const profile of ["tenant-ux-patch", "tenant-access", "operations", "applications", "platform-admin-ui", "security"]) {
+    assert.ok(plan.profiles.includes(profile), `Missing ${profile}`);
+  }
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/pages/app-group/new-unclassified.test.tsx"]), /unclassified changes/);
+});
+
 test("issue 396 scheduler and volume isolation cannot bypass networking and worker Fast Fix gates", () => {
   const files = [
     "packages/resourceportal-api/src/worker-reconcile-lane.ts",

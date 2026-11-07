@@ -40,10 +40,18 @@ beforeEach(()=>{
 });
 describe("Tenant networking without routed Site VPN",()=>{
   it("shows app networks, LAN Attachments, RP Gate and separate Device VPN",()=>{
-    render(<TenantNetworkingPage tenantId={tenantId}/>);
-    expect(screen.getByText("LAN Attachments")).toBeTruthy();
-    expect(screen.getByText("Device VPN")).toBeTruthy();
+    const { rerender } = render(<TenantNetworkingPage tenantId={tenantId}/>);
+    expect(screen.getByRole("navigation", { name: "Networking workspaces" })).toBeTruthy();
+    expect(screen.queryByLabelText("Application Network graph")).toBeNull();
+    rerender(<TenantNetworkingPage tenantId={tenantId} section="lan"/>);
+    expect(screen.getByLabelText("LAN attachments workspace")).toBeTruthy();
+    rerender(<TenantNetworkingPage tenantId={tenantId} section="gates"/>);
     expect(screen.getByText("Remote Office")).toBeTruthy();
+    rerender(<TenantNetworkingPage tenantId={tenantId} section="vpn"/>);
+    expect(screen.getByLabelText("Device VPN workspace")).toBeTruthy();
+    rerender(<TenantNetworkingPage tenantId={tenantId} section="topology"/>);
+    expect(screen.getByRole("table")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Diagram" }));
     expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
     expect(screen.queryByText(/Site VPN|BGP|RP to LAN firewall/i)).toBeNull();
   });
@@ -51,7 +59,7 @@ describe("Tenant networking without routed Site VPN",()=>{
     mock.request.mockResolvedValueOnce({
       enrollment:{token:"test-token",expiresAt:"2026-10-23T15:00:00Z"},
     });
-    render(<TenantNetworkingPage tenantId={tenantId}/>);
+    render(<TenantNetworkingPage tenantId={tenantId} section="gates"/>);
     fireEvent.click(screen.getByRole("button",{name:"Add RP Gate"}));
     fireEvent.change(screen.getByPlaceholderText("remote-gate"),{target:{value:"office-gate"}});
     fireEvent.click(screen.getByRole("button",{name:"Create RP Gate"}));

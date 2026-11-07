@@ -50,7 +50,7 @@ export function AppGroupRoute({ tenantId, segments }: { tenantId: string; segmen
   else if (section === "apps") content = <AppGroupApps tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "config") content = <AppGroupConfig tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "networking") content = <AppGroupNetworking tenantId={tenantId} appGroupId={appGroupId} />;
-  else if (section === "deployments") content = <AppGroupDeployments tenantId={tenantId} appGroupId={appGroupId} onReload={group.reload} />;
+  else if (section === "deployments") content = <AppGroupDeployments tenantId={tenantId} appGroupId={appGroupId} onReload={group.reload} currentVersion={typeof group.data.currentDeploymentVersion === "number" ? group.data.currentDeploymentVersion : null} />;
   else if (section === "activity") content = <AppGroupActivity tenantId={tenantId} appGroupId={appGroupId} />;
   else if (section === "settings" || section === "advanced") {
     activeSection = "settings";

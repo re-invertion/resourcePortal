@@ -20,7 +20,7 @@ describe("platform action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<><PlatformPage section="infrastructure" /><ToastViewport /></>);
+    render(<><PlatformPage section="infrastructure" segments={["swarm"]} /><ToastViewport /></>);
     expect((await screen.findAllByText("Ready")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Reconcile Swarm cluster" }));
 
@@ -40,15 +40,16 @@ describe("platform action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<PlatformPage section="infrastructure" />);
-    await screen.findByText("Primary storage");
+    render(<PlatformPage section="infrastructure" segments={["overview"]} />);
+    await screen.findByText("Infrastructure");
     expect(screen.getByText("1.00 / 4.00 cores")).toBeTruthy();
     expect(screen.getByText("1.0 GiB / 8.0 GiB")).toBeTruthy();
     expect(screen.getAllByText(/Live host measurement/).length).toBe(2);
 
-    expect(screen.getByRole("button", { name: "Reconcile Swarm cluster" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /reconcile/i })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Validate" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Swarm & nodes" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Storage backends" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Validate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reconcile Swarm cluster" })).toBeNull();
   });
 
   it("toggles storage backend maintenance through the platform API", async () => {
@@ -69,7 +70,7 @@ describe("platform action feedback", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<PlatformPage section="infrastructure" />);
+    render(<PlatformPage section="infrastructure" segments={["storage"]} />);
     await screen.findByText("Primary storage");
     fireEvent.click(screen.getByRole("button", { name: "Enter maintenance" }));
 

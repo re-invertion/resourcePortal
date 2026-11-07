@@ -311,6 +311,11 @@ const classifiers = [
   // New syntax-aware config preview and MCP catalog safeguards must never
   // silently skip frontend regression checks on fast-fix releases.
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:config|config-code-preview\.test)\.tsx$/, ["tenant-ux-patch"]],
+  // Issue #399 follow-up: workspace navigation, search, deployment monitoring
+  // and its new regression fixtures must participate in Fast Fix selection.
+  [/^packages\/resourceportal-web\/src\/components\/shell\.test\.tsx$/, ["tenant-ux-patch", "tenant-access", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/deployments(?:\.test)?\.tsx$/, ["applications", "operations", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-usability\.test\.tsx$/, ["platform-admin-ui", "tenant-ux-patch"]],
   // Issue #399: exact status mapping, tenant operation scope and RBAC UI
   // are release-critical; new executable files must not evade changed-path coverage.
   [/^packages\/resourceportal-web\/src\/components\/status-tone(?:\.test)?\.tsx?$/, ["tenant-ux-patch", "security"]],

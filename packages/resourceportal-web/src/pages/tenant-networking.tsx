@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { tenantHref } from "../router/router";
 import type { Connection, Edge } from "@xyflow/react";
 import { apiRequest } from "../api/client";
 import {
@@ -37,7 +38,16 @@ async function operationResult(tenantId:string,operation:Operation) {
     throw new Error(current.errorMessage||"Application topology operation was not successful");
 }
 
-export function TenantNetworkingPage({tenantId}:{tenantId:string}) {
+type NetworkingSection = "networks" | "lan" | "gates" | "vpn" | "topology";
+const networkSections: { id: NetworkingSection; label: string }[] = [
+  { id: "networks", label: "Networks" },
+  { id: "lan", label: "LAN attachments" },
+  { id: "gates", label: "RP Gates" },
+  { id: "vpn", label: "Device VPN" },
+  { id: "topology", label: "Topology" },
+];
+
+export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:string;section?:NetworkingSection}) {
   const root="/api/tenants/"+encodeURIComponent(tenantId)+"/networking";
   const topology=useApi<Topology>(root+"/topology");
   const [working,setWorking]=useState(false);
@@ -50,12 +60,43 @@ export function TenantNetworkingPage({tenantId}:{tenantId:string}) {
   const [enrollment,setEnrollment]=useState<Enrollment>();
   const [attachApp,setAttachApp]=useState("");
   const [attachNetwork,setAttachNetwork]=useState("");
+  const [topologyQuery,setTopologyQuery]=useState("");
+  const [topologyMode,setTopologyMode]=useState<"graph" | "table">("table");
   const networks=topology.data?.networks??[];
   const gates=topology.data?.gates??[];
   const apps=topology.data?.appGroups.flatMap(group=>group.singleApps.map(app=>({
     id:app.id,label:group.name+" / "+app.name,
     networkIds:app.networkAttachments.map(link=>link.networkId),
   })))??[];
+
+  const visibleTopology = useMemo<Topology>(() => {
+    if (!topology.data) return { networks: [], gates: [], appGroups: [] };
+    const q = topologyQuery.toLocaleLowerCase().trim();
+    if (!q) return topology.data;
+    const relatedNetworks = new Set<string>();
+    const appGroups = topology.data.appGroups.flatMap(group => {
+      const matchesGroup = group.name.toLocaleLowerCase().includes(q);
+      const matches = group.singleApps.filter(app =>
+        matchesGroup || app.name.toLocaleLowerCase().includes(q) ||
+        app.id.toLocaleLowerCase().includes(q),
+      );
+      matches.forEach(app => app.networkAttachments.forEach(attachment =>
+        relatedNetworks.add(attachment.networkId)));
+      return matches.length ? [{ ...group, singleApps: matches }] : [];
+    });
+    return { ...topology.data, appGroups, networks: topology.data.networks.filter(
+      network => relatedNetworks.has(network.id) || network.name.toLocaleLowerCase().includes(q) ||
+        network.cidr.includes(q),
+    ) };
+  }, [topology.data, topologyQuery]);
+  const topologyConnections = visibleTopology.appGroups.flatMap(group =>
+    group.singleApps.flatMap(app =>
+      app.networkAttachments.map(attachment => ({
+        id: attachment.id, group: group.name, app: app.name,
+        network: visibleTopology.networks.find(network => network.id === attachment.networkId)?.name,
+        address: attachment.address,
+      })).filter(row => Boolean(row.network))));
+  const activeSection = networkSections.some(value => value.id === section) ? section : "networks";
 
   async function createNetwork(event:FormEvent){
     event.preventDefault();
@@ -168,17 +209,23 @@ export function TenantNetworkingPage({tenantId}:{tenantId:string}) {
       <PageHeader eyebrow="Tenant networking" title="Networking"
         description="Connect applications to private Networks, attach selected applications to customer Ethernet through RP Gate, and manage Device VPN."
         actions={<>
-          <Button onClick={()=>setNetworkOpen(true)}>Create Network</Button>
-          <Button onClick={()=>{setEnrollment(undefined);setGateOpen(true);}}>Add RP Gate</Button>
+          {activeSection==="networks" ? <Button onClick={()=>setNetworkOpen(true)}>Create Network</Button> : null}
+          {activeSection==="gates" ? <Button onClick={()=>{setEnrollment(undefined);setGateOpen(true);}}>Add RP Gate</Button> : null}
         </>}/>
       <NetworkingTabs tenantId={tenantId} active="networking"/>
       {topology.error?<Callout tone="danger" title="Networking unavailable">
         {topology.error instanceof Error?topology.error.message:"Unable to load topology"}
       </Callout>:null}
 
-      <RemoteLanAttachmentsPanel tenantId={tenantId} topology={topology.data}/>
-      {topology.data?<TenantNetworkingGraph topology={topology.data} working={working}
-        onConnect={submitGraphConnection} onDisconnect={edge=>void detachNetwork(edge)}/>:null}
+      <nav aria-label="Networking workspaces" className="mt-5 flex flex-wrap gap-2 border-b border-[#D7E0EC] pb-3">
+        {networkSections.map(item => <a key={item.id} href={tenantHref(tenantId,"networking",item.id)}
+          aria-current={activeSection===item.id ? "page" : undefined}
+          className={`rounded-md border px-3 py-2 text-sm font-semibold ${activeSection===item.id?"border-[#1769E0] bg-[#E7F1FF] text-[#0F4F9B]":"border-[#D7E0EC] text-[#526070] hover:bg-[#F5F8FC]"}`}>
+          {item.label}
+        </a>)}
+      </nav>
+      {activeSection==="networks" ? <section aria-label="Networks workspace">
+      <p className="mt-4 text-sm text-[#5B6678]">{networks.length} private Networks · {apps.length} applications. Use Topology for a diagram or relationship table.</p>
       <Card className="mt-5 p-5">
         <h2 className="text-base font-semibold">Application Network membership</h2>
         <p className="mb-3 text-sm text-[#718096]">
@@ -215,7 +262,9 @@ export function TenantNetworkingPage({tenantId}:{tenantId:string}) {
         </div>
       </Card>
 
-      <Card className="mt-5 p-5">
+      </section> : null}
+      {activeSection==="lan" ? <section aria-label="LAN attachments workspace"><RemoteLanAttachmentsPanel tenantId={tenantId} topology={topology.data}/></section> : null}
+      {activeSection==="gates" ? <section aria-label="RP Gates workspace"><Card className="mt-5 p-5">
         <h2 className="text-base font-semibold">RP Gate devices</h2>
         <p className="mb-3 text-sm text-[#718096]">Remote Gate devices terminate an encrypted L2 tunnel for selected LAN Attachments, not site-wide routes.</p>
         {gates.length===0?<p className="text-sm">No RP Gate enrolled.</p>:null}
@@ -237,7 +286,31 @@ export function TenantNetworkingPage({tenantId}:{tenantId:string}) {
         </div>)}
       </Card>
 
-      <DeviceVpnPanel tenantId={tenantId} networks={networks}/>
+      </section> : null}
+      {activeSection==="vpn" ? <section aria-label="Device VPN workspace"><DeviceVpnPanel tenantId={tenantId} networks={networks}/></section> : null}
+      {activeSection==="topology" ? <section aria-label="Network topology workspace" className="mt-5 space-y-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex min-w-[200px] flex-1 flex-col gap-1 text-sm font-medium">
+            Search applications, groups or Networks
+            <input type="search" value={topologyQuery} onChange={event=>setTopologyQuery(event.target.value)}
+              placeholder="Filter topology" className="w-full rounded-md border border-[#C7D1DF] bg-white px-3 py-2"/>
+          </label>
+          <div className="flex gap-2" role="group" aria-label="Topology presentation">
+            <Button variant={topologyMode==="table"?"primary":"secondary"} onClick={()=>setTopologyMode("table")}>Table</Button>
+            <Button variant={topologyMode==="graph"?"primary":"secondary"} onClick={()=>setTopologyMode("graph")}>Diagram</Button>
+          </div>
+        </div>
+        {topologyMode==="graph" ? <TenantNetworkingGraph topology={visibleTopology} working={working}
+          onConnect={submitGraphConnection} onDisconnect={edge=>void detachNetwork(edge)}/> :
+          <Card className="overflow-x-auto"><table className="w-full text-left text-sm">
+            <thead className="bg-[#F5F8FC]"><tr><th scope="col" className="p-3">App Group</th><th scope="col" className="p-3">Application</th>
+              <th scope="col" className="p-3">Network</th><th scope="col" className="p-3">Address</th></tr></thead>
+            <tbody>{topologyConnections.map(row=><tr key={row.id} className="border-t border-[#E1E7F0]">
+              <td className="p-3">{row.group}</td><td className="p-3">{row.app}</td><td className="p-3">{row.network}</td>
+              <td className="p-3 font-mono text-xs">{row.address}</td></tr>)}</tbody></table>
+            {!topologyConnections.length ? <p className="p-4 text-sm text-[#526070]">No matching application-to-Network connections.</p> : null}
+          </Card>}
+      </section> : null}
 
       <Dialog open={createNetworkOpen} onClose={()=>{if(!working)setNetworkOpen(false);}}
         title="Create Network" description="A private tenant-scoped application Network."
