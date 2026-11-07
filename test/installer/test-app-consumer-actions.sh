@@ -22,37 +22,37 @@ ok() { printf 'PASS: %s\n' "$1"; }
 # Mock only HTTPS ZITADEL HTTP replies. The production verifier itself runs
 # unchanged with real jq and real private input files.
 curl() {
-  local output='' last='' previous='' item
+  local mock_response_path='' last='' previous='' item
   for item in "$@"; do
     [[ "$item" != *'test-public-pat-not-production'* ]] || fail 'PAT appeared in curl argv'
     [[ "$item" != *'test-only-key-with-more-than-'* ]] || fail 'HMAC key appeared in curl argv'
-    if [[ "$previous" == --output ]]; then output="$item"; fi
+    if [[ "$previous" == --output ]]; then mock_response_path="$item"; fi
     previous="$item"
     last="$item"
   done
-  [[ "$last" == https://auth.example.test/* && -n "$output" ]] || fail 'unsafe endpoint or missing output'
+  [[ "$last" == https://auth.example.test/* && -n "$mock_response_path" ]] || fail 'unsafe endpoint or missing mock_response_path'
   [[ -f "$test_tmp/admin.pat" ]] || fail 'missing test PAT'
   if [[ "$last" == */v2/actions/targets/12345678 ]]; then
     case "$test_mode" in
       wrong-key)
-        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"wrong-key","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$output" ;;
+        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"wrong-key","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$mock_response_path" ;;
       wrong-callback)
-        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://attacker.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$output" ;;
+        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://attacker.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$mock_response_path" ;;
       not-interrupting)
-        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":false}}}' > "$output" ;;
+        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":false}}}' > "$mock_response_path" ;;
       *)
-        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$output" ;;
+        printf '%s\n' '{"target":{"id":"12345678","endpoint":"https://rp.example.test/api/app-consumer-actions/preaccesstoken","signingKey":"test-only-key-with-more-than-32-character-bytes-012345","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}}' > "$mock_response_path" ;;
     esac
   elif [[ "$last" == */v2/actions/executions/search ]]; then
     case "$test_mode" in
       multiple)
-        printf '%s\n' '{"pagination":{"totalResult":2},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]},{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$output" ;;
+        printf '%s\n' '{"pagination":{"totalResult":2},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]},{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$mock_response_path" ;;
       partial)
-        printf '%s\n' '{"pagination":{"totalResult":2},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$output" ;;
+        printf '%s\n' '{"pagination":{"totalResult":2},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$mock_response_path" ;;
       wrong-target)
-        printf '%s\n' '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["999"]}]}' > "$output" ;;
+        printf '%s\n' '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["999"]}]}' > "$mock_response_path" ;;
       *)
-        printf '%s\n' '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$output" ;;
+        printf '%s\n' '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["12345678"]}]}' > "$mock_response_path" ;;
     esac
   else
     fail "unexpected management endpoint"
