@@ -462,6 +462,42 @@ async function main() {
       const rotatedB = await allowBRefresh.json() as { refresh_token?: string };
       assert.ok(rotatedB.refresh_token, "ZITADEL did not issue a rotated allowed-B refresh token");
 
+      // A GLOBAL interrupting target that stops answering must block even
+      // an otherwise entitled client, rather than silently issuing a refresh
+      // token without RP authorization. This is why staging/rollback of the
+      // target cannot be an unconditional installer upgrade step.
+      let safelyRotatedA = rotatedA.refresh_token;
+      consumerGate.simulateOutage(true);
+      try {
+        const eventOffset = consumerGate.events().length;
+        const outage = await refreshClient(web.clientId, web.clientSecret, safelyRotatedA);
+        assert.ok(!outage.ok,
+          "SECURITY: ZITADEL minted a token while the global Actions V2 webhook failed");
+        assert.ok(consumerGate.events().slice(eventOffset).some(event =>
+          event.userId === userAId && event.clientId === web.clientId &&
+          event.decision === "deny"),
+        "SECURITY: outage did not reach the signed blocking Action target");
+      } finally {
+        consumerGate.simulateOutage(false);
+      }
+      // Recover using a fresh Authorization Code+PKCE flow: a failed refresh
+      // may already have been consumed or rotated by the issuer.
+      const recoveredA = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      });
+      const afterRecovery = await refreshClient(
+        web.clientId, web.clientSecret, recoveredA.refreshToken);
+      assert.equal(afterRecovery.status, 200,
+        "Authorized refresh remained unavailable after the global webhook recovered");
+      const recoveredATokens = await afterRecovery.json() as { refresh_token?: string };
+      assert.ok(recoveredATokens.refresh_token,
+        "ZITADEL did not issue a rotated refresh after restoring the global callback");
+      safelyRotatedA = recoveredATokens.refresh_token;
+      console.log("PASS: signed global preaccesstoken target outage denies valid refresh, recovery restores authorization");
+
       for (const [remote, tokenResult] of [
         [secondWeb, denyAToken], [foreignDeniedWeb, denyBToken],
       ] as const) {
@@ -486,7 +522,7 @@ async function main() {
       });
       assert.equal(await consumerService.mayIssueClientToken(issuer, userAId, web.clientId), false);
       const beforeRevoked = consumerGate.events().length;
-      const revoked = await refreshClient(web.clientId, web.clientSecret, rotatedA.refresh_token);
+      const revoked = await refreshClient(web.clientId, web.clientSecret, safelyRotatedA);
       assert.ok(!revoked.ok, "SECURITY: RP grant revocation allowed token refresh");
       assert.ok(consumerGate.events().slice(beforeRevoked).some(event =>
         event.clientId === web.clientId && event.userId === userAId && event.decision === "deny"),

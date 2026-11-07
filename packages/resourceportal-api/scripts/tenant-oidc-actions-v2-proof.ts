@@ -51,6 +51,7 @@ export async function startActionProof(input: {
   const events: ActionProofEvent[] = [];
   let signingKey = "";
   let deniedClientId: string | null = null;
+  let temporarilyUnavailable = false;
   const server = createServer((request, response) => {
     if (request.url === "/health" && request.method === "GET") {
       response.writeHead(200).end("ok");
@@ -87,6 +88,14 @@ export async function startActionProof(input: {
       };
       const userId = payload.user?.id ?? null;
       const clientId = payload.application?.client_id ?? null;
+      // Model an issuer-global target outage, not a missing entitlement. The
+      // event records only immutable IDs from VERIFIED signed bytes. An
+      // interrupting ZITADEL action must DENY token issuance on HTTP 503.
+      if (temporarilyUnavailable) {
+        events.push({ userId, clientId, decision: "deny" });
+        response.writeHead(503).end();
+        return;
+      }
       // This probe is only authoritative for its one ephemeral user. Absent
       // client identity is always DENIED for this user; never infer by email.
       let denied = userId === input.testUserId &&
@@ -165,6 +174,7 @@ export async function startActionProof(input: {
     return {
       events: () => events.map(e => ({ ...e })),
       denyClient(clientId: string) { assert.ok(clientId); deniedClientId = clientId; },
+      simulateOutage(enabled: boolean) { temporarilyUnavailable = enabled; },
       async close() {
         if (closed) return;
         closed = true;

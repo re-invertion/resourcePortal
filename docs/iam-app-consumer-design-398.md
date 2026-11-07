@@ -199,6 +199,18 @@ client compatibility, target downtime, and supported multi-version database
 restore certification remain to be completed. Do not set these configuration
 values manually or release this PR merely because CI is green.
 
+### Issuer-global target outage and recovery test (draft)
+
+The isolated real HTTPS ZITADEL suite now simulates a temporary HTTP 503 from
+an otherwise correctly signed and bound `preaccesstoken` target. It asserts
+that a user entitled to the exact OAuth client **cannot refresh** during this
+outage; the denial must be observed at the signed webhook. After restoring
+the listener it repeats the OAuth Authorization Code + PKCE flow and verifies
+fresh authorized refresh succeeds. This validates the failure behavior but
+does not make it acceptable for a production installer to bind or leave the
+global Action installed during rollback: issuer-wide authentication disruption
+remains a mandatory deployment safety gate.
+
 ### Evidence from isolated release readiness
 
 The protected #407 candidate run 42387470756 tested source `v0.2.146`
