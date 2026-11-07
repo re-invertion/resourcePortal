@@ -70,3 +70,13 @@ identity in either direction. Operators should use a distinct native ZITADEL
 identity for App Users rather than converting the same owner account into an
 app-only consumer. Tests assert that blocked paths never create a tenant or
 membership and that existing role-bearing owner onboarding still works.
+
+## Native RP client separation
+
+The signed Actions V2 callback now evaluates the native RP OAuth client against
+any App Consumer record for the exact issuer and immutable ZITADEL subject.
+Known App Consumers, including suspended ones, cannot receive tokens for the
+RP native login client. Unrelated existing RP users and first-time native
+registration retain normal login; a database error denies instead of bypassing
+the check. This does not replace an isolated real-ZITADEL grant-matrix E2E or
+production provisioning/certification of the webhook target.

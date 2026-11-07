@@ -22,8 +22,9 @@ function fixture(overrides: Record<string, string> = {}) {
   };
   const config = { get: vi.fn((key: string) => env[key]) } as unknown as ConfigService;
   const mayIssueClientToken = vi.fn().mockResolvedValue(false);
-  const svc = new AppConsumerActionService(config, { mayIssueClientToken } as never);
-  return { svc, mayIssueClientToken };
+  const mayIssueNativeRpToken = vi.fn().mockResolvedValue(true);
+  const svc = new AppConsumerActionService(config, { mayIssueClientToken, mayIssueNativeRpToken } as never);
+  return { svc, mayIssueClientToken, mayIssueNativeRpToken };
 }
 const client = { function: "preaccesstoken", user: { id: "12131" }, application: { client_id: "home-assistant" } };
 
@@ -67,6 +68,17 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     const f = fixture();
     const payload = signed({ ...client, application: { client_id: "rp-native-client-id" } });
     expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
+    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
+    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+  });
+
+  it("blocks native RP access for App Consumer subjects and fails closed if DB is down", async () => {
+    const f = fixture();
+    const payload = signed({ ...client, application: { client_id: "rp-native-client-id" } });
+    f.mayIssueNativeRpToken.mockResolvedValueOnce(false);
+    await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
+    f.mayIssueNativeRpToken.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
     expect(f.mayIssueClientToken).not.toHaveBeenCalled();
   });
 });

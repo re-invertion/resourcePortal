@@ -54,6 +54,24 @@ function setup() {
 }
 
 describe("app consumer client grants default-deny / tenant scoped (#398)", () => {
+  it("denies RP native login for a matching App Consumer regardless of membership suspension", async () => {
+    const f = setup();
+    expect(await f.svc.mayIssueNativeRpToken("https://zitadel.test", "123456")).toBe(false);
+    expect(f.prisma.tenantAppConsumer.findFirst).toHaveBeenCalledWith({
+      where: { membership: { user: { identities: {
+        some: { issuer: "https://zitadel.test", externalSubject: "123456",
+          providerType: "zitadel", identityProviderId: null },
+      } } } },
+      select: { membershipId: true },
+    });
+    // Query is intentionally NOT scoped to active memberships: suspended
+    // consumers must not regain RP access via the native client.
+    f.prisma.tenantAppConsumer.findFirst.mockResolvedValueOnce(null);
+    expect(await f.svc.mayIssueNativeRpToken("https://zitadel.test", "123456")).toBe(true);
+    expect(await f.svc.mayIssueNativeRpToken("http://insecure.test", "123456")).toBe(false);
+    expect(await f.svc.mayIssueNativeRpToken("https://zitadel.test", "invalid")).toBe(false);
+  });
+
   it("does not return secrets, tokens or external subjects in app consumer list", async () => {
     const f = setup();
     f.prisma.tenantAppConsumer.findMany.mockResolvedValue([{

@@ -104,6 +104,32 @@ export class AppConsumersService {
   }
 
   /**
+   * Native RP login is an infrastructure client, not an app grant. Preserve
+   * normal first-time RP login, but never mint an RP token for an App Consumer
+   * (including a suspended consumer whose old session could still exist).
+   * Identity is resolved solely from the verified signed ZITADEL subject.
+   * A DB outage must reject token issuance; callers must not bypass errors.
+   */
+  async mayIssueNativeRpToken(issuer: string, externalSubject: string): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject)) return false;
+    const consumer = await this.prisma.tenantAppConsumer.findFirst({
+      where: {
+        membership: {
+          user: {
+            identities: {
+              some: {
+                issuer, externalSubject, providerType: "zitadel", identityProviderId: null,
+              },
+            },
+          },
+        },
+      },
+      select: { membershipId: true },
+    });
+    return consumer === null;
+  }
+
+  /**
    * Only call with issuer, subject and client ID obtained from an authenticated
    * ZITADEL Actions V2 webhook. Unknown identities, projects, apps or grants
    * deny by default. This service does not itself expose a public webhook.

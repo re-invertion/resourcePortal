@@ -63,9 +63,17 @@ export class AppConsumerActionService {
     if (!issuer?.startsWith("https://")) {
       throw new ServiceUnavailableException("Issuer not configured");
     }
-    // RP native login is an explicitly audited infrastructure client, outside
-    // the tenant's externally registered OAuthApplication grant matrix.
-    if (clientId === this.config.get<string>("OIDC_CLIENT_ID")) return {};
+    // Native RP is not a tenant OAuth application. Allow its regular/JIT
+    // users, but deny a consumer account from acquiring RP-native tokens.
+    // Check the signed subject in RP's DB; never trust a client name or email.
+    if (clientId === this.config.get<string>("OIDC_CLIENT_ID")) {
+      try {
+        if (await this.consumers.mayIssueNativeRpToken(issuer, subject)) return {};
+      } catch {
+        // A DB outage must not fail open to a privileged RP OAuth client.
+      }
+      throw new ForbiddenException("RP native login denied");
+    }
 
     try {
       if (await this.consumers.mayIssueClientToken(issuer, subject, clientId)) return {};
