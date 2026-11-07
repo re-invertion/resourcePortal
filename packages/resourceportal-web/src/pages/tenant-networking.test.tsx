@@ -55,6 +55,31 @@ describe("Tenant networking without routed Site VPN",()=>{
     expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
     expect(screen.queryByText(/Site VPN|BGP|RP to LAN firewall/i)).toBeNull();
   });
+  it("retains application connections when topology is filtered by Network CIDR or name", () => {
+    const app = topology.appGroups[0].singleApps[0];
+    const original = app.networkAttachments;
+    app.networkAttachments = [{
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-555555555555",
+      networkId, address: "10.240.4.10",
+    }];
+    try {
+      render(<TenantNetworkingPage tenantId={tenantId} section="topology" />);
+      const search = screen.getByRole("searchbox", { name: /Search applications, groups or Networks/i });
+      fireEvent.change(search, { target: { value: "10.240.4.0/24" } });
+      let row = screen.getByRole("row", { name: /sensors sensor backend 10.240.4.10/i });
+      expect(row).toBeTruthy();
+      fireEvent.change(search, { target: { value: "backend" } });
+      row = screen.getByRole("row", { name: /sensors sensor backend 10.240.4.10/i });
+      expect(row).toBeTruthy();
+      fireEvent.change(search, { target: { value: "sensor" } });
+      expect(screen.getByRole("row", { name: /sensors sensor backend 10.240.4.10/i })).toBeTruthy();
+      fireEvent.change(search, { target: { value: "not-a-network" } });
+      expect(screen.getByText("No matching application-to-Network connections.")).toBeTruthy();
+    } finally {
+      app.networkAttachments = original;
+    }
+  });
+
   it("creates an RP Gate with a one-time LAN enrollment flow",async()=>{
     mock.request.mockResolvedValueOnce({
       enrollment:{token:"test-token",expiresAt:"2026-10-23T15:00:00Z"},

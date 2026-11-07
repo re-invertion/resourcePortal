@@ -73,20 +73,26 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
     if (!topology.data) return { networks: [], gates: [], appGroups: [] };
     const q = topologyQuery.toLocaleLowerCase().trim();
     if (!q) return topology.data;
-    const relatedNetworks = new Set<string>();
+    // A query matching only the network name/CIDR must preserve its
+    // connections, even when no application name happens to contain it.
+    const matchingNetworkIds = new Set(topology.data.networks
+      .filter(network => network.name.toLocaleLowerCase().includes(q) ||
+        network.cidr.toLocaleLowerCase().includes(q))
+      .map(network => network.id));
+    const relatedNetworks = new Set(matchingNetworkIds);
     const appGroups = topology.data.appGroups.flatMap(group => {
       const matchesGroup = group.name.toLocaleLowerCase().includes(q);
       const matches = group.singleApps.filter(app =>
         matchesGroup || app.name.toLocaleLowerCase().includes(q) ||
-        app.id.toLocaleLowerCase().includes(q),
+        app.id.toLocaleLowerCase().includes(q) ||
+        app.networkAttachments.some(attachment => matchingNetworkIds.has(attachment.networkId)),
       );
       matches.forEach(app => app.networkAttachments.forEach(attachment =>
         relatedNetworks.add(attachment.networkId)));
       return matches.length ? [{ ...group, singleApps: matches }] : [];
     });
     return { ...topology.data, appGroups, networks: topology.data.networks.filter(
-      network => relatedNetworks.has(network.id) || network.name.toLocaleLowerCase().includes(q) ||
-        network.cidr.includes(q),
+      network => relatedNetworks.has(network.id),
     ) };
   }, [topology.data, topologyQuery]);
   const topologyConnections = visibleTopology.appGroups.flatMap(group =>

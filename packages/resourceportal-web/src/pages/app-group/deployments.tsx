@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../../api/client";
 import {
   Button, Card, ConfirmActionButton, DataTable, DeployIcon, EmptyState,
@@ -31,6 +31,31 @@ export function AppGroupDeployments({
   const events = useApi<unknown>(selected ? `${root}/deployments/${encodeURIComponent(idOf(selected))}/events` : undefined);
   const rows = useMemo(() => items<Deployment>(q.data), [q.data]);
   const inFlight = rows.some(active);
+  const previousStatuses = useRef<{ root: string; statuses: Map<string, string> }>({
+    root, statuses: new Map(),
+  });
+  const [syncingGroup, setSyncingGroup] = useState(false);
+
+  useEffect(() => {
+    if (previousStatuses.current.root !== root) {
+      previousStatuses.current = { root, statuses: new Map() };
+    }
+    // A successful history refresh may transition one deployment to terminal
+    // while other deployments are still running. Refresh the authoritative
+    // App Group version on every observed transition, not only when all
+    // operations have finished. Do not treat failed history requests as proof.
+    if (q.loading || q.error || !q.data) return;
+    const previous = previousStatuses.current.statuses;
+    const next = new Map(rows.map(row => [idOf(row), text(row.status, "Unknown")]));
+    const transitionedToTerminal = rows.some(row => {
+      const prior = previous.get(idOf(row));
+      return prior !== undefined && !FINISHED.has(prior) && FINISHED.has(text(row.status, "Unknown"));
+    });
+    previousStatuses.current = { root, statuses: next };
+    if (!transitionedToTerminal) return;
+    setSyncingGroup(true);
+    void onReload().finally(() => setSyncingGroup(false));
+  }, [root, rows, q.data, q.loading, q.error, onReload]);
 
   useEffect(() => {
     if (!inFlight) return;
@@ -118,7 +143,7 @@ export function AppGroupDeployments({
       ]} rows={visible.map(row => {
         const version = typeof row.version === "number" ? row.version : Number(row.version);
         const isCurrent = currentVersion != null && currentVersion === version;
-        const canRollback = text(row.status) === "Succeeded" && !isCurrent && !activeDeployments;
+        const canRollback = text(row.status) === "Succeeded" && !isCurrent && !activeDeployments && !syncingGroup;
         return { key: idOf(row), cells: {
           version: <strong>{row.version == null ? text(row.name, "—") : `v${text(row.version)}`}{isCurrent ? <span className="ml-2 text-xs font-medium text-[#0F56A7]">Current</span> : null}</strong>,
           status: <StatusText tone={statusTone(row.status)}>{text(row.status, "Unknown")}</StatusText>,
