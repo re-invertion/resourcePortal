@@ -391,7 +391,41 @@ async function main() {
       targetName: "rp-398-real-prisma-client-grants-" + suffix,
       async authorize(raw, signature, signingKey) {
         currentSigningKey = signingKey;
-        await realAuthorization.authorize(raw, signature);
+        try {
+          await realAuthorization.authorize(raw, signature);
+        } catch (error) {
+          // Diagnostics are intentionally restricted to this disposable CI
+          // issuer and a fixed whitelist of server-authored messages; never
+          // print webhook bodies, signing keys, client IDs or user identities.
+          const payload = JSON.parse(raw.toString("utf8")) as {
+            function?: string;
+            user?: { id?: string };
+            application?: { client_id?: string };
+          };
+          const reason = error instanceof Error && [
+            "App Consumer authorization target disabled",
+            "App Consumer target signing key unavailable",
+            "Invalid ZITADEL Action signature",
+            "Invalid Action payload",
+            "Unsupported Action function",
+            "ZITADEL Action user or client identity missing",
+            "Issuer not configured",
+            "OIDC client access denied",
+            "RP native login denied",
+          ].includes(error.message) ? error.message : "unclassified-denial";
+          const knownAllowed =
+            (payload.user?.id === userAId && payload.application?.client_id === web.clientId) ||
+            (payload.user?.id === userBId && payload.application?.client_id === foreignWeb.clientId);
+          if (knownAllowed && payload.user?.id && payload.application?.client_id) {
+            const grant = await consumerService.mayIssueClientToken(
+              issuer, payload.user.id, payload.application.client_id,
+            ).catch(() => null);
+            console.error("Isolated App Consumer expected-allow rejected:",
+              { reason, expectedFunction: payload.function === undefined ||
+                  payload.function === "preaccesstoken", currentGrant: grant });
+          }
+          throw error;
+        }
       },
     });
     const refreshClient = async (clientId: string, clientSecret: string, refreshToken: string) =>
