@@ -42,6 +42,28 @@ describe("AppShell", () => {
     expect(onTenantChange).toHaveBeenCalledWith("tenant-2");
   });
 
+  it("finds real role, groups and Application SSO destinations instead of legacy dead routes", () => {
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    const search = screen.getByRole("combobox", { name: "Search resources" });
+    fireEvent.change(search, { target: { value: "roles" } });
+    const roles = screen.getByRole("option", { name: /Roles & groups/ });
+    expect(roles.getAttribute("aria-selected")).toBe("true");
+    expect(roles.textContent).toContain("View role permissions");
+    const href = roles.getAttribute("data-testid");
+    expect(href).toBeNull();
+    fireEvent.change(search, { target: { value: "SSO" } });
+    expect(screen.getByRole("option", { name: /Application SSO/ })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "gpu" } });
+    expect(screen.queryByRole("option", { name: /GPUs/ })).toBeNull();
+  });
+
+  it("opens global search on Ctrl+K and shows a cross-platform shortcut hint", () => {
+    render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(screen.getByRole("combobox", { name: "Search resources" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Ctrl/⌘ K")).toBeTruthy();
+  });
+
   it("provides the final topbar controls and user menu", () => {
     render(<AppShell user={user} route={tenantRoute()} onLogout={vi.fn()}><p>Content</p></AppShell>);
     expect(screen.getByRole("combobox", { name: "Search resources" })).toBeTruthy();

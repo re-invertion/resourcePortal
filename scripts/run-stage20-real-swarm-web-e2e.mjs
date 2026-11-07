@@ -297,6 +297,30 @@ try {
       await waitForReplicas(createdStackName, singleAppName, "1/1");
     });
 
+    // A rollback to the *currently running* version is intentionally disabled
+    // in the Web Console. Deploy the same validated draft once more using the
+    // explicit force policy so the original version becomes a genuine rollback
+    // target. This also exercises real Swarm redeploy and leaves the existing
+    // rollback verification below intact.
+    const newerDeployment = await proxyApi(
+      context,
+      `/tenants/${createdTenantId}/app-groups/${appGroupId}/deploy`,
+      { method: "POST", body: { force: true, note: "Stage 20 rollback baseline" } },
+    );
+    const newerDeploymentId = stringField(newerDeployment, "id");
+    const newerDeploymentVersion = Number(newerDeployment.version);
+    assert(
+      Number.isInteger(newerDeploymentVersion) && newerDeploymentVersion > deploymentVersion,
+      `Forced deployment ${newerDeploymentId} must follow v${deploymentVersion}`,
+    );
+    await phase("redeploy to a newer version before rollback", async () => {
+      await runOperationToTerminal(newerDeploymentId, "Succeeded");
+      await expectDeploymentStatus(
+        context, createdTenantId, appGroupId, newerDeploymentId, "Succeeded",
+      );
+      await waitForReplicas(createdStackName, singleAppName, "1/1");
+    });
+
     await page.goto(
       `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments`,
       { waitUntil: "domcontentloaded" },
@@ -304,13 +328,33 @@ try {
     await page
       .getByRole("heading", { name: "Deployments", level: 2 })
       .waitFor();
+    const currentRow = page
+      .getByRole("row")
+      .filter({ hasText: `v${newerDeploymentVersion}` });
+    await currentRow.waitFor();
+    // The history and App Group current-version requests settle independently.
+    await currentRow.getByText("Current", { exact: true }).waitFor();
+    assert(
+      (await currentRow.textContent())?.includes("Current"),
+      `Deployment history did not mark v${newerDeploymentVersion} as Current`,
+    );
+    assert(
+      await currentRow.getByRole("button", { name: "Rollback", exact: true }).isDisabled(),
+      "Current deployment must not be offered as a rollback target",
+    );
     const rollbackSourceRow = page
       .getByRole("row")
       .filter({ hasText: `v${deploymentVersion}` });
     await rollbackSourceRow.waitFor();
-    await rollbackSourceRow
-      .getByRole("button", { name: "Rollback", exact: true })
-      .click();
+    assert(
+      (await rollbackSourceRow.textContent())?.includes("Succeeded") &&
+        !(await rollbackSourceRow.textContent())?.includes("Current"),
+      "Only an older successful deployment is eligible for rollback",
+    );
+    const rollbackButton = rollbackSourceRow
+      .getByRole("button", { name: "Rollback", exact: true });
+    assert(await rollbackButton.isEnabled(), "Older successful version must allow rollback");
+    await rollbackButton.click();
 
     const rollbackResponsePromise = page.waitForResponse(
       (response) =>

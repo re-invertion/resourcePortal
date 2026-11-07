@@ -29,7 +29,7 @@ export function TenantPage({ tenantId, section, resourceId, segments = [], userI
   }
   if (section === "app-groups") return (segments.length || resourceId) ? <AppGroupRoute tenantId={tenantId} segments={segments.length ? segments : [resourceId!]} /> : <ApplicationsPage tenantId={tenantId} />;
   if (section === "storage-networking" || section === "storage") return <TenantVolumesPage tenantId={tenantId} />;
-  if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} />;
+  if (section === "networking") return <TenantNetworkingPage tenantId={tenantId} section={(segments[0] || "networks") as "networks" | "lan" | "gates" | "vpn" | "topology"} />;
   if (section === "access") return <TenantAdministrationPage tenantId={tenantId} userId={userId} section="overview" />;
   if (section === "activity") {
     const view = segments[0] === "audit" ? "audit" : "operations";
