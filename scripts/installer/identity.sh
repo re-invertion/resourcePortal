@@ -526,3 +526,91 @@ rp_apply_zitadel_bootstrap_output() {
 
   rp_remove_secret_file "$secret_file"
 }
+
+# App Consumer Actions V2 authorization is a GLOBAL preaccesstoken execution.
+# Enrollment is deliberately explicit, never an ordinary installer/upgrade
+# step. The operator first configures a signed, interrupting HTTPS target in
+# isolated ZITADEL and certifies normal RP logins and downstream client grants.
+# Only after verifying the live read-back can the installer stage a versioned
+# Docker secret and mark the local API config ready for deployment.
+#
+# The PAT and HMAC key are read solely from existing protected files; neither
+# is passed in process arguments or printed in logs.
+rp_verify_app_consumer_actions_v2_binding() (
+  local target_id="${1:-}" key_file="${2:-}"
+  local pat_file="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
+  local auth_host="${RP_CFG_ZITADEL_DOMAIN:-}" rp_host="${RP_CFG_DOMAIN:-}"
+  local org_id="${RP_CFG_ZITADEL_ORGANIZATION_ID:-}" pat key_len callback tmp
+  [[ "$target_id" =~ ^[0-9]{1,64}$ ]] || return 1
+  [[ "$auth_host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ &&
+     "$rp_host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ &&
+     "$org_id" =~ ^[0-9]{1,64}$ ]] || return 1
+  [[ "$key_file" == /* && -f "$key_file" && -r "$key_file" &&
+     "$pat_file" == /* && -f "$pat_file" && -r "$pat_file" ]] || return 1
+  key_len="$(wc -c < "$key_file")" || return 1
+  [[ "$key_len" =~ ^[0-9]+$ && "$key_len" -ge 32 && "$key_len" -le 512 ]] || return 1
+  IFS= read -r pat < "$pat_file" || [[ -n "$pat" ]] || return 1
+  [[ "$pat" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || return 1
+  command -v curl >/dev/null && command -v jq >/dev/null || return 1
+  callback="https://${rp_host}/api/app-consumer-actions/preaccesstoken"
+  tmp="$(mktemp -d)" || return 1
+  chmod 0700 "$tmp" || return 1
+  trap 'rm -rf -- "$tmp"' EXIT
+
+  # curl --config uses a private mode-0600 temporary file instead of putting
+  # Bearer credentials in process args, and TLS redirect is never followed.
+  ( umask 077
+    printf 'header = "Authorization: Bearer %s"\nheader = "x-zitadel-orgid: %s"\n' "$pat" "$org_id"
+  ) > "$tmp/curl.conf" || return 1
+  unset pat
+  local base="https://${auth_host}"
+  if ! curl --silent --show-error --fail --no-location --proto '=https' \
+      --max-time 15 --config "$tmp/curl.conf" \
+      --output "$tmp/target.json" "$base/v2/actions/targets/$target_id" >/dev/null 2>&1; then
+    printf 'ZITADEL App Consumer Actions V2 target verification unavailable.\n' >&2
+    return 1
+  fi
+  if ! jq -e --arg id "$target_id" --arg endpoint "$callback" --rawfile key "$key_file" '
+    .target.id == $id and
+    .target.endpoint == $endpoint and
+    .target.payloadType == "PAYLOAD_TYPE_JSON" and
+    .target.restWebhook.interruptOnError == true and
+    .target.signingKey == ($key | rtrimstr("\n") | rtrimstr("\r"))
+  ' "$tmp/target.json" >/dev/null 2>&1; then
+    printf 'ZITADEL App Consumer Actions V2 target or signing key mismatch.\n' >&2
+    return 1
+  fi
+  if ! curl --silent --show-error --fail --no-location --proto '=https' \
+      --max-time 15 --config "$tmp/curl.conf" \
+      -H 'Content-Type: application/json' --request POST \
+      --data '{"pagination":{"limit":100}}' \
+      --output "$tmp/executions.json" "$base/v2/actions/executions/search" >/dev/null 2>&1; then
+    printf 'ZITADEL App Consumer Actions V2 execution verification unavailable.\n' >&2
+    return 1
+  fi
+  if ! jq -e --arg id "$target_id" '
+    (.executions | type == "array") and
+    ((.pagination.totalResult | tonumber) == (.executions | length)) and
+    (([.executions[] | select(.condition.function.name == "preaccesstoken")] | length) == 1) and
+    (([.executions[] | select(.condition.function.name == "preaccesstoken")] | .[0].targets) == [$id])
+  ' "$tmp/executions.json" >/dev/null 2>&1; then
+    printf 'ZITADEL App Consumer Actions V2 execution is not exclusive and fully verified.\n' >&2
+    return 1
+  fi
+)
+
+rp_stage_app_consumer_actions_v2_binding() {
+  local target_id="$1" key_file="$2" ref
+  rp_verify_app_consumer_actions_v2_binding "$target_id" "$key_file" || return 1
+  # Check all remote preconditions BEFORE creating a persistent Swarm secret.
+  ref="$(rp_ensure_versioned_swarm_secret rp_app_consumer_action_hmac "$key_file")" || return 1
+  [[ "$ref" =~ ^rp_app_consumer_action_hmac_[a-fA-F0-9]{16}$ ]] || return 1
+  RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID="$target_id"
+  RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF="$ref"
+  RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED=true
+  export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID \
+    RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF \
+    RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED
+  # No config write or stack deploy here; an operator-controlled cutover with
+  # rollback preparation is mandatory for an issuer-wide pre-token hook.
+}

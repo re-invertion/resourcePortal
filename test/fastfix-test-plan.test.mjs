@@ -28,6 +28,30 @@ test("shared creation form draft preservation triggers reactive Web and tenant U
   );
 });
 
+test("ZITADEL Actions V2 signing key enrollment and stack opt-in require release/identity/security installer checks", () => {
+  const paths = [
+    "config/production/stack.yml.tpl",
+    "scripts/installer/identity.sh",
+    "scripts/installer/secrets.sh",
+    "scripts/installer/config.sh",
+    "scripts/installer/control-plane.sh",
+    "scripts/installer/swarm.sh",
+    "test/installer/test-app-consumer-actions.sh",
+  ];
+  for (const path of paths) {
+    const selected = selectProfiles([path]);
+    for (const expected of ["identity", "installer", "platform-release", "security"]) {
+      assert.ok(selected.profiles.includes(expected), expected + " missing for " + path);
+    }
+    if (path === "scripts/installer/control-plane.sh" ||
+        path === "config/production/stack.yml.tpl") {
+      assert.ok(selected.profiles.includes("networking"), "Missing Swarm networking gate");
+    }
+  }
+  assert.throws(() => selectProfiles(["test/installer/test-unknown-action-hook.sh"]),
+    /unclassified changes/);
+});
+
 test("issue 398 App Consumer Actions, grant model, and config changes require identity and security regressions", () => {
   const files = [
     "packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts",
@@ -345,10 +369,12 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "applications",
     "bug-reports",
     "domains",
+    "identity",
     "installer",
     "networking",
     "platform-admin-ui",
     "platform-release",
+    "security",
     "volume-safety",
     "web-console",
     "worker",
@@ -418,10 +444,11 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
     "test/installer/test-control-plane.sh",
   ]);
   assert.equal(plan.vpnSmoke, true);
-  assert.deepEqual(plan.profiles, ["installer", "networking", "platform-release"]);
+  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "security"]);
 });
 test("installer configuration fixes select the core safety suite", () => {
-  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles, ["installer", "platform-release"]);
+  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles,
+    ["identity", "installer", "platform-release", "security"]);
 });
 test("the fastfix runner requires a dependency security audit for all releases", async () => {
   const { readFileSync } = await import("node:fs");

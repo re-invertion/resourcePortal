@@ -50,6 +50,7 @@ secrets:
   rp_zitadel_management_token:
     external: true
     name: __ZITADEL_MANAGEMENT_SWARM_REF__
+  # RP_APP_CONSUMER_ACTIONS_V2_SECRET_DECL
 
 volumes: {}
 
@@ -229,6 +230,7 @@ services:
       RP_NATIVE_LOGIN_ONLY: "auto" # only when there are no inbound IdPs, links, sessions or policies
       TENANT_OIDC_AUTO_ROLLOUT: "true"
       TENANT_OIDC_ACTIVATION_ALLOWED: "auto" # automatic, only after issuer + tenant checks
+      # RP_APP_CONSUMER_ACTIONS_V2_ENV
       RP_OIDC_EXTRA_CA_B64: "__OIDC_EXTRA_CA_B64__"
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
@@ -250,6 +252,7 @@ services:
       - rp_internal_worker_token
       - rp_oidc_client_secret
       - rp_zitadel_management_token
+      # RP_APP_CONSUMER_ACTIONS_V2_API_SECRET
     networks:
       - rp-control
       - rp-web-api

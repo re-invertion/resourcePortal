@@ -158,6 +158,7 @@ const commands = {
     ["bash", "test/installer/test-core.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
+    ["bash", "test/installer/test-app-consumer-actions.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
@@ -283,6 +284,12 @@ const classifiers = [
   // Creation-form hydration can reset an administrator's edits between
   // validation and submit; always run actual Web state and tenant UI tests.
   [/^packages\/resourceportal-web\/src\/components\/forms(?:\.test)?\.tsx$/, ["reactive-web-state", "tenant-ux-patch"]],
+  // Global ZITADEL pre-token enrollment and signing-secret Swarm manifests
+  // are identity- and release-critical, including dedicated installer tests.
+  [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
+  [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
+  [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],
+  [/^config\/production\/stack\.yml\.tpl$/, ["identity", "installer", "networking", "platform-release", "security"]],
   [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
   [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Signed ZITADEL webhook secrets loaded from *_FILE are authentication

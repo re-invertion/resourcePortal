@@ -158,3 +158,56 @@ operational risk and must be disclosed. Live production installer-managed
 target provisioning/rotation, HTTPS callback reachability, and explicit
 source-to-target database restore certification remain separate blockers.
 A green isolated CI probe or setting flags manually is not release DoD.
+
+## Opt-in production installer configuration (draft, not a cutover)
+
+An installer upgrade **does not** create, bind or activate the global ZITADEL
+`preaccesstoken` execution. A normal deployment includes neither an App
+Consumer Actions V2 Docker secret nor an enabled callback. This preserves
+existing RP logins if the feature is not explicitly rolled out.
+
+An operator can stage a separately deployed target only with the official
+`rp_stage_app_consumer_actions_v2_binding <numeric-target-id> <absolute-key-file>`
+installer helper, after loading the installed configuration and the
+`scripts/installer/identity.sh` and `scripts/installer/secrets.sh` modules.
+The target's secret file and the existing ZITADEL management PAT remain on the
+host and are never written to an installer environment variable or command
+argument. The helper checks a TLS-only management endpoint, the exact
+`https://<RP-domain>/api/app-consumer-actions/preaccesstoken` callback,
+the signed JSON REST webhook with `interruptOnError=true`, the matching HMAC
+key and the *complete, unique* `preaccesstoken` execution before creating an
+immutable, versioned Docker secret. On failure it creates no secret or
+certified local setting. On success only the target ID, Swarm secret reference
+and explicit certification state are staged in shell variables; **it does not
+persist configuration or deploy/restart RP**.
+
+The existing `rp_config_write` and `rp_render_stack final` paths can consume
+the staged metadata when an operator performs a separately approved cutover.
+The stack mounts the signing key into **only** the API service, through
+`RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE`, and never embeds it in YAML.
+Malformed or partial certified configuration fails stack rendering. The
+preflight is strictly read-only with respect to ZITADEL: it neither creates
+targets nor silently changes a previously running global execution.
+
+**Remaining release blockers:** an approved target creation/rotation and
+global execution cutover/rollback procedure must protect existing users while
+the API is unavailable, upgraded or rolled back to a version without this
+callback. An issuer-global interrupting Action is capable of blocking *all*
+sign-ins if its webhook is unhealthy. A successful isolated E2E is not a safe
+production deployment plan; production MFA/account lifecycle, legacy OAuth
+client compatibility, target downtime, and supported multi-version database
+restore certification remain to be completed. Do not set these configuration
+values manually or release this PR merely because CI is green.
+
+### Evidence from isolated release readiness
+
+The protected #407 candidate run 42387470756 tested source `v0.2.146`
+against the generated merge-group candidate. It applied
+`20261107090000_app_consumer_entitlements`, injected an upgrade health
+failure, restored RP and ZITADEL databases and the previous API/images,
+and verified previous-version Prisma reads/writes. The result was
+`rollbackPolicy: tested` with real-upgrade-and-restore evidence. Isolated
+HTTPS run 42387470721 also completed successfully with the actual target
+readback and a two-user/two-client-per-tenant/two-tenant signed authorization
+matrix. These are **source- and run-specific** certifications, not proof of
+every supported older source release or of production readiness.
