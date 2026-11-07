@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
 import { AppGroupsModule } from "./app-groups/app-groups.module";
+import { AppConsumersModule } from "./app-consumers/app-consumers.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
 import { DevAuthGuard } from "./auth/dev-auth.guard";
@@ -59,6 +60,7 @@ import { ApiVolumesModule } from "./volumes/api-volumes.module";
     OAuthApplicationsModule,
     ServiceIdentitiesModule,
     AppGroupsModule,
+    AppConsumersModule,
     RegistriesModule,
     EmailModule,
     ResourceBotModule,

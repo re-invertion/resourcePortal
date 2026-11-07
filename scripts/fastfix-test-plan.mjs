@@ -108,7 +108,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
   "identity": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities", "src/app-consumers"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
     ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
@@ -276,6 +276,12 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
   [/^packages\/resourceportal-web\/src\/pages\/networking-form-validation(?:\.test)?\.ts$/, ["web-console", "networking"]],
   [/^packages\/resourceportal-web\/src\/pages\/remote-lan-attachments-panel(?:\.test)?\.tsx$/, ["web-console", "networking"]],
+  // App Consumer OAuth entitlements (#398) must execute exact-client grant,
+  // tenant isolation, signed Actions V2 and startup fail-closed regression.
+  // These paths cannot be treated as generic UI when introduced by a schema
+  // migration: the DB restore release gate still blocks an unsafe release.
+  [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
+  [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.

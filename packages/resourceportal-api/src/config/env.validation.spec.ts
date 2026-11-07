@@ -29,6 +29,22 @@ describe("validateEnv", () => {
     expect(validateEnv(validBaseEnv)).toBe(validBaseEnv);
   });
 
+  it("fails startup if App Consumer token gating is enabled without independent certification and signature key", () => {
+    expect(() => validateEnv({
+      ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+    })).toThrow("App Consumer Actions V2 requires explicit isolated HTTPS certification");
+    expect(() => validateEnv({
+      ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "too-short",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY must be at least 32 characters");
+    const valid = { ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "mock-isolated-hmac-key-32-or-more-characters",
+    };
+    expect(validateEnv(valid)).toBe(valid);
+  });
+
   it("rejects unsupported auth modes", () => {
     expect(() => validateEnv({ ...validBaseEnv, AUTH_MODE: "unknown" })).toThrow(
       "AUTH_MODE must be one of",

@@ -120,11 +120,20 @@ export class TenantOidcService {
 
       // The disabled Reconciling marker has already committed above.
         await this.zitadel.readProject(provider.zitadelProjectId);
+        // A tenant project-level role is shared by all of its OAuth clients.
+        // Until the exact-client pre-token gate is explicitly certified and
+        // enabled, assigning rp.tenant.member to an App Consumer would silently
+        // permit every app in that project. Exclude and revoke consumers by
+        // default rather than relying on UI-only allowlisting.
+        const appConsumerGateCertified =
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
         const members = await tx.tenantMembership.findMany({
           where: {
             tenantId,
             status: MembershipStatus.Active,
             user: { status: UserStatus.Active },
+            ...(!appConsumerGateCertified ? { appConsumer: { is: null } } : {}),
           },
           include: { user: { include: { identities: true } } },
         });

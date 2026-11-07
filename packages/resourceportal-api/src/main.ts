@@ -38,6 +38,7 @@ async function bootstrap() {
         process.env.API_TRUST_PROXY_HOPS,
       ),
     }),
+    { rawBody: true },
   );
   const config = app.get(ConfigService);
   const observability = app.get(ObservabilityService);
