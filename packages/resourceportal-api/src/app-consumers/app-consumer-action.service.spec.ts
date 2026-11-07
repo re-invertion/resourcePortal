@@ -18,6 +18,7 @@ function fixture(overrides: Record<string, string> = {}) {
     RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: secret,
     OIDC_ISSUER_URL: "https://zitadel.example.test",
     OIDC_CLIENT_ID: "rp-native-client-id",
+    OIDC_CLI_CLIENT_ID: "rp-cli-client-id",
     ...overrides,
   };
   const config = { get: vi.fn((key: string) => env[key]) } as unknown as ConfigService;
@@ -72,6 +73,37 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
     expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
     expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+  });
+
+  it("allows only the exact registered native RP CLI client for non-consumers", async () => {
+    const f = fixture();
+    const cli = signed({ ...client, application: { client_id: "rp-cli-client-id" } });
+    expect(await f.svc.authorize(cli.raw, cli.header)).toEqual({});
+    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
+    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+  });
+
+  it("denies App Consumers on CLI and denies CLI on native identity lookup failure", async () => {
+    const f = fixture();
+    const cli = signed({ ...client, application: { client_id: "rp-cli-client-id" } });
+    f.mayIssueNativeRpToken.mockResolvedValueOnce(false);
+    await expect(f.svc.authorize(cli.raw, cli.header)).rejects.toBeInstanceOf(ForbiddenException);
+    f.mayIssueNativeRpToken.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(f.svc.authorize(cli.raw, cli.header)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+  });
+
+  it("never recognizes empty, pending or unrelated OAuth client as native CLI", async () => {
+    for (const override of ["", "bootstrap-pending"]) {
+      const f = fixture({ OIDC_CLI_CLIENT_ID: override });
+      const payload = signed({ ...client, application: { client_id: override || "unknown-client" } });
+      await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(f.mayIssueNativeRpToken).not.toHaveBeenCalled();
+    }
+    const f = fixture();
+    const other = signed({ ...client, application: { client_id: "unmanaged-external-client" } });
+    await expect(f.svc.authorize(other.raw, other.header)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(f.mayIssueNativeRpToken).not.toHaveBeenCalled();
   });
 
   it("blocks native RP access for App Consumer subjects and fails closed if DB is down", async () => {

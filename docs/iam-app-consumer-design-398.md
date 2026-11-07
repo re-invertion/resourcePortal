@@ -159,6 +159,18 @@ target provisioning/rotation, HTTPS callback reachability, and explicit
 source-to-target database restore certification remain separate blockers.
 A green isolated CI probe or setting flags manually is not release DoD.
 
+## Native ResourcePortal Web and CLI sign-in
+
+The issuer-global `preaccesstoken` callback has two explicitly configured
+first-party RP clients: `OIDC_CLIENT_ID` (Web) and `OIDC_CLI_CLIENT_ID`
+(native CLI). It checks the exact signed ZITADEL subject through the RP
+identity boundary and permits neither client to an App Consumer. A missing,
+pending or unrelated client ID never enters this exemption. The exception
+does not grant new tenant OAuth application access. Separately registered
+MCP Dynamic Client Registration clients are **not** part of this two-ID
+exemption; their production compatibility must be certified before binding
+the global execution. Until then, treat the global cutover as blocked.
+
 ## Opt-in production installer configuration (draft, not a cutover)
 
 An installer upgrade **does not** create, bind or activate the global ZITADEL

@@ -66,10 +66,17 @@ export class AppConsumerActionService {
     if (!issuer?.startsWith("https://")) {
       throw new ServiceUnavailableException("Issuer not configured");
     }
-    // Native RP is not a tenant OAuth application. Allow its regular/JIT
-    // users, but deny a consumer account from acquiring RP-native tokens.
-    // Check the signed subject in RP's DB; never trust a client name or email.
-    if (clientId === this.config.get<string>("OIDC_CLIENT_ID")) {
+    // RP Web AND the native RP CLI have independently registered OAuth
+    // clients. The issuer-global pre-token action applies to both. Preserve
+    // regular/JIT RP access without granting App Consumers a path to either
+    // client, and never exempt an arbitrary unknown OAuth client.
+    // Check the signed subject in RP's DB; never trust a name or email.
+    const nativeClients = [
+      this.config.get<string>("OIDC_CLIENT_ID"),
+      this.config.get<string>("OIDC_CLI_CLIENT_ID"),
+    ].filter((id): id is string => typeof id === "string" && id.length > 0 &&
+      id !== "bootstrap-pending");
+    if (nativeClients.includes(clientId)) {
       try {
         if (await this.consumers.mayIssueNativeRpToken(issuer, subject)) return {};
       } catch {
