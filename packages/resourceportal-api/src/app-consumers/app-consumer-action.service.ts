@@ -48,8 +48,11 @@ export class AppConsumerActionService {
     } catch {
       throw new ForbiddenException("Invalid Action payload");
     }
+    // ZITADEL Actions V2 serializes the execution function as a namespaced
+    // identifier, e.g. "function/preaccesstoken". The bare condition name is
+    // used only in the management API. Require the exact signed webhook value.
     if (!payload || typeof payload !== "object" ||
-      (payload.function && payload.function !== "preaccesstoken")) {
+      payload.function !== "function/preaccesstoken") {
       throw new ForbiddenException("Unsupported Action function");
     }
     const subject = payload.user?.id;

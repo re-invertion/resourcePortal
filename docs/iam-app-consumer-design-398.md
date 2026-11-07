@@ -100,3 +100,12 @@ webhook: production target creation/secret rotation, existing external OAuth
 client migration, and fail-safe activation are independent release blockers
 until explicitly implemented and certified. Review exact CI run results and
 the approved source-to-target database restore before declaring DoD.
+
+## Actions V2 payload function compatibility
+
+ZITADEL v4.17.0 includes `"function": "function/preaccesstoken"` in its
+signed Actions V2 request. The execution management API uses the bare name
+`preaccesstoken`, but accepting that value as the webhook payload function
+rejects real logins. The production callback requires the exact namespaced
+identifier; missing, bare or different functions fail closed. This was
+identified through the real HTTPS CI integration and regression-tested.

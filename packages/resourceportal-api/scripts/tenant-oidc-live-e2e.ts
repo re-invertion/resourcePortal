@@ -421,8 +421,8 @@ async function main() {
               issuer, payload.user.id, payload.application.client_id,
             ).catch(() => null);
             console.error("Isolated App Consumer expected-allow rejected:",
-              { reason, expectedFunction: payload.function === undefined ||
-                  payload.function === "preaccesstoken", currentGrant: grant });
+              { reason, expectedFunction: payload.function === "function/preaccesstoken",
+                currentGrant: grant });
           }
           throw error;
         }

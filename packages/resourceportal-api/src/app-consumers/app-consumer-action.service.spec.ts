@@ -26,7 +26,7 @@ function fixture(overrides: Record<string, string> = {}) {
   const svc = new AppConsumerActionService(config, { mayIssueClientToken, mayIssueNativeRpToken } as never);
   return { svc, mayIssueClientToken, mayIssueNativeRpToken };
 }
-const client = { function: "preaccesstoken", user: { id: "12131" }, application: { client_id: "home-assistant" } };
+const client = { function: "function/preaccesstoken", user: { id: "12131" }, application: { client_id: "home-assistant" } };
 
 describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
   it("denies when disabled or signing secret absent", async () => {
@@ -47,9 +47,11 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
   });
   it("denies missing subject, client ID, or unsupported function", async () => {
     for (const value of [
-      { function: "preaccesstoken", user: {}, application: { client_id: "home-assistant" } },
-      { function: "preaccesstoken", user: { id: "12131" }, application: {} },
-      { ...client, function: "preuserinfo" },
+      { function: "function/preaccesstoken", user: {}, application: { client_id: "home-assistant" } },
+      { function: "function/preaccesstoken", user: { id: "12131" }, application: {} },
+      { ...client, function: "preaccesstoken" },
+      { ...client, function: "function/preuserinfo" },
+      { ...client, function: undefined },
     ]) {
       const { raw, header } = signed(value);
       await expect(fixture().svc.authorize(raw, header)).rejects.toBeInstanceOf(ForbiddenException);
