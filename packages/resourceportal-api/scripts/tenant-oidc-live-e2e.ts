@@ -14,6 +14,7 @@ import { TenantOidcAutoRolloutService } from "../src/tenant-oidc/tenant-oidc-aut
 import { ZitadelTenantProjectService } from "../src/tenant-oidc/zitadel-tenant-project.service";
 import { ZitadelOAuthApplicationService } from "../src/oauth-applications/zitadel-oauth-application.service";
 import { runOidcAuthorizationE2E, assertRevokedRefreshCannotAuthorizeTenant } from "./tenant-oidc-browser-e2e";
+import { startActionProof } from "./tenant-oidc-actions-v2-proof";
 
 function required(name: string) {
   const value = process.env[name]?.trim();
@@ -69,6 +70,7 @@ async function main() {
     issuer?: string; jwks_uri?: string; authorization_endpoint?: string; token_endpoint?: string;
   };
   assert.equal(discovery.issuer, issuer, "Issuer must match the live HTTPS discovery document");
+  assert.ok(discovery.token_endpoint, "ZITADEL discovery did not provide the token endpoint");
   const jwksUri = discovery.jwks_uri;
   if (!jwksUri?.startsWith(issuer)) {
     throw new Error("JWT keys must belong to actual HTTPS issuer");
@@ -187,6 +189,106 @@ async function main() {
     }, projectA);
     assert.ok(spa.clientId && !spa.clientSecret, "SPA must not be given confidential credentials");
     ownedApps.push({ id: spa.applicationId, projectId: projectA });
+
+    // SECURITY PROOF (#398): same ZITADEL project, two distinct OAuth client
+    // IDs, and a separate project/user. No real RP App User grant is created.
+    // A real V2 preaccesstoken webhook must DENY the revoked client's refresh,
+    // but never deny the still-allowed first client or foreign tenant.
+    const secondWeb = await clients.provision({
+      name: "Client-scoped Web " + suffix, type: "Web",
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+      postLogoutRedirectUris: ["https://localhost:8443/logout"],
+    }, projectA);
+    assert.ok(secondWeb.clientId && secondWeb.clientSecret);
+    ownedApps.push({ id: secondWeb.applicationId, projectId: projectA });
+    const foreignWeb = await clients.provision({
+      name: "Separate tenant Web " + suffix, type: "Web",
+      redirectUris: ["http://127.0.0.1:8765/oidc/callback"],
+      postLogoutRedirectUris: ["https://localhost:8443/logout"],
+    }, projectB);
+    assert.ok(foreignWeb.clientId && foreignWeb.clientSecret);
+    ownedApps.push({ id: foreignWeb.applicationId, projectId: projectB });
+
+    const gate = await startActionProof({ api, issuer, testUserId: userAId, testProjectId: projectA });
+    try {
+      // Do not use the initial login's refresh token here: it has already
+      // completed RP-initiated logout in the pre-existing E2E.
+      const separateAllowed = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      });
+      const scoped = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: secondWeb.clientId, clientSecret: secondWeb.clientSecret,
+        userId: userAId, userName: "oidc-live-" + suffix + "-a",
+        password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+      });
+      assert.ok(gate.events().some(e => e.userId === userAId && e.clientId === secondWeb.clientId &&
+        e.decision === "allow"), "ZITADEL did not expose exact client_id at token issuance");
+      gate.denyClient(secondWeb.clientId);
+      const before = gate.events().length;
+      const deniedRefresh = await fetch(discovery.token_endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Basic " + Buffer.from(
+            secondWeb.clientId + ":" + secondWeb.clientSecret,
+          ).toString("base64"),
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token", refresh_token: scoped.refreshToken,
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      assert.ok(!deniedRefresh.ok,
+        "SECURITY: ZITADEL reissued an access token after exact OAuth client was denied");
+      assert.ok(gate.events().slice(before).some(e =>
+        e.userId === userAId && e.clientId === secondWeb.clientId && e.decision === "deny"),
+      "SECURITY: denied refresh did not trigger a client-aware preaccesstoken callback");
+
+      // The original (different) OAuth client in the SAME ZITADEL project must
+      // continue working, with no project-wide authorization regression.
+      // Do not mistake events from its earlier code exchange/first refresh
+      // for proof that THIS allowed refresh traversed the signed Action.
+      const beforeAllowedRefresh = gate.events().length;
+      const allowedRefresh = await fetch(discovery.token_endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Basic " + Buffer.from(web.clientId + ":" + web.clientSecret).toString("base64"),
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token", refresh_token: separateAllowed.refreshToken,
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      assert.equal(allowedRefresh.status, 200,
+        "Revoking client B unexpectedly revoked separate client A in same project");
+      const rotated = await allowedRefresh.json() as {
+        access_token?: string; refresh_token?: string;
+      };
+      assert.ok(rotated.access_token, "Allowed client refresh returned no access token");
+      separateAllowed.refreshToken = rotated.refresh_token ?? separateAllowed.refreshToken;
+      assert.ok(gate.events().slice(beforeAllowedRefresh).some(e =>
+        e.userId === userAId && e.clientId === web.clientId && e.decision === "allow"),
+      "Allowed client refresh did not invoke the signed Action for that refresh request");
+
+      await runOidcAuthorizationE2E({
+        issuer, projectId: projectB, foreignProjectId: projectA,
+        clientId: foreignWeb.clientId, clientSecret: foreignWeb.clientSecret,
+        userId: userBId, userName: "oidc-live-" + suffix + "-b",
+        password: "E2e!Test-" + suffix + "-b",
+      });
+      assert.ok(gate.events().some(e => e.userId === userBId &&
+        e.clientId === foreignWeb.clientId && e.decision === "allow"),
+      "Foreign tenant OIDC token issuer stopped working");
+      console.log("PASS: isolated signed Action V2 exact-client refresh denial, " +
+        "same-project allow and independent-tenant allow");
+    } finally {
+      await gate.close();
+    }
 
     await tenants.revokeGrantBeforeMembershipRemoval(tenantA.id, userA.id);
     await prisma.tenantMembership.update({

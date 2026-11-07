@@ -7,6 +7,8 @@ on:
       - 'packages/resourceportal-api/src/tenant-oidc/**'
       - 'packages/resourceportal-api/src/oauth-applications/**'
       - 'packages/resourceportal-api/scripts/tenant-oidc-live-e2e.ts'
+      - 'packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.ts'
+      - 'packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.spec.ts'
       - 'packages/resourceportal-api/prisma/**'
       - 'scripts/run-tenant-oidc-https-e2e.sh'
       - 'test/tenant-oidc/**'

@@ -235,7 +235,9 @@ it("rejects an enabled health check without a command", async () => {
   }));
   render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
   fireEvent.click(await screen.findByRole("checkbox", { name: "Enable health check" }));
-  expect(screen.getByRole("textbox", { name: "Health check shell command" })).toBeTruthy();
+  // Advanced controls mount after state updates; assert the eventual input,
+  // not the transient form just after clicking the checkbox.
+  expect(await screen.findByRole("textbox", { name: "Health check shell command" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   expect(patches).toHaveLength(0);
 });

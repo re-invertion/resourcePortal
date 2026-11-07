@@ -821,3 +821,11 @@ test("zero-permission tenant boundary updates require tenant, security and MCP r
   const plan = selectProfiles(paths);
   assert.deepEqual(plan.profiles, ["mcp-oauth", "security", "tenant-access"]);
 });
+
+test("OIDC client/action refresh proof requires identity and security certification (#398)", () => {
+  const paths = [
+    "packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.ts",
+    "packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
+});

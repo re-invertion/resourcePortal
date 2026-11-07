@@ -290,6 +290,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/tsconfig\.build\.json$/, ["identity", "workflow"]],
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-live-preflight\.mjs$/, ["identity"]],
   [/^packages\/resourceportal-api\/scripts\/tenant-oidc-(?:live|browser)-e2e\.ts$/, ["identity"]],
+  [/^packages\/resourceportal-api\/scripts\/tenant-oidc-actions-v2-proof(?:\.spec)?\.ts$/, ["identity", "security"]],
   [/^scripts\/run-tenant-oidc-https-e2e\.sh$/, ["identity", "workflow"]],
   [/^test\/tenant-oidc\/.*\.ya?ml$/, ["identity", "workflow"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-identity-sso(?:\.test)?\.tsx$/, ["identity"]],
