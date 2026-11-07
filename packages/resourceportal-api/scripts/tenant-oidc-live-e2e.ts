@@ -327,6 +327,23 @@ async function main() {
         createdBy: actorId, updatedBy: actorId,
       } }),
     ));
+    // Obtain refresh tokens while these are still ordinary tenant members.
+    // Once App Consumer records are created, these clients are unauthorized
+    // and even the initial OAuth code exchange must be denied. This setup
+    // deliberately precedes both consumer enrollment and Actions V2 target.
+    const denyAToken = await runOidcAuthorizationE2E({
+      issuer, projectId: projectA, foreignProjectId: projectB,
+      clientId: secondWeb.clientId, clientSecret: secondWeb.clientSecret,
+      userId: userAId, userName: "oidc-live-" + suffix + "-a",
+      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
+    });
+    const denyBToken = await runOidcAuthorizationE2E({
+      issuer, projectId: projectB, foreignProjectId: projectA,
+      clientId: foreignDeniedWeb.clientId, clientSecret: foreignDeniedWeb.clientSecret,
+      userId: userBId, userName: "oidc-live-" + suffix + "-b",
+      password: "E2e!Test-" + suffix + "-b", skipLogout: true,
+    });
+
     await Promise.all(members.map((member, index) => prisma.tenantAppConsumer.create({ data: {
       tenantId: index === 0 ? tenantA.id : tenantB.id,
       membershipId: member.id, createdBy: index === 0 ? userA.id : userB.id,
@@ -357,21 +374,6 @@ async function main() {
     }
     assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId), false);
     assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId), false);
-
-    // Obtain pre-existing tokens for the ungranted apps BEFORE installing
-    // the production-policy target, so their refreshes exercise actual denial.
-    const denyAToken = await runOidcAuthorizationE2E({
-      issuer, projectId: projectA, foreignProjectId: projectB,
-      clientId: secondWeb.clientId, clientSecret: secondWeb.clientSecret,
-      userId: userAId, userName: "oidc-live-" + suffix + "-a",
-      password: "E2e!Test-" + suffix + "-a", skipLogout: true,
-    });
-    const denyBToken = await runOidcAuthorizationE2E({
-      issuer, projectId: projectB, foreignProjectId: projectA,
-      clientId: foreignDeniedWeb.clientId, clientSecret: foreignDeniedWeb.clientSecret,
-      userId: userBId, userName: "oidc-live-" + suffix + "-b",
-      password: "E2e!Test-" + suffix + "-b", skipLogout: true,
-    });
 
     // The live target's signing key is returned by ZITADEL at creation.
     // Use exactly that key for the production validator, not a fixture secret.
