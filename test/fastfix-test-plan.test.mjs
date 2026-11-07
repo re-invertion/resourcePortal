@@ -147,8 +147,18 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
     "packages/resourceportal-web/src/pages/tenant-identity-sso.tsx",
     "packages/resourceportal-web/src/pages/platform-identity-pages.tsx",
   ]);
-  assert.deepEqual(plan.profiles, ["identity"]);
+  assert.deepEqual(plan.profiles, ["identity", "security"]);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC App Consumer safety monitoring requires security coverage even on a standalone change", () => {
+  const files = [
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.spec.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(files).profiles, ["identity", "security"]);
 });
 
 test("real ZITADEL federation browser and projection helpers require identity and security gates", () => {

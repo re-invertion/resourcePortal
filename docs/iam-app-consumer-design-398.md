@@ -138,11 +138,23 @@ executions (`action.target.read`, `action.execution.read`), besides the
 usual tenant-project management permissions. No production target is created
 or changed by this verifier, and both feature flags still default to off.
 
-**Important operational limitation:** this is an *activation-time* read-only
-check. A later deletion or modification of the remote execution could again
-allow existing project-wide grants to bypass the callback. A production
-rollout still needs continuous drift detection, safe revocation of existing
-App Consumer project grants on verification failure, external target/secret
-provisioning and rotation, actual HTTPS callback reachability and explicit
-source-to-target database restore certification. A green CI probe, or setting
-both flags manually, does not satisfy that release DoD.
+**Important operational limitation:** the activation-time check alone cannot
+protect previously granted roles if the remote execution later disappears.
+The API's periodic safety monitor now checks the live binding when tracked
+App Consumer project grants exist. On invalid binding, missing flags or a
+changed signing key, it first persists `NeedsReconciliation` and
+`APP_CONSUMER_ACTION_BINDING_LOST`, then revokes only tracked App Consumer
+upstream project roles under the tenant lock; ordinary RP operators keep
+their grants. Each successful tenant revocation is recorded in tenant audit
+history without subject, client or token contents. Failed upstream revocations
+remain tracked for retry and are never falsely reported as complete.
+
+The monitor runs at application startup and on the configured tenant OIDC
+reconcile interval (default 60 seconds), even with automatic OIDC rollout
+disabled. It is not an instantaneous guarantee: removing the external
+execution between checks creates a bounded but nonzero detection window; an
+outage of ZITADEL management can delay role revocation. This is a residual
+operational risk and must be disclosed. Live production installer-managed
+target provisioning/rotation, HTTPS callback reachability, and explicit
+source-to-target database restore certification remain separate blockers.
+A green isolated CI probe or setting flags manually is not release DoD.

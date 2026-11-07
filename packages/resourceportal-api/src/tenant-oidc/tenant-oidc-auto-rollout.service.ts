@@ -26,7 +26,9 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
   ) {}
 
   onModuleInit() {
-    if (this.config.get<string>("TENANT_OIDC_AUTO_ROLLOUT") !== "true") return;
+    // The App Consumer safety check runs even when automatic tenant OIDC
+    // provisioning is disabled. Disabling feature flags after a previous
+    // enrollment must revoke already-issued shared-project role grants.
     void this.reconcileOnce();
     const rawInterval = Number(this.config.get<string>("TENANT_OIDC_RECONCILE_INTERVAL_MS") ?? 60_000);
     const intervalMs = Number.isSafeInteger(rawInterval) && rawInterval >= 10_000
@@ -44,11 +46,18 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
     if (this.running) return;
     this.running = true;
     try {
-      const result = await this.reconcile();
-      this.logger.log(`OIDC auto migration: ${JSON.stringify(result)}`);
+      const safety = await this.oidc.enforceAppConsumerActionsV2Safety();
+      if (safety.state === "app-consumer-grants-revoked") {
+        this.logger.warn("App Consumer Actions V2 binding invalid; upstream grants revoked");
+        return;
+      }
+      if (this.config.get<string>("TENANT_OIDC_AUTO_ROLLOUT") === "true") {
+        const result = await this.reconcile();
+        this.logger.log(`OIDC auto migration: ${JSON.stringify(result)}`);
+      }
     } catch {
-      // Never log raw upstream error responses or management tokens.
-      this.logger.warn("OIDC auto migration could not finish; retry scheduled");
+      // Never log raw upstream responses, client identities or HMAC secrets.
+      this.logger.warn("OIDC app-consumer safety or auto migration incomplete; retry scheduled");
     } finally {
       this.running = false;
     }

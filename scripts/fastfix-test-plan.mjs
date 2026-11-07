@@ -289,6 +289,10 @@ const classifiers = [
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.
+  // Reconciliation and its periodic safety monitor can grant or revoke
+  // shared ZITADEL project roles; require security regressions as well as
+  // identity coverage even if no App Consumer source file is touched.
+  [/^packages\/resourceportal-api\/src\/tenant-oidc\/tenant-oidc(?:-auto-rollout)?\.service(?:\.spec)?\.ts$/, ["identity", "security"]],
   [/^packages\/resourceportal-api\/src\/tenant-oidc\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],

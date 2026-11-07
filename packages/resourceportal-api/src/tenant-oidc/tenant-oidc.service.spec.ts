@@ -32,6 +32,7 @@ function fixture(configValues: Record<string, string> = {}) {
     issuer: nativeIssuer,
     grantsReconciledAt: null,
     lastErrorCode: null,
+    tenant: { name: "Tenant A" },
     _count: { grants: 0 },
   };
   const prisma = {
@@ -45,7 +46,9 @@ function fixture(configValues: Record<string, string> = {}) {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     tenantMembership: { findMany: vi.fn().mockResolvedValue([]) },
+    tenantAppConsumer: { findMany: vi.fn().mockResolvedValue([]) },
     oAuthApplication: { count: vi.fn().mockResolvedValue(0) },
+    auditLogEntry: { create: vi.fn().mockResolvedValue({ id: "security-audit" }) },
     tenantOidcGrant: {
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockResolvedValue({ id: "pending-row" }),
@@ -149,6 +152,99 @@ describe("Tenant OIDC management fails closed", () => {
     ]>;
     expect(updates.some(([row]) =>
       row.data.status === "ReconciliationFailed" && row.data.enabled === false)).toBe(true);
+  });
+
+  it("leaves ordinary tenant grants alone when there are no App Consumers", async () => {
+    const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "no-consumers", revoked: 0,
+    });
+    expect(f.project.verifyAppConsumerActionsV2Gate).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves valid App Consumer project roles when the live signed execution is verified", async () => {
+    const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });
+    f.prisma.tenantAppConsumer.findMany.mockResolvedValue([
+      { tenantId, membership: { userId: "consumer" } },
+    ]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([
+      { id: "grant-1", tenantId, userId: "consumer", zitadelUserId: "zitadel-consumer", zitadelGrantId: "zgrant-1" },
+    ]);
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "verified", revoked: 0,
+    });
+    expect(f.project.verifyAppConsumerActionsV2Gate).toHaveBeenCalledOnce();
+    expect(f.project.revokeMember).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "revokes only App Consumer grants on missing or disabled execution (flag enabled=%s)",
+    async (enabled) => {
+      const f = fixture(enabled ? { RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+        RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" } : {});
+      f.prisma.tenantAppConsumer.findMany.mockResolvedValue([
+        { tenantId, membership: { userId: "consumer" } },
+      ]);
+      const records = [
+        { id: "grant-1", tenantId, userId: "consumer", zitadelUserId: "zitadel-consumer", zitadelGrantId: "zgrant-1" },
+        { id: "operator-grant", tenantId, userId: "operator", zitadelUserId: "zitadel-operator", zitadelGrantId: "zgrant-operator" },
+      ];
+      f.prisma.tenantOidcGrant.findMany.mockImplementation(
+        (query: { where: { userId?: { in: string[] }; tenantId?: string } }) =>
+          Promise.resolve(records.filter((row) =>
+            (!query.where.tenantId || row.tenantId === query.where.tenantId) &&
+            (!query.where.userId || query.where.userId.in.includes(row.userId)))),
+      );
+      f.project.verifyAppConsumerActionsV2Gate.mockRejectedValue(new Error("remote configuration changed"));
+      expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+        state: "app-consumer-grants-revoked", revoked: 1,
+      });
+      expect(f.project.revokeMember).toHaveBeenCalledExactlyOnceWith("zitadel-consumer", "zgrant-1");
+      expect(f.prisma.tenantOidcGrant.delete).toHaveBeenCalledWith({ where: { id: "grant-1" } });
+      expect(f.prisma.tenantOidcGrant.delete).not.toHaveBeenCalledWith({ where: { id: "operator-grant" } });
+      expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null,
+          lastErrorCode: "APP_CONSUMER_ACTION_BINDING_LOST" },
+      });
+      expect(f.prisma.$queryRaw).toHaveBeenCalledOnce();
+      expect(f.prisma.auditLogEntry.create).toHaveBeenCalledOnce();
+      const audit = f.prisma.auditLogEntry.create.mock.calls[0][0] as {
+        data: { action: string; changes: { revokedCount: number } };
+      };
+      expect(audit.data.action).toBe("tenant_oidc.app_consumer_binding_revoked");
+      expect(audit.data.changes.revokedCount).toBe(1);
+      expect(f.prisma.$queryRaw.mock.invocationCallOrder[0])
+        .toBeLessThan(f.project.revokeMember.mock.invocationCallOrder[0]);
+      if (enabled) expect(f.project.verifyAppConsumerActionsV2Gate).toHaveBeenCalledOnce();
+      else expect(f.project.verifyAppConsumerActionsV2Gate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the revocation intent and blocks tenant provider on upstream failure", async () => {
+    const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });
+    f.prisma.tenantAppConsumer.findMany.mockResolvedValue([
+      { tenantId, membership: { userId: "consumer" } },
+    ]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([
+      { id: "grant-1", tenantId, userId: "consumer", zitadelUserId: "zitadel-consumer", zitadelGrantId: "zgrant-1" },
+    ]);
+    f.project.verifyAppConsumerActionsV2Gate.mockRejectedValue(new Error("remote target not installed"));
+    f.project.revokeMember.mockRejectedValue(new Error("upstream response including sensitive material"));
+    await expect(f.service.enforceAppConsumerActionsV2Safety())
+      .rejects.toThrow("App Consumer upstream revocation pending secure recovery");
+    expect(f.prisma.tenantOidcGrant.delete).not.toHaveBeenCalled();
+    expect(f.prisma.auditLogEntry.create).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({
+        enabled: false, lastErrorCode: "APP_CONSUMER_ACTION_BINDING_LOST",
+      }) as Record<string, unknown> }),
+    );
   });
 
   it("revokes grants when membership is no longer active", async () => {
