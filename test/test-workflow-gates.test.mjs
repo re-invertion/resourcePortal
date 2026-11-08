@@ -76,13 +76,24 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   }
   const candidateSteps=readiness.jobs.candidate.steps;
   const premergeSmoke=candidateSteps.find(s=>s.name?.startsWith('Verify automatic rollback of published'));
+  const source146Smoke=candidateSteps.find(s=>s.name?.startsWith('Independently verify v0.2.146 RP and ZITADEL'));
   const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
   const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
-  assert.ok(premergeSmoke && prereleaseBuild && prepublishSmoke);
+  assert.ok(premergeSmoke && source146Smoke && prereleaseBuild && prepublishSmoke);
   // Schema-changing releases need the *real* rollback smoke to produce
   // run-bound evidence before the rollback policy is allowed to certify them.
   assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
-  assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(prerelease));
+  assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(source146Smoke));
+  assert.ok(candidateSteps.indexOf(source146Smoke) < candidateSteps.indexOf(prerelease));
+  assert.match(source146Smoke.run,/run-automatic-rollback-smoke\.sh "0\.2\.146"/);
+  assert.match(source146Smoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence-146\.json/);
+  assert.match(source146Smoke.run,/--previous-tag v0\.2\.146 --head HEAD/);
+  assert.match(source146Smoke.run,/--verified-evidence-file "\$RP_ROLLBACK_EVIDENCE_OUTPUT" --require-automatic/);
+  assert.match(source146Smoke.run,/\.sourceVersion == "0\.2\.146" and \.targetCommit == \$commit/);
+  assert.match(source146Smoke.run,/\.workflowRunId == \$run/);
+  assert.match(source146Smoke.run,/\.zitadelDatabaseRestored == true/);
+  assert.match(source146Smoke.run,/\.previousApiReadWriteAfterRollback == true/);
+  assert.match(source146Smoke.run,/\.zitadelSourceEventstoreVerified == true/);
   assert.ok(publish.indexOf(prepublishSmoke) < publish.indexOf(prepublish));
   assert.ok(publish.indexOf(prepublish) < publish.findIndex(s=>s.name?.startsWith('Publish rollback-tested API image')));
   assert.match(prerelease.run,/--verified-evidence-file/);

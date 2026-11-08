@@ -145,7 +145,9 @@ ZITADEL Actions V2 installer defects. It is NOT a safe mandatory intermediate
 release for a still-installed v0.2.146 deployment. Subsequent fixed releases
 therefore independently execute the full RP+ZITADEL database/runtime rollback
 smoke with v0.2.146 as source (in addition to the immediate published source
-and the older 0.2.92/0.2.93/0.2.96 fleet sources). Before publication,
+and the older 0.2.92/0.2.93/0.2.96 fleet sources). The protected pre-merge Release Readiness independently executes the same
+real two-database rollback smoke from v0.2.146 and requires exact PR SHA/run
+and source ZITADEL/API recovery evidence BEFORE merge. Before publication,
 v0.2.146 must have an exact-target-SHA, same-workflow-run verified restoration
 certificate. Without that evidence the publisher fails closed; it may never
 advertise a direct v0.2.146 upgrade via static history or manual override.
