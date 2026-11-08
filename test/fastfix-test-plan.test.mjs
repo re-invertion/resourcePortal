@@ -932,3 +932,12 @@ test("OIDC client/action refresh proof requires identity and security certificat
   ];
   assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
 });
+
+test("Codex review recheck dispatcher cannot skip identity, security or release tests", () => {
+  for (const path of ["scripts/release-review-recheck.mjs", "test/test-release-review-recheck.test.mjs"]) {
+    const selected = selectProfiles([path]);
+    for (const name of ["identity","security","platform-release","workflow"]) {
+      assert.ok(selected.profiles.includes(name), name + " missing for " + path);
+    }
+  }
+});

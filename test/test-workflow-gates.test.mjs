@@ -366,3 +366,24 @@ test('Required release readiness blocks Draft, stale Codex review and all unreso
   assert.ok(job.steps.indexOf(review) > gates,'Review guard must run before required job can succeed');
   assert.ok(job.steps.some(s=>s.uses?.startsWith('actions/checkout@')),'Review script must be checked out');
 });
+
+test("trusted Codex comment update only reruns the existing failed required PR check", () => {
+  const retry=load("codex-review-recheck.yml");
+  assert.deepEqual(retry.on.issue_comment.types, ["created","edited"]);
+  assert.ok(retry.on.schedule.length);
+  assert.equal(retry.permissions.actions,"write");
+  assert.equal(retry.permissions["pull-requests"],"read");
+  assert.equal(retry.permissions.issues,"read");
+  assert.ok(!retry.on.workflow_dispatch);
+  const job=retry.jobs.recheck;
+  assert.match(job.if,/chatgpt-codex-connector/);
+  assert.match(job.if,/codex-review-state:v1/);
+  const script=job.steps.find(s=>s.run?.includes("release-review-recheck.mjs"));
+  assert.ok(script);
+  assert.ok(script.env.GITHUB_TOKEN);
+  const source=readFileSync(new URL("../scripts/release-review-recheck.mjs",import.meta.url),"utf8");
+  assert.match(source,/rerun-failed-jobs/);
+  assert.match(source,/isEligibleFailedRun/);
+  assert.match(source,/shouldRerunReview/);
+  assert.doesNotMatch(source,/createCheckRun|createCommitStatus|\/statuses\//);
+});

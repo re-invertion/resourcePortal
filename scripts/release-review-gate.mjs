@@ -90,7 +90,7 @@ const query = [
   "}}}",
 ].join(" ");
 
-async function loadReviewPr(owner, repo, number, token) {
+export async function loadReviewPr(owner, repo, number, token) {
   const response = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {

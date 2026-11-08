@@ -104,3 +104,31 @@ On Ready-for-review, and on subsequent review submissions, complete release
 gates run again before the required review check can become green. Nothing bypasses
 the protected Merge Queue, and reviews are never treated as approvals of
 unreviewed source code.
+
+
+### Automatic Codex review-state recovery
+
+Codex often edits its existing issue-comment summary rather than submitting a
+new pull-request review (including when the review has zero findings). The
+default-branch `codex-review-recheck.yml` workflow listens for these trusted
+GitHub issue-comment edits and performs scheduled reconciliation every 15
+minutes for thread resolutions that have no native Actions event.
+
+The dispatcher is **not a required status check**; an issue-comment workflow
+runs on main, not on the PR SHA, so it could never certify a protected PR.
+Instead it reads the authoritative current PR and exact-head code/security
+review summaries, verifies no unresolved review threads, and checks that the
+original PR workflow's candidate and all applicable pre-merge checks succeeded
+and **only the final Codex review step failed**. It can then call the GitHub
+`rerun-failed-jobs` API against this original release-readiness workflow on
+the exact PR SHA, which executes the branch-ruleset-required check again.
+No commit status or check run is forged, and no old failing code/installer job
+can be upgraded to a green result through this mechanism. Draft, stale or
+in-flight PRs and comments not genuinely authored by the Codex bot are ignored.
+
+This recheck is effective only after the dispatcher is merged to the
+default branch; its introduction in a draft PR cannot retroactively enable
+it. The scheduled scan considers the latest 300 failed readiness runs, so
+long-outstanding PRs outside that bound still require a new review activity
+to trigger their recovery. The Merge Queue continues to reverify the final
+status at queue-build time.
