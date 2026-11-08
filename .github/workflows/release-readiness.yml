@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # Review receipts are asynchronous. A new Codex COMMENTED review or a
+  # follow-up review after thread resolution re-runs this SAME required gate.
+  # These are status-check-eligible GitHub Actions events; issue_comment and
+  # pull_request_review_comment alone are not eligible required checks.
+  pull_request_review:
+    types: [submitted, edited, dismissed]
   merge_group:
 
 permissions:
@@ -15,6 +21,9 @@ permissions:
 jobs:
   candidate:
     name: Build and validate release candidate
+    # A Draft must fail the required gate, not launch a costly Swarm/rollback
+    # candidate only to be rejected at the final Codex review step.
+    if: github.event_name == 'merge_group' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:

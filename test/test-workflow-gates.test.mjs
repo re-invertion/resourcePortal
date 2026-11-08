@@ -348,6 +348,15 @@ test('Required release readiness blocks Draft, stale Codex review and all unreso
   assert.ok(readiness.on.merge_group !== undefined);
   assert.ok(readiness.on.pull_request.types.includes('ready_for_review'));
   assert.ok(readiness.on.pull_request.types.includes('converted_to_draft'));
+  assert.deepEqual(readiness.on.pull_request_review.types,['submitted','edited','dismissed']);
+  assert.match(readiness.jobs.candidate.if,/merge_group/);
+  assert.match(readiness.jobs.candidate.if,/pull_request[.]draft == false/);
+  assert.equal(readiness.jobs['release-ready'].if,'always()');
+
+  // Only GitHub Actions status-check-eligible review events are a valid
+  // automatic recheck path; issue_comment checks cannot satisfy main rules.
+  assert.equal(readiness.on.issue_comment,undefined);
+  assert.equal(readiness.on.pull_request_review_comment,undefined);
   assert.equal(readiness.permissions.issues,'read');
   const job=readiness.jobs['release-ready'];
   const review=job.steps.find(s=>s.name?.startsWith('Reject Draft and unresolved Codex'));

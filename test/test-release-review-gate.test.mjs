@@ -6,7 +6,8 @@ const sha = "c".repeat(40);
 const approvedBot = {
   author: { login: "chatgpt-codex-connector[bot]" },
   body: '<!-- codex-review-state:v1 ' + JSON.stringify({
-    code_review: { commit_sha: sha, status: "completed", has_unresolved_findings: false },
+    code_review: { commit_sha: sha, status: "completed", has_any_findings: false, has_unresolved_findings: false },
+    security_review: { commit_sha: null, status: null, has_any_findings: null, has_unresolved_findings: null },
   }) + ' -->',
 };
 function pr(overrides = {}) {
@@ -68,6 +69,41 @@ test("Stale pull request events and moved PR heads are blocked", () => {
   assert.equal(assessReview(pr(), sha, "d".repeat(40)).state, "blocked");
   assert.equal(assessReview(pr(), "e".repeat(40)).state, "blocked");
 });
+test("Codex security review must complete on exact head SHA without any findings", () => {
+  const base = JSON.parse(approvedBot.body.match(/<!-- codex-review-state:v1 (.*) -->/)[1]);
+  const withSecurity = (changes) => {
+    const receipt = structuredClone(base);
+    receipt.security_review = {
+      commit_sha: sha, status: "completed", has_any_findings: false,
+      has_unresolved_findings: false, ...changes,
+    };
+    return { author: approvedBot.author,
+      body: '<!-- codex-review-state:v1 ' + JSON.stringify(receipt) + ' -->' };
+  };
+  assert.equal(assessReview(pr({ comments: { nodes: [withSecurity({})] } }), sha).state, "ready");
+  assert.equal(assessReview(pr({ comments: { nodes: [withSecurity({ status: "running" })] } }), sha).state, "pending");
+  assert.equal(assessReview(pr({ comments: { nodes: [withSecurity({ commit_sha: "a".repeat(40) })] } }), sha).state, "pending");
+  assert.equal(assessReview(pr({ comments: { nodes: [withSecurity({ has_any_findings: true })] } }), sha).state, "blocked");
+  assert.equal(assessReview(pr({ comments: { nodes: [withSecurity({ has_unresolved_findings: true })] } }), sha).state, "blocked");
+});
+
+test("Codex completed review with findings is never sufficient even if threads were manually resolved", () => {
+  const receipt = JSON.parse(approvedBot.body.match(/<!-- codex-review-state:v1 (.*) -->/)[1]);
+  receipt.code_review.has_any_findings = true;
+  const reply = { author: approvedBot.author,
+    body: '<!-- codex-review-state:v1 ' + JSON.stringify(receipt) + ' -->' };
+  assert.equal(assessReview(pr({ comments: { nodes: [reply] } }), sha).state, "blocked");
+});
+
+test("GitHub review submission and editing can recheck an already-passed exact PR head", () => {
+  assert.equal(getReviewPrNumber("pull_request_review", {
+    pull_request: { number: 415, head: { sha } },
+    review: { state: "commented" },
+  }), 415);
+  assert.equal(assessReview(pr(), sha, sha).state, "ready");
+  assert.equal(assessReview(pr(), sha, "a".repeat(40)).state, "blocked");
+});
+
 test("Merge Queue resolves the exact PR number from GitHub-generated head_ref", () => {
   assert.equal(getReviewPrNumber("merge_group", {
     merge_group: { head_ref: "refs/heads/gh-readonly-queue/main/pr-407-9a930b31" },

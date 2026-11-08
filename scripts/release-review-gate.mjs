@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 export function getReviewPrNumber(eventName, event) {
-  if (eventName === "pull_request") {
+  if (eventName === "pull_request" || eventName === "pull_request_review") {
     const n = event.pull_request?.number ?? event.number;
     if (!Number.isSafeInteger(n) || n < 1) throw Error("Missing PR number");
     return n;
@@ -22,7 +22,7 @@ export function getReviewPrNumber(eventName, event) {
     }
     return n;
   }
-  throw Error("Review gate only accepts pull_request and merge_group");
+  throw Error("Review gate only accepts pull_request, pull_request_review and merge_group");
 }
 
 export function assessReview(pr, headSha, eventHead = null) {
@@ -49,19 +49,35 @@ export function assessReview(pr, headSha, eventHead = null) {
   if (!bot) return { state: "pending", reason: "Awaiting Codex review receipt" };
   const match = /<!-- codex-review-state:v1 (\{[^\n]*\}) -->/.exec(bot.body);
   if (!match) return { state: "blocked", reason: "Malformed Codex review receipt" };
-  let summary;
-  try { summary = JSON.parse(match[1]).code_review; }
+  let receipt;
+  try { receipt = JSON.parse(match[1]); }
   catch { return { state: "blocked", reason: "Malformed Codex review status" }; }
+  const summary = receipt?.code_review;
   if (summary?.commit_sha !== headSha) {
     return { state: "pending", reason: "Awaiting Codex review of current commit" };
   }
   if (summary.status === "running" || summary.status == null) {
     return { state: "pending", reason: "Codex review still running" };
   }
-  if (summary.status !== "completed" || summary.has_unresolved_findings !== false) {
-    return { state: "blocked", reason: "Codex reported unresolved findings" };
+  if (summary.status !== "completed" ||
+      summary.has_unresolved_findings !== false ||
+      summary.has_any_findings !== false) {
+    return { state: "blocked", reason: "Codex reported findings on the current SHA" };
   }
-  return { state: "ready", reason: "Codex completed on exact SHA; all review threads resolved" };
+  // Optional Codex security reviews also block when requested, pending,
+  // stale or reporting findings. A null status is no security review request.
+  const security = receipt?.security_review;
+  if (security?.status != null) {
+    if (security.commit_sha !== headSha || security.status === "running") {
+      return { state: "pending", reason: "Awaiting Codex security review of current SHA" };
+    }
+    if (security.status !== "completed" ||
+        security.has_any_findings !== false ||
+        security.has_unresolved_findings !== false) {
+      return { state: "blocked", reason: "Codex security review reported findings" };
+    }
+  }
+  return { state: "ready", reason: "Codex completed clean review on exact SHA; all threads resolved" };
 }
 
 const query = [
@@ -96,7 +112,7 @@ export async function main(env = process.env) {
   const [owner, repo] = (env.GITHUB_REPOSITORY ?? "").split("/");
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
   const n = getReviewPrNumber(env.GITHUB_EVENT_NAME, event);
-  const eventHead = env.GITHUB_EVENT_NAME === "pull_request" ?
+  const eventHead = ["pull_request", "pull_request_review"].includes(env.GITHUB_EVENT_NAME) ?
     event.pull_request?.head?.sha ?? null : null;
   assert.match(owner ?? "", /^[a-zA-Z0-9_-]+$/);
   assert.match(repo ?? "", /^[a-zA-Z0-9_.-]+$/);

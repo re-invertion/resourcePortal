@@ -76,3 +76,31 @@ the race where auto-merge admitted a PR to the queue while Codex was still
 reviewing it. A failed gate is never waived by locally green CI or an
 unverified bot comment. Never enable auto-merge before review and thread
 resolution; Draft is used for ongoing security fixes.
+
+
+### Review completion rechecks and events
+
+GitHub review state is asynchronous: a Codex \`COMMENTED\` review can be
+submitted after the first PR validation has completed. The same signed,
+branch-protected \`Required release readiness\` workflow listens to
+\`pull_request_review\` (\`submitted\`, \`edited\`, \`dismissed\`) and re-runs
+the full applicable release gates plus an exact-head GraphQL review check.
+After closing a review thread, request a fresh Codex review of the unchanged
+SHA; its submitted review event automatically re-evaluates the required gate
+without manually rerunning a workflow. A review of a changed SHA must be
+requested again. GitHub does **not** expose a native Actions event for thread
+resolution, and \`issue_comment\`/\`pull_request_review_comment\` workflow
+checks are not eligible required checks; do not rely on those events to grant
+merge permission. Pending or stale Codex *security review*, when requested,
+also blocks the required check. Exact-head code/security reviews containing
+any findings never satisfy the merge gate, even after threads are marked
+resolved; a fresh clean review is required.
+
+The required check can still fail closed after its bounded review wait and
+rerun only once GitHub delivers a trusted review submission. Draft PRs
+skip the expensive candidate and integration jobs, while the always-running
+required status job still fails closed because no candidate was certified.
+On Ready-for-review, and on subsequent review submissions, complete release
+gates run again before the required review check can become green. Nothing bypasses
+the protected Merge Queue, and reviews are never treated as approvals of
+unreviewed source code.
