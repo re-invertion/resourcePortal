@@ -63,6 +63,11 @@ export function Tabs({ items, label = "Sections" }: { items: Array<{ label: stri
 const openDialogOverlays: HTMLDivElement[] = [];
 const originalBackgroundState = new Map<Element, { inert: string | null; ariaHidden: string | null }>();
 let dialogBodyObserver: MutationObserver | undefined;
+// The outer modal can unmount before an inner modal in the same React commit.
+// Retain the *page* trigger until the final overlay leaves; the inner trigger
+// may already have been removed when its own effect cleanup runs.
+let rootPageReturnFocus: HTMLElement | null = null;
+
 
 function updateDialogBackground() {
   for (const [element, previous] of originalBackgroundState) {
@@ -95,6 +100,7 @@ export function Dialog({ open, title, description, children, actions, onClose, d
     const dialog = ref.current;
     const overlay = overlayRef.current;
     const previous = document.activeElement as HTMLElement | null;
+    if (openDialogOverlays.length === 0) rootPageReturnFocus = previous;
     openDialogOverlays.push(overlay);
     updateDialogBackground();
     if (!dialogBodyObserver && typeof MutationObserver !== "undefined") {
@@ -104,12 +110,21 @@ export function Dialog({ open, title, description, children, actions, onClose, d
 
     // Query at keypress time: conditional/disabled controls can change.
     const focusableSelector = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]';
+    const isVisibleThroughParents = (element: HTMLElement) => {
+      // A descendant of display:none still has its own computed display:block.
+      // Inspect every wrapper, including dynamic Tailwind "hidden" elements.
+      for (let node: HTMLElement | null = element; node && dialog.contains(node); node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" ||
+            style.visibility === "collapse") return false;
+      }
+      return true;
+    };
     const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
       .filter(element => element.tabIndex >= 0 &&
         !element.matches(":disabled") &&
         !element.closest("[hidden], [inert], [aria-hidden='true']") &&
-        getComputedStyle(element).display !== "none" &&
-        getComputedStyle(element).visibility !== "hidden");
+        isVisibleThroughParents(element));
     const body = dialog.querySelector<HTMLElement>("[data-dialog-body]");
     const initial = Array.from(body?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
       .find(element => focusable().includes(element));
@@ -157,8 +172,13 @@ export function Dialog({ open, title, description, children, actions, onClose, d
         dialogBodyObserver?.disconnect();
         dialogBodyObserver = undefined;
       }
-      // Nested: restore outer-dialog trigger. Final: restore page trigger.
-      if (previous?.isConnected && !previous.closest("[inert]")) previous.focus();
+      // Only the final cleanup can restore the page trigger if an outer
+      // overlay was torn down before its inner overlay in the same React batch.
+      const returnTarget = previous?.isConnected && !previous.closest("[inert]")
+        ? previous
+        : openDialogOverlays.length === 0 ? rootPageReturnFocus : null;
+      if (returnTarget?.isConnected && !returnTarget.closest("[inert]")) returnTarget.focus();
+      if (openDialogOverlays.length === 0) rootPageReturnFocus = null;
     };
   }, [open]);
   if (!open) return null;

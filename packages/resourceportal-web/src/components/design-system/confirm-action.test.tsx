@@ -157,4 +157,61 @@ describe("ConfirmActionButton", () => {
       originalBackground.remove();
     }
   });
+
+
+  it("skips focusable descendants of an ancestor hidden dynamically with display:none", () => {
+    function HiddenWrapper() {
+      const [open, setOpen] = useState(false);
+      const [show, setShow] = useState(true);
+      return <>
+        <button onClick={() => setOpen(true)}>Open modal</button>
+        <Dialog title="Hidden controls" open={open} onClose={() => setOpen(false)}
+          actions={<>
+            <button onClick={() => setShow(false)}>Hide last control</button>
+            <div style={{ display: show ? "block" : "none" }}>
+              <button>Invisible last control</button>
+            </div>
+          </>} />
+      </>;
+    }
+    render(<HiddenWrapper />);
+    const trigger = screen.getByRole("button", { name: "Open modal" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const hide = screen.getByRole("button", { name: "Hide last control" });
+    const first = screen.getByRole("button", { name: "Close dialog" });
+    fireEvent.click(hide);
+    hide.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+    first.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(hide);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("restores original page opener when outer and inner dialogs unmount together", () => {
+    const pageTrigger = <button type="button">Open shared dialogs</button>;
+    function Both({ open }: { open: boolean }) {
+      return <>
+        {pageTrigger}
+        {open && <>
+          <Dialog title="Outer batch" open onClose={() => undefined}
+            actions={<button>Outer action</button>}/>
+          <Dialog title="Inner batch" open onClose={() => undefined}
+            actions={<button>Inner action</button>}/>
+        </>}
+      </>;
+    }
+    const { rerender, container } = render(<Both open={false}/>);
+    const trigger = screen.getByRole("button", { name: "Open shared dialogs" });
+    trigger.focus();
+    rerender(<Both open={true}/>);
+    expect(container.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close dialog" }));
+    rerender(<Both open={false}/>);
+    expect(container.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
 });
