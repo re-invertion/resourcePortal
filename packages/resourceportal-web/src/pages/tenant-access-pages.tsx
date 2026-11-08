@@ -42,6 +42,10 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
   const invitations = useApi<unknown>(`${root}/invitations`);
   const rolesQ = useApi<unknown>(`${root}/roles`);
   const groups = useApi<unknown>(`${root}/groups`);
+  const oauthApps = useApi<unknown>(root + "/oauth-applications");
+  const appConsumers = useApi<unknown>(root + "/app-consumers");
+  const oauthRows = items<R>(oauthApps.data);
+  const appConsumerRows = items<R>(appConsumers.data);
   const roles = items<R>(rolesQ.data);
   const memberRows = items<R>(memberships.data);
   const inviteRows = items<R>(invitations.data);
@@ -58,7 +62,10 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     await Promise.all([groups.reload(), memberships.reload()]);
   };
   const [inviteOpen, setInviteOpen] = useState(section === "invite");
-  const [invite, setInvite] = useState({ email: "", roleId: "" });
+  const [invite, setInvite] = useState({
+    email: "", roleId: "", type: "ResourcePortal",
+    oauthApplicationIds: [] as string[],
+  });
   const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
   const [groupOpen, setGroupOpen] = useState(false);
   const [group, setGroup] = useState({ name: "", description: "" });
@@ -85,10 +92,17 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     }
   }
   async function createInvite() {
-    if (!can("membership.invite") || !invite.email.trim() || !invite.roleId) return;
+    const appOnly = invite.type === "AppUser";
+    if (!can("membership.invite") || !invite.email.trim() ||
+        (appOnly ? oauthApps.loading || Boolean(oauthApps.error) || invite.oauthApplicationIds.length === 0 :
+          !invite.roleId)) return;
     setWorking(true);
     try {
-      const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: { email: invite.email.trim(), roleIds: [invite.roleId] } });
+      const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: {
+        email: invite.email.trim(),
+        roleIds: appOnly ? [] : [invite.roleId],
+        ...(appOnly ? { oauthApplicationIds: invite.oauthApplicationIds } : {}),
+      } });
       const token = text(created.token);
       if (!token) throw new Error("Invitation token was not returned.");
       const delivery = (created.emailDelivery ?? {}) as R;
@@ -103,6 +117,19 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     } catch (error) {
       toast.errorFrom(error, "Invitation could not be created.");
     } finally { setWorking(false); }
+  }
+  async function updateAppAccess(membershipId: string, applicationId: string, granted: boolean) {
+    if (!can("membership.update") || working) return;
+    const url = root + "/app-consumers/" + encodeURIComponent(membershipId) + "/grants" +
+      (granted ? "" : "/" + encodeURIComponent(applicationId));
+    try {
+      await action(
+        () => apiRequest(url, { method: granted ? "POST" : "DELETE",
+          ...(granted ? { body: { applicationId } } : {}) }),
+        appConsumers.reload,
+        granted ? "OAuth application access granted." : "OAuth application access revoked.",
+      );
+    } catch { /* The mutation error was surfaced; do not display an optimistic grant. */ }
   }
   async function regenerateInvite(item: R) {
     if (!can("membership.invite")) return;
@@ -201,11 +228,34 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     </Card> : null}
     {inviteOpen && can("membership.invite") ? <Card className="mb-5 grid gap-4 p-5 md:grid-cols-2">
       <Field label="Email" required><TextInput type="email" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} /></Field>
-      <Field label="ResourcePortal role" required><Select value={invite.roleId} onChange={e => setInvite({ ...invite, roleId: e.target.value })}><option value="">Select a role</option>{roleOptions(roles)}</Select></Field>
-      {invite.roleId ? <div className="md:col-span-2 text-xs text-[#526070]">Selected RP role: {roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}. This is not external-application SSO access.</div> : null}
+      <Field label="Invitation access type"><Select aria-label="Invitation access type" value={invite.type} onChange={e => setInvite({ ...invite, type: e.target.value, roleId: "", oauthApplicationIds: [] })}>
+        <option value="ResourcePortal">ResourcePortal member</option>
+        <option value="AppUser">App User — external OAuth applications only</option>
+      </Select></Field>
+      {invite.type === "ResourcePortal" ? <>
+        <Field label="ResourcePortal role" required><Select value={invite.roleId} onChange={e => setInvite({ ...invite, roleId: e.target.value })}><option value="">Select a role</option>{roleOptions(roles)}</Select></Field>
+        {invite.roleId ? <div className="md:col-span-2 text-xs text-[#526070]">Selected RP role: {roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}. This is not external-application SSO access.</div> : null}
+      </> : <fieldset className="md:col-span-2">
+        <legend className="text-sm font-semibold">Allowed OAuth applications (no ResourcePortal permissions)</legend>
+        <p className="mt-1 text-xs text-[#526070]">Default deny. Only the selected OAuth clients are included, never the Viewer role.</p>
+        {oauthApps.loading ? <p className="mt-2 text-xs">Loading OAuth applications…</p> :
+         oauthApps.error ? <p role="alert" className="mt-2 text-xs text-red-700">OAuth applications unavailable; invitation disabled.</p> :
+         oauthRows.length === 0 ? <p className="mt-2 text-xs">No OAuth applications registered.</p> :
+         <div className="mt-2 grid gap-2 sm:grid-cols-2">{oauthRows.map(app => <label key={idOf(app)} className="flex items-center gap-2 text-sm">
+           <input type="checkbox" checked={invite.oauthApplicationIds.includes(idOf(app))}
+             onChange={e => setInvite(prev => ({ ...prev, oauthApplicationIds: e.target.checked ?
+               [...prev.oauthApplicationIds, idOf(app)] : prev.oauthApplicationIds.filter(id => id !== idOf(app)) }))}/>
+           {text(app.name)}
+         </label>)}</div>}
+      </fieldset>}
       <div className="flex gap-2 md:col-span-2">
-        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || !invite.email || !invite.roleId} confirmTitle="Confirm invitation"
-          confirmDescription={`Invite ${invite.email} with the selected ResourcePortal role?`} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
+        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || !invite.email ||
+          (invite.type === "AppUser" ? oauthApps.loading || Boolean(oauthApps.error) || !invite.oauthApplicationIds.length : !invite.roleId)}
+          confirmTitle="Confirm invitation"
+          confirmDescription={invite.type === "AppUser" ?
+            "Invite " + invite.email + " as an App User with " +
+            invite.oauthApplicationIds.length + " OAuth application(s), no ResourcePortal roles?" :
+            "Invite " + invite.email + " with the selected ResourcePortal role?"} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
         <Button onClick={() => setInviteOpen(false)}>Cancel</Button>
       </div>
     </Card> : null}
@@ -269,6 +319,40 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
           confirmTitle="Save membership access?" confirmDescription="This changes the selected member's direct roles and/or active status." confirmLabel="Save access" onConfirm={saveMembership}>Save access</ConfirmActionButton>
         <Button onClick={() => setEditingMembership(undefined)}>Cancel</Button>
       </div>
+    </Card> : null}
+
+    {can("membership.read") ? <Card className="mb-6 overflow-hidden">
+      <div className="border-b border-[#E1E7F0] p-4">
+        <h2 className="font-semibold">App Users — OAuth application access</h2>
+        <p className="text-xs text-[#526070]">App Users have no ResourcePortal roles. Each OAuth client is granted and revoked independently.</p>
+      </div>
+      {appConsumers.error ? <p role="alert" className="p-4 text-sm">App User access could not be loaded. No stale grant data is displayed.</p> :
+       appConsumers.loading ? <p className="p-4 text-sm">Loading App Users…</p> :
+       appConsumerRows.length === 0 ? <div className="p-4"><EmptyState title="No App Users" description="Invite an App User to assign OAuth applications."/></div> :
+       <div className="divide-y divide-[#E1E7F0]">{appConsumerRows.map(consumer => {
+         const account = (consumer.user ?? {}) as R;
+         const grants = items<R>(consumer.grants);
+         return <div key={text(consumer.membershipId)} className="p-4">
+           <div className="flex flex-wrap items-center gap-3">
+             <strong>{text(account.displayName, text(account.email))}</strong>
+             <StatusText tone={statusTone(consumer.status)}>{text(consumer.status)}</StatusText>
+             <span className="text-xs text-[#526070]">App User (zero RP permissions)</span>
+           </div>
+           {oauthApps.error ? <p role="alert" className="mt-3 text-xs">OAuth applications unavailable; grant controls are disabled.</p> :
+            <div className="mt-3 flex flex-wrap gap-2">{oauthRows.map(app => {
+              const enabled = grants.some(g => g.applicationId === idOf(app) && g.enabled === true);
+              return <ConfirmActionButton key={idOf(app)} size="sm" triggerVariant="ghost"
+                disabled={!can("membership.update") || working || oauthApps.loading || consumer.status !== "Active"}
+                confirmTitle={(enabled ? "Revoke " : "Grant ") + text(app.name) + " for " + text(account.email) + "?"}
+                confirmDescription={enabled ? "Revocation disables new authorization and refresh after the ZITADEL client gate is active." :
+                  "Grant only the selected OAuth client. This does not permit ResourcePortal access."}
+                confirmLabel={enabled ? "Revoke client access" : "Grant client access"}
+                onConfirm={() => updateAppAccess(text(consumer.membershipId), idOf(app), !enabled)}>
+                {text(app.name)}: {enabled ? "Allowed" : "Denied"}
+              </ConfirmActionButton>;
+            })}</div>}
+         </div>;
+       })}</div>}
     </Card> : null}
 
     <div className="mt-6 grid gap-6 xl:grid-cols-2">

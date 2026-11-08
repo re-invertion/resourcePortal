@@ -1,0 +1,40 @@
+name: ResourcePortal Codex Review Recheck
+
+# Codex edits the issue-comment summary even for a review without findings.
+# This dispatcher never sets a status itself; it can only re-run the prior
+# required check on the same PR SHA after authoritative GitHub verification.
+on:
+  issue_comment:
+    types: [created, edited]
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: resourceportal-codex-review-recheck
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    name: Recheck completed Codex review on original PR SHA
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event.issue.pull_request &&
+       github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+       contains(github.event.comment.body, '<!-- codex-review-state:v1 '))
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Recheck only isolated failed required review jobs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release-review-recheck.mjs

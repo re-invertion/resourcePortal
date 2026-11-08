@@ -143,6 +143,38 @@ rp_render_stack() {
   if [[ -z "$legacy_zitadel_domain" ]]; then
     output="$(grep -v 'rp-legacy-auth' <<<"$output")"
   fi
+  # App Consumer Actions V2 is strictly opt-in: no externally required
+  # Docker secret exists in the default stack, including older installations
+  # and source images restored during a failed upgrade. A partially configured
+  # target must block deployment, never silently turn off the issuer gate.
+  local action_certified="${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}"
+  local action_id="${RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID:-}"
+  local action_ref="${RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF:-}"
+  local action_env="" action_declaration="" action_mount=""
+  if [[ "$action_certified" != false && "$action_certified" != true ]]; then
+    printf 'Invalid App Consumer Actions V2 certification switch.\n' >&2
+    return 1
+  fi
+  if [[ "$action_certified" == true ]]; then
+    if [[ ! "$action_id" =~ ^[0-9]{1,64}$ ||
+          ! "$action_ref" =~ ^rp_app_consumer_action_hmac_[a-fA-F0-9]{16}$ ]]; then
+      printf 'App Consumer Actions V2 requires a valid target ID and versioned signing key reference.\n' >&2
+      return 1
+    fi
+    action_env=$(printf '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"\n      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true"\n      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "%s"\n      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://%s/api/app-consumer-actions/preaccesstoken"\n      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE: /run/secrets/rp_app_consumer_action_hmac' "$action_id" "$RP_CFG_DOMAIN")
+    action_declaration=$(printf '  rp_app_consumer_action_hmac:\n    external: true\n    name: %s' "$action_ref")
+    action_mount='      - rp_app_consumer_action_hmac'
+  elif [[ -n "$action_id" || -n "$action_ref" ]]; then
+    printf 'App Consumer Actions V2 partial configuration is forbidden when uncertified.\n' >&2
+    return 1
+  fi
+  output="${output//"  # RP_APP_CONSUMER_ACTIONS_V2_SECRET_DECL"/"$action_declaration"}"
+  output="${output//"      # RP_APP_CONSUMER_ACTIONS_V2_ENV"/"$action_env"}"
+  output="${output//"      # RP_APP_CONSUMER_ACTIONS_V2_API_SECRET"/"$action_mount"}"
+  if grep -q 'RP_APP_CONSUMER_ACTIONS_V2_.*DECL\|RP_APP_CONSUMER_ACTIONS_V2_API_SECRET' <<<"$output"; then
+    printf 'Incomplete optional App Consumer stack rendering.\n' >&2
+    return 1
+  fi
   if grep -q '__[A-Z0-9_]*__' <<<"$output"; then
     printf 'Unresolved production stack placeholder.\n' >&2
     return 1

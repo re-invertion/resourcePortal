@@ -108,7 +108,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
   "identity": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities", "src/app-consumers"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
     ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
@@ -158,6 +158,10 @@ const commands = {
     ["bash", "test/installer/test-core.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
+    ["bash", "test/installer/test-app-consumer-actions.sh"],
+    ["bash", "test/installer/test-app-consumer-auto-lifecycle.sh"],
+    ["bash", "test/installer/test-app-consumer-real-signer.sh"],
+    ["bash", "test/installer/test-app-consumer-upgrade-lifecycle.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
@@ -175,7 +179,7 @@ const commands = {
   ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
-    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
+    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs", "test/test-release-review-recheck.test.mjs"],
     ["node", "scripts/test-catalog.mjs"],
     ["bash", "-n", "scripts/run-device-vpn-dataplane-smoke.sh"],
   ],
@@ -276,9 +280,45 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
   [/^packages\/resourceportal-web\/src\/pages\/networking-form-validation(?:\.test)?\.ts$/, ["web-console", "networking"]],
   [/^packages\/resourceportal-web\/src\/pages\/remote-lan-attachments-panel(?:\.test)?\.tsx$/, ["web-console", "networking"]],
+  // App Consumer OAuth entitlements (#398) must execute exact-client grant,
+  // tenant isolation, signed Actions V2 and startup fail-closed regression.
+  // These paths cannot be treated as generic UI when introduced by a schema
+  // migration: the DB restore release gate still blocks an unsafe release.
+  // Creation-form hydration can reset an administrator's edits between
+  // validation and submit; always run actual Web state and tenant UI tests.
+  [/^packages\/resourceportal-web\/src\/components\/forms(?:\.test)?\.tsx$/, ["reactive-web-state", "tenant-ux-patch"]],
+  // Global ZITADEL pre-token enrollment and signing-secret Swarm manifests
+  // are identity- and release-critical, including dedicated installer tests.
+  [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
+  [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-real-signer\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  // Global issuer pre-token callback and two-database rollback safety:
+  // upgrade.sh affects tenant authentication, not only installer plumbing.
+  // Source-stack consistency must be covered by upgrade failure recovery,
+  // identity, security and the real published-image rollback gate.
+  [/^scripts\/release-review-gate\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^scripts\/release-review-recheck\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-recheck\.test\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-gate\.test\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^scripts\/installer\/upgrade\.sh$/, ["identity", "installer", "platform-release", "security", "upgrade-recovery"]],
+  [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
+  [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],
+  [/^config\/production\/stack\.yml\.tpl$/, ["identity", "installer", "networking", "platform-release", "security"]],
+  [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
+  [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
+  // Signed ZITADEL webhook secrets loaded from *_FILE are authentication
+  // boundaries. Changes to the allow-list or its regression fixture require
+  // identity and API security coverage, never a generic unclassified skip.
+  [/^packages\/resourceportal-api\/src\/config\/secret-file-loader(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.
+  // Reconciliation and its periodic safety monitor can grant or revoke
+  // shared ZITADEL project roles; require security regressions as well as
+  // identity coverage even if no App Consumer source file is touched.
+  [/^packages\/resourceportal-api\/src\/tenant-oidc\/tenant-oidc(?:-auto-rollout)?\.service(?:\.spec)?\.ts$/, ["identity", "security"]],
   [/^packages\/resourceportal-api\/src\/tenant-oidc\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],

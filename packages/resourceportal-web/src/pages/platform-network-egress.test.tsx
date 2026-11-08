@@ -34,7 +34,9 @@ it("shows mandatory private-network isolation without any disable control", asyn
   render(<PlatformNetworkEgressPage />);
 
   expect(await screen.findByText("Tenant private-network isolation")).toBeTruthy();
-  expect(screen.getByText("Applied")).toBeTruthy();
+  // The heading is visible before useApi resolves; wait for actual async
+  // enforcement data rather than asserting on the pre-fetch Pending badge.
+  expect(await screen.findByText("Applied")).toBeTruthy();
   expect(screen.getByText("192.168.0.0/16")).toBeTruthy();
   expect(screen.getByText("Mandatory protection")).toBeTruthy();
   expect(screen.getByText(/cannot be disabled from the UI or API/i)).toBeTruthy();

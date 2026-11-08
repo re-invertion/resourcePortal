@@ -49,6 +49,41 @@ bootstrap="$(rp_render_stack bootstrap)"
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 
+# Issue #398: new installations and ordinary upgrades must not require an
+# Action HMAC secret nor activate a global ZITADEL execution by default.
+not_contains "$final" 'rp_app_consumer_action_hmac:' 'unconfigured Action HMAC secret is not a deployment dependency'
+not_contains "$final" 'RP_APP_CONSUMER_ACTIONS_V2_ENABLED:' 'App Consumer Actions V2 stays disabled by default'
+not_contains "$bootstrap" 'RP_APP_CONSUMER_ACTIONS_V2_ENABLED:' 'bootstrap does not activate App Consumer authorization'
+
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='true'
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID='123456789012345678'
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF='rp_app_consumer_action_hmac_0123456789abcdef'
+action_final="$(rp_render_stack final)"
+contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"' 'certified Action runtime flag is explicit'
+contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true"' 'certification flag reaches only enabled API'
+contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "123456789012345678"' 'exact Action target ID reaches API'
+contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/api/app-consumer-actions/preaccesstoken"' 'Action callback is canonical HTTPS URL'
+contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE: /run/secrets/rp_app_consumer_action_hmac' 'signing secret uses Docker file mount'
+contains "$action_final" 'name: rp_app_consumer_action_hmac_0123456789abcdef' 'versioned HMAC ref is rendered'
+contains "$action_final" '      - rp_app_consumer_action_hmac' 'only API receives the Action HMAC secret'
+not_contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: ' 'HMAC secret is never inline YAML'
+action_env_count="$(grep -c '^      RP_APP_CONSUMER_ACTIONS_V2_ENABLED:' <<<"$action_final" || true)"
+[[ "$action_env_count" == 1 ]] && pass 'only one service can enable global Action authorization' || fail 'only one service can enable global Action authorization'
+action_mount_count="$(grep -c '^      - rp_app_consumer_action_hmac$' <<<"$action_final" || true)"
+[[ "$action_mount_count" == 1 ]] && pass 'Action signing secret is mounted into API only' || fail 'Action signing secret is mounted into API only'
+
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID='../../escape'
+status 1 'reject invalid Action target id without rendering' rp_render_stack final
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID='123456789012345678'
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF='rp_oidc_client_secret_0123456789abcdef'
+status 1 'reject wrong signing secret class without rendering' rp_render_stack final
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF='rp_app_consumer_action_hmac_0123456789abcdef'
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='false'
+status 1 'reject partially configured but uncertified Action hook' rp_render_stack final
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='maybe'
+status 1 'reject unknown certification state' rp_render_stack final
+unset RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF
+
 contains "$bootstrap" 'replicas: 0 # RP_API_REPLICAS' 'bootstrap gates API'
 contains "$bootstrap" 'replicas: 0 # RP_WEB_REPLICAS' 'bootstrap gates Web'
 contains "$bootstrap" 'replicas: 0 # RP_WORKER_REPLICAS' 'bootstrap gates worker'

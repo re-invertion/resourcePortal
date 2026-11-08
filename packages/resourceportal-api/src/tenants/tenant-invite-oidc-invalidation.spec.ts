@@ -15,6 +15,7 @@ function setup() {
   const tx = {
     tenantMembership: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({
         id: "membership-1", tenantId: "tenant-1", userId: "user-1", status: "Active",
         roles: [{ roleId: "tenant-member", role: { id: "tenant-member", name: "Member" } }],
@@ -22,6 +23,11 @@ function setup() {
       }),
     },
     tenantOidcProvider: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    tenantAppConsumer: {
+      create: vi.fn().mockResolvedValue({ membershipId: "membership-1" }),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    $queryRaw: vi.fn().mockResolvedValue([]),
     tenantInvitation: { delete: vi.fn() },
     auditLogEntry: { create: vi.fn() },
   };
@@ -46,6 +52,65 @@ describe("tenant invite activation invalidates OIDC grants transactionally", () 
     });
     expect(f.tx.tenantInvitation.delete).toHaveBeenCalledOnce();
   });
+  it("atomically accepts role-free App User with only explicitly invited OAuth client grants", async () => {
+    const f = setup();
+    f.prisma.tenantInvitation.findUnique.mockResolvedValueOnce({
+      ...invitation, roleIds: [], appInvitationGrants: [
+        { oauthApplicationId: "550e8400-e29b-41d4-a716-446655440000" },
+      ],
+    });
+    await f.svc.acceptInvitation({ token }, f.actor);
+    expect(f.tx.tenantMembership.create).toHaveBeenCalledOnce();
+    const membershipCreate = f.tx.tenantMembership.create.mock.calls[0]?.[0] as {
+      data: { roles: { create: unknown[] } };
+    };
+    expect(membershipCreate.data.roles.create).toEqual([]);
+    expect(f.tx.tenantAppConsumer.create).toHaveBeenCalledWith({
+      data: {
+        membershipId: "membership-1", tenantId: "tenant-1", createdBy: "creator-1",
+        grants: { create: [{
+          tenantId: "tenant-1",
+          oauthApplicationId: "550e8400-e29b-41d4-a716-446655440000",
+          createdBy: "creator-1", updatedBy: "creator-1",
+        }] },
+      },
+    });
+    expect(f.tx.tenantInvitation.delete).toHaveBeenCalledOnce();
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledOnce();
+  });
+
+  it("rejects inviting existing RP administrators into an app-only account", async () => {
+    const f = setup();
+    f.prisma.tenantInvitation.findUnique.mockResolvedValueOnce({
+      ...invitation, roleIds: [], appInvitationGrants: [
+        { oauthApplicationId: "550e8400-e29b-41d4-a716-446655440000" },
+      ],
+    });
+    f.tx.tenantMembership.findFirst.mockResolvedValueOnce({ id: "existing-rp-admin" });
+    await expect(f.svc.acceptInvitation({ token }, f.actor)).rejects.toThrow(
+      "App-only accounts must use separate identities",
+    );
+    expect(f.tx.tenantMembership.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects promoting an existing App User by accepting a privileged invitation", async () => {
+    const f = setup();
+    f.tx.tenantAppConsumer.findFirst.mockResolvedValueOnce({ membershipId: "app-only-membership" });
+    await expect(f.svc.acceptInvitation({ token }, f.actor)).rejects.toThrow(
+      "App User identities cannot acquire ResourcePortal membership roles",
+    );
+    expect(f.tx.tenantMembership.create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for malformed role-free invitations without any client grants", async () => {
+    const f = setup();
+    f.prisma.tenantInvitation.findUnique.mockResolvedValueOnce({
+      ...invitation, roleIds: [], appInvitationGrants: [],
+    });
+    await expect(f.svc.acceptInvitation({ token }, f.actor)).rejects.toThrow("Malformed invitation grants");
+    expect(f.tx.tenantMembership.create).not.toHaveBeenCalled();
+  });
+
   it("a failed stale transition prevents acceptance and keeps invitation intact", async () => {
     const f = setup();
     f.tx.tenantOidcProvider.updateMany.mockRejectedValue(new Error("database write failed"));

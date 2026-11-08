@@ -50,6 +50,10 @@ test("classifies every API controller so new public surface cannot drift silentl
   const apiRoot = resolve(__dirname, "../../resourceportal-api/src");
   const actual = controllerFiles(apiRoot).sort();
   const classified = [
+    // Actions V2 callback is ZITADEL-to-RP and deliberately NOT an SDK route.
+    "app-consumers/app-consumer-action.controller.ts",
+    // Tenant-guarded App Consumer grant management is an explicit API surface.
+    "app-consumers/app-consumers.controller.ts",
     "app-groups/app-groups.controller.ts",
     "audit/audit.controller.ts",
     "audit/platform-audit.controller.ts",
