@@ -9,7 +9,8 @@ trap 'rm -rf -- "$tmp"' EXIT
 key='test-only-real-hmac-key-of-at-least-32-bytes'
 printf '%s' "$key" >"$tmp/key"
 printf '%s' '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
-export RP_CFG_API_IMAGE="ghcr.io/re-invertion/resourceportal-api@sha256:$(printf 'a%.0s' {1..64})"
+RP_CFG_API_IMAGE="ghcr.io/re-invertion/resourceportal-api@sha256:$(printf 'a%.0s' {1..64})"
+export RP_CFG_API_IMAGE
 called=0
 # The exact production command is intercepted only at the Docker boundary.
 # Node executes the real production inline program.
