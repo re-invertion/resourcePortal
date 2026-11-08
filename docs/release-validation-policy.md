@@ -119,7 +119,11 @@ runs on main, not on the PR SHA, so it could never certify a protected PR.
 Instead it reads the authoritative current PR and exact-head code/security
 review summaries, verifies no unresolved review threads, and checks that the
 original PR workflow's candidate and all applicable pre-merge checks succeeded
-and **only the final Codex review step failed**. It can then call the GitHub
+and **only the final Codex review step failed**. It reads every page of
+GitHub job history with the all-attempts filter and preserves the newest
+result for each logical job. This retains an earlier successful candidate
+when GitHub reruns only the failed review job; a later failed prerequisite
+always overrides earlier success. It can then call the GitHub
 `rerun-failed-jobs` API against this original release-readiness workflow on
 the exact PR SHA, which executes the branch-ruleset-required check again.
 No commit status or check run is forged, and no old failing code/installer job

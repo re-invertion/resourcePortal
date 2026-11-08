@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  requestedPrNumber, isEligibleFailedRun, shouldRerunReview, main,
+  requestedPrNumber, isEligibleFailedRun, latestJobResultsAcrossAttempts, shouldRerunReview, main,
 } from "../scripts/release-review-recheck.mjs";
 
 const SHA = "b".repeat(40);
@@ -68,6 +68,41 @@ test("only exact SHA run with successful prerequisites and FAILED review step ma
   reviewWasSuccessful[3].steps[1].conclusion = "success";
   assert.equal(isEligibleFailedRun(RUN, SHA, 415, reviewWasSuccessful), false);
 });
+
+test("failed-job retries preserve candidate success from earlier attempts", () => {
+  const attemptsOne = JOBS.map((job, i) => ({ ...snapshot(job), run_attempt: 1, id: 100 + i }));
+  const rerunOnlyReview = {
+    ...snapshot(JOBS.at(-1)), run_attempt: 2, id: 202,
+  };
+  // Latest filter would return only rerunOnlyReview and incorrectly block.
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415, [rerunOnlyReview]), false);
+  const combined = latestJobResultsAcrossAttempts([...attemptsOne, rerunOnlyReview]);
+  assert.equal(combined.length, JOBS.length);
+  assert.equal(combined.find(j => j.name === "Build and validate release candidate").run_attempt, 1);
+  assert.equal(combined.find(j => j.name === "Required release readiness").run_attempt, 2);
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415, combined), true);
+  const thirdRerun = { ...rerunOnlyReview, run_attempt: 3, id: 303 };
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415,
+    latestJobResultsAcrossAttempts([...attemptsOne, rerunOnlyReview, thirdRerun])), true);
+});
+
+test("latest failing prerequisite overrides any earlier success across attempts", () => {
+  const earlier = JOBS.map((job, i) => ({ ...snapshot(job), run_attempt: 1, id: 100 + i }));
+  const newFailure = { name: "Build and validate release candidate", conclusion: "failure",
+    run_attempt: 2, id: 201 };
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415,
+    latestJobResultsAcrossAttempts([...earlier, newFailure])), false);
+  const newActive = { ...newFailure, conclusion: null, status: "in_progress", id: 202 };
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415,
+    latestJobResultsAcrossAttempts([...earlier, newActive])), false);
+  const nowGreen = { ...snapshot(JOBS.at(-1)), run_attempt: 3, id: 303,
+    conclusion: "success", steps: JOBS.at(-1).steps.map(step => ({
+      ...step, conclusion: "success",
+    })) };
+  assert.equal(isEligibleFailedRun(RUN, SHA, 415,
+    latestJobResultsAcrossAttempts([...earlier, nowGreen])), false);
+});
+
 test("Draft, unresolved thread, stale or finding reviews never request reruns", () => {
   assert.equal(shouldRerunReview(PR, SHA), true);
   assert.equal(shouldRerunReview({ ...PR, isDraft: true }, SHA), false);
@@ -97,7 +132,10 @@ test("trusted bot update retries only original failed job, without synthesizing 
     if (uri.endsWith("/graphql")) body = { data: { repository: { pullRequest: PR } } };
     else if (uri.includes("/actions/workflows/release-readiness.yml/runs?"))
       body = { workflow_runs: [RUN] };
-    else if (uri.includes("/actions/runs/491/jobs?")) body = { jobs: JOBS };
+    else if (uri.includes("/actions/runs/491/jobs?")) {
+      assert.ok(uri.includes("filter=all"), "all attempts must be read");
+      body = { jobs: JOBS, total_count: JOBS.length };
+    }
     else if (uri.endsWith("/actions/runs/491/rerun-failed-jobs")) {
       assert.equal(options.method, "POST");
       assert.match(options.headers.Authorization, /^Bearer mock-test-token$/);
@@ -151,8 +189,10 @@ test("scheduled reconciliation handles resolved threads without a GitHub review 
       return Response.json({ workflow_runs: [RUN] });
     if (uri.includes("head_sha="))
       return Response.json({ workflow_runs: [RUN] });
-    if (uri.includes("/jobs?"))
-      return Response.json({ jobs: JOBS });
+    if (uri.includes("/jobs?")) {
+      assert.ok(uri.includes("filter=all"), "all attempts must be read");
+      return Response.json({ jobs: JOBS, total_count: JOBS.length });
+    }
     if (uri.endsWith("/rerun-failed-jobs")) {
       assert.equal(opts.method, "POST");
       reruns++;
@@ -165,6 +205,57 @@ test("scheduled reconciliation handles resolved threads without a GitHub review 
       GITHUB_EVENT_NAME: "schedule", GITHUB_EVENT_PATH: path,
       GITHUB_TOKEN: "mock-test-token" });
     assert.equal(reruns, 1);
+  } finally {
+    globalThis.fetch = original;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("paginates all attempts before rerunning a review-only failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rp-review-multi-attempt-"));
+  const path = join(root, "event.json");
+  writeFileSync(path, JSON.stringify({ action: "edited",
+    issue: { number: 415, pull_request: {} },
+    comment: { user: { login: "chatgpt-codex-connector[bot]" }, body: RECEIPT },
+  }));
+  const first = JOBS.map((job, i) => ({ ...snapshot(job), id: 100 + i, run_attempt: 1 }));
+  for (let i = first.length; i < 100; i++) {
+    first.push({ id: 1000 + i, run_attempt: 1, name: "Dummy passed job " + i,
+      conclusion: "success" });
+  }
+  const latestReviewFailure = {
+    ...snapshot(JOBS.at(-1)), id: 202, run_attempt: 2,
+  };
+  const original = globalThis.fetch;
+  const pages = [];
+  let retries = 0;
+  globalThis.fetch = async (url, options) => {
+    const uri = String(url);
+    if (uri.endsWith("/graphql"))
+      return Response.json({ data: { repository: { pullRequest: PR } } });
+    if (uri.includes("/actions/workflows/release-readiness.yml/runs?"))
+      return Response.json({ workflow_runs: [RUN] });
+    if (uri.includes("/jobs?filter=all&per_page=100&page=1")) {
+      pages.push(1);
+      return Response.json({ jobs: first, total_count: 101 });
+    }
+    if (uri.includes("/jobs?filter=all&per_page=100&page=2")) {
+      pages.push(2);
+      return Response.json({ jobs: [latestReviewFailure], total_count: 101 });
+    }
+    if (uri.endsWith("/rerun-failed-jobs")) {
+      assert.equal(options.method, "POST");
+      retries++;
+      return new Response(null, { status: 201 });
+    }
+    throw Error("Unexpected GitHub URL " + uri);
+  };
+  try {
+    await main({ GITHUB_REPOSITORY: "re-invertion/resourcePortal",
+      GITHUB_EVENT_NAME: "issue_comment", GITHUB_EVENT_PATH: path,
+      GITHUB_TOKEN: "mock-test-token" });
+    assert.deepEqual(pages, [1, 2]);
+    assert.equal(retries, 1);
   } finally {
     globalThis.fetch = original;
     rmSync(root, { recursive: true, force: true });

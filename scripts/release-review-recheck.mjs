@@ -39,6 +39,26 @@ export function isEligibleFailedRun(run, headSha, number, jobs) {
   return prerequisites?.conclusion === "success" && review?.conclusion === "failure";
 }
 
+// The GitHub REST filter=latest returns ONLY jobs started in the last
+// workflow attempt. On rerun-failed-jobs, a candidate that previously passed
+// is not started again. Preserve its evidence from earlier attempts, while
+// using only the newest outcome for each logical named job. This prevents a
+// stale, earlier "success" from hiding a later failure.
+export function latestJobResultsAcrossAttempts(jobs) {
+  const byName = new Map();
+  for (const job of jobs ?? []) {
+    if (typeof job?.name !== "string" || !job.name) continue;
+    const previous = byName.get(job.name);
+    const attempt = Number.isInteger(job.run_attempt) ? job.run_attempt : 0;
+    const priorAttempt = Number.isInteger(previous?.run_attempt) ? previous.run_attempt : 0;
+    if (!previous || attempt > priorAttempt ||
+        (attempt === priorAttempt && (job.id ?? 0) >= (previous.id ?? 0))) {
+      byName.set(job.name, job);
+    }
+  }
+  return [...byName.values()];
+}
+
 export function shouldRerunReview(pr, sha) {
   return assessReview(pr, sha).state === "ready";
 }
@@ -78,6 +98,31 @@ async function openPrsWithFailedReviewRuns(token, repo) {
   return [...found].slice(0, 100);
 }
 
+async function allAttemptJobs(token, repo, runId) {
+  const jobs = [];
+  for (let page = 1; page <= 10; page++) {
+    const result = await githubApi(token, repo,
+      "/actions/runs/" + runId + "/jobs?filter=all&per_page=100&page=" + page);
+    if (!Array.isArray(result?.jobs)) {
+      throw Error("Missing GitHub workflow jobs; cannot certify earlier attempts");
+    }
+    jobs.push(...result.jobs);
+    const total = Number.isSafeInteger(result.total_count) && result.total_count >= 0
+      ? result.total_count : null;
+    if (total !== null) {
+      if (jobs.length >= total) return latestJobResultsAcrossAttempts(jobs);
+      if (result.jobs.length === 0) {
+        throw Error("Incomplete GitHub workflow jobs pagination");
+      }
+    } else if (result.jobs.length < 100) {
+      return latestJobResultsAcrossAttempts(jobs);
+    }
+  }
+  // Truncation must fail closed instead of accidentally ignoring a newer
+  // failed security/installer gate on a later GitHub workflow attempt.
+  throw Error("GitHub workflow job history exceeds safe pagination limit");
+}
+
 async function checkAndRerun(owner, name, token, number) {
   const repo = owner + "/" + name;
   const pr = await loadReviewPr(owner, name, number, token);
@@ -94,9 +139,8 @@ async function checkAndRerun(owner, name, token, number) {
   if (!latest || latest.status !== "completed" || latest.conclusion !== "failure") {
     return "no-failed-required-run";
   }
-  const jobResult = await githubApi(token, repo,
-    "/actions/runs/" + latest.id + "/jobs?filter=latest&per_page=100");
-  if (!isEligibleFailedRun(latest, sha, number, jobResult?.jobs)) {
+  const jobs = await allAttemptJobs(token, repo, latest.id);
+  if (!isEligibleFailedRun(latest, sha, number, jobs)) {
     return "no-isolated-review-failure";
   }
   // Reject a concurrent code change or freshly opened thread before dispatch.
