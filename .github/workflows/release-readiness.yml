@@ -317,10 +317,6 @@ jobs:
     if: always()
     needs: [candidate, swarm, capacity-docker29, federation, installer, tenant-oidc]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: Fail closed unless all applicable pre-merge checks succeeded
         env:
           CANDIDATE: ${{ needs.candidate.result }}
@@ -373,6 +369,11 @@ jobs:
           else
             verify_gate installer "$INSTALLER" false
           fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       # Required branch ruleset pins THIS job, not a separately optional
       # review workflow. Codex starts asynchronously on Ready-for-review;
