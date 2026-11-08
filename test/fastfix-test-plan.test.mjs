@@ -39,6 +39,7 @@ test("ZITADEL Actions V2 signing key enrollment and stack opt-in require release
     "test/installer/test-app-consumer-actions.sh",
     "scripts/installer/app-consumer-actions.sh",
     "test/installer/test-app-consumer-auto-lifecycle.sh",
+    "test/installer/test-app-consumer-real-signer.sh",
     "test/installer/test-app-consumer-upgrade-lifecycle.sh",
   ];
   for (const path of paths) {
@@ -930,4 +931,13 @@ test("OIDC client/action refresh proof requires identity and security certificat
     "packages/resourceportal-api/scripts/tenant-oidc-actions-v2-proof.spec.ts",
   ];
   assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
+});
+
+test("Codex review recheck dispatcher cannot skip identity, security or release tests", () => {
+  for (const path of ["scripts/release-review-recheck.mjs", "test/test-release-review-recheck.test.mjs"]) {
+    const selected = selectProfiles([path]);
+    for (const name of ["identity","security","platform-release","workflow"]) {
+      assert.ok(selected.profiles.includes(name), name + " missing for " + path);
+    }
+  }
 });

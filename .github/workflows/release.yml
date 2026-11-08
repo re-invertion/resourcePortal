@@ -145,10 +145,13 @@ jobs:
           # Upgrade compatibility alone is NOT rollback certification: each
           # source must pass the real restore smoke and retain exact-SHA proof.
           mkdir -p "$RUNNER_TEMP/rollback-source-evidence"
-          source_versions=("${PREVIOUS_TAG#v}" "0.2.96" "0.2.93" "0.2.92")
+          # Last known-safe pre-#407 production version. A user on 0.2.146
+          # must never have to install the defective 0.2.147 as an intermediate.
+          # Independently run its FULL source RP+ZITADEL DB restoration proof.
+          source_versions=("${PREVIOUS_TAG#v}" "0.2.146" "0.2.96" "0.2.93" "0.2.92")
           certified=()
           for source_version in "${source_versions[@]}"; do
-            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.96" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
+            [[ "$source_version" == "${PREVIOUS_TAG#v}" || "$source_version" == "0.2.146" || "$source_version" == "0.2.96" || "$source_version" == "0.2.93" || "$source_version" == "0.2.92" ]] || exit 1
             # A source not earlier than the target release cannot be certified.
             [[ "$(printf '%s\n%s\n' "$source_version" "$VERSION" | sort -V | head -n 1)" == "$source_version" ]] || continue
             if [[ " ${certified[*]} " == *" $source_version "* ]]; then continue; fi
@@ -204,6 +207,26 @@ jobs:
           jq -e --arg source "0.2.92" '
             any(.[]; .sourceVersion == $source)
           ' "$RUNNER_TEMP/rp-rollback-certifications.json"
+          # Never publish an otherwise green post-incident release if it
+          # cannot be installed DIRECTLY from the last known-safe v0.2.146.
+          # No static tag whitelist is accepted as rollback proof: source and
+          # target, BOTH DB restores, old runtime and injected failure must
+          # match the exact publishing run. The smoke above does the work.
+          if [[ "$VERSION" != "0.2.146" &&
+                "$(printf '%s\n%s\n' "0.2.146" "$VERSION" | sort -V | head -n 1)" == "0.2.146" ]]; then
+            jq -e --arg source "0.2.146" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID" '
+              any(.[]; .sourceVersion == $source and .targetCommit == $commit and
+                .workflowRunId == $run and .kind == "real-upgrade-and-restore" and
+                .actualDatabaseMigration == true and
+                .previousImagesRestored == true and .injectedHealthFailure == true and
+                .databaseSnapshotVerified == true and .databaseSnapshotRestored == true and
+                .restoredSourceSchema == true and .previousApiReadWriteAfterRollback == true and
+                .previousApiRuntimeReadyAfterRollback == true and
+                .zitadelDatabaseRestored == true and .zitadelSourceRuntimeReadyAfterRollback == true and
+                .zitadelSourceEventstoreVerified == true and
+                .candidateZitadelRuntimeReadyBeforeRollback == true)
+            ' "$RUNNER_TEMP/rp-rollback-certifications.json"
+          fi
 
       - name: Require verified automatic rollback before publishing
         env:

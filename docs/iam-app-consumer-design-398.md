@@ -182,28 +182,30 @@ additional configuration, UI enable/disable switch or ZITADEL setup step.
 The installer owns the internal key, target and execution lifecycle.
 
 For a signed release manifest declaring
-\`apiCapabilities.appConsumerActionsV2Callback=true\`, the installer:
-1. Verifies there is no foreign/ambiguous global \`preaccesstoken\` execution.
+`apiCapabilities.appConsumerActionsV2Callback=true`, the installer:
+1. Verifies there is no foreign/ambiguous global `preaccesstoken` execution.
    An existing RP-owned execution must match the signed callback, key and
    immutable Swarm secret exactly; it is reused unchanged on later updates.
-2. Creates a signed JSON \`restWebhook\` target with
-   \`interruptOnError=true\` and stores the HMAC key in a versioned Swarm
+2. Creates a signed JSON `restWebhook` target with
+   `interruptOnError=true` and stores the HMAC key in a versioned Swarm
    secret. It does **not** yet attach the global token execution.
 3. Deploys the migrated RP API with the signing key mounted only into that
-   API. Once RP and tenant OIDC health checks pass, it probes a validly
+   API. Once RP HTTPS health passes, it probes a validly
    signed request for an invalid subject through the real public HTTPS
    callback and requires an explicit **403**. A 401, 503, 200 or TLS failure
    blocks activation.
-4. Attaches only the exact RP target to the global execution; validates
-   live management readback before completing the update and storing the
-   local target ID and immutable secret reference.
+4. Attaches only the exact RP target to the global execution and validates
+   the binding **before** waiting for tenant OIDC reconciliation. Some
+   active tenants require this very binding to complete reconciliation, so
+   waiting for readiness first would create a dependency cycle. Stores the
+   local target ID and immutable secret reference on successful update.
 5. If upgrade fails, it restores the source ZITADEL and RP database
    snapshots, then checks/removes the newly introduced execution before
    attempting to start the previous API image. If DB restore itself
    already removed the target, the absence of a global execution is the
    verified safe state. A foreign or ambiguous execution is never rewritten.
 
-The internal \`RP_CFG_APP_CONSUMER_ACTIONS_V2_*\` values are *not* new UI
+The internal `RP_CFG_APP_CONSUMER_ACTIONS_V2_*` values are *not* new UI
 settings. Their consistency is checked before all future updates; an
 unexpected modification fails closed. The older manual verifier helper is
 retained for diagnostics, not as a required update step.
@@ -262,3 +264,22 @@ HTTPS run 42387470721 also completed successfully with the actual target
 readback and a two-user/two-client-per-tenant/two-tenant signed authorization
 matrix. These are **source- and run-specific** certifications, not proof of
 every supported older source release or of production readiness.
+
+
+### Review findings and PR merge safety (P1)
+
+The global token callback preserves existing **platform OAuth applications**
+(`OAuthApplication.tenantId=null`) for ordinary RP users; only tenant-owned
+OAuth clients use exact tenant entitlements. App Consumers retain their
+no-RP-login and no-unassigned-client boundaries.
+
+The host installer does not require Node.js. The signed negative callback
+probe uses the digest-pinned API image's Node runtime inside a read-only,
+network-disabled, no-capabilities ephemeral Docker container. The key stays
+in a protected bind-mounted temp directory and is never an argument.
+
+Before protected merge, `Required release readiness` must independently
+verify that the PR is not Draft, that Codex has completed a code review for
+the exact current PR head SHA without outstanding findings, and that every
+GitHub review thread is resolved. The same check runs on `pull_request`
+and `merge_group`; pending review blocks the merge-group required check.

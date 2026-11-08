@@ -147,9 +147,15 @@ export class AppConsumersService {
         !/^\d{1,64}$/.test(externalSubject)) return false;
     const managed = await this.prisma.oAuthApplication.findUnique({
       where: { clientId },
-      select: { id: true },
+      select: { id: true, tenantId: true },
     });
-    if (managed) return this.mayIssueClientToken(issuer, externalSubject, clientId);
+    // Platform applications have tenantId=null and are authorized by
+    // ZITADEL upstream for ordinary identities. Only tenant-managed apps
+    // require exact RP tenant/project/entitlement checks.
+    if (managed?.tenantId) {
+      return this.mayIssueClientToken(issuer, externalSubject, clientId);
+    }
+    // Never bypass the App Consumer boundary for platform/legacy clients.
     return this.mayIssueNativeRpToken(issuer, externalSubject);
   }
 

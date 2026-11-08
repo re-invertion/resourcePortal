@@ -105,26 +105,37 @@ rp_app_action_prepare() {
   fi
   rm -rf -- "$tmp"
 }
-rp_app_action_probe() {
-  local id="$1" ref="$2" tmp code
-  command -v node >/dev/null || return 1
-  tmp="$(umask 077; mktemp -d)" || return 1
-  rp_app_action_read_key "$id" "$tmp/key" "$ref" || { rm -rf -- "$tmp"; return 1; }
-  printf '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
-  if ! node - "$tmp/key" "$tmp/body" "$tmp/conf" <<'NODE'
-const { readFileSync, writeFileSync } = require("node:fs");
+# The host installer deliberately does NOT install Node.js. Sign the
+# negative HTTPS probe with the already pulled, digest-pinned RP API image,
+# in an isolated, read-only and network-less ephemeral container. The signing
+# secret remains in the protected root-only directory; no key reaches argv.
+rp_app_action_sign_probe() {
+  local tmp="$1" image="${RP_CFG_API_IMAGE:-}"
+  [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
+  docker run --rm --interactive --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user 0:0 \
+    --mount "type=bind,src=$tmp,dst=/rp-action-probe,readonly" \
+    --entrypoint node "$image" - /rp-action-probe/key /rp-action-probe/body >"$tmp/conf" <<'NODE'
+const { readFileSync } = require("node:fs");
 const { createHmac } = require("node:crypto");
-const [keyPath, bodyPath, configPath] = process.argv.slice(2);
+const [keyPath, bodyPath] = process.argv.slice(2);
 const key = readFileSync(keyPath);
 const body = readFileSync(bodyPath);
 const timestamp = String(Math.floor(Date.now() / 1000));
 const signature = createHmac("sha256", key)
   .update(timestamp + ".").update(body).digest("hex");
-writeFileSync(configPath,
-  'header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n',
-  { mode: 0o600 });
+process.stdout.write('header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n');
 NODE
-  then rm -rf -- "$tmp"; return 1; fi
+}
+rp_app_action_probe() {
+  local id="$1" ref="$2" tmp code
+  tmp="$(umask 077; mktemp -d)" || return 1
+  rp_app_action_read_key "$id" "$tmp/key" "$ref" || { rm -rf -- "$tmp"; return 1; }
+  printf '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
+  if ! rp_app_action_sign_probe "$tmp"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
   chmod 0600 "$tmp/conf"
   code="$(curl --silent --show-error --no-location --proto '=https' --max-time 15 \
     --config "$tmp/conf" --header 'Content-Type: application/json' \

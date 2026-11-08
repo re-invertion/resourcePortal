@@ -160,6 +160,7 @@ const commands = {
     ["bash", "test/installer/test-zitadel-management.sh"],
     ["bash", "test/installer/test-app-consumer-actions.sh"],
     ["bash", "test/installer/test-app-consumer-auto-lifecycle.sh"],
+    ["bash", "test/installer/test-app-consumer-real-signer.sh"],
     ["bash", "test/installer/test-app-consumer-upgrade-lifecycle.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
@@ -178,7 +179,7 @@ const commands = {
   ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
-    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
+    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs", "test/test-release-review-recheck.test.mjs"],
     ["node", "scripts/test-catalog.mjs"],
     ["bash", "-n", "scripts/run-device-vpn-dataplane-smoke.sh"],
   ],
@@ -290,12 +291,17 @@ const classifiers = [
   // are identity- and release-critical, including dedicated installer tests.
   [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
   [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-real-signer\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   // Global issuer pre-token callback and two-database rollback safety:
   // upgrade.sh affects tenant authentication, not only installer plumbing.
   // Source-stack consistency must be covered by upgrade failure recovery,
   // identity, security and the real published-image rollback gate.
+  [/^scripts\/release-review-gate\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^scripts\/release-review-recheck\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-recheck\.test\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-gate\.test\.mjs$/, ["identity", "security", "platform-release"]],
   [/^scripts\/installer\/upgrade\.sh$/, ["identity", "installer", "platform-release", "security", "upgrade-recovery"]],
   [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
   [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],
