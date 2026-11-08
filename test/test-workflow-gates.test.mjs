@@ -95,7 +95,11 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.match(prepublishSmoke.run,/rp-rollback-evidence\.json/);
   assert.match(prepublishSmoke.run,/0\.2\.92/);
   assert.match(prepublishSmoke.run,/0\.2\.96/);
-  assert.match(prepublishSmoke.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.96" "0\.2\.93" "0\.2\.92"\)/);
+  assert.match(prepublishSmoke.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.146" "0\.2\.96" "0\.2\.93" "0\.2\.92"\)/);
+  // Last known-safe pre-incident source must pass a separate live two-DB
+  // restore in the exact publishing run; v0.2.147 is not a safe intermediate.
+  assert.match(prepublishSmoke.run,/--arg source "0\.2\.146" --arg commit "\$GITHUB_SHA" --argjson run "\$GITHUB_RUN_ID"/);
+  assert.match(prepublishSmoke.run,/\.zitadelDatabaseRestored == true/);
   assert.match(prepublishSmoke.run,/--previous-tag "v\$source_version"/);
   assert.match(prepublishSmoke.run,/--verified-evidence-file "\$source_file"/);
   assert.match(prepublishSmoke.run,/--require-automatic/);

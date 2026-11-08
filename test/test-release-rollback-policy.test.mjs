@@ -330,6 +330,32 @@ test("published upgrade sources include only exact-commit real rollback certific
     certifiedSupportedUpgradeSources(candidates, proofs, hash, "0.2.146", runId),
     ["0.2.92", "0.2.96", "0.2.146"],
   );
+  // Incident recovery: a future v0.2.148+ may have v0.2.147 as immediate
+  // source, but v0.2.146 remains the last safe upgrade source. These are
+  // TWO independent exact-SHA/Actions-run certifications, not an alias.
+  const afterBadRelease = ["0.2.146", "0.2.147"];
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(afterBadRelease, [
+      certified("0.2.146"), certified("0.2.147"),
+    ], hash, "0.2.147", runId),
+    ["0.2.146", "0.2.147"],
+  );
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(afterBadRelease, [
+      certified("0.2.147"),
+    ], hash, "0.2.147", runId),
+    ["0.2.147"],
+    "v0.2.146 must not be advertised from a v0.2.147-only certificate",
+  );
+  for (const badSource146 of [
+    { targetCommit: "b".repeat(40) },
+    { databaseSnapshotRestored: false },
+    { zitadelSourceRuntimeReadyAfterRollback: false },
+  ]) {
+    assert.throws(() => certifiedSupportedUpgradeSources(afterBadRelease, [
+      certified("0.2.146", badSource146), certified("0.2.147"),
+    ], hash, "0.2.147", runId), /Release blocked/);
+  }
   // Schema-neutral sources still require independently tested real rollback.
   assert.deepEqual(
     certifiedSupportedUpgradeSources(candidates, [

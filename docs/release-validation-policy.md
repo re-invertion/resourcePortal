@@ -136,3 +136,16 @@ it. The scheduled scan considers the latest 300 failed readiness runs, so
 long-outstanding PRs outside that bound still require a new review activity
 to trigger their recovery. The Merge Queue continues to reverify the final
 status at queue-build time.
+
+
+### v0.2.147 incident: certified direct v0.2.146 update
+
+v0.2.147 was accidentally published from PR #407 with known P1 OAuth and
+ZITADEL Actions V2 installer defects. It is NOT a safe mandatory intermediate
+release for a still-installed v0.2.146 deployment. Subsequent fixed releases
+therefore independently execute the full RP+ZITADEL database/runtime rollback
+smoke with v0.2.146 as source (in addition to the immediate published source
+and the older 0.2.92/0.2.93/0.2.96 fleet sources). Before publication,
+v0.2.146 must have an exact-target-SHA, same-workflow-run verified restoration
+certificate. Without that evidence the publisher fails closed; it may never
+advertise a direct v0.2.146 upgrade via static history or manual override.

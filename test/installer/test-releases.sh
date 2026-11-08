@@ -315,6 +315,12 @@ contains "$workflow" 'fetch-depth: 0' 'release workflow fetches tag history for 
 contains "$workflow" 'git tag --merged HEAD' 'release workflow derives compatibility only from ancestor release tags'
 contains "$workflow" 'SUPPORTED_FROM_VERSIONS' 'release workflow derives supported source versions dynamically'
 contains "$workflow" 'supportedFromVersions:$supported_from_versions' 'release manifest uses derived supported source versions'
+
+# The last known-safe v0.2.146 must be directly certified for post-incident
+# releases; the bugged v0.2.147 cannot be a mandatory intermediate.
+contains "$workflow" 'source_versions=("${PREVIOUS_TAG#v}" "0.2.146" "0.2.96" "0.2.93" "0.2.92")' 'release independently restores last known-safe 0.2.146'
+contains "$workflow" '--arg source "0.2.146" --arg commit "$GITHUB_SHA" --argjson run "$GITHUB_RUN_ID"' 'release blocks if direct 0.2.146 exact-run DB restore missing'
+
 contains "$workflow" 'apiCapabilities:{appConsumerActionsV2Callback:true}' 'signed release manifest advertises exact App Consumer callback availability'
 contains "$workflow" 'MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"' 'v0.2 release workflow keeps v0.1.8+ as supported upgrade sources'
 not_contains "$workflow" 'release_series=' 'release workflow does not incorrectly restrict compatibility to the target minor series'
