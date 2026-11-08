@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Recovery must be self-contained even when invoked by an older installer
+# or a direct upgrade/rollback command that only sources this module.
+source "$(dirname "${BASH_SOURCE[0]}")/app-consumer-actions.sh"
+
 rp_upgrade_rollback_allowed() {
   local manifest="$1" policy
   rp_validate_release_manifest "$manifest" || return 1
@@ -736,6 +740,12 @@ rp_upgrade_reconcile_failed_rollback() {
   esac
 
   printf 'Verifying recovery of the previously failed ResourcePortal rollback...\n' >&2
+  # An aborted initial cutover must not strand old RP images behind
+  # an issuer-global callback. Source DB restore was already verified above.
+  if ! rp_app_action_checkpoint_detach "$dir"; then
+    printf 'Recovery blocked: RP-owned ZITADEL Action not safely detached.\n' >&2
+    return 1
+  fi
   rp_swarm_stack_deploy_retry "$dir/previous-stack.yml" "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   # Older signed Compose snapshots may omit privileged agent capabilities;
   # restore only the known RP system-agent requirements before readiness.
@@ -903,6 +913,14 @@ rp_upgrade_restore_after_failure() {
     printf 'Automatic rollback cannot restore the source databases; leave services quiesced for recovery.\n' >&2
     return 1
   fi
+  # Restore source databases BEFORE detaching the new global execution:
+  # App Consumers' newly issued upstream grants cannot remain unguarded.
+  if [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]] &&
+     ! rp_app_action_checkpoint_detach "$RP_UPGRADE_ACTIVE_CHECKPOINT"; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+    printf 'Rollback blocked: issuer global Action not safely detached.\n' >&2
+    return 1
+  fi
   local rollback_stack="$previous_stack"
   if [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]]; then
     rp_upgrade_checkpoint_verify || {
@@ -972,6 +990,14 @@ rp_upgrade_apply() {
   rp_upgrade_prepare_zitadel_for_mcp_oauth "$source_version" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "ZITADEL preparation"; return 1; }
   rp_upgrade_checkpoint_stage mcp-oauth-reconciliation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint mcp-oauth-reconciliation"; return 1; }
   rp_run_zitadel_mcp_oauth_reconcile || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "MCP OAuth reconciliation"; return 1; }
+  # Target and immutable Docker signing key are automatic. Do not attach
+  # the interrupting execution before the migrated API is live.
+  if jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null 2>&1; then
+    if ! rp_app_action_prepare || ! rp_app_action_checkpoint_record; then
+      rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "App Consumer target provisioning"
+      return 1
+    fi
+  fi
   if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
     declare -F rp_prepare_oidc_staging_ca >/dev/null || return 1
     rp_prepare_oidc_staging_ca "${RP_CFG_ZITADEL_DOMAIN:?RP_CFG_ZITADEL_DOMAIN is required}" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "OIDC staging CA"; return 1; }
@@ -984,6 +1010,13 @@ rp_upgrade_apply() {
   rp_upgrade_checkpoint_stage tenant-oidc-activation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint tenant-oidc-activation"; return 1; }
   if ! rp_upgrade_wait_for_tenant_oidc_ready "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
+    return 1
+  fi
+  # Prove signed HTTPS callback handles a denied unknown subject before
+  # ZITADEL is allowed to invoke it for real application tokens.
+  if jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null 2>&1 &&
+     ! rp_app_action_activate; then
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "App Consumer issuer activation"
     return 1
   fi
   rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }

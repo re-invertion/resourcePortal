@@ -159,6 +159,8 @@ const commands = {
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
     ["bash", "test/installer/test-app-consumer-actions.sh"],
+    ["bash", "test/installer/test-app-consumer-auto-lifecycle.sh"],
+    ["bash", "test/installer/test-app-consumer-upgrade-lifecycle.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
@@ -287,6 +289,9 @@ const classifiers = [
   // Global ZITADEL pre-token enrollment and signing-secret Swarm manifests
   // are identity- and release-critical, including dedicated installer tests.
   [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
+  [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   // Global issuer pre-token callback and two-database rollback safety:
   // upgrade.sh affects tenant authentication, not only installer plumbing.
   // Source-stack consistency must be covered by upgrade failure recovery,

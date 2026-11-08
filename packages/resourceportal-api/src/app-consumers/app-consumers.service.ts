@@ -130,6 +130,30 @@ export class AppConsumersService {
   }
 
   /**
+   * Issuer-global pre-token Actions V2 also runs for pre-existing OAuth and
+   * dynamically registered MCP clients not managed by RP. Do not change their
+   * ZITADEL authorization model: non-App-Consumers remain eligible for those
+   * upstream-managed clients. App Consumers never get that legacy path.
+   *
+   * Registered tenant OAuthApplication clients always use their exact tenant
+   * grants, so this path cannot bypass App Consumer client entitlements.
+   */
+  async mayIssueLegacyClientToken(
+    issuer: string,
+    externalSubject: string,
+    clientId: string,
+  ): Promise<boolean> {
+    if (!clientId || !issuer.startsWith("https://") ||
+        !/^\d{1,64}$/.test(externalSubject)) return false;
+    const managed = await this.prisma.oAuthApplication.findUnique({
+      where: { clientId },
+      select: { id: true },
+    });
+    if (managed) return this.mayIssueClientToken(issuer, externalSubject, clientId);
+    return this.mayIssueNativeRpToken(issuer, externalSubject);
+  }
+
+  /**
    * Only call with issuer, subject and client ID obtained from an authenticated
    * ZITADEL Actions V2 webhook. Unknown identities, projects, apps or grants
    * deny by default. This service does not itself expose a public webhook.
@@ -176,14 +200,13 @@ export class AppConsumersService {
     });
     if (!membership || membership.status !== MembershipStatus.Active) return false;
 
-    // Owner and Admin of RP retain explicit managed tenant access. Other
-    // regular RP roles do NOT implicitly grant all newly registered clients.
+    // Existing role-bearing RP members historically used project-scoped
+    // ZITADEL roles for these OAuth applications. Preserve that behavior
+    // during the issuer-global cutover. The App Consumer category below
+    // remains per-client and has no fallback.
     if (!membership.appConsumer) {
-      const roleIds = [
-        ...membership.roles.map((r) => r.roleId),
-        ...membership.groupMemberships.flatMap((row) => row.group.roles.map((r) => r.roleId)),
-      ];
-      return roleIds.includes("tenant-owner") || roleIds.includes("tenant-admin");
+      return membership.roles.length > 0 ||
+        membership.groupMemberships.some((row) => row.group.roles.length > 0);
     }
     // A consumer with any RP role (direct/inherited) is an invalid state:
     // do not let a malformed consumer also inherit portal permissions.

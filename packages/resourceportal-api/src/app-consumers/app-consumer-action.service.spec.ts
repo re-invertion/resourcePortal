@@ -22,10 +22,10 @@ function fixture(overrides: Record<string, string> = {}) {
     ...overrides,
   };
   const config = { get: vi.fn((key: string) => env[key]) } as unknown as ConfigService;
-  const mayIssueClientToken = vi.fn().mockResolvedValue(false);
+  const mayIssueLegacyClientToken = vi.fn().mockResolvedValue(false);
   const mayIssueNativeRpToken = vi.fn().mockResolvedValue(true);
-  const svc = new AppConsumerActionService(config, { mayIssueClientToken, mayIssueNativeRpToken } as never);
-  return { svc, mayIssueClientToken, mayIssueNativeRpToken };
+  const svc = new AppConsumerActionService(config, { mayIssueLegacyClientToken, mayIssueNativeRpToken } as never);
+  return { svc, mayIssueLegacyClientToken, mayIssueNativeRpToken };
 }
 const client = { function: "function/preaccesstoken", user: { id: "12131" }, application: { client_id: "home-assistant" } };
 
@@ -44,7 +44,7 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
       .rejects.toBeInstanceOf(UnauthorizedException);
     expect(verifyActionSignature(payload.raw, payload.header, secret)).toBe(true);
     expect(verifyActionSignature(payload.raw, payload.header, secret, Date.now() + 3600_000)).toBe(false);
-    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+    expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
   it("denies missing subject, client ID, or unsupported function", async () => {
     for (const value of [
@@ -61,18 +61,28 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
   it("allows only exact verified issuer/subject/client grant and not unrelated clients", async () => {
     const f = fixture(); const payload = signed(client);
     await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(f.mayIssueClientToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "home-assistant");
-    f.mayIssueClientToken.mockResolvedValueOnce(true);
+    expect(f.mayIssueLegacyClientToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "home-assistant");
+    f.mayIssueLegacyClientToken.mockResolvedValueOnce(true);
     expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
     await expect(f.svc.authorize(signed({ ...client, application: { client_id: "mypa" } }).raw,
       signed({ ...client, application: { client_id: "mypa" } }).header)).rejects.toBeInstanceOf(ForbiddenException);
   });
+  it("retains existing OAuth and MCP DCR clients for non-consumers only", async () => {
+    const f = fixture();
+    const legacy = signed({ ...client, application: { client_id: "preexisting-mcp-dcr" } });
+    f.mayIssueLegacyClientToken.mockResolvedValueOnce(true);
+    expect(await f.svc.authorize(legacy.raw, legacy.header)).toEqual({});
+    f.mayIssueLegacyClientToken.mockResolvedValueOnce(false);
+    await expect(f.svc.authorize(legacy.raw, legacy.header)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(f.mayIssueLegacyClientToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "preexisting-mcp-dcr");
+  });
+
   it("preserves explicitly identified RP-native login client without granting any tenant OAuth client", async () => {
     const f = fixture();
     const payload = signed({ ...client, application: { client_id: "rp-native-client-id" } });
     expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
     expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
-    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+    expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 
   it("allows only the exact registered native RP CLI client for non-consumers", async () => {
@@ -80,7 +90,7 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     const cli = signed({ ...client, application: { client_id: "rp-cli-client-id" } });
     expect(await f.svc.authorize(cli.raw, cli.header)).toEqual({});
     expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
-    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+    expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 
   it("denies App Consumers on CLI and denies CLI on native identity lookup failure", async () => {
@@ -90,7 +100,7 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     await expect(f.svc.authorize(cli.raw, cli.header)).rejects.toBeInstanceOf(ForbiddenException);
     f.mayIssueNativeRpToken.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(f.svc.authorize(cli.raw, cli.header)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+    expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 
   it("never recognizes empty, pending or unrelated OAuth client as native CLI", async () => {
@@ -113,6 +123,6 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
     f.mayIssueNativeRpToken.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
-    expect(f.mayIssueClientToken).not.toHaveBeenCalled();
+    expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 });

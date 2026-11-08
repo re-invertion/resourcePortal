@@ -86,7 +86,10 @@ export class AppConsumerActionService {
     }
 
     try {
-      if (await this.consumers.mayIssueClientToken(issuer, subject, clientId)) return {};
+      // Registered RP tenant applications are checked per-client. Unknown
+      // upstream OAuth/MCP DCR clients retain ZITADEL's existing policy for
+      // regular identities, but are never a fallback for App Consumers.
+      if (await this.consumers.mayIssueLegacyClientToken(issuer, subject, clientId)) return {};
     } catch {
       // No user, grant or secret details in the denied response or HTTP logs.
       throw new ForbiddenException("OIDC client access denied");

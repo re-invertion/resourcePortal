@@ -614,3 +614,6 @@ rp_stage_app_consumer_actions_v2_binding() {
   # No config write or stack deploy here; an operator-controlled cutover with
   # rollback preparation is mandatory for an issuer-wide pre-token hook.
 }
+
+# Secure automatic App Consumer Actions V2 lifecycle.
+source "$(dirname "${BASH_SOURCE[0]}")/app-consumer-actions.sh"

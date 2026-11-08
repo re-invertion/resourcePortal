@@ -12,7 +12,7 @@ The ZITADEL tenant project currently grants rp.tenant.member at **project** leve
 - TenantAppClientGrant links consumer membership to the exact OAuthApplication id. The application's globally unique clientId and tenant/projectId are checked on each request. Unknown clients default deny. Use enabled/revoked timestamps rather than deleting grants on revoke; audit every transition.
 - A TenantAppInvitationGrant links a pending, hashed-token TenantInvitation to eligible OAuthApplication IDs. Invitation roles remain [] and acceptance creates a role-free membership plus consumer/grants atomically. No role is silently assigned.
 - An OIDC callback derives identity exclusively from a verified ZITADEL signature and immutable user.id, resolves a single matching UserIdentity issuer+subject and tenant project+OAuthApplication clientId, validates active User and membership, and checks enabled grants. Never accept email, clientId or tenant from unsignatured user fields as authorization.
-- Existing RP operators must not experience silent lockout. Before enforcing this gate for a tenant, migrate existing explicit client entitlements or use a documented limited legacy mode. Newly enrolled App Consumers must always default deny until granted. Only owner/admin bypasses should be explicit and audited.
+- Existing RP operators must not experience silent lockout. During global issuer activation, role-bearing regular RP members retain their historical ZITADEL tenant project permissions; registered RP tenant applications still require an active RP membership and a matching tenant/issuer/project. Previously registered external OAuth/MCP Dynamic Client Registration client IDs retain upstream ZITADEL authorization for non-App-Consumer identities. App Consumers always default-deny without a matching explicit client grant; they cannot use the legacy OAuth/MCP fallback.
 - Revoking app grants must prevent new authorization and refresh. An already issued JWT may remain valid to its expiry; the UI must explain that third-party sessions are outside RP's control.
 
 ## Rollout and rollback gate
@@ -95,10 +95,12 @@ Each negative refresh must be observed at the signed target; a generic 4xx
 response is not accepted as proof of authorization enforcement.
 
 The target and credentials live only on the isolated CI host and are detached
-before test cleanup. This test is NOT permission to register the live production
-webhook: production target creation/secret rotation, existing external OAuth
-client migration, and fail-safe activation are independent release blockers
-until explicitly implemented and certified. Review exact CI run results and
+before test cleanup. The separate installer implementation provisions a new
+target and Docker secret automatically, probes the target API through signed
+HTTPS, and activates the execution only after the migrated RP stack is healthy.
+The installer regression tests exercise foreign-binding rejection and
+automatic rollback detachment; real production upgrade/recovery certification
+still requires the release pipeline evidence. Review exact CI run results and
 the approved source-to-target database restore before declaring DoD.
 
 ## Actions V2 payload function compatibility
@@ -154,10 +156,9 @@ reconcile interval (default 60 seconds), even with automatic OIDC rollout
 disabled. It is not an instantaneous guarantee: removing the external
 execution between checks creates a bounded but nonzero detection window; an
 outage of ZITADEL management can delay role revocation. This is a residual
-operational risk and must be disclosed. Live production installer-managed
-target provisioning/rotation, HTTPS callback reachability, and explicit
-source-to-target database restore certification remain separate blockers.
-A green isolated CI probe or setting flags manually is not release DoD.
+operational risk and must be disclosed. Live production cutover/recovery, HTTPS callback reachability in the
+deployment network, and source-to-target database restore certification must
+still pass the real release gate. An isolated CI probe alone is not release DoD.
 
 ## Native ResourcePortal Web and CLI sign-in
 
@@ -166,50 +167,50 @@ first-party RP clients: `OIDC_CLIENT_ID` (Web) and `OIDC_CLI_CLIENT_ID`
 (native CLI). It checks the exact signed ZITADEL subject through the RP
 identity boundary and permits neither client to an App Consumer. A missing,
 pending or unrelated client ID never enters this exemption. The exception
-does not grant new tenant OAuth application access. Separately registered
-MCP Dynamic Client Registration clients are **not** part of this two-ID
-exemption; their production compatibility must be certified before binding
-the global execution. Until then, treat the global cutover as blocked.
+does not grant new tenant OAuth application access. Separately registered MCP Dynamic Client Registration clients are **not**
+part of this two-ID exemption. Instead, the callback distinguishes exact
+RP-managed tenant OAuthApplication client IDs from pre-existing externally
+managed clients: existing non-App-Consumer identities retain the upstream
+ZITADEL authorization model; App Consumers cannot use that fallback. The
+real HTTPS legacy-client and recovery regression remains a release gate.
 
-## Opt-in production installer configuration (draft, not a cutover)
+## Automatic production installer enrollment and controlled rollback
 
-An installer upgrade **does not** create, bind or activate the global ZITADEL
-`preaccesstoken` execution. A normal deployment includes neither an App
-Consumer Actions V2 Docker secret nor an enabled callback. This preserves
-existing RP logins if the feature is not explicitly rolled out.
+**User-facing update contract:** normal installation and a supported one-click
+ResourcePortal update must deliver App Consumer authorization without any
+additional configuration, UI enable/disable switch or ZITADEL setup step.
+The installer owns the internal key, target and execution lifecycle.
 
-An operator can stage a separately deployed target only with the official
-`rp_stage_app_consumer_actions_v2_binding <numeric-target-id> <absolute-key-file>`
-installer helper, after loading the installed configuration and the
-`scripts/installer/identity.sh` and `scripts/installer/secrets.sh` modules.
-The target's secret file and the existing ZITADEL management PAT remain on the
-host and are never written to an installer environment variable or command
-argument. The helper checks a TLS-only management endpoint, the exact
-`https://<RP-domain>/api/app-consumer-actions/preaccesstoken` callback,
-the signed JSON REST webhook with `interruptOnError=true`, the matching HMAC
-key and the *complete, unique* `preaccesstoken` execution before creating an
-immutable, versioned Docker secret. On failure it creates no secret or
-certified local setting. On success only the target ID, Swarm secret reference
-and explicit certification state are staged in shell variables; **it does not
-persist configuration or deploy/restart RP**.
+For a signed release manifest declaring
+\`apiCapabilities.appConsumerActionsV2Callback=true\`, the installer:
+1. Verifies there is no foreign/ambiguous global \`preaccesstoken\` execution.
+   An existing RP-owned execution must match the signed callback, key and
+   immutable Swarm secret exactly; it is reused unchanged on later updates.
+2. Creates a signed JSON \`restWebhook\` target with
+   \`interruptOnError=true\` and stores the HMAC key in a versioned Swarm
+   secret. It does **not** yet attach the global token execution.
+3. Deploys the migrated RP API with the signing key mounted only into that
+   API. Once RP and tenant OIDC health checks pass, it probes a validly
+   signed request for an invalid subject through the real public HTTPS
+   callback and requires an explicit **403**. A 401, 503, 200 or TLS failure
+   blocks activation.
+4. Attaches only the exact RP target to the global execution; validates
+   live management readback before completing the update and storing the
+   local target ID and immutable secret reference.
+5. If upgrade fails, it restores the source ZITADEL and RP database
+   snapshots, then checks/removes the newly introduced execution before
+   attempting to start the previous API image. If DB restore itself
+   already removed the target, the absence of a global execution is the
+   verified safe state. A foreign or ambiguous execution is never rewritten.
 
-The existing `rp_config_write` and `rp_render_stack final` paths can consume
-the staged metadata when an operator performs a separately approved cutover.
-The stack mounts the signing key into **only** the API service, through
-`RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE`, and never embeds it in YAML.
-Malformed or partial certified configuration fails stack rendering. The
-preflight is strictly read-only with respect to ZITADEL: it neither creates
-targets nor silently changes a previously running global execution.
+The internal \`RP_CFG_APP_CONSUMER_ACTIONS_V2_*\` values are *not* new UI
+settings. Their consistency is checked before all future updates; an
+unexpected modification fails closed. The older manual verifier helper is
+retained for diagnostics, not as a required update step.
 
-**Remaining release blockers:** an approved target creation/rotation and
-global execution cutover/rollback procedure must protect existing users while
-the API is unavailable, upgraded or rolled back to a version without this
-callback. An issuer-global interrupting Action is capable of blocking *all*
-sign-ins if its webhook is unhealthy. A successful isolated E2E is not a safe
-production deployment plan; production MFA/account lifecycle, legacy OAuth
-client compatibility, target downtime, and supported multi-version database
-restore certification remain to be completed. Do not set these configuration
-values manually or release this PR merely because CI is green.
+Issuer-global webhook loss can still temporarily interrupt token issuance
+until fail-safe remediation. Production acceptance therefore requires the
+live issuer/OAuth/MCP and two-DB restore checks, not merely green unit tests.
 
 ### Upgrade preflight: preserve source callback before any mutation
 
@@ -232,12 +233,10 @@ blocks the update. If the feature is off and there is no action configuration
 in the source stack, ordinary upgrades need no additional Docker secret.
 
 This protects the source rollback contract and checks the target's signed
-compatibility declaration. It **does not** prove a live global ZITADEL
-execution can be detached and reattached during an emergency rollback, nor
-that a target's callback will always be reachable under service failure.
-A reversible production cutover and live issuer availability/recovery tests
-remain blockers. Never treat the manifest contract alone as completed
-issuer-global lifecycle certification.
+compatibility declaration. The automatic issuer detach is additionally tested
+by dedicated installer regression; the real protected release still must
+verify restore and live issuer availability. Never treat the manifest
+contract alone as completed issuer-global lifecycle certification.
 
 ### Issuer-global target outage and recovery test (draft)
 

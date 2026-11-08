@@ -37,6 +37,9 @@ test("ZITADEL Actions V2 signing key enrollment and stack opt-in require release
     "scripts/installer/control-plane.sh",
     "scripts/installer/swarm.sh",
     "test/installer/test-app-consumer-actions.sh",
+    "scripts/installer/app-consumer-actions.sh",
+    "test/installer/test-app-consumer-auto-lifecycle.sh",
+    "test/installer/test-app-consumer-upgrade-lifecycle.sh",
   ];
   for (const path of paths) {
     const selected = selectProfiles([path]);

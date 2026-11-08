@@ -206,17 +206,32 @@ describe("app consumer client grants default-deny / tenant scoped (#398)", () =>
     expect(f.prisma.userIdentity.findUnique).toHaveBeenCalledTimes(8);
   });
 
-  it("never treats regular Viewer as an implicit OAuth client grant", async () => {
+  it("preserves legacy role-bearing project members, without granting role-free unassigned identities", async () => {
     const f = setup();
     f.prisma.tenantMembership.findUnique.mockResolvedValue({
       ...mockConsumer.membership,
       appConsumer: null, roles: [{ roleId: "tenant-viewer" }], groupMemberships: [],
     });
+    expect(await f.svc.mayIssueClientToken("https://zitadel.test", "123456", "client-1")).toBe(true);
+    f.prisma.tenantMembership.findUnique.mockResolvedValue({
+      ...mockConsumer.membership,
+      appConsumer: null, roles: [], groupMemberships: [],
+    });
     expect(await f.svc.mayIssueClientToken("https://zitadel.test", "123456", "client-1")).toBe(false);
     f.prisma.tenantMembership.findUnique.mockResolvedValue({
       ...mockConsumer.membership,
-      appConsumer: null, roles: [{ roleId: "tenant-owner" }], groupMemberships: [],
+      appConsumer: null, roles: [], groupMemberships: [{ group: { roles: [{ roleId: "tenant-viewer" }] } }],
     });
     expect(await f.svc.mayIssueClientToken("https://zitadel.test", "123456", "client-1")).toBe(true);
+  });
+  it("lets existing OAuth/MCP DCR clients follow upstream policy but never lets App Consumers bypass exact grants", async () => {
+    const f = setup();
+    f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(null);
+    f.prisma.tenantAppConsumer.findFirst.mockResolvedValueOnce(null);
+    expect(await f.svc.mayIssueLegacyClientToken("https://zitadel.test", "123456", "legacy-mcp-client")).toBe(true);
+    f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(null);
+    expect(await f.svc.mayIssueLegacyClientToken("https://zitadel.test", "123456", "legacy-mcp-client")).toBe(false);
+    expect(await f.svc.mayIssueLegacyClientToken("https://zitadel.test", "123456", "client-1")).toBe(true);
+    expect(await f.svc.mayIssueLegacyClientToken("http://zitadel.test", "123456", "legacy")).toBe(false);
   });
 });

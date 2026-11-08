@@ -335,6 +335,17 @@ rp_upgrade_quiesce_database_clients() {
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
+# This real database/SWARM fault-injection test uses disposable source and
+# candidate containers but no externally reachable HTTPS RP or ZITADEL
+# management issuer. Those issuer-global operations are certified by the
+# dedicated live HTTPS ZITADEL E2E and installer lifecycle tests; do not let
+# local test infrastructure mutate any real issuer or replace the verified
+# PostgreSQL restore below.
+rp_app_action_prepare() { RP_APP_ACTION_UPGRADE_NEW=false; return 0; }
+rp_app_action_checkpoint_record() { return 0; }
+rp_app_action_activate() { return 0; }
+rp_app_action_checkpoint_detach() { return 0; }
+
 rp_run_migrations() {
   docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
     resourceportal-api-candidate /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
