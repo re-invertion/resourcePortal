@@ -160,6 +160,7 @@ const commands = {
     ["bash", "test/installer/test-zitadel-management.sh"],
     ["bash", "test/installer/test-app-consumer-actions.sh"],
     ["bash", "test/installer/test-app-consumer-auto-lifecycle.sh"],
+    ["bash", "test/installer/test-app-consumer-real-signer.sh"],
     ["bash", "test/installer/test-app-consumer-upgrade-lifecycle.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
@@ -290,6 +291,7 @@ const classifiers = [
   // are identity- and release-critical, including dedicated installer tests.
   [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
   [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-real-signer\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   // Global issuer pre-token callback and two-database rollback safety:

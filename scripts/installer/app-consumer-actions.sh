@@ -112,7 +112,7 @@ rp_app_action_prepare() {
 rp_app_action_sign_probe() {
   local tmp="$1" image="${RP_CFG_API_IMAGE:-}"
   [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
-  docker run --rm --network none --read-only --cap-drop ALL \
+  docker run --rm --interactive --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user 0:0 \
     --mount "type=bind,src=$tmp,dst=/rp-action-probe,readonly" \
     --entrypoint node "$image" - /rp-action-probe/key /rp-action-probe/body >"$tmp/conf" <<'NODE'
