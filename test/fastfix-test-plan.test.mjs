@@ -16,6 +16,81 @@ test("Web anti-clickjacking server and regression fixture select security header
   );
 });
 
+test("shared creation form draft preservation triggers reactive Web and tenant UI regressions", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/forms.tsx",
+    "packages/resourceportal-web/src/components/forms.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["reactive-web-state", "tenant-ux-patch"]);
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/components/forms-unknown.tsx"]),
+    /unclassified changes/,
+  );
+});
+
+test("ZITADEL Actions V2 signing key enrollment and stack opt-in require release/identity/security installer checks", () => {
+  const paths = [
+    "config/production/stack.yml.tpl",
+    "scripts/installer/identity.sh",
+    "scripts/installer/secrets.sh",
+    "scripts/installer/config.sh",
+    "scripts/installer/control-plane.sh",
+    "scripts/installer/swarm.sh",
+    "test/installer/test-app-consumer-actions.sh",
+    "scripts/installer/app-consumer-actions.sh",
+    "test/installer/test-app-consumer-auto-lifecycle.sh",
+    "test/installer/test-app-consumer-upgrade-lifecycle.sh",
+  ];
+  for (const path of paths) {
+    const selected = selectProfiles([path]);
+    for (const expected of ["identity", "installer", "platform-release", "security"]) {
+      assert.ok(selected.profiles.includes(expected), expected + " missing for " + path);
+    }
+    if (path === "scripts/installer/control-plane.sh" ||
+        path === "config/production/stack.yml.tpl") {
+      assert.ok(selected.profiles.includes("networking"), "Missing Swarm networking gate");
+    }
+  }
+  assert.throws(() => selectProfiles(["test/installer/test-unknown-action-hook.sh"]),
+    /unclassified changes/);
+});
+
+test("issue 398 App Consumer Actions, grant model, and config changes require identity and security regressions", () => {
+  const files = [
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.module.ts",
+    "packages/resourceportal-api/src/config/env.validation.ts",
+    "packages/resourceportal-api/src/config/env.validation.spec.ts",
+  ];
+  const plan = selectProfiles(files);
+  for(const profile of ["identity","security","tenant-access","schema"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/not-certified-client-gate.ts"]),
+    /unclassified changes/,
+  );
+});
+
+test("App Consumer signing-key secret-file loader is security-classified and unknown config files fail closed (#398)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/config/secret-file-loader.ts",
+    "packages/resourceportal-api/src/config/secret-file-loader.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
+  for (const path of paths) {
+    assert.deepEqual(selectProfiles([path]).profiles, ["identity", "security"]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/config/secret-file-loader.other.spec.ts"]),
+    /unclassified changes/,
+  );
+});
+
 test("issue 399 search and deployment history retain classified Fast Fix regression coverage", () => {
   const plan = selectProfiles([
     "packages/resourceportal-web/src/components/shell.test.tsx",
@@ -111,8 +186,18 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
     "packages/resourceportal-web/src/pages/tenant-identity-sso.tsx",
     "packages/resourceportal-web/src/pages/platform-identity-pages.tsx",
   ]);
-  assert.deepEqual(plan.profiles, ["identity"]);
+  assert.deepEqual(plan.profiles, ["identity", "security"]);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC App Consumer safety monitoring requires security coverage even on a standalone change", () => {
+  const files = [
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.spec.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(files).profiles, ["identity", "security"]);
 });
 
 test("real ZITADEL federation browser and projection helpers require identity and security gates", () => {
@@ -287,10 +372,13 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "applications",
     "bug-reports",
     "domains",
+    "identity",
     "installer",
     "networking",
     "platform-admin-ui",
     "platform-release",
+    "security",
+    "upgrade-recovery",
     "volume-safety",
     "web-console",
     "worker",
@@ -360,10 +448,11 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
     "test/installer/test-control-plane.sh",
   ]);
   assert.equal(plan.vpnSmoke, true);
-  assert.deepEqual(plan.profiles, ["installer", "networking", "platform-release"]);
+  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "security", "upgrade-recovery"]);
 });
 test("installer configuration fixes select the core safety suite", () => {
-  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles, ["installer", "platform-release"]);
+  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles,
+    ["identity", "installer", "platform-release", "security"]);
 });
 test("the fastfix runner requires a dependency security audit for all releases", async () => {
   const { readFileSync } = await import("node:fs");

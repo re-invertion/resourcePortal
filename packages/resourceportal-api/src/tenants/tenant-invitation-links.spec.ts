@@ -48,6 +48,7 @@ describe("tenant invitation links", () => {
       where: { tokenHash: hashToken(token) },
       include: {
         tenant: { select: { id: true, name: true, displayName: true } },
+        appInvitationGrants: { include: { application: { select: { id: true, name: true } } } },
       },
     });
     expect(preview).toEqual({
@@ -60,6 +61,8 @@ describe("tenant invitation links", () => {
         { id: "tenant-admin", name: "Tenant admin" },
         { id: "tenant-viewer", name: "Tenant viewer" },
       ],
+      accessType: "ResourcePortal",
+      applications: [],
       expiresAt: preview.expiresAt,
       status: "Pending",
     });

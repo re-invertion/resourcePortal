@@ -120,11 +120,27 @@ export class TenantOidcService {
 
       // The disabled Reconciling marker has already committed above.
         await this.zitadel.readProject(provider.zitadelProjectId);
+        // A tenant project-level role is shared by all of its OAuth clients.
+        // Until the exact-client pre-token gate is explicitly certified and
+        // enabled, assigning rp.tenant.member to an App Consumer would silently
+        // permit every app in that project. Exclude and revoke consumers by
+        // default rather than relying on UI-only allowlisting.
+        const appConsumerGateCertified =
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+        // Flags alone do NOT prove that ZITADEL invokes our webhook. If an
+        // operator forgot to bind the execution, project grants would bypass
+        // the per-client allowlist for every OAuth application in the tenant.
+        // Verify the live target, signing key and exclusive execution first.
+        if (appConsumerGateCertified) {
+          await this.zitadel.verifyAppConsumerActionsV2Gate();
+        }
         const members = await tx.tenantMembership.findMany({
           where: {
             tenantId,
             status: MembershipStatus.Active,
             user: { status: UserStatus.Active },
+            ...(!appConsumerGateCertified ? { appConsumer: { is: null } } : {}),
           },
           include: { user: { include: { identities: true } } },
         });
@@ -220,6 +236,103 @@ export class TenantOidcService {
 
   async verifyIssuerSecurity() {
     await this.zitadel.verifyIssuerSecurity();
+  }
+
+  /**
+   * Safety monitor for shared-project App Consumer role grants. Even disabling
+   * the opt-in flag must remove already-assigned ZITADEL project roles: without
+   * a functioning preaccesstoken execution they authorize EVERY OAuth client.
+   *
+   * Ordinary RP members are never in the revocation set. Reconciliation and
+   * membership operations serialize on the tenant row lock. Remote failures
+   * preserve tracked intents so the next monitor pass retries revocation.
+   */
+  async enforceAppConsumerActionsV2Safety() {
+    const consumers = await this.prisma.tenantAppConsumer.findMany({
+      select: { tenantId: true, membership: { select: { userId: true } } },
+    });
+    if (!consumers.length) return { state: "no-consumers", revoked: 0 };
+    const consumerKeys = new Set(consumers.map((row) =>
+      row.tenantId + ":" + row.membership.userId));
+    const userIds = [...new Set(consumers.map((row) => row.membership.userId))];
+    const assigned = await this.prisma.tenantOidcGrant.findMany({
+      where: { userId: { in: userIds } },
+      select: { tenantId: true, userId: true },
+    });
+    const tracked = assigned.filter((row) =>
+      consumerKeys.has(row.tenantId + ":" + row.userId));
+    if (!tracked.length) return { state: "no-upstream-app-grants", revoked: 0 };
+
+    const enabled =
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+    if (enabled) {
+      try {
+        await this.zitadel.verifyAppConsumerActionsV2Gate();
+        return { state: "verified", revoked: 0 };
+      } catch {
+        // Never log upstream credentials or webhook signatures. Revoke below.
+      }
+    }
+    const byTenant = new Map<string, string[]>();
+    for (const row of tracked) {
+      byTenant.set(row.tenantId, [...(byTenant.get(row.tenantId) ?? []), row.userId]);
+    }
+    let revoked = 0;
+    let failed = 0;
+    for (const [tenantId, ids] of byTenant) {
+      try {
+        // Persist fail-closed RP state BEFORE any upstream I/O and before a
+        // transaction could abort; a later success must explicitly reconcile.
+        await this.prisma.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: {
+            enabled: false, status: "NeedsReconciliation",
+            grantsReconciledAt: null, lastErrorCode: "APP_CONSUMER_ACTION_BINDING_LOST",
+          },
+        });
+        await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+          const provider = await tx.tenantOidcProvider.findUnique({
+            where: { tenantId }, include: { tenant: { select: { name: true } } },
+          });
+          if (!provider?.zitadelProjectId) {
+            throw new ServiceUnavailableException("App Consumer upstream project revocation unresolved");
+          }
+          const grants = await tx.tenantOidcGrant.findMany({
+            where: { tenantId, userId: { in: ids } },
+          });
+          for (const grant of grants) {
+            const remoteId = grant.zitadelGrantId ??
+              await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId);
+            if (remoteId) await this.zitadel.revokeMember(grant.zitadelUserId, remoteId);
+            await tx.tenantOidcGrant.delete({ where: { id: grant.id } });
+            revoked++;
+          }
+          if (grants.length) {
+            // Durable tenant-scoped security evidence, without OAuth client
+            // identifiers, subject PII, signing secrets or token contents.
+            await tx.auditLogEntry.create({ data: {
+              tenantId,
+              tenantName: provider.tenant.name,
+              actor: "system",
+              actorName: "ResourcePortal Security Monitor",
+              action: "tenant_oidc.app_consumer_binding_revoked",
+              resourceType: "TenantOidcProvider",
+              resourceId: tenantId,
+              result: "Success",
+              changes: { reason: "APP_CONSUMER_ACTION_BINDING_LOST", revokedCount: grants.length },
+            } });
+          }
+        }, { maxWait: 30_000, timeout: 120_000 });
+      } catch {
+        failed++;
+      }
+    }
+    if (failed) {
+      throw new ServiceUnavailableException("App Consumer upstream revocation pending secure recovery");
+    }
+    return { state: "app-consumer-grants-revoked", revoked };
   }
 
   async activate(tenantId: string, fromAutoRollout = false) {

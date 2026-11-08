@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rollbackAssessment, requireAutomaticRollback, assertExpandOnlyMigrationSql } from "../scripts/release-rollback-policy.mjs";
+import { rollbackAssessment, requireAutomaticRollback, assertExpandOnlyMigrationSql, certifiedSupportedUpgradeSources } from "../scripts/release-rollback-policy.mjs";
 
 const hash = "a".repeat(40);
 const candidateZitadelImage = "ghcr.io/zitadel/zitadel@sha256:" + "a".repeat(64);
@@ -297,5 +297,78 @@ test("release CLI compares both tag and target commit in a real Git history", as
     assert.match(unsafe.stderr, /Release blocked/);
   } finally {
     rmSync(work, { recursive: true, force: true });
+  }
+});
+test("published upgrade sources include only exact-commit real rollback certifications", () => {
+  const runId = Number(process.env.GITHUB_RUN_ID || 12345);
+  const certified = (sourceVersion, changes = {}) => ({
+    sourceVersion,
+    targetCommit: hash,
+    workflowRunId: runId,
+    kind: "real-upgrade-and-restore",
+    policy: "tested",
+    reason: "verified-recovery-test",
+    actualDatabaseMigration: true,
+    previousImagesRestored: true,
+    injectedHealthFailure: true,
+    databaseSnapshotVerified: true,
+    databaseSnapshotRestored: true,
+    restoredSourceSchema: true,
+    previousApiReadWriteAfterRollback: true,
+    previousApiRuntimeReadyAfterRollback: true,
+    zitadelDatabaseRestored: true,
+    zitadelSourceRuntimeReadyAfterRollback: true,
+    zitadelSourceEventstoreVerified: true,
+    candidateZitadelRuntimeReadyBeforeRollback: true,
+    candidateZitadelImage,
+    sourceZitadelImage,
+    ...changes,
+  });
+  const candidates = ["0.2.92", "0.2.93", "0.2.96", "0.2.145", "0.2.146"];
+  const proofs = [certified("0.2.92"), certified("0.2.96"), certified("0.2.146")];
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(candidates, proofs, hash, "0.2.146", runId),
+    ["0.2.92", "0.2.96", "0.2.146"],
+  );
+  // Schema-neutral sources still require independently tested real rollback.
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(candidates, [
+      certified("0.2.146", {
+        policy: "image-only",
+        reason: "no-resourceportal-database-schema-changes",
+      }),
+    ], hash, "0.2.146", runId),
+    ["0.2.146"],
+  );
+  for (const bad of [
+    [],
+    [certified("0.2.92")], // missing immediate published source
+    [certified("0.2.146", { targetCommit: "b".repeat(40) })],
+    [certified("0.2.146", { workflowRunId: runId + 1 })],
+    [certified("0.2.146", { sourceVersion: "0.2.147" })],
+    [certified("0.2.146", { kind: "mock" })],
+    [certified("0.2.146", { databaseSnapshotRestored: false })],
+    [certified("0.2.146", { previousApiReadWriteAfterRollback: false })],
+    [certified("0.2.146", { zitadelSourceEventstoreVerified: false })],
+    [certified("0.2.146", { actualDatabaseMigration: false })],
+    [certified("0.2.146", { sourceZitadelImage: "zitadel:latest" })],
+    [certified("0.2.146", { reason: "no-resourceportal-database-schema-changes" })],
+    [certified("0.2.146", { policy: "none" })],
+    [certified("0.2.146"), certified("0.2.146")],
+  ]) {
+    assert.throws(
+      () => certifiedSupportedUpgradeSources(candidates, bad, hash, "0.2.146", runId),
+      /Release blocked/,
+    );
+  }
+  for (const malformed of [
+    [],
+    [...candidates, "0.2.146"],
+    [...candidates, "*"],
+  ]) {
+    assert.throws(
+      () => certifiedSupportedUpgradeSources(malformed, proofs, hash, "0.2.146", runId),
+      /Release blocked/,
+    );
   }
 });

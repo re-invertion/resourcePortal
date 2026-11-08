@@ -130,6 +130,36 @@ describe("Stage 2 Permission model", () => {
     });
   });
 
+  it("never gives App User tenant API access even after an accidentally inherited admin group role", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
+    const tenantAuthPolicyFindUnique = vi.fn();
+    const prisma = {
+      tenantMembership: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "158e191e-967a-4fe9-9480-3ea28010a714",
+          status: MembershipStatus.Active,
+          appConsumer: { membershipId: "158e191e-967a-4fe9-9480-3ea28010a714" },
+          roles: [],
+          groupMemberships: [{
+            group: { roles: [{ role: {
+              permissionBindings: [{ permission: { id: "*" } }],
+            } }] },
+          }],
+        }),
+      },
+      tenantAuthPolicy: { findUnique: tenantAuthPolicyFindUnique },
+    } as unknown as PrismaService;
+    const reflector = {
+      getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]),
+    } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+    await expect(guard.canActivate(contextFor({
+      params: { tenantId },
+      user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
+    }))).rejects.toThrow("App Consumer identities have no ResourcePortal access");
+    expect(tenantAuthPolicyFindUnique).not.toHaveBeenCalled();
+  });
+
   it("resolves service identity permissions through RolePermission instead of the legacy Role array", async () => {
     const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
     const serviceIdentityId = "8c8d0ea9-e0b2-4c13-935f-7e04ec03f8ff";

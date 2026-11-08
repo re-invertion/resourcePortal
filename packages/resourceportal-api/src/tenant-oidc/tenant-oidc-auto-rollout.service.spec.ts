@@ -48,6 +48,7 @@ function fixture(overrides: Record<string, string> = {}) {
     activate: vi.fn().mockResolvedValue({ enabled: true }),
     disable: vi.fn().mockResolvedValue({ enabled: false }),
     verifyIssuerSecurity: vi.fn().mockResolvedValue(undefined),
+    enforceAppConsumerActionsV2Safety: vi.fn().mockResolvedValue({ state: "no-consumers", revoked: 0 }),
   };
   const service = new TenantOidcAutoRolloutService(
     prisma as unknown as PrismaService,
@@ -62,6 +63,39 @@ describe("Tenant OIDC automatic rollout", () => {
     const f = fixture({ TENANT_OIDC_AUTO_ROLLOUT: "false" });
     expect(await f.service.reconcile()).toMatchObject({ state: "disabled" });
     expect(f.prisma.tenant.findMany).not.toHaveBeenCalled();
+  });
+
+  it("runs signed Action drift monitoring even when automatic OIDC rollout is off", async () => {
+    const f = fixture({ TENANT_OIDC_AUTO_ROLLOUT: "false" });
+    f.service.onModuleInit();
+    try {
+      await vi.waitFor(() => expect(f.oidc.enforceAppConsumerActionsV2Safety).toHaveBeenCalledOnce());
+      expect(f.oidc.provision).not.toHaveBeenCalled();
+      expect(f.oidc.reconcileGrants).not.toHaveBeenCalled();
+    } finally {
+      f.service.onModuleDestroy();
+    }
+  });
+
+  it("does not auto-regrant during the same monitoring pass that revoked unsafe upstream roles", async () => {
+    const f = fixture();
+    f.oidc.enforceAppConsumerActionsV2Safety.mockResolvedValue({
+      state: "app-consumer-grants-revoked", revoked: 2,
+    });
+    await (f.service as unknown as { reconcileOnce: () => Promise<void> }).reconcileOnce();
+    expect(f.oidc.enforceAppConsumerActionsV2Safety).toHaveBeenCalledOnce();
+    expect(f.oidc.provision).not.toHaveBeenCalled();
+    expect(f.oidc.reconcileGrants).not.toHaveBeenCalled();
+  });
+
+  it("keeps auto activation blocked when App Consumer upstream revocation failed", async () => {
+    const f = fixture();
+    f.oidc.enforceAppConsumerActionsV2Safety.mockRejectedValue(
+      new Error("upstream revocation needs recovery"),
+    );
+    await (f.service as unknown as { reconcileOnce: () => Promise<void> }).reconcileOnce();
+    expect(f.oidc.provision).not.toHaveBeenCalled();
+    expect(f.oidc.activate).not.toHaveBeenCalled();
   });
 
   it("blocks all tenant cutovers if any inbound federation exists", async () => {

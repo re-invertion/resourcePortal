@@ -37,6 +37,15 @@ cat >"$manifest" <<'JSON'
 }
 JSON
 
+action_capable_manifest="$(mktemp /tmp/rp-action-capable-manifest.XXXXXX)"
+jq '.apiCapabilities={appConsumerActionsV2Callback:true}' "$manifest" > "$action_capable_manifest"
+status 0 'signed manifest API capability is validated when declared' rp_validate_release_manifest "$action_capable_manifest"
+jq '.apiCapabilities.appConsumerActionsV2Callback=false' "$action_capable_manifest" > "$action_capable_manifest.invalid"
+status 1 'manifest rejects a false App Consumer callback capability' rp_validate_release_manifest "$action_capable_manifest.invalid"
+jq '.apiCapabilities.extraUnverifiedCapability=true' "$action_capable_manifest" > "$action_capable_manifest.invalid"
+status 1 'manifest rejects unknown unverified API capability fields' rp_validate_release_manifest "$action_capable_manifest.invalid"
+rm -f "$action_capable_manifest" "$action_capable_manifest.invalid"
+
 # The updater is based on Alpine: BusyBox mktemp requires XXXXXX at the end
 # of a supplied template. GNU mktemp accepts the old .XXXXXX.yml/.json form,
 # so run a compatibility scan even on Ubuntu CI runners.
@@ -306,6 +315,7 @@ contains "$workflow" 'fetch-depth: 0' 'release workflow fetches tag history for 
 contains "$workflow" 'git tag --merged HEAD' 'release workflow derives compatibility only from ancestor release tags'
 contains "$workflow" 'SUPPORTED_FROM_VERSIONS' 'release workflow derives supported source versions dynamically'
 contains "$workflow" 'supportedFromVersions:$supported_from_versions' 'release manifest uses derived supported source versions'
+contains "$workflow" 'apiCapabilities:{appConsumerActionsV2Callback:true}' 'signed release manifest advertises exact App Consumer callback availability'
 contains "$workflow" 'MIN_SUPPORTED_SOURCE_VERSION: "0.1.8"' 'v0.2 release workflow keeps v0.1.8+ as supported upgrade sources'
 not_contains "$workflow" 'release_series=' 'release workflow does not incorrectly restrict compatibility to the target minor series'
 not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
@@ -313,6 +323,7 @@ not_contains "$workflow" ':latest' 'release workflow never publishes latest tag'
 schema="$(cat "$repo_root/config/production/release-manifest.schema.json")"
 contains "$schema" 'rollbackPolicy' 'manifest schema declares rollback policy'
 contains "$schema" 'minimumVersion' 'manifest schema declares installer compatibility'
+contains "$schema" 'appConsumerActionsV2Callback' 'manifest schema tracks the source API callback contract'
 
 # Stateful upgrade checkpoint regression: the previous stack/configuration
 # must survive failure, and unsafe/interrupted operations must fail closed.

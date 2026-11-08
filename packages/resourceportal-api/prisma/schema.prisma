@@ -231,6 +231,7 @@ model Tenant {
   groups                     TenantGroup[]
   identityProviders          IdentityProvider[]
   oauthApplications          OAuthApplication[]
+  appConsumers               TenantAppConsumer[]
   serviceIdentities          ServiceIdentity[]
   mcpSettings                TenantMcpSettings?
   resourceBotSettings        TenantResourceBotSettings?
@@ -264,9 +265,11 @@ model TenantMembership {
   tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   roles            MembershipRole[]
   groupMemberships TenantGroupMember[]
+  appConsumer      TenantAppConsumer?
   mcpAccess        TenantMcpMemberAccess[]
 
   @@unique([userId, tenantId])
+  @@unique([id, tenantId])
 }
 
 model Permission {
@@ -532,8 +535,11 @@ model OAuthApplication {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
   tenant                 Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appConsumerGrants      TenantAppClientGrant[]
+  appInvitationGrants    TenantAppInvitationGrant[]
 
   @@unique([tenantId, name])
+  @@unique([id, tenantId])
   @@index([tenantId, type])
 }
 
@@ -578,8 +584,59 @@ model TenantInvitation {
   createdBy  String    @db.Uuid
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appInvitationGrants TenantAppInvitationGrant[]
 
   @@unique([tenantId, email])
+  @@unique([id, tenantId])
+}
+
+// Presence marks an application-only tenant identity. Its membership has
+// ZERO RolePermission bindings; never give it tenant.read or any management
+// permission. Independently-managed OAuth applications require explicit grants.
+model TenantAppConsumer {
+  membershipId String @id @db.Uuid
+  tenantId     String @db.Uuid
+  createdBy    String @db.Uuid
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  membership   TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grants       TenantAppClientGrant[]
+
+  @@unique([membershipId, tenantId])
+  @@index([tenantId])
+}
+
+// Durable default-deny grant bound to the immutable OAuthApplication.id.
+// Revocation must update enabled=false (not merely hide a UI item).
+model TenantAppClientGrant {
+  id                 String @id @default(uuid()) @db.Uuid
+  membershipId       String @db.Uuid
+  tenantId           String @db.Uuid
+  oauthApplicationId String @db.Uuid
+  enabled            Boolean @default(true)
+  createdBy          String @db.Uuid
+  updatedBy          String @db.Uuid
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  consumer           TenantAppConsumer @relation(fields: [membershipId, tenantId], references: [membershipId, tenantId], onDelete: Cascade)
+  application        OAuthApplication @relation(fields: [oauthApplicationId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([membershipId, oauthApplicationId])
+  @@index([tenantId, oauthApplicationId, enabled])
+}
+
+// Pending invitation grants are created in the same transaction as the
+// hashed-token invitation and atomically copied at invitation acceptance.
+model TenantAppInvitationGrant {
+  invitationId       String @db.Uuid
+  tenantId           String @db.Uuid
+  oauthApplicationId String @db.Uuid
+  invitation         TenantInvitation @relation(fields: [invitationId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  application        OAuthApplication @relation(fields: [oauthApplicationId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@id([invitationId, oauthApplicationId])
+  @@index([tenantId, oauthApplicationId])
 }
 
 model TenantGroup {

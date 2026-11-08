@@ -35,6 +35,11 @@ rp_validate_release_manifest() {
     (.installer.minimumVersion | type == "string") and
     (.docker.minimumVersion | type == "string") and
     (.configSchemaVersion | type == "number") and
+    (if has("apiCapabilities") then
+       (.apiCapabilities |
+         type == "object" and .appConsumerActionsV2Callback == true and
+         (keys | length) == 1)
+     else true end) and
     (.migrations.supportedFromVersions | type == "array" and length > 0) and
     (.migrations.rollbackPolicy == "none" or .migrations.rollbackPolicy == "image-only" or .migrations.rollbackPolicy == "tested") and
     ([.images.api,.images.web,.images.postgres,.images.zitadel,.images.traefik] | all(type == "string"))

@@ -55,6 +55,10 @@ export class TenantContextGuard implements CanActivate {
         },
       },
       include: {
+        // App Consumer remains a hard no-RP identity even if a group role is
+        // mistakenly assigned later. Protect HTTP management independently
+        // of the editable RolePermission graph.
+        appConsumer: { select: { membershipId: true } },
         roles: {
           include: {
             role: {
@@ -88,6 +92,9 @@ export class TenantContextGuard implements CanActivate {
 
     if (!membership || membership.status !== MembershipStatus.Active) {
       throw new ForbiddenException("Active tenant membership is required");
+    }
+    if (membership.appConsumer) {
+      throw new ForbiddenException("App Consumer identities have no ResourcePortal access");
     }
 
     // Membership does not bypass an incoming IdP requirement. All user

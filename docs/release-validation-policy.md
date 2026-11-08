@@ -43,3 +43,21 @@ never rewritten.
 ## Protected main delivery
 
 An enforced GitHub Ruleset requires PR and Merge Queue (one PR per group), together with `Required release readiness`. Direct pushes, administrator bypass and force pushes are forbidden. Each merged main revision starts publication of an immutable-SHA release plus images, CLI and manifest. The next merge is blocked until the prior main SHA has been published. See `docs/automatic-main-releases.md`.
+
+## Advertised supported upgrade sources in new releases
+
+New release manifests must advertise only source versions that have independent
+`real-upgrade-and-restore` certification from the exact SHA and GitHub Actions
+run publishing the target. Historic Git tags alone do not establish upgrade
+support. In particular, a schema-changing feature must not appear installable
+from a version for which the previous database, ZITADEL event store and API
+read/write recovery have not been verified. The publisher intersects eligible
+ancestor versions with the signed release's per-source certificates and refuses
+to publish if the immediate previous official release is not in that set.
+
+An older deployment omitted from `supportedFromVersions` is intentionally not
+offered a direct update to this target. It must upgrade through a separately
+supported, certified intermediate release rather than bypass the gate.
+This restriction does **not** certify issuer-global ZITADEL Actions V2 cutover:
+production action target availability, safe activation and detachment/restore
+remain independent hard blockers for PR #407.
