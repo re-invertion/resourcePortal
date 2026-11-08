@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 function preflight(missing) {
@@ -148,4 +148,189 @@ jq -e '.phase == "manual-recovery-required" and .runtimeStage == "mcp-oauth-reco
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stdout, /UNSAFE/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// #398: ZITADEL Actions V2 preaccesstoken execution is issuer-global.
+// An image-only Swarm rollback cannot recover authentication when the source
+// API/stack has no compatible callback, even if the source database is healthy.
+const certifiedActionStack = (overrides = {}) => [
+  'version: "3.9"',
+  'secrets:',
+  '  rp_app_consumer_action_hmac:',
+  '    external: true',
+  '    name: rp_app_consumer_action_hmac_0123456789abcdef',
+  'services:',
+  '  api:',
+  '    environment:',
+  '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"',
+  '      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true"',
+  '      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "1234567890"',
+  '      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.test/api/app-consumer-actions/preaccesstoken"',
+  '      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE: /run/secrets/rp_app_consumer_action_hmac',
+  '    secrets:',
+  '      - rp_app_consumer_action_hmac',
+  '',
+].map(line => overrides[line] ?? line).join('\n');
+
+function appConsumerRollbackFixture({
+  stack = certifiedActionStack(),
+  source = "0.2.147",
+  target = "0.2.148",
+  certified = "true",
+  targetId = "1234567890",
+  secretRef = "rp_app_consumer_action_hmac_0123456789abcdef",
+  secretExists = true,
+  sourceCapability = true,
+  targetCapability = true,
+  sourceManifestVersion = source,
+  sourceAttested = true,
+  symlink = false,
+} = {}) {
+  const directory = mkdtempSync(join(tmpdir(), "rp-action-rollback-preflight-"));
+  const stackPath = join(directory, "stack.yml");
+  const targetPath = symlink ? join(directory, "target.yml") : stackPath;
+  writeFileSync(stackPath, stack, { mode: 0o600 });
+  const sourceManifest = join(directory, "source-release.json");
+  const targetManifest = join(directory, "target-release.json");
+  writeFileSync(sourceManifest, JSON.stringify({
+    version: sourceManifestVersion,
+    ...(sourceCapability ? { apiCapabilities: { appConsumerActionsV2Callback: true } } : {}),
+  }));
+  writeFileSync(targetManifest, JSON.stringify({
+    version: target,
+    ...(targetCapability ? { apiCapabilities: { appConsumerActionsV2Callback: true } } : {}),
+  }));
+  if (symlink) {
+    // Avoid importing shell utilities: create an actual symlink to prove that
+    // the rollback guard will not trust a mutable redirected source compose.
+    symlinkSync(stackPath, targetPath);
+  }
+  try {
+    return spawnSync("bash", ["-c", `
+set -euo pipefail
+source scripts/installer/upgrade.sh
+export RP_CFG_DOMAIN=rp.example.test
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED="$CERTIFIED"
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID="$TARGET_ID"
+export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF="$SECRET_REF"
+export RP_CFG_RELEASE_MANIFEST="$SOURCE_MANIFEST"
+rp_verify_release_manifest_attestation(){ [[ "$SOURCE_ATTESTED" == true && "$1" == "$SOURCE_MANIFEST" ]]; }
+docker() {
+  [[ "$1" == secret && "$2" == inspect && "$3" == rp_app_consumer_action_hmac_0123456789abcdef && "$SECRET_EXISTS" == true ]]
+}
+rp_upgrade_app_consumer_actions_v2_rollback_preflight "$PREVIOUS_STACK" "$SOURCE_VERSION" "$TARGET_MANIFEST"
+`], { encoding: "utf8", env: {
+      ...process.env, PREVIOUS_STACK: targetPath, SOURCE_VERSION: source,
+      SOURCE_MANIFEST: sourceManifest, TARGET_MANIFEST: targetManifest,
+      CERTIFIED: certified, TARGET_ID: targetId,
+      SECRET_REF: secretRef, SECRET_EXISTS: String(secretExists),
+      SOURCE_ATTESTED: String(sourceAttested),
+    } });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+test("global pre-token Action rollback guard accepts compatible immutable source stack", () => {
+  const result = appConsumerRollbackFixture();
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("normal default-off upgrades have no extra ZITADEL or Swarm dependencies", () => {
+  const result = appConsumerRollbackFixture({ certified: "false", targetId: "", secretRef: "", stack: "services:\n  api: {}\n", source: "0.2.146", target: "0.2.147", secretExists: false });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("installer refuses stale or partial Action config even when flag is off", () => {
+  for (const overrides of [
+    { certified: "false", targetId: "", secretRef: "" },
+    { certified: "false", targetId: "1234567890", secretRef: "" },
+    { certified: "garbled", targetId: "", secretRef: "" },
+  ]) {
+    const result = appConsumerRollbackFixture(overrides);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Upgrade blocked: App Consumer global Action state is inconsistent/);
+  }
+});
+
+test("issuer-global Action requires explicit signed source and target capability, not a guessed version", () => {
+  for (const variant of [
+    { source: "0.2.146", sourceCapability: false },
+    { target: "0.2.147", targetCapability: false },
+    { sourceManifestVersion: "0.2.145" },
+  ]) {
+    const result = appConsumerRollbackFixture(variant);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /signed source and target releases must explicitly certify/);
+  }
+});
+
+test("issuer-global Action refuses an unverified source release despite a capability claim", () => {
+  const result = appConsumerRollbackFixture({ sourceAttested: false });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /source RP callback capability has no valid release attestation/);
+});
+
+test("issuer-global Action refuses mismatched rollback Web, target or signing key", () => {
+  const cases = [
+    { targetId: "999999999" },
+    { secretRef: "rp_app_consumer_action_hmac_aaaaaaaaaaaaaaaa" },
+    { stack: certifiedActionStack({ '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"': '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "false"' }) },
+    { stack: certifiedActionStack({ '      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.test/api/app-consumer-actions/preaccesstoken"': '      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://other.example.test/api/app-consumer-actions/preaccesstoken"' }) },
+    { stack: certifiedActionStack() + '      - rp_app_consumer_action_hmac\n' },
+    { secretExists: false },
+  ];
+  for (const entry of cases) {
+    const result = appConsumerRollbackFixture(entry);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Upgrade blocked: (previous RP stack|App Consumer callback rollback signing secret)/);
+  }
+});
+
+test("app-consumer rollback safety rejects symlinked source stack without accessing its contents", () => {
+  const result = appConsumerRollbackFixture({ symlink: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /App Consumer action metadata or previous stack is invalid/);
+});
+
+test("normal upgrade preflight refuses active global Action on incompatible source", () => {
+  const result = spawnSync("bash", ["-c", `
+set -euo pipefail
+source scripts/installer/upgrade.sh
+RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED=true
+RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID=1234567890
+RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF=rp_app_consumer_action_hmac_0123456789abcdef
+rp_release_compatible(){ :; }
+rp_verify_release_manifest_attestation(){ :; }
+rp_upgrade_rollback_allowed(){ :; }
+rp_upgrade_identity_preflight(){ :; }
+rp_manifest_value(){ printf '0.2.147\n'; }
+rp_upgrade_check_temporary_files(){ printf 'UNSAFE-TMP-MUTATION\n'; }
+rp_upgrade_preflight /etc/hosts 0.2.147 0.2.146 29.0.0
+`], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /signed source and target releases must explicitly certify/);
+  assert.doesNotMatch(result.stdout, /UNSAFE/);
+});
+
+test("direct upgrade apply refuses unsafe issuer rollback before any image pull", () => {
+  const result = spawnSync("bash", ["-c", `
+set -euo pipefail
+source scripts/installer/upgrade.sh
+RP_CFG_RELEASE_VERSION=0.2.146
+RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED=true
+RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID=1234567890
+RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF=rp_app_consumer_action_hmac_0123456789abcdef
+RP_CFG_DOMAIN=rp.example.test
+rp_upgrade_check_temporary_files(){ :; }
+rp_config_apply_defaults(){ :; }
+rp_verify_release_manifest_attestation(){ :; }
+rp_upgrade_rollback_allowed(){ :; }
+rp_upgrade_identity_preflight(){ :; }
+rp_manifest_value(){ printf '0.2.147\\n'; }
+rp_pull_release_images(){ printf 'UNSAFE-IMAGE-PULL\\n'; }
+rp_apply_release_manifest_images(){ printf 'UNSAFE-MANIFEST-MUTATION\\n'; }
+rp_upgrade_apply /etc/hosts /etc/hosts
+`], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /signed source and target releases must explicitly certify/);
+  assert.doesNotMatch(result.stdout, /UNSAFE/);
 });

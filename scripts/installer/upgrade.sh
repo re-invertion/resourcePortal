@@ -251,6 +251,87 @@ rp_upgrade_check_temporary_files() {
   rm -f -- "$probe"
 }
 
+# The issuer-global ZITADEL preaccesstoken execution may call the RP API for
+# *every* token, including native RP Web/CLI and non-App-Consumer users. If the
+# previous image/stack cannot serve this callback, restoring an otherwise
+# healthy database and Swarm stack would still lock the issuer out.
+#
+# This guard runs BEFORE stopping any services in both the normal preflight
+# and direct rp_upgrade_apply entrypoints. It deliberately never changes
+# upstream ZITADEL executions or grants; an issuer-wide cutover needs its own
+# separately certified, reversible procedure.
+rp_upgrade_app_consumer_actions_v2_rollback_preflight() {
+  local previous_stack="$1" source_version="$2" target_manifest="$3"
+  local certified="${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}"
+  local target_id="${RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID:-}"
+  local secret_ref="${RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF:-}"
+  local domain="${RP_CFG_DOMAIN:-}" expected_line count
+  local source_manifest="${RP_CFG_RELEASE_MANIFEST:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/release.json}"
+  # Installed config and the last deployed Swarm manifest MUST agree. If a
+  # global action is still enabled in a persisted stack, don't interpret an
+  # absent/old installer.conf key as proof that token issuance is unaffected.
+  if [[ "$certified" != true ]]; then
+    if [[ "$certified" != false || -n "$target_id" || -n "$secret_ref" ]] ||
+       { [[ -f "$previous_stack" ]] &&
+         grep -Fqx '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"' "$previous_stack"; }; then
+      printf 'Upgrade blocked: App Consumer global Action state is inconsistent; preserve current login path.\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  # A semver floor is NOT proof: another PR could publish that number first.
+  # Require both installed-source AND signed target manifests to claim the
+  # callback contract. Older official releases intentionally omit the field.
+  # The source manifest must be the exact signed/installed source version.
+  if [[ "$source_manifest" != /* || ! -f "$source_manifest" ||
+        ! -r "$source_manifest" || -L "$source_manifest" ]] ||
+     ! jq -e --arg version "$source_version" '
+       .version == $version and .apiCapabilities.appConsumerActionsV2Callback == true
+     ' "$source_manifest" >/dev/null 2>&1 ||
+     ! jq -e '
+       .apiCapabilities.appConsumerActionsV2Callback == true
+     ' "$target_manifest" >/dev/null 2>&1; then
+    printf 'Upgrade blocked: signed source and target releases must explicitly certify the App Consumer callback.\n' >&2
+    return 1
+  fi
+  if ! rp_verify_release_manifest_attestation "$source_manifest"; then
+    printf 'Upgrade blocked: source RP callback capability has no valid release attestation.\n' >&2
+    return 1
+  fi
+  if [[ ! "$target_id" =~ ^[0-9]{1,64}$ ||
+        ! "$secret_ref" =~ ^rp_app_consumer_action_hmac_[a-fA-F0-9]{16}$ ||
+        ! "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ||
+        ! -f "$previous_stack" || ! -r "$previous_stack" || -L "$previous_stack" ]]; then
+    printf 'Upgrade blocked: App Consumer action metadata or previous stack is invalid.\n' >&2
+    return 1
+  fi
+
+  local -a required_lines=(
+    '      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"'
+    '      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true"'
+    "      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: \"$target_id\""
+    "      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: \"https://$domain/api/app-consumer-actions/preaccesstoken\""
+    '      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY_FILE: /run/secrets/rp_app_consumer_action_hmac'
+    '  rp_app_consumer_action_hmac:'
+    "    name: $secret_ref"
+    '      - rp_app_consumer_action_hmac'
+  )
+  for expected_line in "${required_lines[@]}"; do
+    count="$(grep -Fxc -- "$expected_line" "$previous_stack" || true)"
+    if [[ "$count" != 1 ]]; then
+      printf 'Upgrade blocked: previous RP stack cannot safely serve the issuer-global Action callback.\n' >&2
+      return 1
+    fi
+  done
+  # The immutable signing key must remain available for the source image if
+  # automatic rollback restores it. Never read or print its contents.
+  if ! docker secret inspect "$secret_ref" >/dev/null 2>&1; then
+    printf 'Upgrade blocked: App Consumer callback rollback signing secret is missing.\n' >&2
+    return 1
+  fi
+}
+
 rp_upgrade_preflight() {
   local manifest="$1" installer_version="$2" current_version="$3" docker_version="$4"
   rp_release_compatible "$manifest" "$installer_version" "$current_version" "$docker_version" || return 1
@@ -260,6 +341,8 @@ rp_upgrade_preflight() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
+  rp_upgrade_app_consumer_actions_v2_rollback_preflight \
+    "${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}" "$current_version" "$manifest" || return 1
   rp_upgrade_check_temporary_files
 }
 
@@ -867,6 +950,8 @@ rp_upgrade_apply() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
+  rp_upgrade_app_consumer_actions_v2_rollback_preflight \
+    "$previous_stack" "$source_version" "$manifest" || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_checkpoint_prepare "$manifest" "$previous_stack" "$source_version" || return 1

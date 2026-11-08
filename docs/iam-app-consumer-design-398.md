@@ -211,6 +211,34 @@ client compatibility, target downtime, and supported multi-version database
 restore certification remain to be completed. Do not set these configuration
 values manually or release this PR merely because CI is green.
 
+### Upgrade preflight: preserve source callback before any mutation
+
+When an App Consumer action has been explicitly certified and enabled,
+`rp_upgrade_preflight` and the independently callable `rp_upgrade_apply`
+both verify the rollback source **before pulling images, quiescing services
+or writing migration checkpoints**. Both source and target must carry the explicit
+`apiCapabilities.appConsumerActionsV2Callback=true` contract in their
+official signed release manifests. The installed source manifest is
+re-attested and its version must match the live source; older source
+releases cannot gain compatibility merely because they have a higher
+version number. The persisted previous Swarm stack must contain exactly
+one enabled and certified API callback, the configured target ID,
+canonical HTTPS callback URL and
+`_FILE`-based signing secret mount with the same immutable Swarm reference.
+The signing Docker secret must still exist; its content is neither read nor
+logged by this preflight. A missing, older, mismatched or symlinked previous
+stack, stale target ID, wrong key reference or inconsistent installer config
+blocks the update. If the feature is off and there is no action configuration
+in the source stack, ordinary upgrades need no additional Docker secret.
+
+This protects the source rollback contract and checks the target's signed
+compatibility declaration. It **does not** prove a live global ZITADEL
+execution can be detached and reattached during an emergency rollback, nor
+that a target's callback will always be reachable under service failure.
+A reversible production cutover and live issuer availability/recovery tests
+remain blockers. Never treat the manifest contract alone as completed
+issuer-global lifecycle certification.
+
 ### Issuer-global target outage and recovery test (draft)
 
 The isolated real HTTPS ZITADEL suite now simulates a temporary HTTP 503 from

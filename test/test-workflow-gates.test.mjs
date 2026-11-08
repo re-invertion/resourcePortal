@@ -117,6 +117,10 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.match(manifest.run,/ROLLBACK_POLICY.*image-only/);
   assert.match(manifest.run,/ROLLBACK_POLICY.*tested/);
   assert.match(manifest.run,/rollbackEvidence/);
+  // New signed release manifests must carry the actual API callback contract
+  // so an upgrade can compare immutable SOURCE and TARGET capabilities.
+  assert.match(manifest.run,/apiCapabilities:\{appConsumerActionsV2Callback:true\}/);
+
   assert.doesNotMatch(manifest.run,/image-only \|\|.*none/);
 });
 
@@ -318,4 +322,23 @@ test('Docker 29 private cgroup capacity must pass real Swarm before any merge (#
   const stockSwarm=load('swarm-integration.yml');
   assert.ok(!stockSwarm.jobs['real-swarm'].steps.some(s=>s.run?.includes('scripts/run-capacity-private-cgroup-swarm-smoke.sh')),
     'Docker 29 regression must run on pinned daemon, not arbitrary stock runner');
+});
+
+test('signed App Consumer callback capability matches the built production API and remains tested', () => {
+  // A future release must not advertise this signed compatibility claim after
+  // accidentally dropping the corresponding API module, route, raw-body
+  // verifier or executable contract tests.
+  const read = (path) => readFileSync(new URL('../'+path, import.meta.url), 'utf8');
+  assert.match(read('packages/resourceportal-api/src/api.module.ts'), /AppConsumersModule/);
+  assert.match(read('packages/resourceportal-api/src/app-consumers/app-consumers.module.ts'),
+    /AppConsumerActionController/);
+  assert.match(read('packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts'),
+    /@Controller\("app-consumer-actions"\)/);
+  assert.match(read('packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts'),
+    /@Post\("preaccesstoken"\)/);
+  assert.match(read('packages/resourceportal-api/src/app-consumers/app-consumer-action.service.ts'),
+    /verifyActionSignature/);
+  assert.match(read('packages/resourceportal-api/src/config/secret-file-loader.ts'),
+    /RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY/);
+  assert.match(read('package.json'), /test-app-consumer-actions\.sh/);
 });

@@ -375,6 +375,7 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "platform-admin-ui",
     "platform-release",
     "security",
+    "upgrade-recovery",
     "volume-safety",
     "web-console",
     "worker",
@@ -444,7 +445,7 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
     "test/installer/test-control-plane.sh",
   ]);
   assert.equal(plan.vpnSmoke, true);
-  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "security"]);
+  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "security", "upgrade-recovery"]);
 });
 test("installer configuration fixes select the core safety suite", () => {
   assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles,

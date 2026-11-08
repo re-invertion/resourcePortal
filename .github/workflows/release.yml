@@ -316,7 +316,7 @@ jobs:
             --argjson rollback_run_id "$GITHUB_RUN_ID" \
             --argjson supported_from_versions "$SUPPORTED_FROM_VERSIONS" \
             --slurpfile rollback_certificates "$RUNNER_TEMP/rp-rollback-certifications.json" \
-            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
+            '{schemaVersion:1,version:$version,installer:{minimumVersion:"0.1.0"},docker:{minimumVersion:"27.0.0"},configSchemaVersion:1,apiCapabilities:{appConsumerActionsV2Callback:true},images:{api:$api,web:$web,postgres:$postgres,zitadel:$zitadel,traefik:$traefik},migrations:{supportedFromVersions:$supported_from_versions,rollbackPolicy:$rollback_policy,rollbackAssessment:{reason:$rollback_reason,sourceVersion:$rollback_source_version,targetCommit:$rollback_target_commit}}}
              | .migrations.rollbackCertifiedSources=$rollback_certificates[0]
              | if $rollback_policy == "tested" then
                  .migrations.rollbackEvidence={kind:"real-upgrade-and-restore",workflowRunId:$rollback_run_id,sourceVersion:$rollback_source_version,databaseSnapshotRestored:true,restoredSourceSchema:true,zitadelDatabaseRestored:true,zitadelSourceRuntimeReadyAfterRollback:true,zitadelSourceEventstoreVerified:true,candidateZitadelRuntimeReadyBeforeRollback:true,candidateZitadelImage:$zitadel}
