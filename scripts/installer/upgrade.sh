@@ -1007,16 +1007,17 @@ rp_upgrade_apply() {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "migration/deployment health"
     return 1
   fi
-  rp_upgrade_checkpoint_stage tenant-oidc-activation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint tenant-oidc-activation"; return 1; }
-  if ! rp_upgrade_wait_for_tenant_oidc_ready "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
-    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
-    return 1
-  fi
-  # Prove signed HTTPS callback handles a denied unknown subject before
-  # ZITADEL is allowed to invoke it for real application tokens.
+  # Tenant reconciliation may require a live global Action to verify
+  # App Consumer authorization. Migrated API has passed HTTPS health;
+  # activate the signed callback BEFORE the dependent OIDC readiness wait.
   if jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null 2>&1 &&
      ! rp_app_action_activate; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "App Consumer issuer activation"
+    return 1
+  fi
+  rp_upgrade_checkpoint_stage tenant-oidc-activation || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint tenant-oidc-activation"; return 1; }
+  if ! rp_upgrade_wait_for_tenant_oidc_ready "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300; then
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
     return 1
   fi
   rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }

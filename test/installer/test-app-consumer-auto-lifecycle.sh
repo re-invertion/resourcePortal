@@ -67,6 +67,23 @@ rp_verify_app_consumer_actions_v2_binding() {
   rp_app_action_execution_state "$1" state
   [[ "$state" == ours ]]
 }
+# The real signer must not require a host Node binary, leak the key into
+# process arguments or open any network inside its ephemeral container.
+signer="$(declare -f rp_app_action_sign_probe)"
+[[ "$signer" == *"docker run"* && "$signer" == *"--network none"* &&
+   "$signer" == *"--read-only"* && "$signer" == *"--cap-drop ALL"* &&
+   "$signer" == *"--entrypoint node"* &&
+   "$signer" != *"command -v node"* ]] || {
+  printf 'FAIL: production signer cannot depend on host Node or an unsafe container.\n' >&2
+  exit 1
+}
+# The real signer executes digest-pinned production Node inside an isolated
+# Docker container; mocked installer tests do not require a production image.
+# Real HMAC signature validity is separately verified by HTTPS issuer E2E.
+rp_app_action_sign_probe() {
+  local tmp="$1"
+  printf 'header = "ZITADEL-Signature: t=%s,v1=%064d"\n' "$(date +%s)" 0 >"$tmp/conf"
+}
 # Probe must pass real signing code and recognize only a precise 403.
 curl() {
   local previous="" path="" conf="" arg

@@ -61,3 +61,18 @@ supported, certified intermediate release rather than bypass the gate.
 This restriction does **not** certify issuer-global ZITADEL Actions V2 cutover:
 production action target availability, safe activation and detachment/restore
 remain independent hard blockers for PR #407.
+
+
+## Review completion before protected Merge Queue
+
+The protected `main` ruleset requires `Required release readiness` and
+resolved review threads. The required job now also fails closed unless the
+authoritative PR is **not Draft**, GitHub reports no unresolved review threads,
+and the Codex review receipt is **completed on the exact current PR head SHA**
+with no outstanding findings. A running, stale or absent Codex review cannot
+make a merge-group commit eligible. The check runs for both `pull_request`
+and `merge_group` and uses GitHub's authenticated GraphQL API. This prevents
+the race where auto-merge admitted a PR to the queue while Codex was still
+reviewing it. A failed gate is never waived by locally green CI or an
+unverified bot comment. Never enable auto-merge before review and thread
+resolution; Draft is used for ongoing security fixes.

@@ -342,3 +342,18 @@ test('signed App Consumer callback capability matches the built production API a
     /RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY/);
   assert.match(read('package.json'), /test-app-consumer-actions\.sh/);
 });
+
+test('Required release readiness blocks Draft, stale Codex review and all unresolved threads on PR and merge_group',()=>{
+  const readiness=load('release-readiness.yml');
+  assert.ok(readiness.on.merge_group !== undefined);
+  assert.ok(readiness.on.pull_request.types.includes('ready_for_review'));
+  assert.ok(readiness.on.pull_request.types.includes('converted_to_draft'));
+  assert.equal(readiness.permissions.issues,'read');
+  const job=readiness.jobs['release-ready'];
+  const review=job.steps.find(s=>s.name?.startsWith('Reject Draft and unresolved Codex'));
+  assert.ok(review,'Missing required review gate');
+  assert.match(review.run,/release-review-gate\.mjs/);
+  const gates=job.steps.findIndex(s=>s.name?.startsWith('Fail closed unless'));
+  assert.ok(job.steps.indexOf(review) > gates,'Review guard must run before required job can succeed');
+  assert.ok(job.steps.some(s=>s.uses?.startsWith('actions/checkout@')),'Review script must be checked out');
+});

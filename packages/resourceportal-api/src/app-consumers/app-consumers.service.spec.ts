@@ -224,6 +224,21 @@ describe("app consumer client grants default-deny / tenant scoped (#398)", () =>
     });
     expect(await f.svc.mayIssueClientToken("https://zitadel.test", "123456", "client-1")).toBe(true);
   });
+  it("preserves platform OAuth (tenantId null) for normal users, never App Consumers", async () => {
+    const f = setup();
+    const platform = { id: "platform-1", tenantId: null };
+    f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(platform);
+    f.prisma.tenantAppConsumer.findFirst.mockResolvedValueOnce(null);
+    expect(await f.svc.mayIssueLegacyClientToken("https://zitadel.test", "123456", "platform-client")).toBe(true);
+    expect(f.prisma.tenantMembership.findUnique).not.toHaveBeenCalled();
+    f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(platform);
+    expect(await f.svc.mayIssueLegacyClientToken("https://zitadel.test", "123456", "platform-client")).toBe(false);
+    expect(f.prisma.oAuthApplication.findUnique).toHaveBeenCalledWith({
+      where: { clientId: "platform-client" },
+      select: { id: true, tenantId: true },
+    });
+  });
+
   it("lets existing OAuth/MCP DCR clients follow upstream policy but never lets App Consumers bypass exact grants", async () => {
     const f = setup();
     f.prisma.oAuthApplication.findUnique.mockResolvedValueOnce(null);

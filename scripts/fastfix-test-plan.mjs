@@ -296,6 +296,8 @@ const classifiers = [
   // upgrade.sh affects tenant authentication, not only installer plumbing.
   // Source-stack consistency must be covered by upgrade failure recovery,
   // identity, security and the real published-image rollback gate.
+  [/^scripts\/release-review-gate\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^test\/test-release-review-gate\.test\.mjs$/, ["identity", "security", "platform-release"]],
   [/^scripts\/installer\/upgrade\.sh$/, ["identity", "installer", "platform-release", "security", "upgrade-recovery"]],
   [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
   [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],

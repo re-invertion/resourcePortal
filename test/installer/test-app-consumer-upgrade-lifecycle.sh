@@ -63,15 +63,15 @@ testcase(){
   local actual expected
   actual="$(grep -Ev '^(STAGE|PHASE):' "$tmp/trace" | grep -v '^$')"
   if [[ "$expect_fail" == true ]]; then
-    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL MIGRATE DEPLOY HEALTH OIDC-READY ACTION-ACTIVATE DB-RESTORED ACTION-DETACHED OLD-STACK HEALTH)"
+    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL MIGRATE DEPLOY HEALTH ACTION-ACTIVATE DB-RESTORED ACTION-DETACHED OLD-STACK HEALTH)"
   else
-    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL MIGRATE DEPLOY HEALTH OIDC-READY ACTION-ACTIVATE ENROLL CONFIG STACK-PERSIST)"
+    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL MIGRATE DEPLOY HEALTH ACTION-ACTIVATE OIDC-READY ENROLL CONFIG STACK-PERSIST)"
   fi
   if [[ "$actual" != "$expected" ]]; then
     printf 'FAIL: unexpected upgrade/rollback stage order (failed=%s)\nEXPECTED:\n%s\nACTUAL:\n%s\n' "$expect_fail" "$expected" "$actual" >&2; exit 1
   fi
 }
 testcase false
-echo 'PASS: standard upgrade activates ZITADEL Action only after migrated RP API, HTTPS health and OIDC readiness'
+echo 'PASS: standard upgrade activates ZITADEL Action only after migrated RP API and HTTPS health, before dependent OIDC readiness'
 testcase true
 echo 'PASS: failed Action activation restores database before detach, and detach before previous stack'
