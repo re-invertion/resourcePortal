@@ -297,10 +297,19 @@ jobs:
             [[ "$oldest" == "$MIN_SUPPORTED_SOURCE_VERSION" ]] || continue
             supported_versions+=("$candidate")
           done
-          if (( ${#supported_versions[@]} == 0 )); then
-            supported_versions=("$VERSION")
-          fi
-          SUPPORTED_FROM_VERSIONS="$(printf '%s\n' "${supported_versions[@]}" | jq -R . | jq -s .)"
+          # Never advertise a source merely because its tag is in history.
+          # Every selectable upgrade must have its own exact release-SHA,
+          # real-database rollback certification in this workflow run.
+          (( ${#supported_versions[@]} > 0 )) || {
+            echo "Release blocked: no published upgrade source tags" >&2; exit 1;
+          }
+          SOURCE_TAG_CANDIDATES="$(printf '%s\n' "${supported_versions[@]}" | jq -R . | jq -s .)"
+          SUPPORTED_FROM_VERSIONS="$(node scripts/release-rollback-policy.mjs \
+            --verified-supported-sources \
+            --candidate-versions-json "$SOURCE_TAG_CANDIDATES" \
+            --certifications-file "$RUNNER_TEMP/rp-rollback-certifications.json" \
+            --target-commit "$GITHUB_SHA" \
+            --required-source "${PREVIOUS_TAG#v}")"
 
           jq -n \
             --arg version "$VERSION" \
