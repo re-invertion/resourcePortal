@@ -69,7 +69,7 @@ rp_verify_app_consumer_actions_v2_binding() {
 }
 # Probe must pass real signing code and recognize only a precise 403.
 curl() {
-  local previous="" path="" conf="" codeout=false arg
+  local previous="" path="" conf="" arg
   for arg in "$@"; do
     [[ "$arg" != *"$key"* && "$arg" != *test-only-management-pat* ]] || return 1
     if [[ "$previous" == --config ]]; then conf="$arg"; fi

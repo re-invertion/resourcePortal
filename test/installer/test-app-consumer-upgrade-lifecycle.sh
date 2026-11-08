@@ -28,7 +28,7 @@ rp_upgrade_database_snapshot_prepare(){ printf 'SNAPSHOT\n'; }
 rp_upgrade_prepare_postgres_services(){ printf 'POSTGRES\n'; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth(){ printf 'ZITADEL\n'; }
 rp_run_zitadel_mcp_oauth_reconcile(){ printf 'MCP\n'; }
-rp_app_action_prepare(){ printf 'PROVISION\n'; RP_APP_ACTION_UPGRADE_NEW=true; }
+rp_app_action_prepare(){ printf 'PROVISION\n'; }
 rp_app_action_checkpoint_record(){ printf 'ACTION-JOURNAL\n'; }
 rp_run_migrations(){ printf 'MIGRATE\n'; }
 rp_deploy_control_plane(){ printf 'DEPLOY\n'; }
