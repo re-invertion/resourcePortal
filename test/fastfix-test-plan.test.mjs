@@ -941,3 +941,14 @@ test("Codex review recheck dispatcher cannot skip identity, security or release 
     }
   }
 });
+
+test("shared modal focus containment test cannot bypass UI and security Fast Fix profiles (#406)", () => {
+  const selected=selectProfiles([
+    "packages/resourceportal-web/src/components/design-system/primitives.tsx",
+    "packages/resourceportal-web/src/components/design-system/confirm-action.test.tsx",
+  ]);
+  for(const name of ["tenant-ux-patch", "reactive-web-state", "security"]) {
+    assert.ok(selected.profiles.includes(name), name + " is missing");
+  }
+  assert.equal(selected.vpnSmoke,false);
+});
