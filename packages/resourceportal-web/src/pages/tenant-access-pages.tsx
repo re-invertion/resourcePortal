@@ -294,7 +294,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
                 confirmLabel="Revoke invitation" onConfirm={() => action(() => apiRequest(`${root}/invitations/${encodeURIComponent(idOf(i))}`, { method: "DELETE" }), invitations.reload, "Invitation revoked.")}><TrashIcon size={14}/></ConfirmActionButton> : null}
             </div>
           </div>)}
-          {!inviteRows.length && !invitations.loading ? <EmptyState title="No pending invitations" /> : null}
+          {!inviteRows.length && !invitations.loading && !invitations.error ? <EmptyState title="No pending invitations" /> : null}
         </div>
       </Card>
     </div>
