@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { isIP } from "node:net";
 import { connect } from "node:tls";
 
 export type ObservedCertificate = {
@@ -9,11 +10,31 @@ export type ObservedCertificate = {
   issuer?: string;
 };
 
+/** Match SAN names without allowing multi-label wildcard expansion. */
+export function certificateCoversHostname(domains: string[], hostname: string) {
+  const normalizedHostname = hostname.toLowerCase();
+  return domains.some((domain) => {
+    const normalizedDomain = domain.toLowerCase();
+    if (normalizedDomain === normalizedHostname) return true;
+    if (!normalizedDomain.startsWith("*.")) return false;
+    const suffix = normalizedDomain.slice(1);
+    if (!normalizedHostname.endsWith(suffix)) return false;
+    const prefix = normalizedHostname.slice(0, -suffix.length);
+    return prefix.length > 0 && !prefix.includes(".");
+  });
+}
+
 @Injectable()
 export class TraefikCertificateObserverService {
   constructor(private readonly config: ConfigService) {}
 
   observe(hostname: string): Promise<ObservedCertificate> {
+    // Use the pinned Swarm manager's published port, not public DNS. A public
+    // edge/CDN can terminate HTTPS with a different certificate from Traefik.
+    const ingressHost = this.config.get<string>("INSTALLER_SWARM_ADVERTISE_ADDR")?.trim();
+    if (!ingressHost || isIP(ingressHost) === 0) {
+      return Promise.reject(new Error("ManagedIngressAddressUnavailable"));
+    }
     const timeoutMs = this.timeoutMs();
 
     return new Promise((resolve, reject) => {
@@ -37,7 +58,7 @@ export class TraefikCertificateObserverService {
 
       const socket = connect(
         {
-          host: hostname,
+          host: ingressHost,
           port: 443,
           servername: hostname,
           rejectUnauthorized: true,
@@ -56,7 +77,6 @@ export class TraefikCertificateObserverService {
 
             const domains = this.certificateDomains(
               certificate.subjectaltname,
-              hostname,
             );
             const issuer = this.certificateIssuer(certificate.issuer);
 
@@ -96,7 +116,7 @@ export class TraefikCertificateObserverService {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
   }
 
-  private certificateDomains(subjectAltName: string | undefined, hostname: string) {
+  private certificateDomains(subjectAltName: string | undefined) {
     const domains = (subjectAltName ?? "")
       .split(",")
       .map((entry) => entry.trim())
@@ -104,7 +124,8 @@ export class TraefikCertificateObserverService {
       .map((entry) => entry.slice(4).trim().toLowerCase())
       .filter(Boolean);
 
-    return domains.length > 0 ? Array.from(new Set(domains)) : [hostname];
+    // Do not invent certificate SAN coverage when the server omits SANs.
+    return Array.from(new Set(domains));
   }
 
   private certificateIssuer(issuer: unknown) {

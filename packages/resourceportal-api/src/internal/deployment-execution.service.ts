@@ -33,6 +33,7 @@ import { StackConfigProvisionerService } from "./stack-config-provisioner.servic
 import { StackRegistryAuthService, type RegistryLogin } from "./stack-registry-auth.service";
 import { StackRolloutService } from "./stack-rollout.service";
 import { RuntimeDriftReconcilerService } from "./runtime-drift-reconciler.service";
+import { certificateCoversHostname, TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
 import { StackSecretProvisionerService } from "./stack-secret-provisioner.service";
 import {
   renderRuntimeVolumeMount,
@@ -190,6 +191,7 @@ export class DeploymentExecutionService {
     private readonly secretStorage: SecretStorageService,
     @Optional() private readonly config?: ConfigService,
     @Optional() private readonly runtimeDrift?: RuntimeDriftReconcilerService,
+    @Optional() private readonly certificateObserver?: TraefikCertificateObserverService,
   ) {}
 
   async heartbeatDeployment(deploymentId: string, dto: HeartbeatDeploymentDto) {
@@ -1273,18 +1275,52 @@ export class DeploymentExecutionService {
               `Domain ${domain.id} hostname no longer matches its tenant record`,
             );
           }
-          if (domain.dnsStatus !== "Valid") {
+          const current = byId.get(domain.id)!;
+          if (current.dnsStatus !== "Valid") {
             return this.validationFailure(
               "DomainUnavailable",
-              `Domain ${domain.hostname} DNS status is ${domain.dnsStatus}`,
+              `Domain ${domain.hostname} DNS status is ${current.dnsStatus} (current record)`,
             );
           }
 
-          if (domain.tlsEnabled && domain.certificateStatus === "Error") {
-            return this.validationFailure(
-              "DomainUnavailable",
-              `Domain ${domain.hostname} certificate status is ${domain.certificateStatus}`,
-            );
+          // Snapshot TLS metadata is only historical. A previous observation
+          // failure must not permanently prevent an otherwise safe redeploy.
+          // Conversely, a later Error or expired certificate must not be
+          // masked by an old Active snapshot.
+          const expired = current.certificateExpiresAt !== null &&
+            current.certificateExpiresAt !== undefined &&
+            current.certificateExpiresAt.getTime() <= Date.now();
+          const missingEvidence = current.certificateStatus === "Active" &&
+            !current.certificateExpiresAt;
+          if (domain.tlsEnabled && (
+            domain.certificateStatus === "Error" ||
+            current.certificateStatus === "Error" || expired || missingEvidence
+          )) {
+            if (!this.certificateObserver) {
+              return this.validationFailure(
+                "DomainUnavailable",
+                `Domain ${domain.hostname}: managed ingress TLS verification unavailable`,
+              );
+            }
+            let observed;
+            try {
+              observed = await this.certificateObserver.observe(domain.hostname);
+            } catch {
+              return this.validationFailure(
+                "DomainUnavailable",
+                `Domain ${domain.hostname}: managed ingress TLS observation failed; retry certificate diagnostics`,
+              );
+            }
+            if (!certificateCoversHostname(observed.domains, domain.hostname) ||
+                observed.expiresAt.getTime() <= Date.now()) {
+              return this.validationFailure(
+                "DomainUnavailable",
+                `Domain ${domain.hostname}: managed ingress certificate invalid, expired or hostname mismatch`,
+              );
+            }
+            // A successful authenticated managed-ingress handshake is
+            // authoritative for this preflight; the regular worker reconciler
+            // persists recovered metadata. Do not change workload state here.
           }
         }
       }

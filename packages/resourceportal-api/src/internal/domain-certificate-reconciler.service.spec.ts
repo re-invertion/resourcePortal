@@ -1,4 +1,4 @@
-import { CertificateStatus } from "@prisma/client";
+import { CertificateStatus, DnsStatus, DomainType, CustomRootDomainVerificationStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { DomainCertificateReconcilerService } from "./domain-certificate-reconciler.service";
@@ -48,6 +48,7 @@ function serviceFor(domains: Array<Record<string, unknown>>, observeFn: ObserveF
   const prisma = {
     domain: {
       findMany: vi.fn().mockResolvedValue(domains),
+      findFirst: vi.fn().mockResolvedValue(domains[0] ?? null),
       update,
     },
     auditLogEntry: { create: auditCreate },
@@ -178,6 +179,58 @@ describe("DomainCertificateReconcilerService", () => {
       certificateStatus: CertificateStatus.Error,
       updatedBy: "system",
     });
+  });
+
+  it("recovers a tenant-owned Error domain on a verified ingress observation", async () => {
+    const domain = assignedDomain("HTTPS", {
+      dnsStatus: DnsStatus.Valid,
+      type: DomainType.Custom,
+      certificateStatus: CertificateStatus.Error,
+      customRootDomain: {
+        tenantId: "22222222-2222-4222-8222-222222222222",
+        rootDomain: "example.com",
+        verificationStatus: CustomRootDomainVerificationStatus.Verified,
+      },
+    });
+    const { service, prisma } = serviceFor([domain], async hostname => ({
+      hostname, domains: [hostname], expiresAt: new Date(Date.now() + 86_400_000),
+    }));
+    const result = await service.reconcileTenantDomain(domain.tenantId as string, domain.id as string);
+    expect(result.failed).toBe(0);
+    expect(prisma.domain.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: domain.id, tenantId: domain.tenantId },
+    }));
+    expect(updateData(prisma.domain.update)?.certificateStatus).toBe("Active");
+  });
+
+  it("blocks recovery for unverified legacy domains before observing TLS", async () => {
+    const domain = assignedDomain("HTTPS", { dnsStatus: DnsStatus.Valid, type: DomainType.Custom, customRootDomain: null });
+    const { service, observer } = serviceFor([domain], async hostname => ({
+      hostname, domains: [hostname], expiresAt: new Date(Date.now() + 86_400_000),
+    }));
+    await expect(service.reconcileTenantDomain(domain.tenantId as string, domain.id as string)).rejects.toThrow("DomainNotPublishable");
+    expect(observer.observe).not.toHaveBeenCalled();
+  });
+
+  it("keeps Error after a repeated failed observation instead of silently reverting to Issuing", async () => {
+    const domain = assignedDomain("HTTPS", {
+      type: DomainType.Managed, dnsStatus: DnsStatus.Valid,
+      certificateStatus: CertificateStatus.Error,
+      certificateExpiresAt: new Date("2027-01-01T00:00:00.000Z"),
+    });
+    const { service, prisma } = serviceFor([domain], () => Promise.reject(new Error("ACME timeout")));
+    await service.reconcileBatch();
+    expect(updateData(prisma.domain.update)?.certificateStatus).toBe(CertificateStatus.Error);
+    expect(updateData(prisma.domain.update)?.certificateExpiresAt).toBeUndefined();
+  });
+
+  it("reports a failed explicit reconcile rather than a misleading succeeded operation", async () => {
+    const domain = assignedDomain("HTTPS", {
+      type: DomainType.Managed, dnsStatus: DnsStatus.Valid,
+      certificateStatus: CertificateStatus.Error,
+    });
+    const { service } = serviceFor([domain], () => Promise.reject(new Error("ACME timeout")));
+    await expect(service.reconcileTenantDomain(domain.tenantId as string, domain.id as string)).rejects.toThrow("ManagedIngressCertificateObservationFailed");
   });
 
   it("continues reconciling other domains after one observation failure", async () => {

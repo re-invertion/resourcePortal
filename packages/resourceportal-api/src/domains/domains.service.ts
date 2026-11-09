@@ -50,6 +50,63 @@ export class DomainsService {
     return mapDomain(domain);
   }
 
+  /** Read-only, tenant-scoped TLS diagnostics from worker reconciliation audit.
+   * DNS verification and route publication are independent from TLS readiness.
+   * Never return raw observer/ACME errors: they may contain internal addresses.
+   */
+  async getCertificateDiagnostics(tenantId: string, domainId: string) {
+    const domain = await this.findDomainOrThrow(tenantId, domainId);
+    const lastObservation = await this.prisma.auditLogEntry.findFirst({
+      where: {
+        tenantId,
+        resourceType: "Domain",
+        resourceId: domainId,
+        action: "domain.certificate.renew",
+      },
+      orderBy: { timestamp: "desc" },
+      select: {
+        timestamp: true,
+        result: true,
+        errorCode: true,
+      },
+    });
+    const tlsRequired = domain.httpEndpoint
+      ? protocolModeRequiresTls(domain.httpEndpoint.protocolMode)
+      : false;
+    const publishable = isDomainPublishable(domain, tenantId);
+    const observationFailure = lastObservation?.result === "Failed";
+    const code = observationFailure ? lastObservation.errorCode : null;
+    const cause = code === "CertificateObservationFailed"
+      ? "Managed ingress TLS inspection failed. This can be transient; retry after checking Traefik reachability and ACME logs."
+      : code === "CertificateInvalid"
+        ? "The managed ingress presented a certificate that is expired or does not cover this hostname."
+        : tlsRequired && !lastObservation
+          ? "No managed ingress TLS observation has completed yet."
+          : null;
+    return {
+      dnsStatus: domain.dnsStatus,
+      tlsRequired,
+      certificateStatus: tlsRequired ? domain.certificateStatus : "NotRequired",
+      certificateIssuer: tlsRequired ? domain.certificateIssuer : null,
+      certificateExpiresAt: tlsRequired ? domain.certificateExpiresAt : null,
+      lastCheckedAt: lastObservation?.timestamp ?? null,
+      observationSource: "ManagedSwarmIngress",
+      observationStatus: !lastObservation ? "NotChecked" :
+        observationFailure ? "Failed" : "Succeeded",
+      errorCode: code,
+      cause,
+      transient: code === "CertificateObservationFailed",
+      canReconcile: tlsRequired && publishable,
+      // Publication is not implied by TLS or DNS. Issue #394 owns the
+      // detailed route/ownership diagnostics.
+      ingressPublication: "NotVerified",
+      deploymentBlocked: tlsRequired && domain.certificateStatus === CertificateStatus.Error,
+      deploymentBlockReason: tlsRequired && domain.certificateStatus === CertificateStatus.Error
+        ? "Managed ingress TLS state is Error; run certificate diagnostics before deploying."
+        : null,
+    };
+  }
+
   async getCapabilities() {
     return this.managedDns
       ? this.managedDns.getTenantCapabilities()

@@ -3,6 +3,22 @@ import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
+test("issue #414 TLS recovery changes remain covered by security and domain CI", () => {
+  const paths = [
+    "packages/resourceportal-api/src/internal/traefik-certificate-observer.service.ts",
+    "packages/resourceportal-api/src/internal/domain-certificate-reconciler.service.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-tls-recovery.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/domain-operation.executors.ts",
+    "packages/resourceportal-web/src/pages/tenant-domain-tls-recovery.test.tsx",
+  ];
+  for (const path of paths) {
+    const profiles = selectProfiles([path]).profiles;
+    assert.ok(profiles.includes("domains"), `domains missing for ${path}`);
+    assert.ok(profiles.includes("security"), `security missing for ${path}`);
+  }
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/internal/unreviewed-tls-bypass.ts"]), /unclassified changes/);
+});
+
 test("Web anti-clickjacking server and regression fixture select security header checks", () => {
   const plan = selectProfiles([
     "packages/resourceportal-web/server.mjs",
