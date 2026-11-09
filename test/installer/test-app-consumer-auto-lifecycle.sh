@@ -16,9 +16,18 @@ created=0
 writes=0
 probe_http=403
 partial=false
+search_response=''
+search_error=''
 rp_app_action_http() {
   local method="$1" path="$2" out="$3" payload="${4:-}"
   [[ "$out" == /* && -n "$out" ]] || return 1
+  if [[ "$method $path" == 'POST /v2/actions/executions/search' ]]; then
+    [[ -z "$search_error" ]] || return "$search_error"
+    if [[ -n "$search_response" ]]; then
+      printf '%s\n' "$search_response" >"$out"
+      return 0
+    fi
+  fi
   case "$method $path" in
     'POST /v2/actions/executions/search')
       if [[ "$partial" == true ]]; then
@@ -100,6 +109,62 @@ curl() {
 }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ok() { printf 'PASS: %s\n' "$*"; }
+# Exercise the real parser with the exact sparse ZITADEL v4.17.0 response
+# observed when upgrading a v0.2.146 installation. Upstream HTTP failures
+# are deliberately distinct from successful empty responses.
+assert_search() {
+  local response="$1" expected="$2" label="$3" state=untouched
+  search_response="$response"
+  search_error=''
+  if [[ "$expected" == reject ]]; then
+    if rp_app_action_execution_state "$id" state >"$tmp/parser.stdout" 2>"$tmp/parser.stderr"; then
+      fail "accepted unsafe Actions V2 search response: $label"
+    fi
+    [[ "$state" == untouched ]] || fail "invalid search modified caller state: $label"
+    ! grep -qF "$key" "$tmp/parser.stderr" || fail 'secret leaked into diagnostics'
+  else
+    rp_app_action_execution_state "$id" state || fail "rejected valid Actions V2 search response: $label"
+    [[ "$state" == "$expected" ]] || fail "incorrect search classification: $label (got $state)"
+  fi
+  ok "$label"
+}
+assert_search '{"pagination":{"appliedLimit":"100"}}' none 'v0.2.146 sparse empty result (missing executions and totalResult)'
+assert_search '{"pagination":{"appliedLimit":100}}' none 'numeric appliedLimit on sparse empty result'
+assert_search '{"pagination":{"totalResult":"0","appliedLimit":"100"},"executions":[]}' none 'explicit empty result with string total'
+assert_search '{"pagination":{"totalResult":0},"executions":[]}' none 'explicit empty result with number total'
+assert_search '{"pagination":{"totalResult":1,"appliedLimit":"100"},"executions":[{"condition":{"function":{"name":"postauthentication"}},"targets":["777"]}]}' none 'complete foreign non-pretoken execution does not block'
+assert_search '{"pagination":{"totalResult":1,"appliedLimit":"100"},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["123456789"]}]}' ours 'preexisting exact execution is reused'
+assert_search '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["999"]}]}' conflict 'foreign preaccesstoken execution is protected'
+assert_search '{"pagination":{"totalResult":2},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["123456789"]},{"condition":{"function":{"name":"preaccesstoken"}},"targets":["999"]}]}' conflict 'duplicate preaccesstoken executions are protected'
+assert_search '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["123456789","999"]}]}' conflict 'multiple targets on one preaccesstoken are protected'
+assert_search '{"pagination":{"appliedLimit":"99"}}' reject 'unverified sparse result with wrong applied limit'
+assert_search '{"pagination":{"appliedLimit":"invalid"}}' reject 'unverified sparse result with malformed applied limit'
+assert_search '{"pagination":{"appliedLimit":"100"},"executions":[]}' reject 'missing totalResult for explicit list'
+assert_search '{"pagination":{"appliedLimit":"100","totalResult":0}}' reject 'missing executions with only totalResult present'
+assert_search '{"pagination":{"totalResult":1},"executions":[]}' reject 'incomplete result count'
+assert_search '{"pagination":{"totalResult":0},"executions":[{"condition":{"function":{"name":"preaccesstoken"}},"targets":["123456789"]}]}' reject 'inconsistent zero total'
+assert_search '{"pagination":{"totalResult":"1.5"},"executions":[]}' reject 'noninteger result total'
+assert_search '{"pagination":{"totalResult":0,"appliedLimit":0},"executions":[]}' reject 'invalid applied limit'
+assert_search '{"pagination":{"totalResult":0,"appliedLimit":"101"},"executions":[]}' reject 'excessive applied limit'
+assert_search '{"executions":[]}' reject 'missing pagination metadata'
+assert_search '{"pagination":{"appliedLimit":"100"},"executions":null}' reject 'null executions'
+assert_search '{"pagination":{"totalResult":1},"executions":[{"targets":["123456789"]}]}' reject 'execution missing function condition'
+assert_search '{"pagination":{"totalResult":1},"executions":[{"condition":{"function":{"name":false}},"targets":["123456789"]}]}' reject 'nonstring function condition'
+assert_search '[]' reject 'non-object response'
+assert_search '{}' reject 'missing response metadata'
+assert_search 'this is not JSON' reject 'invalid JSON'
+# Mocked curl --fail response and timeout semantics: no lack-of-execution inference.
+search_response=''
+for search_error in 22 28 7; do
+  state=untouched
+  if rp_app_action_execution_state "$id" state >"$tmp/parser.stdout" 2>"$tmp/parser.stderr"; then
+    fail "accepted failed Actions V2 HTTP request (curl $search_error)"
+  fi
+  [[ "$state" == untouched ]] || fail 'transport error modified state'
+  ok "ZITADEL HTTP failure/authorization/timeout (curl $search_error) blocked"
+done
+search_error=''
+search_response=''
 # Unknown foreign pre-token execution must be protected, never overwritten.
 remote_execution=foreign
 if rp_app_action_prepare >/dev/null 2>&1; then fail 'overwrote unrelated execution'; fi
