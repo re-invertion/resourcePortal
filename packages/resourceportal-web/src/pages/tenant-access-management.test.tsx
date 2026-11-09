@@ -194,3 +194,42 @@ it("refreshes memberships after group deletion so inherited permissions do not r
     expect(screen.queryByText(/inherited: Admin/)).toBeNull();
   });
 });
+
+describe("Invitations fetch states (#417)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubInvitations(reply: () => Promise<Response>) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/invitations")) return reply();
+      if (url.endsWith("/memberships")) return json([owner]);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/groups")) return json([]);
+      return json([]);
+    }));
+  }
+
+  it("does not claim there are no invitations when the API fails", async () => {
+    stubInvitations(async () => json({ message: "Service unavailable" }, 500));
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(await screen.findByText("Access data could not be loaded")).toBeTruthy();
+    expect(screen.queryByText("No pending invitations")).toBeNull();
+  });
+
+  it("does not show an empty state while invitations are loading", async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    stubInvitations(() => pending);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(screen.queryByText("No pending invitations")).toBeNull();
+    finish(json([]));
+    expect(await screen.findByText("No pending invitations")).toBeTruthy();
+  });
+
+  it("shows the empty state after a successful empty response", async () => {
+    stubInvitations(async () => json([]));
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(await screen.findByText("No pending invitations")).toBeTruthy();
+    expect(screen.queryByText("Access data could not be loaded")).toBeNull();
+  });
+});
