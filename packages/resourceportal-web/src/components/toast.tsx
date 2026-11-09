@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { DIALOG_LAYER_CHANGE_EVENT, getActiveDialogContent } from "./design-system/primitives";
 import { CheckIcon, InfoIcon, WarningIcon, XIcon } from "./design-system";
 
 export type ToastTone = "success" | "danger" | "warning" | "info";
@@ -108,6 +110,15 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: strin
 
 export function ToastViewport() {
   const [items, setItems] = useState<ToastItem[]>([]);
+  const [activeDialogContent, setActiveDialogContent] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const syncLayer = () => setActiveDialogContent(getActiveDialogContent());
+    window.addEventListener(DIALOG_LAYER_CHANGE_EVENT, syncLayer);
+    // Dialog and ToastViewport can mount in either effect order.
+    syncLayer();
+    return () => window.removeEventListener(DIALOG_LAYER_CHANGE_EVENT, syncLayer);
+  }, []);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -123,7 +134,7 @@ export function ToastViewport() {
     setItems((current) => current.filter((item) => item.id !== id));
   };
 
-  return (
+  const viewport = (
     <div
       className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
       aria-live="polite"
@@ -133,4 +144,8 @@ export function ToastViewport() {
       {items.map((item) => <ToastCard key={item.id} item={item} onDismiss={dismiss} />)}
     </div>
   );
+  // A modal makes the application root inert. Portal the whole live region
+  // into the active role=dialog, including its dismiss buttons. On close,
+  // preserve pending toasts by returning the viewport to its normal location.
+  return activeDialogContent?.isConnected ? createPortal(viewport, activeDialogContent) : viewport;
 }
