@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { CertificateStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { isDomainPublishable } from "../domains/domain-publication";
 import { protocolModeRequiresTls } from "./traefik-routing";
-import { TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
+import { certificateCoversHostname, TraefikCertificateObserverService } from "./traefik-certificate-observer.service";
 
 @Injectable()
 export class DomainCertificateReconcilerService {
@@ -12,8 +13,34 @@ export class DomainCertificateReconcilerService {
     private readonly observer: TraefikCertificateObserverService,
   ) {}
 
-  async reconcileBatch() {
+  async reconcileTenantDomain(tenantId: string, domainId: string) {
+    const domain = await this.prisma.domain.findFirst({
+      where: { id: domainId, tenantId },
+      include: {
+        customRootDomain: true,
+        httpEndpoint: { select: { protocolMode: true } },
+      },
+    });
+    // A tenant cannot use the repair endpoint to probe unverified/foreign hosts.
+    if (!domain || !isDomainPublishable(domain, tenantId)) {
+      throw new NotFoundException("DomainNotPublishable");
+    }
+    if (!domain.httpEndpoint || !protocolModeRequiresTls(domain.httpEndpoint.protocolMode)) {
+      throw new ConflictException("DomainTlsNotRequired");
+    }
+    const result = await this.reconcileBatch({ tenantId, domainId });
+    if (result.checked !== 1) {
+      throw new NotFoundException("DomainNotPublishable");
+    }
+    if (result.failed) {
+      throw new Error("ManagedIngressCertificateObservationFailed");
+    }
+    return result;
+  }
+
+  async reconcileBatch(filter?: { tenantId: string; domainId: string }) {
     const domains = await this.prisma.domain.findMany({
+      ...(filter ? { where: { id: filter.domainId, tenantId: filter.tenantId } } : {}),
       include: {
         tenant: {
           select: { name: true },
@@ -21,6 +48,7 @@ export class DomainCertificateReconcilerService {
         httpEndpoint: {
           select: { protocolMode: true },
         },
+        customRootDomain: true,
       },
     });
 
@@ -28,9 +56,17 @@ export class DomainCertificateReconcilerService {
     let failed = 0;
 
     for (const domain of domains) {
+      // Ownership may be revoked between queue admission and worker execution.
+      if (filter && !isDomainPublishable(domain, filter.tenantId)) {
+        throw new NotFoundException("DomainNotPublishable");
+      }
       const tlsRequired = domain.httpEndpoint
         ? protocolModeRequiresTls(domain.httpEndpoint.protocolMode)
         : false;
+      if (filter && !tlsRequired) {
+        // Attachment/protocol may have changed after queue admission.
+        throw new ConflictException("DomainTlsNotRequired");
+      }
 
       if (!tlsRequired) {
         await this.prisma.domain.update({
@@ -53,7 +89,8 @@ export class DomainCertificateReconcilerService {
       } catch (error) {
         failed += 1;
         const certificateStatus =
-          domain.certificateStatus === CertificateStatus.Active
+          domain.certificateStatus === CertificateStatus.Active ||
+          domain.certificateStatus === CertificateStatus.Error
             ? CertificateStatus.Error
             : CertificateStatus.Issuing;
         const errorMessage = this.errorMessage(error);
@@ -64,7 +101,10 @@ export class DomainCertificateReconcilerService {
             data: {
               tlsEnabled: true,
               certificateStatus,
-              certificateExpiresAt: null,
+              // Preserve previously observed expiry across transport failures.
+              // Initial issuance still explicitly starts without expiry metadata.
+              certificateExpiresAt: domain.certificateStatus === CertificateStatus.Pending
+                ? null : undefined,
               updatedBy: "system",
             },
           });
@@ -93,7 +133,7 @@ export class DomainCertificateReconcilerService {
                 },
                 after: {
                   certificateStatus,
-                  certificateExpiresAt: null,
+                  certificateExpiresAt: domain.certificateExpiresAt,
                 },
               },
             },
@@ -103,7 +143,7 @@ export class DomainCertificateReconcilerService {
         continue;
       }
 
-      const coversHostname = this.coversHostname(
+      const coversHostname = certificateCoversHostname(
         observed.domains,
         domain.hostname,
       );
@@ -167,25 +207,6 @@ export class DomainCertificateReconcilerService {
     }
 
     return { checked: domains.length, updated, failed };
-  }
-
-  private coversHostname(domains: string[], hostname: string) {
-    const normalizedHostname = hostname.toLowerCase();
-    return domains.some((domain) => {
-      const normalizedDomain = domain.toLowerCase();
-      if (normalizedDomain === normalizedHostname) {
-        return true;
-      }
-      if (!normalizedDomain.startsWith("*.")) {
-        return false;
-      }
-      const suffix = normalizedDomain.slice(1);
-      if (!normalizedHostname.endsWith(suffix)) {
-        return false;
-      }
-      const prefix = normalizedHostname.slice(0, -suffix.length);
-      return prefix.length > 0 && !prefix.includes(".");
-    });
   }
 
   private errorMessage(error: unknown) {

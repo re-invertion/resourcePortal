@@ -7,6 +7,32 @@ const implementationUrl = new URL("./domain-operation.executors.ts", import.meta
 const modulePath = "./domain-operation.executors";
 
 describe("Stage 16 domain operation executor", () => {
+  it("performs tenant-scoped explicit TLS reconciliation through the existing worker operation", async () => {
+    const imported = (await import(modulePath)) as unknown as {
+      DomainOperationExecutor: new (domains: unknown, certificates: unknown) => {
+        execute: (operation: OperationRecord) => Promise<{ result?: unknown; resourceId?: string | null }>;
+      };
+    };
+    const reconcileTenantDomain = vi.fn().mockResolvedValue({ checked: 1, updated: 1, failed: 0 });
+    const domains = { validateDomain: vi.fn() };
+    const executor = new imported.DomainOperationExecutor(domains, { reconcileTenantDomain });
+    const operation = {
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "DOMAIN_CERTIFICATE_RECONCILE",
+      tenantId: "22222222-2222-4222-8222-222222222222",
+      resourceId: "33333333-3333-4333-8333-333333333333",
+      createdBy: "44444444-4444-4444-8444-444444444444",
+      createdByEmail: "actor@example.com",
+      createdByDisplayName: "Actor",
+    } as OperationRecord;
+    await expect(executor.execute(operation)).resolves.toEqual({
+      resourceId: operation.resourceId,
+      result: { checked: 1, updated: 1, failed: 0 },
+    });
+    expect(reconcileTenantDomain).toHaveBeenCalledExactlyOnceWith(operation.tenantId, operation.resourceId);
+    expect(domains.validateDomain).not.toHaveBeenCalled();
+  });
+
   it("delegates DOMAIN_VERIFY to existing domain validation", async () => {
     expect(existsSync(fileURLToPath(implementationUrl))).toBe(true);
     const imported = (await import(modulePath)) as unknown as {

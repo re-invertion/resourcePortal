@@ -185,8 +185,8 @@ const commands = {
   ],
   "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
   "domains": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domains-certificate-diagnostics.spec.ts", "src/domains/domains-certificate-controller.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-tls-recovery.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/internal/domain-certificate-reconciler.service.spec.ts", "src/internal/traefik-certificate-observer.service.spec.ts", "src/operations/executors/domain-operation.executors.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-domain-tls-recovery.test.tsx"],
   ],
   "applications": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
@@ -403,6 +403,12 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
+  // Issue #414: managed TLS evidence, safe reconciliation and preflight are
+  // tenant-security boundaries. Never let new regressions escape the patch CI.
+  [/^packages\/resourceportal-api\/src\/internal\/(?:domain-certificate-reconciler|traefik-certificate-observer)\.service(?:\.spec)?\.ts$/, ["domains", "security", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-tls-recovery\.spec\.ts$/, ["domains", "security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/domain-operation\.executors(?:\.spec)?\.ts$/, ["domains", "operations", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-domain-tls-recovery\.test\.tsx$/, ["domains", "tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "domains", "gpu-security", "quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-stopped-resource-domain\.spec\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-cpu-validation\.spec\.ts$/, ["quota-security", "registry-auth", "worker"]],
