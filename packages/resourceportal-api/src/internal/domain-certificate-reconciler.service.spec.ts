@@ -192,10 +192,10 @@ describe("DomainCertificateReconcilerService", () => {
         verificationStatus: CustomRootDomainVerificationStatus.Verified,
       },
     });
-    const { service, prisma } = serviceFor([domain], async hostname => ({
+    const { service, prisma } = serviceFor([domain], hostname => Promise.resolve({
       hostname, domains: [hostname], expiresAt: new Date(Date.now() + 86_400_000),
     }));
-    const result = await service.reconcileTenantDomain(domain.tenantId as string, domain.id as string);
+    const result = await service.reconcileTenantDomain(domain.tenantId, domain.id);
     expect(result.failed).toBe(0);
     expect(prisma.domain.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: domain.id, tenantId: domain.tenantId },
@@ -205,10 +205,10 @@ describe("DomainCertificateReconcilerService", () => {
 
   it("blocks recovery for unverified legacy domains before observing TLS", async () => {
     const domain = assignedDomain("HTTPS", { dnsStatus: DnsStatus.Valid, type: DomainType.Custom, customRootDomain: null });
-    const { service, observer } = serviceFor([domain], async hostname => ({
+    const { service, observer } = serviceFor([domain], hostname => Promise.resolve({
       hostname, domains: [hostname], expiresAt: new Date(Date.now() + 86_400_000),
     }));
-    await expect(service.reconcileTenantDomain(domain.tenantId as string, domain.id as string)).rejects.toThrow("DomainNotPublishable");
+    await expect(service.reconcileTenantDomain(domain.tenantId, domain.id)).rejects.toThrow("DomainNotPublishable");
     expect(observer.observe).not.toHaveBeenCalled();
   });
 
@@ -230,7 +230,7 @@ describe("DomainCertificateReconcilerService", () => {
       certificateStatus: CertificateStatus.Error,
     });
     const { service } = serviceFor([domain], () => Promise.reject(new Error("ACME timeout")));
-    await expect(service.reconcileTenantDomain(domain.tenantId as string, domain.id as string)).rejects.toThrow("ManagedIngressCertificateObservationFailed");
+    await expect(service.reconcileTenantDomain(domain.tenantId, domain.id)).rejects.toThrow("ManagedIngressCertificateObservationFailed");
   });
 
   it("continues reconciling other domains after one observation failure", async () => {

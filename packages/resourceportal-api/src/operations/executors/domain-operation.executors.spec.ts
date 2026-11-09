@@ -8,12 +8,14 @@ const modulePath = "./domain-operation.executors";
 
 describe("Stage 16 domain operation executor", () => {
   it("performs tenant-scoped explicit TLS reconciliation through the existing worker operation", async () => {
-    const { DomainOperationExecutor } = await import("./domain-operation.executors");
+    const imported = (await import(modulePath)) as unknown as {
+      DomainOperationExecutor: new (domains: unknown, certificates: unknown) => {
+        execute: (operation: OperationRecord) => Promise<{ result?: unknown; resourceId?: string | null }>;
+      };
+    };
     const reconcileTenantDomain = vi.fn().mockResolvedValue({ checked: 1, updated: 1, failed: 0 });
     const domains = { validateDomain: vi.fn() };
-    const executor = new DomainOperationExecutor(domains as never, {
-      reconcileTenantDomain,
-    } as never);
+    const executor = new imported.DomainOperationExecutor(domains, { reconcileTenantDomain });
     const operation = {
       id: "11111111-1111-4111-8111-111111111111",
       type: "DOMAIN_CERTIFICATE_RECONCILE",

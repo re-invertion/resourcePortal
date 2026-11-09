@@ -60,9 +60,9 @@ describe("AppGroup managed-ingress TLS preflight (#414)", () => {
   it("denies a truly expired or hostname-mismatched ingress certificate", async () => {
     const x = fixture("Error", "Error");
     x.observe.mockResolvedValue({ hostname, domains: ["different.example.com"], expiresAt: expiresAt() });
-    await expect(x.service.validateDomains(x.snapshot)).resolves.toMatchObject({
-      errorCode: "DomainUnavailable", message: expect.stringContaining("hostname mismatch"),
-    });
+    const failure = await x.service.validateDomains(x.snapshot);
+    expect(failure).toMatchObject({ errorCode: "DomainUnavailable" });
+    expect(failure?.message).toContain("hostname mismatch");
   });
 
   it("denies an expired certificate on the intended ingress", async () => {
@@ -74,9 +74,9 @@ describe("AppGroup managed-ingress TLS preflight (#414)", () => {
   it("fails closed on TLS observer timeout and does not mutate workload state", async () => {
     const x = fixture("Active", "Error");
     x.observe.mockRejectedValue(new Error("ETIMEDOUT"));
-    await expect(x.service.validateDomains(x.snapshot)).resolves.toMatchObject({
-      errorCode: "DomainUnavailable", message: expect.stringContaining("observation failed"),
-    });
+    const failure = await x.service.validateDomains(x.snapshot);
+    expect(failure).toMatchObject({ errorCode: "DomainUnavailable" });
+    expect(failure?.message).toContain("observation failed");
     expect(x.findMany).toHaveBeenCalledTimes(1);
   });
 

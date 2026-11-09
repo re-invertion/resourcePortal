@@ -29,8 +29,13 @@ function fixture() {
 
 describe("tenant-managed certificate diagnostics and recovery controller", () => {
   it("requires separate read and validate permissions", () => {
-    expect(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, DomainsController.prototype.certificateDiagnostics)).toEqual(["domain.read"]);
-    expect(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, DomainsController.prototype.reconcileCertificate)).toEqual(["domain.validate"]);
+    const diagnostics: unknown = Object.getOwnPropertyDescriptor(DomainsController.prototype, "certificateDiagnostics")?.value;
+    const reconcile: unknown = Object.getOwnPropertyDescriptor(DomainsController.prototype, "reconcileCertificate")?.value;
+    if (typeof diagnostics !== "function" || typeof reconcile !== "function") {
+      throw new Error("Expected domain certificate route handlers");
+    }
+    expect(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, diagnostics)).toEqual(["domain.read"]);
+    expect(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, reconcile)).toEqual(["domain.validate"]);
   });
 
   it("scopes diagnostics and queued reconcile to the authorized tenant domain", async () => {
@@ -42,8 +47,12 @@ describe("tenant-managed certificate diagnostics and recovery controller", () =>
     expect(x.operationsService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: tenant, resourceId: domain, actor,
       type: "DOMAIN_CERTIFICATE_RECONCILE", maxAttempts: 1,
-      idempotencyKey: expect.stringMatching(/^tls-reconcile:22222222-2222-4222-8222-222222222222:33333333-3333-4333-8333-333333333333:\d+$/),
     }));
+    const payload: unknown = x.operationsService.enqueue.mock.calls[0]?.[0];
+    if (!payload || typeof payload !== "object" || !("idempotencyKey" in payload)) {
+      throw new Error("Missing idempotency key in worker operation");
+    }
+    expect(payload.idempotencyKey).toMatch(/^tls-reconcile:22222222-2222-4222-8222-222222222222:33333333-3333-4333-8333-333333333333:\d+$/);
   });
 
   it("rejects unowned domain before it can queue an observation", async () => {
@@ -57,7 +66,9 @@ describe("tenant-managed certificate diagnostics and recovery controller", () =>
     const x = fixture();
     await x.ctrl.reconcileCertificate(tenant, domain, actor);
     await x.ctrl.reconcileCertificate(tenant, domain, actor);
-    const calls = x.operationsService.enqueue.mock.calls.map(([v]) => v.idempotencyKey);
-    expect(calls[0]).toBe(calls[1]);
+    const calls: unknown[] = x.operationsService.enqueue.mock.calls.map(([value]: unknown[]) => value);
+    const keyOf = (value: unknown) =>
+      value && typeof value === "object" && "idempotencyKey" in value ? value.idempotencyKey : null;
+    expect(keyOf(calls[0])).toBe(keyOf(calls[1]));
   });
 });
