@@ -952,3 +952,16 @@ test("shared modal focus containment test cannot bypass UI and security Fast Fix
   }
   assert.equal(selected.vpnSmoke,false);
 });
+
+
+test("accessible modal notification portal cannot bypass focused UI or security Fast Fix suites (#406)", () => {
+  const selected = selectProfiles([
+    "packages/resourceportal-web/src/components/toast.tsx",
+    "packages/resourceportal-web/src/components/design-system/primitives.tsx",
+    "packages/resourceportal-web/src/components/design-system/confirm-action.test.tsx",
+  ]);
+  for (const name of ["tenant-ux-patch", "reactive-web-state", "security"]) {
+    assert.ok(selected.profiles.includes(name), name + " required for dialog toast accessibility");
+  }
+  assert.equal(selected.vpnSmoke, false);
+});

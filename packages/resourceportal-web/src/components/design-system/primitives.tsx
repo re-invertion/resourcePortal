@@ -60,7 +60,17 @@ export function Tabs({ items, label = "Sections" }: { items: Array<{ label: stri
 /** Block page/background accessibility while a React-portal modal is open.
  * Store and restore existing states even when another modal is opened above it.
  */
+export const DIALOG_LAYER_CHANGE_EVENT = "resourceportal:dialog-layer-change";
 const openDialogOverlays: HTMLDivElement[] = [];
+
+/**
+ * Notifications must be rendered *inside* the topmost role=dialog rather
+ * than #root, which is inert and aria-hidden while a modal is open.
+ * Return null on SSR and after the last modal closes.
+ */
+export function getActiveDialogContent(): HTMLElement | null {
+  return openDialogOverlays.at(-1)?.querySelector<HTMLElement>('[role="dialog"]') ?? null;
+}
 const originalBackgroundState = new Map<Element, { inert: string | null; ariaHidden: string | null }>();
 let dialogBodyObserver: MutationObserver | undefined;
 // The outer modal can unmount before an inner modal in the same React commit.
@@ -103,6 +113,7 @@ export function Dialog({ open, title, description, children, actions, onClose, d
     if (openDialogOverlays.length === 0) rootPageReturnFocus = previous;
     openDialogOverlays.push(overlay);
     updateDialogBackground();
+    window.dispatchEvent(new Event(DIALOG_LAYER_CHANGE_EVENT));
     if (!dialogBodyObserver && typeof MutationObserver !== "undefined") {
       dialogBodyObserver = new MutationObserver(updateDialogBackground);
       dialogBodyObserver.observe(document.body, { childList: true });
@@ -168,6 +179,7 @@ export function Dialog({ open, title, description, children, actions, onClose, d
       const index = openDialogOverlays.indexOf(overlay);
       if (index >= 0) openDialogOverlays.splice(index, 1);
       updateDialogBackground();
+      window.dispatchEvent(new Event(DIALOG_LAYER_CHANGE_EVENT));
       if (openDialogOverlays.length === 0) {
         dialogBodyObserver?.disconnect();
         dialogBodyObserver = undefined;

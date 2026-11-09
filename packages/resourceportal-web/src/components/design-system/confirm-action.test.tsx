@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { ConfirmActionButton, Dialog } from "./primitives";
+import { toast, ToastViewport } from "../toast";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -214,4 +215,63 @@ describe("ConfirmActionButton", () => {
     expect(container.hasAttribute("inert")).toBe(false);
     expect(document.activeElement).toBe(trigger);
   });
+
+  it("announces an API failure inside the active modal while the page is inert (#406)", () => {
+    function ModalError() {
+      const [open, setOpen] = useState(false);
+      return <>
+        <ToastViewport />
+        <button onClick={() => setOpen(true)}>Create Network</button>
+        <Dialog title="Create Network" open={open} onClose={() => setOpen(false)}
+          actions={<button onClick={() => toast.errorFrom(new Error("Network could not be created."))}>Save Network</button>} />
+      </>;
+    }
+    const { container } = render(<ModalError />);
+    const trigger = screen.getByRole("button", { name: "Create Network" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Create Network" });
+    expect(container.getAttribute("aria-hidden")).toBe("true");
+    expect(container.hasAttribute("inert")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Save Network" }));
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Network could not be created.");
+    expect(dialog.contains(alert)).toBe(true);
+    expect(alert.closest("[inert], [aria-hidden='true']")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(container.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.getByRole("alert").textContent).toContain("Network could not be created.");
+  });
+
+  it("moves the active notification region with the highest nested dialog (#406)", () => {
+    function Layered() {
+      const [outerOpen, setOuterOpen] = useState(false);
+      const [innerOpen, setInnerOpen] = useState(false);
+      return <>
+        <ToastViewport />
+        <button onClick={() => setOuterOpen(true)}>Open outer</button>
+        <Dialog title="Outer layer" open={outerOpen} onClose={() => setOuterOpen(false)}
+          actions={<button onClick={() => setInnerOpen(true)}>Open inner</button>}/>
+        <Dialog title="Inner layer" open={innerOpen} onClose={() => setInnerOpen(false)}
+          actions={<button onClick={() => toast.error("Inner save denied")}>Save inner</button>}/>
+      </>;
+    }
+    render(<Layered />);
+    fireEvent.click(screen.getByRole("button", { name: "Open outer" }));
+    const outer = screen.getByRole("dialog", { name: "Outer layer" });
+    fireEvent.click(screen.getByRole("button", { name: "Open inner" }));
+    const inner = screen.getByRole("dialog", { name: "Inner layer" });
+    fireEvent.click(screen.getByRole("button", { name: "Save inner" }));
+    const alert = screen.getByRole("alert");
+    expect(inner.contains(alert)).toBe(true);
+    expect(outer.contains(alert)).toBe(false);
+    expect(alert.closest("[inert], [aria-hidden='true']")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(screen.queryByRole("dialog", { name: "Inner layer" })).toBeNull();
+    expect(outer.contains(screen.getByRole("alert"))).toBe(true);
+    expect(screen.getByRole("alert").textContent).toContain("Inner save denied");
+  });
+
 });

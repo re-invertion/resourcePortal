@@ -361,6 +361,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/components\/status-tone(?:\.test)?\.tsx?$/, ["tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-web\/src\/components\/(?:design-system\/primitives|ui)\.tsx$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/components\/design-system\/confirm-action\.test\.tsx$/, ["tenant-ux-patch", "reactive-web-state", "security"]],
+  [/^packages\/resourceportal-web\/src\/components\/toast\.tsx$/, ["tenant-ux-patch", "reactive-web-state", "security"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:activity(?:\.test)?|activity-scope(?:\.test)?)(?:\.ts|\.tsx)$/, ["applications", "operations", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-edit\.tsx$/, ["applications", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-access-(?:pages|management)(?:\.test)?\.tsx$/, ["tenant-access", "security", "tenant-ux-patch"]],
