@@ -90,36 +90,36 @@ mock_create_count=0
 mock_execution_writes=0
 mock_search_error=false
 rp_app_action_http() {
-  local method="$1" path="$2" output="$3" request=''
+  local method="$1" path="$2" reply_file="$3" request=''
   if (( $# >= 4 )); then request="$4"; fi
   case "$method $path" in
     'POST /v2/actions/executions/search')
       [[ "$mock_search_error" != true ]] || return 22
       if [[ "$mock_execution" == none ]]; then
-        printf '{"pagination":{"appliedLimit":"100"}}\n' >"$output"
+        printf '{"pagination":{"appliedLimit":"100"}}\n' >"$reply_file"
       else
         jq -n --arg id "$mock_target" \
           '{pagination:{appliedLimit:"100",totalResult:"1"},
-            executions:[{condition:{function:{name:"preaccesstoken"}},targets:[$id]}]}' >"$output"
+            executions:[{condition:{function:{name:"preaccesstoken"}},targets:[$id]}]}' >"$reply_file"
       fi ;;
     'POST /v2/actions/targets')
       jq -e --arg url "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken" \
         '.endpoint == $url and .restWebhook.interruptOnError == true and .payloadType == "PAYLOAD_TYPE_JSON"' \
         "$request" >/dev/null || return 1
       ((mock_create_count+=1))
-      jq -n --arg id "$mock_target" '{id:$id}' >"$output" ;;
+      jq -n --arg id "$mock_target" '{id:$id}' >"$reply_file" ;;
     "GET /v2/actions/targets/$mock_target")
       jq -n --arg id "$mock_target" --arg key "$mock_signing_key" \
         --arg url "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken" \
         '{target:{id:$id,signingKey:$key,endpoint:$url,payloadType:"PAYLOAD_TYPE_JSON",
-                  restWebhook:{interruptOnError:true}}}' >"$output" ;;
+                  restWebhook:{interruptOnError:true}}}' >"$reply_file" ;;
     'PUT /v2/actions/executions')
       [[ "$mock_execution" == none ]] || return 1
       jq -e --arg id "$mock_target" \
         '.condition.function.name=="preaccesstoken" and .targets==[$id]' "$request" >/dev/null || return 1
       mock_execution=ours
       ((mock_execution_writes+=1))
-      printf '{}\n' >"$output" ;;
+      printf '{}\n' >"$reply_file" ;;
     *) printf 'Unexpected mock Actions V2 endpoint: %s %s\n' "$method" "$path" >&2; return 1 ;;
   esac
 }
