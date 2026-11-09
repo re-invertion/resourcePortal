@@ -65,11 +65,42 @@ rp_app_action_execution_state() {
              ($response.executions | length) > ($limit | number_value)) then
         error("incomplete execution list")
       else
-        # Reject entries without a recognizable function identifier; they
-        # could otherwise conceal an issuer-global preaccesstoken binding.
-        if any($response.executions[];
-               (.condition.function.name | type) != "string" or
-               (.condition.function.name | length) == 0) then
+        # ZITADEL returns request/response/event executions too. They do
+        # not conflict with preaccesstoken, but malformed/ambiguous entries
+        # must not conceal an issuer-global function binding.
+        def valid_condition:
+          (.condition | type) == "object" and
+          (.condition | keys | length) == 1 and
+          (
+            .condition as $c |
+            if $c | has("function") then
+              ($c.function | type) == "object" and
+              ($c.function.name | type) == "string" and
+              ($c.function.name | length) > 0
+            else
+              ($c | to_entries[0]) as $entry |
+              ($entry.key == "request" or $entry.key == "response" or
+               $entry.key == "event") and
+              ($entry.value | type) == "object" and
+              ($entry.value | keys | length) == 1 and
+              (
+                ($entry.value.all == true) or
+                (($entry.value.method | type) == "string" and
+                 ($entry.value.method | length) > 0 and
+                 $entry.key != "event") or
+                (($entry.value.service | type) == "string" and
+                 ($entry.value.service | length) > 0 and
+                 $entry.key != "event") or
+                (($entry.value.event | type) == "string" and
+                 ($entry.value.event | length) > 0 and
+                 $entry.key == "event") or
+                (($entry.value.group | type) == "string" and
+                 ($entry.value.group | length) > 0 and
+                 $entry.key == "event")
+              )
+            end
+          );
+        if any($response.executions[]; valid_condition | not) then
           error("invalid execution condition")
         else
           [$response.executions[] |
