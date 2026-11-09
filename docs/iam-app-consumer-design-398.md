@@ -135,6 +135,23 @@ exact binding:
   the expected target. Incomplete pagination, multiple targets, absent
   execution, wrong signing key or upstream errors block reconciliation.
 
+For **installer-managed first-time provisioning and rollback** (issue #419),
+ZITADEL v4.17.0 can report an empty Actions V2 search using
+`{"pagination":{"appliedLimit":"100"}}`: both `executions` and
+`pagination.totalResult` are absent. The installer recognizes this as
+**no execution** only after a successful HTTPS management request and
+a complete applied limit of 100. A concrete list must carry a matching
+nonnegative result count; partial fields, malformed conditions, pagination
+inconsistencies, HTTP 401/403/5xx and timeouts still fail closed.
+This is a pre-activation absence check, **not** certification of an active
+authorization binding: the independent read-only grant verifier above still
+requires exactly one RP-owned `preaccesstoken` execution.
+Regression coverage also exercises `rp_upgrade_apply` from source
+v0.2.146 with this sparse response, and preserves the existing
+rollback-before-old-stack ordering on a later activation failure.
+An isolated test with mocked API replies is not a substitute for the
+signed release's real ZITADEL/Swarm and upgrade-source certification.
+
 The ZITADEL management token must have read access to Actions targets and
 executions (`action.target.read`, `action.execution.read`), besides the
 usual tenant-project management permissions. No production target is created
