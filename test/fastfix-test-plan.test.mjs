@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
-import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
+import { selectProfiles, commandsForProfiles } from "../scripts/fastfix-test-plan.mjs";
 
 test("Web anti-clickjacking server and regression fixture select security header checks", () => {
   const plan = selectProfiles([
@@ -964,4 +964,29 @@ test("accessible modal notification portal cannot bypass focused UI or security 
     assert.ok(selected.profiles.includes(name), name + " required for dialog toast accessibility");
   }
   assert.equal(selected.vpnSmoke, false);
+});
+
+
+test("each Dialog/Toast changed path actually runs modal regressions, not just a named profile (#406 P1)", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/design-system/primitives.tsx",
+    "packages/resourceportal-web/src/components/toast.tsx",
+    "packages/resourceportal-web/src/components/design-system/confirm-action.test.tsx",
+  ];
+  for (const path of paths) {
+    const selected = selectProfiles([path]);
+    assert.ok(selected.profiles.includes("tenant-ux-patch"), path + " must select UI Fast Fix");
+    const executableCommands = commandsForProfiles(selected.profiles);
+    assert.ok(
+      executableCommands.some((command) => (
+        command[0] === "npm" &&
+        command.includes("--workspace") &&
+        command.includes("@resource-portal/web") &&
+        command.includes("test") &&
+        command.includes("src/components/design-system/confirm-action.test.tsx")
+      )),
+      path + " lacks executable modal focus, nesting and aria-live coverage",
+    );
+  }
+  assert.throws(() => commandsForProfiles(["unregistered-security-profile"]), /Unknown Fast Fix profile/);
 });

@@ -203,7 +203,10 @@ const commands = {
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
       "src/pages/network-status-display.test.ts", "src/lib/billing-display.test.ts",
-      "src/lib/compute-estimate.test.ts", "src/lib/role-capabilities.test.ts"],
+      "src/lib/compute-estimate.test.ts", "src/lib/role-capabilities.test.ts",
+      // Dialog, nested focus and aria-live notifications belong to this
+      // profile for *every* change to Dialog, ToastViewport or their tests.
+      "src/components/design-system/confirm-action.test.tsx"],
   ],
   "bug-reports": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/bug-reports/bug-reports.service.spec.ts", "src/mcp/admin-mcp-protocol.service.spec.ts"],
@@ -559,6 +562,21 @@ export function selectProfiles(paths) {
   };
 }
 
+/**
+ * Resolve the actual executable commands for selected Fast Fix profiles.
+ * Tests use the same helper as --run, so merely mapping a changed file to
+ * a profile cannot silently omit that file's regression fixture.
+ */
+export function commandsForProfiles(profiles) {
+  const selected = new Map();
+  for (const profile of profiles) {
+    const entries = commands[profile];
+    if (!entries) throw new Error("Unknown Fast Fix profile: " + profile);
+    for (const command of entries) selected.set(JSON.stringify(command), command);
+  }
+  return [...selected.values()];
+}
+
 function readArg(flag) {
   const idx = process.argv.indexOf(flag);
   return idx === -1 ? undefined : process.argv[idx + 1];
@@ -586,12 +604,9 @@ if (process.argv[1]?.endsWith("fastfix-test-plan.mjs")) {
     "",
   ].join("\n"));
   if (process.argv.includes("--run")) {
-    const selected = new Map();
-    for (const profile of plan.profiles) {
-      for (const command of commands[profile]) {
-        selected.set(JSON.stringify(command), command);
-      }
-    }
+    const selected = new Map(
+      commandsForProfiles(plan.profiles).map((command) => [JSON.stringify(command), command]),
+    );
     // Mandatory for every patch; scoped tests must never suppress dependency audit.
     selected.set("mandatory-dependency-audit", ["npm", "audit", "--audit-level=high"]);
     for (const command of selected.values()) {
