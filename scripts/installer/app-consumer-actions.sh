@@ -30,18 +30,60 @@ rp_app_action_execution_state() {
   tmp="$(umask 077; mktemp -d)" || return 1
   printf '{"pagination":{"limit":100}}\n' >"$tmp/request"
   if ! rp_app_action_http POST /v2/actions/executions/search "$tmp/result" "$tmp/request"; then
+    printf 'ZITADEL Actions V2 execution search failed (HTTP, authorization or transport).\n' >&2
     rm -rf -- "$tmp"; return 1
   fi
   result="$(jq -er --arg id "$id" '
-    if (.executions | type) != "array" or
-       ((.pagination.totalResult | tonumber) != (.executions|length)) or
-       (.executions|length) > 100 then error("incomplete") else
-      [.executions[] | select(.condition.function.name == "preaccesstoken")] as $e |
-      if ($e|length) == 0 then "none"
-      elif ($e|length) == 1 and $e[0].targets == [$id] then "ours"
-      else "conflict" end
+    # ZITADEL may omit BOTH result fields for an empty page. Accept this
+    # only with a verified full applied limit; a partially missing, malformed
+    # or truncated result must never be mistaken for no global execution.
+    def uint: if type == "number" then . >= 0 and . == floor
+              elif type == "string" then test("^(0|[1-9][0-9]*)$")
+              else false end;
+    def number_value: if type == "number" then . else tonumber end;
+    if type != "object" or (.pagination | type) != "object" then
+      error("invalid response shape")
+    else
+      . as $response |
+      ($response.pagination.appliedLimit // null) as $limit |
+      if $limit != null and
+         (($limit | uint | not) or ($limit | number_value) < 1 or
+          ($limit | number_value) > 100) then
+        error("invalid applied limit")
+      elif ($response | has("executions") | not) and
+           ($response.pagination | has("totalResult") | not) then
+        if $limit != null and ($limit | number_value) == 100 then
+          "none"
+        else error("unverified empty page") end
+      elif ($response.executions | type) != "array" or
+           ($response.pagination | has("totalResult") | not) or
+           ($response.pagination.totalResult | uint | not) or
+           (($response.pagination.totalResult | number_value) !=
+            ($response.executions | length)) or
+           ($response.executions | length) > 100 or
+           ($limit != null and
+             ($response.executions | length) > ($limit | number_value)) then
+        error("incomplete execution list")
+      else
+        # Reject entries without a recognizable function identifier; they
+        # could otherwise conceal an issuer-global preaccesstoken binding.
+        if any($response.executions[];
+               (.condition.function.name | type) != "string" or
+               (.condition.function.name | length) == 0) then
+          error("invalid execution condition")
+        else
+          [$response.executions[] |
+           select(.condition.function.name == "preaccesstoken")] as $e |
+          if ($e | length) == 0 then "none"
+          elif ($e | length) == 1 and $e[0].targets == [$id] then "ours"
+          else "conflict" end
+        end
+      end
     end
-  ' "$tmp/result" 2>/dev/null)" || { rm -rf -- "$tmp"; return 1; }
+  ' "$tmp/result" 2>/dev/null)" || {
+    printf 'ZITADEL Actions V2 execution search returned an invalid or incomplete page; refusing provisioning.\n' >&2
+    rm -rf -- "$tmp"; return 1
+  }
   rm -rf -- "$tmp"
   printf -v "$resultvar" '%s' "$result"
 }
