@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type ClipboardEvent,
@@ -24,6 +25,7 @@ export function BugReportDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [description, setDescription] = useState("");
   const [url, setUrl] = useState("");
   const [image, setImage] = useState<File>();
@@ -71,6 +73,11 @@ export function BugReportDialog({
     return true;
   }
 
+  function removeImage() {
+    setImage(undefined);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  }
+
   function chooseImage(event: ChangeEvent<HTMLInputElement>) {
     const accepted = acceptImage(event.target.files?.[0]);
     if (!accepted) event.target.value = "";
@@ -84,7 +91,9 @@ export function BugReportDialog({
     const file = item.getAsFile();
     if (!file) return;
     event.preventDefault();
-    acceptImage(file);
+    if (acceptImage(file) && imageInputRef.current) {
+      imageInputRef.current.value = "";
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -108,7 +117,7 @@ export function BugReportDialog({
       }
       await apiRequest("/api/bug-reports", { method: "POST", body });
       setDescription("");
-      setImage(undefined);
+      removeImage();
       toast.success(
         "Bug report sent.",
         "The report is now available to Global Admins for triage.",
@@ -187,6 +196,7 @@ export function BugReportDialog({
           hint="Optional. Choose a PNG, JPEG, GIF or WebP up to 3 MB, or paste an image from the clipboard with Ctrl/Cmd+V."
         >
           <input
+            ref={imageInputRef}
             aria-label="Bug image"
             type="file"
             accept="image/png,image/jpeg,image/gif,image/webp"
@@ -203,7 +213,7 @@ export function BugReportDialog({
               <button
                 type="button"
                 className="font-semibold text-[#0F56A7] hover:underline"
-                onClick={() => setImage(undefined)}
+                onClick={removeImage}
               >
                 Remove
               </button>

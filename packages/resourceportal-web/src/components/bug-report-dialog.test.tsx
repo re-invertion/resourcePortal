@@ -67,3 +67,26 @@ it("accepts an image pasted from the clipboard", async () => {
   expect(await screen.findByAltText("Bug attachment preview")).toBeTruthy();
   expect(screen.getByText("clipboard.png")).toBeTruthy();
 });
+
+it("clears the native file input when removing an attachment so the same file can be chosen again", async () => {
+  vi.stubGlobal("URL", {
+    ...URL,
+    createObjectURL: vi.fn(() => "blob:preview"),
+    revokeObjectURL: vi.fn(),
+  });
+  const file = new File(["screenshot"], "screenshot.png", { type: "image/png" });
+  render(<BugReportDialog open onClose={vi.fn()} />);
+
+  const input = screen.getByLabelText("Bug image") as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await screen.findByAltText("Bug attachment preview")).toBeTruthy();
+  expect(input.files?.[0]).toBe(file);
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  expect(input.value).toBe("");
+  expect(input.files?.length).toBe(0);
+  expect(screen.queryByAltText("Bug attachment preview")).toBeNull();
+
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await screen.findByAltText("Bug attachment preview")).toBeTruthy();
+});
