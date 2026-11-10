@@ -65,6 +65,39 @@ describe("Gateway dynamic lease policy (not part of Swarm service spec)", () => 
     expect(boundLanSource(applyGateLeaseSnapshot(required,provisioning,now+46_000)
       .remoteLanAttachments[0],now+46_000)).toBeNull();
   });
+  it("keeps the first freshly Active v4 attachment online before offline lease issuance",()=>{
+    const required = {...config, remoteLanAttachments:[{
+      ...app, status:"Active", authorizationRequired:true,
+      verifiedAddress:"192.168.60.51",
+      leaseExpiresAt:new Date(now+3_600_000).toISOString(),
+    }]};
+    const justActivated={...snapshot, grants:[{...grant,authorizationExpiresAt:null}]};
+    expect(validateGateLeaseSnapshot(justActivated,required,now)).toBe(true);
+    const live=applyGateLeaseSnapshot(required,justActivated,now);
+    expect(boundLanSource(live.remoteLanAttachments[0],now)).toEqual({
+      ip:"192.168.60.51",timeoutSeconds:43,
+    });
+    const after=applyGateLeaseSnapshot(required,justActivated,now+46_000);
+    expect(after.remoteLanAttachments[0].status).toBe("Provisioning");
+    expect(boundLanSource(after.remoteLanAttachments[0],now+46_000)).toBeNull();
+    // No verified lease snapshot may reuse the DB's nominal 1-hour
+    // DHCP address reservation to bypass actual authorization expiry.
+    expect(boundLanSource(applyGateLeaseSnapshot(required,null,now)
+      .remoteLanAttachments[0],now)).toBeNull();
+  });
+  it("keeps freshly Active static IPv4 online only for fresh proof without offline lease",()=>{
+    const required={...config,remoteLanAttachments:[{
+      ...app,addressMode:"Static" as const,staticAddress:"192.168.60.60/24",
+      status:"Active",authorizationRequired:true,
+    }]};
+    const unleased={...snapshot,grants:[{...grant,authorizationExpiresAt:null}]};
+    expect(boundLanSource(applyGateLeaseSnapshot(required,unleased,now)
+      .remoteLanAttachments[0],now)).toEqual({
+      ip:"192.168.60.60",timeoutSeconds:45,
+    });
+    expect(boundLanSource(applyGateLeaseSnapshot(required,unleased,now+46_000)
+      .remoteLanAttachments[0],now+46_000)).toBeNull();
+  });
   it("retains the same Gate v4 lease snapshot across API downtime but not beyond original expiry",()=>{
     const required={...config,remoteLanAttachments:[{
       ...app,authorizationRequired:true,
@@ -123,7 +156,9 @@ describe("Gateway dynamic lease policy (not part of Swarm service spec)", () => 
     const required = { ...fixed, remoteLanAttachments:
       [{ ...fixed.remoteLanAttachments[0], authorizationRequired:true }] };
     expect(boundLanSource(applyGateLeaseSnapshot(required, snapshot, now)
-      .remoteLanAttachments[0], now)).toBeNull();
+      .remoteLanAttachments[0], now)).toEqual({
+      ip:"192.168.60.60",timeoutSeconds:45,
+    });
     const authenticated = applyGateLeaseSnapshot(required,
       { ...snapshot, grants: [{ ...grant,
         authorizationExpiresAt: new Date(now + 100_000).toISOString() }] }, now);

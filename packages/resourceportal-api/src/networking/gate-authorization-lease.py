@@ -18,8 +18,7 @@ import time
 STATE_DIR = Path("/run/resourceportal-gate")
 LEASE_FILE = STATE_DIR / "authorization.json"
 GATE_STATE = Path("/etc/resourceportal-gate/state.json")
-L2_STATE = Path("/var/lib/resourceportal-gate/lan-state.json")
-# The L2 agent's actual state location is resolved independently below.
+L2_STATE = Path("/etc/resourceportal-gate/lan-state.json")
 LAN_AGENT = "/usr/local/sbin/resourceportal-gate-lan.py"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 MAX_TTL_SECONDS = 600
@@ -69,7 +68,8 @@ def read():
         # A lease is valid only for the EXACT locally applied revision and
         # application identity; a newer server policy cannot inherit it.
         local = json.loads(L2_STATE.read_text(encoding="utf-8"))
-        if local.get("gateId") != state.get("gateId") or                 local.get("tenantId") != state.get("tenantId"):
+        if (local.get("gateId") != state.get("gateId") or
+                local.get("tenantId") != state.get("tenantId")):
             return None
         attached = local.get("attachments")
         if not isinstance(attached, dict) or len(attached) != len(state["grants"]):
@@ -142,10 +142,22 @@ def renew(response, nonce):
 
 def revoke():
     # Always revoke RP-owned resources, never the physical managed uplink.
-    subprocess.run([sys.executable, LAN_AGENT, "--revoke-all"], timeout=20, check=True,
-                   stdout=subprocess.DEVNULL)
-    subprocess.run(["wg-quick", "down", "rp-gate"], timeout=20, check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    failure = None
+    try:
+        subprocess.run([sys.executable, LAN_AGENT, "--revoke-all"],
+                       timeout=20, check=True, stdout=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure = exc
+    # The RP-owned WireGuard interface must be torn down even if bridge
+    # cleanup fails. Preserve failure so the watchdog keeps retrying cleanup.
+    try:
+        subprocess.run(["wg-quick", "down", "rp-gate"], timeout=20,
+                       check=False, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        failure = failure or exc
+    if failure:
+        raise failure
 
 
 def watch():
@@ -158,8 +170,13 @@ def watch():
         elif had_lease or LEASE_FILE.exists():
             # A stale/corrupted/replayed lease cannot keep forwarding enabled.
             clear()
-            revoke()
-            had_lease = False
+            try:
+                revoke()
+                had_lease = False
+            except (OSError, subprocess.SubprocessError):
+                # Do not exit or forget a failed revoke; keep retrying and
+                # rely on independently expiring kernel source-set entries.
+                had_lease = True
         time.sleep(0.2)
 
 

@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+import subprocess
 from unittest.mock import patch
 
 
@@ -11,6 +13,16 @@ MODULE = Path(__file__).resolve().parents[1] / "packages/resourceportal-api/src/
 spec = importlib.util.spec_from_file_location("gate_authorization_lease", MODULE)
 lease = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lease)
+
+# The local-state pathname is a security boundary: unlike unit tests that
+# inject temporary paths, the installed Gate agent and watchdog MUST read
+# the exact same persistent state file.
+ORIGINAL_L2_STATE = lease.L2_STATE
+LAN_AGENT_MODULE = MODULE.with_name("gate-lan-agent.py")
+lan_spec = importlib.util.spec_from_file_location("gate_lan_agent_422", LAN_AGENT_MODULE)
+lan = importlib.util.module_from_spec(lan_spec)
+sys.modules[lan_spec.name] = lan
+lan_spec.loader.exec_module(lan)
 
 GATE = "aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb"
 TENANT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -31,6 +43,10 @@ RESPONSE = {"gateId": GATE, "tenantId": TENANT, "lanAttachmentProtocol": 1,
 
 
 class GateLeaseTests(unittest.TestCase):
+    def test_production_state_path_matches_installed_lan_agent(self):
+        self.assertEqual(ORIGINAL_L2_STATE, lan.STATE)
+        self.assertEqual(ORIGINAL_L2_STATE, Path("/etc/resourceportal-gate/lan-state.json"))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -101,6 +117,37 @@ class GateLeaseTests(unittest.TestCase):
                 lease.watch()
             revoked.assert_called_once_with()
         self.assertIsNone(lease.read())
+        self.assertFalse(lease.LEASE_FILE.exists())
+
+    def test_failed_lan_cleanup_still_shuts_down_wireguard(self):
+        commands = []
+        def local_run(argv, **_kwargs):
+            commands.append(argv)
+            if "--revoke-all" in argv:
+                raise subprocess.TimeoutExpired("lan-agent", 20)
+            return subprocess.CompletedProcess(argv, 0)
+        with patch.object(lease.subprocess, "run", side_effect=local_run):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                lease.revoke()
+        self.assertEqual(len(commands), 2)
+        self.assertIn("--revoke-all", commands[0])
+        self.assertEqual(commands[1], ["wg-quick", "down", "rp-gate"])
+
+    def test_watchdog_retries_failed_revocation_and_always_attempts_wireguard_down(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        self.t = 701
+        ticks = 0
+        def step(_):
+            nonlocal ticks
+            ticks += 1
+            if ticks == 2:
+                raise StopIteration("end after retry")
+        with patch.object(lease.time, "sleep", side_effect=step), \
+             patch.object(lease, "revoke",
+                          side_effect=[subprocess.TimeoutExpired("lan-agent", 20), None]) as revoke:
+            with self.assertRaises(StopIteration):
+                lease.watch()
+            self.assertEqual(revoke.call_count, 2)
         self.assertFalse(lease.LEASE_FILE.exists())
 
     def test_revision_change_or_locally_removed_attachment_invalidates_lease(self):

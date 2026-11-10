@@ -53,10 +53,22 @@ export function validateGateLeaseSnapshot(
     if (v4 && grant.status === "Active") {
       const end = grant.authorizationExpiresAt ?
         Date.parse(grant.authorizationExpiresAt) : NaN;
-      // An old signed-at-ingress snapshot may be replayed, but it can never
-      // extend the originally approved authorization or manufacture a lease.
-      if (!Number.isFinite(end) || end > issued + maxAge ||
-          end <= issued) return false;
+      if (Number.isFinite(end)) {
+        // Existing offline grants cannot grow past their original server
+        // authorization window, regardless of a newer worker poll.
+        if (end > issued + maxAge || end <= issued) return false;
+      } else {
+        // A newly Active attachment (or another attachment being added) may
+        // have no offline grant yet. Allow a fresh authenticated observation
+        // for at most the original 45s live-proof window; never replay it
+        // throughout the 600s offline lease window.
+        const verified = grant.lastVerifiedAt ?
+          Date.parse(grant.lastVerifiedAt) : NaN;
+        if (grant.authorizationExpiresAt != null ||
+            !Number.isFinite(verified) || verified > now + 5_000 ||
+            now - verified >= REMOTE_LAN_PROOF_MAX_AGE_MS ||
+            now - issued >= REMOTE_LAN_PROOF_MAX_AGE_MS) return false;
+      }
     }
     seen.add(grant.attachmentId);
   }
@@ -69,7 +81,24 @@ export function validateGateLeaseSnapshot(
 export function applyGateLeaseSnapshot(
   base: GateRuntimeConfig, snapshot: GateLeaseSnapshot | null, now = Date.now(),
 ): GateRuntimeConfig {
-  if (!snapshot || !validateGateLeaseSnapshot(snapshot, base, now)) return base;
+  // The Swarm stack contains DB-derived address hints for provisioning,
+  // NOT an independent authorization to forward IPv4. A missing, stale or
+  // mismatched v4 runtime snapshot must never reactivate those hints.
+  const revokeUnverified = (item: GateRuntimeLanAttachment): GateRuntimeLanAttachment =>
+    item.authorizationRequired ? {
+      ...item, status: "Provisioning", verifiedAddress: null,
+      leaseExpiresAt: null, authorizationExpiresAt: null,
+    } : item;
+  if (!snapshot || !validateGateLeaseSnapshot(snapshot, base, now)) {
+    // Preserve legacy v3 behavior; v4 alone adopts fail-closed data-plane
+    // authorization on missing runtime snapshots.
+    if (!base.remoteLanAttachments.some(item => item.authorizationRequired))
+      return base;
+    return {
+      ...base,
+      remoteLanAttachments: base.remoteLanAttachments.map(revokeUnverified),
+    };
+  }
   const byId = new Map(snapshot.grants.map(a => [a.attachmentId, a]));
   return {
     ...base,
@@ -92,12 +121,11 @@ export function applyGateLeaseSnapshot(
           Date.parse(grant.authorizationExpiresAt) : NaN;
         // A static address is configured in the signed policy, but its
         // actual forwarding must still be clipped by the offline TTL.
-        if (!Number.isFinite(until) || until <= now + 1_000 ||
-            until > now + 600_000) return {
-              ...item, status: "Provisioning", authorizationExpiresAt: null,
-            };
+        const liveExpiry = Date.parse(snapshot.issuedAt) + REMOTE_LAN_PROOF_MAX_AGE_MS;
+        const end = Number.isFinite(until) ? until : liveExpiry;
+        if (end <= now + 1_000 || end > now + 600_000) return revokeUnverified(item);
         return { ...item, status:"Active", authorizationExpiresAt:
-          new Date(until).toISOString() };
+          new Date(end).toISOString() };
       }
       if (item.addressMode !== "DHCP") return item;
       const verifiedAt = grant.lastVerifiedAt ? Date.parse(grant.lastVerifiedAt) : NaN;
@@ -106,13 +134,14 @@ export function applyGateLeaseSnapshot(
         Date.parse(grant.authorizationExpiresAt) : NaN;
       // New v4 proof can continue only inside an already issued bounded
       // authorization window. Legacy v3 is still limited to fresh 45s proof.
-      const maxExpiry = Number.isFinite(authExpiry) && authExpiry <= now + 600_000
-        ? authExpiry : verifiedAt + REMOTE_LAN_PROOF_MAX_AGE_MS;
+      const liveExpiry = Math.min(verifiedAt + REMOTE_LAN_PROOF_MAX_AGE_MS,
+        Date.parse(snapshot.issuedAt) + REMOTE_LAN_PROOF_MAX_AGE_MS);
+      const maxExpiry = Number.isFinite(authExpiry) ? authExpiry : liveExpiry;
       if (!Number.isFinite(verifiedAt) || verifiedAt > now + 5_000 ||
           !Number.isFinite(maxExpiry) || !Number.isFinite(dhcpExpiry))
-        return item;
+        return revokeUnverified(item);
       const expiry = Math.min(maxExpiry, dhcpExpiry);
-      if (expiry <= now + 1_000) return item;
+      if (expiry <= now + 1_000) return revokeUnverified(item);
       return { ...item, status: "Active", verifiedAddress: grant.verifiedAddress,
         leaseExpiresAt: new Date(expiry).toISOString() };
     }),

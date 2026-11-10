@@ -250,7 +250,7 @@ def bound_source(item: dict):
             return None
         if ip.version != 4 or ip.network != net:
             return None
-        timeout = (min(45, authorization_remaining(item) or 45)
+        timeout = ((authorization_remaining(item) or 45)
                    if item.get("authorizationRequired") else None)
     elif address_mode == "DHCP" and item.get("status") == "Active":
         raw = item.get("verifiedAddress")
