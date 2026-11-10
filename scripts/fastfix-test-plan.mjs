@@ -133,6 +133,7 @@ const commands = {
     ["python3", "test/installer/test-remote-lan-dhcp.py"],
     ["bash", "-n", "scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"],
     ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_gate*.py", "-v"],
+    ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_remote_lan_lease_soak.py", "-v"],
   ],
   "web-console": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
@@ -512,6 +513,8 @@ const classifiers = [
 
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^scripts\/run-remote-lan-l2-dhcp-smoke\.sh$/, ["networking", "workflow"]],
+  [/^scripts\/remote-lan-lease-soak\.py$/, ["networking", "security", "workflow"]],
+  [/^test\/test_remote_lan_lease_soak\.py$/, ["networking", "security", "workflow"]],
   // Running Gateway sysctl in real Swarm is networking and release-critical.
   [/^scripts\/run-remote-lan-gateway-sysctl-swarm-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],

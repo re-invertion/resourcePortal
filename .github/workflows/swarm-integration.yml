@@ -21,7 +21,7 @@ jobs:
     if: inputs.force_gate == true || github.event_name == 'workflow_dispatch'
     name: Installer + real Swarm smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -351,8 +351,37 @@ jobs:
         run: bash scripts/run-remote-lan-static-nsenter-smoke.sh
 
       - name: Run Remote LAN Attachment WireGuard + GRETAP + DHCP dataplane smoke
-        timeout-minutes: 8
-        run: bash scripts/run-remote-lan-l2-dhcp-smoke.sh
+        # The 443s no-renewal + >600s expiry experiment is intentionally
+        # limited to changes to the security-critical Gate authorization
+        # implementation. Ordinary PRs retain the fast smoke.
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          long=0
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            long=1
+          else
+            # PR/merge-group checkouts have a synthetic merge HEAD. Fetch
+            # one additional history layer for the base parent if shallow.
+            if ! git rev-parse --verify 'HEAD^1' >/dev/null 2>&1; then
+              git fetch --no-tags --deepen=2 origin "$GITHUB_REF" || true
+            fi
+            if git rev-parse --verify 'HEAD^1' >/dev/null 2>&1 &&
+               git rev-parse --verify 'HEAD^2' >/dev/null 2>&1; then
+              # Merge HEAD's first parent is the exact base. Failed diffs
+              # also select the security experiment rather than skipping it.
+              if ! git diff --name-only 'HEAD^1' HEAD > "$RUNNER_TEMP/lan-changed-files"; then
+                long=1
+              elif grep -Eq '^packages/resourceportal-api/src/networking/(gate-authorization-lease[.]py|gate-lan-agent[.]py|gate-installer[.]ts)$' "$RUNNER_TEMP/lan-changed-files"; then
+                long=1
+              fi
+            else
+              # Unknown or non-merge ancestry must never silently skip it.
+              long=1
+            fi
+          fi
+          echo "Remote LAN long-lease smoke selected: $long"
+          RP_LAN_LONG_LEASE_SMOKE="$long" bash scripts/run-remote-lan-l2-dhcp-smoke.sh
 
       - name: Run Device VPN real dataplane isolation smoke
         timeout-minutes: 8

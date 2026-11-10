@@ -163,3 +163,28 @@ application revokes RP-owned forwarding. It does not extend old authority.
 The two Gate Python consumers enforce the same 64,000-byte authorization
 file limit, sufficient for all 64 allowed attachment grants (including
 old/new transition scopes). A 65th attachment is rejected by the parser.
+
+## 443-second disposable dataplane soak in Real Swarm CI
+
+When a PR changes the Gate authorization helper, Gate LAN source enforcement or
+installer, the reusable real-Swarm workflow additionally runs the isolated
+Linux namespace smoke with RP_LAN_LONG_LEASE_SMOKE=1. It installs an actual
+nft source rule for one already bound DHCP client with a 600-second deadline,
+then **does not refresh the rule** for 443 real elapsed seconds. During that
+period an HA-like client in its own application namespace sends 90 distinct
+motion/click UDP events (45 of each) across two GRETAP ends over a live
+WireGuard underlay. The customer LAN namespace returns a payload-correlated
+acknowledgment for every event, proving bidirectional packet delivery.
+The experiment verifies that neither WG nor GRETAP interface was recreated,
+then waits past the original 600-second kernel deadline and requires real
+IPv4 and event delivery to stop. A fresh source authorization must restore
+connectivity. Regular PRs retain the quick smoke duration.
+
+This **only validates a deliberately silent control plane at the real
+kernel data-plane level**. It does *not* shut down the ResourcePortal API or
+churn actual Traefik, does not run real Home Assistant integrations, and
+does not constitute security sign-off on the 600-second revocation exposure.
+The separate full API/Traefik fault-injection and HA-like end-to-end acceptance
+scenario in issue #422 remains open until explicitly demonstrated. The
+CI experiment is disposable and must never be run on the production
+Raspberry Pi, Home Assistant or physical LAN.

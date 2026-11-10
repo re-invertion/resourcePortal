@@ -6,6 +6,11 @@ APP="rpa-$"; APP2="rp2-$"; RP="rpr-$"; GATE="rpg-$"; LAN="rpl-$"
 TMP="$(mktemp -d)"
 SERVER_KEY_APPARMOR=""
 CLIENT_KEY_APPARMOR=""
+# Full-duration kernel lease continuity only on explicitly selected changes.
+LONG_LEASE_SMOKE="$(printenv RP_LAN_LONG_LEASE_SMOKE 2>/dev/null || printf 0)"
+case "$LONG_LEASE_SMOKE" in 0|1) ;; *) echo "Invalid long lease smoke selector" >&2; exit 2;; esac
+DHCP_DURATION="5m"
+if [ "$LONG_LEASE_SMOKE" = 1 ]; then DHCP_DURATION="15m"; fi
 MAC="02:aa:bb:cc:dd:ee"; MAC2="02:aa:bb:cc:dd:ef"
 APP_IP="10.200.42.12"; RP_IP="10.200.42.20"
 APP2_IP="10.200.43.12"; RP2_IP="10.200.43.20"
@@ -33,6 +38,7 @@ for binary in ip nsenter wg dnsmasq busybox python3 ping nft; do
 done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$REPO_ROOT/test" -p "test_gate*py" -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$REPO_ROOT/test" -p "test_remote_lan_lease_soak.py" -v
 sudo -n true || fail "passwordless sudo required"
 read -r APP_DEV WAN_DEV APP_KEY WAN_KEY GATE_BRIDGE < <(python3 - <<'PY'
 import hashlib
@@ -222,7 +228,7 @@ if ! ns "$RP" ping -q -c 3 -W 2 -I wg0 "$CL_IP" >/dev/null 2>&1; then
 fi
 log "PASS STP forwarding and encrypted underlay readiness"
 ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces --interface=lan0 \
-  --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,5m \
+  --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,"$DHCP_DURATION" \
   --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" --dhcp-host="$MAC2,192.168.90.24" \
   --dhcp-leasefile="$TMP/dnsmasq.leases" --log-dhcp --log-facility=- \
   > "$TMP/dhcp.log" 2>&1 &
@@ -381,6 +387,58 @@ ns "$GATE" bridge fdb show dev "$WAN_DEV" | grep -qi "$MAC" ||
 ns "$GATE" bridge fdb show dev "$WAN2_DEV" | grep -qi "$MAC2" ||
   fail "second application MAC was not learned on its own Gate tunnel"
 log "PASS two independent application DHCP leases, MACs, ARP and encrypted tunnels"
+
+if [ "$LONG_LEASE_SMOKE" = 1 ]; then
+  # This real kernel WG/GRETAP test injects zero source-rule renewals. It
+  # exercises data-plane silence, not an actual RP API/Traefik shutdown.
+  log "Beginning 443s bidirectional HA-like event test with no control-plane renewals"
+  begin="$(python3 -c 'import time; print(time.monotonic())')"
+  wg_before="$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)"
+  gretap_before="$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 600)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "Missing initial LAN data plane for 443s test"
+
+  ready="$TMP/ha-event-listener-ready"
+  ns "$LAN" env RP_EVENT_READY="$ready" python3 -u     "$REPO_ROOT/scripts/remote-lan-lease-soak.py" receiver >"$TMP/events.log" 2>&1 &
+  server_pid="$!"
+  started=0
+  for attempt in $(seq 1 40); do
+    if [ -f "$ready" ]; then started=1; break; fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  [ "$started" -eq 1 ] || { cat "$TMP/events.log" >&2; fail "LAN event receiver unavailable"; }
+  ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" client --duration 443 ||
+    fail "443s bidirectional HA-like events interrupted"
+  [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+    fail "WireGuard was recreated during bounded control-plane silence"
+  [ "$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)" = "$gretap_before" ] ||
+    fail "GRETAP was recreated during bounded control-plane silence"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "No IPv4 forwarding after 443s of control-plane silence"
+  log "PASS uninterrupted 443s motion/click events, bidirectional encrypted L2, stable interfaces"
+
+  # Keep the original Gate nft deadline. Neither API failure nor this test
+  # may refresh the source before expiry; observe fail-closed after >600s.
+  python3 - "$begin" <<'PY_WAIT_LEASE'
+import sys,time
+start=float(sys.argv[1])
+time.sleep(max(0,608-(time.monotonic()-start)))
+PY_WAIT_LEASE
+  ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" denied ||
+    fail "Expired source still delivered HA-like events"
+  if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+    fail "Expired Gate nft source still forwards IPv4"
+  fi
+  log "PASS expiry stops IPv4 despite continued WireGuard/GRETAP availability"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 240)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "Freshly reauthorized source did not recover"
+  log "PASS recovery only after fresh source authorization"
+  kill "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+fi
 
 # Reuse the same encrypted WG/GRETAP application attachment to test Static
 # address transition. The customer LAN supplies another on-link IP/gateway;
