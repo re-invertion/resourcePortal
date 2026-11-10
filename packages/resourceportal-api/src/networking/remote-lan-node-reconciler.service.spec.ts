@@ -155,7 +155,7 @@ describe("Remote LAN node policy rollout",()=>{
         swarmNetworkName:"rp-network-"+legacyNetworkId},
       singleApp:{...row.singleApp,id:legacyAppId},
     };
-    const snapshot={version:1,attachments:[staleV4,freshV3].map((r,i)=>({
+    const snapshot={version:1,attachments:[staleV4,freshV3].map(r=>({
       attachmentId:r.id,tenantId:r.tenantId,singleAppId:r.singleAppId,
       gateId:r.gateId,networkName:r.network.swarmNetworkName,
       overlayCidr:r.network.overlayCidr,lanCidr:r.lanCidr,
