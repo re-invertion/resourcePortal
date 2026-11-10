@@ -22,6 +22,9 @@ export type RemoteLanAuthorizationLease = {
   issuedAtMs: number;
   ttlSeconds: number;
   grants: RemoteLanAuthorizationGrant[];
+  /** One-time authenticated instruction: keep only the exact previous
+   * LOCAL deadline, never turn an old grant into a fresh 600s renewal. */
+  retainExisting?: true;
 };
 export type LeaseProof = {
   attachmentId: string;
@@ -79,6 +82,68 @@ export function issueRemoteLanAuthorizationLease(input: {
     nonce: input.nonce!, issuedAtMs: now,
     ttlSeconds: REMOTE_LAN_AUTHORIZATION_TTL_MS / 1_000, grants,
   };
+}
+
+export type PersistedRemoteLanAuthorization = {
+  issuedAtMs: number;
+  grants: RemoteLanAuthorizationGrant[];
+};
+
+/** During the FIRST recovered heartbeat after an outage, the Gate can have
+ * fresh authenticated local L2 proof but stale DB activation timestamp.
+ * Do NOT replace the old, exact-scoped server grant with a new deadline.
+ * Carry only an unexpired previously approved grant for the exact unchanged
+ * full Active topology; bad/missing proofs or any revocation fail closed.
+ */
+export function retainedRemoteLanAuthorization(input: {
+  gate: {
+    gateId: string; tenantId: string; agentVersion?: string | null;
+    revokedAt?: Date | null; observedL2Diagnostic?: unknown;
+  };
+  candidates: readonly LeaseCandidate[];
+  proofs: readonly LeaseProof[];
+  now?: number;
+}): PersistedRemoteLanAuthorization | null {
+  const now = input.now ?? Date.now();
+  const {gate,candidates,proofs} = input;
+  if (gate.agentVersion !== "gate-l2-v4" || gate.revokedAt ||
+      candidates.length < 1 || candidates.length > 64 ||
+      proofs.length !== candidates.length) return null;
+  const original = gate.observedL2Diagnostic;
+  if (!original || typeof original !== "object" || Array.isArray(original))
+    return null;
+  const old = (original as Record<string,unknown>).authorizationLease;
+  if (!old || typeof old !== "object" || Array.isArray(old)) return null;
+  const stamp = old as {issuedAtMs?: unknown; grants?: unknown};
+  if (typeof stamp.issuedAtMs !== "number" ||
+      !Number.isSafeInteger(stamp.issuedAtMs) || !Array.isArray(stamp.grants) ||
+      stamp.grants.length !== candidates.length) return null;
+  const byId = new Map(proofs.map(item => [item.attachmentId,item]));
+  if (byId.size !== candidates.length ||
+      new Set(candidates.map(item=>item.attachmentId)).size !== candidates.length)
+    return null;
+  const grants: RemoteLanAuthorizationGrant[] = [];
+  for(const candidate of candidates) {
+    const proof = byId.get(candidate.attachmentId);
+    if (candidate.status !== "Active" || !proof ||
+        proof.tenantId !== candidate.tenantId ||
+        proof.gateId !== candidate.gateId ||
+        proof.singleAppId !== candidate.singleAppId ||
+        proof.configurationRevision !== candidate.configurationRevision ||
+        proof.macAddress.toLowerCase() !== candidate.macAddress.toLowerCase() ||
+        !proof.gatewayTunnelOwned || !proof.bridgeOwned ||
+        !proof.macLearnedOnTunnel) return null;
+    const grant:RemoteLanAuthorizationGrant = {
+      attachmentId:candidate.attachmentId,tenantId:candidate.tenantId,
+      gateId:candidate.gateId,singleAppId:candidate.singleAppId,
+      networkId:candidate.networkId,macAddress:candidate.macAddress,
+      configurationRevision:candidate.configurationRevision,
+    };
+    if (remoteLanAuthorizationExpiry(gate,grant,now) === null) return null;
+    grants.push(grant);
+  }
+  return {issuedAtMs:stamp.issuedAtMs,
+    grants:grants.sort((a,b)=>a.attachmentId.localeCompare(b.attachmentId))};
 }
 
 /** The worker must never derive a new deadline from updated heartbeat time.

@@ -758,6 +758,41 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
       ...payload(120),lanAttachmentProofs:[{...payload(120).lanAttachmentProofs[0],tenantId:gateId}],
     })).rejects.toThrow(/Untrusted or stale Gate attachment proof/);
   });
+  it("persists the original v4 deadline when the first recovered heartbeat cannot reissue it",async()=>{
+    const {service,prisma}=fixture();
+    const now=Date.now(), issuedAtMs=now-443_000;
+    const old=currentGate.remoteLanAttachments[0];
+    const grant={attachmentId:old.id,tenantId,gateId,
+      singleAppId:old.singleAppId,networkId:old.networkId,
+      macAddress:old.macAddress,configurationRevision:2};
+    const gate={...currentGate,agentVersion:"gate-l2-v4",
+      observedL2Diagnostic:{authorizationLease:{issuedAtMs,grants:[grant]}}};
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(gate);
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([{
+      id:old.id,tenantId,gateId,singleAppId:old.singleAppId,
+      networkId:old.networkId,macAddress:old.macAddress,
+      configurationRevision:2,status:"Active",
+      lastVerifiedAt:new Date(issuedAtMs),
+    }])};
+    const dto={agentVersion:"gate-l2-v4" as const,
+      leaseNonce:"c".repeat(64),lanAttachmentProofs:[{
+        source:"gate-agent" as const,attachmentId:old.id,tenantId,gateId,
+        singleAppId:old.singleAppId,configurationRevision:2,
+        macAddress:old.macAddress,observedAtMs:now-1_000,
+        handshakeAtMs:now-1_000,gatewayTunnelOwned:true,bridgeOwned:true,
+        macLearnedOnTunnel:true,
+      }]};
+    const response=await service.gateHeartbeat("Bearer "+gateToken,dto);
+    // No new 600s authorization is issued solely because API recovered.
+    expect(response.authorizationLease?.grants).toEqual([]);
+    expect(response.authorizationLease?.retainExisting).toBe(true);
+    const persisted=(prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0]
+      .data.observedL2Diagnostic.authorizationLease;
+    expect(persisted).toEqual({issuedAtMs,grants:[grant]});
+    expect(persisted.issuedAtMs+600_000-now).toBeLessThan(160_000);
+    expect(persisted.issuedAtMs+600_000-now).toBeGreaterThan(150_000);
+  });
   it("never publishes grants after Gate token revocation",async()=>{
     const {service,prisma}=fixture();
     (prisma.resourcePortalGate.findUnique as any).mockResolvedValue({...currentGate,revokedAt:new Date()});

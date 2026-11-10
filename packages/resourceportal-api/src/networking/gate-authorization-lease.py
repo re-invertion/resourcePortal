@@ -229,10 +229,17 @@ def begin_transition(response, nonce):
                     for aid, item in current.get("attachments", {}).items()]
     else:
         previous = prior["grants"] if prior else []
+    # A *verified, unexpired local lease* may need to survive the first
+    # recovered 200 while DB activation proof catches up. Its ORIGINAL
+    # monotonic deadline is kept alongside the short transition, never
+    # synthesized from server wall time or the current heartbeat.
+    prior_lease = ({"deadline": prior["deadline"], "grants": prior["grants"]}
+                   if prior and prior.get("mode", "lease") == "lease" else None)
     store({"protocol": 1, "mode": "transition", "bootId": boot_id(),
            "gateId": config["gateId"], "tenantId": response["tenantId"],
            "deadline": boot_time() + LIVE_TTL_SECONDS,
-           "grants": scoped, "previous": previous})
+           "grants": scoped, "previous": previous,
+           "previousLease": prior_lease})
 
 
 def renew(response, nonce):
@@ -286,11 +293,44 @@ def renew(response, nonce):
         return False
     if len(seen) != len(expected):
         scoped = scoped_live_policy(expected)
+        if "retainExisting" in lease and lease["retainExisting"] is not True:
+            raise ValueError("Invalid existing-lease retention instruction")
+        if lease.get("retainExisting") is True:
+            # This directive is issued ONLY when the server has verified the
+            # exact original full topology plus fresh owned L2 proof. Never
+            # renew the deadline, never accept changed/new/revoked attachments.
+            transition = read(allow_live=True)
+            prior = transition.get("previousLease") if (
+                transition and transition.get("mode") == "transition") else None
+            if prior is not None:
+                deadline = prior.get("deadline") if isinstance(prior, dict) else None
+                prior_grants = prior.get("grants") if isinstance(prior, dict) else None
+                if (type(deadline) not in (int, float) or
+                        not 0 < deadline - boot_time() <= MAX_TTL_SECONDS or
+                        not isinstance(prior_grants, list) or
+                        len(prior_grants) != len(scoped) or
+                        any(item.get("status") != "Active" for item in expected)):
+                    raise ValueError("Untrusted old lease retention")
+                current_scope = [{k: item[k] for k in (
+                    "attachmentId", "singleAppId", "networkId",
+                    "configurationRevision", "macAddress")} for item in prior_grants
+                    if isinstance(item, dict) and
+                    item.get("gateId") == config["gateId"] and
+                    item.get("tenantId") == response["tenantId"]]
+                if (len(current_scope) != len(scoped) or
+                        sorted(current_scope, key=lambda item: item["attachmentId"]) != scoped):
+                    raise ValueError("Old authorization differs from current topology")
+                store({"protocol": 1, "mode": "lease", "bootId": boot_id(),
+                       "gateId": config["gateId"], "tenantId": response["tenantId"],
+                       "deadline": deadline, "grants": prior_grants})
+                return True
         store({"protocol": 1, "mode": "live", "bootId": boot_id(),
                "gateId": config["gateId"], "tenantId": response["tenantId"],
                "deadline": boot_time() + LIVE_TTL_SECONDS,
                "grants": scoped})
         return False
+    if "retainExisting" in lease:
+        raise ValueError("Complete new grant must not retain an old lease")
     store({"protocol": 1, "mode": "lease", "bootId": boot_id(), "gateId": config["gateId"],
            "tenantId": response["tenantId"], "deadline": boot_time() + ttl,
            "grants": sorted(grants, key=lambda item: item["attachmentId"])})

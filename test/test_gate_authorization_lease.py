@@ -292,6 +292,60 @@ class GateLeaseTests(unittest.TestCase):
         self.t = 146
         self.assertIsNone(lease.read(allow_live=True))
 
+    def test_recovered_heartbeat_keeps_original_offline_deadline_without_renewal(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        original = lease.read()["deadline"]
+        self.t = 543  # 443 seconds into a 600s previously signed grant
+        recovered = deepcopy(RESPONSE)
+        recovered["authorizationLease"]["grants"] = []
+        recovered["authorizationLease"]["retainExisting"] = True
+        lease.begin_transition(recovered, NONCE)
+        self.assertIsNone(lease.read())  # transition never grants offline access
+        self.assertEqual(lease.read(allow_live=True)["mode"], "transition")
+        self.assertTrue(lease.renew(recovered, NONCE))
+        self.assertEqual(lease.read()["deadline"], original)
+        self.t = 650  # Another HTTPS interruption after the recovered 200
+        self.assertEqual(lease.read()["deadline"], original)
+        # Even several additional authenticated recoveries may not move
+        # the original deadline forward by a single second.
+        lease.begin_transition(recovered, NONCE)
+        self.assertTrue(lease.renew(recovered, NONCE))
+        self.assertEqual(lease.read()["deadline"], original)
+        self.t = 701
+        self.assertIsNone(lease.read())  # No extension beyond the ORIGINAL 600s
+
+    def test_old_grant_retention_cannot_upgrade_revision_or_revoke_scope(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        self.t = 543
+        retained = deepcopy(RESPONSE)
+        retained["authorizationLease"]["grants"] = []
+        retained["authorizationLease"]["retainExisting"] = True
+        changed = deepcopy(retained)
+        changed["lanAttachments"][0]["configurationRevision"] = 3
+        lease.begin_transition(changed, NONCE)
+        local=json.loads(lease.L2_STATE.read_text())
+        local["attachments"][ATTACHMENT]["configurationRevision"] = 3
+        lease.L2_STATE.write_text(json.dumps(local))
+        with self.assertRaises(ValueError):
+            lease.renew(changed, NONCE)
+        self.assertIsNone(lease.read())  # Invalid revision never recovers old lease
+
+        # New session from verified matching state: an explicit Provisioning
+        # attachment is NOT the complete previously authorized topology.
+        self.t = 100
+        local["attachments"][ATTACHMENT]["configurationRevision"] = 2
+        lease.L2_STATE.write_text(json.dumps(local))
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        partial = deepcopy(retained)
+        partial["lanAttachments"][0]["status"] = "Provisioning"
+        lease.begin_transition(partial, NONCE)
+        with self.assertRaises(ValueError):
+            lease.renew(partial, NONCE)
+        self.assertIsNone(lease.read())
+        with self.assertRaises(ValueError):
+            lease.renew({**RESPONSE, "authorizationLease":{
+                **RESPONSE["authorizationLease"],"retainExisting":True}}, NONCE)
+
     def test_transition_covers_old_and_new_state_before_live_only_renewal(self):
         self.assertTrue(lease.renew(RESPONSE, NONCE))
         newer = deepcopy(RESPONSE)

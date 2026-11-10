@@ -1,4 +1,4 @@
-import { REMOTE_LAN_AUTHORIZATION_TTL_MS, issueRemoteLanAuthorizationLease } from "./remote-lan-authorization-lease";
+import { REMOTE_LAN_AUTHORIZATION_TTL_MS, issueRemoteLanAuthorizationLease, retainedRemoteLanAuthorization } from "./remote-lan-authorization-lease";
 import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import {
   BadRequestException,
@@ -1131,11 +1131,30 @@ export class NetworkingService {
     const complete = desired.length > 0 &&
       desired.every(a=>a.status==="Active") &&
       proposedLease?.grants.length === desired.length;
-    const authorizationLease = proposedLease ?
-      { ...proposedLease, grants:complete ? proposedLease.grants : [] } : null;
+    // The first good heartbeat after a <=600s transport outage may have
+    // fresh authenticated L2 proofs but a stale DB activation timestamp.
+    // The Gate still owns its exact original lease; dropping the persisted
+    // stamp here would let the Gateway worker revoke an otherwise live path.
+    // Retention NEVER uses now as issuedAt and NEVER adds a missing grant.
+    const previousStamp = dto.agentVersion === "gate-l2-v4" &&
+      authorized.length === desired.length ?
+      retainedRemoteLanAuthorization({
+        gate: {gateId:gate.id,tenantId:gate.tenantId,
+          agentVersion:gate.agentVersion,revokedAt:gate.revokedAt,
+          observedL2Diagnostic:gate.observedL2Diagnostic},
+        candidates:desired.map(a=>({...a,attachmentId:a.id})),
+        proofs:bound,now,
+      }) : null;
+    const authorizationLease = proposedLease ? {
+      ...proposedLease, grants:complete ? proposedLease.grants : [],
+      // Only a fresh, complete L2 proof and the exact original server
+      // authorization permit the Gate to retain its *local* old deadline.
+      // A partial change, revocation or negative proof never opts in.
+      ...(complete || !previousStamp ? {} : {retainExisting:true as const}),
+    } : null;
     const authorizedLeaseStamp = authorizationLease && authorizationLease.grants.length ?
       { issuedAtMs:authorizationLease.issuedAtMs,
-        grants:authorizationLease.grants } : null;
+        grants:authorizationLease.grants } : previousStamp;
     const updated = await this.prisma.resourcePortalGate.update({
       where: { id: gate.id },
       data: {

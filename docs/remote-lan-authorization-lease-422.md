@@ -203,3 +203,25 @@ completing teardown of a newly authenticated replacement tunnel.
 The lock inode is never renamed/unlinked. Lock acquisition failure aborts
 the agent (fail closed), and kernel nft source timers remain independent
 hard expiry enforcement. Legacy Gate v3 never receives a v4 offline grant.
+
+### The first recovered heartbeat must not destroy an existing grant
+
+After 443 seconds without API ingress, the last DB activation timestamp can
+be older than the 45-second proof freshness window even when the first
+authenticated resumed heartbeat contains CURRENT valid local Gate/Node proof.
+The API may not issue a new offline 600-second grant on stale historical
+activation evidence. Instead, if and ONLY if every desired attachment
+remains Active with the same Gate, tenant, app, network, MAC and revision
+AND complete fresh authenticated owned-L2 proof is supplied, the API
+retains the original persisted authorization stamp with its **unchanged**
+issuedAtMs. The nonce-bound heartbeat reply marks retainExisting=true.
+
+The physical Gate captured a verified prior local lease during its short
+transition mode. If that original local lease is still unexpired, the scope
+is EXACTLY unchanged and the new server response explicitly permits it,
+the Gate restores the old monotonic deadline rather than deriving any
+new duration from a recovered HTTPS heartbeat. The next transient 502
+may therefore continue the old tunnel only until the ORIGINAL deadline.
+A changed revision, revocation, new attachment, missing/negative proof,
+expired/rebooted lease, or wrong scope can never inherit the old grant.
+No caller may manufacture a new authorized lease from a recovery poll.
