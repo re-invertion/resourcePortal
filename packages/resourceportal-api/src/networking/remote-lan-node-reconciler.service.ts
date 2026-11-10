@@ -176,14 +176,15 @@ export class RemoteLanNodeReconcilerService {
     // an instruction to destroy a previously installed v4 attachment during
     // a short control-plane partition. Do not write any new service policy,
     // renew authorization or admit a new app from a stale observation.
-    const stale = rows.some(row => row.uplinkMode === "ManagedSharedUplink" &&
-      (() => {
-        try {
-          const o = verifiedManagedLan(row.gateId, row.lanInterface,
-            row.gate.observedLan, row.gate.observedLanAt);
-          return o.networkCidr !== row.lanCidr;
-        } catch { return true; }
-      })());
+    const managedObservationStale = (row: (typeof rows)[number]): boolean => {
+      if (row.uplinkMode !== "ManagedSharedUplink") return false;
+      try {
+        const observed = verifiedManagedLan(row.gateId, row.lanInterface,
+          row.gate.observedLan, row.gate.observedLanAt);
+        return observed.networkCidr !== row.lanCidr;
+      } catch { return true; }
+    };
+    const stale = rows.some(managedObservationStale);
     if (stale && featureOn) {
       const stack = this.config.get<string>("RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME",
         "resourceportal-control-plane");
@@ -217,11 +218,24 @@ export class RemoteLanNodeReconcilerService {
               row.network.tenantId !== row.tenantId ||
               row.singleApp.appGroup.tenantId !== row.tenantId ||
               row.singleApp.pendingDeletion || row.singleApp.desiredReplicas !== 1 ||
-              remoteLanAuthorizationExpiry({ ...row.gate, gateId:row.gate.id },{
-                attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
-                singleAppId:row.singleAppId,networkId:row.networkId,
-                macAddress:row.macAddress,configurationRevision:row.configurationRevision,
-              },now)===null) return true;
+              !["gate-l2-v3","gate-l2-v4"].includes(row.gate.agentVersion ?? "") ||
+              !row.gate.serverTunnelAddress || !row.gate.clientTunnelAddress)
+            return true;
+          // A managed Gate with CURRENT authenticated LAN evidence does not
+          // need to borrow another Gate's offline grant. This is essential in
+          // mixed v3/v4 installs: v3 never has a v4 offline lease.
+          // Dedicated handoffs instead need a fresh authenticated heartbeat.
+          const fresh = row.uplinkMode === "ManagedSharedUplink" ?
+            !managedObservationStale(row) :
+            !!row.gate.lastSeenAt && row.gate.lastSeenAt.getTime() <= now + 5_000 &&
+            now - row.gate.lastSeenAt.getTime() < 60_000;
+          if (!fresh && remoteLanAuthorizationExpiry({
+            ...row.gate, gateId:row.gate.id,
+          },{
+            attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
+            singleAppId:row.singleAppId,networkId:row.networkId,
+            macAddress:row.macAddress,configurationRevision:row.configurationRevision,
+          },now)===null) return true;
           return item.tenantId !== row.tenantId ||
             item.gateId !== row.gateId || item.singleAppId !== row.singleAppId ||
             item.configurationRevision !== row.configurationRevision ||

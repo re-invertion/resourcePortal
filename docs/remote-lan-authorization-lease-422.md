@@ -139,3 +139,14 @@ or edit the private lease file to make an outage appear resolved.
   kernel source-set timers. DHCP expiry remains a tighter bound.
   Old v3 Gates never inherit this grace period.
 - Service/UI Active does not certify working connectivity.
+
+### Live-only heartbeat scheduling
+
+A successful authenticated Gate heartbeat without a complete offline grant
+uses a separate 45-second authorization, not an offline lease. During this
+mode the agent temporarily limits its next heartbeat delay to 10 seconds,
+even when the configured normal interval is 30, 60 or 120 seconds (including
+an in-place upgrade retaining the old interval). Transport failures are
+**not** permitted to renew that short authorization, and the watchdog
+revokes local forwarding if it expires. The persisted normal interval is
+not changed by this safety adjustment.

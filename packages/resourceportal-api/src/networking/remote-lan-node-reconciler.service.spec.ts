@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { managedBridgeName } from "./remote-lan-managed-uplink";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ConfigService } from "@nestjs/config";
 import { RemoteLanNodeReconcilerService } from "./remote-lan-node-reconciler.service";
@@ -119,6 +121,67 @@ describe("Remote LAN node policy rollout",()=>{
     bad.policyEnv=[...service.policyEnv];
     await expect(bad.reconcile()).rejects.toThrow(/Stale Gate observation/);
     expect(bad.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
+  });
+  it("preserves fresh legacy v3 source grants while a DIFFERENT Gate v4 is offline",async()=>{
+    const now=Date.now(), legacyGateId="aaaaaaaa-bbbb-4ccc-8ddd-cccccccccccc";
+    const legacyAppId="aaaaaaaa-bbbb-4ccc-8ddd-222222222222";
+    const legacyAttachmentId="aaaaaaaa-bbbb-4ccc-8ddd-333333333333";
+    const legacyNetworkId="aaaaaaaa-bbbb-4ccc-8ddd-444444444444";
+    const cidr="192.168.50.0/24", observedAt=new Date(now).toISOString();
+    const legacyObservation={
+      protocol:1,gateId:legacyGateId,physicalInterface:"eth0",
+      bridge:managedBridgeName(legacyGateId,"eth0"),
+      networkCidr:cidr,gateway:"192.168.50.1",state:"Ready",
+      observedAt,agentVersion:"gate-l2-v3",
+      segmentId:createHash("sha256")
+        .update(legacyGateId+":eth0:"+cidr).digest("hex").slice(0,24),
+    };
+    const staleV4={...row,status:"Active",uplinkMode:"ManagedSharedUplink",
+      lanInterface:"eth0",addressMode:"DHCP",staticAddress:null,staticGateway:null,
+      configurationRevision:2,
+      gate:{...row.gate,agentVersion:"gate-l2-v4",
+        observedLan:null,observedLanAt:new Date(now-100_000),
+        observedL2Diagnostic:{authorizationLease:{issuedAtMs:now-2000,
+          grants:[{attachmentId,tenantId,gateId,singleAppId:appId,networkId,
+            macAddress:row.macAddress,configurationRevision:2}]}}}};
+    const freshV3={...row,
+      id:legacyAttachmentId,gateId:legacyGateId,singleAppId:legacyAppId,
+      networkId:legacyNetworkId,status:"Active",uplinkMode:"ManagedSharedUplink",
+      lanInterface:"eth0",addressMode:"DHCP",staticAddress:null,staticGateway:null,
+      configurationRevision:1,
+      gate:{...row.gate,id:legacyGateId,agentVersion:"gate-l2-v3",
+        observedLan:legacyObservation,observedLanAt:new Date(now)},
+      network:{...row.network,id:legacyNetworkId,
+        swarmNetworkName:"rp-network-"+legacyNetworkId},
+      singleApp:{...row.singleApp,id:legacyAppId},
+    };
+    const snapshot={version:1,attachments:[staleV4,freshV3].map((r,i)=>({
+      attachmentId:r.id,tenantId:r.tenantId,singleAppId:r.singleAppId,
+      gateId:r.gateId,networkName:r.network.swarmNetworkName,
+      overlayCidr:r.network.overlayCidr,lanCidr:r.lanCidr,
+      gatewayOverlayIp:"10.200.42.20",macAddress:r.macAddress,
+      configurationRevision:r.configurationRevision,
+      uplinkMode:"ManagedSharedUplink",addressMode:"DHCP",
+      staticAddress:null,staticGateway:null,
+    }))};
+    const {service}=fixture("true",[staleV4,freshV3]);
+    service.policyEnv=[
+      "RESOURCEPORTAL_REMOTE_LAN_NODES_B64="+
+        Buffer.from(JSON.stringify(snapshot)).toString("base64"),
+      "RP_REMOTE_LAN_NODE_ENABLED=true",
+    ];
+    expect(await service.reconcile()).toMatchObject({
+      changed:false,attachments:2,disabled:false,degraded:true,
+    });
+    expect(service.calls.filter(a=>a[0]==="service"&&a[1]==="update")).toHaveLength(0);
+    // A legacy Gate that itself loses its own fresh managed observation has
+    // no v4 offline grant; the shared policy MUST then fail closed.
+    const legacyStale={...freshV3,gate:{...freshV3.gate,
+      observedLanAt:new Date(now-100_000)}};
+    const failed=fixture("true",[staleV4,legacyStale]).service;
+    failed.policyEnv=[...service.policyEnv];
+    await expect(failed.reconcile()).rejects.toThrow(/Stale Gate observation/);
+    expect(failed.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
   });
   it("binds policy to exactly one observed running Gateway task on the tenant overlay",async()=>{
     const {service,prisma}=fixture();

@@ -68,6 +68,24 @@ describe("RP Gate LAN Attachments-only installer", () => {
       expect(result.stdout).toBe(status);
     }
   });
+  it("shortens only live-only heartbeat scheduling even for an old 60/120s agent interval",()=>{
+    const line=agent.split("\n").find(s=>
+      s.includes('if [ "$LIVE_ONLY" -eq 1 ] && [ "$DELAY" -gt 10 ]'));
+    expect(line).toBeDefined();
+    for(const interval of [5,30,60,120]) {
+      for(const live of [0,1]) {
+        const bash = 'INTERVAL='+interval+'; LIVE_ONLY='+live+
+          '; DELAY="$INTERVAL"; '+line+'; printf "%s" "$DELAY"';
+        const result=spawnSync("bash",["-c",bash],{encoding:"utf8",timeout:5000});
+        expect(result.status,result.stderr).toBe(0);
+        expect(result.stdout).toBe(String(live===1 ? Math.min(interval,10) : interval));
+      }
+    }
+    expect(agent).toContain("LIVE_ONLY=0");
+    expect(agent).toContain("LIVE_ONLY=1");
+    expect(agent).toContain('RENEW_STATUS" -eq 2');
+    expect(agent).toContain('python3 "$LEASE_AGENT" --valid');
+  });
   it("packages every Python helper required by the production Gate installer",()=>{
     const dockerfile = readFileSync(resolve(__dirname,"../../../../Dockerfile"),"utf8");
     for(const asset of [

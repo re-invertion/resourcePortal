@@ -279,6 +279,7 @@ while :; do
     HTTP_CODE="__RP_SHELL_EXPAND__RAW_RESPONSE##*$'\n'}"
   fi
   RESPONSE="__RP_SHELL_EXPAND__RAW_RESPONSE%$'\n'*}"
+  LIVE_ONLY=0
   if [ "$HTTP_CODE" = "200" ]; then
     # A valid HTTP response without the fresh client challenge is untrusted.
     if ! printf '%s' "$RESPONSE" | jq -e --arg gate "$GATE_ID" --arg nonce "$CHALLENGE" \
@@ -318,6 +319,10 @@ while :; do
           down_tunnel
           log "Live-only source refresh failed; forwarding revoked"
         fi
+        # A live-only grant is shorter than the configured interval.
+        # Schedule its next authenticated heartbeat before expiry, without
+        # rewriting the user's stored interval or extending a failed request.
+        LIVE_ONLY=1
         log "Offline authorization withdrawn; live-only source window"
       else
         # A malformed/unauthorized response must not be downgraded to
@@ -330,6 +335,9 @@ while :; do
       RETRY_DELAY=2
     fi
     DELAY="$INTERVAL"
+    # curl can itself consume up to 20s. Keep a 35s margin against the
+    # independent 45s LIVE_TTL, including legacy --update interval=60/120.
+    if [ "$LIVE_ONLY" -eq 1 ] && [ "$DELAY" -gt 10 ]; then DELAY=10; fi
   elif [[ "$HTTP_CODE" =~ ^(400|401|403|405|409|410|412|422)$ ]]; then
     python3 "$LEASE_AGENT" --clear || true
     revoke_lan || true
