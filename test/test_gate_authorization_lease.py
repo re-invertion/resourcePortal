@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sandbox-only Gate authorization lease tests: no WireGuard or host mutation."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -150,6 +151,54 @@ class GateLeaseTests(unittest.TestCase):
             self.assertEqual(revoke.call_count, 2)
         self.assertFalse(lease.LEASE_FILE.exists())
 
+    def test_live_only_transition_does_not_revoke_fresh_authenticated_200(self):
+        from copy import deepcopy
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        live_response = deepcopy(RESPONSE)
+        live_response["authorizationLease"]["grants"] = []
+        # A successful 200 with a matching one-use nonce and no offline
+        # grants is not a transport failure or an authorization revocation.
+        self.assertFalse(lease.renew(live_response, NONCE))
+        self.assertIsNone(lease.read())  # Not authorized for offline forwarding
+        self.assertEqual(lease.read(allow_live=True)["mode"], "live")
+        self.assertEqual(lease.read(allow_live=True)["deadline"], 145)
+        ticks = 0
+        with patch.object(lease, "revoke") as revoked:
+            def step(_seconds):
+                nonlocal ticks
+                ticks += 1
+                if ticks == 1:
+                    self.assertEqual(revoked.call_count, 0)
+                    self.t = 144
+                elif ticks == 2:
+                    self.assertEqual(revoked.call_count, 0)
+                    self.t = 146
+                else:
+                    raise StopIteration("watchdog test completed")
+            with patch.object(lease.time, "sleep", side_effect=step):
+                with self.assertRaises(StopIteration):
+                    lease.watch()
+            revoked.assert_called_once_with()
+            self.assertFalse(lease.LEASE_FILE.exists())
+
+    def test_live_only_mode_invalidates_on_revision_reboot_and_never_extends_offline(self):
+        from copy import deepcopy
+        response = deepcopy(RESPONSE)
+        response["authorizationLease"]["grants"] = []
+        self.assertFalse(lease.renew(response, NONCE))
+        self.assertIsNone(lease.read())  # Failed HTTPS must revoke immediately
+        self.assertIsNotNone(lease.read(allow_live=True))
+        local = json.loads(lease.L2_STATE.read_text())
+        local["attachments"][ATTACHMENT]["configurationRevision"] = 3
+        lease.L2_STATE.write_text(json.dumps(local))
+        self.assertIsNone(lease.read(allow_live=True))
+        local["attachments"][ATTACHMENT]["configurationRevision"] = 2
+        lease.L2_STATE.write_text(json.dumps(local))
+        with patch.object(lease, "boot_id", return_value="another-boot"):
+            self.assertIsNone(lease.read(allow_live=True))
+        self.t = 146
+        self.assertIsNone(lease.read(allow_live=True))
+
     def test_revision_change_or_locally_removed_attachment_invalidates_lease(self):
         self.assertTrue(lease.renew(RESPONSE, NONCE))
         import json
@@ -168,7 +217,10 @@ class GateLeaseTests(unittest.TestCase):
         new = dict(RESPONSE)
         new["lanAttachments"] = RESPONSE["lanAttachments"] + [
             {"id": "aaaaaaaa-bbbb-4ccc-8ddd-ffffffffffff", "status": "Provisioning"}]
-        self.assertFalse(lease.renew(new, NONCE))
+        # Incomplete and also malformed new live scope must be rejected,
+        # never mistaken for a valid downgrade.
+        with self.assertRaises(ValueError):
+            lease.renew(new, NONCE)
         self.assertIsNone(lease.read())
 
     def test_boot_identity_and_clock_rollback_do_not_extend_deadline(self):

@@ -296,7 +296,9 @@ while :; do
     else
       # The current server may provide no offline grant while provisioning;
       # this is NOT a failure of the live authorized configuration.
-      if printf '%s' "$RESPONSE" | python3 "$LEASE_AGENT" --renew --nonce "$CHALLENGE"; then
+      RENEW_STATUS=0
+      printf '%s' "$RESPONSE" | python3 "$LEASE_AGENT" --renew --nonce "$CHALLENGE" || RENEW_STATUS=$?
+      if [ "$RENEW_STATUS" -eq 0 ]; then
         # Extend only the exact existing authorized nft source timers
         # to the fixed lease deadline; never recreate WireGuard or bridges.
         if ! python3 "$LAN_AGENT" --refresh-authorized-sources; then
@@ -305,17 +307,25 @@ while :; do
           down_tunnel
           log "Authorized source refresh failed; forwarding revoked"
         fi
-      else
-        python3 "$LEASE_AGENT" --clear || true
-        # A new static-IP attachment requires ARP/bootstrap to become Active.
-        # Permit a short, single-heartbeat source grant while the authenticated
-        # control plane is reachable; it cannot be renewed during an outage.
+      elif [ "$RENEW_STATUS" -eq 2 ]; then
+        # The lease helper ATOMICALLY replaced the previous offline grant
+        # with a short-lived, revision-bound live-only grant. The watchdog
+        # will not race an authenticated live configuration, but --valid
+        # rejects live-only mode if the NEXT heartbeat fails.
         if ! python3 "$LAN_AGENT" --refresh-live-sources; then
+          python3 "$LEASE_AGENT" --clear || true
           revoke_lan || true
           down_tunnel
           log "Live-only source refresh failed; forwarding revoked"
         fi
-        log "No offline lease; source policy limited to live control plane"
+        log "Offline authorization withdrawn; live-only source window"
+      else
+        # A malformed/unauthorized response must not be downgraded to
+        # live-only forwarding. Exit 2 alone denotes valid live-only mode.
+        python3 "$LEASE_AGENT" --clear || true
+        revoke_lan || true
+        down_tunnel
+        log "Untrusted lease response; forwarding revoked"
       fi
       RETRY_DELAY=2
     fi

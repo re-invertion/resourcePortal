@@ -22,6 +22,7 @@ L2_STATE = Path("/etc/resourceportal-gate/lan-state.json")
 LAN_AGENT = "/usr/local/sbin/resourceportal-gate-lan.py"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 MAX_TTL_SECONDS = 600
+LIVE_TTL_SECONDS = 45  # fresh authenticated heartbeat only, NEVER offline
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 NONCE = re.compile(r"^[0-9a-f]{64}$")
 MAC = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", re.I)
@@ -54,15 +55,21 @@ def store(obj):
         temp.unlink(missing_ok=True)
 
 
-def read():
+def read(allow_live=False):
     try:
         if LEASE_FILE.is_symlink() or LEASE_FILE.stat().st_size > 16000:
             return None
         with LEASE_FILE.open(encoding="utf-8") as fd:
             state = json.load(fd)
-        if not isinstance(state, dict) or state.get("bootId") != boot_id() or \
+        if not isinstance(state, dict):
+            return None
+        mode = state.get("mode", "lease")
+        if mode not in ("lease", "live") or (mode == "live" and not allow_live):
+            return None
+        maximum = LIVE_TTL_SECONDS if mode == "live" else MAX_TTL_SECONDS
+        if state.get("bootId") != boot_id() or \
                 type(state.get("deadline")) not in (int, float) or \
-                not 0 < state["deadline"] - boot_time() <= MAX_TTL_SECONDS or \
+                not 0 < state["deadline"] - boot_time() <= maximum or \
                 not isinstance(state.get("grants"), list) or not state["grants"]:
             return None
         # A lease is valid only for the EXACT locally applied revision and
@@ -129,12 +136,40 @@ def renew(response, nonce):
                 not isinstance(item.get("macAddress"), str) or not MAC.fullmatch(item["macAddress"]):
             raise ValueError("Grant attempts to alter an authorized policy")
         seen.add(aid)
-    # No offline forwarding is authorized if the API cannot verify every
-    # locally applied attachment. This is conservative during mixed provisioning.
-    if not expected or len(seen) != len(expected):
+    # An authenticated heartbeat can legitimately authorize a *live-only*
+    # topology when no complete offline grant can be issued (for example,
+    # while another attachment is being provisioned). Transition atomically:
+    # clearing the previous lease would make the independent watchdog
+    # revoke healthy just-applied live L2 forwarding.
+    if not expected:
         clear()
         return False
-    store({"protocol": 1, "bootId": boot_id(), "gateId": config["gateId"],
+    if len(seen) != len(expected):
+        scoped = []
+        for item in expected:
+            aid = item.get("id")
+            revision = item.get("configurationRevision")
+            mac = item.get("macAddress")
+            if (not isinstance(aid, str) or not UUID.fullmatch(aid) or
+                    type(revision) is not int or revision < 1 or
+                    not isinstance(mac, str) or not MAC.fullmatch(mac) or
+                    not isinstance(item.get("networkId"), str) or
+                    not UUID.fullmatch(item["networkId"]) or
+                    not isinstance(item.get("singleAppId"), str) or
+                    not UUID.fullmatch(item["singleAppId"]) or
+                    item.get("status") not in ("Provisioning", "Active")):
+                raise ValueError("Invalid live-only attachment scope")
+            scoped.append({
+                "attachmentId": aid, "singleAppId": item["singleAppId"],
+                "networkId": item["networkId"],
+                "configurationRevision": revision, "macAddress": mac,
+            })
+        store({"protocol": 1, "mode": "live", "bootId": boot_id(),
+               "gateId": config["gateId"], "tenantId": response["tenantId"],
+               "deadline": boot_time() + LIVE_TTL_SECONDS,
+               "grants": sorted(scoped, key=lambda item: item["attachmentId"])})
+        return False
+    store({"protocol": 1, "mode": "lease", "bootId": boot_id(), "gateId": config["gateId"],
            "tenantId": response["tenantId"], "deadline": boot_time() + ttl,
            "grants": sorted(grants, key=lambda item: item["attachmentId"])})
     return True
@@ -164,7 +199,7 @@ def watch():
     """Independent deadline monitor, not blocked by HTTP requests or sleep."""
     had_lease = False
     while True:
-        current = read()
+        current = read(allow_live=True)
         if current:
             had_lease = True
         elif had_lease or LEASE_FILE.exists():
@@ -196,7 +231,10 @@ def main():
         if not args.nonce:
             raise ValueError("Missing heartbeat challenge")
         if not renew(json.load(sys.stdin), args.nonce):
-            sys.exit(1)
+            # Exit 2 is reserved for a valid, already-applied authenticated
+            # 200 response with NO offline grant. Malformed responses exit 1,
+            # and the caller must revoke them instead of treating as live.
+            sys.exit(2)
     elif args.valid:
         if read() is None:
             sys.exit(1)
@@ -205,8 +243,10 @@ def main():
     elif args.watch:
         watch()
     elif args.status:
-        state = read()
-        print(json.dumps({"state": "active" if state else "expired",
+        state = read(allow_live=True)
+        mode = state.get("mode", "lease") if state else None
+        print(json.dumps({"state": ("live_only" if mode == "live" else
+                                    "active" if state else "expired"),
                           "remainingSeconds": max(0, int(state["deadline"] - boot_time())) if state else 0,
                           "attachmentCount": len(state["grants"]) if state else 0}, sort_keys=True))
 
