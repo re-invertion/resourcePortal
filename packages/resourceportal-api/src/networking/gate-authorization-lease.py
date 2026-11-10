@@ -22,6 +22,8 @@ L2_STATE = Path("/etc/resourceportal-gate/lan-state.json")
 LAN_AGENT = "/usr/local/sbin/resourceportal-gate-lan.py"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 MAX_TTL_SECONDS = 600
+# 64 fixed-shape UUID grants, or old/new full topologies during a transition.
+MAX_LEASE_BYTES = 64_000
 LIVE_TTL_SECONDS = 45  # fresh authenticated heartbeat only, NEVER offline
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 NONCE = re.compile(r"^[0-9a-f]{64}$")
@@ -57,42 +59,155 @@ def store(obj):
 
 def read(allow_live=False):
     try:
-        if LEASE_FILE.is_symlink() or LEASE_FILE.stat().st_size > 16000:
+        if LEASE_FILE.is_symlink() or LEASE_FILE.stat().st_size > MAX_LEASE_BYTES:
             return None
         with LEASE_FILE.open(encoding="utf-8") as fd:
             state = json.load(fd)
         if not isinstance(state, dict):
             return None
         mode = state.get("mode", "lease")
-        if mode not in ("lease", "live") or (mode == "live" and not allow_live):
+        if mode not in ("lease", "live", "transition") or (
+                mode != "lease" and not allow_live):
             return None
-        maximum = LIVE_TTL_SECONDS if mode == "live" else MAX_TTL_SECONDS
+        maximum = LIVE_TTL_SECONDS if mode in ("live", "transition") else MAX_TTL_SECONDS
         if state.get("bootId") != boot_id() or \
                 type(state.get("deadline")) not in (int, float) or \
                 not 0 < state["deadline"] - boot_time() <= maximum or \
-                not isinstance(state.get("grants"), list) or not state["grants"]:
+                not isinstance(state.get("grants"), list) or \
+                not 1 <= len(state["grants"]) <= 64:
             return None
-        # A lease is valid only for the EXACT locally applied revision and
-        # application identity; a newer server policy cannot inherit it.
-        local = json.loads(L2_STATE.read_text(encoding="utf-8"))
-        if (local.get("gateId") != state.get("gateId") or
+        # Existing lease/live authority requires the EXACT locally applied
+        # topology. During an authenticated topology update, an ephemeral
+        # 45s transition allows ONLY the original authorized topology or
+        # the new nonce-bound target while the LAN agent atomically persists
+        # the new state. A disconnected Gate can never create this authority.
+        if mode == "transition" and not L2_STATE.exists() and not state.get("previous"):
+            local = {"gateId": state["gateId"],
+                     "tenantId": state["tenantId"], "attachments": {}}
+        else:
+            local = json.loads(L2_STATE.read_text(encoding="utf-8"))
+        if (not isinstance(local, dict) or local.get("gateId") != state.get("gateId") or
                 local.get("tenantId") != state.get("tenantId")):
             return None
         attached = local.get("attachments")
-        if not isinstance(attached, dict) or len(attached) != len(state["grants"]):
+        if not isinstance(attached, dict) or len(attached) > 64:
             return None
-        for item in state["grants"]:
-            if not isinstance(item, dict):
-                return None
-            physical = attached.get(item.get("attachmentId"))
-            if not isinstance(physical, dict) or any(
-                physical.get(field) != item.get(field)
-                for field in ("singleAppId", "networkId", "configurationRevision", "macAddress")
-            ):
-                return None
-        return state
+
+        def matches(grants):
+            if not isinstance(grants, list) or len(grants) != len(attached):
+                return False
+            seen = set()
+            for item in grants:
+                if not isinstance(item, dict):
+                    return False
+                aid = item.get("attachmentId")
+                if not isinstance(aid, str) or aid in seen:
+                    return False
+                seen.add(aid)
+                physical = attached.get(aid)
+                if not isinstance(physical, dict) or any(
+                    physical.get(field) != item.get(field)
+                    for field in ("singleAppId", "networkId",
+                                  "configurationRevision", "macAddress")
+                ):
+                    return False
+            return True
+
+        if matches(state["grants"]):
+            return state
+        if (mode == "transition" and isinstance(state.get("previous"), list) and
+                len(state["previous"]) <= 64 and matches(state["previous"])):
+            return state
+        return None
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
+
+
+def scoped_live_policy(expected):
+    """Validate exact target identity from a fresh authenticated response."""
+    if not isinstance(expected, list) or not 1 <= len(expected) <= 64:
+        raise ValueError("Invalid desired Gate attachment topology")
+    scoped = []
+    ids = set()
+    for item in expected:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid live-only attachment")
+        aid = item.get("id")
+        revision = item.get("configurationRevision")
+        mac = item.get("macAddress")
+        if (not isinstance(aid, str) or not UUID.fullmatch(aid) or aid in ids or
+                type(revision) is not int or revision < 1 or
+                not isinstance(mac, str) or not MAC.fullmatch(mac) or
+                not isinstance(item.get("networkId"), str) or
+                not UUID.fullmatch(item["networkId"]) or
+                not isinstance(item.get("singleAppId"), str) or
+                not UUID.fullmatch(item["singleAppId"]) or
+                item.get("status") not in ("Provisioning", "Active")):
+            raise ValueError("Invalid live-only attachment scope")
+        ids.add(aid)
+        scoped.append({
+            "attachmentId": aid, "singleAppId": item["singleAppId"],
+            "networkId": item["networkId"],
+            "configurationRevision": revision, "macAddress": mac,
+        })
+    return sorted(scoped, key=lambda item: item["attachmentId"])
+
+
+def begin_transition(response, nonce):
+    """Publish bounded new+prior scope BEFORE applying a topology change.
+
+    The successful authenticated HTTP 200 and one-use challenge authorize
+    this temporary local state; --valid still refuses it for offline mode.
+    """
+    if not NONCE.fullmatch(nonce):
+        raise ValueError("Invalid heartbeat challenge")
+    config = json.loads(GATE_STATE.read_text(encoding="utf-8"))
+    lease = response.get("authorizationLease")
+    if (not isinstance(lease, dict) or lease.get("protocol") != 1 or
+            lease.get("nonce") != nonce or lease.get("gateId") != config.get("gateId") or
+            lease.get("tenantId") != response.get("tenantId") or
+            response.get("gateId") != config.get("gateId") or
+            type(lease.get("ttlSeconds")) is not int or
+            not 1 <= lease["ttlSeconds"] <= MAX_TTL_SECONDS or
+            not isinstance(lease.get("grants"), list) or
+            len(lease["grants"]) > 64):
+        raise ValueError("Invalid authenticated transition authority")
+    expected = response.get("lanAttachments")
+    if expected == []:
+        clear()  # Explicit revocation/empty config is never a grace period.
+        return
+    scoped = scoped_live_policy(expected)
+    authorized = {item["attachmentId"]: item for item in scoped}
+    seen = set()
+    for grant in lease["grants"]:
+        aid = grant.get("attachmentId") if isinstance(grant, dict) else None
+        policy = authorized.get(aid)
+        original = next((item for item in expected if item["id"] == aid), None)
+        if (not policy or aid in seen or
+                grant.get("gateId") != config["gateId"] or
+                grant.get("tenantId") != response["tenantId"] or
+                grant.get("singleAppId") != policy["singleAppId"] or
+                grant.get("networkId") != policy["networkId"] or
+                grant.get("macAddress") != policy["macAddress"] or
+                grant.get("configurationRevision") != policy["configurationRevision"] or
+                original.get("status") != "Active"):
+            raise ValueError("Invalid transition grant identity")
+        seen.add(aid)
+    prior = read(allow_live=True)
+    # Only an existing, VERIFIED local authority is eligible as "previous".
+    # Unverified legacy or expired data planes cannot inherit a grace window.
+    if prior and prior.get("mode") == "transition":
+        current = json.loads(L2_STATE.read_text(encoding="utf-8"))
+        previous = [{"attachmentId": aid,
+                     **{k: item[k] for k in (
+                         "singleAppId", "networkId", "configurationRevision", "macAddress")}}
+                    for aid, item in current.get("attachments", {}).items()]
+    else:
+        previous = prior["grants"] if prior else []
+    store({"protocol": 1, "mode": "transition", "bootId": boot_id(),
+           "gateId": config["gateId"], "tenantId": response["tenantId"],
+           "deadline": boot_time() + LIVE_TTL_SECONDS,
+           "grants": scoped, "previous": previous})
 
 
 def renew(response, nonce):
@@ -145,29 +260,11 @@ def renew(response, nonce):
         clear()
         return False
     if len(seen) != len(expected):
-        scoped = []
-        for item in expected:
-            aid = item.get("id")
-            revision = item.get("configurationRevision")
-            mac = item.get("macAddress")
-            if (not isinstance(aid, str) or not UUID.fullmatch(aid) or
-                    type(revision) is not int or revision < 1 or
-                    not isinstance(mac, str) or not MAC.fullmatch(mac) or
-                    not isinstance(item.get("networkId"), str) or
-                    not UUID.fullmatch(item["networkId"]) or
-                    not isinstance(item.get("singleAppId"), str) or
-                    not UUID.fullmatch(item["singleAppId"]) or
-                    item.get("status") not in ("Provisioning", "Active")):
-                raise ValueError("Invalid live-only attachment scope")
-            scoped.append({
-                "attachmentId": aid, "singleAppId": item["singleAppId"],
-                "networkId": item["networkId"],
-                "configurationRevision": revision, "macAddress": mac,
-            })
+        scoped = scoped_live_policy(expected)
         store({"protocol": 1, "mode": "live", "bootId": boot_id(),
                "gateId": config["gateId"], "tenantId": response["tenantId"],
                "deadline": boot_time() + LIVE_TTL_SECONDS,
-               "grants": sorted(scoped, key=lambda item: item["attachmentId"])})
+               "grants": scoped})
         return False
     store({"protocol": 1, "mode": "lease", "bootId": boot_id(), "gateId": config["gateId"],
            "tenantId": response["tenantId"], "deadline": boot_time() + ttl,
@@ -219,6 +316,7 @@ def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--renew", action="store_true")
+    mode.add_argument("--transition", action="store_true")
     mode.add_argument("--valid", action="store_true")
     mode.add_argument("--clear", action="store_true")
     mode.add_argument("--watch", action="store_true")
@@ -235,6 +333,10 @@ def main():
             # 200 response with NO offline grant. Malformed responses exit 1,
             # and the caller must revoke them instead of treating as live.
             sys.exit(2)
+    elif args.transition:
+        if not args.nonce:
+            raise ValueError("Missing transition heartbeat challenge")
+        begin_transition(json.load(sys.stdin), args.nonce)
     elif args.valid:
         if read() is None:
             sys.exit(1)
@@ -246,6 +348,7 @@ def main():
         state = read(allow_live=True)
         mode = state.get("mode", "lease") if state else None
         print(json.dumps({"state": ("live_only" if mode == "live" else
+                                    "transition" if mode == "transition" else
                                     "active" if state else "expired"),
                           "remainingSeconds": max(0, int(state["deadline"] - boot_time())) if state else 0,
                           "attachmentCount": len(state["grants"]) if state else 0}, sort_keys=True))

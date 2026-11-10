@@ -27,6 +27,7 @@ MAC_RE = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 DEVICE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$")
 # WG rekeys around 120s. Accept bounded 30s grace, reject before 180s key lifetime.
 MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS = 150
+MAX_AUTHORIZATION_FILE_BYTES = 64_000  # 64 scoped UUID grants or an atomic transition
 
 
 def call(*argv: str, ignore: bool = False, input_text: str | None = None) -> str:
@@ -211,7 +212,7 @@ def authorization_remaining(item: dict) -> int | None:
     """
     path = Path("/run/resourceportal-gate/authorization.json")
     try:
-        if path.is_symlink() or path.stat().st_size > 16000:
+        if path.is_symlink() or path.stat().st_size > MAX_AUTHORIZATION_FILE_BYTES:
             return None
         state = json.loads(path.read_text(encoding="utf-8"))
         if state.get("bootId") != Path("/proc/sys/kernel/random/boot_id").read_text().strip():

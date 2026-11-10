@@ -289,6 +289,11 @@ while :; do
       revoke_lan || true
       down_tunnel
       log "Untrusted heartbeat response; forwarding revoked"
+    elif ! printf '%s' "$RESPONSE" | python3 "$LEASE_AGENT" --transition --nonce "$CHALLENGE"; then
+      python3 "$LEASE_AGENT" --clear || true
+      revoke_lan || true
+      down_tunnel
+      log "Invalid authenticated LAN topology transition; forwarding revoked"
     elif ! apply_config "$RESPONSE"; then
       python3 "$LEASE_AGENT" --clear || true
       revoke_lan || true

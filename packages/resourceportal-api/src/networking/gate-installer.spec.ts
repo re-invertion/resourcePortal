@@ -152,6 +152,10 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(agent).toContain("Gate authorization rejected by API; forwarding revoked immediately");
     expect(agent).toContain("Control plane Degraded; continuing only existing leased forwarding");
     expect(agent).toContain('RENEW_STATUS=0');
+    expect(agent).toContain('--transition --nonce "$CHALLENGE"');
+    expect(agent.indexOf('--transition --nonce "$CHALLENGE"'))
+      .toBeLessThan(agent.indexOf('elif ! apply_config "$RESPONSE"'));
+    expect(agent).toContain('Invalid authenticated LAN topology transition; forwarding revoked');
     expect(agent).toContain('RENEW_STATUS" -eq 2');
     expect(agent).toContain('Untrusted lease response; forwarding revoked');
     expect(agent).toContain("authorizationLease.nonce==$nonce");

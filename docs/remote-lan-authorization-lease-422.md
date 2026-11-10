@@ -150,3 +150,16 @@ an in-place upgrade retaining the old interval). Transport failures are
 **not** permitted to renew that short authorization, and the watchdog
 revokes local forwarding if it expires. The persisted normal interval is
 not changed by this safety adjustment.
+
+### Topology-change watchdog race and full Gate capacity
+
+An authenticated HTTPS 200 with a matching one-use nonce first replaces the
+local offline authorization with a root-only 45-second transition scope.
+The watchdog permits either the previously verified applied identity or the
+exact new server-authorized identity while the LAN agent atomically replaces
+its state file, then the agent installs a new offline or live-only grant.
+Transition mode is not accepted by offline --valid, and expiry or failed
+application revokes RP-owned forwarding. It does not extend old authority.
+The two Gate Python consumers enforce the same 64,000-byte authorization
+file limit, sufficient for all 64 allowed attachment grants (including
+old/new transition scopes). A 65th attachment is rejected by the parser.

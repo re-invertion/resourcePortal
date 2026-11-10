@@ -7,6 +7,8 @@ import tempfile
 import unittest
 import sys
 import subprocess
+import uuid
+from copy import deepcopy
 from unittest.mock import patch
 
 
@@ -198,6 +200,121 @@ class GateLeaseTests(unittest.TestCase):
             self.assertIsNone(lease.read(allow_live=True))
         self.t = 146
         self.assertIsNone(lease.read(allow_live=True))
+
+    def test_transition_covers_old_and_new_state_before_live_only_renewal(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        newer = deepcopy(RESPONSE)
+        new_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-gate-new-attachment"))
+        new_app = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-gate-new-app"))
+        new_net = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-gate-new-network"))
+        new_mac = "02:aa:bb:cc:dd:ef"
+        newer["lanAttachments"].append({
+            "id": new_id, "singleAppId": new_app, "networkId": new_net,
+            "macAddress": new_mac, "configurationRevision": 1,
+            "status": "Provisioning"})
+        newer["authorizationLease"]["grants"] = []  # No offline grace during provisioning
+        lease.begin_transition(newer, NONCE)
+        state = lease.read(allow_live=True)
+        self.assertEqual(state["mode"], "transition")
+        self.assertEqual(state["deadline"], 145)
+        self.assertEqual(len(state["previous"]), 1)
+        self.assertEqual(len(state["grants"]), 2)
+        self.assertIsNone(lease.read())  # HTTPS failure never treats transition as offline
+        # Simulate an atomic LAN state replacement between two 200ms watchdog
+        # polls. A real previously reported P2 bug revoked here.
+        ticks = 0
+        def step(_):
+            nonlocal ticks
+            ticks += 1
+            if ticks == 1:
+                local = json.loads(lease.L2_STATE.read_text())
+                local["attachments"][new_id] = {
+                    "singleAppId": new_app, "networkId": new_net,
+                    "macAddress": new_mac, "configurationRevision": 1}
+                lease.L2_STATE.write_text(json.dumps(local))
+                self.assertIsNotNone(lease.read(allow_live=True))
+            elif ticks == 2:
+                self.assertFalse(lease.renew(newer, NONCE))
+                self.assertEqual(lease.read(allow_live=True)["mode"], "live")
+            else:
+                raise StopIteration("reconciliation complete")
+        with patch.object(lease.time, "sleep", side_effect=step), \
+             patch.object(lease, "revoke") as revoked:
+            with self.assertRaises(StopIteration):
+                lease.watch()
+            revoked.assert_not_called()
+        self.assertIsNone(lease.read())
+        self.assertEqual(lease.read(allow_live=True)["mode"], "live")
+        self.t = 146
+        self.assertIsNone(lease.read(allow_live=True))
+
+    def test_transition_rejects_replay_and_never_extends_expired_old_authority(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        with self.assertRaises(ValueError):
+            lease.begin_transition(RESPONSE, "b" * 64)
+        self.assertEqual(lease.read()["mode"], "lease")
+        self.t = 700
+        self.assertIsNone(lease.read())
+        lease.begin_transition(RESPONSE, NONCE)
+        transition = lease.read(allow_live=True)
+        self.assertEqual(transition["previous"], [])
+        self.assertIsNone(lease.read())  # Never permits disconnected continuation
+        self.t = 746
+        self.assertIsNone(lease.read(allow_live=True))
+
+    def test_64_grants_fit_both_python_readers_but_65_are_rejected(self):
+        newer = deepcopy(RESPONSE)
+        newer["lanAttachments"] = []
+        newer["authorizationLease"]["grants"] = []
+        local = {"gateId":GATE,"tenantId":TENANT,"attachments":{}}
+        for i in range(64):
+            aid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-grant-%d" % i))
+            app = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-app-%d" % i))
+            network = str(uuid.uuid5(uuid.NAMESPACE_DNS, "rp-network-%d" % i))
+            mac = "02:aa:bb:%02x:cc:dd" % i
+            entry = {"attachmentId":aid,"tenantId":TENANT,"gateId":GATE,
+                     "singleAppId":app,"networkId":network,
+                     "macAddress":mac,"configurationRevision":2}
+            newer["authorizationLease"]["grants"].append(entry)
+            newer["lanAttachments"].append({
+                "id":aid,"singleAppId":app,"networkId":network,
+                "macAddress":mac,"configurationRevision":2,"status":"Active"})
+            local["attachments"][aid] = {
+                "singleAppId":app,"networkId":network,
+                "macAddress":mac,"configurationRevision":2}
+        lease.L2_STATE.write_text(json.dumps(local))
+        self.assertTrue(lease.renew(newer, NONCE))
+        self.assertGreater(lease.LEASE_FILE.stat().st_size, 16_000)
+        self.assertLessEqual(lease.LEASE_FILE.stat().st_size, lease.MAX_LEASE_BYTES)
+        self.assertEqual(len(lease.read()["grants"]), 64)
+        lease.begin_transition(newer, NONCE)
+        self.assertEqual(len(lease.read(allow_live=True)["grants"]), 64)
+        self.assertEqual(len(lease.read(allow_live=True)["previous"]), 64)
+        self.assertIsNone(lease.read())  # 64-grant transition is NEVER offline
+        self.assertLessEqual(lease.LEASE_FILE.stat().st_size, lease.MAX_LEASE_BYTES)
+        self.assertTrue(lease.renew(newer, NONCE))
+        # Verify the separate LAN/nft parser can actually read that file,
+        # not only that the lease watchdog can parse its 64 grants.
+        boot = Path(self.tmp.name)/"boot-id"
+        boot.write_text("boot-1")
+        original_path = Path
+        def path_override(raw):
+            if raw == "/run/resourceportal-gate/authorization.json":
+                return lease.LEASE_FILE
+            if raw == "/proc/sys/kernel/random/boot_id":
+                return boot
+            return original_path(raw)
+        with patch.object(lan, "Path", side_effect=path_override), \
+             patch.object(lan.time, "clock_gettime", return_value=100):
+            self.assertEqual(lan.authorization_remaining(
+                {"attachmentId":newer["authorizationLease"]["grants"][0]["attachmentId"],
+                 **local["attachments"][newer["authorizationLease"]["grants"][0]["attachmentId"]]}),
+                600)
+        too_many = deepcopy(newer)
+        too_many["authorizationLease"]["grants"].append(GRANT)
+        too_many["lanAttachments"].append(RESPONSE["lanAttachments"][0])
+        with self.assertRaises(ValueError):
+            lease.renew(too_many, NONCE)
 
     def test_revision_change_or_locally_removed_attachment_invalidates_lease(self):
         self.assertTrue(lease.renew(RESPONSE, NONCE))
