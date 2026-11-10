@@ -59,3 +59,39 @@ it("does not offer TLS repair when the API reports insufficient publishability e
   await screen.findByRole("heading", { name: "TLS recovery & diagnostics" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Retry TLS reconciliation" }).hasAttribute("disabled")).toBe(true));
 });
+
+
+it("shows an error without fabricated TLS findings when diagnostics return HTTP 500", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith(`${base}/certificate/diagnostics`)) {
+      return new Response("Unavailable", { status: 500 });
+    }
+    if (String(input).endsWith(base)) return json({
+      id: domainId, tenantId, hostname: "app.example.com", tlsEnabled: true,
+      dnsStatus: "Valid", certificateStatus: "Error",
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  expect(await screen.findByText("Diagnostics unavailable")).toBeTruthy();
+  expect(screen.queryByText("No evidence")).toBeNull();
+  expect(screen.queryByText("Failure code")).toBeNull();
+  expect(screen.getByRole("button", { name: "Refresh diagnostics" })).toBeTruthy();
+});
+
+it("shows loading status without TLS conclusions while diagnostics are pending", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith(`${base}/certificate/diagnostics`)) {
+      return new Promise<Response>(() => {});
+    }
+    if (String(input).endsWith(base)) return json({
+      id: domainId, tenantId, hostname: "app.example.com", tlsEnabled: true,
+      dnsStatus: "Valid", certificateStatus: "Error",
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  expect(await screen.findByText("Loading TLS diagnostics…")).toBeTruthy();
+  expect(screen.queryByText("No evidence")).toBeNull();
+  expect(screen.queryByText("Failure code")).toBeNull();
+});
