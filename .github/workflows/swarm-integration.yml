@@ -354,7 +354,7 @@ jobs:
         # The 443s no-renewal + >600s expiry experiment is intentionally
         # limited to changes to the security-critical Gate authorization
         # implementation. Ordinary PRs retain the fast smoke.
-        timeout-minutes: 15
+        timeout-minutes: 18
         run: |
           set -euo pipefail
           long=0
@@ -381,7 +381,11 @@ jobs:
             fi
           fi
           echo "Remote LAN long-lease smoke selected: $long"
-          RP_LAN_LONG_LEASE_SMOKE="$long" bash scripts/run-remote-lan-l2-dhcp-smoke.sh
+          # A selected security experiment must also stop the ACTUAL
+          # disposable RP API and churn real Traefik, not merely omit
+          # heartbeat renewals. The script enforces runner-only guards.
+          RP_LAN_LONG_LEASE_SMOKE="$long" RP_LAN_REAL_CONTROL_PLANE_FAULT="$long" \
+            bash scripts/run-remote-lan-l2-dhcp-smoke.sh
 
       - name: Run Device VPN real dataplane isolation smoke
         timeout-minutes: 8

@@ -6,11 +6,17 @@ APP="rpa-$"; APP2="rp2-$"; RP="rpr-$"; GATE="rpg-$"; LAN="rpl-$"
 TMP="$(mktemp -d)"
 SERVER_KEY_APPARMOR=""
 CLIENT_KEY_APPARMOR=""
+FAULT_PID=""
+REAL_FAULT="$(printenv RP_LAN_REAL_CONTROL_PLANE_FAULT 2>/dev/null || printf 0)"
+case "$REAL_FAULT" in 0|1) ;; *) echo "Invalid real fault selector" >&2; exit 2;; esac
 # Full-duration kernel lease continuity only on explicitly selected changes.
 LONG_LEASE_SMOKE="$(printenv RP_LAN_LONG_LEASE_SMOKE 2>/dev/null || printf 0)"
 case "$LONG_LEASE_SMOKE" in 0|1) ;; *) echo "Invalid long lease smoke selector" >&2; exit 2;; esac
 DHCP_DURATION="5m"
 if [ "$LONG_LEASE_SMOKE" = 1 ]; then DHCP_DURATION="15m"; fi
+if [ "$REAL_FAULT" = 1 ] && [ "$LONG_LEASE_SMOKE" != 1 ]; then
+  echo "Real API fault requires the long lease smoke" >&2; exit 2
+fi
 MAC="02:aa:bb:cc:dd:ee"; MAC2="02:aa:bb:cc:dd:ef"
 APP_IP="10.200.42.12"; RP_IP="10.200.42.20"
 APP2_IP="10.200.43.12"; RP2_IP="10.200.43.20"
@@ -20,6 +26,13 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ns() { local net="$1"; shift; sudo -n ip netns exec "$net" "$@"; }
 cleanup() {
   set +e
+  # The fault driver has its own EXIT trap that always restores the isolated
+  # API. Never leave the API stopped if an event assertion fails.
+  if [ -n "$FAULT_PID" ]; then
+    kill "$FAULT_PID" 2>/dev/null || true
+    wait "$FAULT_PID" 2>/dev/null || true
+    [ ! -f "$TMP/controlplane.log" ] || cat "$TMP/controlplane.log" >&2
+  fi
   for net in "$APP" "$APP2" "$RP" "$GATE" "$LAN"; do
     sudo -n ip netns pids "$net" 2>/dev/null | xargs -r sudo -n kill >/dev/null 2>&1 || true
     sudo -n ip netns del "$net" >/dev/null 2>&1 || true
@@ -84,7 +97,7 @@ aid = os.environ["RP_NFT_ATTACHMENT"]
 tunnel, _, chain, _ = mod.names(gate, tenant, aid, "eth1")
 stage, address, expiry = os.environ["RP_NFT_MODE"], os.environ["RP_NFT_ADDRESS"], os.environ["RP_NFT_EXPIRY"]
 item = {"lanCidr":"192.168.90.0/24", "addressMode":"Static" if stage=="Static" else "DHCP",
-        "status": "Provisioning" if stage=="Provisioning" else "Active",
+        "status": "Provisioning" if stage in ("Provisioning", "Revoked") else "Active",
         "staticAddress":address+"/24" if stage=="Static" else None,
         "verifiedAddress":address if stage=="Active" else None,
         "leaseExpiresAt":expiry if stage=="Active" else None}
@@ -389,15 +402,40 @@ ns "$GATE" bridge fdb show dev "$WAN2_DEV" | grep -qi "$MAC2" ||
 log "PASS two independent application DHCP leases, MACs, ARP and encrypted tunnels"
 
 if [ "$LONG_LEASE_SMOKE" = 1 ]; then
-  # This real kernel WG/GRETAP test injects zero source-rule renewals. It
-  # exercises data-plane silence, not an actual RP API/Traefik shutdown.
-  log "Beginning 443s bidirectional HA-like event test with no control-plane renewals"
-  begin="$(python3 -c 'import time; print(time.monotonic())')"
+  # This uses actual WG/GRETAP and the production nft generator. With
+  # REAL_FAULT=1 it also stops the disposable API and churns real Traefik.
+  # No kernel grant is renewed during the entire trial, including recovery.
+  log "Beginning 443s bidirectional HA-like event test with no source renewals"
   wg_before="$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)"
   gretap_before="$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)"
+  if [ "$REAL_FAULT" = 1 ]; then
+    bash "$REPO_ROOT/scripts/run-remote-lan-real-controlplane-fault.sh" \
+      "$TMP/fault-prepared" "$TMP/fault-lease" "$TMP/fault-outage" "$TMP/fault-restore" \
+      >"$TMP/controlplane.log" 2>&1 &
+    FAULT_PID="$!"
+    prepared=0
+    for i in $(seq 1 125); do
+      if [ -f "$TMP/fault-prepared" ]; then prepared=1; break; fi
+      if ! kill -0 "$FAULT_PID" 2>/dev/null; then break; fi
+      sleep 1
+    done
+    [ "$prepared" -eq 1 ] || { cat "$TMP/controlplane.log" >&2; fail "Real Traefik fault preflight failed"; }
+  fi
+  # Record original monotonic authorization instant BEFORE API shutdown.
+  begin="$(python3 -c 'import time; print(time.monotonic())')"
   gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 600)"
   ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
     fail "Missing initial LAN data plane for 443s test"
+  if [ "$REAL_FAULT" = 1 ]; then
+    : > "$TMP/fault-lease"
+    outage_ready=0
+    for i in $(seq 1 75); do
+      if [ -f "$TMP/fault-outage" ]; then outage_ready=1; break; fi
+      if ! kill -0 "$FAULT_PID" 2>/dev/null; then break; fi
+      sleep 1
+    done
+    [ "$outage_ready" -eq 1 ] || { cat "$TMP/controlplane.log" >&2; fail "Real API/Traefik shutdown failed"; }
+  fi
 
   ready="$TMP/ha-event-listener-ready"
   ns "$LAN" env RP_EVENT_READY="$ready" python3 -u     "$REPO_ROOT/scripts/remote-lan-lease-soak.py" receiver >"$TMP/events.log" 2>&1 &
@@ -411,6 +449,17 @@ if [ "$LONG_LEASE_SMOKE" = 1 ]; then
   [ "$started" -eq 1 ] || { cat "$TMP/events.log" >&2; fail "LAN event receiver unavailable"; }
   ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" client --duration 443 ||
     fail "443s bidirectional HA-like events interrupted"
+  if [ "$REAL_FAULT" = 1 ]; then
+    ! curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1 ||
+      fail "Real RP API was unexpectedly reachable during event outage"
+    : > "$TMP/fault-restore"
+    if ! wait "$FAULT_PID"; then
+      cat "$TMP/controlplane.log" >&2
+      fail "API shutdown, real Traefik task churn or API restoration failed"
+    fi
+    cat "$TMP/controlplane.log"
+    FAULT_PID=""
+  fi
   [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
     fail "WireGuard was recreated during bounded control-plane silence"
   [ "$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)" = "$gretap_before" ] ||
@@ -436,6 +485,19 @@ PY_WAIT_LEASE
   ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
     fail "Freshly reauthorized source did not recover"
   log "PASS recovery only after fresh source authorization"
+  # Explicit policy withdrawal must immediately deny existing authorized
+  # source packets even while WG/GRETAP remain up. Then a NEW approved
+  # source install must recover without rebuilding the tunnel.
+  gate_source_policy "$SOURCE_BID" "" "Revoked" ""
+  if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+    fail "Explicit Gate local source revocation did not deny IPv4"
+  fi
+  [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+    fail "Explicit source revocation unnecessarily replaced WireGuard"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 240)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "New authorized source did not restore connectivity after explicit revoke"
+  log "PASS immediate local policy revoke and fresh reauthorization preserve WG/GRETAP identity"
   kill "$server_pid" 2>/dev/null || true
   wait "$server_pid" 2>/dev/null || true
 fi

@@ -225,3 +225,30 @@ may therefore continue the old tunnel only until the ORIGINAL deadline.
 A changed revision, revocation, new attachment, missing/negative proof,
 expired/rebooted lease, or wrong scope can never inherit the old grant.
 No caller may manufacture a new authorized lease from a recovery poll.
+
+### Real API shutdown and Traefik churn fault injection (pending CI validation)
+
+The mandatory long LAN smoke additionally runs a runner-guarded experiment
+on a disposable **single-node GitHub Actions Swarm only**. It deploys a real
+Traefik reverse proxy with a file-provider router to the running Stage20 RP
+API. After the RP API and Traefik route are verified healthy, the L2 test
+installs one bounded kernel source grant, then the fault helper kills ONLY the
+specific local API process listening on port 3000. It confirms the API health
+endpoint is unreachable and real Traefik returns an upstream 502/503/504.
+While 90 distinct HA-like motion and click events cross live encrypted
+WireGuard/GRETAP and receive customer-LAN acknowledgments over >=443 real
+seconds, Traefik forces a new Swarm task and scales from 1 to 0 to 1.
+The helper must prove the API stayed unavailable for the full event period,
+restore a healthy API, verify the real proxy forwards it, then remove its
+temporary Swarm service/config. Both helpers include EXIT cleanup; the
+fault helper refuses all non-GitHub-hosted/non-single-node contexts. The
+Gate's nft authorization is not renewed when the API comes back, and the
+existing >600-second test must still deny IPv4 until a fresh grant.
+
+**Evidence status:** the old isolated 443s kernel/event simulation succeeded
+in run 42906449331; this *stronger actual API/Traefik fault test is not proven*
+until a new exact-HEAD Release Readiness run succeeds with logs showing
+all API/proxy failure, churn, recovery, bidirectional event and expiry proofs.
+An installed real RP Gate v4-to-RP API end-to-end agent heartbeat test,
+physical/data-path fault, full explicit revocation and independent security
+sign-off of 600s offline revocation semantics are separate required DoD items.
