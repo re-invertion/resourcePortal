@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 import sys
 import subprocess
@@ -58,6 +59,7 @@ class GateLeaseTests(unittest.TestCase):
         self.patchers = [
             patch.object(lease, "STATE_DIR", root),
             patch.object(lease, "LEASE_FILE", root / "authorization.json"),
+            patch.object(lease, "LOCK_FILE", root / "authorization.lock"),
             patch.object(lease, "GATE_STATE", root / "gate.json"),
             patch.object(lease, "L2_STATE", root / "lan-state.json"),
             patch.object(lease, "boot_id", lambda: "boot-1"),
@@ -73,6 +75,95 @@ class GateLeaseTests(unittest.TestCase):
                 "singleAppId":APP,"networkId":NETWORK,
                 "configurationRevision":2,"macAddress":GRANT["macAddress"],
             }}}))
+
+    def test_python_watchdog_and_util_linux_flock_share_lock_inode(self):
+        # Exercise the actual util-linux command used by the generated Bash
+        # agent against the Python watchdog's fcntl exclusive lock.
+        with lease.exclusive_authorization():
+            blocked = subprocess.run(
+                ["flock", "-n", str(lease.LOCK_FILE), "true"],
+                check=False, capture_output=True, timeout=3)
+            self.assertNotEqual(blocked.returncode, 0)
+        allowed = subprocess.run(
+            ["flock", "-n", str(lease.LOCK_FILE), "true"],
+            check=False, capture_output=True, timeout=3)
+        self.assertEqual(allowed.returncode, 0)
+        self.assertEqual(lease.LOCK_FILE.stat().st_mode & 0o777, 0o600)
+
+    def test_expired_watchdog_revoke_finishes_before_new_heartbeat_can_apply(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        self.t = 701
+        revoking = threading.Event()
+        permit_revoke_finish = threading.Event()
+        attempting_recovery = threading.Event()
+        recovery_applied = threading.Event()
+        errors = []
+
+        def slow_revoke():
+            revoking.set()
+            if not permit_revoke_finish.wait(timeout=4):
+                raise AssertionError("Watchdog revoke did not finish")
+
+        def watchdog_cycle():
+            try:
+                self.assertFalse(lease.watch_cycle(True))
+            except BaseException as exc:
+                errors.append(exc)
+
+        def authenticated_recovery():
+            try:
+                attempting_recovery.set()
+                # Real shell agent holds this identical lock across
+                # --transition, apply_config, --renew and nft refresh.
+                with lease.exclusive_authorization():
+                    self.assertTrue(lease.renew(RESPONSE, NONCE))
+                    recovery_applied.set()
+            except BaseException as exc:
+                errors.append(exc)
+
+        with patch.object(lease, "revoke", side_effect=slow_revoke) as revoked:
+            watcher = threading.Thread(target=watchdog_cycle, daemon=True)
+            watcher.start()
+            self.assertTrue(revoking.wait(2))
+            recovery = threading.Thread(target=authenticated_recovery, daemon=True)
+            recovery.start()
+            self.assertTrue(attempting_recovery.wait(2))
+            # The second process may not begin to replace the old authority
+            # until BOTH LAN cleanup and wg-quick down are complete.
+            self.assertFalse(recovery_applied.wait(0.15))
+            permit_revoke_finish.set()
+            watcher.join(3)
+            recovery.join(3)
+            self.assertFalse(watcher.is_alive())
+            self.assertFalse(recovery.is_alive())
+            self.assertEqual(errors, [])
+            revoked.assert_called_once_with()
+        self.assertTrue(recovery_applied.is_set())
+        self.assertEqual(lease.read()["deadline"], 1301)
+        self.assertEqual(lease.LOCK_FILE.stat().st_mode & 0o777, 0o600)
+
+    def test_watchdog_rechecks_new_authority_after_waiting_for_apply_lock(self):
+        self.assertTrue(lease.renew(RESPONSE, NONCE))
+        self.t = 701
+        attempted = threading.Event()
+        completed = threading.Event()
+        results = []
+        with patch.object(lease, "revoke") as revoked:
+            with lease.exclusive_authorization():
+                self.assertTrue(lease.renew(RESPONSE, NONCE))
+                def watch():
+                    attempted.set()
+                    results.append(lease.watch_cycle(True))
+                    completed.set()
+                watcher = threading.Thread(target=watch, daemon=True)
+                watcher.start()
+                self.assertTrue(attempted.wait(2))
+                self.assertFalse(completed.wait(0.15))
+            watcher.join(3)
+            self.assertFalse(watcher.is_alive())
+            self.assertEqual(results, [True])
+            revoked.assert_not_called()
+        self.assertIsNotNone(lease.read())
 
     def test_deadline_uses_boottime_and_never_extends_on_failed_exchange(self):
         self.assertTrue(lease.renew(RESPONSE, NONCE))

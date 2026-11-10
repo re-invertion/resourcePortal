@@ -7,6 +7,8 @@ No grant is restored after agent restart: the calling agent clears this file
 and revokes old owned forwarding before its first authenticated heartbeat.
 """
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -17,6 +19,7 @@ import time
 
 STATE_DIR = Path("/run/resourceportal-gate")
 LEASE_FILE = STATE_DIR / "authorization.json"
+LOCK_FILE = STATE_DIR / "authorization.lock"
 GATE_STATE = Path("/etc/resourceportal-gate/state.json")
 L2_STATE = Path("/etc/resourceportal-gate/lan-state.json")
 LAN_AGENT = "/usr/local/sbin/resourceportal-gate-lan.py"
@@ -28,6 +31,28 @@ LIVE_TTL_SECONDS = 45  # fresh authenticated heartbeat only, NEVER offline
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", re.I)
 NONCE = re.compile(r"^[0-9a-f]{64}$")
 MAC = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", re.I)
+
+
+@contextmanager
+def exclusive_authorization():
+    """Serialize stale-state validation and full RP-owned revoke with renewal.
+
+    The shell agent uses the same inode via util-linux flock while validating
+    a successful response, applying topology and refreshing authorized nft
+    sources. NEVER unlink or replace LOCK_FILE: lock identity must stay stable.
+    """
+    STATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(STATE_DIR, 0o700)
+    descriptor = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def boot_time():
@@ -292,23 +317,34 @@ def revoke():
         raise failure
 
 
+def watch_cycle(had_lease):
+    """Recheck under the SAME lock as apply/renew, then revoke atomically.
+
+    An earlier unprotected expiry observation must never tear down a freshly
+    authenticated replacement while LAN cleanup and WireGuard shutdown run.
+    nft source-set timers remain an independent hard expiry if apply stalls.
+    """
+    with exclusive_authorization():
+        current = read(allow_live=True)
+        if current:
+            return True
+        if had_lease or LEASE_FILE.exists():
+            clear()
+            try:
+                revoke()
+                return False
+            except (OSError, subprocess.SubprocessError):
+                # Failed cleanup must retry; bounded source timers still
+                # independently enforce expiry if the monitor is delayed.
+                return True
+        return False
+
+
 def watch():
     """Independent deadline monitor, not blocked by HTTP requests or sleep."""
     had_lease = False
     while True:
-        current = read(allow_live=True)
-        if current:
-            had_lease = True
-        elif had_lease or LEASE_FILE.exists():
-            # A stale/corrupted/replayed lease cannot keep forwarding enabled.
-            clear()
-            try:
-                revoke()
-                had_lease = False
-            except (OSError, subprocess.SubprocessError):
-                # Do not exit or forget a failed revoke; keep retrying and
-                # rely on independently expiring kernel source-set entries.
-                had_lease = True
+        had_lease = watch_cycle(had_lease)
         time.sleep(0.2)
 
 

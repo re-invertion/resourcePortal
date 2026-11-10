@@ -56,6 +56,27 @@ describe("RP Gate LAN Attachments-only installer", () => {
       timeout:12000,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
     expect(outcome.status,outcome.stderr||outcome.error?.message).toBe(0);
   });
+  it("serializes a successful authenticated heartbeat and authoritative revoke with the watchdog lock",()=>{
+    expect(agent).toContain('LEASE_LOCK_FILE="$LEASE_RUNTIME_DIR/authorization.lock"');
+    expect(agent).toContain('flock -x -w 45 "$LEASE_LOCK_FD"');
+    expect(script).toContain('for tool in curl jq wg wg-quick python3 nft ip flock systemctl');
+    const success = agent.indexOf('if [ "$HTTP_CODE" = "200" ]; then');
+    const acquire = agent.indexOf('lock_authorization || die',success);
+    const transition = agent.indexOf('--transition --nonce "$CHALLENGE"',success);
+    const apply = agent.indexOf('elif ! apply_config "$RESPONSE"',success);
+    const renew = agent.indexOf('--renew --nonce "$CHALLENGE"',success);
+    const release = agent.indexOf('unlock_authorization',renew);
+    expect(success).toBeGreaterThan(0);
+    expect(acquire).toBeGreaterThan(success);
+    expect(acquire).toBeLessThan(transition);
+    expect(transition).toBeLessThan(apply);
+    expect(apply).toBeLessThan(renew);
+    expect(renew).toBeLessThan(release);
+    const denied = agent.indexOf('elif [[ "$HTTP_CODE" =~ ^(400',release);
+    expect(denied).toBeGreaterThan(release);
+    expect(agent.indexOf('lock_authorization',denied)).toBeGreaterThan(denied);
+    expect(agent.indexOf('unlock_authorization',denied)).toBeGreaterThan(denied);
+  });
   it("parses the real curl response suffix without misclassifying HTTP 200 as an outage",()=>{
     const parser=agent.split("\n").find(line =>
       line.includes("HTTP_CODE=") && line.includes("RAW_RESPONSE##"));

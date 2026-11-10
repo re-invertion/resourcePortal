@@ -51,13 +51,13 @@ install_packages() {
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y curl jq wireguard-tools iproute2 nftables python3 python3-yaml ca-certificates
+    apt-get install -y curl jq wireguard-tools iproute2 nftables util-linux python3 python3-yaml ca-certificates
   elif command -v dnf >/dev/null; then
-    dnf install -y curl jq wireguard-tools iproute nftables python3 ca-certificates
+    dnf install -y curl jq wireguard-tools iproute nftables util-linux python3 ca-certificates
   elif command -v yum >/dev/null; then
-    yum install -y curl jq wireguard-tools iproute nftables python3 ca-certificates
+    yum install -y curl jq wireguard-tools iproute nftables util-linux python3 ca-certificates
   elif command -v apk >/dev/null; then
-    apk add --no-cache curl jq wireguard-tools iproute2 nftables python3 ca-certificates
+    apk add --no-cache curl jq wireguard-tools iproute2 nftables util-linux python3 ca-certificates
   else
     die "Unsupported distribution: install curl, jq, wg, ip, nft, python3"
   fi
@@ -65,7 +65,7 @@ install_packages() {
 if [ "$UPDATE_ONLY" -eq 0 ]; then
   install_packages
 else
-  for tool in curl jq wg wg-quick python3 nft ip systemctl; do
+  for tool in curl jq wg wg-quick python3 nft ip flock systemctl; do
     command -v "$tool" >/dev/null || die "Existing Gate update missing dependency: $tool"
   done
   # Never touch the physical management uplink or enroll a new Gate during update.
@@ -137,9 +137,25 @@ WG_CONF="/etc/wireguard/rp-gate.conf"
 WG_INTERFACE="rp-gate"
 LAN_AGENT="/usr/local/sbin/resourceportal-gate-lan.py"
 LEASE_AGENT="/usr/local/sbin/resourceportal-gate-authorization-lease.py"
+LEASE_RUNTIME_DIR="/run/resourceportal-gate"
+LEASE_LOCK_FILE="$LEASE_RUNTIME_DIR/authorization.lock"
 WATCHDOG_PID=""
 RETRY_DELAY=2
 log() { printf '[RP Gate LAN] %s\n' "$*"; }
+lock_authorization() {
+  mkdir -p -m 0700 "$LEASE_RUNTIME_DIR" || return 1
+  chmod 0700 "$LEASE_RUNTIME_DIR" || return 1
+  # Keep this lock inode stable across renewals. The independent Python
+  # watchdog locks the SAME file around state re-check and complete revoke.
+  # Never unlink/rename the lock: the lease JSON is a SEPARATE atomic file.
+  exec {LEASE_LOCK_FD}>"$LEASE_LOCK_FILE" || return 1
+  chmod 0600 "$LEASE_LOCK_FILE" || return 1
+  flock -x -w 45 "$LEASE_LOCK_FD"
+}
+unlock_authorization() {
+  flock -u "$LEASE_LOCK_FD" || true
+  exec {LEASE_LOCK_FD}>&-
+}
 revoke_lan() {
   python3 "$LAN_AGENT" --revoke-all || { log "LAN revocation failed; state retained"; return 1; }
 }
@@ -281,6 +297,11 @@ while :; do
   RESPONSE="__RP_SHELL_EXPAND__RAW_RESPONSE%$'\n'*}"
   LIVE_ONLY=0
   if [ "$HTTP_CODE" = "200" ]; then
+    # The entire fresh response (nonce validation, apply, lease renewal and
+    # nft source refresh) is serialized with expiry cleanup, not just the
+    # short transition write. An expired prior watchdog decision cannot
+    # tear down a replacement interface after this transaction commits.
+    lock_authorization || die "Authorization lock unavailable; watchdog must revoke"
     # A valid HTTP response without the fresh client challenge is untrusted.
     if ! printf '%s' "$RESPONSE" | jq -e --arg gate "$GATE_ID" --arg nonce "$CHALLENGE" \
       '.gateId==$gate and .authorizationLease.protocol==1 and
@@ -343,12 +364,15 @@ while :; do
     # curl can itself consume up to 20s. Keep a 35s margin against the
     # independent 45s LIVE_TTL, including legacy --update interval=60/120.
     if [ "$LIVE_ONLY" -eq 1 ] && [ "$DELAY" -gt 10 ]; then DELAY=10; fi
+    unlock_authorization
   elif [[ "$HTTP_CODE" =~ ^(400|401|403|405|409|410|412|422)$ ]]; then
+    lock_authorization || die "Authorization lock unavailable for explicit rejection"
     python3 "$LEASE_AGENT" --clear || true
     revoke_lan || true
     down_tunnel
     log "Gate authorization rejected by API; forwarding revoked immediately"
     DELAY="$INTERVAL"
+    unlock_authorization
   else
     if python3 "$LEASE_AGENT" --valid; then
       log "Control plane Degraded; continuing only existing leased forwarding"

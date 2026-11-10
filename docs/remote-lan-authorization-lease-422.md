@@ -188,3 +188,18 @@ The separate full API/Traefik fault-injection and HA-like end-to-end acceptance
 scenario in issue #422 remains open until explicitly demonstrated. The
 CI experiment is disposable and must never be run on the production
 Raspberry Pi, Home Assistant or physical LAN.
+
+### Serialized expiry/recovery (Codex P2)
+
+The Gate agent and its separate Python watchdog share a **stable, root-only**
+authorization lock inode in /run/resourceportal-gate/authorization.lock.
+The Bash agent acquires an exclusive util-linux flock across nonce
+verification, transition issuance, LAN apply, renewal and nft source refresh;
+it also serializes authoritative HTTP deny and local revocation.
+The watchdog takes the same advisory lock, **rechecks fresh local authority
+after acquiring it** and performs both LAN cleanup and WireGuard shutdown
+while holding it. This prevents an earlier expiry observation from
+completing teardown of a newly authenticated replacement tunnel.
+The lock inode is never renamed/unlinked. Lock acquisition failure aborts
+the agent (fail closed), and kernel nft source timers remain independent
+hard expiry enforcement. Legacy Gate v3 never receives a v4 offline grant.
