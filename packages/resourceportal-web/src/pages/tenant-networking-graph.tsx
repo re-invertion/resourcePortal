@@ -27,6 +27,13 @@ export type GateResource={
   id:string;name:string;description?:string|null;status:string;configRevision:number;
   agentVersion?:string|null;serverListenPort?:number|null;lastSeenAt?:string|null;
   lastError?:string|null;revokedAt?:string|null;
+  authorizationLease?:{
+    controlPlane:"Connected"|"Degraded";
+    state:"Authorized"|"Degraded"|"ExpiredOrUnavailable";
+    lastRenewedAt?:string|null;expiresAt?:string|null;
+    remainingSeconds:number;authorizedAttachments:number;
+    dataPlane:"NotDirectlyVerified";
+  }|null;
   observedLan?:{
     protocol:number;gateId:string;physicalInterface:string;bridge:string;
     networkCidr:string;gateway:string;state:string;observedAt:string;

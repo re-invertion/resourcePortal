@@ -89,6 +89,37 @@ function fixture(flag="true", rows: unknown[]=[row]){
   return {prisma,config,service};
 }
 describe("Remote LAN node policy rollout",()=>{
+  it("keeps the exact active v4 snapshot during a stale managed-Gate observation and revokes on revision change",async()=>{
+    const now=Date.now();
+    const authorized={...row, status:"Active",uplinkMode:"ManagedSharedUplink",
+      lanInterface:"eth0",addressMode:"DHCP",staticAddress:null,staticGateway:null,
+      configurationRevision:2,
+      gate:{...row.gate,agentVersion:"gate-l2-v4",
+        observedLan:null,observedLanAt:new Date(now-100_000),
+        observedL2Diagnostic:{authorizationLease:{issuedAtMs:now-1000,
+          grants:[{attachmentId,tenantId,gateId,singleAppId:appId,networkId,
+            macAddress:row.macAddress,configurationRevision:2}]}}}};
+    const snapshot={version:1,attachments:[{
+      attachmentId,tenantId,singleAppId:appId,gateId,networkName,
+      overlayCidr:"10.200.42.0/24",lanCidr:"192.168.50.0/24",
+      gatewayOverlayIp:"10.200.42.20",
+      macAddress:row.macAddress,configurationRevision:2,
+      uplinkMode:"ManagedSharedUplink",addressMode:"DHCP",
+      staticAddress:null,staticGateway:null,
+    }]};
+    const encoded=Buffer.from(JSON.stringify(snapshot)).toString("base64");
+    const {service}=fixture("true",[authorized]);
+    service.policyEnv=["RESOURCEPORTAL_REMOTE_LAN_NODES_B64="+encoded,
+      "RP_REMOTE_LAN_NODE_ENABLED=true"];
+    expect(await service.reconcile()).toMatchObject({
+      changed:false,attachments:1,disabled:false,degraded:true,
+    });
+    expect(service.calls.every(x=>x[0]!=="service"||x[1]!=="update")).toBe(true);
+    const bad=fixture("true",[{...authorized,configurationRevision:3}]).service;
+    bad.policyEnv=[...service.policyEnv];
+    await expect(bad.reconcile()).rejects.toThrow(/Stale Gate observation/);
+    expect(bad.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
+  });
   it("binds policy to exactly one observed running Gateway task on the tenant overlay",async()=>{
     const {service,prisma}=fixture();
     const result=await service.reconcile();

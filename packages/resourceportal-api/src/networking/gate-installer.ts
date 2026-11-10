@@ -4,6 +4,7 @@ import { join } from "node:path";
 export function resourcePortalGateInstallerScript() {
   const lanAgent = readFileSync(join(__dirname, "gate-lan-agent.py"), "utf8");
   const managedUplink = readFileSync(join(__dirname, "gate-managed-uplink.py"), "utf8");
+  const leaseAgent = readFileSync(join(__dirname, "gate-authorization-lease.py"), "utf8");
   return String.raw`#!/usr/bin/env bash
 set -euo pipefail
 API_URL=""
@@ -11,7 +12,8 @@ TOKEN=""
 INTERVAL=30
 UPLINK_DEVICE=""
 SKIP_MANAGED_UPLINK=0
-AGENT_VERSION="gate-l2-v3"
+UPDATE_ONLY=0
+AGENT_VERSION="gate-l2-v4"
 STATE_DIR="/etc/resourceportal-gate"
 STATE_FILE="$STATE_DIR/state.json"
 PRIVATE_KEY="$STATE_DIR/private.key"
@@ -26,13 +28,24 @@ while [ "$#" -gt 0 ]; do
     --interval) INTERVAL="__RP_SHELL_EXPAND__2:-30}"; shift 2 ;;
     --uplink-device) UPLINK_DEVICE="__RP_SHELL_EXPAND__2:-}"; shift 2 ;;
     --skip-managed-uplink) SKIP_MANAGED_UPLINK=1; shift ;;
+    --update) UPDATE_ONLY=1; SKIP_MANAGED_UPLINK=1; shift ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
 [ "$(id -u)" -eq 0 ] || die "Run as root"
-[ -n "$API_URL" ] && [ -n "$TOKEN" ] || die "--url and --token required"
-[[ "$INTERVAL" =~ ^[0-9]+$ ]] && [ "$INTERVAL" -ge 5 ] && [ "$INTERVAL" -le 120 ] ||
-  die "Invalid heartbeat interval"
+if [ "$UPDATE_ONLY" -eq 1 ]; then
+  [ -s "$STATE_FILE" ] && [ -s "$PRIVATE_KEY" ] &&
+    [ -f "$AGENT_BIN" ] || die "Existing Gate identity or executable missing; update refused"
+  STORED_URL="$(jq -er '.apiUrl' "$STATE_FILE")"
+  [ -z "$API_URL" ] || [ "$API_URL" = "$STORED_URL" ] ||
+    die "Update may not switch enrolled API origin"
+  API_URL="$STORED_URL"
+  [ -z "$TOKEN" ] || die "--update never accepts a new enrollment token"
+else
+  [ -n "$API_URL" ] && [ -n "$TOKEN" ] || die "--url and --token required"
+  [[ "$INTERVAL" =~ ^[0-9]+$ ]] && [ "$INTERVAL" -ge 5 ] && [ "$INTERVAL" -le 120 ] ||
+    die "Invalid heartbeat interval"
+fi
 API_URL="__RP_SHELL_EXPAND__API_URL%/}"
 install_packages() {
   if command -v apt-get >/dev/null; then
@@ -49,24 +62,54 @@ install_packages() {
     die "Unsupported distribution: install curl, jq, wg, ip, nft, python3"
   fi
 }
-install_packages
+if [ "$UPDATE_ONLY" -eq 0 ]; then
+  install_packages
+else
+  for tool in curl jq wg wg-quick python3 nft ip systemctl; do
+    command -v "$tool" >/dev/null || die "Existing Gate update missing dependency: $tool"
+  done
+  # Never touch the physical management uplink or enroll a new Gate during update.
+  BACKUP_DIR="$(mktemp -d /var/backups/resourceportal-gate-XXXXXX)"
+  for path in "$AGENT_BIN" "$SERVICE_FILE" \
+    /usr/local/sbin/resourceportal-gate-lan.py \
+    /usr/local/sbin/resourceportal-gate-uplink \
+    /usr/local/sbin/resourceportal-gate-authorization-lease.py; do
+    if [ -f "$path" ]; then
+      install -m 0700 -p "$path" "$BACKUP_DIR/$(basename "$path")"
+    fi
+  done
+fi
 command -v systemctl >/dev/null || die "systemd is required"
 install -d -m 0700 "$STATE_DIR"
 install -d -m 0700 /etc/wireguard
 if [ ! -s "$PRIVATE_KEY" ]; then umask 077; wg genkey > "$PRIVATE_KEY"; fi
 chmod 0600 "$PRIVATE_KEY"
-PUBLIC_KEY="$(wg pubkey < "$PRIVATE_KEY")"
-PAYLOAD="$(jq -cn --arg token "$TOKEN" --arg key "$PUBLIC_KEY" \
-  '{token:$token,publicKey:$key,agentVersion:"gate-l2-v3"}')"
-RESPONSE="$(curl -fsS --max-time 20 -H 'content-type: application/json' -X POST \
-  --data "$PAYLOAD" "$API_URL/networking/gates/enroll")" || die "LAN enrollment failed"
-AGENT_TOKEN="$(printf '%s' "$RESPONSE" | jq -er .agentToken)"
-GATE_ID="$(printf '%s' "$RESPONSE" | jq -er .gateId)"
-umask 077
-jq -cn --arg api "$API_URL" --arg token "$AGENT_TOKEN" \
-  --arg gate "$GATE_ID" --argjson interval "$INTERVAL" \
-  '{apiUrl:$api,agentToken:$token,gateId:$gate,interval:$interval}' > "$STATE_FILE"
-chmod 0600 "$STATE_FILE"
+if [ "$UPDATE_ONLY" -eq 1 ]; then
+  AGENT_TOKEN="$(jq -er .agentToken "$STATE_FILE")"
+  GATE_ID="$(jq -er .gateId "$STATE_FILE")"
+  # The existing enrolled machine bearer must be recognized by the upgraded
+  # server before any local executable is overwritten.
+  CONFIG_RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
+    "$API_URL/networking/gates/agent/config")" ||
+    die "Existing Gate bearer not accepted by RP; update refused"
+  printf '%s' "$CONFIG_RESPONSE" | jq -e --arg id "$GATE_ID" \
+    '.gateId==$id and .lanAttachmentProtocol==1 and .revoked!=true and
+     (.supportedAgentVersions | type=="array" and index("gate-l2-v4")!=null)' >/dev/null ||
+    die "Existing Gate identity or v4 server capability mismatch"
+else
+  PUBLIC_KEY="$(wg pubkey < "$PRIVATE_KEY")"
+  PAYLOAD="$(jq -cn --arg token "$TOKEN" --arg key "$PUBLIC_KEY" \
+    '{token:$token,publicKey:$key,agentVersion:"gate-l2-v4"}')"
+  RESPONSE="$(curl -fsS --max-time 20 -H 'content-type: application/json' -X POST \
+    --data "$PAYLOAD" "$API_URL/networking/gates/enroll")" || die "LAN enrollment failed"
+  AGENT_TOKEN="$(printf '%s' "$RESPONSE" | jq -er .agentToken)"
+  GATE_ID="$(printf '%s' "$RESPONSE" | jq -er .gateId)"
+  umask 077
+  jq -cn --arg api "$API_URL" --arg token "$AGENT_TOKEN" \
+    --arg gate "$GATE_ID" --argjson interval "$INTERVAL" \
+    '{apiUrl:$api,agentToken:$token,gateId:$gate,interval:$interval}' > "$STATE_FILE"
+  chmod 0600 "$STATE_FILE"
+fi
 
 cat > /usr/local/sbin/resourceportal-gate-lan.py <<'RP_GATE_LAN_PYTHON'
 __RP_GATE_LAN_PYTHON__
@@ -80,6 +123,11 @@ __RP_GATE_UPLINK_PYTHON__
 RP_GATE_UPLINK_PYTHON
 chmod 0700 /usr/local/sbin/resourceportal-gate-uplink
 
+cat > /usr/local/sbin/resourceportal-gate-authorization-lease.py <<'RP_GATE_LEASE_PYTHON'
+__RP_GATE_LEASE_PYTHON__
+RP_GATE_LEASE_PYTHON
+chmod 0700 /usr/local/sbin/resourceportal-gate-authorization-lease.py
+
 cat > "$AGENT_BIN" <<'RP_GATE_AGENT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -88,12 +136,20 @@ PRIVATE_KEY="/etc/resourceportal-gate/private.key"
 WG_CONF="/etc/wireguard/rp-gate.conf"
 WG_INTERFACE="rp-gate"
 LAN_AGENT="/usr/local/sbin/resourceportal-gate-lan.py"
+LEASE_AGENT="/usr/local/sbin/resourceportal-gate-authorization-lease.py"
+WATCHDOG_PID=""
+RETRY_DELAY=2
 log() { printf '[RP Gate LAN] %s\n' "$*"; }
 revoke_lan() {
   python3 "$LAN_AGENT" --revoke-all || { log "LAN revocation failed; state retained"; return 1; }
 }
 down_tunnel() { wg-quick down "$WG_INTERFACE" >/dev/null 2>&1 || true; }
-shutdown() { revoke_lan || true; down_tunnel; }
+shutdown() {
+  python3 "$LEASE_AGENT" --clear || true
+  if [ -n "$WATCHDOG_PID" ]; then kill "$WATCHDOG_PID" 2>/dev/null || true; fi
+  revoke_lan || true
+  down_tunnel
+}
 trap shutdown EXIT
 trap 'exit 0' SIGTERM SIGINT
 
@@ -140,6 +196,12 @@ API_URL="$(printf '%s' "$CONFIG" | jq -er .apiUrl)"
 AGENT_TOKEN="$(printf '%s' "$CONFIG" | jq -er .agentToken)"
 GATE_ID="$(printf '%s' "$CONFIG" | jq -er .gateId)"
 INTERVAL="$(printf '%s' "$CONFIG" | jq -er .interval)"
+
+# A process/host restart never inherits an old grant, even if the kernel
+# retained an old RP-owned tunnel. A successful new heartbeat must reauthorize.
+shutdown
+python3 "$LEASE_AGENT" --watch &
+WATCHDOG_PID=$!
 
 apply_config() {
   local config="$1" count endpoint key addr server allowed tmp
@@ -197,23 +259,86 @@ while :; do
   OBSERVED_L2="$(printf '%s' "$OBSERVED_RESULT" | jq -c '.proofs')"
   OBSERVED_DIAG="$(printf '%s' "$OBSERVED_RESULT" | jq -c '.diagnostic')"
   APPLIED_AT="$(python3 "$LAN_AGENT" --applied-at 2>/dev/null || printf '0')"
-  HEARTBEAT="$(jq -cn --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson diag "$OBSERVED_DIAG" --argjson applied "$APPLIED_AT" \
-    '{agentVersion:"gate-l2-v3",lanObservation:$observation,lanAttachmentProofs:$l2,lanProofDiagnostic:$diag} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')" || HEARTBEAT='{"agentVersion":"gate-l2-v3"}'
-  if RESPONSE="$(curl -fsS --max-time 20 -H "authorization: Bearer $AGENT_TOKEN" \
+  if ! kill -0 "$WATCHDOG_PID" 2>/dev/null; then
+    log "Authorization watchdog unavailable; failing closed"
+    exit 1
+  fi
+  CHALLENGE="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  HEARTBEAT="$(jq -cn --arg nonce "$CHALLENGE" --argjson observation "$OBSERVED_LAN" --argjson l2 "$OBSERVED_L2" --argjson diag "$OBSERVED_DIAG" --argjson applied "$APPLIED_AT" \
+    '{agentVersion:"gate-l2-v4",leaseNonce:$nonce,lanObservation:$observation,lanAttachmentProofs:$l2,lanProofDiagnostic:$diag} + (if $applied > 0 then {lanAppliedAtMs:$applied} else {} end)')"
+  # A 401/403 is an explicit authenticated-access denial, unlike an
+  # ambiguous ingress 404/502 or broken TLS transport. Never extend an
+  # offline lease after an explicit authorization rejection.
+  RAW_RESPONSE=""
+  HTTP_CODE="000"
+  if RAW_RESPONSE="$(curl -sS --max-time 20 -w $'\n%{http_code}' \
+    -H "authorization: Bearer $AGENT_TOKEN" \
     -H 'content-type: application/json' -X POST \
     --data "$HEARTBEAT" \
     "$API_URL/networking/gates/agent/heartbeat")"; then
-    if ! apply_config "$RESPONSE"; then
+    HTTP_CODE="__RP_SHELL_EXPAND__RAW_RESPONSE##*$'\n'}"
+  fi
+  RESPONSE="__RP_SHELL_EXPAND__RAW_RESPONSE%$'\n'*}"
+  if [ "$HTTP_CODE" = "200" ]; then
+    # A valid HTTP response without the fresh client challenge is untrusted.
+    if ! printf '%s' "$RESPONSE" | jq -e --arg gate "$GATE_ID" --arg nonce "$CHALLENGE" \
+      '.gateId==$gate and .authorizationLease.protocol==1 and
+       .authorizationLease.gateId==$gate and .authorizationLease.nonce==$nonce' >/dev/null; then
+      python3 "$LEASE_AGENT" --clear || true
+      revoke_lan || true
+      down_tunnel
+      log "Untrusted heartbeat response; forwarding revoked"
+    elif ! apply_config "$RESPONSE"; then
+      python3 "$LEASE_AGENT" --clear || true
       revoke_lan || true
       down_tunnel
       log "LAN policy invalid or tunnel unavailable"
+    else
+      # The current server may provide no offline grant while provisioning;
+      # this is NOT a failure of the live authorized configuration.
+      if printf '%s' "$RESPONSE" | python3 "$LEASE_AGENT" --renew --nonce "$CHALLENGE"; then
+        # Extend only the exact existing authorized nft source timers
+        # to the fixed lease deadline; never recreate WireGuard or bridges.
+        if ! python3 "$LAN_AGENT" --refresh-authorized-sources; then
+          python3 "$LEASE_AGENT" --clear || true
+          revoke_lan || true
+          down_tunnel
+          log "Authorized source refresh failed; forwarding revoked"
+        fi
+      else
+        python3 "$LEASE_AGENT" --clear || true
+        # A new static-IP attachment requires ARP/bootstrap to become Active.
+        # Permit a short, single-heartbeat source grant while the authenticated
+        # control plane is reachable; it cannot be renewed during an outage.
+        if ! python3 "$LAN_AGENT" --refresh-live-sources; then
+          revoke_lan || true
+          down_tunnel
+          log "Live-only source refresh failed; forwarding revoked"
+        fi
+        log "No offline lease; source policy limited to live control plane"
+      fi
+      RETRY_DELAY=2
     fi
-  else
+    DELAY="$INTERVAL"
+  elif [[ "$HTTP_CODE" =~ ^(400|401|403|405|409|410|412|422)$ ]]; then
+    python3 "$LEASE_AGENT" --clear || true
     revoke_lan || true
     down_tunnel
-    log "Heartbeat failure; bridge revoked"
+    log "Gate authorization rejected by API; forwarding revoked immediately"
+    DELAY="$INTERVAL"
+  else
+    if python3 "$LEASE_AGENT" --valid; then
+      log "Control plane Degraded; continuing only existing leased forwarding"
+    else
+      revoke_lan || true
+      down_tunnel
+      log "Heartbeat failed without valid authorization; forwarding revoked"
+    fi
+    DELAY=$((RETRY_DELAY + RANDOM % 4))
+    RETRY_DELAY=$((RETRY_DELAY * 2))
+    if [ "$RETRY_DELAY" -gt 30 ]; then RETRY_DELAY=30; fi
   fi
-  sleep "$INTERVAL" &
+  sleep "$DELAY" &
   wait $! || exit 0
 done
 RP_GATE_AGENT
@@ -236,7 +361,11 @@ EOF
 systemctl daemon-reload
 systemctl enable resourceportal-gate.service
 systemctl restart resourceportal-gate.service
-log "LAN Gate enrolled as $GATE_ID"
+if [ "$UPDATE_ONLY" -eq 1 ]; then
+  log "LAN Gate $GATE_ID upgraded in place; backups: $BACKUP_DIR"
+else
+  log "LAN Gate enrolled as $GATE_ID"
+fi
 
 # One-command enrollment prepares a managed physical LAN bridge.
 # Wi-Fi is neither bridged nor used as a recovery prerequisite. A detached
@@ -285,5 +414,6 @@ if [ "$SKIP_MANAGED_UPLINK" -eq 0 ]; then
     fi
   fi
 fi
-`.replace("__RP_GATE_LAN_PYTHON__", lanAgent).replace("__RP_GATE_UPLINK_PYTHON__", managedUplink).replaceAll("__RP_SHELL_EXPAND__", "${");
+`.replace("__RP_GATE_LAN_PYTHON__", lanAgent).replace("__RP_GATE_UPLINK_PYTHON__", managedUplink)
+    .replace("__RP_GATE_LEASE_PYTHON__", leaseAgent).replaceAll("__RP_SHELL_EXPAND__", "${");
 }

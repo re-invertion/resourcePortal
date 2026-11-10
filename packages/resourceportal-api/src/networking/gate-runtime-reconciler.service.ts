@@ -1,3 +1,4 @@
+import { remoteLanAuthorizationExpiry } from "./remote-lan-authorization-lease";
 import { normalizeSwarmCapabilityAdd } from "./swarm-capabilities";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -90,7 +91,7 @@ export class GateRuntimeReconcilerService {
         }
         if (!gate.publicKey || !gate.serverPrivateKeyCiphertext ||
             !gate.serverListenPort || !gate.serverTunnelAddress ||
-            !gate.clientTunnelAddress || gate.agentVersion !== "gate-l2-v3") {
+            !gate.clientTunnelAddress || !["gate-l2-v3","gate-l2-v4"].includes(gate.agentVersion ?? "")) {
           // A legacy Gate must NEVER receive any L2 grant. Remove the
           // previous stack/route surface before requiring re-enrollment.
           await this.removeStack(gateStackName(gate.id));
@@ -159,6 +160,7 @@ export class GateRuntimeReconcilerService {
               "_" + attachment.singleApp.name.replaceAll("-", "_"),
             macAddress: attachment.macAddress,
             configurationRevision: attachment.configurationRevision,
+            authorizationRequired: gate.agentVersion === "gate-l2-v4",
             lanCidr: attachment.lanCidr,
             addressMode: attachment.addressMode as "DHCP" | "Static",
             staticAddress: attachment.staticAddress,
@@ -197,6 +199,15 @@ export class GateRuntimeReconcilerService {
             ? attachment.leaseExpiresAt?.toISOString() ?? null : null,
           lastVerifiedAt: attachment.status === "Active"
             ? attachment.lastVerifiedAt?.toISOString() ?? null : null,
+          authorizationExpiresAt: attachment.status === "Active" ? (
+            (deadline => deadline ? new Date(deadline).toISOString() : null)(
+              remoteLanAuthorizationExpiry({ ...gate, gateId:gate.id }, {
+                attachmentId: attachment.id,tenantId:attachment.tenantId,
+                gateId:gate.id,singleAppId:attachment.singleAppId,
+                networkId:attachment.networkId,macAddress:attachment.macAddress,
+                configurationRevision:attachment.configurationRevision,
+              }))
+          ) : null,
         })));
         await this.prisma.resourcePortalGate.update({
           where: { id: gate.id }, data: { status: "Ready", lastError: null },

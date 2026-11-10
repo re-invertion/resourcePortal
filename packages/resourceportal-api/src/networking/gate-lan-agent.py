@@ -201,6 +201,39 @@ def is_handshake_recent(expected_peer: str):
     return 0 <= age < MAX_AUTHENTICATED_HANDSHAKE_AGE_SECONDS
 
 
+def authorization_remaining(item: dict) -> int | None:
+    """Monotonic remaining seconds of the EXACT local v4 authorization.
+
+    Fail closed on malformed/replayed lease, wrong boot, tenant, Gate, MAC,
+    network, app or attachment revision. The external watchdog still owns
+    full revocation. This additionally arms kernel nft set expiry on BOTH
+    static and DHCP sources, even if that watchdog crashes.
+    """
+    path = Path("/run/resourceportal-gate/authorization.json")
+    try:
+        if path.is_symlink() or path.stat().st_size > 16000:
+            return None
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if state.get("bootId") != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
+            return None
+        now = time.clock_gettime(time.CLOCK_BOOTTIME)
+        remaining = int(state["deadline"] - now)
+        if not 1 < remaining <= 600:
+            return None
+        matches = [g for g in state.get("grants", [])
+                   if g.get("attachmentId") == item.get("attachmentId")]
+        if len(matches) != 1:
+            return None
+        for field in ("macAddress", "networkId", "singleAppId", "configurationRevision"):
+            if matches[0].get(field) != item.get(field):
+                return None
+        if not isinstance(state.get("gateId"), str) or not isinstance(state.get("tenantId"), str):
+            return None
+        return remaining
+    except (OSError, TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
 def bound_source(item: dict):
     """A verified backend lease or an explicitly granted static IP; never subnet-wide."""
     net = ipaddress.ip_network(item["lanCidr"], strict=True)
@@ -217,7 +250,8 @@ def bound_source(item: dict):
             return None
         if ip.version != 4 or ip.network != net:
             return None
-        timeout = None
+        timeout = (min(45, authorization_remaining(item) or 45)
+                   if item.get("authorizationRequired") else None)
     elif address_mode == "DHCP" and item.get("status") == "Active":
         raw = item.get("verifiedAddress")
         expiry = item.get("leaseExpiresAt")
@@ -231,7 +265,8 @@ def bound_source(item: dict):
         seconds = int(deadline - time.time())
         if seconds <= 1 or seconds > 90 * 86400:
             return None
-        timeout = seconds
+        timeout = (min(seconds, authorization_remaining(item) or 45)
+                   if item.get("authorizationRequired") else seconds)
     else:
         return None
     if ip.version != 4 or ip.ip not in net or ip.ip in (net.network_address, net.broadcast_address):
@@ -355,13 +390,15 @@ def reconcile(config: dict, current: dict):
         revision = item.get("configurationRevision", 1)
         if not isinstance(revision, int) or isinstance(revision, bool) or not 1 <= revision <= 2**31-1:
             raise ValueError("Invalid LAN attachment configuration revision")
-        new[a] = {"lanInterface": physical, "macAddress": mac, "singleAppId": item["singleAppId"],
+        new[a] = {"attachmentId": a, "lanInterface": physical,
+                  "macAddress": mac, "singleAppId": item["singleAppId"],
                   "networkId": item["networkId"], "lanCidr": str(cidr), "uplinkMode": mode,
                   "addressMode": address_mode, "staticAddress": static_addr,
                   "staticGateway": static_gateway, "configurationRevision": revision,
                   "status": item.get("status"),
                   "verifiedAddress": item.get("verifiedAddress"),
-                  "leaseExpiresAt": item.get("leaseExpiresAt")}
+                  "leaseExpiresAt": item.get("leaseExpiresAt"),
+                  "authorizationRequired": item.get("authorizationRequired") is True}
     # Reject conflicting addressing before any privileged L2 mutation.
     static_ips = [item["staticAddress"] for item in new.values() if item["addressMode"] == "Static"]
     if len(static_ips) != len(set(static_ips)):
@@ -388,6 +425,8 @@ def reconcile(config: dict, current: dict):
             previous.setdefault("status", None)
             previous.setdefault("verifiedAddress", None)
             previous.setdefault("leaseExpiresAt", None)
+            previous.setdefault("authorizationRequired", False)
+            previous.setdefault("attachmentId", a)
             if a in old and previous == item:
                 # Revalidate kernel state: durable desired state is not proof
                 # that a tunnel survived a Gate restart or host reboot.
@@ -555,7 +594,7 @@ def observed_managed_segment() -> dict:
         "netmask": str(host.network.netmask),
         "gateway": route["gateway"], "discoveryMethod": "host-verified",
         "observedAt": datetime.now(timezone.utc).isoformat(),
-        "agentVersion": "gate-l2-v3", "capabilities": ["ManagedSharedUplink", "LANDiscoveryV1"],
+        "agentVersion": "gate-l2-v4", "capabilities": ["ManagedSharedUplink", "LANDiscoveryV1"],
         "state": "Ready",
     }
 
@@ -657,6 +696,29 @@ def main():
         return
     if sys.argv[1:] == ["--observed-attachments"]:
         print(json.dumps(observed_attachment_proofs(state), sort_keys=True))
+        return
+    if sys.argv[1:] == ["--refresh-live-sources"]:
+        # Called exclusively after a fresh authenticated successful heartbeat.
+        # Does not issue a lease: any unleased source is kernel-bounded to
+        # 45s and may not be refreshed while HTTPS is unavailable.
+        if not state.get("gateId") or not state.get("tenantId"):
+            raise ValueError("No Gate identity for live source refresh")
+        for aid, item in sorted(state.get("attachments", {}).items()):
+            _, _, chain, _ = names(state["gateId"], state["tenantId"],
+                                  aid, item["lanInterface"])
+            nft_refresh_source(chain, item)
+        return
+    if sys.argv[1:] == ["--refresh-authorized-sources"]:
+        # Only update nft source sets for the current, explicitly leased
+        # attachment identities. NEVER recreate bridges, WG or GRETAP.
+        if not state.get("gateId") or not state.get("tenantId"):
+            raise ValueError("No Gate identity for source lease refresh")
+        for aid, item in sorted(state.get("attachments", {}).items()):
+            if authorization_remaining(item) is None:
+                raise ValueError("Local authorization missing for source refresh")
+            _, _, chain, _ = names(state["gateId"], state["tenantId"],
+                                  aid, item["lanInterface"])
+            nft_refresh_source(chain, item)
         return
     if sys.argv[1:] == ["--revoke-all"]:
         # Authorization failures and agent shutdown must be able to revoke

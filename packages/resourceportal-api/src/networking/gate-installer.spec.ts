@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
 import { resourcePortalGateInstallerScript } from "./gate-installer";
@@ -46,7 +48,35 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(script).not.toContain("__RP_SHELL_EXPAND__");
     expect(script).not.toContain("__RP_GATE_LAN_PYTHON__");
     expect(script).toContain("systemctl restart resourceportal-gate.service");
-    expect(script.match(/AGENT_VERSION="gate-l2-v3"/g)).toHaveLength(1);
+    expect(script.match(/AGENT_VERSION="gate-l2-v4"/g)).toHaveLength(1);
+  });
+  it("enforces on-device monotonic deadline, reboot, replay and revision safety in the real Python helper",()=>{
+    const source = resolve(__dirname,"../../../../test/test_gate_authorization_lease.py");
+    const outcome = spawnSync("python3",[source],{encoding:"utf8",
+      timeout:12000,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
+    expect(outcome.status,outcome.stderr||outcome.error?.message).toBe(0);
+  });
+  it("parses the real curl response suffix without misclassifying HTTP 200 as an outage",()=>{
+    const parser=agent.split("\n").find(line =>
+      line.includes("HTTP_CODE=") && line.includes("RAW_RESPONSE##"));
+    expect(parser).toBeDefined();
+    for(const status of ["200","401","404","502"]) {
+      const bash = "RAW_RESPONSE=$(printf '%s\\n"+status+"' 'response-body')\n" +
+        parser + "\nprintf '%s' \"$HTTP_CODE\"";
+      const result = spawnSync("bash",["-c",bash],{encoding:"utf8",timeout:5000});
+      expect(result.status,result.stderr).toBe(0);
+      expect(result.stdout).toBe(status);
+    }
+  });
+  it("packages every Python helper required by the production Gate installer",()=>{
+    const dockerfile = readFileSync(resolve(__dirname,"../../../../Dockerfile"),"utf8");
+    for(const asset of [
+      "gate-lan-agent.py","gate-managed-uplink.py","gate-authorization-lease.py",
+    ]) {
+      expect(dockerfile).toContain(
+        "COPY packages/resourceportal-api/src/networking/"+asset+
+        " ./dist/src/networking/"+asset);
+    }
   });
   it("accepts real Gate v2 subnet/mask/capabilities without whitelisting arbitrary properties",()=>{
     const gateId="aaaaaaaa-bbbb-4ccc-8ddd-bbbbbbbbbbbb";
@@ -72,9 +102,9 @@ describe("RP Gate LAN Attachments-only installer", () => {
       gateway:"999.999.999.999"}})).not.toEqual([]);
   });
   it("sends only machine-bound enrollment and heartbeat credentials", () => {
-    expect(script).toContain('agentVersion:"gate-l2-v3"');
+    expect(script).toContain('agentVersion:"gate-l2-v4"');
     expect(agent).toContain('authorization: Bearer $AGENT_TOKEN');
-    expect(agent).toContain('agentVersion:"gate-l2-v3",lanObservation:$observation');
+    expect(agent).toContain('agentVersion:"gate-l2-v4",leaseNonce:$nonce,lanObservation:$observation');
     expect(agent).toContain('(.lanAttachments|length)<=64');
     expect(agent).toContain('.gateId==$gate');
     expect(script).not.toContain("lanCidrs:$lanCidrs");
@@ -98,7 +128,15 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(agent).toContain("trap shutdown EXIT");
     expect(agent).toContain("trap 'exit 0' SIGTERM SIGINT");
     expect(agent).toContain('python3 "$LAN_AGENT" --revoke-all');
-    expect(agent).toContain("Heartbeat failure; bridge revoked");
+    expect(agent).toContain("Control plane Degraded; continuing only existing leased forwarding");
+    expect(agent).toContain("Heartbeat failed without valid authorization; forwarding revoked");
+    expect(agent).toContain("^(400|401|403|405|409|410|412|422)$");
+    expect(agent).toContain("Gate authorization rejected by API; forwarding revoked immediately");
+    expect(agent).toContain("Control plane Degraded; continuing only existing leased forwarding");
+    expect(agent).toContain("authorizationLease.nonce==$nonce");
+    expect(script).toContain("--update");
+    expect(script).toContain("Existing Gate bearer not accepted by RP; update refused");
+    expect(script).toContain("supportedAgentVersions");
     expect(agent).toContain('if [ "$count" -eq 0 ]; then revoke_lan; down_tunnel; return; fi');
     expect(python).toContain("Missing fresh authenticated WireGuard peer handshake");
     expect(python).toContain("LAN attachment requires a live dedicated Ethernet/VLAN interface");

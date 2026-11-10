@@ -40,6 +40,49 @@ describe("Gateway dynamic lease policy (not part of Swarm service spec)", () => 
     expect(address?.timeoutSeconds).toBe(43);
     expect(config.remoteLanAttachments[0].verifiedAddress).toBeNull();
   });
+  it("allows already verified v4 DHCP source to expire on the original authorization deadline", () => {
+    const prolonged = { ...snapshot, grants: [{ ...grant,
+      lastVerifiedAt: new Date(now-44_000).toISOString(),
+      authorizationExpiresAt: new Date(now + 300_000).toISOString() }] };
+    const result = applyGateLeaseSnapshot(config, prolonged, now);
+    expect(boundLanSource(result.remoteLanAttachments[0], now)).toEqual({
+      ip:"192.168.60.51", timeoutSeconds:300,
+    });
+    expect(boundLanSource(applyGateLeaseSnapshot(config, prolonged, now+300_001)
+      .remoteLanAttachments[0], now+300_001)).toBeNull();
+  });
+  it("provides live-only static bootstrap and expires on lost API evidence, not offline renewal",()=>{
+    const required={...config,remoteLanAttachments:[{
+      ...app,addressMode:"Static" as const,staticAddress:"192.168.60.60/24",
+      status:"Provisioning",authorizationRequired:true,
+    }]};
+    const provisioning={...snapshot,grants:[{...grant,status:"Provisioning",
+      verifiedAddress:null,authorizationExpiresAt:null}]};
+    const live=applyGateLeaseSnapshot(required,provisioning,now);
+    expect(boundLanSource(live.remoteLanAttachments[0],now)).toEqual({
+      ip:"192.168.60.60",timeoutSeconds:45,
+    });
+    expect(boundLanSource(applyGateLeaseSnapshot(required,provisioning,now+46_000)
+      .remoteLanAttachments[0],now+46_000)).toBeNull();
+  });
+  it("retains the same Gate v4 lease snapshot across API downtime but not beyond original expiry",()=>{
+    const required={...config,remoteLanAttachments:[{
+      ...app,authorizationRequired:true,
+    }]};
+    const v4={...snapshot, grants:[{...grant,
+      authorizationExpiresAt:new Date(now+400_000).toISOString()}]};
+    expect(validateGateLeaseSnapshot(v4,required,now+300_000)).toBe(true);
+    expect(boundLanSource(applyGateLeaseSnapshot(required,v4,now+300_000)
+      .remoteLanAttachments[0],now+300_000)).toEqual({
+      ip:"192.168.60.51",timeoutSeconds:100,
+    });
+    expect(applyGateLeaseSnapshot(required,v4,now+400_001)
+      .remoteLanAttachments[0].status).toBe("Provisioning");
+    expect(validateGateLeaseSnapshot(v4,required,now+600_001)).toBe(false);
+    expect(validateGateLeaseSnapshot({...v4, grants:[{...grant,
+      authorizationExpiresAt:new Date(now+601_000).toISOString()}]},
+      required,now)).toBe(false);
+  });
   it("rejects stale and forged lease evidence, wrong Gate/tenant/MAC/network and revision-like identity", () => {
     for (const bad of [
       { ...snapshot, gateId: "another" },
@@ -71,10 +114,21 @@ describe("Gateway dynamic lease policy (not part of Swarm service spec)", () => 
     expect(boundLanSource(applyGateLeaseSnapshot(config, snapshot, now + 46_000)
       .remoteLanAttachments[0], now + 46_000)).toBeNull();
   });
-  it("preserves authorized static IP even without DHCP evidence, but never allows new static source", () => {
+  it("bounds verified static IP by separate authorization, never an unbounded stale source", () => {
     const fixed = { ...config, remoteLanAttachments: [{ ...app, addressMode: "Static" as const,
       staticAddress: "192.168.60.60/24" }] };
     const output = applyGateLeaseSnapshot(fixed, snapshot, now);
-    expect(boundLanSource(output.remoteLanAttachments[0], now)).toEqual({ip: "192.168.60.60"});
+    expect(boundLanSource(output.remoteLanAttachments[0], now))
+      .toEqual({ ip:"192.168.60.60" }); // old v3 security semantics
+    const required = { ...fixed, remoteLanAttachments:
+      [{ ...fixed.remoteLanAttachments[0], authorizationRequired:true }] };
+    expect(boundLanSource(applyGateLeaseSnapshot(required, snapshot, now)
+      .remoteLanAttachments[0], now)).toBeNull();
+    const authenticated = applyGateLeaseSnapshot(required,
+      { ...snapshot, grants: [{ ...grant,
+        authorizationExpiresAt: new Date(now + 100_000).toISOString() }] }, now);
+    expect(boundLanSource(authenticated.remoteLanAttachments[0], now)).toEqual({
+      ip: "192.168.60.60", timeoutSeconds: 100,
+    });
   });
 });

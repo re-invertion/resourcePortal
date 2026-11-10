@@ -15,6 +15,8 @@ export type GateLeaseGrant = {
   verifiedAddress: string | null;
   leaseExpiresAt: string | null;
   lastVerifiedAt: string | null;
+  /** Offline authorization expires independently of the DHCP address. */
+  authorizationExpiresAt?: string | null;
 };
 export type GateLeaseSnapshot = {
   gateId: string;
@@ -29,8 +31,14 @@ export function validateGateLeaseSnapshot(
   if (!snapshot || snapshot.gateId !== base.gateId || !Array.isArray(snapshot.grants) ||
       snapshot.grants.length !== base.remoteLanAttachments.length) return false;
   const issued = Date.parse(snapshot.issuedAt);
+  // An already running v4 Gateway may retain its *identical*, verified
+  // policy snapshot until the original authorization expires. v3 keeps the
+  // existing 45s bound. This must not authorize new attachments or revisions.
+  const v4 = base.remoteLanAttachments.length > 0 &&
+    base.remoteLanAttachments.every(a => a.authorizationRequired === true);
+  const maxAge = v4 ? 600_000 : REMOTE_LAN_PROOF_MAX_AGE_MS;
   if (!Number.isFinite(issued) || issued > now + 5_000 ||
-      now - issued > REMOTE_LAN_PROOF_MAX_AGE_MS) return false;
+      now - issued > maxAge) return false;
   const expected = new Map(base.remoteLanAttachments.map(a => [a.attachmentId, a]));
   const seen = new Set<string>();
   for (const grant of snapshot.grants) {
@@ -42,6 +50,14 @@ export function validateGateLeaseSnapshot(
         !Number.isSafeInteger(item.configurationRevision) ||
         item.configurationRevision !== grant.configurationRevision ||
         !["Provisioning", "Active"].includes(grant.status)) return false;
+    if (v4 && grant.status === "Active") {
+      const end = grant.authorizationExpiresAt ?
+        Date.parse(grant.authorizationExpiresAt) : NaN;
+      // An old signed-at-ingress snapshot may be replayed, but it can never
+      // extend the originally approved authorization or manufacture a lease.
+      if (!Number.isFinite(end) || end > issued + maxAge ||
+          end <= issued) return false;
+    }
     seen.add(grant.attachmentId);
   }
   return true;
@@ -59,13 +75,43 @@ export function applyGateLeaseSnapshot(
     ...base,
     remoteLanAttachments: base.remoteLanAttachments.map((item): GateRuntimeLanAttachment => {
       const grant = byId.get(item.attachmentId)!;
-      if (item.addressMode !== "DHCP" || grant.status !== "Active") return item;
+      if (grant.status !== "Active") {
+        // Provisioning static IPv4 needs short-lived ARP/IPv4 bootstrap.
+        // Never allow its source beyond one fresh authenticated snapshot.
+        if (grant.status === "Provisioning" && item.status === "Provisioning" &&
+            item.addressMode === "Static" && item.authorizationRequired) {
+          const until = Date.parse(snapshot.issuedAt) + REMOTE_LAN_PROOF_MAX_AGE_MS;
+          return until > now + 1_000 ?
+            {...item, authorizationExpiresAt:new Date(until).toISOString()} : item;
+        }
+        return item;
+      }
+      if (item.addressMode === "Static") {
+        if (!item.authorizationRequired) return item;
+        const until = grant.authorizationExpiresAt ?
+          Date.parse(grant.authorizationExpiresAt) : NaN;
+        // A static address is configured in the signed policy, but its
+        // actual forwarding must still be clipped by the offline TTL.
+        if (!Number.isFinite(until) || until <= now + 1_000 ||
+            until > now + 600_000) return {
+              ...item, status: "Provisioning", authorizationExpiresAt: null,
+            };
+        return { ...item, status:"Active", authorizationExpiresAt:
+          new Date(until).toISOString() };
+      }
+      if (item.addressMode !== "DHCP") return item;
       const verifiedAt = grant.lastVerifiedAt ? Date.parse(grant.lastVerifiedAt) : NaN;
-      const lease = grant.leaseExpiresAt ? Date.parse(grant.leaseExpiresAt) : NaN;
+      const dhcpExpiry = grant.leaseExpiresAt ? Date.parse(grant.leaseExpiresAt) : NaN;
+      const authExpiry = grant.authorizationExpiresAt ?
+        Date.parse(grant.authorizationExpiresAt) : NaN;
+      // New v4 proof can continue only inside an already issued bounded
+      // authorization window. Legacy v3 is still limited to fresh 45s proof.
+      const maxExpiry = Number.isFinite(authExpiry) && authExpiry <= now + 600_000
+        ? authExpiry : verifiedAt + REMOTE_LAN_PROOF_MAX_AGE_MS;
       if (!Number.isFinite(verifiedAt) || verifiedAt > now + 5_000 ||
-          now - verifiedAt >= REMOTE_LAN_PROOF_MAX_AGE_MS ||
-          !Number.isFinite(lease)) return item;
-      const expiry = Math.min(verifiedAt + REMOTE_LAN_PROOF_MAX_AGE_MS, lease);
+          !Number.isFinite(maxExpiry) || !Number.isFinite(dhcpExpiry))
+        return item;
+      const expiry = Math.min(maxExpiry, dhcpExpiry);
       if (expiry <= now + 1_000) return item;
       return { ...item, status: "Active", verifiedAddress: grant.verifiedAddress,
         leaseExpiresAt: new Date(expiry).toISOString() };
