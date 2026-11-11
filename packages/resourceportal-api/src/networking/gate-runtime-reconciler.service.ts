@@ -81,6 +81,10 @@ export class GateRuntimeReconcilerService {
     }
 
     for (const gate of gates) {
+      // Only remove a stale worker's OWN digest in a race with a newer
+      // deployment. Never tear down a newer, separately authorized Swarm
+      // task just because an old worker finally noticed the revision.
+      let attemptedDigest: string | null = null;
       try {
         const attachments = gate.remoteLanAttachments;
         if (gate.revokedAt || gate.status === "Revoked" || gate.status === "Deleting") {
@@ -95,18 +99,15 @@ export class GateRuntimeReconcilerService {
           // A legacy Gate must NEVER receive any L2 grant. Remove the
           // previous stack/route surface before requiring re-enrollment.
           await this.removeStack(gateStackName(gate.id));
-          await this.prisma.resourcePortalGate.update({
-            where: { id: gate.id },
-            data: { status: "PendingEnrollment", lastError: null },
-          });
+          await this.updateGateStatusIfAuthorized(gate,
+            {status:"PendingEnrollment",lastError:null});
           pending += 1;
           continue;
         }
         if (!attachments.length) {
           await this.removeStack(gateStackName(gate.id));
-          await this.prisma.resourcePortalGate.update({
-            where: { id: gate.id }, data: { status: "Ready", lastError: null },
-          });
+          await this.updateGateStatusIfAuthorized(gate,
+            {status:"Ready",lastError:null});
           ready += 1;
           continue;
         }
@@ -175,17 +176,27 @@ export class GateRuntimeReconcilerService {
           })),
         };
         const digest = gateStackDigest(stackInput);
+        attemptedDigest = digest;
+        // These checks also prevent an attachment which was revoked while
+        // tenant networks and Gate secrets were being prepared from reaching
+        // a privileged Gateway deployment.
+        await this.assertGateSnapshotCurrent(gate);
         if (await this.currentGateDigest(gate.id) !== digest) {
+          await this.assertGateSnapshotCurrent(gate);
           const deployed = await this.deployStack(gateStackName(gate.id),
             renderGateStack(stackInput));
           if (deployed.exitCode !== 0)
             throw new Error(deployed.stderr || deployed.stdout ||
               "Unable to deploy Remote LAN Gateway runtime");
+          await this.assertGateSnapshotCurrent(gate);
         }
+        await this.assertGateSnapshotCurrent(gate);
         await this.ensureGatewayCapabilities(gate.id, true);
+        await this.assertGateSnapshotCurrent(gate);
         // A source-identity proof is never sent in the Swarm service spec:
         // Docker exec delivers the short-lived grant to the running task.
         // Missing task is safe: DHCP remains denied until the next cycle.
+        await this.assertGateSnapshotCurrent(gate);
         await this.syncGatewayLeases(gate.id, attachments.map(attachment => ({
           attachmentId: attachment.id,
           tenantId: attachment.tenantId,
@@ -209,17 +220,39 @@ export class GateRuntimeReconcilerService {
               }))
           ) : null,
         })));
-        await this.prisma.resourcePortalGate.update({
-          where: { id: gate.id }, data: { status: "Ready", lastError: null },
-        });
+        await this.assertGateSnapshotCurrent(gate);
+        await this.updateGateStatusIfAuthorized(gate,
+          {status:"Ready",lastError:null});
         ready += 1;
       } catch (error) {
         failed += 1;
         const message = error instanceof Error ? error.message : String(error);
-        await this.prisma.resourcePortalGate.update({
-          where: { id: gate.id },
-          data: { status: "Error", lastError: message.slice(0, 4000) },
+        // A late error must not overwrite a committed administrator revoke,
+        // nor overwrite a newer generation of this Gate.
+        await this.prisma.resourcePortalGate.updateMany({
+          where:{id:gate.id,tenantId:gate.tenantId,
+            configRevision:gate.configRevision,revokedAt:null,
+            status:{notIn:["Deleting","Revoked"]}},
+          data:{status:"Error",lastError:message.slice(0,4000)},
         });
+        // A revoked Gate must never retain a just-deployed stale Swarm task
+        // with an old source policy. Explicit withdrawal wins on the node.
+        const latest=await this.prisma.resourcePortalGate.findUnique({
+          where:{id:gate.id},
+          select:{revokedAt:true,status:true,configRevision:true},
+        });
+        if (!latest || latest.revokedAt ||
+            ["Deleting","Revoked"].includes(latest.status)) {
+          await this.removeStack(gateStackName(gate.id));
+        } else if (attemptedDigest && (
+            latest.configRevision !== gate.configRevision ||
+            message.includes("authorization changed during runtime reconciliation"))) {
+          // A stale deployment can have committed before the revoke/detach
+          // was observed. Remove it only if its digest still matches our
+          // own work; leave a newer authorized worker's deployment intact.
+          if (await this.currentGateDigest(gate.id) === attemptedDigest)
+            await this.removeStack(gateStackName(gate.id));
+        }
       }
     }
 
@@ -257,6 +290,59 @@ export class GateRuntimeReconcilerService {
       networksDeleted,
       networkDeleteFailures,
     };
+  }
+
+  /**
+   * A reconcile() snapshot is NOT an authorization token. Re-read current
+   * Gate/attachment revisions immediately before and after privileged
+   * Docker operations. Admin revoke and network detach run independently of
+   * this worker; both must fence a stale snapshot before it can publish
+   * LAN source grants or mark a deleting Gate Ready again.
+   */
+  private async assertGateSnapshotCurrent(gate: {
+    id: string; tenantId: string; configRevision: number;
+    agentVersion: string | null; remoteLanAttachments: Array<{
+      id: string; status: string; configurationRevision: number;
+      networkId: string; singleAppId: string; macAddress: string;
+    }>;
+  }) {
+    const current = await this.prisma.resourcePortalGate.findUnique({
+      where: { id: gate.id },
+      include: { remoteLanAttachments: {
+        where: { status: { in: ["Provisioning", "Active"] } },
+        select: {id:true,status:true,configurationRevision:true,
+          networkId:true,singleAppId:true,macAddress:true},
+      }},
+    });
+    if (!current || current.revokedAt || ["Deleting","Revoked"].includes(current.status) ||
+        current.tenantId !== gate.tenantId ||
+        current.configRevision !== gate.configRevision ||
+        current.agentVersion !== gate.agentVersion)
+      throw new Error("Gate authorization changed during runtime reconciliation");
+    const old = new Map(gate.remoteLanAttachments.map(row => [row.id,row]));
+    if (current.remoteLanAttachments.length !== old.size ||
+        current.remoteLanAttachments.some(row => {
+          const previous=old.get(row.id);
+          return !previous || row.status !== previous.status ||
+            row.configurationRevision !== previous.configurationRevision ||
+            row.networkId !== previous.networkId ||
+            row.singleAppId !== previous.singleAppId ||
+            row.macAddress.toLowerCase() !== previous.macAddress.toLowerCase();
+        }))
+      throw new Error("Gate attachment authorization changed during runtime reconciliation");
+  }
+
+  private async updateGateStatusIfAuthorized(gate: {
+    id: string; tenantId:string; configRevision:number;
+  }, data: {status:string;lastError:string|null}) {
+    const claimed=await this.prisma.resourcePortalGate.updateMany({
+      where: {id:gate.id,tenantId:gate.tenantId,
+        configRevision:gate.configRevision,revokedAt:null,
+        status:{notIn:["Deleting","Revoked"]}},
+      data,
+    });
+    if (claimed.count !== 1)
+      throw new Error("Gate was revoked or revised before runtime status commit");
   }
 
   private async ensureGatewayCapabilities(gateId: string, enforceForwarding = false) {

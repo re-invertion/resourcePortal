@@ -1,6 +1,10 @@
 # Remote LAN Authorization Lease (#422) — security design and review checklist
 
-Status: **candidate design; security review REQUIRED before any production release**.
+Status: **600-second offline TTL owner-approved** for issue #422 (PR #425,
+owner decision 2026-11-11); the security correctness of the implementation
+remains subject to the required CI, review and merge protections. Physical
+Raspberry Pi / Home Assistant acceptance is scheduled **after** the signed RP
+release by explicit owner decision, not represented as an executed test.
 This lease is *not* the address DHCP lease. Gate v3/older never receive offline
 authorization. The feature requires both a server with lease support and a
 physical Gate v4 installed by the explicitly authorized update path.
@@ -24,13 +28,17 @@ new/revised attachment still requires the existing fresh Gate/Node proofs.
 The client validates the server response and scopes before applying it; an
 empty authorized response, changed revision, tenant or Gate mismatch revokes.
 
-**Candidate TTL: 600 seconds maximum**, from the last *accepted* server
-renewal. This is a test proposal, **not approved** for production. It covers
-the measured 443-second single outage plus one 30-second heartbeat interval,
-while imposing a worst-case 10-minute revocation-latency exposure for a
-completely isolated Gate. Security reviewers must explicitly approve the
-default/max TTL, threat model and offline revocation tradeoff; reducing the
-TTL may be necessary for specific tenants.
+**Owner-approved TTL: 600 seconds maximum**, from the last *accepted*
+server renewal. The owner's explicit acceptance is recorded at
+https://github.com/re-invertion/resourcePortal/pull/425#issuecomment-6791122317.
+It covers the measured 443-second outage plus one heartbeat interval, while
+accepting up to 10 minutes of delayed revocation **only for the already issued
+and exactly scoped lease of a completely disconnected Gate**. An authenticated
+online administrative detach/revoke still invalidates server-side authorization
+immediately. The TTL does not itself excuse authorization races, replay,
+cross-tenant access or any CI failure. There is no second independent
+*TTL decision* to obtain; normal protected PR approval and mandatory security
+tests remain applicable to the code.
 
 Lease deadlines on the Gate are based on CLOCK_BOOTTIME, never local wall time.
 Use an independent watchdog to revoke at expiry even while curl hangs or the
@@ -261,7 +269,16 @@ creating a new source grant or replacing the WireGuard/GRETAP interfaces.
 An EXIT trap restores the link if an assertion fails. This is a *virtual
 Linux underlay link fault*, not a physical Raspberry Pi cable test.
 
-An installed real RP Gate v4-to-RP API end-to-end agent heartbeat test,
-physical hardware/HA acceptance and **independent security sign-off of
-600-second offline revocation semantics** remain distinct DoD gates.
-Do not merge until these are explicitly accepted or proven.
+An installed real RP Gate v4-to-RP API HTTPS end-to-end agent heartbeat
+test remains a separate, non-hardware protocol assurance gap; the added
+cross-runtime API-issued v4 grant -> actual packaged Gate Python lease helper
+regression verifies nonce, 600s local monotonic deadline and reboot rejection
+but is not a replacement for the full installer/HTTPS agent test.
+The owner has explicitly deferred physical Raspberry Pi/Home Assistant
+acceptance until AFTER the first signed RP release. These tests must not be
+reported as executed. The owner-accepted 600s TTL decision is final; do not
+block the release on an additional approval of the number itself. Continue
+enforcing required protected Merge Queue, source tests, security regressions,
+rollback and exact-SHA release checks. Before production rollout, perform
+physical failure injection, monitor degraded Gate status and verify rollback
+or Gate disable if runtime behavior diverges from disposable evidence.

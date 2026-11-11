@@ -1,6 +1,6 @@
 import { REMOTE_LAN_PROOF_MAX_AGE_MS } from "./remote-lan-proof-age";
 
-/** Candidate upper bound, pending independent security review (#422). */
+/** Owner-approved ceiling for already granted, exactly scoped offline continuity (#422). */
 export const REMOTE_LAN_AUTHORIZATION_TTL_MS = 600_000;
 
 /** Distinct from the customer's DHCP lease. This is an HTTPS + nonce-bound

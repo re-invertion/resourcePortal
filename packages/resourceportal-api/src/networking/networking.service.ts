@@ -518,6 +518,32 @@ export class NetworkingService {
         actor.id,
       );
       await tx.networkAttachment.delete({ where: { id: attachment.id } });
+      // Detaching a network is an immediate withdrawal of the associated
+      // Remote LAN business authorization, not just an App Group draft.
+      // Do this in the SAME transaction as the detach: no Active record may
+      // be used to mint a fresh 600s lease after this commit.
+      const withdrawn = await tx.remoteLanAttachment.updateMany({
+        where: { tenantId, networkId, singleAppId: attachment.singleAppId,
+          status: { in: ["Provisioning", "Active"] } },
+        data: { status: "Revoking", configurationRevision: { increment: 1 },
+          dhcpAddress: null, leaseExpiresAt: null, lastVerifiedAt: null },
+      });
+      if (withdrawn.count) {
+        // Fence a heartbeat that authenticated and read its old topology
+        // BEFORE this transaction. Its CAS update must not restore old
+        // lease diagnostics after the detach has committed.
+        const affected = await tx.remoteLanAttachment.findMany({
+          where: { tenantId, networkId, singleAppId: attachment.singleAppId },
+          select: { gateId: true },
+        });
+        for (const gateId of new Set(affected.map(row => row.gateId))) {
+          await tx.resourcePortalGate.update({
+            where: { id: gateId },
+            data: { configRevision: { increment: 1 },
+              observedL2Diagnostic: Prisma.DbNull },
+          });
+        }
+      }
       await this.markAppGroupDraftChanged(
         tx,
         attachment.singleApp.appGroupId,
@@ -1099,13 +1125,23 @@ export class NetworkingService {
     // lag a revision change. Do not ingest old/foreign claims as current
     // activation evidence. Still return the desired policy so the Gate can
     // revoke obsolete kernel links instead of deadlocking its heartbeat.
-    const authorized = supplied.length ? await this.prisma.remoteLanAttachment.findMany({
-      where:{gateId:gate.id,tenantId:gate.tenantId,
-        status:{in:["Provisioning","Active","Revoking"]}},
-      select:{id:true,tenantId:true,gateId:true,singleAppId:true,networkId:true,
-        configurationRevision:true,macAddress:true,status:true,lastVerifiedAt:true},
-    }) : [];
-    const approved=new Map(authorized.map(row=>[row.id,row]));
+    const authorized = supplied.length && gate.status === "Ready" ?
+      await this.prisma.remoteLanAttachment.findMany({
+        where:{gateId:gate.id,tenantId:gate.tenantId,
+          status:{in:["Provisioning","Active","Revoking"]},
+          gate:{status:"Ready",revokedAt:null,tenantId:gate.tenantId},
+          network:{status:"Ready",tenantId:gate.tenantId},
+          singleApp:{pendingDeletion:false,desiredReplicas:1,
+            appGroup:{tenantId:gate.tenantId},
+            networkAttachments:{some:{network:{tenantId:gate.tenantId}}}},
+        },
+        select:{id:true,tenantId:true,gateId:true,singleAppId:true,networkId:true,
+          configurationRevision:true,macAddress:true,status:true,lastVerifiedAt:true,
+          singleApp:{select:{networkAttachments:{select:{networkId:true}}}}},
+      }) : [];
+    const eligible = authorized.filter(row =>
+      row.singleApp.networkAttachments.some(link => link.networkId === row.networkId));
+    const approved=new Map(eligible.map(row=>[row.id,row]));
     const bound=supplied.filter(proof=>{
       const row=approved.get(proof.attachmentId);
       return row&&row.singleAppId===proof.singleAppId&&
@@ -1117,7 +1153,7 @@ export class NetworkingService {
     // must not advance an offline authorization deadline.
     const proposedLease = issueRemoteLanAuthorizationLease({
       gateId: gate.id, tenantId: gate.tenantId, agentVersion: dto.agentVersion,
-      nonce: dto.leaseNonce, candidates: authorized.map(a=>({
+      nonce: dto.leaseNonce, candidates: eligible.map(a=>({
         ...a,attachmentId:a.id,
       })), proofs: bound,
       now: Date.now(),
@@ -1126,7 +1162,7 @@ export class NetworkingService {
     // Gate. Pending revisions also block renewal until fresh proofs for the
     // complete active topology are available. Revoking rows are excluded
     // from the desired client configuration, but never get their own grant.
-    const desired = authorized.filter(a =>
+    const desired = eligible.filter(a =>
       ["Provisioning","Active"].includes(a.status));
     const complete = desired.length > 0 &&
       desired.every(a=>a.status==="Active") &&
@@ -1137,7 +1173,7 @@ export class NetworkingService {
     // stamp here would let the Gateway worker revoke an otherwise live path.
     // Retention NEVER uses now as issuedAt and NEVER adds a missing grant.
     const previousStamp = dto.agentVersion === "gate-l2-v4" &&
-      authorized.length === desired.length ?
+      eligible.length === desired.length ?
       retainedRemoteLanAuthorization({
         gate: {gateId:gate.id,tenantId:gate.tenantId,
           agentVersion:gate.agentVersion,revokedAt:gate.revokedAt,
@@ -1156,7 +1192,12 @@ export class NetworkingService {
       { issuedAtMs:authorizationLease.issuedAtMs,
         grants:authorizationLease.grants } : previousStamp;
     const updated = await this.prisma.resourcePortalGate.update({
-      where: { id: gate.id },
+      // CAS against revoke/retirement and config revision. A detach bumps
+      // configRevision in its transaction, so an in-flight heartbeat using
+      // the old membership cannot resurrect the old authorization stamp.
+      where: { id: gate.id, tenantId: gate.tenantId,
+        configRevision:gate.configRevision,revokedAt:null,
+        agentTokenHash:gate.agentTokenHash ?? "",status:{notIn:["Deleting","Revoked"]} },
       data: {
         agentVersion: dto.agentVersion,
         observedLan, observedLanAt: dto.lanObservation ? new Date() : null,
@@ -1176,6 +1217,11 @@ export class NetworkingService {
         lastSeenAt: new Date(),
       },
       include: { remoteLanAttachments: true },
+    }).catch((error: unknown) => {
+      if (error && typeof error === "object" && "code" in error &&
+          error.code === "P2025")
+        throw new UnauthorizedException("Gate authorization changed while processing heartbeat");
+      throw error;
     });
     return { ...this.agentConfig(updated), ...(authorizationLease ? {authorizationLease} : {}) };
   }
