@@ -114,6 +114,17 @@ class GateLanAgentTest(unittest.TestCase):
         self.assertEqual(agent.bound_source(item), ("192.168.50.25", None))
         self.assertIsNone(agent.bound_source({**item, "staticAddress":"192.168.50.25/25"}))
 
+    def test_static_v4_authorization_keeps_kernel_source_for_remaining_lease(self):
+        item = {**ITEM, "addressMode": "Static", "status": "Active",
+                "staticAddress": "192.168.50.25/24",
+                "authorizationRequired": True}
+        with patch.object(agent, "authorization_remaining", return_value=443):
+            self.assertEqual(agent.bound_source(item), ("192.168.50.25", 443))
+        with patch.object(agent, "authorization_remaining", return_value=None):
+            self.assertEqual(agent.bound_source(item), ("192.168.50.25", 45))
+        with patch.object(agent, "authorization_remaining", return_value=1):
+            self.assertEqual(agent.bound_source(item), ("192.168.50.25", 1))
+
     def test_revocation_does_not_disconnect_other_apps_from_shared_bridge(self):
         tun,br,chain,_=agent.names(GATE,TENANT,ATTACHMENT,"eth1")
         linklist=[{**LINKS[0],"master":br},

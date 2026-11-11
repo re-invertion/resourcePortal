@@ -6,6 +6,18 @@ APP="rpa-$"; APP2="rp2-$"; RP="rpr-$"; GATE="rpg-$"; LAN="rpl-$"
 TMP="$(mktemp -d)"
 SERVER_KEY_APPARMOR=""
 CLIENT_KEY_APPARMOR=""
+FAULT_PID=""
+UNDERLAY_LINK_DOWN=0
+REAL_FAULT="$(printenv RP_LAN_REAL_CONTROL_PLANE_FAULT 2>/dev/null || printf 0)"
+case "$REAL_FAULT" in 0|1) ;; *) echo "Invalid real fault selector" >&2; exit 2;; esac
+# Full-duration kernel lease continuity only on explicitly selected changes.
+LONG_LEASE_SMOKE="$(printenv RP_LAN_LONG_LEASE_SMOKE 2>/dev/null || printf 0)"
+case "$LONG_LEASE_SMOKE" in 0|1) ;; *) echo "Invalid long lease smoke selector" >&2; exit 2;; esac
+DHCP_DURATION="5m"
+if [ "$LONG_LEASE_SMOKE" = 1 ]; then DHCP_DURATION="15m"; fi
+if [ "$REAL_FAULT" = 1 ] && [ "$LONG_LEASE_SMOKE" != 1 ]; then
+  echo "Real API fault requires the long lease smoke" >&2; exit 2
+fi
 MAC="02:aa:bb:cc:dd:ee"; MAC2="02:aa:bb:cc:dd:ef"
 APP_IP="10.200.42.12"; RP_IP="10.200.42.20"
 APP2_IP="10.200.43.12"; RP2_IP="10.200.43.20"
@@ -15,6 +27,18 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ns() { local net="$1"; shift; sudo -n ip netns exec "$net" "$@"; }
 cleanup() {
   set +e
+  # A failed assertion must restore the disposable Gate's simulated
+  # physical underlay before deleting its namespace.
+  if [ "$UNDERLAY_LINK_DOWN" -eq 1 ]; then
+    ns "$GATE" ip link set gu0 up >/dev/null 2>&1 || true
+  fi
+  # The fault driver has its own EXIT trap that always restores the isolated
+  # API. Never leave the API stopped if an event assertion fails.
+  if [ -n "$FAULT_PID" ]; then
+    kill "$FAULT_PID" 2>/dev/null || true
+    wait "$FAULT_PID" 2>/dev/null || true
+    [ ! -f "$TMP/controlplane.log" ] || cat "$TMP/controlplane.log" >&2
+  fi
   for net in "$APP" "$APP2" "$RP" "$GATE" "$LAN"; do
     sudo -n ip netns pids "$net" 2>/dev/null | xargs -r sudo -n kill >/dev/null 2>&1 || true
     sudo -n ip netns del "$net" >/dev/null 2>&1 || true
@@ -33,6 +57,7 @@ for binary in ip nsenter wg dnsmasq busybox python3 ping nft; do
 done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$REPO_ROOT/test" -p "test_gate*py" -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$REPO_ROOT/test" -p "test_remote_lan_lease_soak.py" -v
 sudo -n true || fail "passwordless sudo required"
 read -r APP_DEV WAN_DEV APP_KEY WAN_KEY GATE_BRIDGE < <(python3 - <<'PY'
 import hashlib
@@ -78,7 +103,7 @@ aid = os.environ["RP_NFT_ATTACHMENT"]
 tunnel, _, chain, _ = mod.names(gate, tenant, aid, "eth1")
 stage, address, expiry = os.environ["RP_NFT_MODE"], os.environ["RP_NFT_ADDRESS"], os.environ["RP_NFT_EXPIRY"]
 item = {"lanCidr":"192.168.90.0/24", "addressMode":"Static" if stage=="Static" else "DHCP",
-        "status": "Provisioning" if stage=="Provisioning" else "Active",
+        "status": "Provisioning" if stage in ("Provisioning", "Revoked") else "Active",
         "staticAddress":address+"/24" if stage=="Static" else None,
         "verifiedAddress":address if stage=="Active" else None,
         "leaseExpiresAt":expiry if stage=="Active" else None}
@@ -222,7 +247,7 @@ if ! ns "$RP" ping -q -c 3 -W 2 -I wg0 "$CL_IP" >/dev/null 2>&1; then
 fi
 log "PASS STP forwarding and encrypted underlay readiness"
 ns "$LAN" dnsmasq --keep-in-foreground --no-hosts --no-resolv --bind-interfaces --interface=lan0 \
-  --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,5m \
+  --port=0 --dhcp-range=192.168.90.20,192.168.90.40,255.255.255.0,"$DHCP_DURATION" \
   --dhcp-authoritative --dhcp-host="$MAC,192.168.90.23" --dhcp-host="$MAC2,192.168.90.24" \
   --dhcp-leasefile="$TMP/dnsmasq.leases" --log-dhcp --log-facility=- \
   > "$TMP/dhcp.log" 2>&1 &
@@ -381,6 +406,146 @@ ns "$GATE" bridge fdb show dev "$WAN_DEV" | grep -qi "$MAC" ||
 ns "$GATE" bridge fdb show dev "$WAN2_DEV" | grep -qi "$MAC2" ||
   fail "second application MAC was not learned on its own Gate tunnel"
 log "PASS two independent application DHCP leases, MACs, ARP and encrypted tunnels"
+
+if [ "$LONG_LEASE_SMOKE" = 1 ]; then
+  # This uses actual WG/GRETAP and the production nft generator. With
+  # REAL_FAULT=1 it also stops the disposable API and churns real Traefik.
+  # No kernel grant is renewed during the entire trial, including recovery.
+  log "Beginning 443s bidirectional HA-like event test with no source renewals"
+  wg_before="$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)"
+  gretap_before="$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)"
+  if [ "$REAL_FAULT" = 1 ]; then
+    bash "$REPO_ROOT/scripts/run-remote-lan-real-controlplane-fault.sh" \
+      "$TMP/fault-prepared" "$TMP/fault-lease" "$TMP/fault-outage" "$TMP/fault-restore" \
+      >"$TMP/controlplane.log" 2>&1 &
+    FAULT_PID="$!"
+    prepared=0
+    for i in $(seq 1 125); do
+      if [ -f "$TMP/fault-prepared" ]; then prepared=1; break; fi
+      if ! kill -0 "$FAULT_PID" 2>/dev/null; then break; fi
+      sleep 1
+    done
+    [ "$prepared" -eq 1 ] || { cat "$TMP/controlplane.log" >&2; fail "Real Traefik fault preflight failed"; }
+  fi
+  # Record original monotonic authorization instant BEFORE API shutdown.
+  begin="$(python3 -c 'import time; print(time.monotonic())')"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 600)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "Missing initial LAN data plane for 443s test"
+  if [ "$REAL_FAULT" = 1 ]; then
+    : > "$TMP/fault-lease"
+    outage_ready=0
+    for i in $(seq 1 75); do
+      if [ -f "$TMP/fault-outage" ]; then outage_ready=1; break; fi
+      if ! kill -0 "$FAULT_PID" 2>/dev/null; then break; fi
+      sleep 1
+    done
+    [ "$outage_ready" -eq 1 ] || { cat "$TMP/controlplane.log" >&2; fail "Real API/Traefik shutdown failed"; }
+  fi
+
+  ready="$TMP/ha-event-listener-ready"
+  ns "$LAN" env RP_EVENT_READY="$ready" python3 -u     "$REPO_ROOT/scripts/remote-lan-lease-soak.py" receiver >"$TMP/events.log" 2>&1 &
+  server_pid="$!"
+  started=0
+  for attempt in $(seq 1 40); do
+    if [ -f "$ready" ]; then started=1; break; fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  [ "$started" -eq 1 ] || { cat "$TMP/events.log" >&2; fail "LAN event receiver unavailable"; }
+  ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" client --duration 443 ||
+    fail "443s bidirectional HA-like events interrupted"
+  if [ "$REAL_FAULT" = 1 ]; then
+    ! curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1 ||
+      fail "Real RP API was unexpectedly reachable during event outage"
+    : > "$TMP/fault-restore"
+    if ! wait "$FAULT_PID"; then
+      cat "$TMP/controlplane.log" >&2
+      fail "API shutdown, real Traefik task churn or API restoration failed"
+    fi
+    cat "$TMP/controlplane.log"
+    FAULT_PID=""
+  fi
+  [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+    fail "WireGuard was recreated during bounded control-plane silence"
+  [ "$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)" = "$gretap_before" ] ||
+    fail "GRETAP was recreated during bounded control-plane silence"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "No IPv4 forwarding after 443s of control-plane silence"
+  log "PASS uninterrupted 443s motion/click events, bidirectional encrypted L2, stable interfaces"
+
+  # Keep the original Gate nft deadline. Neither API failure nor this test
+  # may refresh the source before expiry; observe fail-closed after >600s.
+  python3 - "$begin" <<'PY_WAIT_LEASE'
+import sys,time
+start=float(sys.argv[1])
+time.sleep(max(0,608-(time.monotonic()-start)))
+PY_WAIT_LEASE
+  ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" denied ||
+    fail "Expired source still delivered HA-like events"
+  if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+    fail "Expired Gate nft source still forwards IPv4"
+  fi
+  log "PASS expiry stops IPv4 despite continued WireGuard/GRETAP availability"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 240)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "Freshly reauthorized source did not recover"
+  log "PASS recovery only after fresh source authorization"
+  # Explicit policy withdrawal must immediately deny existing authorized
+  # source packets even while WG/GRETAP remain up. Then a NEW approved
+  # source install must recover without rebuilding the tunnel.
+  gate_source_policy "$SOURCE_BID" "" "Revoked" ""
+  if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+    fail "Explicit Gate local source revocation did not deny IPv4"
+  fi
+  [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+    fail "Explicit source revocation unnecessarily replaced WireGuard"
+  gate_source_policy "$SOURCE_BID" "192.168.90.24" "Active" "$(source_expiry 240)"
+  ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
+    fail "New authorized source did not restore connectivity after explicit revoke"
+  log "PASS immediate local policy revoke and fresh reauthorization preserve WG/GRETAP identity"
+
+  if [ "$REAL_FAULT" = 1 ]; then
+    # Unlike a stopped API or stale control-plane telemetry, a real
+    # underlay fault MUST interrupt the data plane even with an otherwise
+    # authorized nft source. Only the DISPOSABLE Gate network namespace's
+    # owned veth is altered; the production physical NIC is never touched.
+    curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null ||
+      fail "Cannot distinguish local underlay failure from stopped RP API"
+    ns "$GATE" ip link set gu0 down
+    UNDERLAY_LINK_DOWN=1
+    if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+      fail "Gate underlay loss did not interrupt authorized LAN packets"
+    fi
+    ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" denied ||
+      fail "Gate underlay loss still delivered HA-like events"
+    [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+      fail "Link loss unexpectedly replaced WireGuard interface"
+    log "PASS local underlay link fault denied IPv4 and HA-like events while RP API stayed healthy"
+
+    # Restore ONLY the original underlay link, not any source lease, policy,
+    # app attachment, WireGuard or GRETAP interface. Reuse the LAN receiver.
+    ns "$GATE" ip link set gu0 up
+    UNDERLAY_LINK_DOWN=0
+    recovered=0
+    for attempt in $(seq 1 12); do
+      if ns "$APP2" ping -q -c 1 -W 1 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+        recovered=1
+        break
+      fi
+      sleep 1
+    done
+    [ "$recovered" = 1 ] || fail "Restored Gate underlay did not restore IPv4"
+    ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" client --duration 3 ||
+      fail "Restored Gate underlay did not recover HA-like motion/click acknowledgments"
+    [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] &&
+    [ "$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)" = "$gretap_before" ] ||
+      fail "Underlay recovery recreated WireGuard or GRETAP interface"
+    log "PASS local underlay recovery restored encrypted bidirectional HA-like traffic without new grants"
+  fi
+  kill "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+fi
 
 # Reuse the same encrypted WG/GRETAP application attachment to test Static
 # address transition. The customer LAN supplies another on-link IP/gateway;

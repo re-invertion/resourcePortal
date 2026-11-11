@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { EncryptionService } from "../security/encryption.service";
@@ -27,6 +29,10 @@ function fixture(overrides: Record<string, any> = {}, maintenance = false) {
     networkAttachment: {
       create: vi.fn(),
       delete: vi.fn(),
+    },
+    remoteLanAttachment: {
+      updateMany: vi.fn().mockResolvedValue({count:0}),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     resourcePortalGate: {
       create: vi.fn(),
@@ -301,6 +307,34 @@ describe("NetworkingService control plane", () => {
         runtimeDraftRevision: { increment: 1 },
         updatedBy: actor.id,
       },
+    });
+  });
+
+  it("atomically withdraws Remote LAN authority when an app is detached", async () => {
+    const {service, prisma, tx}=fixture();
+    const tenantId="11111111-1111-4111-8111-111111111111";
+    const networkId="22222222-2222-4222-8222-222222222222";
+    const singleAppId="33333333-3333-4333-8333-333333333333";
+    (prisma.networkAttachment.findFirst as any).mockResolvedValue({
+      id:"55555555-5555-4555-8555-555555555555", networkId,singleAppId,
+      address:"10.240.10.10",network:{name:"backend"},
+      singleApp:{name:"api",appGroupId:"44444444-4444-4444-8444-444444444444",
+        appGroup:{name:"services"}},
+    });
+    tx.remoteLanAttachment.updateMany.mockResolvedValue({count:1});
+    tx.remoteLanAttachment.findMany.mockResolvedValue([{gateId:"66666666-6666-4666-8666-666666666666"}]);
+    await service.detachApplication(tenantId,networkId,
+      "55555555-5555-4555-8555-555555555555",actor);
+    expect(tx.remoteLanAttachment.updateMany).toHaveBeenCalledWith({
+      where:{tenantId,networkId,singleAppId,
+        status:{in:["Provisioning","Active"]}},
+      data:{status:"Revoking",configurationRevision:{increment:1},
+        dhcpAddress:null,leaseExpiresAt:null,lastVerifiedAt:null},
+    });
+    expect(tx.resourcePortalGate.update).toHaveBeenCalledWith({
+      where:{id:"66666666-6666-4666-8666-666666666666"},
+      data:{configRevision:{increment:1},
+        observedL2Diagnostic:Prisma.DbNull},
     });
   });
 
@@ -732,6 +766,8 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
       id:currentGate.remoteLanAttachments[0].id,
       singleAppId:currentGate.remoteLanAttachments[0].singleAppId,
       configurationRevision:4,macAddress:"02:aa:bb:cc:dd:ee",
+      networkId:currentGate.remoteLanAttachments[0].networkId,
+      singleApp:{networkAttachments:[{networkId:currentGate.remoteLanAttachments[0].networkId}]},
     }])};
     const payload=(age:number)=>({agentVersion:"gate-l2-v2" as const,
       lanAttachmentProofs:[{
@@ -757,6 +793,193 @@ describe("RP Gate LAN Attachments-only machine token policy", () => {
     await expect(service.gateHeartbeat("Bearer "+gateToken,{
       ...payload(120),lanAttachmentProofs:[{...payload(120).lanAttachmentProofs[0],tenantId:gateId}],
     })).rejects.toThrow(/Untrusted or stale Gate attachment proof/);
+  });
+  it("persists the original v4 deadline when the first recovered heartbeat cannot reissue it",async()=>{
+    const {service,prisma}=fixture();
+    const now=Date.now(), issuedAtMs=now-443_000;
+    const old=currentGate.remoteLanAttachments[0];
+    const grant={attachmentId:old.id,tenantId,gateId,
+      singleAppId:old.singleAppId,networkId:old.networkId,
+      macAddress:old.macAddress,configurationRevision:2};
+    const gate={...currentGate,agentVersion:"gate-l2-v4",
+      observedL2Diagnostic:{authorizationLease:{issuedAtMs,grants:[grant]}}};
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(gate);
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([{
+      id:old.id,tenantId,gateId,singleAppId:old.singleAppId,
+      networkId:old.networkId,macAddress:old.macAddress,
+      configurationRevision:2,status:"Active",
+      lastVerifiedAt:new Date(issuedAtMs),
+      singleApp:{networkAttachments:[{networkId:old.networkId}]},
+    }])};
+    const dto={agentVersion:"gate-l2-v4" as const,
+      leaseNonce:"c".repeat(64),lanAttachmentProofs:[{
+        source:"gate-agent" as const,attachmentId:old.id,tenantId,gateId,
+        singleAppId:old.singleAppId,configurationRevision:2,
+        macAddress:old.macAddress,observedAtMs:now-1_000,
+        handshakeAtMs:now-1_000,gatewayTunnelOwned:true,bridgeOwned:true,
+        macLearnedOnTunnel:true,
+      }]};
+    const response=await service.gateHeartbeat("Bearer "+gateToken,dto);
+    // No new 600s authorization is issued solely because API recovered.
+    expect(response.authorizationLease?.grants).toEqual([]);
+    expect(response.authorizationLease?.retainExisting).toBe(true);
+    const persisted=(prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0]
+      .data.observedL2Diagnostic.authorizationLease;
+    expect(persisted).toEqual({issuedAtMs,grants:[grant]});
+    expect(persisted.issuedAtMs+600_000-now).toBeLessThan(160_000);
+    expect(persisted.issuedAtMs+600_000-now).toBeGreaterThan(150_000);
+
+    // A legitimate network detach after the first recovery removes business
+    // membership. Even the previously saved exact-scope lease may NOT be
+    // retained if that authorization is no longer effective.
+    (prisma.remoteLanAttachment as any).findMany.mockResolvedValueOnce([{
+      id:old.id,tenantId,gateId,singleAppId:old.singleAppId,
+      networkId:old.networkId,macAddress:old.macAddress,
+      configurationRevision:2,status:"Active",lastVerifiedAt:new Date(issuedAtMs),
+      singleApp:{networkAttachments:[]},
+    }]);
+    const revoked=await service.gateHeartbeat("Bearer "+gateToken,dto);
+    expect(revoked.authorizationLease?.grants).toEqual([]);
+    expect(revoked.authorizationLease?.retainExisting).toBeUndefined();
+    const diagnostics=(prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0]
+      .data.observedL2Diagnostic;
+    expect(diagnostics).not.toHaveProperty("authorizationLease");
+  });
+  it("round-trips an API v4 nonce-bound grant through the shipped Gate Python helper",async()=>{
+    const {service,prisma}=fixture();
+    const now=Date.now(),original=currentGate.remoteLanAttachments[0];
+    const applied={...original,configurationRevision:2,lanInterface:"eth1",
+      uplinkMode:"DedicatedUnnumbered",addressMode:"DHCP",
+      dhcpAddress:"192.168.50.20",leaseExpiresAt:new Date(now+720_000),
+      staticAddress:null,staticGateway:null,status:"Active"};
+    const gate={...currentGate,agentVersion:"gate-l2-v4",
+      remoteLanAttachments:[applied]};
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
+    (prisma.resourcePortalGate.update as any).mockImplementation(({data}:any)=>
+      Promise.resolve({...gate,agentVersion:data.agentVersion,
+        observedL2Diagnostic:data.observedL2Diagnostic}));
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([{
+      id:original.id,tenantId,gateId,singleAppId:original.singleAppId,
+      networkId:original.networkId,macAddress:original.macAddress,
+      configurationRevision:2,status:"Active",lastVerifiedAt:new Date(now-1_000),
+      singleApp:{networkAttachments:[{networkId:original.networkId}]},
+    }])};
+    const nonce="d".repeat(64);
+    const response=await service.gateHeartbeat("Bearer "+gateToken,{
+      agentVersion:"gate-l2-v4",leaseNonce:nonce,lanAttachmentProofs:[{
+        source:"gate-agent",attachmentId:original.id,tenantId,gateId,
+        singleAppId:original.singleAppId,configurationRevision:2,
+        macAddress:original.macAddress,observedAtMs:now-800,
+        handshakeAtMs:now-800,gatewayTunnelOwned:true,bridgeOwned:true,
+        macLearnedOnTunnel:true,
+      }],
+    });
+    expect(response.authorizationLease?.grants).toHaveLength(1);
+    expect(response.authorizationLease?.ttlSeconds).toBe(600);
+    // Cross-language integration with the real installer-packaged helper.
+    // The only mocked boundaries are root-only paths and monotonic clock.
+    const helper=resolve(__dirname,"gate-authorization-lease.py");
+    const python=String.raw`
+import importlib.util, json, pathlib, sys, tempfile
+source=sys.argv[1]
+spec=importlib.util.spec_from_file_location("rp_gate_v4_interop", source)
+lease=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lease)
+req=json.load(sys.stdin)
+response,nonce=req["response"],req["nonce"]
+with tempfile.TemporaryDirectory() as tmp:
+    root=pathlib.Path(tmp)
+    lease.STATE_DIR=root
+    lease.LEASE_FILE=root/"authorization.json"
+    lease.LOCK_FILE=root/"authorization.lock"
+    lease.GATE_STATE=root/"state.json"
+    lease.L2_STATE=root/"lan-state.json"
+    lease.boot_id=lambda:"test-boot"
+    tick=[100.0]
+    lease.boot_time=lambda:tick[0]
+    lease.GATE_STATE.write_text(json.dumps({"gateId":response["gateId"]}))
+    scope={}
+    for entry in response["lanAttachments"]:
+        scope[entry["id"]]={k:entry[k] for k in (
+            "singleAppId","networkId","configurationRevision","macAddress")}
+    lease.L2_STATE.write_text(json.dumps({
+        "gateId":response["gateId"],"tenantId":response["tenantId"],
+        "attachments":scope}))
+    lease.begin_transition(response,nonce)
+    assert lease.renew(response,nonce)
+    original=lease.read()
+    assert original and original["mode"]=="lease"
+    assert original["deadline"]==700.0
+    try:
+        lease.renew(response, "a"*64)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Wrong nonce accepted")
+    tick[0]=699.0
+    assert lease.read() is not None
+    tick[0]=701.0
+    assert lease.read() is None
+    tick[0]=100.0
+    lease.boot_id=lambda:"rebooted"
+    assert lease.read() is None
+print("PASS actual Gate v4 lease helper: API grant, nonce, expiry, reboot")`;
+    const verified=spawnSync("python3",["-c",python,helper],{
+      input:JSON.stringify({response,nonce}),encoding:"utf8",timeout:10000,
+      env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"},
+    });
+    expect(verified.status,verified.stderr||verified.error?.message).toBe(0);
+    expect(verified.stdout).toContain("PASS actual Gate v4 lease helper");
+  });
+
+  it("never grants a stale Active row without current app-network membership",async()=>{
+    const {service,prisma}=fixture();
+    const now=Date.now(),old=currentGate.remoteLanAttachments[0];
+    const gate={...currentGate,agentVersion:"gate-l2-v4"};
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(gate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValue(gate);
+    (prisma.remoteLanAttachment as any)={findMany:vi.fn().mockResolvedValue([{
+      id:old.id,tenantId,gateId,singleAppId:old.singleAppId,
+      networkId:old.networkId,macAddress:old.macAddress,
+      configurationRevision:2,status:"Active",lastVerifiedAt:new Date(now),
+      singleApp:{networkAttachments:[]},
+    }])};
+    const dto={agentVersion:"gate-l2-v4" as const,leaseNonce:"a".repeat(64),
+      lanAttachmentProofs:[{
+        source:"gate-agent" as const,attachmentId:old.id,tenantId,gateId,
+        singleAppId:old.singleAppId,configurationRevision:2,
+        macAddress:old.macAddress,observedAtMs:now-1_000,
+        handshakeAtMs:now-1_000,gatewayTunnelOwned:true,bridgeOwned:true,
+        macLearnedOnTunnel:true,
+      }]};
+    const response=await service.gateHeartbeat("Bearer "+gateToken,dto);
+    expect(response.authorizationLease?.grants).toEqual([]);
+    expect(response.authorizationLease?.retainExisting).toBeUndefined();
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0]
+      .data.observedL2Diagnostic).not.toHaveProperty("authorizationLease");
+    expect((prisma.remoteLanAttachment as any).findMany).toHaveBeenCalledWith(
+      expect.objectContaining({where:expect.objectContaining({
+        network:{status:"Ready",tenantId},
+        singleApp:expect.objectContaining({pendingDeletion:false,desiredReplicas:1}),
+      })}),
+    );
+  });
+
+  it("rejects an in-flight Gate heartbeat when detach/revoke wins the config-revision fence",async()=>{
+    const {service,prisma}=fixture();
+    (prisma.resourcePortalGate.findUnique as any).mockResolvedValue(currentGate);
+    (prisma.resourcePortalGate.update as any).mockResolvedValueOnce(currentGate).mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Gate row changed",{
+        code:"P2025",clientVersion:"6.12.0",
+      }),
+    );
+    await expect(service.gateHeartbeat("Bearer "+gateToken,{
+      agentVersion:"gate-l2-v4",leaseNonce:"d".repeat(64),lanAttachmentProofs:[],
+    })).rejects.toThrow("Gate authorization changed while processing heartbeat");
+    expect((prisma.resourcePortalGate.update as any).mock.calls.at(-1)[0].where)
+      .toMatchObject({id:gateId,tenantId,configRevision:currentGate.configRevision,
+        revokedAt:null,status:{notIn:["Deleting","Revoked"]}});
   });
   it("never publishes grants after Gate token revocation",async()=>{
     const {service,prisma}=fixture();

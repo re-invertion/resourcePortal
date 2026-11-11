@@ -190,3 +190,22 @@ must pass the mandatory image-level rollback smoke. New dynamic policy and
 Gateway agent behaviour are release-coupled; verify the supported Gate-agent
 upgrade/rollback instructions before any live host work. Production RP and
 physical Gate updates are explicitly outside the agent's release task.
+
+## Bounded Remote LAN control-plane continuity (#422)
+
+A transient external HTTPS heartbeat error (including ingress 404/502)
+must not immediately tear down a previously authorized v4 Gate data plane.
+The new **authorization lease** is scoped per Gate, tenant, attachment and
+configuration revision, is separate from the DHCP lease, and is limited
+to a candidate **600 seconds**. It is not valid for new or revised
+attachments. The physical Gate uses a monotonic fail-closed watchdog and
+kernel-expiring source rules; the Swarm Gateway enforces its own bounded
+source rule. Authenticated revocations and policy changes take immediate
+effect where delivered. A partitioned Gate cannot observe a revocation
+before its bounded lease expires.
+
+This feature requires RP release support *and* an explicit in-place
+upgrade to Gate v4; older agents retain their original fail-closed behavior.
+Full design, threat model, security review requirement, test cases and
+rollback procedure: [Authorization Lease (#422)](remote-lan-authorization-lease-422.md).
+Do not update a live Gate/Pi or Home Assistant during isolated CI.

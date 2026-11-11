@@ -177,6 +177,29 @@ describe("production LAN activation and revocation ingestion",()=>{
     expect(prisma.remoteLanAttachment.updateMany.mock.calls.some(call =>
       (call[0] as {data:{status?:string}}).data.status==="Active")).toBe(false);
   });
+  it("retains v4 Active during an API observation gap only within a previously persisted authorization lease",async()=>{
+    const now=Date.now();
+    const n=nodeProof(now);
+    const g=gateProof(now);
+    const {prisma,service}=make(now,"Active",true);
+    prisma.remoteLanAttachment.findMany.mockResolvedValueOnce([{
+      ...row,gateId,status:"Active",macAddress:n.macAddress,
+      addressMode:"DHCP",staticAddress:null,staticGateway:null,
+      configurationRevision:1,leaseExpiresAt:new Date(now+3600_000),
+      network:{...row.network,status:"Ready"},
+      singleApp:{...row.singleApp,appGroup:{tenantId},
+        networkAttachments:[{networkId}]},
+      gate:{...row.gate,agentVersion:"gate-l2-v4",status:"Ready",
+        observedL2:[g],observedL2At:new Date(now-100_000),
+        observedL2Diagnostic:{authorizationLease:{
+          issuedAtMs:now-200_000,
+          grants:[{attachmentId:row.id,tenantId,gateId,
+            singleAppId:appId,networkId,macAddress:n.macAddress,
+            configurationRevision:1}]}}},
+    }]);
+    expect(await service.reconcileActivation()).toMatchObject({degraded:0,activated:0});
+    expect(prisma.remoteLanAttachment.updateMany).not.toHaveBeenCalled();
+  });
   it("demotes Active on missing app proof instead of retaining stale lease",async()=>{
     const now=Date.now();
     const {prisma,service}=make(now,"Active",false);

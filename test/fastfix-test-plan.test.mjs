@@ -699,6 +699,10 @@ test("stack apply changes always run deployment rollout and auth regressions", (
 test("LAN Attachment DHCP smoke and capability helper select security regression gates", () => {
   const plan = selectProfiles([
     "scripts/run-remote-lan-l2-dhcp-smoke.sh",
+    "scripts/remote-lan-lease-soak.py",
+    "test/test_remote_lan_lease_soak.py",
+    "scripts/run-remote-lan-real-controlplane-fault.sh",
+    "test/test_real_controlplane_fault_guard.py",
     "test/installer/test-remote-lan-dhcp.py",
     "test/installer/test-swarm-required-capabilities.sh",
   ]);
