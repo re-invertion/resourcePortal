@@ -8,6 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-remote-lan-real-controlplane-fault.sh"
+SMOKE = ROOT / "scripts" / "run-remote-lan-l2-dhcp-smoke.sh"
 
 
 class RealFaultGuardTests(unittest.TestCase):
@@ -47,6 +48,28 @@ class RealFaultGuardTests(unittest.TestCase):
                         "GITHUB_REPOSITORY":"wrong/repo",
                         "GITHUB_RUN_ID":"12345",
                         "RUNNER_TEMP":"/home/runner/work/_temp"})
+
+    def test_disposable_gate_underlay_fault_is_fail_closed_and_restored(self):
+        result = subprocess.run(["bash", "-n", str(SMOKE)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = SMOKE.read_text()
+        begin = text.index('  if [ "$REAL_FAULT" = 1 ]; then',
+                           text.index('PASS immediate local policy revoke'))
+        end = text.index('  kill "$server_pid"', begin)
+        fault = text[begin:end]
+        self.assertIn('http://127.0.0.1:3000/api/health', fault)
+        self.assertIn('ns "$GATE" ip link set gu0 down', fault)
+        self.assertIn('UNDERLAY_LINK_DOWN=1', fault)
+        self.assertIn('ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" denied', fault)
+        self.assertIn('ns "$GATE" ip link set gu0 up', fault)
+        self.assertIn('UNDERLAY_LINK_DOWN=0', fault)
+        self.assertIn('client --duration 3', fault)
+        self.assertNotIn('gate_source_policy', fault)
+        self.assertNotIn('source_expiry', fault)
+        self.assertIn('if [ "$UNDERLAY_LINK_DOWN" -eq 1 ]; then', text)
+        self.assertIn('ns "$GATE" ip link set gu0 up >/dev/null 2>&1 || true', text)
+        self.assertIn('Real API fault requires the long lease smoke', text)
 
     def test_shell_syntax_and_real_fault_semantics_are_explicit(self):
         result = subprocess.run(["bash","-n",str(SCRIPT)],

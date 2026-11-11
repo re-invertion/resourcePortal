@@ -226,7 +226,7 @@ A changed revision, revocation, new attachment, missing/negative proof,
 expired/rebooted lease, or wrong scope can never inherit the old grant.
 No caller may manufacture a new authorized lease from a recovery poll.
 
-### Real API shutdown and Traefik churn fault injection (pending CI validation)
+### Real API shutdown and Traefik churn fault injection (CI verified at 4416728c)
 
 The mandatory long LAN smoke additionally runs a runner-guarded experiment
 on a disposable **single-node GitHub Actions Swarm only**. It deploys a real
@@ -245,10 +245,23 @@ fault helper refuses all non-GitHub-hosted/non-single-node contexts. The
 Gate's nft authorization is not renewed when the API comes back, and the
 existing >600-second test must still deny IPv4 until a fresh grant.
 
-**Evidence status:** the old isolated 443s kernel/event simulation succeeded
-in run 42906449331; this *stronger actual API/Traefik fault test is not proven*
-until a new exact-HEAD Release Readiness run succeeds with logs showing
-all API/proxy failure, churn, recovery, bidirectional event and expiry proofs.
+**Evidence:** Release Readiness run 42919345011, job 130194394629
+completed successfully for exact SHA 4416728c. The runner log records
+90/90 event acknowledgments, 443.0 seconds with the actual RP API stopped,
+HTTP 502 from the real Traefik proxy, task replacement and scale 1->0->1,
+healthy API/proxy restoration, no WireGuard/GRETAP recreation, >600-second
+kernel expiry denial, explicit local source revocation and recovery.
+
+**Additional disposable underlay-fault case pending new CI:** after valid
+fresh source authorization, bring DOWN only the Gate namespace's simulated
+physical Ethernet underlay veth gu0. With RP API still healthy, require
+both permitted IPv4 and HA-like UDP event delivery to fail. Restore gu0,
+confirm IPv4 plus bidirectional motion/click acknowledgments resume without
+creating a new source grant or replacing the WireGuard/GRETAP interfaces.
+An EXIT trap restores the link if an assertion fails. This is a *virtual
+Linux underlay link fault*, not a physical Raspberry Pi cable test.
+
 An installed real RP Gate v4-to-RP API end-to-end agent heartbeat test,
-physical/data-path fault, full explicit revocation and independent security
-sign-off of 600s offline revocation semantics are separate required DoD items.
+physical hardware/HA acceptance and **independent security sign-off of
+600-second offline revocation semantics** remain distinct DoD gates.
+Do not merge until these are explicitly accepted or proven.

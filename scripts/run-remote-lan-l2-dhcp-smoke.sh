@@ -7,6 +7,7 @@ TMP="$(mktemp -d)"
 SERVER_KEY_APPARMOR=""
 CLIENT_KEY_APPARMOR=""
 FAULT_PID=""
+UNDERLAY_LINK_DOWN=0
 REAL_FAULT="$(printenv RP_LAN_REAL_CONTROL_PLANE_FAULT 2>/dev/null || printf 0)"
 case "$REAL_FAULT" in 0|1) ;; *) echo "Invalid real fault selector" >&2; exit 2;; esac
 # Full-duration kernel lease continuity only on explicitly selected changes.
@@ -26,6 +27,11 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ns() { local net="$1"; shift; sudo -n ip netns exec "$net" "$@"; }
 cleanup() {
   set +e
+  # A failed assertion must restore the disposable Gate's simulated
+  # physical underlay before deleting its namespace.
+  if [ "$UNDERLAY_LINK_DOWN" -eq 1 ]; then
+    ns "$GATE" ip link set gu0 up >/dev/null 2>&1 || true
+  fi
   # The fault driver has its own EXIT trap that always restores the isolated
   # API. Never leave the API stopped if an event assertion fails.
   if [ -n "$FAULT_PID" ]; then
@@ -498,6 +504,45 @@ PY_WAIT_LEASE
   ns "$APP2" ping -q -c 2 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null ||
     fail "New authorized source did not restore connectivity after explicit revoke"
   log "PASS immediate local policy revoke and fresh reauthorization preserve WG/GRETAP identity"
+
+  if [ "$REAL_FAULT" = 1 ]; then
+    # Unlike a stopped API or stale control-plane telemetry, a real
+    # underlay fault MUST interrupt the data plane even with an otherwise
+    # authorized nft source. Only the DISPOSABLE Gate network namespace's
+    # owned veth is altered; the production physical NIC is never touched.
+    curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null ||
+      fail "Cannot distinguish local underlay failure from stopped RP API"
+    ns "$GATE" ip link set gu0 down
+    UNDERLAY_LINK_DOWN=1
+    if ns "$APP2" ping -q -c 1 -W 2 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+      fail "Gate underlay loss did not interrupt authorized LAN packets"
+    fi
+    ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" denied ||
+      fail "Gate underlay loss still delivered HA-like events"
+    [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] ||
+      fail "Link loss unexpectedly replaced WireGuard interface"
+    log "PASS local underlay link fault denied IPv4 and HA-like events while RP API stayed healthy"
+
+    # Restore ONLY the original underlay link, not any source lease, policy,
+    # app attachment, WireGuard or GRETAP interface. Reuse the LAN receiver.
+    ns "$GATE" ip link set gu0 up
+    UNDERLAY_LINK_DOWN=0
+    recovered=0
+    for attempt in $(seq 1 12); do
+      if ns "$APP2" ping -q -c 1 -W 1 -I "$APP2_DEV" 192.168.90.1 >/dev/null 2>&1; then
+        recovered=1
+        break
+      fi
+      sleep 1
+    done
+    [ "$recovered" = 1 ] || fail "Restored Gate underlay did not restore IPv4"
+    ns "$APP2" python3 "$REPO_ROOT/scripts/remote-lan-lease-soak.py" client --duration 3 ||
+      fail "Restored Gate underlay did not recover HA-like motion/click acknowledgments"
+    [ "$(ns "$GATE" ip -o link show dev rp-gate | cut -d: -f1)" = "$wg_before" ] &&
+    [ "$(ns "$GATE" ip -o link show dev "$WAN2_DEV" | cut -d: -f1)" = "$gretap_before" ] ||
+      fail "Underlay recovery recreated WireGuard or GRETAP interface"
+    log "PASS local underlay recovery restored encrypted bidirectional HA-like traffic without new grants"
+  fi
   kill "$server_pid" 2>/dev/null || true
   wait "$server_pid" 2>/dev/null || true
 fi
