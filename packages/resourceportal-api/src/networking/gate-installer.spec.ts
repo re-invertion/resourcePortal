@@ -78,7 +78,7 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(agent.indexOf('unlock_authorization',denied)).toBeGreaterThan(denied);
   });
   it("treats HTTP 200 and legacy HTTP 201 as successful heartbeats, never as a transport outage",()=>{
-    const successLine=agent.split("\\n").find(line=>line.includes('if [[ "$HTTP_CODE" =~ ^(200|201)$ ]]'));
+    const successLine=agent.split("\n").find(line=>line.includes('if [[ "$HTTP_CODE" =~ ^(200|201)$ ]]'));
     expect(successLine).toBeDefined();
     for(const status of ["200","201","400","401","404","502"]) {
       const bash='HTTP_CODE='+status+'; '+successLine+' echo accepted; else echo rejected; fi';
@@ -87,7 +87,7 @@ describe("RP Gate LAN Attachments-only installer", () => {
       expect(result.stdout.trim()).toBe(["200","201"].includes(status) ? "accepted" : "rejected");
     }
     const controller=readFileSync(resolve(__dirname,"./networking.controller.ts"),"utf8");
-    expect(controller).toMatch(/@Post\\("agent\\/heartbeat"\\)\\s+@HttpCode\\(HttpStatus\\.OK\\)/);
+    expect(controller).toMatch(/@Post\("agent\/heartbeat"\)\s+@HttpCode\(HttpStatus\.OK\)/);
     expect(agent).toContain('authorizationLease.nonce==$nonce');
     expect(agent).toContain('--renew --nonce "$CHALLENGE"');
   });
