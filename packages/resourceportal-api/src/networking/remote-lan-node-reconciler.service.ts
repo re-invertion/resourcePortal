@@ -212,7 +212,8 @@ export class RemoteLanNodeReconcilerService {
       // an existing lease, but it must not be added to the old node policy.
       if (existing.length > rows.length || existing.some(item => {
           const row = keyed.get(item.attachmentId);
-          if (!row || row.status !== "Active" || row.gate.revokedAt ||
+          if (!row || !["Provisioning","Active"].includes(row.status) ||
+              row.gate.revokedAt ||
               row.gate.status !== "Ready" || row.network.status !== "Ready" ||
               row.gate.tenantId !== row.tenantId ||
               row.network.tenantId !== row.tenantId ||
@@ -229,13 +230,20 @@ export class RemoteLanNodeReconcilerService {
             !managedObservationStale(row) :
             !!row.gate.lastSeenAt && row.gate.lastSeenAt.getTime() <= now + 5_000 &&
             now - row.gate.lastSeenAt.getTime() < 60_000;
-          if (!fresh && remoteLanAuthorizationExpiry({
-            ...row.gate, gateId:row.gate.id,
-          },{
-            attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
-            singleAppId:row.singleAppId,networkId:row.networkId,
-            macAddress:row.macAddress,configurationRevision:row.configurationRevision,
-          },now)===null) return true;
+          // Only the Gate whose own observation is stale needs a v4
+          // offline authorization and an ALREADY Active attachment. Another
+          // healthy Gate may have an unchanged, previously installed
+          // Provisioning attachment (e.g. waiting for DHCP). Requiring
+          // Active globally would revoke the shared node service, including
+          // all otherwise authorized leased v4 attachments.
+          if (!fresh && (row.status !== "Active" ||
+            remoteLanAuthorizationExpiry({
+              ...row.gate, gateId:row.gate.id,
+            },{
+              attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
+              singleAppId:row.singleAppId,networkId:row.networkId,
+              macAddress:row.macAddress,configurationRevision:row.configurationRevision,
+            },now)===null)) return true;
           return item.tenantId !== row.tenantId ||
             item.gateId !== row.gateId || item.singleAppId !== row.singleAppId ||
             item.configurationRevision !== row.configurationRevision ||

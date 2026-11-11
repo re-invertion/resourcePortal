@@ -174,6 +174,37 @@ describe("Remote LAN node policy rollout",()=>{
       changed:false,attachments:2,disabled:false,degraded:true,
     });
     expect(service.calls.filter(a=>a[0]==="service"&&a[1]==="update")).toHaveLength(0);
+
+    // Another healthy Gate may have an already installed Provisioning
+    // attachment waiting for DHCP. A different Gate's stale observation
+    // must NOT force that fresh row to Active or revoke the entire service.
+    const provisioning={...freshV3,status:"Provisioning"};
+    const pending=fixture("true",[staleV4,provisioning]).service;
+    pending.policyEnv=[...service.policyEnv];
+    expect(await pending.reconcile()).toMatchObject({
+      changed:false,attachments:2,disabled:false,degraded:true,
+    });
+    expect(pending.calls.filter(a=>a[0]==="service"&&a[1]==="update")).toHaveLength(0);
+    expect(pending.policyEnv).toEqual(service.policyEnv);
+
+    // The exception does NOT permit a fresh Gate to change an attachment's
+    // previously installed scope or revision during another Gate's outage.
+    const changedProvisioning=fixture("true",[
+      staleV4,{...provisioning,configurationRevision:2},
+    ]).service;
+    changedProvisioning.policyEnv=[...service.policyEnv];
+    await expect(changedProvisioning.reconcile()).rejects.toThrow(/Stale Gate observation/);
+    expect(changedProvisioning.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
+
+    // An offline Gate may not borrow this provisioning exception even when
+    // it previously held an otherwise exact v4 authorization stamp.
+    const staleProvisioning=fixture("true",[
+      {...staleV4,status:"Provisioning"},freshV3,
+    ]).service;
+    staleProvisioning.policyEnv=[...service.policyEnv];
+    await expect(staleProvisioning.reconcile()).rejects.toThrow(/Stale Gate observation/);
+    expect(staleProvisioning.policyEnv).toContain("RP_REMOTE_LAN_NODE_ENABLED=false");
+
     // A legacy Gate that itself loses its own fresh managed observation has
     // no v4 offline grant; the shared policy MUST then fail closed.
     const legacyStale={...freshV3,gate:{...freshV3.gate,
