@@ -137,8 +137,10 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
     <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={!selectedEndpoint||working} confirmTitle="Confirm domain assignment" confirmDescription="Route this domain to the selected application endpoint?" confirmLabel="Assign domain" onConfirm={assignDomain}>Assign to endpoint</ConfirmActionButton>
   </div></Card> : null}<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS certificate</h2><DetailList items={[{label:"TLS",value:tlsEnabled?"Enabled":"Off"},{label:"Certificate",value:<StatusText tone={tlsEnabled?statusTone(d.certificateStatus):"neutral"}>{tlsEnabled?text(d.certificateStatus,"Pending"):"Not required"}</StatusText>},{label:"Issuer",value:tlsEnabled?text(d.certificateIssuer,"—"):"—"},{label:"Expires",value:tlsEnabled?formatDate(d.certificateExpiresAt):"—"},{label:"Created",value:formatDate(d.createdAt)}]}/></Card>
  {tlsEnabled?<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS recovery &amp; diagnostics</h2>
-   {tlsDiagnostics.error?<Callout tone="danger" title="Diagnostics unavailable">Unable to load managed ingress TLS diagnostics. Retry after checking connectivity.</Callout>:null}
-   <DetailList items={[
+   {tlsDiagnostics.loading?<p role="status" className="text-sm text-[#5B6678]">Loading TLS diagnostics…</p>:null}
+   {!tlsDiagnostics.loading&&tlsDiagnostics.error?<Callout tone="danger" title="Diagnostics unavailable">Unable to load managed ingress TLS diagnostics. Retry after checking connectivity.</Callout>:null}
+   {!tlsDiagnostics.loading&&!tlsDiagnostics.error&&!tlsDiagnostics.data?<Callout title="No diagnostics available">TLS diagnostics have not returned any results. Refresh to try again.</Callout>:null}
+   {!tlsDiagnostics.loading&&!tlsDiagnostics.error&&tlsDiagnostics.data?<><DetailList items={[
      {label:"DNS",value:<StatusText tone={statusTone(tlsDiagnostics.data?.dnsStatus??d.dnsStatus)}>{text(tlsDiagnostics.data?.dnsStatus,d.dnsStatus as string)}</StatusText>},
      {label:"Managed ingress TLS",value:<StatusText tone={statusTone(tlsDiagnostics.data?.certificateStatus??d.certificateStatus)}>{text(tlsDiagnostics.data?.certificateStatus,d.certificateStatus as string)}</StatusText>},
      {label:"Ingress publication",value:"Not independently verified"},
@@ -148,7 +150,7 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
      {label:"Transient failure",value:tlsDiagnostics.data?.transient===true?"Possible":"No evidence"},
    ]}/>
    {text(tlsDiagnostics.data?.cause,"")?<div className="mt-4"><Callout tone={tlsDiagnostics.data?.transient===true?"warning":"danger"} title="TLS diagnostics">{text(tlsDiagnostics.data?.cause)}</Callout></div>:null}
-   {tlsDiagnostics.data?.deploymentBlocked===true?<div className="mt-4"><Callout tone="danger" title="Why deployment is blocked">{text(tlsDiagnostics.data?.deploymentBlockReason,"Managed ingress TLS is not ready.")} Successful DNS verification or a public HTTP 200 response does not prove a valid managed ingress certificate.</Callout></div>:null}
+   {tlsDiagnostics.data?.deploymentBlocked===true?<div className="mt-4"><Callout tone="danger" title="Why deployment is blocked">{text(tlsDiagnostics.data?.deploymentBlockReason,"Managed ingress TLS is not ready.")} Successful DNS verification or a public HTTP 200 response does not prove a valid managed ingress certificate.</Callout></div>:null}</>:null}
    <p className="mt-4 text-xs leading-5 text-[#5B6678]">Ingress publication is checked separately from DNS and TLS. Route ownership and publication blockers are tracked under issue #394. Reconciliation does not disable TLS, replace keys or restart workloads.</p>
    {tlsQueued?<p className="mt-3 text-xs text-[#5B6678]">Reconciliation queued. Refresh diagnostics after the worker processes the operation.</p>:null}
    <div className="mt-4 flex flex-wrap gap-2">
