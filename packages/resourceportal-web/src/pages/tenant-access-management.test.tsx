@@ -36,6 +36,11 @@ function fetcher() {
     if (url.endsWith("/memberships") && (!init?.method || init.method === "GET")) return json([owner, viewer, member]);
     if (url.endsWith("/memberships/m-member") && init?.method === "PATCH") return json({ success: true });
     if (url.endsWith("/roles")) return json(roleList);
+    if (url.endsWith("/membership-app-grants")) return json([
+      { membershipId: "m-owner", grants: [], nativeGrants: [] },
+      { membershipId: "m-viewer", grants: [], nativeGrants: [] },
+      { membershipId: "m-member", grants: [], nativeGrants: [] },
+    ]);
     if (url.endsWith("/invitations")) return json([]);
     if (url.endsWith("/groups") && (!init?.method || init.method === "GET")) return json([activeGroup]);
     if (url.endsWith("/groups/g-admin/members") && init?.method === "POST") {
@@ -76,7 +81,7 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     expect(screen.queryByRole("button", { name: "Create group" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Manage" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete Developers" })).toBeNull();
-    expect(screen.getByText(/Granting a role gives ResourcePortal rights/)).toBeTruthy();
+    expect(screen.getByText(/sso-login has no RP permissions/)).toBeTruthy();
     expect(calls.some(c => c.init?.method === "POST" || c.init?.method === "PATCH")).toBe(false);
   });
 
@@ -94,7 +99,7 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     await waitFor(() => {
       const change = calls.find(c => c.url.endsWith("/memberships/m-member") && c.init?.method === "PATCH");
       expect(change).toBeTruthy();
-      expect(JSON.parse(String(change?.init?.body))).toEqual({ roleIds: ["tenant-viewer", "tenant-admin"], status: "Suspended" });
+      expect(JSON.parse(String(change?.init?.body))).toEqual({ roleIds: ["tenant-viewer", "tenant-admin"], status: "Suspended", oauthApplicationIds: [], nativeApplicationKeys: [] });
     });
   });
 
@@ -155,7 +160,7 @@ it("removes group-inherited admin controls after revocation and refreshes member
     expect(screen.queryByText(/inherited: Manager/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Manage" })).toBeNull();
   });
-  expect(screen.getByText(/Granting a role gives ResourcePortal rights/)).toBeTruthy();
+  expect(screen.getByText(/sso-login has no RP permissions/)).toBeTruthy();
 });
 
 it("refreshes memberships after group deletion so inherited permissions do not remain visible", async () => {
