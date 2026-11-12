@@ -1,5 +1,5 @@
 import { MembershipStatus } from "@prisma/client";
-import { ArrayNotEmpty, IsArray, IsEnum, IsOptional, IsString } from "class-validator";
+import { ArrayUnique, IsArray, IsEnum, IsOptional, IsString } from "class-validator";
 
 export class UpdateMembershipDto {
   @IsOptional()
@@ -8,7 +8,7 @@ export class UpdateMembershipDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayNotEmpty()
+  @ArrayUnique()
   @IsString({ each: true })
   roleIds?: string[];
 }

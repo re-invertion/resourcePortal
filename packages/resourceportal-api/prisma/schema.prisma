@@ -232,6 +232,7 @@ model Tenant {
   identityProviders          IdentityProvider[]
   oauthApplications          OAuthApplication[]
   appConsumers               TenantAppConsumer[]
+  nativeAppGrants            TenantNativeAppGrant[]
   serviceIdentities          ServiceIdentity[]
   mcpSettings                TenantMcpSettings?
   resourceBotSettings        TenantResourceBotSettings?
@@ -265,7 +266,9 @@ model TenantMembership {
   tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   roles            MembershipRole[]
   groupMemberships TenantGroupMember[]
-  appConsumer      TenantAppConsumer?
+  appConsumer      TenantAppConsumer? // legacy migration marker; not a user type
+  appGrants        TenantAppClientGrant[]
+  nativeAppGrants  TenantNativeAppGrant[]
   mcpAccess        TenantMcpMemberAccess[]
 
   @@unique([userId, tenantId])
@@ -585,14 +588,14 @@ model TenantInvitation {
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   appInvitationGrants TenantAppInvitationGrant[]
+  nativeApplicationKeys String[] @default([])
 
   @@unique([tenantId, email])
   @@unique([id, tenantId])
 }
 
-// Presence marks an application-only tenant identity. Its membership has
-// ZERO RolePermission bindings; never give it tenant.read or any management
-// permission. Independently-managed OAuth applications require explicit grants.
+// Legacy #398 marker kept for reversible migration only. It no longer defines
+// an account category or constrains RBAC/application grants.
 model TenantAppConsumer {
   membershipId String @id @db.Uuid
   tenantId     String @db.Uuid
@@ -601,7 +604,6 @@ model TenantAppConsumer {
   updatedAt    DateTime @updatedAt
   membership   TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
   tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  grants       TenantAppClientGrant[]
 
   @@unique([membershipId, tenantId])
   @@index([tenantId])
@@ -619,11 +621,31 @@ model TenantAppClientGrant {
   updatedBy          String @db.Uuid
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
-  consumer           TenantAppConsumer @relation(fields: [membershipId, tenantId], references: [membershipId, tenantId], onDelete: Cascade)
+  membership         TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
   application        OAuthApplication @relation(fields: [oauthApplicationId, tenantId], references: [id, tenantId], onDelete: Cascade)
 
   @@unique([membershipId, oauthApplicationId])
   @@index([tenantId, oauthApplicationId, enabled])
+}
+
+// A platform-level OIDC client is shared by all tenants. Do not duplicate the
+// physical ZITADEL client or store a tenant's RP access as a global role.
+// "web" and "cli" are deliberately distinct entitlements.
+model TenantNativeAppGrant {
+  id           String @id @default(uuid()) @db.Uuid
+  membershipId String @db.Uuid
+  tenantId     String @db.Uuid
+  clientKey    String
+  enabled      Boolean @default(true)
+  createdBy    String @db.Uuid
+  updatedBy    String @db.Uuid
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  membership   TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, clientKey])
+  @@index([tenantId, clientKey, enabled])
 }
 
 // Pending invitation grants are created in the same transaction as the
