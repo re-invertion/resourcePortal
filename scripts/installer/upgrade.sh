@@ -347,6 +347,7 @@ rp_upgrade_preflight() {
   rp_upgrade_identity_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}" "$current_version" "$manifest" || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_upgrade_check_temporary_files
 }
 
@@ -753,6 +754,12 @@ rp_upgrade_reconcile_failed_rollback() {
   rp_wait_control_plane_converged "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300 || return 1
   RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
+  if [[ "$db_state" == restored ]] &&
+     declare -F rp_invitation_oidc_rollback_recover >/dev/null &&
+     ! rp_invitation_oidc_rollback_recover tested; then
+    printf 'Previous rollback recovery blocked: restored ZITADEL invitation journal could not be reconciled.\n' >&2
+    return 1
+  fi
   rp_upgrade_restore_manifest_checkpoint || return 1
   # Keep the previous failed journal as evidence before starting a new
   # checkpoint. The enclosing prepare() still holds the exclusive flock.
@@ -913,6 +920,23 @@ rp_upgrade_restore_after_failure() {
     printf 'Automatic rollback cannot restore the source databases; leave services quiesced for recovery.\n' >&2
     return 1
   fi
+  # Two restored databases invalidate an invitation app created in this
+  # attempt. Verify durable provenance IMMEDIATELY after restore, but defer
+  # removing its Swarm secret until the previous stack releases the mount.
+  # If stack recovery later fails, the signed checkpoint remains usable on
+  # the next explicit upgrade retry without trusting the stale physical app.
+  if [[ "$claim" == tested &&
+        "${RP_INVITATION_OIDC_CREATED_IN_ATTEMPT:-false}" == true ]]; then
+    local invitation_journal
+    invitation_journal="$(rp_invitation_oidc_recovery_path)" || return 1
+    if ! rp_invitation_oidc_created_for_restored_checkpoint "$invitation_journal" rolling-back ||
+       ! rp_invitation_oidc_recovery_load "$invitation_journal" \
+         "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" "${RP_CFG_INVITATION_OIDC_SWARM_REF:-}"; then
+      rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+      printf 'Automatic rollback cannot reconcile invitation client provenance after ZITADEL restore.\n' >&2
+      return 1
+    fi
+  fi
   # Restore source databases BEFORE detaching the new global execution:
   # App Consumers' newly issued upstream grants cannot remain unguarded.
   if [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]] &&
@@ -948,6 +972,15 @@ rp_upgrade_restore_after_failure() {
     rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     return 1
   }
+  # Image-only rollback retains the certified OIDC credential references for
+  # a subsequent upgrade; tested DB restore discards only clients introduced
+  # after the snapshot. Never report rollback success with orphaned references.
+  if declare -F rp_invitation_oidc_rollback_recover >/dev/null &&
+     ! rp_invitation_oidc_rollback_recover "$claim"; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+    printf 'Rollback blocked: invitation OIDC recovery journal could not be reconciled.\n' >&2
+    return 1
+  fi
   rp_upgrade_checkpoint_phase rolled-back "$failed_step" || return 1
   printf "Automatic rollback completed: previous ResourcePortal stack is healthy. Update failed.\n" >&2
   return 1
@@ -961,6 +994,8 @@ rp_upgrade_apply() {
   [[ -r "$previous_stack" ]] || return 1
   # Keep this guard even when the apply function is invoked directly.
   rp_upgrade_check_temporary_files || return 1
+  RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
+  export RP_INVITATION_OIDC_CREATED_IN_ATTEMPT
   rp_config_apply_defaults || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
   rp_upgrade_rollback_allowed "$manifest" || {
@@ -970,6 +1005,7 @@ rp_upgrade_apply() {
   rp_upgrade_identity_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "$previous_stack" "$source_version" "$manifest" || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_checkpoint_prepare "$manifest" "$previous_stack" "$source_version" || return 1
@@ -993,7 +1029,8 @@ rp_upgrade_apply() {
   # Target and immutable Docker signing key are automatic. Do not attach
   # the interrupting execution before the migrated API is live.
   if jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null 2>&1; then
-    if ! rp_app_action_prepare || ! rp_app_action_checkpoint_record; then
+    if ! rp_app_action_prepare || ! rp_app_action_checkpoint_record ||
+       ! rp_invitation_oidc_prepare; then
       rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "App Consumer target provisioning"
       return 1
     fi
@@ -1038,4 +1075,7 @@ rp_upgrade_apply() {
     return 1
   }
   rp_upgrade_checkpoint_phase completed "target-stack-healthy" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint completed"; return 1; }
+  # Keep the owner-private reference journal even after success: this commit
+  # releases the upgrade lock, so deleting the journal here would race a
+  # subsequent upgrade and could erase its recovery metadata.
 }

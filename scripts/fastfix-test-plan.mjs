@@ -305,6 +305,7 @@ const classifiers = [
   [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^test\/installer\/test-app-consumer-real-signer\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-invitation-oidc-upgrade\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
   // Global issuer pre-token callback and two-database rollback safety:
   // upgrade.sh affects tenant authentication, not only installer plumbing.
