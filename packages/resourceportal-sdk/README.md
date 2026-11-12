@@ -218,3 +218,22 @@ error.correlationId
 The SDK targets the public Resource Portal management API. `/internal/*` endpoints and routes explicitly protected as internal worker APIs are intentionally excluded, including `/users` guarded by `InternalAuthGuard`.
 
 The compatibility test inventory classifies every API controller. Adding or removing a controller changes that manifest and forces an explicit SDK/CLI parity decision instead of allowing public surface drift to pass silently.
+
+## Unified tenant identities and SSO application grants (#430, unreleased)
+
+Application grants are independent from ResourcePortal RBAC. A user has one `UserIdentity` and one membership per tenant; `sso-login` provides no ResourcePortal permissions. Use the typed full SDK `ResourcePortalClient` for managing explicit application grants on that membership:
+
+```ts
+const access = await client.membershipAppGrants.list(tenantId);
+await client.membershipAppGrants.grant(tenantId, membershipId, oauthApplicationId);
+await client.membershipAppGrants.grantNative(tenantId, membershipId, "web");
+// Separate physical RP CLI client: do not infer from RP Web authorization.
+await client.membershipAppGrants.revokeNative(tenantId, membershipId, "cli");
+await client.membershipAppGrants.reconcile(tenantId, membershipId, {
+  roleIds: ["sso-login", "tenant-viewer"],
+  oauthApplicationIds: [oauthApplicationId],
+  nativeApplicationKeys: ["web"],
+});
+```
+
+The same membership PATCH atomically reconciles RBAC and app grants. All mutations require `membership.update`; the API rejects self-grant. Changes are not usable through the live issuer until the Actions V2 exact-client gate and release have been certified. See `docs/iam-unified-identity-430.md`.
