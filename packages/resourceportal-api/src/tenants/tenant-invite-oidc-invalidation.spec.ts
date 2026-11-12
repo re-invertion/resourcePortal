@@ -47,11 +47,9 @@ describe("#430 unified invitations remain transactional", () => {
     const f = fixture();
     await f.service.acceptInvitation({ token }, f.actor);
     expect(f.tx.tenantMembership.create).toHaveBeenCalledOnce();
-    expect(f.tx.tenantMembership.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({
-        roles: { create: [{ roleId: "sso-login" }] },
-      }) }),
-    );
+    expect(f.tx.tenantMembership.create.mock.calls[0]?.[0] as unknown).toMatchObject({
+      data: { roles: { create: [{ roleId: "sso-login" }] } },
+    });
     expect(f.tx.tenantAppClientGrant.createMany).toHaveBeenCalledWith({
       data: [{ membershipId: "membership-1", tenantId: "tenant-1",
         oauthApplicationId: appId, createdBy: "creator-1", updatedBy: "creator-1" }],
@@ -76,11 +74,9 @@ describe("#430 unified invitations remain transactional", () => {
       ...invitation, roleIds: ["sso-login", "tenant-admin"],
     });
     await f.service.acceptInvitation({ token }, f.actor);
-    expect(f.tx.tenantMembership.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({
-        userId: f.actor.id, roles: { create: [{ roleId: "sso-login" }, { roleId: "tenant-admin" }] },
-      }) }),
-    );
+    expect(f.tx.tenantMembership.create.mock.calls[0]?.[0] as unknown).toMatchObject({
+      data: { userId: f.actor.id, roles: { create: [{ roleId: "sso-login" }, { roleId: "tenant-admin" }] } },
+    });
     expect(f.tx.tenantAppClientGrant.createMany).toHaveBeenCalledOnce();
     expect(f.tx.tenantNativeAppGrant.createMany).toHaveBeenCalledOnce();
   });
@@ -91,9 +87,9 @@ describe("#430 unified invitations remain transactional", () => {
       ...invitation, roleIds: [], nativeApplicationKeys: [], appInvitationGrants: [],
     });
     await f.service.acceptInvitation({ token }, f.actor);
-    expect(f.tx.tenantMembership.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ roles: { create: [] } }) }),
-    );
+    expect(f.tx.tenantMembership.create.mock.calls[0]?.[0] as unknown).toMatchObject({
+      data: { roles: { create: [] } },
+    });
     expect(f.tx.tenantAppClientGrant.createMany).not.toHaveBeenCalled();
     expect(f.tx.tenantNativeAppGrant.createMany).not.toHaveBeenCalled();
   });

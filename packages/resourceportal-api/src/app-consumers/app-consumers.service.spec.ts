@@ -146,16 +146,12 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
     const f = fixture();
     expect(await f.svc.mayIssueNativeRpToken(issuer, "123456", "web")).toBe(true);
     expect(await f.svc.mayIssueNativeRpToken(issuer, "123456", "cli")).toBe(true);
-    expect(f.prisma.tenantMembership.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({
-        nativeAppGrants: { some: { clientKey: "web", enabled: true } },
-      }) }),
-    );
-    expect(f.prisma.tenantMembership.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({
-        nativeAppGrants: { some: { clientKey: "cli", enabled: true } },
-      }) }),
-    );
+    expect(f.prisma.tenantMembership.findFirst.mock.calls[0]?.[0] as unknown).toMatchObject({
+      where: { nativeAppGrants: { some: { clientKey: "web", enabled: true } } },
+    });
+    expect(f.prisma.tenantMembership.findFirst.mock.calls[1]?.[0] as unknown).toMatchObject({
+      where: { nativeAppGrants: { some: { clientKey: "cli", enabled: true } } },
+    });
     f.prisma.tenantMembership.findFirst.mockResolvedValueOnce(null);
     expect(await f.svc.mayIssueNativeRpToken(issuer, "123456", "web")).toBe(false);
   });

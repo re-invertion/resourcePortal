@@ -25,11 +25,9 @@ describe("#430 global tenant creation is not an implicit SSO entitlement", () =>
     const { tx, service } = fixture(1, false);
     await expect(service.createTenant(dto, actor)).rejects.toBeInstanceOf(ForbiddenException);
     expect(tx.$queryRaw).toHaveBeenCalledOnce();
-    expect(tx.tenantMembership.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        userId: actor.id, status: "Active", roles: { some: { roleId: "tenant-owner" } },
-      }),
-    }));
+    expect(tx.tenantMembership.findFirst.mock.calls[0]?.[0] as unknown).toMatchObject({
+      where: { userId: actor.id, status: "Active", roles: { some: { roleId: "tenant-owner" } } },
+    });
     expect(tx.tenant.create).not.toHaveBeenCalled();
   });
 
