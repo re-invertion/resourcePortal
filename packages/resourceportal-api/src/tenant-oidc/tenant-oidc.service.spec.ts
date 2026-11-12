@@ -107,6 +107,12 @@ describe("Tenant OIDC management fails closed", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId, appConsumer: { is: null },
+          OR: [
+            { roles: { some: { roleId: { not: "sso-login" } } } },
+            { groupMemberships: { some: { group: { roles: { some: {
+              roleId: { not: "sso-login" },
+            } } } } } },
+          ],
         }) as Record<string, unknown>,
       }),
     );

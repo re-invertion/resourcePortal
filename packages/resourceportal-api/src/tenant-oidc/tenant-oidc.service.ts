@@ -145,7 +145,19 @@ export class TenantOidcService {
                 { roles: { some: { roleId: "sso-login" } } },
                 { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
               ],
-            } : { appConsumer: { is: null } }),
+            } : {
+              // Without a LIVE, certified exact-client pre-token Action,
+              // never issue project-wide roles to a newly invited SSO-only
+              // identity. Legacy RP members retain pre-#430 access until
+              // operator cutover; the installer must block new grant rollout.
+              appConsumer: { is: null },
+              OR: [
+                { roles: { some: { roleId: { not: "sso-login" } } } },
+                { groupMemberships: { some: { group: { roles: { some: {
+                  roleId: { not: "sso-login" },
+                } } } } } },
+              ],
+            }),
           },
           include: { user: { include: { identities: true } } },
         });
