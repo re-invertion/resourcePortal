@@ -16,17 +16,35 @@ const preview = {
 describe("InvitationPage", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("builds login and registration links that return to the invitation", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(preview)));
+  it("uses identity-only onboarding client links with an opaque invitation proof when the Action is enabled", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ ...preview, onboardingAvailable: true })));
     render(<InvitationPage token="opaque-token" user={null} />);
 
     expect(await screen.findByRole("heading", { name: "Join Acme Corp" })).toBeTruthy();
     const signIn = screen.getByRole("link", { name: "Sign in to accept" });
     const signUp = screen.getByRole("link", { name: "Create account" });
-    expect(signIn.getAttribute("href")).toContain("/login?");
-    expect(signIn.getAttribute("href")).toContain("tenantId=22222222-2222-4222-8222-222222222222");
-    expect(signIn.getAttribute("href")).toContain("returnTo=%2Finvitations%2Fopaque-token");
-    expect(signUp.getAttribute("href")).toContain("/register?");
+    expect(signIn.getAttribute("href")).toBe("/api/invitations/onboard/start?token=opaque-token&register=false");
+    expect(signUp.getAttribute("href")).toBe("/api/invitations/onboard/start?token=opaque-token&register=true");
+    expect(signIn.getAttribute("href")).not.toContain("/api/auth/login");
+    expect(signUp.getAttribute("href")).not.toContain("OIDC_CLIENT_ID");
+  });
+
+  it("preserves ordinary login/register with signed returnTo on pre-cutover installations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ ...preview, onboardingAvailable: false })));
+    render(<InvitationPage token="opaque-token" user={null} />);
+    expect(await screen.findByRole("heading", { name: "Join Acme Corp" })).toBeTruthy();
+    const loginHref = screen.getByRole("link", { name: "Sign in to accept" }).getAttribute("href");
+    const registerHref = screen.getByRole("link", { name: "Create account" }).getAttribute("href");
+    expect(loginHref).toBe("/login?returnTo=%2Finvitations%2Fopaque-token&tenantId=22222222-2222-4222-8222-222222222222");
+    expect(registerHref).toBe("/register?returnTo=%2Finvitations%2Fopaque-token&tenantId=22222222-2222-4222-8222-222222222222");
+  });
+
+  it("fails safe to ordinary login for legacy preview payloads without onboarding capability", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(preview)));
+    render(<InvitationPage token="opaque-token" user={null} />);
+    expect(await screen.findByRole("heading", { name: "Join Acme Corp" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sign in to accept" }).getAttribute("href"))
+      .toContain("/login?");
   });
 
   it("accepts the invitation as the signed-in user and navigates to the tenant", async () => {

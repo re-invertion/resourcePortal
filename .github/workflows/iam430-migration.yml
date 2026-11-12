@@ -1,0 +1,51 @@
+name: "IAM #430 legacy data migration and snapshot restore"
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/iam430-migration.yml'
+      - 'test/iam430/**'
+      - 'packages/resourceportal-api/prisma/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-upgrade-restore:
+    name: PostgreSQL legacy grants -> unified identity -> snapshot restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: iam430
+          POSTGRES_PASSWORD: iam430_ci_only
+          POSTGRES_DB: iam430
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://iam430:iam430_ci_only@localhost:5432/iam430?schema=public
+      PGPASSWORD: iam430_ci_only
+      PGUSER: iam430
+      PGHOST: localhost
+      PGPORT: '5432'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact dependencies and PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          npm ci --no-audit --no-fund
+      - name: Migrate legacy members and verify source DB restore
+        run: bash test/iam430/legacy-upgrade-restore.sh

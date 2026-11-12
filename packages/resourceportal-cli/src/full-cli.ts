@@ -35,6 +35,7 @@ const COMPATIBILITY_GROUPS = new Set([
   "platform-maintenance",
   "tenant-mcp",
   "tenant-oidc",
+  "membership-grant",
   "native-login-migration",
   "oauth-application",
   "platform-oauth-application",
@@ -60,6 +61,8 @@ const DTO_ARRAY_FIELDS = new Set([
   "postLogoutRedirectUris",
   "scopes",
   "allowedMembershipIds",
+  "oauthApplicationIds",
+  "nativeApplicationKeys",
 ]);
 
 const parsed = parseArgs(process.argv.slice(2));
@@ -102,6 +105,38 @@ async function runCompatibilityCommand(parsedArgs: ParsedArgs) {
   let result: unknown;
 
   switch (key) {
+    case "membership-grant list":
+      result = await client.membershipAppGrants.list(arg(parsedArgs, 0, "tenantId"));
+      break;
+    case "membership-grant show":
+      result = await client.membershipAppGrants.get(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"));
+      break;
+    case "membership-grant grant":
+      result = await client.membershipAppGrants.grant(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"),
+        arg(parsedArgs, 2, "oauthApplicationId"));
+      break;
+    case "membership-grant revoke":
+      result = await client.membershipAppGrants.revoke(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"),
+        arg(parsedArgs, 2, "oauthApplicationId"));
+      break;
+    case "membership-grant grant-native":
+      result = await client.membershipAppGrants.grantNative(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"),
+        nativeKey(arg(parsedArgs, 2, "webOrCli")));
+      break;
+    case "membership-grant revoke-native":
+      result = await client.membershipAppGrants.revokeNative(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"),
+        nativeKey(arg(parsedArgs, 2, "webOrCli")));
+      break;
+    case "membership-grant set":
+      result = await client.membershipAppGrants.reconcile(
+        arg(parsedArgs, 0, "tenantId"), arg(parsedArgs, 1, "membershipId"),
+        mutationBody(parsedArgs.flags));
+      break;
     case "platform-billing price-list-list":
       result = await client.platformBilling.listPriceLists();
       break;
@@ -600,6 +635,13 @@ function printCompatibilityHelp(group?: string) {
     "platform-maintenance set --enabled true|false [--reason TEXT]",
     "tenant-mcp show <tenantId>",
     "tenant-mcp set <tenantId> --enabled true|false --access-mode AllMembers|SelectedMembers [--allowed-membership-ids ID]",
+    "membership-grant list <tenantId>",
+    "membership-grant show <tenantId> <membershipId>",
+    "membership-grant grant <tenantId> <membershipId> <oauthApplicationId>",
+    "membership-grant revoke <tenantId> <membershipId> <oauthApplicationId>",
+    "membership-grant grant-native <tenantId> <membershipId> web|cli",
+    "membership-grant revoke-native <tenantId> <membershipId> web|cli",
+    "membership-grant set <tenantId> <membershipId> [--role-ids IDs] [--oauth-application-ids IDs] [--native-application-keys web,cli]",
     "tenant-oidc show <tenantId>",
     "tenant-oidc provision <tenantId>",
     "tenant-oidc reconcile <tenantId>",
@@ -746,4 +788,9 @@ function kebabCase(value: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nativeKey(key: string): "web" | "cli" {
+  if (key !== "web" && key !== "cli") throw new Error("Native OIDC client must be web or cli");
+  return key;
 }

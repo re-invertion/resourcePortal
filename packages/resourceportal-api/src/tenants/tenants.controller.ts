@@ -9,6 +9,8 @@ import {
   Post,
   Query,
   UnauthorizedException,
+  Req,
+  Res,
 } from "@nestjs/common";
 import { Authenticated } from "../auth/authenticated.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -35,6 +37,9 @@ import { UpdateTenantBrandingDto } from "./dto/update-tenant-branding.dto";
 import { UpdateTenantAuthPolicyDto } from "./dto/update-tenant-auth-policy.dto";
 import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import { TenantsService } from "./tenants.service";
+import { TenantInvitationOnboardingService } from "./tenant-invitation-onboarding.service";
+import { AuthSessionService } from "../auth/auth-session.service";
+import { FastifyRequest, FastifyReply } from "fastify";
 
 @Controller("tenants")
 export class TenantsController {
@@ -327,12 +332,79 @@ export class TenantsController {
 
 @Controller("invitations")
 export class TenantInvitationsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    private readonly onboarding: TenantInvitationOnboardingService,
+    private readonly sessions: AuthSessionService,
+  ) {}
+
+  private readonly onboardingPath = "/api/invitations/onboard";
+  private readonly onboardingCookies = {
+    state: "rp_invite_oauth_state",
+    verifier: "rp_invite_oauth_verifier",
+    token: "rp_invite_oauth_token",
+  } as const;
+
+  @Public()
+  @Get("onboard/start")
+  async startOnboarding(
+    @Query("token") token: string,
+    @Query("register") register: string | undefined,
+    @Res() reply: FastifyReply,
+  ) {
+    const request = await this.onboarding.start(token, register === "true");
+    const options = { path: this.onboardingPath, httpOnly: true,
+      signed: true, sameSite: "lax" as const, secure: this.sessions.isCookieSecure(), maxAge: 600 };
+    reply.setCookie(this.onboardingCookies.state, request.state, options);
+    reply.setCookie(this.onboardingCookies.verifier, request.verifier, options);
+    reply.setCookie(this.onboardingCookies.token, request.token, options);
+    return reply.status(302).redirect(request.url);
+  }
+
+  @Public()
+  @Get("onboard/callback")
+  async finishOnboarding(
+    @Query("code") code: string, @Query("state") state: string,
+    @Req() request: FastifyRequest, @Res() reply: FastifyReply,
+  ) {
+    const signed = (name: string) => {
+      const value = request.cookies[name];
+      if (!value) return undefined;
+      const result = request.unsignCookie(value);
+      return result.valid ? result.value : undefined;
+    };
+    let result: Awaited<ReturnType<TenantInvitationOnboardingService["complete"]>>;
+    try {
+      result = await this.onboarding.complete(code, state,
+        signed(this.onboardingCookies.state),
+        signed(this.onboardingCookies.verifier),
+        signed(this.onboardingCookies.token));
+    } finally {
+      for (const name of Object.values(this.onboardingCookies)) {
+        reply.clearCookie(name, { path: this.onboardingPath });
+      }
+    }
+    if (result.webGranted) {
+      // Now use an ordinary RP Web auth-code flow; the exact-client Action
+      // will find active membership + sso-login + explicit Web grant.
+      return reply.status(302).redirect("/api/auth/login?tenantId=" + encodeURIComponent(result.tenantId));
+    }
+    // HA-only and other SSO application users do not obtain RP sessions.
+    return reply.status(200).type("text/plain; charset=utf-8")
+      .send("Invitation accepted. Your application access is activated; you may close this page.");
+  }
+
 
   @Public()
   @Get(":token")
-  previewInvitation(@Param("token") token: string) {
-    return this.tenantsService.getInvitationPreview(token);
+  async previewInvitation(@Param("token") token: string) {
+    const preview = await this.tenantsService.getInvitationPreview(token);
+    return {
+      ...preview,
+      // Explicit server-side capability. Never guess it from the invitation
+      // role or the browser: pre-cutover installs require ordinary login.
+      onboardingAvailable: this.onboarding.isOnboardingAvailable(),
+    };
   }
 
   @Authenticated()

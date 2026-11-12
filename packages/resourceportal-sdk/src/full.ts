@@ -28,6 +28,21 @@ export type ResourcePortalRequestOptions = BaseResourcePortalRequestOptions & {
   responseType?: "auto" | "json" | "text";
 };
 
+export type TenantMembershipApplicationAccess = {
+  membershipId: string;
+  status: string;
+  user: { id: string; email: string; displayName?: string; status: string };
+  grants: Array<{ applicationId: string; applicationName: string; enabled: boolean; updatedAt: string }>;
+  nativeGrants: Array<{ clientKey: "web" | "cli"; enabled: boolean; updatedAt: string }>;
+};
+
+export type TenantMembershipAccessUpdate = {
+  roleIds?: string[];
+  status?: "Active" | "Suspended";
+  oauthApplicationIds?: string[];
+  nativeApplicationKeys?: Array<"web" | "cli">;
+};
+
 export type PlatformDnsState = {
   provider: string;
   enabled: boolean;
@@ -159,6 +174,29 @@ export class ResourcePortalApiError extends BaseResourcePortalApiError {
 }
 
 export class ResourcePortalClient extends BaseResourcePortalClient {
+  /** A member is a single identity with independent RP RBAC and app grants. */
+  readonly membershipAppGrants = {
+    list: (tenantId: string) => this.request<TenantMembershipApplicationAccess[]>(
+      `/tenants/${encode(tenantId)}/membership-app-grants`),
+    get: (tenantId: string, membershipId: string) => this.request<TenantMembershipApplicationAccess>(
+      `/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}/app-grants`),
+    grant: (tenantId: string, membershipId: string, applicationId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}/app-grants`,
+        { method: "POST", body: { applicationId } }),
+    revoke: (tenantId: string, membershipId: string, applicationId: string) =>
+      this.request(`/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}/app-grants/${encode(applicationId)}`,
+        { method: "DELETE" }),
+    grantNative: (tenantId: string, membershipId: string, clientKey: "web" | "cli") =>
+      this.request(`/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}/app-grants/native/${clientKey}`,
+        { method: "POST" }),
+    revokeNative: (tenantId: string, membershipId: string, clientKey: "web" | "cli") =>
+      this.request(`/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}/app-grants/native/${clientKey}`,
+        { method: "DELETE" }),
+    reconcile: (tenantId: string, membershipId: string, body: TenantMembershipAccessUpdate) =>
+      this.request(`/tenants/${encode(tenantId)}/memberships/${encode(membershipId)}`,
+        { method: "PATCH", body }),
+  };
+
   readonly platformBilling = {
     usageSeries: (tenantId: string, query: { from?: string; to?: string; bucket?: "15m" | "2h" | "12h" | "1d" } = {}) =>
       this.request("/platform/billing/usage-series", { query: { tenantId, ...query } }),

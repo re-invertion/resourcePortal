@@ -140,7 +140,24 @@ export class TenantOidcService {
             tenantId,
             status: MembershipStatus.Active,
             user: { status: UserStatus.Active },
-            ...(!appConsumerGateCertified ? { appConsumer: { is: null } } : {}),
+            ...(appConsumerGateCertified ? {
+              OR: [
+                { roles: { some: { roleId: "sso-login" } } },
+                { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+              ],
+            } : {
+              // Without a LIVE, certified exact-client pre-token Action,
+              // never issue project-wide roles to a newly invited SSO-only
+              // identity. Legacy RP members retain pre-#430 access until
+              // operator cutover; the installer must block new grant rollout.
+              appConsumer: { is: null },
+              OR: [
+                { roles: { some: { roleId: { not: "sso-login" } } } },
+                { groupMemberships: { some: { group: { roles: { some: {
+                  roleId: { not: "sso-login" },
+                } } } } } },
+              ],
+            }),
           },
           include: { user: { include: { identities: true } } },
         });
@@ -248,25 +265,58 @@ export class TenantOidcService {
    * preserve tracked intents so the next monitor pass retries revocation.
    */
   async enforceAppConsumerActionsV2Safety() {
+    // Include legacy #398 markers during migration, but never rely on them
+    // as the sole definition of an SSO principal. Any converted membership
+    // carrying sso-login must be protected if the issuer-global pre-token
+    // Action disappears; a ZITADEL project role is NOT a client entitlement.
+    const gateConfigured =
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
     const consumers = await this.prisma.tenantAppConsumer.findMany({
       select: { tenantId: true, membership: { select: { userId: true } } },
     });
-    if (!consumers.length) return { state: "no-consumers", revoked: 0 };
-    const consumerKeys = new Set(consumers.map((row) =>
-      row.tenantId + ":" + row.membership.userId));
-    const userIds = [...new Set(consumers.map((row) => row.membership.userId))];
+    const ssoMembers = await this.prisma.tenantMembership.findMany({
+      where: {
+        status: MembershipStatus.Active,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: {
+            roleId: "sso-login",
+          } } } } } },
+        ],
+        // The #430 expand migration assigns sso-login to historical RP
+        // operators. Before first successful Actions V2 cutover their project
+        // grants still follow the previous RP-role policy. Revoking them on
+        // every startup would lock out existing owners/admins. Protect only
+        // SSO-only converted/new memberships and original #398 consumers
+        // until the signed exact-client gate is explicitly configured.
+        ...(gateConfigured ? {} : {
+          AND: [
+            { roles: { none: { roleId: { not: "sso-login" } } } },
+            { groupMemberships: { none: { group: { roles: { some: {
+              roleId: { not: "sso-login" },
+            } } } } } },
+          ],
+        }),
+      },
+      select: { tenantId: true, userId: true },
+    });
+    const protectedKeys = new Set([
+      ...consumers.map((row) => row.tenantId + ":" + row.membership.userId),
+      ...ssoMembers.map((row) => row.tenantId + ":" + row.userId),
+    ]);
+    if (!protectedKeys.size) return { state: "no-consumers", revoked: 0 };
+    const userIds = [...new Set([...consumers.map((row) => row.membership.userId),
+      ...ssoMembers.map((row) => row.userId)])];
     const assigned = await this.prisma.tenantOidcGrant.findMany({
       where: { userId: { in: userIds } },
       select: { tenantId: true, userId: true },
     });
     const tracked = assigned.filter((row) =>
-      consumerKeys.has(row.tenantId + ":" + row.userId));
+      protectedKeys.has(row.tenantId + ":" + row.userId));
     if (!tracked.length) return { state: "no-upstream-app-grants", revoked: 0 };
 
-    const enabled =
-      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
-      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
-    if (enabled) {
+    if (gateConfigured) {
       try {
         await this.zitadel.verifyAppConsumerActionsV2Gate();
         return { state: "verified", revoked: 0 };

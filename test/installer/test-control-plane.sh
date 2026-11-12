@@ -58,8 +58,19 @@ not_contains "$bootstrap" 'RP_APP_CONSUMER_ACTIONS_V2_ENABLED:' 'bootstrap does 
 export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='true'
 export RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID='123456789012345678'
 export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF='rp_app_consumer_action_hmac_0123456789abcdef'
+status 1 'block certified global Action without isolated invitation client' rp_render_stack final
+export RP_CFG_INVITATION_OIDC_CLIENT_ID='zitadel-client-123'
+export RP_CFG_INVITATION_OIDC_SWARM_REF='rp_invitation_oidc_secret_0123456789abcdef'
+status 1 'block invitation client collision with RP native Web client' rp_render_stack final
+export RP_CFG_INVITATION_OIDC_CLIENT_ID='zitadel-invitation-physical-444'
 action_final="$(rp_render_stack final)"
 contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true"' 'certified Action runtime flag is explicit'
+contains "$action_final" 'RP_INVITATION_ONBOARDING_ENABLED: "true"' 'certified Action enables dedicated invitation identity client'
+contains "$action_final" 'OIDC_INVITATION_CLIENT_ID: "zitadel-invitation-physical-444"' 'dedicated first-login client stays distinct'
+contains "$action_final" 'OIDC_INVITATION_REDIRECT_URI: "https://rp.example.com/api/invitations/onboard/callback"' 'first-login callback is canonical HTTPS RP URL'
+contains "$action_final" 'OIDC_INVITATION_CLIENT_SECRET_FILE: /run/secrets/rp_invitation_oidc_secret' 'enrollment client secret is mounted only as file'
+contains "$action_final" 'name: rp_invitation_oidc_secret_0123456789abcdef' 'versioned enrollment client Swarm secret is pinned'
+not_contains "$action_final" 'OIDC_INVITATION_CLIENT_SECRET: ' 'enrollment secret never enters YAML environment'
 contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true"' 'certification flag reaches only enabled API'
 contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "123456789012345678"' 'exact Action target ID reaches API'
 contains "$action_final" 'RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/api/app-consumer-actions/preaccesstoken"' 'Action callback is canonical HTTPS URL'
@@ -82,7 +93,7 @@ export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='false'
 status 1 'reject partially configured but uncertified Action hook' rp_render_stack final
 export RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED='maybe'
 status 1 'reject unknown certification state' rp_render_stack final
-unset RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF
+unset RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
 
 contains "$bootstrap" 'replicas: 0 # RP_API_REPLICAS' 'bootstrap gates API'
 contains "$bootstrap" 'replicas: 0 # RP_WEB_REPLICAS' 'bootstrap gates Web'

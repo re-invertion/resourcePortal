@@ -107,6 +107,12 @@ describe("Tenant OIDC management fails closed", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId, appConsumer: { is: null },
+          OR: [
+            { roles: { some: { roleId: { not: "sso-login" } } } },
+            { groupMemberships: { some: { group: { roles: { some: {
+              roleId: { not: "sso-login" },
+            } } } } } },
+          ],
         }) as Record<string, unknown>,
       }),
     );
@@ -224,6 +230,95 @@ describe("Tenant OIDC management fails closed", () => {
       else expect(f.project.verifyAppConsumerActionsV2Gate).not.toHaveBeenCalled();
     },
   );
+
+  it("retains historical RP owner grants before Actions V2 first cutover despite sso-login backfill", async () => {
+    const f = fixture();
+    // Prisma filters historical role-bearing members out of ssoMembers in
+    // uncertified mode. A legacy owner retains its normal RP project role.
+    f.prisma.tenantMembership.findMany.mockResolvedValue([]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{
+      tenantId, userId: "legacy-owner", zitadelGrantId: "old-role-grant",
+    }]);
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "no-consumers", revoked: 0,
+    });
+    const [where] = f.prisma.tenantMembership.findMany.mock.calls[0] as [
+      { where: { AND?: unknown } },
+    ];
+    expect(where.where.AND).toEqual([
+      { roles: { none: { roleId: { not: "sso-login" } } } },
+      { groupMemberships: { none: { group: { roles: { some: {
+        roleId: { not: "sso-login" },
+      } } } } } },
+    ]);
+    expect(f.project.revokeMember).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("protects SSO-only members before certification while preserving legacy role owners", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([
+      { tenantId, userId: "sso-only" },
+    ]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{
+      id: "grant-sso-only", tenantId, userId: "sso-only",
+      zitadelUserId: "native-sso-only", zitadelGrantId: "upstream-sso-only",
+    }]);
+    await expect(f.service.enforceAppConsumerActionsV2Safety()).resolves.toEqual({
+      state: "app-consumer-grants-revoked", revoked: 1,
+    });
+    expect(f.project.revokeMember).toHaveBeenCalledWith("native-sso-only", "upstream-sso-only");
+  });
+
+  it("protects #430 SSO members without a legacy App Consumer marker on binding loss", async () => {
+    const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });
+    f.prisma.tenantMembership.findMany.mockResolvedValue([
+      { tenantId, userId: "unified-member" },
+    ]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([
+      { id: "unified-grant", tenantId, userId: "unified-member",
+        zitadelUserId: "native-unified", zitadelGrantId: "remote-unified" },
+    ]);
+    f.project.verifyAppConsumerActionsV2Gate.mockRejectedValue(new Error("binding not found"));
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "app-consumer-grants-revoked", revoked: 1,
+    });
+    expect(f.prisma.tenantAppConsumer.findMany).toHaveBeenCalledOnce();
+    expect(f.prisma.tenantMembership.findMany).toHaveBeenCalledWith({
+      where: { status: MembershipStatus.Active, OR: [
+        { roles: { some: { roleId: "sso-login" } } },
+        { groupMemberships: { some: { group: { roles: { some: {
+          roleId: "sso-login",
+        } } } } } },
+      ] },
+      select: { tenantId: true, userId: true },
+    });
+    expect(f.project.revokeMember).toHaveBeenCalledWith("native-unified", "remote-unified");
+    expect(f.prisma.tenantOidcGrant.delete).toHaveBeenCalledWith({
+      where: { id: "unified-grant" },
+    });
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null,
+        lastErrorCode: "APP_CONSUMER_ACTION_BINDING_LOST" },
+    });
+  });
+
+  it("does not revoke unified member grants while the exact-client Action is verified", async () => {
+    const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{ tenantId, userId: "unified-member" }]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([
+      { id: "unified-grant", tenantId, userId: "unified-member",
+        zitadelUserId: "native-unified", zitadelGrantId: "remote-unified" },
+    ]);
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "verified", revoked: 0,
+    });
+    expect(f.project.verifyAppConsumerActionsV2Gate).toHaveBeenCalledOnce();
+    expect(f.project.revokeMember).not.toHaveBeenCalled();
+  });
 
   it("retains the revocation intent and blocks tenant provider on upstream failure", async () => {
     const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",

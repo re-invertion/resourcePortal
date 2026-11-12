@@ -961,3 +961,32 @@ test("Codex review recheck dispatcher cannot skip identity, security or release 
     }
   }
 });
+
+test("issue #430 legacy PostgreSQL migration and restore fixtures stay on all IAM/security release gates", () => {
+  for (const path of [
+    "test/iam430/legacy-fixture.sql",
+    "test/iam430/legacy-upgrade-restore.sh",
+  ]) {
+    const plan = selectProfiles([path]);
+    assert.deepEqual(plan.profiles, [
+      "identity", "platform-release", "schema", "security", "upgrade-recovery", "workflow",
+    ]);
+  }
+  // Other IAM fixtures cannot enter releases until explicitly classified.
+  assert.throws(() => selectProfiles(["test/iam430/untested-restore-bypass.sh"]), /unclassified changes/);
+});
+
+test("#430 invitation login and registration UI must invoke exact IAM/security/tenant gates", () => {
+  for (const path of [
+    "packages/resourceportal-web/src/pages/invitation.tsx",
+    "packages/resourceportal-web/src/pages/invitation.test.tsx",
+  ]) {
+    assert.deepEqual(selectProfiles([path]).profiles, [
+      "identity", "security", "tenant-access", "tenant-ux-patch",
+    ]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/pages/invitation-unsafe-helper.tsx"]),
+    /unclassified changes/,
+  );
+});

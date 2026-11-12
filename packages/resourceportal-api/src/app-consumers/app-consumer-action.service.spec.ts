@@ -81,15 +81,15 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     const f = fixture();
     const payload = signed({ ...client, application: { client_id: "rp-native-client-id" } });
     expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
-    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
+    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "web");
     expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 
-  it("allows only the exact registered native RP CLI client for non-consumers", async () => {
+  it("allows RP CLI only through its own dedicated exact native-client entitlement", async () => {
     const f = fixture();
     const cli = signed({ ...client, application: { client_id: "rp-cli-client-id" } });
     expect(await f.svc.authorize(cli.raw, cli.header)).toEqual({});
-    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
+    expect(f.mayIssueNativeRpToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "cli");
     expect(f.mayIssueLegacyClientToken).not.toHaveBeenCalled();
   });
 

@@ -98,4 +98,73 @@ rp_stage_app_consumer_actions_v2_binding 12345678 "$test_tmp/action.key"
   fail 'verified target staging did not fill only safe configuration refs'
 ok 'real target preflight stages only an immutable Docker secret reference'
 
+
+# The shared issuer-global Action cannot be switched on in Swarm unless a
+# physically separate confidential enrollment client has been registered.
+# Mock only the public stack-render dependencies; no Docker operations occur.
+source "$repo_root/scripts/installer/control-plane.sh"
+rp_acme_resolver_for_state(){ printf 'letsencrypt-production\n'; }
+rp_acme_ca_server_for_environment(){ printf 'https://acme.example.test/directory\n'; }
+rp_storage_worker_device(){ printf '/dev/mock-storage\n'; }
+RP_CFG_API_IMAGE="ghcr.io/rp/api@sha256:$(printf 'a%.0s' {1..64})"
+RP_CFG_WEB_IMAGE="ghcr.io/rp/web@sha256:$(printf 'b%.0s' {1..64})"
+RP_CFG_POSTGRES_IMAGE="postgres@sha256:$(printf 'c%.0s' {1..64})"
+RP_CFG_ZITADEL_IMAGE="zitadel@sha256:$(printf 'd%.0s' {1..64})"
+RP_CFG_TRAEFIK_IMAGE="traefik@sha256:$(printf 'e%.0s' {1..64})"
+RP_CFG_OIDC_CLIENT_ID=rp-web-physical
+RP_CFG_OIDC_CLI_CLIENT_ID=rp-cli-physical
+RP_CFG_OIDC_SWARM_REF=rp_web_secret_test
+RP_CFG_COOKIE_SWARM_REF=rp_cookie_secret_test
+RP_CFG_WORKER_SWARM_REF=rp_worker_secret_test
+RP_CFG_ZITADEL_KEY_SWARM_REF=rp_zitadel_key_test
+RP_CFG_STORAGE_DEVICE=/dev/mock-storage
+RP_CFG_ACME_EMAIL=acme@example.test
+RP_CFG_SWARM_ADVERTISE_ADDR=10.1.2.3
+RP_CFG_STORAGE_SERVER_ADDRESS=10.1.2.3
+RP_CFG_CLUSTER_CIDR=10.0.0.0/8
+RP_CFG_ACME_ENVIRONMENT=production
+
+# Uncertified deployments and rollback to an older release must not require
+# the new client or secret, or silently render onboarding enabled.
+unset RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID \
+  RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF
+base_stack="$(rp_render_stack final)"
+[[ "$base_stack" != *RP_INVITATION_ONBOARDING_ENABLED* &&
+   "$base_stack" != *rp_invitation_oidc_secret* ]] || fail 'default stack includes new onboarding secret'
+ok 'normal and rollback stacks remain free from optional onboarding client'
+
+RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED=true
+RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID=12345678
+RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF=rp_app_consumer_action_hmac_0123456789abcdef
+if rp_render_stack final >"$test_tmp/invalid-stack.yml" 2>/dev/null; then
+  fail 'issuer-global gate activated without verified distinct onboarding client'
+fi
+RP_CFG_INVITATION_OIDC_CLIENT_ID=rp-web-physical
+RP_CFG_INVITATION_OIDC_SWARM_REF=rp_invitation_oidc_secret_0123456789abcdef
+if rp_render_stack final >"$test_tmp/invalid-stack.yml" 2>/dev/null; then
+  fail 'issuer-global gate reused native RP Web physical client'
+fi
+RP_CFG_INVITATION_OIDC_CLIENT_ID=rp-cli-physical
+if rp_render_stack final >"$test_tmp/invalid-stack.yml" 2>/dev/null; then
+  fail 'issuer-global gate reused native RP CLI physical client'
+fi
+RP_CFG_INVITATION_OIDC_CLIENT_ID=separate-onboard-client
+stack="$(rp_render_stack final)"
+grep -q 'RP_INVITATION_ONBOARDING_ENABLED: "true"' <<<"$stack" ||
+  fail 'certified Action did not enable isolated onboarding in API'
+grep -q 'OIDC_INVITATION_CLIENT_ID: "separate-onboard-client"' <<<"$stack" ||
+  fail 'stack dropped the exact isolated OIDC client'
+grep -q 'OIDC_INVITATION_CLIENT_SECRET_FILE: /run/secrets/rp_invitation_oidc_secret' <<<"$stack" ||
+  fail 'stack exposed or omitted the confidential enrollment client secret'
+grep -q 'name: rp_invitation_oidc_secret_0123456789abcdef' <<<"$stack" ||
+  fail 'stack does not pin the immutable onboarding Swarm secret'
+grep -q '      - rp_invitation_oidc_secret' <<<"$stack" ||
+  fail 'onboarding secret was not mounted to API'
+grep -q 'OIDC_INVITATION_REDIRECT_URI: "https://rp.example.test/api/invitations/onboard/callback"' <<<"$stack" ||
+  fail 'isolated callback has incorrect external HTTPS origin'
+if grep -Eq 'RP_INVITATION_ONBOARDING_(ENV|SECRET_DECL|API_SECRET)' <<<"$stack"; then
+  fail 'onboarding placeholders leaked into rendered stack'
+fi
+ok 'certified Action requires exact isolated client, HTTPS callback and secret-only Swarm mounting'
+
 printf 'All App Consumer Actions V2 installer preflight tests passed.\n'

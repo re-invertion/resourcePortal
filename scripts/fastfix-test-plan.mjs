@@ -283,6 +283,15 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
   [/^packages\/resourceportal-web\/src\/pages\/networking-form-validation(?:\.test)?\.ts$/, ["web-console", "networking"]],
   [/^packages\/resourceportal-web\/src\/pages\/remote-lan-attachments-panel(?:\.test)?\.tsx$/, ["web-console", "networking"]],
+  // #430 Prisma expand/backfill migration fixtures are executable identity and
+  // rollback security contracts, not unclassified fast-fix collateral.
+  // The independent IAM PostgreSQL 16 snapshot-restore Actions gate must also
+  // pass; these profiles KEEP the full identity/security/release smoke gates.
+  [/^test\/iam430\/(?:legacy-fixture\.sql|legacy-upgrade-restore\.sh)$/, ["identity", "security", "schema", "upgrade-recovery", "platform-release", "workflow"]],
+  // #430 Invitation enrollment is an OAuth security boundary: both the
+  // unauthenticated UI entry and its test must run IAM, tenant access and
+  // security regressions, rather than falling through a generic Web class.
+  [/^packages\/resourceportal-web\/src\/pages\/invitation(?:\.test)?\.tsx$/, ["identity", "security", "tenant-access", "tenant-ux-patch"]],
   // App Consumer OAuth entitlements (#398) must execute exact-client grant,
   // tenant isolation, signed Actions V2 and startup fail-closed regression.
   // These paths cannot be treated as generic UI when introduced by a schema

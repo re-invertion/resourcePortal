@@ -148,6 +148,7 @@ describe("TenantsService tenant inventories", () => {
         roles: {
           some: {
             role: {
+              id: { not: "sso-login" },
               permissionBindings: {
                 some: { permissionId: { in: ["tenant.read", "*"] } },
               },
@@ -162,6 +163,7 @@ describe("TenantsService tenant inventories", () => {
               roles: {
                 some: {
                   role: {
+                    id: { not: "sso-login" },
                     permissionBindings: {
                       some: { permissionId: { in: ["tenant.read", "*"] } },
                     },

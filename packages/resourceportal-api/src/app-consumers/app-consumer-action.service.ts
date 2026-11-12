@@ -66,10 +66,24 @@ export class AppConsumerActionService {
     if (!issuer?.startsWith("https://")) {
       throw new ServiceUnavailableException("Issuer not configured");
     }
+    // A strictly separate confidential identity-only client may perform
+    // first-time invitation verification. It requests no RP project audience
+    // and its signed tokens are rejected by all normal RP bearer auth paths.
+    // This is NOT a managed SSO application entitlement or a Web/CLI bypass:
+    // the callback creates no session and atomically accepts a one-time invite.
+    const inviteClient = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
+    if (inviteClient && clientId === inviteClient) {
+      if (this.config.get<string>("RP_INVITATION_ONBOARDING_ENABLED") !== "true" ||
+          inviteClient === this.config.get<string>("OIDC_CLIENT_ID") ||
+          inviteClient === this.config.get<string>("OIDC_CLI_CLIENT_ID")) {
+        throw new ForbiddenException("Invitation-only OAuth client not authorized");
+      }
+      return {};
+    }
+
     // RP Web AND the native RP CLI have independently registered OAuth
-    // clients. The issuer-global pre-token action applies to both. Preserve
-    // regular/JIT RP access without granting App Consumers a path to either
-    // client, and never exempt an arbitrary unknown OAuth client.
+    // clients. The issuer-global pre-token action applies to both. Each now
+    // requires its OWN explicit tenant-scoped native-client grant + sso-login.
     // Check the signed subject in RP's DB; never trust a name or email.
     const nativeClients = [
       this.config.get<string>("OIDC_CLIENT_ID"),
@@ -78,7 +92,8 @@ export class AppConsumerActionService {
       id !== "bootstrap-pending");
     if (nativeClients.includes(clientId)) {
       try {
-        if (await this.consumers.mayIssueNativeRpToken(issuer, subject)) return {};
+        if (await this.consumers.mayIssueNativeRpToken(issuer, subject,
+          clientId === this.config.get<string>("OIDC_CLIENT_ID") ? "web" : "cli")) return {};
       } catch {
         // A DB outage must not fail open to a privileged RP OAuth client.
       }
@@ -87,8 +102,7 @@ export class AppConsumerActionService {
 
     try {
       // Registered RP tenant applications are checked per-client. Unknown
-      // upstream OAuth/MCP DCR clients retain ZITADEL's existing policy for
-      // regular identities, but are never a fallback for App Consumers.
+      // platform/DCR clients deny rather than inheriting an RP role fallback.
       if (await this.consumers.mayIssueLegacyClientToken(issuer, subject, clientId)) return {};
     } catch {
       // No user, grant or secret details in the denied response or HTTP logs.

@@ -1,3 +1,5 @@
+> **Historical #398 design (superseded by #430).** The separate App User category is no longer the desired IAM model. See [Unified Identity / SSO grant migration](iam-unified-identity-430.md). This file documents past behavior and security constraints only; do not implement a new account-type split from it.
+
 # App Consumer authorization (issue #398) — implementation and safety design
 
 ## Baseline and verified proof

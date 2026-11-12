@@ -57,6 +57,8 @@ const allowedRawSqlFiles = new Set([
   // Reviewed parameter-bound Tenant row lock serializes grant reconciliation,
   // OIDC disable/revoke and membership removal across replicated API workers.
   "tenant-oidc/tenant-oidc.service.ts",
+  // Reviewed tenant row lock serializes parallel per-member application grants.
+  "app-consumers/app-consumers.service.ts",
   // Tenant owner row lock serializes owner-role removals.
   "tenants/tenants.service.ts",
   // Reservation calculation using pending-or-current volume size in one query.

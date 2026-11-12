@@ -168,9 +168,36 @@ rp_render_stack() {
     printf 'App Consumer Actions V2 partial configuration is forbidden when uncertified.\n' >&2
     return 1
   fi
+  # Opt-in independent identity-only invitation client. Never put the
+  # confidential OAuth secret into exported stack YAML or installer config.
+  local invite_client="${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}"
+  local invite_ref="${RP_CFG_INVITATION_OIDC_SWARM_REF:-}"
+  local invite_declaration="" invite_env="" invite_mount=""
+  if [[ "$action_certified" == true ]]; then
+    if [[ ! "$invite_client" =~ ^[A-Za-z0-9@._-]{1,256}$ ||
+          "$invite_client" == "$RP_CFG_OIDC_CLIENT_ID" ||
+          "$invite_client" == "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" ||
+          ! "$invite_ref" =~ ^rp_invitation_oidc_secret_[a-fA-F0-9]{16}$ ]]; then
+      printf 'Global Actions V2 requires a verified, physically separate invitation OAuth client and versioned Swarm secret.\n' >&2
+      return 1
+    fi
+    invite_declaration=$(printf '  rp_invitation_oidc_secret:\n    external: true\n    name: %s' "$invite_ref")
+    invite_env=$(printf '      RP_INVITATION_ONBOARDING_ENABLED: "true"\n      OIDC_INVITATION_CLIENT_ID: "%s"\n      OIDC_INVITATION_CLIENT_SECRET_FILE: /run/secrets/rp_invitation_oidc_secret\n      OIDC_INVITATION_REDIRECT_URI: "https://%s/api/invitations/onboard/callback"' "$invite_client" "$RP_CFG_DOMAIN")
+    invite_mount='      - rp_invitation_oidc_secret'
+  elif [[ -n "$invite_client" || -n "$invite_ref" ]]; then
+    printf 'Invitation client configuration requires a certified issuer-global Action.\n' >&2
+    return 1
+  fi
+  output="${output//"  # RP_INVITATION_ONBOARDING_SECRET_DECL"/"$invite_declaration"}"
+  output="${output//"      # RP_INVITATION_ONBOARDING_ENV"/"$invite_env"}"
+  output="${output//"      # RP_INVITATION_ONBOARDING_API_SECRET"/"$invite_mount"}"
   output="${output//"  # RP_APP_CONSUMER_ACTIONS_V2_SECRET_DECL"/"$action_declaration"}"
   output="${output//"      # RP_APP_CONSUMER_ACTIONS_V2_ENV"/"$action_env"}"
   output="${output//"      # RP_APP_CONSUMER_ACTIONS_V2_API_SECRET"/"$action_mount"}"
+  if grep -q 'RP_INVITATION_ONBOARDING_.*DECL\|RP_INVITATION_ONBOARDING_API_SECRET' <<<"$output"; then
+    printf 'Incomplete optional invitation OAuth rendering.\n' >&2
+    return 1
+  fi
   if grep -q 'RP_APP_CONSUMER_ACTIONS_V2_.*DECL\|RP_APP_CONSUMER_ACTIONS_V2_API_SECRET' <<<"$output"; then
     printf 'Incomplete optional App Consumer stack rendering.\n' >&2
     return 1
