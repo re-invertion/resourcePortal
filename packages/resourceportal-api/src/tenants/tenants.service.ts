@@ -1324,7 +1324,8 @@ export class TenantsService {
     const existing = await this.findMembershipOrThrow(tenantId, membershipId);
     // Administrators may manage app grants and RBAC independently, but never
     // change their own membership through this management endpoint.
-    if (actor.id === existing.userId && (dto.roleIds !== undefined || dto.status !== undefined)) {
+    if (actor.id === existing.userId && (dto.roleIds !== undefined || dto.status !== undefined ||
+        dto.oauthApplicationIds !== undefined || dto.nativeApplicationKeys !== undefined)) {
       throw new ForbiddenException("Self-service membership changes are forbidden");
     }
 
@@ -1336,6 +1337,9 @@ export class TenantsService {
       actor,
       [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
     );
+    if (dto.nativeApplicationKeys?.some(key => key !== "web" && key !== "cli")) {
+      throw new BadRequestException("Invalid ResourcePortal client key");
+    }
 
     const membership = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
@@ -1347,6 +1351,42 @@ export class TenantsService {
         await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
       }
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, dto, tx);
+      if (dto.oauthApplicationIds !== undefined) {
+        const apps = await tx.oAuthApplication.findMany({
+          where: { tenantId, id: { in: dto.oauthApplicationIds } }, select: { id: true },
+        });
+        if (apps.length !== dto.oauthApplicationIds.length) {
+          throw new NotFoundException("OAuth application not found in this tenant");
+        }
+        await tx.tenantAppClientGrant.updateMany({
+          where: { membershipId, tenantId, enabled: true,
+            oauthApplicationId: { notIn: dto.oauthApplicationIds } },
+          data: { enabled: false, updatedBy: actor.id },
+        });
+        for (const applicationId of dto.oauthApplicationIds) {
+          await tx.tenantAppClientGrant.upsert({
+            where: { membershipId_oauthApplicationId: { membershipId, oauthApplicationId: applicationId } },
+            create: { membershipId, tenantId, oauthApplicationId: applicationId,
+              createdBy: actor.id, updatedBy: actor.id },
+            update: { enabled: true, updatedBy: actor.id },
+          });
+        }
+      }
+      if (dto.nativeApplicationKeys !== undefined) {
+        await tx.tenantNativeAppGrant.updateMany({
+          where: { membershipId, tenantId, enabled: true,
+            clientKey: { notIn: dto.nativeApplicationKeys } },
+          data: { enabled: false, updatedBy: actor.id },
+        });
+        for (const clientKey of dto.nativeApplicationKeys) {
+          await tx.tenantNativeAppGrant.upsert({
+            where: { membershipId_clientKey: { membershipId, clientKey } },
+            create: { membershipId, tenantId, clientKey,
+              createdBy: actor.id, updatedBy: actor.id },
+            update: { enabled: true, updatedBy: actor.id },
+          });
+        }
+      }
       if (dto.roleIds !== undefined) {
         await tx.membershipRole.deleteMany({
           where: { membershipId },
@@ -1389,6 +1429,8 @@ export class TenantsService {
             status: dto.status,
             previousRoleIds: existing.roles.map(({ role }) => role.id),
             roleIds: dto.roleIds,
+            oauthApplicationIds: dto.oauthApplicationIds,
+            nativeApplicationKeys: dto.nativeApplicationKeys,
           },
         },
       });
