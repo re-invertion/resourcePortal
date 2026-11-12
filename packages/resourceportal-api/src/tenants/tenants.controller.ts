@@ -397,8 +397,14 @@ export class TenantInvitationsController {
 
   @Public()
   @Get(":token")
-  previewInvitation(@Param("token") token: string) {
-    return this.tenantsService.getInvitationPreview(token);
+  async previewInvitation(@Param("token") token: string) {
+    const preview = await this.tenantsService.getInvitationPreview(token);
+    return {
+      ...preview,
+      // Explicit server-side capability. Never guess it from the invitation
+      // role or the browser: pre-cutover installs require ordinary login.
+      onboardingAvailable: this.onboarding.isOnboardingAvailable(),
+    };
   }
 
   @Authenticated()

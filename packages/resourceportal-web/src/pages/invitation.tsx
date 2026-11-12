@@ -19,6 +19,7 @@ type InvitationPreview = {
   roles: Array<{ id: string; name: string }>;
   expiresAt: string;
   status: "Pending" | "Expired";
+  onboardingAvailable?: boolean;
 };
 
 type InvitationUser = {
@@ -64,10 +65,17 @@ export function InvitationPage({
   }, [token]);
 
   function authHref(mode: "login" | "register") {
-    // First-time invitees use an identity-only client; standard RP Web login
-    // is forbidden until the invitation creates an explicit native Web grant.
-    const query = new URLSearchParams({ token, register: String(mode === "register") });
-    return `/api/invitations/onboard/start?${query.toString()}`;
+    if (preview?.onboardingAvailable === true) {
+      // When issuer-global entitlement enforcement is active, RP Web cannot
+      // authorize a brand-new invitee until the invitation is accepted.
+      const query = new URLSearchParams({ token, register: String(mode === "register") });
+      return `/api/invitations/onboard/start?${query.toString()}`;
+    }
+    // Prior releases/pre-cutover deployments still use normal RP Web login,
+    // which creates the UserIdentity before authenticated invitation accept.
+    const query = new URLSearchParams({ returnTo: `/invitations/${encodeURIComponent(token)}` });
+    if (preview?.tenant.id) query.set("tenantId", preview.tenant.id);
+    return `/${mode}?${query.toString()}`;
   }
 
   async function accept() {

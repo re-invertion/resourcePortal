@@ -35,6 +35,17 @@ function setup(values: Record<string,string> = {}) {
 }
 
 describe("#430 first-login invitation onboarding client (no RP session)", () => {
+  it("advertises isolated flow only when issuer-global Actions V2 are certified and client is configured", () => {
+    expect(setup().service.isOnboardingAvailable()).toBe(false);
+    expect(setup({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" }).service.isOnboardingAvailable()).toBe(true);
+    expect(setup({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "false" }).service.isOnboardingAvailable()).toBe(false);
+    expect(setup({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      OIDC_INVITATION_CLIENT_ID: configValues.OIDC_CLIENT_ID }).service.isOnboardingAvailable()).toBe(false);
+  });
+
   afterEach(() => vi.unstubAllGlobals());
 
   it("uses only an isolated physical OIDC client and PKCE with nonce, never the RP project audience", async () => {

@@ -17,6 +17,19 @@ export class TenantInvitationOnboardingService {
     private readonly config: ConfigService,
   ) {}
 
+  // Public invitation preview discloses only whether this deployment has
+  // activated the isolated first-login flow; no client ID or secret is sent.
+  isOnboardingAvailable(): boolean {
+    if (this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") !== "true" ||
+        this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") !== "true") return false;
+    try {
+      this.client();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private client() {
     const id = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
     const secret = this.config.get<string>("OIDC_INVITATION_CLIENT_SECRET");
