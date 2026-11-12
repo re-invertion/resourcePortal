@@ -78,7 +78,7 @@ for blocker in untracked_app_grants_without_legacy_owner untracked_native_client
   }
 done
 assert_count "$pgurl" 'Preflight transaction performed no writes' 1 \
-  'SELECT count(*) FROM "Iam430BackfillAudit" WHERE "kind"=$tenant-app$'
+  'SELECT count(*) FROM "Iam430BackfillAudit" WHERE "kind"=$$tenant-app$$'
 echo "Restore legacy source snapshot to a second clean PostgreSQL database"
 psql "postgresql://iam430:iam430_ci_only@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE iam430_restore' >/dev/null
