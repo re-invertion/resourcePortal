@@ -975,3 +975,18 @@ test("issue #430 legacy PostgreSQL migration and restore fixtures stay on all IA
   // Other IAM fixtures cannot enter releases until explicitly classified.
   assert.throws(() => selectProfiles(["test/iam430/untested-restore-bypass.sh"]), /unclassified changes/);
 });
+
+test("#430 invitation login and registration UI must invoke exact IAM/security/tenant gates", () => {
+  for (const path of [
+    "packages/resourceportal-web/src/pages/invitation.tsx",
+    "packages/resourceportal-web/src/pages/invitation.test.tsx",
+  ]) {
+    assert.deepEqual(selectProfiles([path]).profiles, [
+      "identity", "security", "tenant-access", "tenant-ux-patch",
+    ]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/pages/invitation-unsafe-helper.tsx"]),
+    /unclassified changes/,
+  );
+});
