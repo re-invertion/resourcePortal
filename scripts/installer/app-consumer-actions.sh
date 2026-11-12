@@ -327,7 +327,7 @@ rp_invitation_oidc_client_id_valid() {
 
 rp_invitation_oidc_search() {
   local output="$1" tmp
-  [[ "$output" == /* ]] || return 1
+  [[ "$output" == /* && "${RP_CFG_ZITADEL_PROJECT_ID:-}" =~ ^[0-9]{1,64}$ ]] || return 1
   tmp="$(umask 077; mktemp)" || return 1
   printf '{"query":{"limit":100}}\n' > "$tmp" || { rm -f "$tmp"; return 1; }
   if ! rp_invitation_oidc_http POST \

@@ -345,9 +345,9 @@ rp_upgrade_preflight() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
-  rp_invitation_oidc_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}" "$current_version" "$manifest" || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_upgrade_check_temporary_files
 }
 
@@ -972,6 +972,7 @@ rp_upgrade_apply() {
   # Keep this guard even when the apply function is invoked directly.
   rp_upgrade_check_temporary_files || return 1
   RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
+  export RP_INVITATION_OIDC_CREATED_IN_ATTEMPT
   rp_config_apply_defaults || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
   rp_upgrade_rollback_allowed "$manifest" || {
@@ -979,9 +980,9 @@ rp_upgrade_apply() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
-  rp_invitation_oidc_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "$previous_stack" "$source_version" "$manifest" || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_pull_release_images "$manifest" || return 1
   rp_apply_release_manifest_images "$manifest" || return 1
   rp_upgrade_checkpoint_prepare "$manifest" "$previous_stack" "$source_version" || return 1
