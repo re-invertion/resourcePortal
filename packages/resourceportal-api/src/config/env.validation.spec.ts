@@ -46,6 +46,13 @@ describe("validateEnv", () => {
       ZITADEL_MANAGEMENT_TOKEN: "read-only-test-pat",
       ZITADEL_ORGANIZATION_ID: "org-1",
       OIDC_ISSUER_URL: "https://auth.example.com",
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "first-login-only-client",
+      OIDC_INVITATION_CLIENT_SECRET: "confidential-onboarding-client-secret-00001",
+      OIDC_INVITATION_REDIRECT_URI: "https://rp.example.com/api/invitations/onboard/callback",
+      PUBLIC_API_URL: "https://rp.example.com",
+      OIDC_CLIENT_ID: "rp-web-client",
+      OIDC_CLI_CLIENT_ID: "rp-cli-client",
     };
     expect(validateEnv(valid)).toBe(valid);
   });
@@ -71,6 +78,36 @@ describe("validateEnv", () => {
       RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "12345",
       RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/other",
     })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL must be the exact secure callback URL");
+  });
+
+  it("requires isolated invitation client before activating issuer-global exact-client authorization", () => {
+    expect(() => validateEnv({
+      ...validBaseEnv,
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+    })).toThrow("Global exact-client Action requires a dedicated first-login invitation client");
+  });
+
+  it("rejects an invitation identity client sharing RP Web/CLI physical credentials or unsafe callback", () => {
+    const base = {
+      ...validBaseEnv,
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "invite",
+      OIDC_INVITATION_CLIENT_SECRET: "some-very-long-test-only-client-secret",
+      OIDC_INVITATION_REDIRECT_URI: "https://rp.example.com/api/invitations/onboard/callback",
+      PUBLIC_API_URL: "https://rp.example.com",
+      OIDC_CLIENT_ID: "web", OIDC_CLI_CLIENT_ID: "cli",
+    };
+    expect(validateEnv(base)).toBe(base);
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_ID: "web" }))
+      .toThrow("physically distinct");
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_ID: "cli" }))
+      .toThrow("physically distinct");
+    expect(() => validateEnv({ ...base,
+      OIDC_INVITATION_REDIRECT_URI: "https://attacker.example.com/api/invitations/onboard/callback",
+    })).toThrow("callback must match public HTTPS RP API origin");
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_SECRET: "short" }))
+      .toThrow("OIDC_INVITATION_CLIENT_SECRET must be at least 24 characters");
   });
 
   it("rejects unsupported auth modes", () => {

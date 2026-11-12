@@ -35,6 +35,13 @@ describe("loadSecretFiles", () => {
     expect(loadSecretFiles(env).RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY).toBe(key);
   });
 
+  it("loads separate invitation client secret from the controlled Swarm secret file", () => {
+    const key = "private-first-login-only-client-secret";
+    const path = secretFile(key + "\n");
+    const env = { OIDC_INVITATION_CLIENT_SECRET_FILE: path };
+    expect(loadSecretFiles(env).OIDC_INVITATION_CLIENT_SECRET).toBe(key);
+  });
+
   it("keeps a direct secret value when both direct and *_FILE are set", () => {
     const path = secretFile("from-file\n");
     const env = {
