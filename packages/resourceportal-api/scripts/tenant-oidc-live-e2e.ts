@@ -110,6 +110,35 @@ async function main() {
   const ownedApps: Array<{ id: string; projectId: string }> = [];
   const createdTenants = [tenantA.id, tenantB.id];
   try {
+    // Preserve the legacy RP member path before the exact-client gate is
+    // certified. A role-free/sso-only member must NOT receive a project-wide
+    // grant merely because it can authenticate through ZITADEL.
+    await prisma.permission.upsert({
+      where: { id: "*" }, create: { id: "*" }, update: {},
+    });
+    await prisma.role.upsert({
+      where: { id: "tenant-owner" },
+      create: { id: "tenant-owner", name: "Tenant Owner", permissions: ["*"] },
+      update: {},
+    });
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: "tenant-owner", permissionId: "*" } },
+      create: { roleId: "tenant-owner", permissionId: "*" }, update: {},
+    });
+    const legacyMembers = await Promise.all([
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userA.id, tenantId: tenantA.id } },
+        select: { id: true },
+      }),
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userB.id, tenantId: tenantB.id } },
+        select: { id: true },
+      }),
+    ]);
+    await prisma.membershipRole.createMany({
+      data: legacyMembers.map(({ id }) => ({ membershipId: id, roleId: "tenant-owner" })),
+      skipDuplicates: true,
+    });
     process.env.TENANT_OIDC_AUTO_ROLLOUT = "true";
     // Prove the same zero-touch activation mode used by the real installer.
     process.env.TENANT_OIDC_ACTIVATION_ALLOWED = "auto";
