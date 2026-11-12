@@ -63,8 +63,8 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
   };
   const [inviteOpen, setInviteOpen] = useState(section === "invite");
   const [invite, setInvite] = useState({
-    email: "", roleId: "", type: "ResourcePortal",
-    oauthApplicationIds: [] as string[],
+    email: "", roleIds: [] as string[], ssoLogin: true,
+    oauthApplicationIds: [] as string[], nativeApplicationKeys: [] as string[],
   });
   const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
   const [groupOpen, setGroupOpen] = useState(false);
@@ -92,16 +92,15 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     }
   }
   async function createInvite() {
-    const appOnly = invite.type === "AppUser";
     if (!can("membership.invite") || !invite.email.trim() ||
-        (appOnly ? oauthApps.loading || Boolean(oauthApps.error) || invite.oauthApplicationIds.length === 0 :
-          !invite.roleId)) return;
+        oauthApps.loading || Boolean(oauthApps.error)) return;
     setWorking(true);
     try {
       const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: {
         email: invite.email.trim(),
-        roleIds: appOnly ? [] : [invite.roleId],
-        ...(appOnly ? { oauthApplicationIds: invite.oauthApplicationIds } : {}),
+        roleIds: [...invite.roleIds, ...(invite.ssoLogin ? ["sso-login"] : [])],
+        oauthApplicationIds: invite.oauthApplicationIds,
+        nativeApplicationKeys: invite.nativeApplicationKeys,
       } });
       const token = text(created.token);
       if (!token) throw new Error("Invitation token was not returned.");
@@ -214,7 +213,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
 
   return <main>
     <PageHeader eyebrow="Tenant security" title={section === "overview" ? "Access" : "Access management"}
-      description="Manage ResourcePortal memberships, inherited group permissions and invitations. OAuth application access is a separate entitlement, not the Viewer role."
+      description="One tenant member, one identity. SSO login, individual applications and ResourcePortal RBAC are independent."
       actions={can("membership.invite") ? <Button variant="primary" onClick={() => setInviteOpen(true)}><PlusIcon size={15}/>Invite user</Button> : undefined}
     />
     <AccessTabs tenantId={tenantId} active={section === "overview" ? "overview" : "administration"} />
@@ -228,34 +227,49 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     </Card> : null}
     {inviteOpen && can("membership.invite") ? <Card className="mb-5 grid gap-4 p-5 md:grid-cols-2">
       <Field label="Email" required><TextInput type="email" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} /></Field>
-      <Field label="Invitation access type"><Select aria-label="Invitation access type" value={invite.type} onChange={e => setInvite({ ...invite, type: e.target.value, roleId: "", oauthApplicationIds: [] })}>
-        <option value="ResourcePortal">ResourcePortal member</option>
-        <option value="AppUser">App User — external OAuth applications only</option>
-      </Select></Field>
-      {invite.type === "ResourcePortal" ? <>
-        <Field label="ResourcePortal role" required><Select value={invite.roleId} onChange={e => setInvite({ ...invite, roleId: e.target.value })}><option value="">Select a role</option>{roleOptions(roles)}</Select></Field>
-        {invite.roleId ? <div className="md:col-span-2 text-xs text-[#526070]">Selected RP role: {roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}. This is not external-application SSO access.</div> : null}
-      </> : <fieldset className="md:col-span-2">
-        <legend className="text-sm font-semibold">Allowed OAuth applications (no ResourcePortal permissions)</legend>
-        <p className="mt-1 text-xs text-[#526070]">Default deny. Only the selected OAuth clients are included, never the Viewer role.</p>
-        {oauthApps.loading ? <p className="mt-2 text-xs">Loading OAuth applications…</p> :
-         oauthApps.error ? <p role="alert" className="mt-2 text-xs text-red-700">OAuth applications unavailable; invitation disabled.</p> :
-         oauthRows.length === 0 ? <p className="mt-2 text-xs">No OAuth applications registered.</p> :
-         <div className="mt-2 grid gap-2 sm:grid-cols-2">{oauthRows.map(app => <label key={idOf(app)} className="flex items-center gap-2 text-sm">
-           <input type="checkbox" checked={invite.oauthApplicationIds.includes(idOf(app))}
-             onChange={e => setInvite(prev => ({ ...prev, oauthApplicationIds: e.target.checked ?
-               [...prev.oauthApplicationIds, idOf(app)] : prev.oauthApplicationIds.filter(id => id !== idOf(app)) }))}/>
-           {text(app.name)}
-         </label>)}</div>}
-      </fieldset>}
+       <label className="flex items-center gap-2 text-sm">
+         <input type="checkbox" checked={invite.ssoLogin} onChange={e => setInvite(prev => ({ ...prev, ssoLogin: e.target.checked }))} />
+         SSO login (does not grant ResourcePortal permissions)
+       </label>
+       <fieldset className="md:col-span-2">
+         <legend className="text-sm font-semibold">ResourcePortal roles (optional)</legend>
+         <div className="mt-2 flex flex-wrap gap-3">{roles.filter(role => idOf(role) !== "sso-login").map(role =>
+           <label key={idOf(role)} className="flex items-center gap-2 text-sm">
+             <input type="checkbox" checked={invite.roleIds.includes(idOf(role))}
+               onChange={e => setInvite(prev => ({ ...prev, roleIds: e.target.checked ?
+                 [...prev.roleIds, idOf(role)] : prev.roleIds.filter(id => id !== idOf(role)) }))} />
+             {roleName(role)}
+           </label>)}</div>
+       </fieldset>
+       <fieldset className="md:col-span-2">
+         <legend className="text-sm font-semibold">Allowed SSO applications</legend>
+         <p className="mt-1 text-xs text-[#526070]">Default deny. ResourcePortal Web and CLI are independent clients. Application access is separate from RP RBAC.</p>
+         <div className="mt-2 flex flex-wrap gap-3">
+           {([{ key: "web", name: "ResourcePortal Web" }, { key: "cli", name: "ResourcePortal CLI" }]).map(client =>
+             <label key={client.key} className="flex items-center gap-2 text-sm">
+               <input type="checkbox" checked={invite.nativeApplicationKeys.includes(client.key)}
+                 onChange={e => setInvite(prev => ({ ...prev, nativeApplicationKeys: e.target.checked ?
+                   [...prev.nativeApplicationKeys, client.key] : prev.nativeApplicationKeys.filter(key => key !== client.key) }))} />
+               {client.name}
+             </label>)}
+         </div>
+         {oauthApps.loading ? <p className="mt-2 text-xs">Loading OAuth applications…</p> :
+          oauthApps.error ? <p role="alert" className="mt-2 text-xs text-red-700">OAuth applications unavailable; invitation disabled.</p> :
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">{oauthRows.map(app => <label key={idOf(app)} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={invite.oauthApplicationIds.includes(idOf(app))}
+              onChange={e => setInvite(prev => ({ ...prev, oauthApplicationIds: e.target.checked ?
+                [...prev.oauthApplicationIds, idOf(app)] : prev.oauthApplicationIds.filter(id => id !== idOf(app)) }))} />
+            {text(app.name)}
+          </label>)}</div>}
+       </fieldset>
       <div className="flex gap-2 md:col-span-2">
-        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || !invite.email ||
-          (invite.type === "AppUser" ? oauthApps.loading || Boolean(oauthApps.error) || !invite.oauthApplicationIds.length : !invite.roleId)}
-          confirmTitle="Confirm invitation"
-          confirmDescription={invite.type === "AppUser" ?
-            "Invite " + invite.email + " as an App User with " +
-            invite.oauthApplicationIds.length + " OAuth application(s), no ResourcePortal roles?" :
-            "Invite " + invite.email + " with the selected ResourcePortal role?"} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
+         <ConfirmActionButton triggerVariant="primary" confirmVariant="primary"
+           disabled={working || !invite.email || oauthApps.loading || Boolean(oauthApps.error)}
+           confirmTitle="Confirm invitation"
+           confirmDescription={"Invite " + invite.email + " with " + invite.roleIds.length + " RP role(s), " +
+             (invite.ssoLogin ? "SSO enabled" : "SSO disabled") + " and " +
+             (invite.oauthApplicationIds.length + invite.nativeApplicationKeys.length) + " application grant(s)?"}
+           confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
         <Button onClick={() => setInviteOpen(false)}>Cancel</Button>
       </div>
     </Card> : null}
