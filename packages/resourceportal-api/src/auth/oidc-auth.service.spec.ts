@@ -18,7 +18,7 @@ function createConfig(values: ConfigValues) {
   } as ConfigService;
 }
 
-async function createTokenFixture(emailVerified = true, includeEmail = true, authenticatedIdpId?: string) {
+async function createTokenFixture(emailVerified = true, includeEmail = true, authenticatedIdpId?: string, nonce?: string) {
   const issuer = "https://issuer.example.com";
   const audience = "resource-portal";
   const subject = "zitadel-user-1";
@@ -33,6 +33,7 @@ async function createTokenFixture(emailVerified = true, includeEmail = true, aut
     ...(includeEmail ? { email: "User@Example.com" } : {}),
     email_verified: emailVerified,
     name: "Example User",
+    ...(nonce ? { nonce } : {}),
     ...(authenticatedIdpId ? { "urn:resourceportal:auth:external_idp_id": authenticatedIdpId } : {}),
   })
     .setProtectedHeader({
@@ -720,3 +721,96 @@ describe("server-attested external IdP authentication (#238)", () => {
     expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe("#430 onboarding ID tokens cannot authorize ordinary RP API or link unrelated subjects", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const config = (issuer: string, inviteAudience: string) => createConfig({
+    OIDC_ISSUER_URL: issuer,
+    OIDC_INVITATION_CLIENT_ID: inviteAudience,
+    RP_INVITATION_ONBOARDING_ENABLED: "true",
+    OIDC_CLIENT_ID: "regular-rp-web-client",
+    OIDC_CLI_CLIENT_ID: "regular-rp-cli-client",
+    OIDC_AUDIENCE: "regular-rp-web-client",
+    OIDC_AUTO_PROVISION_USERS: "false",
+  });
+
+  it("verifies a signed invite-client-specific ID token and nonce, then provisions only the invited subject", async () => {
+    const nonce = "N".repeat(43);
+    const fixture = await createTokenFixture(true, true, undefined, nonce);
+    installOidcFetch(fixture);
+    const user = { id: "new-user", email: "user@example.com", displayName: "Example User", status: UserStatus.Active };
+    const prisma = {
+      userIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+      user: { findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue(user) },
+    };
+    const service = new OidcAuthService(config(fixture.issuer, fixture.audience), prisma as unknown as PrismaService);
+    expect(await service.authenticateInvitationTokens(fixture.token, "identity-only-access", nonce, "user@example.com"))
+      .toEqual(user);
+    expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        email: "user@example.com",
+        identities: { create: expect.objectContaining({
+          issuer: fixture.issuer, externalSubject: fixture.subject,
+        }) as unknown },
+      }) as unknown,
+    }));
+    expect(prisma.user.create).toHaveBeenCalledOnce();
+  });
+
+  it("denies onboarding-client tokens on normal bearer API regardless of RP audience settings", async () => {
+    const nonce = "N".repeat(43);
+    const fixture = await createTokenFixture(true, true, undefined, nonce);
+    installOidcFetch(fixture);
+    const cfg = createConfig({
+      OIDC_ISSUER_URL: fixture.issuer,
+      OIDC_CLIENT_ID: "regular-rp-web-client",
+      OIDC_AUDIENCE: fixture.audience,
+      OIDC_INVITATION_CLIENT_ID: fixture.audience,
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+    });
+    const prisma = { userIdentity: { findUnique: vi.fn() } };
+    const service = new OidcAuthService(cfg, prisma as unknown as PrismaService);
+    await expect(service.authenticateBearerToken(fixture.token))
+      .rejects.toThrow("OIDC bearer token is invalid");
+    expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects wrong nonce, wrong verified email, unverified email and native client confusion", async () => {
+    const nonce = "N".repeat(43);
+    const signed = await createTokenFixture(true, true, undefined, nonce);
+    const unsignedEmail = await createTokenFixture(false, true, undefined, nonce);
+    installOidcFetch(signed);
+    const prisma = {
+      userIdentity: { findUnique: vi.fn() },
+      user: { findUnique: vi.fn(), create: vi.fn() },
+    };
+    const service = new OidcAuthService(config(signed.issuer, signed.audience), prisma as unknown as PrismaService);
+    await expect(service.authenticateInvitationTokens(signed.token, "access", "wrong", "user@example.com"))
+      .rejects.toThrow("Invitation identity proof is invalid");
+    await expect(service.authenticateInvitationTokens(signed.token, "access", nonce, "other@example.com"))
+      .rejects.toThrow("Verified invitation email mismatch");
+    await expect(service.authenticateInvitationTokens(unsignedEmail.token, "access", nonce, "user@example.com"))
+      .rejects.toThrow();
+    expect(prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it("never links a second ZITADEL subject to an existing RP User based solely on email", async () => {
+    const nonce = "N".repeat(43);
+    const fixture = await createTokenFixture(true, true, undefined, nonce);
+    installOidcFetch(fixture);
+    const prisma = {
+      userIdentity: { findUnique: vi.fn().mockResolvedValue(null) },
+      user: { findUnique: vi.fn().mockResolvedValue({ id: "other-subject-user" }),
+        create: vi.fn(), update: vi.fn() },
+    };
+    const service = new OidcAuthService(config(fixture.issuer, fixture.audience), prisma as unknown as PrismaService);
+    await expect(service.authenticateInvitationTokens(fixture.token, "access", nonce, "user@example.com"))
+      .rejects.toThrow("OIDC identity is not linked to the existing user account");
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+});
+
