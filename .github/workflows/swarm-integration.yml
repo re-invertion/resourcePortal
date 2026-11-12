@@ -7,6 +7,11 @@ on:
         required: false
         type: boolean
         default: false
+      vpn_required:
+        description: Require real Remote LAN and Device VPN dataplane
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -100,6 +105,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Cache versioned Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright for Stage 20 real-Swarm browser smoke
         run: npx playwright install --with-deps chromium
@@ -324,9 +335,6 @@ jobs:
         timeout-minutes: 3
         run: npm --workspace @resource-portal/api exec -- ts-node --files scripts/smoke-container-terminal.ts
 
-      - name: Verify actual Swarm task-scoped Gateway forwarding isolation
-        run: bash scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh
-
       - name: Run Stage 20 browser smoke against real Swarm
         timeout-minutes: 10
         env:
@@ -340,63 +348,6 @@ jobs:
 
       - name: Run Resource Portal against real Swarm
         run: bash scripts/run-real-swarm-smoke.sh
-
-      - name: Build VPN dataplane smoke image
-        run: docker build --tag resourceportal-vpn-e2e:current .
-
-      - name: Install Remote LAN L2 DHCP smoke prerequisites
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y dnsmasq-base busybox-static iproute2 iputils-ping
-
-      - name: Verify Remote LAN DHCP hook rejects foreign leases
-        run: python3 test/installer/test-remote-lan-dhcp.py
-
-      - name: Verify first Static LAN attach and DHCP/Static routing transitions in Linux nsenter
-        run: bash scripts/run-remote-lan-static-nsenter-smoke.sh
-
-      - name: Run Remote LAN Attachment WireGuard + GRETAP + DHCP dataplane smoke
-        # The 443s no-renewal + >600s expiry experiment is intentionally
-        # limited to changes to the security-critical Gate authorization
-        # implementation. Ordinary PRs retain the fast smoke.
-        timeout-minutes: 18
-        run: |
-          set -euo pipefail
-          long=0
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            long=1
-          else
-            # PR/merge-group checkouts have a synthetic merge HEAD. Fetch
-            # one additional history layer for the base parent if shallow.
-            if ! git rev-parse --verify 'HEAD^1' >/dev/null 2>&1; then
-              git fetch --no-tags --deepen=2 origin "$GITHUB_REF" || true
-            fi
-            if git rev-parse --verify 'HEAD^1' >/dev/null 2>&1 &&
-               git rev-parse --verify 'HEAD^2' >/dev/null 2>&1; then
-              # Merge HEAD's first parent is the exact base. Failed diffs
-              # also select the security experiment rather than skipping it.
-              if ! git diff --name-only 'HEAD^1' HEAD > "$RUNNER_TEMP/lan-changed-files"; then
-                long=1
-              elif grep -Eq '^packages/resourceportal-api/src/networking/(gate-authorization-lease[.]py|gate-lan-agent[.]py|gate-installer[.]ts)$' "$RUNNER_TEMP/lan-changed-files"; then
-                long=1
-              fi
-            else
-              # Unknown or non-merge ancestry must never silently skip it.
-              long=1
-            fi
-          fi
-          echo "Remote LAN long-lease smoke selected: $long"
-          # A selected security experiment must also stop the ACTUAL
-          # disposable RP API and churn real Traefik, not merely omit
-          # heartbeat renewals. The script enforces runner-only guards.
-          RP_LAN_LONG_LEASE_SMOKE="$long" RP_LAN_REAL_CONTROL_PLANE_FAULT="$long" \
-            bash scripts/run-remote-lan-l2-dhcp-smoke.sh
-
-      - name: Run Device VPN real dataplane isolation smoke
-        timeout-minutes: 8
-        env:
-          RP_DEVICE_VPN_E2E_IMAGE: resourceportal-vpn-e2e:current
-        run: bash scripts/run-device-vpn-dataplane-smoke.sh
 
       - name: Remove real-Swarm ingress anchor
         if: always()
@@ -461,5 +412,139 @@ jobs:
           fi
 
       - name: Leave Swarm
+        if: always()
+        run: docker swarm leave --force || true
+
+  # Independent runner and Docker daemon, required for milestone or
+  # networking changes. In particular, do not shorten the 443s Gate fault.
+  network-dataplane:
+    name: Real Remote LAN + Device VPN dataplane
+    if: inputs.vpn_required == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: resource_portal
+          POSTGRES_PASSWORD: resource_portal
+          POSTGRES_DB: resource_portal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U resource_portal -d resource_portal"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgresql://resource_portal:resource_portal@127.0.0.1:5432/resource_portal?schema=public
+      AUTH_MODE: dev
+      RESOURCE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      RP_DEVICE_VPN_E2E_IMAGE: resourceportal-vpn-e2e:current
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npm run api:prisma:generate
+      - name: Apply database migrations
+        run: npm exec --workspace @resource-portal/api -- prisma migrate deploy
+      - name: Seed RBAC roles
+        run: npm run api:db:seed
+      - name: Prepare real WireGuard and kernel namespace dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wireguard-tools dnsmasq-base busybox-static iproute2 iputils-ping nftables iptables
+          for bin in wg ip nsenter dnsmasq busybox ping nft; do command -v "$bin"; done
+      - name: Initialize dedicated real Docker Swarm
+        run: |
+          set -euo pipefail
+          docker swarm init
+          test "$(docker info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true'
+          node_id="$(docker info --format '{{.Swarm.NodeID}}')"
+          docker node update --label-add rp.node.control-plane=true "$node_id"
+      - name: Start disposable RP API for full 443s fault simulation
+        run: |
+          set -euo pipefail
+          npm run api:start > "$RUNNER_TEMP/resource-portal-api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/resource-portal-api.pid"
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/resource-portal-api.log"
+          exit 1
+      - name: Verify actual Swarm task-scoped Gateway forwarding isolation
+        run: bash scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh
+
+      - name: Build VPN dataplane smoke image
+        run: docker build --tag resourceportal-vpn-e2e:current .
+
+      - name: Verify Remote LAN DHCP hook rejects foreign leases
+        run: python3 test/installer/test-remote-lan-dhcp.py
+
+      - name: Verify first Static LAN attach and DHCP/Static routing transitions in Linux nsenter
+        run: bash scripts/run-remote-lan-static-nsenter-smoke.sh
+
+      - name: Run Remote LAN Attachment WireGuard + GRETAP + DHCP dataplane smoke
+        # The 443s no-renewal + >600s expiry experiment is intentionally
+        # limited to changes to the security-critical Gate authorization
+        # implementation. Ordinary PRs retain the fast smoke.
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          long=0
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            long=1
+          else
+            # PR/merge-group checkouts have a synthetic merge HEAD. Fetch
+            # one additional history layer for the base parent if shallow.
+            if ! git rev-parse --verify 'HEAD^1' >/dev/null 2>&1; then
+              git fetch --no-tags --deepen=2 origin "$GITHUB_REF" || true
+            fi
+            if git rev-parse --verify 'HEAD^1' >/dev/null 2>&1 &&
+               git rev-parse --verify 'HEAD^2' >/dev/null 2>&1; then
+              # Merge HEAD's first parent is the exact base. Failed diffs
+              # also select the security experiment rather than skipping it.
+              if ! git diff --name-only 'HEAD^1' HEAD > "$RUNNER_TEMP/lan-changed-files"; then
+                long=1
+              elif grep -Eq '^packages/resourceportal-api/src/networking/(gate-authorization-lease[.]py|gate-lan-agent[.]py|gate-installer[.]ts)$' "$RUNNER_TEMP/lan-changed-files"; then
+                long=1
+              fi
+            else
+              # Unknown or non-merge ancestry must never silently skip it.
+              long=1
+            fi
+          fi
+          echo "Remote LAN long-lease smoke selected: $long"
+          # A selected security experiment must also stop the ACTUAL
+          # disposable RP API and churn real Traefik, not merely omit
+          # heartbeat renewals. The script enforces runner-only guards.
+          RP_LAN_LONG_LEASE_SMOKE="$long" RP_LAN_REAL_CONTROL_PLANE_FAULT="$long" \
+            bash scripts/run-remote-lan-l2-dhcp-smoke.sh
+
+      - name: Run Device VPN real dataplane isolation smoke
+        timeout-minutes: 8
+        env:
+          RP_DEVICE_VPN_E2E_IMAGE: resourceportal-vpn-e2e:current
+        run: bash scripts/run-device-vpn-dataplane-smoke.sh
+
+      - name: Upload independent network smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-portal-network-dataplane-logs
+          path: ${{ runner.temp }}/resource-portal-api.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Leave dedicated Swarm
         if: always()
         run: docker swarm leave --force || true
