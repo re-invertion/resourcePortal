@@ -67,6 +67,18 @@ assert_count "$pgurl" 'No cross-tenant or wrong-project app grants' 0 \
   'SELECT count(*) FROM "TenantAppClientGrant" g JOIN "OAuthApplication" a ON a."id"=g."oauthApplicationId" WHERE g."tenantId" <> a."tenantId" OR a."zitadelProjectId"=$$wrong-project$$'
 assert_count "$pgurl" 'Original same email does not cause auto identity merge' 2 \
   'SELECT count(*) FROM "UserIdentity" WHERE "email"=$$common-identity@example.test$$'
+echo "Verify rollback preflight is read-only and all new grants are accounted for"
+preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
+printf '%s\n' "$preflight" >"$tmp/preflight.out"
+for blocker in untracked_app_grants_without_legacy_owner untracked_native_client_grants \
+  untracked_sso_role_assignments pending_native_client_invitations; do
+  grep -Fx -- "$blocker|0" "$tmp/preflight.out" >/dev/null || {
+    echo "FAIL: rollback preflight found untracked privileges or malformed output: $blocker" >&2
+    exit 1
+  }
+done
+assert_count "$pgurl" 'Preflight transaction performed no writes' 1 \
+  'SELECT count(*) FROM "Iam430BackfillAudit" WHERE "kind"=$tenant-app$'
 echo "Restore legacy source snapshot to a second clean PostgreSQL database"
 psql "postgresql://iam430:iam430_ci_only@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE iam430_restore' >/dev/null
