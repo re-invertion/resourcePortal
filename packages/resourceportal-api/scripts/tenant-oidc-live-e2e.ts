@@ -372,8 +372,8 @@ async function main() {
         );
       }
     }
-    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId), false);
-    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId), false);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId, "web"), false);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId, "web"), false);
 
     // The live target's signing key is returned by ZITADEL at creation.
     // Use exactly that key for the production validator, not a fixture secret.
