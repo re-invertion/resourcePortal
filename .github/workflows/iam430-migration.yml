@@ -1,4 +1,4 @@
-name: IAM #430 legacy data migration and snapshot restore
+name: "IAM #430 legacy data migration and snapshot restore"
 
 on:
   pull_request:

@@ -65,7 +65,7 @@ echo "Restore legacy source snapshot to a second clean PostgreSQL database"
 psql "postgresql://iam430:iam430_ci_only@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE iam430_restore' >/dev/null
 restore_url='postgresql://iam430:iam430_ci_only@localhost:5432/iam430_restore'
-pg_restore --no-owner --no-acl --exit-on-error --dbname="$restore_url" "$dump"
+pg_restore --clean --if-exists --no-owner --no-acl --exit-on-error --dbname="$restore_url" "$dump"
 assert_count "$restore_url" 'Restored original users' 3 'SELECT count(*) FROM "User"'
 assert_count "$restore_url" 'Restored legacy app grant' 1 'SELECT count(*) FROM "TenantAppClientGrant"'
 assert_count "$restore_url" 'Restored legacy RP owner role' 1 \
