@@ -71,7 +71,9 @@ echo "Verify rollback preflight is read-only and all new grants are accounted fo
 preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
 printf '%s\n' "$preflight" >"$tmp/preflight.out"
 for blocker in untracked_app_grants_without_legacy_owner untracked_native_client_grants \
-  untracked_sso_role_assignments pending_native_client_invitations; do
+  untracked_sso_role_assignments pending_native_client_invitations \
+  revoked_or_missing_backfilled_native_grants revoked_or_missing_backfilled_app_grants \
+  removed_backfilled_sso_roles; do
   grep -Fx -- "$blocker|0" "$tmp/preflight.out" >/dev/null || {
     echo "FAIL: rollback preflight found untracked privileges or malformed output: $blocker" >&2
     exit 1
@@ -79,6 +81,57 @@ for blocker in untracked_app_grants_without_legacy_owner untracked_native_client
 done
 assert_count "$pgurl" 'Preflight transaction performed no writes' 1 \
   'SELECT count(*) FROM "Iam430BackfillAudit" WHERE "kind"=$$tenant-app$$'
+echo "Verify a revoked backfilled Web grant blocks schema-down rollback"
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'UPDATE "TenantNativeAppGrant" SET "enabled"=false WHERE "id" IN (
+     SELECT "recordId"::uuid FROM "Iam430BackfillAudit" WHERE "kind"=$native-app$ AND "resourceId"=$web$
+   )' >/dev/null
+assert_count "$pgurl" 'Web grant explicitly revoked' 1 \
+  'SELECT count(*) FROM "TenantNativeAppGrant" WHERE "clientKey"=$web$ AND "enabled"=false'
+preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
+grep -Fx 'revoked_or_missing_backfilled_native_grants|1' <<<"$preflight" >/dev/null || {
+  echo 'FAIL: preflight would reauthorize previously revoked native Web grant' >&2; exit 1;
+}
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'UPDATE "TenantNativeAppGrant" SET "enabled"=true WHERE "id" IN (
+     SELECT "recordId"::uuid FROM "Iam430BackfillAudit" WHERE "kind"=$native-app$ AND "resourceId"=$web$
+   )' >/dev/null
+
+echo "Verify a revoked backfilled OAuth app grant blocks schema-down rollback"
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'UPDATE "TenantAppClientGrant" SET "enabled"=false WHERE "id" IN (
+     SELECT "recordId"::uuid FROM "Iam430BackfillAudit" WHERE "kind"=$tenant-app$
+   )' >/dev/null
+assert_count "$pgurl" 'Legacy RP app backfill intentionally revoked' 1 \
+  'SELECT count(*) FROM "TenantAppClientGrant" WHERE "enabled"=false'
+preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
+grep -Fx 'revoked_or_missing_backfilled_app_grants|1' <<<"$preflight" >/dev/null || {
+  echo 'FAIL: preflight would reauthorize a revoked migrated OAuth client' >&2; exit 1;
+}
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'UPDATE "TenantAppClientGrant" SET "enabled"=true WHERE "id" IN (
+     SELECT "recordId"::uuid FROM "Iam430BackfillAudit" WHERE "kind"=$tenant-app$
+   )' >/dev/null
+
+echo "Verify removing a backfilled SSO role blocks schema-down rollback"
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'DELETE FROM "MembershipRole" WHERE "roleId"=$sso-login$ AND "membershipId" IN (
+     SELECT "membershipId" FROM "Iam430BackfillAudit" WHERE "kind"=$sso-role$
+   )' >/dev/null
+preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
+grep -Fx 'removed_backfilled_sso_roles|1' <<<"$preflight" >/dev/null || {
+  echo 'FAIL: preflight would restore SSO login after its role was revoked' >&2; exit 1;
+}
+psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
+  'INSERT INTO "MembershipRole" ("membershipId","roleId")
+    SELECT "membershipId", $sso-login$ FROM "Iam430BackfillAudit" WHERE "kind"=$sso-role$' >/dev/null
+preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
+for blocker in revoked_or_missing_backfilled_native_grants \
+  revoked_or_missing_backfilled_app_grants removed_backfilled_sso_roles; do
+  grep -Fx -- "$blocker|0" <<<"$preflight" >/dev/null || {
+    echo "FAIL: restored migration grants still block preflight: $blocker" >&2; exit 1;
+  }
+done
 echo "Restore legacy source snapshot to a second clean PostgreSQL database"
 psql "postgresql://iam430:iam430_ci_only@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE iam430_restore' >/dev/null
