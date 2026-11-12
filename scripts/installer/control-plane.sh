@@ -174,7 +174,8 @@ rp_render_stack() {
   local invite_ref="${RP_CFG_INVITATION_OIDC_SWARM_REF:-}"
   local invite_declaration="" invite_env="" invite_mount=""
   if [[ "$action_certified" == true ]]; then
-    if [[ ! "$invite_client" =~ ^[A-Za-z0-9@._-]{1,256}$ ||
+    if [[ -z "$invite_client" || ${#invite_client} -gt 256 ||
+          ! "$invite_client" =~ ^[A-Za-z0-9@._-]+$ ||
           "$invite_client" == "$RP_CFG_OIDC_CLIENT_ID" ||
           "$invite_client" == "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" ||
           ! "$invite_ref" =~ ^rp_invitation_oidc_secret_[a-fA-F0-9]{16}$ ]]; then

@@ -612,6 +612,7 @@ rp_primary_activate_app_consumer_actions() {
     return 0
   fi
   rp_app_action_prepare || return 1
+  rp_invitation_oidc_prepare || return 1
   id="$RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID"
   if ! rp_deploy_control_plane final ||
      ! rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300 ||

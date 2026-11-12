@@ -283,3 +283,181 @@ rp_app_action_checkpoint_detach() {
   rm -rf -- "$tmp"
   return "$result"
 }
+
+# IAM #430: separate confidential invitation OIDC client, provisioned before
+# issuer-global Actions V2 can authorize new identities. PAT and client secret
+# never appear in process arguments, logs, stack YAML or installer config.
+rp_invitation_oidc_http() (
+  local method="$1" path="$2" output="$3" data="${4:-}"
+  local project="${RP_CFG_ZITADEL_PROJECT_ID:-}" org="${RP_CFG_ZITADEL_ORGANIZATION_ID:-}"
+  local host="${RP_CFG_ZITADEL_DOMAIN:-}"
+  local patfile="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
+  local pat conf
+  [[ "$method" == GET || "$method" == POST ]] || return 1
+  [[ "$project" =~ ^[0-9]{1,64}$ && "$org" =~ ^[0-9]{1,64}$ ]] || return 1
+  [[ "$path" == "/management/v1/projects/$project/apps/_search" ||
+     "$path" == "/management/v1/projects/$project/apps/oidc" ||
+     "$path" =~ ^/management/v1/projects/[0-9]{1,64}/apps/[0-9]{1,64}$ ]] || return 1
+  [[ "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ &&
+     "$output" == /* && ! -L "$output" &&
+     "$patfile" == /* && -f "$patfile" && -r "$patfile" ]] || return 1
+  [[ -z "$data" || ( "$data" == /* && -f "$data" && -r "$data" && ! -L "$data" ) ]] || return 1
+  IFS= read -r pat < "$patfile" || [[ -n "$pat" ]] || return 1
+  [[ "$pat" =~ ^[A-Za-z0-9._~+/=-]+$ ]] || return 1
+  conf="$(umask 077; mktemp)" || return 1
+  trap 'rm -f -- "$conf"' EXIT
+  (umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "x-zitadel-orgid: %s"\n' "$pat" "$org") > "$conf" || return 1
+  unset pat
+  if [[ -n "$data" ]]; then
+    curl --silent --show-error --fail --no-location --proto '=https' --max-time 15 \
+      --config "$conf" --header 'Content-Type: application/json' \
+      --request "$method" --data-binary "@$data" --output "$output" "https://$host$path"
+  else
+    curl --silent --show-error --fail --no-location --proto '=https' --max-time 15 \
+      --config "$conf" --request "$method" --output "$output" "https://$host$path"
+  fi
+)
+
+rp_invitation_oidc_client_id_valid() {
+  local id="$1"
+  [[ -n "$id" && ${#id} -le 256 && "$id" =~ ^[A-Za-z0-9@._-]+$ &&
+     "$id" != "${RP_CFG_OIDC_CLIENT_ID:-}" &&
+     "$id" != "${RP_CFG_OIDC_CLI_CLIENT_ID:-}" ]]
+}
+
+rp_invitation_oidc_search() {
+  local output="$1" tmp
+  [[ "$output" == /* ]] || return 1
+  tmp="$(umask 077; mktemp)" || return 1
+  printf '{"query":{"limit":100}}\n' > "$tmp" || { rm -f "$tmp"; return 1; }
+  if ! rp_invitation_oidc_http POST \
+      "/management/v1/projects/${RP_CFG_ZITADEL_PROJECT_ID}/apps/_search" \
+      "$output" "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  rm -f "$tmp"
+  jq -e '
+    (.result | type == "array") and
+    ((.details.totalResult // .pagination.totalResult // (.result | length)) | tonumber? // -1) <= 100 and
+    ((.details.totalResult // .pagination.totalResult // (.result | length)) | tonumber? // -1) >= (.result | length)
+  ' "$output" >/dev/null 2>&1
+}
+
+rp_invitation_oidc_verify() {
+  local client="$1" listing="$2" project="${RP_CFG_ZITADEL_PROJECT_ID:-}"
+  local callback="https://${RP_CFG_DOMAIN:-}/api/invitations/onboard/callback"
+  local app_id tmp
+  rp_invitation_oidc_client_id_valid "$client" || return 1
+  app_id="$(jq -er --arg client "$client" '
+    [.result[] | select(.oidcConfig.clientId == $client)] |
+    if length == 1 then .[0].id | select(type == "string" and test("^[0-9]{1,64}$"))
+    else error("ambiguous client") end
+  ' "$listing")" || return 1
+  tmp="$(umask 077; mktemp)" || return 1
+  if ! rp_invitation_oidc_http GET "/management/v1/projects/$project/apps/$app_id" "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  jq -e --arg client "$client" --arg callback "$callback" '
+    (.app // .).oidcConfig as $o |
+    $o.clientId == $client and
+    $o.appType == "OIDC_APP_TYPE_WEB" and
+    $o.authMethodType == "OIDC_AUTH_METHOD_TYPE_BASIC" and
+    $o.devMode == false and
+    $o.responseTypes == ["OIDC_RESPONSE_TYPE_CODE"] and
+    $o.grantTypes == ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"] and
+    $o.redirectUris == [$callback]
+  ' "$tmp" >/dev/null 2>&1
+  local status=$?
+  rm -f "$tmp"
+  return "$status"
+}
+
+# Read-only gate runs BEFORE any quiesce/snapshot/DB changes. The legacy
+# (0.2.152) state with BOTH client references absent can be provisioned.
+rp_invitation_oidc_preflight() {
+  local client="${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}"
+  local ref="${RP_CFG_INVITATION_OIDC_SWARM_REF:-}" tmp
+  if [[ "${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}" != true ]]; then
+    if [[ -n "$client" || -n "$ref" ]]; then
+      printf 'Upgrade blocked before shutdown: invitation OAuth references require certified Actions V2.\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+  [[ "${RP_CFG_DOMAIN:-}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || return 1
+  if [[ -n "$client" || -n "$ref" ]]; then
+    if ! rp_invitation_oidc_client_id_valid "$client" ||
+       [[ ! "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] ||
+       ! docker secret inspect "$ref" >/dev/null 2>&1; then
+      printf 'Upgrade blocked before shutdown: invitation OIDC client/secret references are incomplete or missing.\n' >&2
+      return 1
+    fi
+  fi
+  tmp="$(umask 077; mktemp -d)" || return 1
+  if ! rp_invitation_oidc_search "$tmp/apps"; then
+    printf 'Upgrade blocked before shutdown: cannot verify invitation clients with ZITADEL.\n' >&2
+    rm -rf -- "$tmp"; return 1
+  fi
+  if [[ -n "$client" ]]; then
+    if ! rp_invitation_oidc_verify "$client" "$tmp/apps"; then
+      printf 'Upgrade blocked: invitation OAuth client is not a verified isolated confidential code-only app.\n' >&2
+      rm -rf -- "$tmp"; return 1
+    fi
+  elif jq -e '[.result[] | select(.name == "ResourcePortal Invitation Proof")] | length > 0' "$tmp/apps" >/dev/null; then
+    printf 'Upgrade blocked: orphaned invitation app exists without recoverable secret; review manually.\n' >&2
+    rm -rf -- "$tmp"; return 1
+  fi
+  rm -rf -- "$tmp"
+}
+
+# Called after the protected 2-DB snapshot for upgrades and after ZITADEL
+# bootstrap for fresh installs. No client is reused without validated refs.
+rp_invitation_oidc_prepare() {
+  [[ "${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}" == true ]] || return 0
+  rp_invitation_oidc_preflight || return 1
+  [[ -z "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" ]] || return 0
+  local tmp client ref
+  tmp="$(umask 077; mktemp -d)" || return 1
+  jq -n --arg callback "https://${RP_CFG_DOMAIN}/api/invitations/onboard/callback" \
+    --arg origin "https://${RP_CFG_DOMAIN}" '{
+      name:"ResourcePortal Invitation Proof",
+      redirectUris:[$callback], responseTypes:["OIDC_RESPONSE_TYPE_CODE"],
+      grantTypes:["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
+      appType:"OIDC_APP_TYPE_WEB", authMethodType:"OIDC_AUTH_METHOD_TYPE_BASIC",
+      postLogoutRedirectUris:[], additionalOrigins:[$origin],
+      version:"OIDC_VERSION_1_0", devMode:false,
+      accessTokenType:"OIDC_TOKEN_TYPE_JWT", idTokenUserinfoAssertion:true,
+      loginVersion:{loginV1:{}}
+    }' > "$tmp/request" || { rm -rf -- "$tmp"; return 1; }
+  if ! rp_invitation_oidc_http POST \
+      "/management/v1/projects/${RP_CFG_ZITADEL_PROJECT_ID}/apps/oidc" \
+      "$tmp/created" "$tmp/request"; then
+    rm -rf -- "$tmp"; return 1
+  fi
+  client="$(jq -er '.clientId | select(type=="string")' "$tmp/created")" || {
+    rm -rf -- "$tmp"; return 1;
+  }
+  if ! rp_invitation_oidc_client_id_valid "$client" ||
+     ! jq -e '.appId | type == "string"' "$tmp/created" >/dev/null ||
+     ! jq -e '.clientSecret | type == "string" and length >= 16' "$tmp/created" >/dev/null; then
+    rm -rf -- "$tmp"; return 1
+  fi
+  (umask 077; printf '%s' "$(jq -er '.clientSecret' "$tmp/created")" > "$tmp/secret") || {
+    rm -rf -- "$tmp"; return 1;
+  }
+  if ! rp_invitation_oidc_search "$tmp/apps" ||
+     ! rp_invitation_oidc_verify "$client" "$tmp/apps"; then
+    rm -rf -- "$tmp"; return 1
+  fi
+  ref="$(rp_ensure_versioned_swarm_secret rp_invitation_oidc_secret "$tmp/secret")" || {
+    rm -rf -- "$tmp"; return 1;
+  }
+  if [[ ! "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] ||
+     ! docker secret inspect "$ref" >/dev/null 2>&1; then
+    rm -rf -- "$tmp"; return 1
+  fi
+  RP_CFG_INVITATION_OIDC_CLIENT_ID="$client"
+  RP_CFG_INVITATION_OIDC_SWARM_REF="$ref"
+  export RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
+  rm -rf -- "$tmp"
+}

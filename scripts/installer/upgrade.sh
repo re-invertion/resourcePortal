@@ -345,6 +345,7 @@ rp_upgrade_preflight() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "${RP_CFG_PREVIOUS_STACK_FILE:-/etc/resourceportal/stack.yml}" "$current_version" "$manifest" || return 1
   rp_upgrade_check_temporary_files
@@ -968,6 +969,7 @@ rp_upgrade_apply() {
     return 1
   }
   rp_upgrade_identity_preflight || return 1
+  rp_invitation_oidc_preflight || return 1
   rp_upgrade_app_consumer_actions_v2_rollback_preflight \
     "$previous_stack" "$source_version" "$manifest" || return 1
   rp_pull_release_images "$manifest" || return 1
@@ -993,7 +995,8 @@ rp_upgrade_apply() {
   # Target and immutable Docker signing key are automatic. Do not attach
   # the interrupting execution before the migrated API is live.
   if jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null 2>&1; then
-    if ! rp_app_action_prepare || ! rp_app_action_checkpoint_record; then
+    if ! rp_app_action_prepare || ! rp_app_action_checkpoint_record ||
+       ! rp_invitation_oidc_prepare; then
       rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "App Consumer target provisioning"
       return 1
     fi
