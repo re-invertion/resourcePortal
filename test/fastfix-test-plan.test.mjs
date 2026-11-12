@@ -1,3 +1,17 @@
+test("issue #430 legacy PostgreSQL migration and restore fixtures stay on all IAM/security release gates", () => {
+  for (const path of [
+    "test/iam430/legacy-fixture.sql",
+    "test/iam430/legacy-upgrade-restore.sh",
+  ]) {
+    const plan = selectProfiles([path]);
+    assert.deepEqual(plan.profiles, [
+      "identity", "platform-release", "schema", "security", "upgrade-recovery", "workflow",
+    ]);
+  }
+  // Other IAM fixtures cannot enter releases until explicitly classified.
+  assert.throws(() => selectProfiles(["test/iam430/untested-restore-bypass.sh"]), /unclassified changes/);
+});
+
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
