@@ -57,7 +57,7 @@ describe("#430 single member identity and independent SSO / RP roles", () => {
     fixture();
     render(<TenantAdministrationPage tenantId="t1" userId="owner" />);
     expect(await screen.findByText("Alice")).toBeTruthy();
-    expect(screen.getByText(/SSO apps: none/)).toBeTruthy();
+    expect(screen.getAllByText(/SSO apps: none/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/App Users — OAuth application access/)).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Invitation access type" })).toBeNull();
   });
