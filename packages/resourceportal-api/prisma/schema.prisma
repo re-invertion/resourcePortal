@@ -1661,3 +1661,14 @@ model RemoteLanAttachment {
   @@index([gateId, status])
   @@index([networkId])
 }
+// Retains the provenance of migration-generated entitlements for scoped rollback.
+model Iam430BackfillAudit {
+  id           BigInt   @id @default(autoincrement())
+  kind         String
+  membershipId String   @db.Uuid
+  resourceId   String
+  recordId     String
+  createdAt    DateTime @default(now())
+
+  @@unique([kind, membershipId, resourceId])
+}
