@@ -68,7 +68,11 @@ WITH inserted AS (
  SELECT gen_random_uuid(), m."id",m."tenantId",a."id",true,m."createdBy",m."createdBy",now(),now()
  FROM "TenantMembership" m
  JOIN "OAuthApplication" a ON a."tenantId"=m."tenantId"
- WHERE NOT EXISTS (SELECT 1 FROM "TenantAppConsumer" c WHERE c."membershipId"=m."id")
+ JOIN "TenantOidcProvider" p ON p."tenantId"=m."tenantId"
+   AND p."enabled"=true AND p."zitadelProjectId"=a."zitadelProjectId"
+ WHERE a."zitadelProjectId" IS NOT NULL
+   AND m."status"='Active'
+   AND NOT EXISTS (SELECT 1 FROM "TenantAppConsumer" c WHERE c."membershipId"=m."id")
    AND (EXISTS (SELECT 1 FROM "MembershipRole" r WHERE r."membershipId"=m."id" AND r."roleId"<>'sso-login')
      OR EXISTS (SELECT 1 FROM "TenantGroupMember" gm JOIN "TenantGroupRole" gr ON gr."tenantGroupId"=gm."tenantGroupId"
        WHERE gm."membershipId"=m."id" AND gr."roleId"<>'sso-login'))
