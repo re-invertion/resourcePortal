@@ -21,9 +21,9 @@ INSERT INTO "TenantOidcProvider" ("tenantId","zitadelProjectId","issuer","status
  ('11111111-1111-4111-8111-111111111111','project-a','https://auth.example.test','Active',true,now()),
  ('22222222-2222-4222-8222-222222222222','project-b','https://auth.example.test','Active',true,now());
 INSERT INTO "OAuthApplication" ("id","tenantId","name","type","zitadelApplicationId","zitadelProjectId","clientId","createdBy","updatedBy","updatedAt") VALUES
- ('aaaa1111-aaaa-4111-8111-aaaaaaaaaaaa','11111111-1111-4111-8111-111111111111','Legacy HA','WEB','rp-legacy-app-a','project-a','legacy-client-a','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',now()),
- ('aaaa2222-aaaa-4222-8222-aaaaaaaaaaaa','11111111-1111-4111-8111-111111111111','Foreign project','WEB','rp-legacy-app-wrong','wrong-project','legacy-client-wrong','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',now()),
- ('bbbb1111-bbbb-4111-8111-bbbbbbbbbbbb','22222222-2222-4222-8222-222222222222','App B','WEB','rp-legacy-app-b','project-b','legacy-client-b','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',now());
+ ('aaaa1111-aaaa-4111-8111-aaaaaaaaaaaa','11111111-1111-4111-8111-111111111111','Legacy HA','Web','rp-legacy-app-a','project-a','legacy-client-a','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',now()),
+ ('aaaa2222-aaaa-4222-8222-aaaaaaaaaaaa','11111111-1111-4111-8111-111111111111','Foreign project','Web','rp-legacy-app-wrong','wrong-project','legacy-client-wrong','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',now()),
+ ('bbbb1111-bbbb-4111-8111-bbbbbbbbbbbb','22222222-2222-4222-8222-222222222222','App B','Web','rp-legacy-app-b','project-b','legacy-client-b','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',now());
 INSERT INTO "TenantAppConsumer" ("membershipId","tenantId","createdBy","updatedAt") VALUES
  ('44444444-4444-4444-8444-444444444444','22222222-2222-4222-8222-222222222222','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',now());
 INSERT INTO "TenantAppClientGrant" ("id","membershipId","tenantId","oauthApplicationId","createdBy","updatedBy","updatedAt") VALUES
