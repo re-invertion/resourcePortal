@@ -64,6 +64,7 @@ export class TenantsService {
                 roles: {
                   some: {
                     role: {
+                      id: { not: "sso-login" },
                       permissionBindings: {
                         some: { permissionId: { in: ["tenant.read", "*"] } },
                       },
@@ -78,6 +79,7 @@ export class TenantsService {
                       roles: {
                         some: {
                           role: {
+                            id: { not: "sso-login" },
                             permissionBindings: {
                               some: { permissionId: { in: ["tenant.read", "*"] } },
                             },

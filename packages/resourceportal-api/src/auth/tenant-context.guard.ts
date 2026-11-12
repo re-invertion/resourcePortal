@@ -105,11 +105,13 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set([
         ...membership.roles.flatMap(({ role }) =>
-          role.permissionBindings.map(({ permission }) => permission.id),
+          role.id === "sso-login" ? [] :
+            role.permissionBindings.map(({ permission }) => permission.id),
         ),
         ...membership.groupMemberships.flatMap(({ group }) =>
           group.roles.flatMap(({ role }) =>
-            role.permissionBindings.map(({ permission }) => permission.id),
+            role.id === "sso-login" ? [] :
+              role.permissionBindings.map(({ permission }) => permission.id),
           ),
         ),
       ]),
@@ -158,7 +160,8 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set(
         roleBindings.flatMap(({ role }) =>
-          role.permissionBindings.map(({ permission }) => permission.id),
+          role.id === "sso-login" ? [] :
+            role.permissionBindings.map(({ permission }) => permission.id),
         ),
       ),
     ];

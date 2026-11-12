@@ -130,6 +130,24 @@ describe("Stage 2 Permission model", () => {
     });
   });
 
+  it("never treats the system sso-login role as RP permissions even if bindings are misconfigured", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
+    const prisma = {
+      tenantMembership: { findUnique: vi.fn().mockResolvedValue({
+        id: "158e191e-967a-4fe9-9480-3ea28010a714",
+        status: MembershipStatus.Active,
+        roles: [{ role: { id: "sso-login", permissionBindings: [{ permission: { id: "tenant.read" } }] } }],
+        groupMemberships: [],
+      }) },
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]) } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+    await expect(guard.canActivate(contextFor({
+      params: { tenantId }, user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
+    }))).rejects.toThrow("No tenant permissions assigned");
+  });
+
   it("SSO-only membership never bypasses RP management, even with app grants", async () => {
     const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
     const prisma = {
