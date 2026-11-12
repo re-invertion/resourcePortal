@@ -296,7 +296,9 @@ while :; do
   fi
   RESPONSE="__RP_SHELL_EXPAND__RAW_RESPONSE%$'\n'*}"
   LIVE_ONLY=0
-  if [ "$HTTP_CODE" = "200" ]; then
+  # NestJS previously returned 201 for POST; accept both successful heartbeat codes
+  # with the same mandatory nonce, lease and topology validation.
+  if [[ "$HTTP_CODE" =~ ^(200|201)$ ]]; then
     # The entire fresh response (nonce validation, apply, lease renewal and
     # nft source refresh) is serialized with expiry cleanup, not just the
     # short transition write. An expired prior watchdog decision cannot

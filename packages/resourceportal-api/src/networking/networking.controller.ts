@@ -244,6 +244,7 @@ export class GateAgentController {
 
   @MachineBearerAuth()
   @Post("agent/heartbeat")
+  @HttpCode(HttpStatus.OK)
   heartbeat(
     @Headers("authorization") authorization: string | undefined,
     @Body() dto: GateHeartbeatDto,

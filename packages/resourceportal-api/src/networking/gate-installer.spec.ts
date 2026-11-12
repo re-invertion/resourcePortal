@@ -60,7 +60,7 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(agent).toContain('LEASE_LOCK_FILE="$LEASE_RUNTIME_DIR/authorization.lock"');
     expect(agent).toContain('flock -x -w 45 "$LEASE_LOCK_FD"');
     expect(script).toContain('for tool in curl jq wg wg-quick python3 nft ip flock systemctl');
-    const success = agent.indexOf('if [ "$HTTP_CODE" = "200" ]; then');
+    const success = agent.indexOf('if [[ "$HTTP_CODE" =~ ^(200|201)$ ]]; then');
     const acquire = agent.indexOf('lock_authorization || die',success);
     const transition = agent.indexOf('--transition --nonce "$CHALLENGE"',success);
     const apply = agent.indexOf('elif ! apply_config "$RESPONSE"',success);
@@ -76,6 +76,20 @@ describe("RP Gate LAN Attachments-only installer", () => {
     expect(denied).toBeGreaterThan(release);
     expect(agent.indexOf('lock_authorization',denied)).toBeGreaterThan(denied);
     expect(agent.indexOf('unlock_authorization',denied)).toBeGreaterThan(denied);
+  });
+  it("treats HTTP 200 and legacy HTTP 201 as successful heartbeats, never as a transport outage",()=>{
+    const successLine=agent.split("\n").find(line=>line.includes('if [[ "$HTTP_CODE" =~ ^(200|201)$ ]]'));
+    expect(successLine).toBeDefined();
+    for(const status of ["200","201","400","401","404","502"]) {
+      const bash='HTTP_CODE='+status+'; '+successLine+' echo accepted; else echo rejected; fi';
+      const result=spawnSync("bash",["-c",bash],{encoding:"utf8",timeout:5000});
+      expect(result.status,result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(["200","201"].includes(status) ? "accepted" : "rejected");
+    }
+    const controller=readFileSync(resolve(__dirname,"./networking.controller.ts"),"utf8");
+    expect(controller).toMatch(/@Post\("agent\/heartbeat"\)\s+@HttpCode\(HttpStatus\.OK\)/);
+    expect(agent).toContain('authorizationLease.nonce==$nonce');
+    expect(agent).toContain('--renew --nonce "$CHALLENGE"');
   });
   it("parses the real curl response suffix without misclassifying HTTP 200 as an outage",()=>{
     const parser=agent.split("\n").find(line =>
