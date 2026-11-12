@@ -26,7 +26,13 @@ npx prisma migrate deploy --schema "$tmp/baseline/schema.prisma"
 psql "$pgurl" -v ON_ERROR_STOP=1 -f "$root/test/iam430/legacy-fixture.sql" >/dev/null
 
 dump="$tmp/legacy.dump"
-pg_dump --format=custom --no-owner --no-acl --file="$dump" "$pgurl"
+# Pin pg_dump to the PostgreSQL 16 server version: newer pg_restore
+# generates SET transaction_timeout, which PostgreSQL 16 cannot execute.
+# This CI-only container performs no migrations, writes or network callbacks.
+docker run --rm --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --pull never \
+  --user "$(id -u):$(id -g)" -e PGPASSWORD \
+  postgres:16 pg_dump --format=custom --no-owner --no-acl "$pgurl" >"$dump"
 [[ -s "$dump" ]] || { echo 'Baseline dump is empty' >&2; exit 1; }
 echo "Upgrade legacy database with actual new Prisma migration"
 npx prisma migrate deploy --schema "$schema"
@@ -65,7 +71,11 @@ echo "Restore legacy source snapshot to a second clean PostgreSQL database"
 psql "postgresql://iam430:iam430_ci_only@localhost:5432/postgres" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE iam430_restore' >/dev/null
 restore_url='postgresql://iam430:iam430_ci_only@localhost:5432/iam430_restore'
-pg_restore --clean --if-exists --no-owner --no-acl --exit-on-error --dbname="$restore_url" "$dump"
+docker run --rm --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --pull never \
+  --user "$(id -u):$(id -g)" -e PGPASSWORD \
+  --interactive postgres:16 pg_restore --clean --if-exists --no-owner --no-acl \
+  --exit-on-error --dbname="$restore_url" <"$dump"
 assert_count "$restore_url" 'Restored original users' 3 'SELECT count(*) FROM "User"'
 assert_count "$restore_url" 'Restored legacy app grant' 1 'SELECT count(*) FROM "TenantAppClientGrant"'
 assert_count "$restore_url" 'Restored legacy RP owner role' 1 \
