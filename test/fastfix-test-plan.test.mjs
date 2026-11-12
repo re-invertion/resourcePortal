@@ -990,3 +990,14 @@ test("#430 invitation login and registration UI must invoke exact IAM/security/t
     /unclassified changes/,
   );
 });
+
+test("changing the real Swarm workflow runs both real core and VPN smoke gates", () => {
+  const plan = selectProfiles([".github/workflows/swarm-integration.yml"]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
+  for (const name of ["networking", "swarm-smoke-fixtures", "workflow"])
+    assert.ok(plan.profiles.includes(name), name);
+  const unrelated = selectProfiles([".github/workflows/tenant-oidc-live.yml"]);
+  assert.equal(unrelated.vpnSmoke, false);
+  assert.equal(unrelated.swarmSmoke, false);
+});
