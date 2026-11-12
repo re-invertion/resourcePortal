@@ -119,7 +119,7 @@ psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
      SELECT "membershipId" FROM "Iam430BackfillAudit" WHERE "kind"=$sso-role$
    )' >/dev/null
 preflight="$(psql "$pgurl" -X -v ON_ERROR_STOP=1 -At -f "$root/docs/iam430-rollback-preflight.sql")"
-grep -Fx 'removed_backfilled_sso_roles|1' <<<"$preflight" >/dev/null || {
+grep -Fx 'removed_backfilled_sso_roles|2' <<<"$preflight" >/dev/null || {
   echo 'FAIL: preflight would restore SSO login after its role was revoked' >&2; exit 1;
 }
 psql "$pgurl" -X -v ON_ERROR_STOP=1 -c \
