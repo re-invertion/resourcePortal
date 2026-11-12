@@ -66,6 +66,21 @@ export class AppConsumerActionService {
     if (!issuer?.startsWith("https://")) {
       throw new ServiceUnavailableException("Issuer not configured");
     }
+    // A strictly separate confidential identity-only client may perform
+    // first-time invitation verification. It requests no RP project audience
+    // and its signed tokens are rejected by all normal RP bearer auth paths.
+    // This is NOT a managed SSO application entitlement or a Web/CLI bypass:
+    // the callback creates no session and atomically accepts a one-time invite.
+    const inviteClient = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
+    if (inviteClient && clientId === inviteClient) {
+      if (this.config.get<string>("RP_INVITATION_ONBOARDING_ENABLED") !== "true" ||
+          inviteClient === this.config.get<string>("OIDC_CLIENT_ID") ||
+          inviteClient === this.config.get<string>("OIDC_CLI_CLIENT_ID")) {
+        throw new ForbiddenException("Invitation-only OAuth client not authorized");
+      }
+      return {};
+    }
+
     // RP Web AND the native RP CLI have independently registered OAuth
     // clients. The issuer-global pre-token action applies to both. Each now
     // requires its OWN explicit tenant-scoped native-client grant + sso-login.

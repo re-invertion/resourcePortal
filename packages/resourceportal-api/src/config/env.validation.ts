@@ -14,6 +14,29 @@ export function validateEnv(config: Env) {
 
   requireValue(config, errors, "DATABASE_URL");
 
+  if (config.RP_INVITATION_ONBOARDING_ENABLED === "true") {
+    requireValue(config, errors, "OIDC_INVITATION_CLIENT_ID");
+    requireMinLength(config, errors, "OIDC_INVITATION_CLIENT_SECRET", 24);
+    requireValue(config, errors, "OIDC_INVITATION_REDIRECT_URI");
+    if (config.OIDC_INVITATION_CLIENT_ID === config.OIDC_CLIENT_ID ||
+        config.OIDC_INVITATION_CLIENT_ID === config.OIDC_CLI_CLIENT_ID) {
+      errors.push("Invitation identity client must be physically distinct from RP Web and CLI");
+    }
+    let validRedirect = false;
+    try {
+      const callback = new URL(config.OIDC_INVITATION_REDIRECT_URI ?? "");
+      const publicApi = new URL(config.PUBLIC_API_URL ?? "");
+      validRedirect = callback.protocol === "https:" && publicApi.protocol === "https:" &&
+        callback.origin === publicApi.origin && !callback.search && !callback.hash &&
+        !callback.username && !callback.password &&
+        callback.pathname === "/api/invitations/onboard/callback";
+    } catch { /* Fail closed for absent/malformed callback or public API URL. */ }
+    if (!validRedirect) errors.push("Invitation OIDC callback must match public HTTPS RP API origin");
+  }
+  if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&
+      config.RP_INVITATION_ONBOARDING_ENABLED !== "true") {
+    errors.push("Global exact-client Action requires a dedicated first-login invitation client");
+  }
   if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true") {
     if (config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED !== "true") {
       errors.push("App Consumer Actions V2 requires explicit isolated HTTPS certification");
