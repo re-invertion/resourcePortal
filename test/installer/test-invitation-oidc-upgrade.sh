@@ -131,6 +131,12 @@ unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
 export RP_UPGRADE_STATE_DIR="$test_root/upgrade"
 export RP_UPGRADE_ACTIVE_CHECKPOINT="$RP_UPGRADE_STATE_DIR"
 mkdir -m 700 "$RP_UPGRADE_STATE_DIR"
+printf 'source previous stack\n' > "$RP_UPGRADE_STATE_DIR/previous-stack.yml"
+source_sha="$(sha256sum "$RP_UPGRADE_STATE_DIR/previous-stack.yml" | cut -d' ' -f1)"
+jq -n --arg prior "$source_sha" --arg target "$(printf '%064d' 0)" '{
+  phase:"applying",sourceVersion:"0.2.152",targetVersion:"0.2.154",
+  targetManifestSha256:$target,previousStackSha256:$prior,databaseSnapshotState:"verified"
+}' > "$RP_UPGRADE_STATE_DIR/state.json"
 mock_outage=false
 mock_created=false
 rp_invitation_oidc_prepare || fail 'checkpointed invitation provisioning failed'
@@ -178,6 +184,9 @@ echo 'PASS: journal file permissions and physical issuer/callback fingerprint fa
 # A tested two-database snapshot reverts the newly provisioned ZITADEL app.
 # Its new Swarm secret and recovery journal must be deleted rather than reused.
 RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=true
+jq '.databaseSnapshotState="restored" | .phase="rolling-back"' \
+  "$RP_UPGRADE_STATE_DIR/state.json" > "$test_root/tested-rollback.json"
+cp "$test_root/tested-rollback.json" "$RP_UPGRADE_STATE_DIR/state.json"
 mock_created=false  # represents the restored source ZITADEL database
 rp_invitation_oidc_rollback_recover tested ||
   fail 'tested rollback did not remove newly introduced sealed client secret'
@@ -202,3 +211,72 @@ mock_wrong_redirect=false
 rp_invitation_oidc_prepare || fail 'compensated failed create cannot retry'
 [[ "$mock_created" == true ]] || fail 'reprovisioning after compensation failed'
 echo 'PASS: invalid new physical client is compensated before rollback'
+
+# A tested database snapshot is restored, so the newly issued invitation
+# app disappears from ZITADEL while its sealed Swarm secret may still be
+# mounted by the candidate stack. An interrupted previous-stack deployment
+# must leave a safe checkpoint for an explicit retry.
+jq '.databaseSnapshotState="restored" | .phase="rollback-failed"' \
+  "$RP_UPGRADE_STATE_DIR/state.json" > "$test_root/restored-source.json"
+cp "$test_root/restored-source.json" "$RP_UPGRADE_STATE_DIR/state.json"
+mock_created=false
+unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
+RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
+before="$mock_post_count"
+rp_invitation_oidc_preflight || fail 'verified restored ZITADEL checkpoint did not permit safe resume'
+[[ -z "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" && "$mock_post_count" == "$before" ]] ||
+  fail 'tested resume adopted physically absent OIDC app or created new app'
+# A corrupt or unrelated restored checkpoint cannot bypass physical proof.
+jq '.targetManifestSha256=("f" * 64)' "$RP_UPGRADE_STATE_DIR/state.json" > "$test_root/corrupt-checkpoint.json"
+cp "$test_root/corrupt-checkpoint.json" "$RP_UPGRADE_STATE_DIR/state.json"
+if rp_invitation_oidc_preflight >/dev/null 2>&1; then
+  fail 'unbound restored checkpoint bypassed physical OIDC verification'
+fi
+cp "$test_root/restored-source.json" "$RP_UPGRADE_STATE_DIR/state.json"
+rp_invitation_oidc_rollback_recover tested ||
+  fail 'recovered tested source failed to release stale credential journal'
+[[ ! -e "$recovery" && "$mock_secret_found" == false ]] ||
+  fail 'stale tested invitation secret not reconciled after previous stack recovery'
+mock_secret_found=true
+rp_invitation_oidc_preflight || fail 'tested rollback replay did not restore safe legacy preflight'
+echo 'PASS: interrupted tested rollback safely resumes only with verified checkpoint; no stale client adoption'
+
+# Integrated prior-rollback retry: source ZITADEL DB was restored, but Swarm
+# returned a transient error before the old stack was healthy. The journal
+# must remain until the old stack is deployed, then release its sealed secret.
+jq '.phase="applying" | .databaseSnapshotState="verified"' \
+  "$RP_UPGRADE_STATE_DIR/state.json" > "$test_root/retry-provision.json"
+cp "$test_root/retry-provision.json" "$RP_UPGRADE_STATE_DIR/state.json"
+mock_created=false
+mock_secret_found=true
+rp_invitation_oidc_prepare || fail 'could not create retry fixture invitation app'
+jq '.phase="rollback-failed" | .databaseSnapshotState="restored"' \
+  "$RP_UPGRADE_STATE_DIR/state.json" > "$test_root/retry-pending.json"
+cp "$test_root/retry-pending.json" "$RP_UPGRADE_STATE_DIR/state.json"
+jq -n '{version:"0.2.152"}' > "$RP_UPGRADE_STATE_DIR/previous-release.json"
+mock_created=false
+unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
+source "$root/scripts/installer/upgrade.sh"
+deploy_calls=0
+rp_app_action_checkpoint_detach(){ :; }
+rp_swarm_stack_deploy_retry(){
+  deploy_calls=$((deploy_calls+1))
+  [[ "$deploy_calls" -gt 1 ]]
+}
+rp_ensure_rollback_agent_capabilities(){ :; }
+rp_wait_control_plane_converged(){ :; }
+rp_wait_for_https_origin(){ :; }
+rp_upgrade_restore_manifest_checkpoint(){ :; }
+if rp_upgrade_reconcile_failed_rollback "$RP_UPGRADE_STATE_DIR" 0.2.152 > /dev/null 2>&1; then
+  fail 'simulated failed previous stack unexpectedly recovered'
+fi
+[[ -f "$recovery" && "$mock_secret_found" == true ]] ||
+  fail 'rollback retry deleted secret while previous stack was still unavailable'
+rp_invitation_oidc_preflight || fail 'failed tested rollback prevented verified explicit retry'
+rp_upgrade_reconcile_failed_rollback "$RP_UPGRADE_STATE_DIR" 0.2.152 ||
+  fail 'previous-stack retry did not recover verified restored ZITADEL checkpoint'
+[[ "$deploy_calls" == 2 && ! -f "$recovery" &&
+   "$mock_secret_found" == false &&
+   "$(jq -r '.phase' "$RP_UPGRADE_STATE_DIR/state.json")" == rolled-back ]] ||
+  fail 'successful tested rollback retry failed to reconcile old stack and confidential secret'
+echo 'PASS: tested DB restore plus failing previous-stack deploy retries without losing journal or credential cleanup'

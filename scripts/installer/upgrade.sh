@@ -754,6 +754,12 @@ rp_upgrade_reconcile_failed_rollback() {
   rp_wait_control_plane_converged "${RP_CFG_STACK_NAME:-resourceportal-control-plane}" || return 1
   rp_wait_for_https_origin "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 300 || return 1
   RP_UPGRADE_ACTIVE_CHECKPOINT="$dir"
+  if [[ "$db_state" == restored ]] &&
+     declare -F rp_invitation_oidc_rollback_recover >/dev/null &&
+     ! rp_invitation_oidc_rollback_recover tested; then
+    printf 'Previous rollback recovery blocked: restored ZITADEL invitation journal could not be reconciled.\n' >&2
+    return 1
+  fi
   rp_upgrade_restore_manifest_checkpoint || return 1
   # Keep the previous failed journal as evidence before starting a new
   # checkpoint. The enclosing prepare() still holds the exclusive flock.
@@ -913,6 +919,23 @@ rp_upgrade_restore_after_failure() {
     rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     printf 'Automatic rollback cannot restore the source databases; leave services quiesced for recovery.\n' >&2
     return 1
+  fi
+  # Two restored databases invalidate an invitation app created in this
+  # attempt. Verify durable provenance IMMEDIATELY after restore, but defer
+  # removing its Swarm secret until the previous stack releases the mount.
+  # If stack recovery later fails, the signed checkpoint remains usable on
+  # the next explicit upgrade retry without trusting the stale physical app.
+  if [[ "$claim" == tested &&
+        "${RP_INVITATION_OIDC_CREATED_IN_ATTEMPT:-false}" == true ]]; then
+    local invitation_journal
+    invitation_journal="$(rp_invitation_oidc_recovery_path)" || return 1
+    if ! rp_invitation_oidc_created_for_restored_checkpoint "$invitation_journal" rolling-back ||
+       ! rp_invitation_oidc_recovery_load "$invitation_journal" \
+         "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" "${RP_CFG_INVITATION_OIDC_SWARM_REF:-}"; then
+      rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+      printf 'Automatic rollback cannot reconcile invitation client provenance after ZITADEL restore.\n' >&2
+      return 1
+    fi
   fi
   # Restore source databases BEFORE detaching the new global execution:
   # App Consumers' newly issued upstream grants cannot remain unguarded.

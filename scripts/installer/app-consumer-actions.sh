@@ -391,11 +391,18 @@ rp_invitation_oidc_recovery_record() {
      "$app_id" =~ ^[0-9]{1,64}$ &&
      "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] || return 1
   rp_invitation_oidc_client_id_valid "$client" || return 1
+  local state="${path%/*}/state.json" source target manifest_sha
+  [[ -r "$state" && ! -L "$state" ]] || return 1
+  source="$(jq -er '.sourceVersion | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$state")" || return 1
+  target="$(jq -er '.targetVersion | select(type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' "$state")" || return 1
+  manifest_sha="$(jq -er '.targetManifestSha256 | select(type == "string" and test("^[a-f0-9]{64}$"))' "$state")" || return 1
   tmp="$(umask 077; mktemp "${path%/*}/.invitation-recovery.XXXXXX")" || return 1
   if ! jq -n --arg id "$app_id" --arg client "$client" --arg ref "$ref" \
        --arg project "${RP_CFG_ZITADEL_PROJECT_ID}" --arg host "${RP_CFG_ZITADEL_DOMAIN}" \
-       --arg domain "${RP_CFG_DOMAIN}" \
-       '{appId:$id,clientId:$client,secretRef:$ref,projectId:$project,issuerHost:$host,domain:$domain}' > "$tmp" ||
+       --arg domain "${RP_CFG_DOMAIN}" --arg source "$source" --arg target "$target" \
+       --arg sha "$manifest_sha" \
+       '{appId:$id,clientId:$client,secretRef:$ref,projectId:$project,issuerHost:$host,domain:$domain,
+         createdForSourceVersion:$source,createdForTargetVersion:$target,createdForManifestSha256:$sha}' > "$tmp" ||
      ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$path"; then
     rm -f -- "$tmp"
     return 1
@@ -420,6 +427,31 @@ rp_invitation_oidc_recovery_load() {
   [[ ( -z "$candidate_client" && -z "$candidate_ref" ) ||
      ( "$candidate_client" == "$RP_INVITATION_RECOVERED_CLIENT" &&
        "$candidate_ref" == "$RP_INVITATION_RECOVERED_REF" ) ]]
+}
+
+# Immutable per-attempt evidence prevents deleting a preexisting
+# credential when a later, unrelated tested rollback restores its source DB.
+# The snapshot marker is written only AFTER both RP and ZITADEL swaps commit.
+rp_invitation_oidc_created_for_restored_checkpoint() {
+  local journal="$1" phase="${2:-rollback-failed}" dir state actual expected
+  dir="${journal%/*}"
+  state="$dir/state.json"
+  [[ "$journal" == "$(rp_invitation_oidc_recovery_path)" &&
+     -r "$journal" && ! -L "$journal" && -r "$state" && ! -L "$state" &&
+     -r "$dir/previous-stack.yml" && ! -L "$dir/previous-stack.yml" ]] || return 1
+  expected="$(jq -er '.previousStackSha256' "$state")" || return 1
+  [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || return 1
+  actual="$(sha256sum "$dir/previous-stack.yml" | cut -d' ' -f1)" || return 1
+  [[ "$actual" == "$expected" ]] || return 1
+  jq -e --slurpfile cp "$state" --arg phase "$phase" '
+     ($cp | length == 1) and
+     ($cp[0].databaseSnapshotState == "restored") and
+     ($cp[0].phase == $phase) and
+     .createdForSourceVersion == $cp[0].sourceVersion and
+     .createdForTargetVersion == $cp[0].targetVersion and
+     .createdForManifestSha256 == $cp[0].targetManifestSha256 and
+     (.createdForManifestSha256 | type == "string" and test("^[a-f0-9]{64}$"))
+  ' "$journal" >/dev/null 2>&1
 }
 
 rp_invitation_oidc_recovery_forget() {
@@ -455,17 +487,29 @@ rp_invitation_oidc_rollback_recover() {
   path="$(rp_invitation_oidc_recovery_path)" || return 1
   [[ ! -L "$path" ]] || return 1
   [[ -f "$path" ]] || return 0
-  if [[ "$policy" == tested && "${RP_INVITATION_OIDC_CREATED_IN_ATTEMPT:-false}" == true ]]; then
+  if [[ "$policy" == tested ]] &&
+     ( rp_invitation_oidc_created_for_restored_checkpoint "$path" rolling-back ||
+       rp_invitation_oidc_created_for_restored_checkpoint "$path" rollback-failed ); then
     rp_invitation_oidc_recovery_load "$path" \
       "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" "${RP_CFG_INVITATION_OIDC_SWARM_REF:-}" || return 1
     ref="$RP_INVITATION_RECOVERED_REF"
-    docker secret rm "$ref" >/dev/null 2>&1 || return 1
+    # The previous stack has been restored, and no target service should
+    # still require this secret. Repeat safely if a prior cleanup completed.
+    if docker secret inspect "$ref" >/dev/null 2>&1; then
+      docker secret rm "$ref" >/dev/null 2>&1 || return 1
+    fi
     rp_invitation_oidc_recovery_forget || return 1
     unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
     RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
-  else
-    rp_invitation_oidc_preflight
+    return 0
   fi
+  # A new client must never be silently treated as a preexisting one if its
+  # saved checkpoint was lost/tampered before the DB restore was certified.
+  if [[ "$policy" == tested &&
+        "${RP_INVITATION_OIDC_CREATED_IN_ATTEMPT:-false}" == true ]]; then
+    return 1
+  fi
+  rp_invitation_oidc_preflight
 }
 
 # Read-only gate runs BEFORE any quiesce/snapshot/DB changes. The legacy
@@ -481,6 +525,13 @@ rp_invitation_oidc_preflight() {
     fi
     client="$RP_INVITATION_RECOVERED_CLIENT"
     ref="$RP_INVITATION_RECOVERED_REF"
+    # A certified tested rollback restored ZITADEL without the new app.
+    # Only a matching failed checkpoint may postpone physical verification;
+    # checkpoint_prepare must reconcile the previous stack and secret first.
+    # Do NOT reattach stale refs or create another app in this preflight.
+    if rp_invitation_oidc_created_for_restored_checkpoint "$recovery" rollback-failed; then
+      return 0
+    fi
     recovered=true
   fi
   if [[ "${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}" != true ]]; then
