@@ -231,6 +231,45 @@ describe("Tenant OIDC management fails closed", () => {
     },
   );
 
+  it("retains historical RP owner grants before Actions V2 first cutover despite sso-login backfill", async () => {
+    const f = fixture();
+    // Prisma filters historical role-bearing members out of ssoMembers in
+    // uncertified mode. A legacy owner retains its normal RP project role.
+    f.prisma.tenantMembership.findMany.mockResolvedValue([]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{
+      tenantId, userId: "legacy-owner", zitadelGrantId: "old-role-grant",
+    }]);
+    expect(await f.service.enforceAppConsumerActionsV2Safety()).toEqual({
+      state: "no-consumers", revoked: 0,
+    });
+    const [where] = f.prisma.tenantMembership.findMany.mock.calls[0] as [
+      { where: { AND?: unknown } },
+    ];
+    expect(where.where.AND).toEqual([
+      { roles: { none: { roleId: { not: "sso-login" } } } },
+      { groupMemberships: { none: { group: { roles: { some: {
+        roleId: { not: "sso-login" },
+      } } } } } },
+    ]);
+    expect(f.project.revokeMember).not.toHaveBeenCalled();
+    expect(f.prisma.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("protects SSO-only members before certification while preserving legacy role owners", async () => {
+    const f = fixture();
+    f.prisma.tenantMembership.findMany.mockResolvedValue([
+      { tenantId, userId: "sso-only" },
+    ]);
+    f.prisma.tenantOidcGrant.findMany.mockResolvedValue([{
+      id: "grant-sso-only", tenantId, userId: "sso-only",
+      zitadelUserId: "native-sso-only", zitadelGrantId: "upstream-sso-only",
+    }]);
+    await expect(f.service.enforceAppConsumerActionsV2Safety()).resolves.toEqual({
+      state: "app-consumer-grants-revoked", revoked: 1,
+    });
+    expect(f.project.revokeMember).toHaveBeenCalledWith("native-sso-only", "upstream-sso-only");
+  });
+
   it("protects #430 SSO members without a legacy App Consumer marker on binding loss", async () => {
     const f = fixture({ RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
       RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true" });

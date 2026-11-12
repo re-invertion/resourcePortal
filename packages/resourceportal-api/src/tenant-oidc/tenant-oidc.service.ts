@@ -269,6 +269,9 @@ export class TenantOidcService {
     // as the sole definition of an SSO principal. Any converted membership
     // carrying sso-login must be protected if the issuer-global pre-token
     // Action disappears; a ZITADEL project role is NOT a client entitlement.
+    const gateConfigured =
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
     const consumers = await this.prisma.tenantAppConsumer.findMany({
       select: { tenantId: true, membership: { select: { userId: true } } },
     });
@@ -281,6 +284,20 @@ export class TenantOidcService {
             roleId: "sso-login",
           } } } } } },
         ],
+        // The #430 expand migration assigns sso-login to historical RP
+        // operators. Before first successful Actions V2 cutover their project
+        // grants still follow the previous RP-role policy. Revoking them on
+        // every startup would lock out existing owners/admins. Protect only
+        // SSO-only converted/new memberships and original #398 consumers
+        // until the signed exact-client gate is explicitly configured.
+        ...(gateConfigured ? {} : {
+          AND: [
+            { roles: { none: { roleId: { not: "sso-login" } } } },
+            { groupMemberships: { none: { group: { roles: { some: {
+              roleId: { not: "sso-login" },
+            } } } } } },
+          ],
+        }),
       },
       select: { tenantId: true, userId: true },
     });
@@ -299,10 +316,7 @@ export class TenantOidcService {
       protectedKeys.has(row.tenantId + ":" + row.userId));
     if (!tracked.length) return { state: "no-upstream-app-grants", revoked: 0 };
 
-    const enabled =
-      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
-      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
-    if (enabled) {
+    if (gateConfigured) {
       try {
         await this.zitadel.verifyAppConsumerActionsV2Gate();
         return { state: "verified", revoked: 0 };
