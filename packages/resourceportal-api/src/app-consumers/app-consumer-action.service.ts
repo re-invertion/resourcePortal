@@ -67,9 +67,8 @@ export class AppConsumerActionService {
       throw new ServiceUnavailableException("Issuer not configured");
     }
     // RP Web AND the native RP CLI have independently registered OAuth
-    // clients. The issuer-global pre-token action applies to both. Preserve
-    // regular/JIT RP access without granting App Consumers a path to either
-    // client, and never exempt an arbitrary unknown OAuth client.
+    // clients. The issuer-global pre-token action applies to both. Each now
+    // requires its OWN explicit tenant-scoped native-client grant + sso-login.
     // Check the signed subject in RP's DB; never trust a name or email.
     const nativeClients = [
       this.config.get<string>("OIDC_CLIENT_ID"),
@@ -78,7 +77,8 @@ export class AppConsumerActionService {
       id !== "bootstrap-pending");
     if (nativeClients.includes(clientId)) {
       try {
-        if (await this.consumers.mayIssueNativeRpToken(issuer, subject)) return {};
+        if (await this.consumers.mayIssueNativeRpToken(issuer, subject,
+          clientId === this.config.get<string>("OIDC_CLIENT_ID") ? "web" : "cli")) return {};
       } catch {
         // A DB outage must not fail open to a privileged RP OAuth client.
       }
@@ -87,8 +87,7 @@ export class AppConsumerActionService {
 
     try {
       // Registered RP tenant applications are checked per-client. Unknown
-      // upstream OAuth/MCP DCR clients retain ZITADEL's existing policy for
-      // regular identities, but are never a fallback for App Consumers.
+      // platform/DCR clients deny rather than inheriting an RP role fallback.
       if (await this.consumers.mayIssueLegacyClientToken(issuer, subject, clientId)) return {};
     } catch {
       // No user, grant or secret details in the denied response or HTTP logs.
