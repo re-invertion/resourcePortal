@@ -12,9 +12,14 @@ on:
 permissions:
   contents: read
 
+# Called by Release Readiness on both PR synchronize and review events.
+# A PR review runs a NEW required check on the SAME ref. Scoping to ref
+# would cancel the earlier run's still-running required installer/Swarm gates,
+# producing a false failed Required release readiness check. Retain isolated
+# runs instead; the caller still requires every applicable gate to succeed.
 concurrency:
-  group: swarm-integration-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: swarm-integration-${{ github.workflow }}-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
 
 jobs:
   real-swarm:
