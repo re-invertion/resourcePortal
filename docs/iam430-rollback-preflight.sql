@@ -19,6 +19,33 @@ WITH untracked AS (
   LEFT JOIN "Iam430BackfillAudit" a ON a."kind"='sso-role'
       AND a."membershipId"=m."membershipId" AND a."resourceId"='sso-login'
   WHERE m."roleId"='sso-login' AND a."id" IS NULL
+), native_backfill_divergence AS (
+  -- The previous binary does not consult TenantNativeAppGrant. Reverting a
+  -- migrated native grant's enabled state, membership or client key would
+  -- silently re-authorize Web/CLI access after an in-place downgrade.
+  SELECT a."recordId" AS id
+  FROM "Iam430BackfillAudit" a
+  LEFT JOIN "TenantNativeAppGrant" g ON g."id"::text=a."recordId"
+  WHERE a."kind"='native-app'
+    AND (g."id" IS NULL OR g."enabled" IS DISTINCT FROM true
+      OR g."membershipId" IS DISTINCT FROM a."membershipId"
+      OR g."clientKey" IS DISTINCT FROM a."resourceId")
+), app_backfill_divergence AS (
+  -- Old RP project access may cover these clients implicitly. A revoked or
+  -- repointed migration-created grant cannot be represented by that policy.
+  SELECT a."recordId" AS id
+  FROM "Iam430BackfillAudit" a
+  LEFT JOIN "TenantAppClientGrant" g ON g."id"::text=a."recordId"
+  WHERE a."kind"='tenant-app'
+    AND (g."id" IS NULL OR g."enabled" IS DISTINCT FROM true
+      OR g."membershipId" IS DISTINCT FROM a."membershipId"
+      OR g."oauthApplicationId"::text IS DISTINCT FROM a."resourceId")
+), sso_backfill_divergence AS (
+  SELECT a."membershipId"::text AS id
+  FROM "Iam430BackfillAudit" a
+  LEFT JOIN "MembershipRole" m ON m."membershipId"=a."membershipId"
+    AND m."roleId"='sso-login'
+  WHERE a."kind"='sso-role' AND m."membershipId" IS NULL
 ), invited AS (
   SELECT i."id"::text AS id FROM "TenantInvitation" i
   WHERE cardinality(i."nativeApplicationKeys") > 0
@@ -29,5 +56,11 @@ SELECT 'untracked_native_client_grants', COUNT(*)::int FROM native_untracked
 UNION ALL
 SELECT 'untracked_sso_role_assignments', COUNT(*)::int FROM sso_untracked
 UNION ALL
-SELECT 'pending_native_client_invitations', COUNT(*)::int FROM invited;
+SELECT 'pending_native_client_invitations', COUNT(*)::int FROM invited
+UNION ALL
+SELECT 'revoked_or_missing_backfilled_native_grants', COUNT(*)::int FROM native_backfill_divergence
+UNION ALL
+SELECT 'revoked_or_missing_backfilled_app_grants', COUNT(*)::int FROM app_backfill_divergence
+UNION ALL
+SELECT 'removed_backfilled_sso_roles', COUNT(*)::int FROM sso_backfill_divergence;
 ROLLBACK;
