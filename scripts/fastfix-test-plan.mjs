@@ -532,6 +532,9 @@ const classifiers = [
   [/^scripts\/run-remote-lan-gateway-sysctl-swarm-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
+  // CI changes affecting real Swarm wiring must exercise BOTH independent
+  // runners, not merely pass static YAML parsing or ordinary unit tests.
+  [/^\.github\/workflows\/swarm-integration\.yml$/, ["workflow", "networking", "swarm-smoke-fixtures"]],
   [/^\.github\/workflows\//, ["workflow"]],
 
   [/^scripts\/next-main-release\.mjs$/, ["platform-release", "workflow"]],

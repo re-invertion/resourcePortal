@@ -429,3 +429,36 @@ test("trusted Codex comment update only reruns the existing failed required PR c
   assert.match(source,/shouldRerunReview/);
   assert.doesNotMatch(source,/createCheckRun|createCommitStatus|\/statuses\//);
 });
+
+test('independent network dataplane is selected only for networking and milestones, without bypassing Swarm gate',()=>{
+  const main=load('release-readiness.yml');
+  const called=load('swarm-integration.yml');
+  assert.equal(called.on.workflow_call.inputs.vpn_required.type,'boolean');
+  assert.equal(called.on.workflow_call.inputs.vpn_required.default,false);
+  assert.match(main.jobs.swarm.with.vpn_required,/vpn_smoke/);
+  assert.match(main.jobs.swarm.with.vpn_required,/milestone/);
+  assert.match(called.jobs['real-swarm'].if,/force_gate/);
+  assert.match(called.jobs['network-dataplane'].if,/inputs\.vpn_required == true/);
+  const app=called.jobs['real-swarm'].steps.map(s=>s.run||'').join('\n');
+  const net=called.jobs['network-dataplane'].steps.map(s=>s.run||'').join('\n');
+  assert.match(app,/run-real-swarm-smoke\.sh/);
+  assert.doesNotMatch(app,/run-remote-lan-l2-dhcp-smoke\.sh|run-device-vpn-dataplane-smoke\.sh/);
+  for(const name of ['run-remote-lan-l2-dhcp-smoke.sh','run-device-vpn-dataplane-smoke.sh',
+    'run-remote-lan-gateway-sysctl-swarm-smoke.sh','run-remote-lan-static-nsenter-smoke.sh']){
+    assert.ok(net.includes(name),name);
+  }
+  assert.match(net,/RP_LAN_REAL_CONTROL_PLANE_FAULT/);
+  assert.match(net,/api:start/);
+  assert.match(net,/docker swarm init/);
+  assert.match(net,/npm run build --workspace @resource-portal\/help/);
+  assert.match(net,/docker network create --driver overlay resourceportal-smoke-control-plane/);
+  assert.match(main.jobs['release-ready'].steps[0].run,/verify_gate swarm "\$SWARM" true/);
+  for(const wf of [called,load('tenant-oidc-live.yml'),load('federation-integration.yml')]){
+    assert.ok(Object.values(wf.jobs).some(j=>j.steps.some(s=>s.uses==='actions/cache@v4' &&
+      String(s.with?.key).includes('hashFiles'))),'missing version-bound browser cache');
+  }
+  const report=main.jobs['release-ready'].steps.find(s=>s.name?.startsWith('Report slowest'));
+  assert.equal(report.if,'always()');
+  assert.equal(report['continue-on-error'],true);
+  assert.match(report.run,/actions\/runs\/\$GITHUB_RUN_ID\/jobs/);
+});

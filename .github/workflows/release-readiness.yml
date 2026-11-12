@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   issues: read
   # The called Federation gate may comment on failed PR browser tests.
   pull-requests: write
@@ -297,6 +298,8 @@ jobs:
     uses: ./.github/workflows/swarm-integration.yml
     with:
       force_gate: true
+      # Only network-impacting changes and milestones require the dataplane.
+      vpn_required: ${{ needs.candidate.outputs.mode == 'milestone' || needs.candidate.outputs.vpn_smoke == 'true' }}
 
   capacity-docker29:
     name: Docker 29 private cgroup capacity gate
@@ -429,3 +432,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/release-review-gate.mjs
+
+      # Diagnostic-only; never overrides required gates or reviews.
+      - name: Report slowest Release Readiness jobs and steps
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100")"
+          {
+            echo '### Release Readiness duration profile'
+            echo '| Job | Seconds |'
+            echo '|---|---:|'
+            jq -r '[.jobs[] | select(.started_at and .completed_at) | {name:.name,sec:((.completed_at|fromdateiso8601)-(.started_at|fromdateiso8601))}] | sort_by(-.sec) | .[:10][] | "| \(.name) | \(.sec) |"' <<< "$jobs"
+            echo ''
+            echo '| Slowest step | Seconds |'
+            echo '|---|---:|'
+            jq -r '[.jobs[] | .name as $job | .steps[]? | select(.started_at and .completed_at and .conclusion != "skipped") | {name:($job+" / "+.name),sec:((.completed_at|fromdateiso8601)-(.started_at|fromdateiso8601))}] | sort_by(-.sec) | .[:10][] | "| \(.name) | \(.sec) |"' <<< "$jobs"
+          } >> "$GITHUB_STEP_SUMMARY"

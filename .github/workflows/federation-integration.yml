@@ -36,6 +36,12 @@ jobs:
       - name: Validate Production Installer contracts
         run: npm run test:installer
 
+      - name: Cache versioned Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install Playwright for live browser login
         run: npx playwright install --with-deps chromium
 
