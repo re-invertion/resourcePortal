@@ -6,7 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   echo 'Refusing migration test outside isolated CI database' >&2; exit 1;
 }
 # Prisma accepts ?schema=public, but libpq utilities (psql/pg_dump) do not.
-pgurl="${DATABASE_URL%%\\?*}"
+pgurl="${DATABASE_URL%%\?*}"
 tmp="$(mktemp -d)"
 trap 'rm -rf -- "$tmp"' EXIT
 schema="$root/packages/resourceportal-api/prisma/schema.prisma"
