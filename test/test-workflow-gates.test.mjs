@@ -450,6 +450,8 @@ test('independent network dataplane is selected only for networking and mileston
   assert.match(net,/RP_LAN_REAL_CONTROL_PLANE_FAULT/);
   assert.match(net,/api:start/);
   assert.match(net,/docker swarm init/);
+  assert.match(net,/npm run build --workspace @resource-portal\/help/);
+  assert.match(net,/docker network create --driver overlay resourceportal-smoke-control-plane/);
   assert.match(main.jobs['release-ready'].steps[0].run,/verify_gate swarm "\$SWARM" true/);
   for(const wf of [called,load('tenant-oidc-live.yml'),load('federation-integration.yml')]){
     assert.ok(Object.values(wf.jobs).some(j=>j.steps.some(s=>s.uses==='actions/cache@v4' &&

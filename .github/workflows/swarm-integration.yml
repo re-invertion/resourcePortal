@@ -453,6 +453,9 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      # ResourceBot/ApiModule imports the built help package at runtime.
+      - name: Build Help runtime dependency
+        run: npm run build --workspace @resource-portal/help
       - name: Generate Prisma client
         run: npm run api:prisma:generate
       - name: Apply database migrations
@@ -471,6 +474,12 @@ jobs:
           test "$(docker info --format '{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}')" = 'active true'
           node_id="$(docker info --format '{{.Swarm.NodeID}}')"
           docker node update --label-add rp.node.control-plane=true "$node_id"
+      # The Gateway sysctl smoke inspects the exact overlay and cannot use
+      # the application job's separate Docker daemon.
+      - name: Create dedicated Gateway control-plane overlay
+        run: |
+          docker network create --driver overlay resourceportal-smoke-control-plane
+          docker network inspect resourceportal-smoke-control-plane >/dev/null
       - name: Start disposable RP API for full 443s fault simulation
         run: |
           set -euo pipefail
@@ -545,6 +554,9 @@ jobs:
           path: ${{ runner.temp }}/resource-portal-api.log
           if-no-files-found: ignore
           retention-days: 7
+      - name: Remove dedicated Gateway control-plane overlay
+        if: always()
+        run: docker network rm resourceportal-smoke-control-plane || true
       - name: Leave dedicated Swarm
         if: always()
         run: docker swarm leave --force || true
