@@ -56,10 +56,8 @@ export class TenantsService {
           some: {
             userId,
             status: "Active",
-            appConsumer: { is: null },
-            // An application-only identity may have an active membership
-            // without any ResourcePortal read permissions. Never return
-            // tenant metadata, billing or other members on membership alone.
+            // Membership grants no RP access by itself. A user with only
+            // sso-login and application grants cannot enumerate tenants.
             // Evaluate effective RolePermission bindings (not legacy arrays).
             OR: [
               {
@@ -201,16 +199,19 @@ export class TenantsService {
   async createTenant(dto: CreateTenantDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        // App-only identities must not self-escalate via the global create
-        // endpoint (which grants Owner on a freshly created tenant).
-        // The user-row lock also serializes this with invitation acceptance.
+        // A first-time user may create their initial tenant. Existing users
+        // must be an active owner in an existing tenant; SSO-only, Viewer and
+        // suspended users cannot mint themselves a fresh Owner role here.
+        // Lock the User to serialize with invitation acceptance.
         await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${actor.id}::uuid FOR UPDATE`);
-        const appOnly = await tx.tenantAppConsumer.findFirst({
-          where: { membership: { userId: actor.id, status: MembershipStatus.Active } },
-          select: { membershipId: true },
-        });
-        if (appOnly) {
-          throw new ForbiddenException("App User identities cannot create ResourcePortal tenants");
+        const existingCount = await tx.tenantMembership.count({ where: { userId: actor.id } });
+        if (existingCount) {
+          const owned = await tx.tenantMembership.findFirst({
+            where: { userId: actor.id, status: MembershipStatus.Active,
+              roles: { some: { roleId: TENANT_OWNER_ROLE_ID } } },
+            select: { id: true },
+          });
+          if (!owned) throw new ForbiddenException("Tenant creation requires an existing Owner grant");
         }
         const tenant = await tx.tenant.create({
           data: {
@@ -526,15 +527,18 @@ export class TenantsService {
     actor: AuthenticatedUser,
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
+    const roleIds = dto.roleIds ?? [];
     const oauthApplicationIds = dto.oauthApplicationIds ?? [];
-    if ((dto.roleIds.length === 0) === (oauthApplicationIds.length === 0)) {
-      throw new BadRequestException("Invite with either RP roles or app-only access, not both or neither");
+    const nativeApplicationKeys = dto.nativeApplicationKeys ?? [];
+    if (nativeApplicationKeys.some(key => key !== "web" && key !== "cli") ||
+        new Set(nativeApplicationKeys).size !== nativeApplicationKeys.length) {
+      throw new BadRequestException("Invalid ResourcePortal client keys");
     }
     if (new Set(oauthApplicationIds).size !== oauthApplicationIds.length) {
       throw new BadRequestException("OAuth application ids must be unique");
     }
-    await this.ensureRolesExist(dto.roleIds);
-    await this.assertOwnerRoleChangeAllowed(tenantId, actor, dto.roleIds);
+    await this.ensureRolesExist(roleIds);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, roleIds);
     if (oauthApplicationIds.length) {
       const applications = await this.prisma.oAuthApplication.findMany({
         where: { tenantId, id: { in: oauthApplicationIds } },
@@ -567,7 +571,8 @@ export class TenantsService {
           data: {
             tenantId,
             email,
-            roleIds: dto.roleIds,
+            roleIds,
+            nativeApplicationKeys,
             tokenHash: hashToken(token),
             expiresAt: invitationExpiry(),
             lastSentAt: new Date(),
@@ -596,8 +601,9 @@ export class TenantsService {
             correlationId: randomUUID(),
             changes: {
               email,
-              roleIds: dto.roleIds,
+              roleIds,
               oauthApplicationIds,
+              nativeApplicationKeys,
               expiresAt: created.expiresAt,
             },
           },
@@ -755,8 +761,8 @@ export class TenantsService {
       roles: invitation.roleIds
         .map((roleId) => rolesById.get(roleId))
         .filter((role): role is { id: string; name: string } => Boolean(role)),
-      accessType: invitation.appInvitationGrants?.length ? "AppUser" : "ResourcePortal",
       applications: (invitation.appInvitationGrants ?? []).map(({ application }) => application),
+      nativeApplicationKeys: invitation.nativeApplicationKeys,
       expiresAt: invitation.expiresAt,
       status: invitation.expiresAt <= new Date() ? "Expired" : "Pending",
     };
@@ -791,37 +797,14 @@ export class TenantsService {
     }
 
     const appIds = (invitation.appInvitationGrants ?? []).map((row) => row.oauthApplicationId);
-    if ((invitation.roleIds.length === 0) === (appIds.length === 0)) {
-      throw new ForbiddenException("Malformed invitation grants");
+    const nativeKeys = invitation.nativeApplicationKeys;
+    if (nativeKeys.some(key => key !== "web" && key !== "cli")) {
+      throw new ForbiddenException("Invalid invitation client keys");
     }
     await this.ensureRolesExist(invitation.roleIds);
 
     const membership = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${actor.id}::uuid FOR UPDATE`);
-      if (appIds.length) {
-        const privileged = await tx.tenantMembership.findFirst({
-          where: {
-            userId: actor.id, status: MembershipStatus.Active,
-            appConsumer: { is: null },
-            OR: [
-              { roles: { some: {} } },
-              { groupMemberships: { some: { group: { roles: { some: {} } } } } },
-            ],
-          },
-          select: { id: true },
-        });
-        if (privileged) {
-          throw new ForbiddenException("App-only accounts must use separate identities from ResourcePortal members");
-        }
-      } else {
-        const appConsumer = await tx.tenantAppConsumer.findFirst({
-          where: { membership: { userId: actor.id, status: MembershipStatus.Active } },
-          select: { membershipId: true },
-        });
-        if (appConsumer) {
-          throw new ForbiddenException("App User identities cannot acquire ResourcePortal membership roles");
-        }
-      }
       const existingMembership = await tx.tenantMembership.findUnique({
         where: {
           userId_tenantId: {
@@ -849,18 +832,21 @@ export class TenantsService {
       });
 
       if (appIds.length) {
-        // Create zero-role application-only identity and scoped grants in the
-        // SAME transaction as membership creation/invitation consumption.
-        await tx.tenantAppConsumer.create({
-          data: {
-            membershipId: created.id,
-            tenantId: invitation.tenantId,
-            createdBy: invitation.createdBy,
-            grants: { create: appIds.map((oauthApplicationId) => ({
-              tenantId: invitation.tenantId, oauthApplicationId,
-              createdBy: invitation.createdBy, updatedBy: invitation.createdBy,
-            })) },
-          },
+        await tx.tenantAppClientGrant.createMany({
+          data: appIds.map(oauthApplicationId => ({
+            membershipId: created.id, tenantId: invitation.tenantId, oauthApplicationId,
+            createdBy: invitation.createdBy, updatedBy: invitation.createdBy,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      if (nativeKeys.length) {
+        await tx.tenantNativeAppGrant.createMany({
+          data: nativeKeys.map(clientKey => ({
+            membershipId: created.id, tenantId: invitation.tenantId, clientKey,
+            createdBy: invitation.createdBy, updatedBy: invitation.createdBy,
+          })),
+          skipDuplicates: true,
         });
       }
 
@@ -893,7 +879,7 @@ export class TenantsService {
             email: invitation.email,
             roleIds: invitation.roleIds,
             oauthApplicationIds: appIds,
-            accessType: appIds.length ? "AppUser" : "ResourcePortal",
+            nativeApplicationKeys: nativeKeys,
           },
         },
       });
@@ -1336,12 +1322,10 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     const existing = await this.findMembershipOrThrow(tenantId, membershipId);
-    if (dto.roleIds?.length) {
-      const appConsumer = await this.prisma.tenantAppConsumer.findUnique({
-        where: { membershipId },
-        select: { membershipId: true },
-      });
-      if (appConsumer) throw new ForbiddenException("App Users cannot be assigned ResourcePortal roles");
+    // Administrators may manage app grants and RBAC independently, but never
+    // change their own membership through this management endpoint.
+    if (actor.id === existing.userId && (dto.roleIds !== undefined || dto.status !== undefined)) {
+      throw new ForbiddenException("Self-service membership changes are forbidden");
     }
 
     if (dto.roleIds !== undefined) {
@@ -1683,6 +1667,8 @@ export class TenantsService {
         },
         orderBy: { tenantGroupId: "asc" as const },
       },
+      appGrants: { select: { oauthApplicationId: true, enabled: true } },
+      nativeAppGrants: { select: { clientKey: true, enabled: true } },
     };
   }
 

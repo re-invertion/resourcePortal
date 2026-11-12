@@ -140,7 +140,12 @@ export class TenantOidcService {
             tenantId,
             status: MembershipStatus.Active,
             user: { status: UserStatus.Active },
-            ...(!appConsumerGateCertified ? { appConsumer: { is: null } } : {}),
+            ...(appConsumerGateCertified ? {
+              OR: [
+                { roles: { some: { roleId: "sso-login" } } },
+                { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+              ],
+            } : { appConsumer: { is: null } }),
           },
           include: { user: { include: { identities: true } } },
         });
