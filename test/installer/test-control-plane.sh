@@ -62,9 +62,11 @@ status 1 'block certified global Action without isolated invitation client' rp_r
 export RP_CFG_INVITATION_OIDC_CLIENT_ID='zitadel-client-123'
 export RP_CFG_INVITATION_OIDC_SWARM_REF='rp_invitation_oidc_secret_0123456789abcdef'
 status 1 'block invitation client collision with RP native Web client' rp_render_stack final
-export RP_CFG_INVITATION_OIDC_CLIENT_ID="$(printf '%0256d' 12345)"
+RP_CFG_INVITATION_OIDC_CLIENT_ID="$(printf '%0256d' 12345)"
+export RP_CFG_INVITATION_OIDC_CLIENT_ID
 status 0 'accept longest valid 256-character invitation OIDC client ID' rp_render_stack final
-export RP_CFG_INVITATION_OIDC_CLIENT_ID="$(printf '%0257d' 12345)"
+RP_CFG_INVITATION_OIDC_CLIENT_ID="$(printf '%0257d' 12345)"
+export RP_CFG_INVITATION_OIDC_CLIENT_ID
 status 1 'reject 257-character invitation client ID' rp_render_stack final
 export RP_CFG_INVITATION_OIDC_CLIENT_ID='bad/client'
 status 1 'reject invitation ID containing slash' rp_render_stack final

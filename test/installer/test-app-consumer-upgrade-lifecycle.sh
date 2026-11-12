@@ -31,6 +31,7 @@ rp_run_zitadel_mcp_oauth_reconcile(){ printf 'MCP\n'; }
 rp_app_action_prepare(){ printf 'PROVISION\n'; }
 rp_app_action_checkpoint_record(){ printf 'ACTION-JOURNAL\n'; }
 rp_invitation_oidc_prepare(){ printf 'INVITATION-READY\n'; }
+rp_invitation_oidc_rollback_recover(){ printf 'INVITATION-RECOVER:%s\n' "$1"; }
 rp_run_migrations(){ printf 'MIGRATE\n'; }
 rp_deploy_control_plane(){ printf 'DEPLOY\n'; }
 rp_wait_for_https_origin(){ printf 'HEALTH\n'; }
@@ -64,7 +65,7 @@ testcase(){
   local actual expected
   actual="$(grep -Ev '^(STAGE|PHASE):' "$tmp/trace" | grep -v '^$')"
   if [[ "$expect_fail" == true ]]; then
-    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE DB-RESTORED ACTION-DETACHED OLD-STACK HEALTH)"
+    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE DB-RESTORED ACTION-DETACHED OLD-STACK HEALTH INVITATION-RECOVER:image-only)"
   else
     expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE OIDC-READY ENROLL CONFIG STACK-PERSIST)"
   fi

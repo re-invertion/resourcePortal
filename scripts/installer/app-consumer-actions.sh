@@ -293,7 +293,7 @@ rp_invitation_oidc_http() (
   local host="${RP_CFG_ZITADEL_DOMAIN:-}"
   local patfile="${RP_ZITADEL_MANAGEMENT_PAT_FILE:-/mnt/resourceportal/platform/zitadel-bootstrap/admin.pat}"
   local pat conf
-  [[ "$method" == GET || "$method" == POST ]] || return 1
+  [[ "$method" == GET || "$method" == POST || "$method" == DELETE ]] || return 1
   [[ "$project" =~ ^[0-9]{1,64}$ && "$org" =~ ^[0-9]{1,64}$ ]] || return 1
   [[ "$path" == "/management/v1/projects/$project/apps/_search" ||
      "$path" == "/management/v1/projects/$project/apps/oidc" ||
@@ -372,11 +372,117 @@ rp_invitation_oidc_verify() {
   return "$status"
 }
 
+# Only public client and Swarm secret REFERENCES live here; the confidential
+# value remains exclusively in Docker Swarm. This owner-private journal is
+# independent of the installer config restored by image-only rollback.
+rp_invitation_oidc_recovery_path() {
+  local dir="${RP_UPGRADE_STATE_DIR:-${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}/upgrade}"
+  [[ "$dir" == /* && "$dir" != / && ! -L "$dir" ]] || return 1
+  printf '%s/invitation-oidc-recovery.json\n' "$dir"
+}
+
+rp_invitation_oidc_recovery_record() {
+  local app_id="$1" client="$2" ref="$3" path tmp
+  # Fresh installations have no upgrade rollback checkpoint.
+  [[ -n "${RP_UPGRADE_ACTIVE_CHECKPOINT:-}" ]] || return 0
+  path="$(rp_invitation_oidc_recovery_path)" || return 1
+  [[ "${RP_UPGRADE_ACTIVE_CHECKPOINT}" == "${path%/*}" &&
+     -d "${path%/*}" && ! -L "$path" &&
+     "$app_id" =~ ^[0-9]{1,64}$ &&
+     "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] || return 1
+  rp_invitation_oidc_client_id_valid "$client" || return 1
+  tmp="$(umask 077; mktemp "${path%/*}/.invitation-recovery.XXXXXX")" || return 1
+  if ! jq -n --arg id "$app_id" --arg client "$client" --arg ref "$ref" \
+       --arg project "${RP_CFG_ZITADEL_PROJECT_ID}" --arg host "${RP_CFG_ZITADEL_DOMAIN}" \
+       --arg domain "${RP_CFG_DOMAIN}" \
+       '{appId:$id,clientId:$client,secretRef:$ref,projectId:$project,issuerHost:$host,domain:$domain}' > "$tmp" ||
+     ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$path"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+# If the previous target was rolled back image-only, its confidential client
+# still exists in ZITADEL and its versioned Swarm secret is still sealed.
+# Reattach ONLY after verifying both physical resources and exact namespace.
+rp_invitation_oidc_recovery_load() {
+  local path="$1" candidate_client="$2" candidate_ref="$3"
+  [[ -f "$path" && ! -L "$path" && "$(stat -c %a "$path")" == 600 ]] || return 1
+  jq -e --arg project "${RP_CFG_ZITADEL_PROJECT_ID:-}" \
+    --arg host "${RP_CFG_ZITADEL_DOMAIN:-}" --arg domain "${RP_CFG_DOMAIN:-}" '
+      .projectId == $project and .issuerHost == $host and .domain == $domain and
+      (.appId | type == "string" and test("^[0-9]{1,64}$")) and
+      (.clientId | type == "string" and length > 0 and length <= 256 and test("^[A-Za-z0-9@._-]+$")) and
+      (.secretRef | type == "string" and test("^rp_invitation_oidc_secret_[a-f0-9]{16}$"))
+    ' "$path" >/dev/null 2>&1 || return 1
+  RP_INVITATION_RECOVERED_CLIENT="$(jq -er '.clientId' "$path")" || return 1
+  RP_INVITATION_RECOVERED_REF="$(jq -er '.secretRef' "$path")" || return 1
+  [[ ( -z "$candidate_client" && -z "$candidate_ref" ) ||
+     ( "$candidate_client" == "$RP_INVITATION_RECOVERED_CLIENT" &&
+       "$candidate_ref" == "$RP_INVITATION_RECOVERED_REF" ) ]]
+}
+
+rp_invitation_oidc_recovery_forget() {
+  local path
+  path="$(rp_invitation_oidc_recovery_path)" || return 1
+  [[ ! -L "$path" ]] || return 1
+  rm -f -- "$path"
+}
+
+# Compensate a failed, not-yet-journaled create, so its lost secret cannot
+# make every later read-only preflight reject an orphaned application.
+rp_invitation_oidc_discard_created() {
+  local app_id="$1" ref="${2:-}" tmp
+  [[ "$app_id" =~ ^[0-9]{1,64}$ ]] || return 1
+  tmp="$(umask 077; mktemp)" || return 1
+  if ! rp_invitation_oidc_http DELETE \
+       "/management/v1/projects/${RP_CFG_ZITADEL_PROJECT_ID}/apps/$app_id" "$tmp"; then
+    rm -f -- "$tmp"; return 1
+  fi
+  rm -f -- "$tmp"
+  if [[ -n "$ref" ]]; then
+    [[ "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] || return 1
+    docker secret rm "$ref" >/dev/null 2>&1 || return 1
+  fi
+}
+
+# A tested database rollback removes an app created AFTER its ZITADEL
+# snapshot, so discard only the newly created secret. An image-only rollback
+# preserves the app and its sealed secret, and keeps the verified journal for
+# the next upgrade's read-only preflight. Never delete pre-existing clients.
+rp_invitation_oidc_rollback_recover() {
+  local policy="$1" path ref
+  path="$(rp_invitation_oidc_recovery_path)" || return 1
+  [[ ! -L "$path" ]] || return 1
+  [[ -f "$path" ]] || return 0
+  if [[ "$policy" == tested && "${RP_INVITATION_OIDC_CREATED_IN_ATTEMPT:-false}" == true ]]; then
+    rp_invitation_oidc_recovery_load "$path" \
+      "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" "${RP_CFG_INVITATION_OIDC_SWARM_REF:-}" || return 1
+    ref="$RP_INVITATION_RECOVERED_REF"
+    docker secret rm "$ref" >/dev/null 2>&1 || return 1
+    rp_invitation_oidc_recovery_forget || return 1
+    unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
+    RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
+  else
+    rp_invitation_oidc_preflight
+  fi
+}
+
 # Read-only gate runs BEFORE any quiesce/snapshot/DB changes. The legacy
 # (0.2.152) state with BOTH client references absent can be provisioned.
 rp_invitation_oidc_preflight() {
   local client="${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}"
-  local ref="${RP_CFG_INVITATION_OIDC_SWARM_REF:-}" tmp
+  local ref="${RP_CFG_INVITATION_OIDC_SWARM_REF:-}" tmp recovery recovered=false
+  recovery="$(rp_invitation_oidc_recovery_path)" || return 1
+  if [[ -e "$recovery" || -L "$recovery" ]]; then
+    if ! rp_invitation_oidc_recovery_load "$recovery" "$client" "$ref"; then
+      printf 'Upgrade blocked before shutdown: invitation OIDC recovery journal is invalid or mismatched.\n' >&2
+      return 1
+    fi
+    client="$RP_INVITATION_RECOVERED_CLIENT"
+    ref="$RP_INVITATION_RECOVERED_REF"
+    recovered=true
+  fi
   if [[ "${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}" != true ]]; then
     if [[ -n "$client" || -n "$ref" ]]; then
       printf 'Upgrade blocked before shutdown: invitation OAuth references require certified Actions V2.\n' >&2
@@ -399,6 +505,11 @@ rp_invitation_oidc_preflight() {
     rm -rf -- "$tmp"; return 1
   fi
   if [[ -n "$client" ]]; then
+    if [[ "$recovered" == true ]] &&
+       ! jq -e --arg id "$(jq -er '.appId' "$recovery")" --arg client "$client"           '[.result[] | select(.id == $id and .oidcConfig.clientId == $client)] | length == 1'           "$tmp/apps" >/dev/null 2>&1; then
+      printf 'Upgrade blocked: recovered invitation app ID does not match the physical ZITADEL app.\n' >&2
+      rm -rf -- "$tmp"; return 1
+    fi
     if ! rp_invitation_oidc_verify "$client" "$tmp/apps"; then
       printf 'Upgrade blocked: invitation OAuth client is not a verified isolated confidential code-only app.\n' >&2
       rm -rf -- "$tmp"; return 1
@@ -408,6 +519,11 @@ rp_invitation_oidc_preflight() {
     rm -rf -- "$tmp"; return 1
   fi
   rm -rf -- "$tmp"
+  if [[ "$recovered" == true ]]; then
+    RP_CFG_INVITATION_OIDC_CLIENT_ID="$client"
+    RP_CFG_INVITATION_OIDC_SWARM_REF="$ref"
+    export RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
+  fi
 }
 
 # Called after the protected 2-DB snapshot for upgrades and after ZITADEL
@@ -416,7 +532,7 @@ rp_invitation_oidc_prepare() {
   [[ "${RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED:-false}" == true ]] || return 0
   rp_invitation_oidc_preflight || return 1
   [[ -z "${RP_CFG_INVITATION_OIDC_CLIENT_ID:-}" ]] || return 0
-  local tmp client ref
+  local tmp app_id client ref=''
   tmp="$(umask 077; mktemp -d)" || return 1
   jq -n --arg callback "https://${RP_CFG_DOMAIN}/api/invitations/onboard/callback" \
     --arg origin "https://${RP_CFG_DOMAIN}" '{
@@ -434,28 +550,41 @@ rp_invitation_oidc_prepare() {
       "$tmp/created" "$tmp/request"; then
     rm -rf -- "$tmp"; return 1
   fi
-  client="$(jq -er '.clientId | select(type=="string")' "$tmp/created")" || {
-    rm -rf -- "$tmp"; return 1;
+  app_id="$(jq -er '.appId | select(type=="string" and test("^[0-9]{1,64}$"))' "$tmp/created")" || {
+    printf 'Invitation app was created without a recoverable ID; manual ZITADEL reconciliation is required.\n' >&2
+    rm -rf -- "$tmp"; return 1
   }
-  if ! rp_invitation_oidc_client_id_valid "$client" ||
-     ! jq -e '.appId | type == "string"' "$tmp/created" >/dev/null ||
+  if ! client="$(jq -er '.clientId | select(type=="string")' "$tmp/created")" ||
+     ! rp_invitation_oidc_client_id_valid "$client" ||
      ! jq -e '.clientSecret | type == "string" and length >= 16' "$tmp/created" >/dev/null; then
+    rp_invitation_oidc_discard_created "$app_id" || \
+      printf 'Invitation app compensation failed; manual reconciliation is required.\n' >&2
     rm -rf -- "$tmp"; return 1
   fi
-  (umask 077; printf '%s' "$(jq -er '.clientSecret' "$tmp/created")" > "$tmp/secret") || {
-    rm -rf -- "$tmp"; return 1;
-  }
+  if ! (umask 077; printf '%s' "$(jq -er '.clientSecret' "$tmp/created")" > "$tmp/secret"); then
+    rp_invitation_oidc_discard_created "$app_id" || \
+      printf 'Invitation app compensation failed; manual reconciliation is required.\n' >&2
+    rm -rf -- "$tmp"; return 1
+  fi
   if ! rp_invitation_oidc_search "$tmp/apps" ||
      ! rp_invitation_oidc_verify "$client" "$tmp/apps"; then
+    rp_invitation_oidc_discard_created "$app_id" || \
+      printf 'Invitation app compensation failed; manual reconciliation is required.\n' >&2
     rm -rf -- "$tmp"; return 1
   fi
   ref="$(rp_ensure_versioned_swarm_secret rp_invitation_oidc_secret "$tmp/secret")" || {
-    rm -rf -- "$tmp"; return 1;
+    rp_invitation_oidc_discard_created "$app_id" || \
+      printf 'Invitation app compensation failed; manual reconciliation is required.\n' >&2
+    rm -rf -- "$tmp"; return 1
   }
   if [[ ! "$ref" =~ ^rp_invitation_oidc_secret_[a-f0-9]{16}$ ]] ||
-     ! docker secret inspect "$ref" >/dev/null 2>&1; then
+     ! docker secret inspect "$ref" >/dev/null 2>&1 ||
+     ! rp_invitation_oidc_recovery_record "$app_id" "$client" "$ref"; then
+    rp_invitation_oidc_discard_created "$app_id" "$ref" || \
+      printf 'Invitation app/secret compensation failed; manual reconciliation is required.\n' >&2
     rm -rf -- "$tmp"; return 1
   fi
+  RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=true
   RP_CFG_INVITATION_OIDC_CLIENT_ID="$client"
   RP_CFG_INVITATION_OIDC_SWARM_REF="$ref"
   export RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF

@@ -949,6 +949,15 @@ rp_upgrade_restore_after_failure() {
     rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
     return 1
   }
+  # Image-only rollback retains the certified OIDC credential references for
+  # a subsequent upgrade; tested DB restore discards only clients introduced
+  # after the snapshot. Never report rollback success with orphaned references.
+  if declare -F rp_invitation_oidc_rollback_recover >/dev/null &&
+     ! rp_invitation_oidc_rollback_recover "$claim"; then
+    rp_upgrade_checkpoint_phase rollback-failed "$failed_step" || true
+    printf 'Rollback blocked: invitation OIDC recovery journal could not be reconciled.\n' >&2
+    return 1
+  fi
   rp_upgrade_checkpoint_phase rolled-back "$failed_step" || return 1
   printf "Automatic rollback completed: previous ResourcePortal stack is healthy. Update failed.\n" >&2
   return 1
@@ -962,6 +971,7 @@ rp_upgrade_apply() {
   [[ -r "$previous_stack" ]] || return 1
   # Keep this guard even when the apply function is invoked directly.
   rp_upgrade_check_temporary_files || return 1
+  RP_INVITATION_OIDC_CREATED_IN_ATTEMPT=false
   rp_config_apply_defaults || return 1
   rp_verify_release_manifest_attestation "$manifest" || return 1
   rp_upgrade_rollback_allowed "$manifest" || {
@@ -1041,4 +1051,7 @@ rp_upgrade_apply() {
     return 1
   }
   rp_upgrade_checkpoint_phase completed "target-stack-healthy" || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint completed"; return 1; }
+  # Keep the owner-private reference journal even after success: this commit
+  # releases the upgrade lock, so deleting the journal here would race a
+  # subsequent upgrade and could erase its recovery metadata.
 }
