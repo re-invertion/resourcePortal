@@ -106,6 +106,40 @@ export class OidcAuthService {
     return { ...user, authenticatedIdpId };
   }
 
+  /**
+   * Dedicated, short-lived invitation client: signed ID-token identity proof,
+   * not an RP login. Its tokens MUST NOT create a PortalSession or authorize
+   * RP bearer APIs. The caller must verify the opaque invitation both before
+   * the code exchange and inside the atomic membership-accept transaction.
+   */
+  async authenticateInvitationTokens(
+    idToken: string, accessToken: string, nonce: string, invitedEmail: string,
+  ): Promise<AuthenticatedUser> {
+    const client = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
+    if (this.config.get<string>("RP_INVITATION_ONBOARDING_ENABLED") !== "true" ||
+        !client || client === this.config.get<string>("OIDC_CLIENT_ID") ||
+        client === this.config.get<string>("OIDC_CLI_CLIENT_ID")) {
+      throw new UnauthorizedException("Isolated invitation client unavailable");
+    }
+    const claims = await this.verifyToken(idToken, client);
+    if (!nonce || claims.nonce !== nonce || this.verifiedAuthenticationIdpId(claims)) {
+      throw new UnauthorizedException("Invitation identity proof is invalid");
+    }
+    const human = await this.resolveHumanClaims(accessToken, claims);
+    if (human.email_verified !== true ||
+        this.getEmail(human) !== invitedEmail.trim().toLowerCase()) {
+      throw new UnauthorizedException("Verified invitation email mismatch");
+    }
+    // Never merge two distinct issuer+subject identities based on email alone.
+    // Only the explicit, validated invitation callback can create a new User
+    // when the normal OIDC_AUTO_PROVISION_USERS setting is disabled.
+    const user = await this.findOrProvisionUser(this.getIssuer(), human, undefined, true);
+    if (user.status !== UserStatus.Active) {
+      throw new UnauthorizedException("Invited identity is not active");
+    }
+    return user;
+  }
+
   async authenticateMcpPrincipalToken(token: string, rejectFederated = false): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
     this.assertMcpTokenClaims(payload);
@@ -200,12 +234,12 @@ export class OidcAuthService {
     return claims;
   }
 
-  private async verifyToken(token: string) {
+  private async verifyToken(token: string, invitationAudience?: string) {
     const { jwtVerify } = await import("jose");
     const issuer = this.getIssuer();
     const jwks = await this.getJwks();
     const verifyOptions: JWTVerifyOptions = { issuer };
-    const audience = this.getAudience();
+    const audience = invitationAudience ? [invitationAudience] : this.getAudience();
 
     if (audience.length > 0) {
       verifyOptions.audience = audience.length === 1 ? audience[0] : audience;
@@ -213,6 +247,20 @@ export class OidcAuthService {
 
     try {
       const result = await jwtVerify(token, jwks, verifyOptions);
+      if (!invitationAudience) {
+        const onboardingClient = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
+        const aud = Array.isArray(result.payload.aud) ? result.payload.aud
+          : typeof result.payload.aud === "string" ? [result.payload.aud] : [];
+        // Identity-only onboarding tokens cannot be replayed as normal RP,
+        // CLI, MCP or tenant management bearer tokens.
+        if (onboardingClient && (
+          aud.includes(onboardingClient) ||
+          result.payload.azp === onboardingClient ||
+          result.payload.client_id === onboardingClient
+        )) {
+          throw new UnauthorizedException("Invitation token is not an RP API credential");
+        }
+      }
       return result.payload;
     } catch {
       throw new UnauthorizedException("OIDC bearer token is invalid");
@@ -240,6 +288,7 @@ export class OidcAuthService {
     issuer: string,
     payload: JWTPayload,
     identityProviderId?: string,
+    allowInvitedProvision = false,
   ): Promise<AuthenticatedUser> {
     const subject = this.requireStringClaim(payload.sub, "sub");
     const email = this.getEmail(payload);
@@ -313,7 +362,7 @@ export class OidcAuthService {
       );
     }
 
-    if (!this.isAutoProvisionEnabled()) {
+    if (!this.isAutoProvisionEnabled() && !allowInvitedProvision) {
       throw new UnauthorizedException("OIDC user is not provisioned");
     }
 
