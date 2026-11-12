@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiRequest } from "../api/client";
 import { AuthWorkspaceLayout } from "../components/auth-workspace";
 import {
@@ -43,7 +43,6 @@ export function InvitationPage({
   const [preview, setPreview] = useState<InvitationPreview>();
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
-  const returnTo = useMemo(() => `/invitations/${encodeURIComponent(token)}`, [token]);
 
   useEffect(() => {
     let active = true;
@@ -65,9 +64,10 @@ export function InvitationPage({
   }, [token]);
 
   function authHref(mode: "login" | "register") {
-    const query = new URLSearchParams({ returnTo });
-    if (preview?.tenant.id) query.set("tenantId", preview.tenant.id);
-    return `/${mode}?${query.toString()}`;
+    // First-time invitees use an identity-only client; standard RP Web login
+    // is forbidden until the invitation creates an explicit native Web grant.
+    const query = new URLSearchParams({ token, register: String(mode === "register") });
+    return `/api/invitations/onboard/start?${query.toString()}`;
   }
 
   async function accept() {
@@ -136,7 +136,7 @@ export function InvitationPage({
               </>
             ) : (
               <>
-                <div className="mt-5"><Callout title="Sign in required">Sign in with the account that was invited. After OAuth completes, ResourcePortal will return you to this invitation.</Callout></div>
+                <div className="mt-5"><Callout title="Sign in required">Sign in with the account that was invited. After identity verification, ResourcePortal accepts the invitation before starting any normal RP session.</Callout></div>
                 <div className="mt-6 grid gap-2.5">
                   <LinkButton className="h-11 w-full justify-center" variant="primary" href={authHref("login")}>Sign in to accept</LinkButton>
                   <LinkButton className="h-11 w-full justify-center" href={authHref("register")}>Create account</LinkButton>
