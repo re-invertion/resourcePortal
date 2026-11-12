@@ -640,7 +640,7 @@ model TenantNativeAppGrant {
   createdBy    String @db.Uuid
   updatedBy    String @db.Uuid
   createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  updatedAt    DateTime @default(now()) @updatedAt
   membership   TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
   tenant       Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -1670,5 +1670,5 @@ model Iam430BackfillAudit {
   recordId     String
   createdAt    DateTime @default(now())
 
-  @@unique([kind, membershipId, resourceId])
+  @@unique([kind, membershipId, resourceId], map: "Iam430BackfillAudit_kind_membership_resource_key")
 }
