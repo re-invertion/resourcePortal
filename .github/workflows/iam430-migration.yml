@@ -26,7 +26,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd 'pg_isready -U iam430 -d iam430'
+          --health-cmd=pg_isready
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       DATABASE_URL: postgresql://iam430:iam430_ci_only@localhost:5432/iam430?schema=public
