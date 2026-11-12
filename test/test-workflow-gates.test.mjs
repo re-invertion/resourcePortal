@@ -50,11 +50,11 @@ test('review-triggered Release Readiness cannot cancel another required installe
     const called=load(name);
     assert.ok('workflow_call' in called.on,name);
     assert.equal(called.concurrency['cancel-in-progress'],false,name);
-    assert.match(called.concurrency.group,/github\\.run_id/,name);
-    assert.match(called.concurrency.group,/github\\.run_attempt/,name);
+    assert.match(called.concurrency.group,/github\.run_id/,name);
+    assert.match(called.concurrency.group,/github\.run_attempt/,name);
     // github.ref and github.sha are shared across multiple independent review
     // events, so neither one is sufficient for the concurrency group.
-    assert.doesNotMatch(called.concurrency.group,/github\\.ref|github\\.sha/,name);
+    assert.doesNotMatch(called.concurrency.group,/github\.ref|github\.sha/,name);
     assert.equal(readiness.jobs[job].with.force_gate,true,name);
     assert.ok(readiness.jobs['release-ready'].needs.includes(job),name);
   }
