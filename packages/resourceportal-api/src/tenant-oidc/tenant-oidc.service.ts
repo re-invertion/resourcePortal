@@ -265,19 +265,38 @@ export class TenantOidcService {
    * preserve tracked intents so the next monitor pass retries revocation.
    */
   async enforceAppConsumerActionsV2Safety() {
+    // Include legacy #398 markers during migration, but never rely on them
+    // as the sole definition of an SSO principal. Any converted membership
+    // carrying sso-login must be protected if the issuer-global pre-token
+    // Action disappears; a ZITADEL project role is NOT a client entitlement.
     const consumers = await this.prisma.tenantAppConsumer.findMany({
       select: { tenantId: true, membership: { select: { userId: true } } },
     });
-    if (!consumers.length) return { state: "no-consumers", revoked: 0 };
-    const consumerKeys = new Set(consumers.map((row) =>
-      row.tenantId + ":" + row.membership.userId));
-    const userIds = [...new Set(consumers.map((row) => row.membership.userId))];
+    const ssoMembers = await this.prisma.tenantMembership.findMany({
+      where: {
+        status: MembershipStatus.Active,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: {
+            roleId: "sso-login",
+          } } } } } },
+        ],
+      },
+      select: { tenantId: true, userId: true },
+    });
+    const protectedKeys = new Set([
+      ...consumers.map((row) => row.tenantId + ":" + row.membership.userId),
+      ...ssoMembers.map((row) => row.tenantId + ":" + row.userId),
+    ]);
+    if (!protectedKeys.size) return { state: "no-consumers", revoked: 0 };
+    const userIds = [...new Set([...consumers.map((row) => row.membership.userId),
+      ...ssoMembers.map((row) => row.userId)])];
     const assigned = await this.prisma.tenantOidcGrant.findMany({
       where: { userId: { in: userIds } },
       select: { tenantId: true, userId: true },
     });
     const tracked = assigned.filter((row) =>
-      consumerKeys.has(row.tenantId + ":" + row.userId));
+      protectedKeys.has(row.tenantId + ":" + row.userId));
     if (!tracked.length) return { state: "no-upstream-app-grants", revoked: 0 };
 
     const enabled =
