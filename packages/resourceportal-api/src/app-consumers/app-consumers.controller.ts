@@ -11,7 +11,7 @@ class AppGrantDto {
 }
 
 /** Legacy endpoint is an alias over the unified membership grant catalog. */
-@Controller("tenants/:tenantId/app-consumers")
+@Controller(["tenants/:tenantId/app-consumers", "tenants/:tenantId/membership-app-grants"])
 export class AppConsumersController {
   constructor(private readonly service: AppConsumersService) {}
 
