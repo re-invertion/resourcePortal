@@ -63,6 +63,32 @@ production action target availability, safe activation and detachment/restore
 remain independent hard blockers for PR #407.
 
 
+### v0.2.153–v0.2.155 incident: direct recovery from installed v0.2.152
+
+Production ResourcePortal remained on v0.2.152 after the installer failed to
+complete v0.2.153. Both later tags v0.2.154 and v0.2.155 were published,
+but the signed v0.2.155 manifest excludes 0.2.152 from
+migrations.supportedFromVersions. Green PR checks and signed publication
+alone do not prove that the installed v0.2.152 can upgrade.
+
+v0.2.155 is an immutable published release: do not retag, replace its manifest,
+or reuse its signed image names. The next normal main merge allocates v0.2.156
+and must certify v0.2.152 to v0.2.156 directly, never through v0.2.153–155.
+
+Pre-merge Release Readiness must perform a real isolated rollback smoke from
+the official v0.2.152 immutable images and RP/ZITADEL source databases into
+the exact release candidate. It must prove an injected upgrade failure
+restores both databases, previous API read/write readiness, ZITADEL event
+store/runtime, and previous images. The post-merge release must independently
+repeat the source-152 test and require a same-publishing-SHA/workflow-run-bound
+certificate before the source version appears in its newly signed manifest.
+
+A missing or failed direct source-152 test blocks publication. It must never be
+replaced with a static version whitelist or the v0.2.155 source proof.
+Passing the isolated release smoke is eligibility evidence; successful
+production upgrade remains unverified until the operator validates the real
+v0.2.152 deployment. Keep issue #430 open until then.
+
 ## Review completion before protected Merge Queue
 
 The protected `main` ruleset requires `Required release readiness` and

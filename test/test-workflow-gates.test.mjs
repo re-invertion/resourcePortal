@@ -104,14 +104,29 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   const candidateSteps=readiness.jobs.candidate.steps;
   const premergeSmoke=candidateSteps.find(s=>s.name?.startsWith('Verify automatic rollback of published'));
   const source146Smoke=candidateSteps.find(s=>s.name?.startsWith('Independently verify v0.2.146 RP and ZITADEL'));
+  const source152Smoke=candidateSteps.find(s=>s.name?.startsWith('Independently verify v0.2.152 RP and ZITADEL'));
   const prereleaseBuild=candidateSteps.find(s=>s.name?.startsWith('Build the three production'));
   const prepublishSmoke=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
-  assert.ok(premergeSmoke && source146Smoke && prereleaseBuild && prepublishSmoke);
+  assert.ok(premergeSmoke && source146Smoke && source152Smoke && prereleaseBuild && prepublishSmoke);
   // Schema-changing releases need the *real* rollback smoke to produce
   // run-bound evidence before the rollback policy is allowed to certify them.
   assert.ok(candidateSteps.indexOf(prereleaseBuild) < candidateSteps.indexOf(premergeSmoke));
   assert.ok(candidateSteps.indexOf(premergeSmoke) < candidateSteps.indexOf(source146Smoke));
   assert.ok(candidateSteps.indexOf(source146Smoke) < candidateSteps.indexOf(prerelease));
+  assert.ok(candidateSteps.indexOf(source146Smoke) < candidateSteps.indexOf(source152Smoke));
+  assert.ok(candidateSteps.indexOf(source152Smoke) < candidateSteps.indexOf(prerelease));
+  assert.match(source152Smoke.run,/run-automatic-rollback-smoke\.sh "0\.2\.152"/);
+  assert.match(source152Smoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence-152\.json/);
+  assert.match(source152Smoke.run,/--previous-tag v0\.2\.152 --head HEAD/);
+  assert.match(source152Smoke.run,/--verified-evidence-file "\$RP_ROLLBACK_EVIDENCE_OUTPUT" --require-automatic/);
+  assert.match(source152Smoke.run,/\.sourceVersion == "0\.2\.152" and \.targetCommit == \$commit/);
+  assert.match(source152Smoke.run,/\.workflowRunId == \$run/);
+  assert.match(source152Smoke.run,/\.zitadelDatabaseRestored == true/);
+  assert.match(source152Smoke.run,/\.previousApiReadWriteAfterRollback == true/);
+  assert.match(source152Smoke.run,/\.zitadelSourceEventstoreVerified == true/);
+  const releaseSourceStep=publish.find(s=>s.name?.startsWith('Validate actual RP release images recover'));
+  assert.match(releaseSourceStep.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.152"/);
+  assert.match(releaseSourceStep.run,/--arg source "0\.2\.152" --arg commit "\$GITHUB_SHA" --argjson run "\$GITHUB_RUN_ID"/);
   assert.match(source146Smoke.run,/run-automatic-rollback-smoke\.sh "0\.2\.146"/);
   assert.match(source146Smoke.env.RP_ROLLBACK_EVIDENCE_OUTPUT,/rp-rollback-evidence-146\.json/);
   assert.match(source146Smoke.run,/--previous-tag v0\.2\.146 --head HEAD/);
@@ -133,7 +148,7 @@ test('automatic rollback is mandatory before merge and any release artifacts',()
   assert.match(prepublishSmoke.run,/rp-rollback-evidence\.json/);
   assert.match(prepublishSmoke.run,/0\.2\.92/);
   assert.match(prepublishSmoke.run,/0\.2\.96/);
-  assert.match(prepublishSmoke.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.146" "0\.2\.96" "0\.2\.93" "0\.2\.92"\)/);
+  assert.match(prepublishSmoke.run,/source_versions=\("\$\{PREVIOUS_TAG#v\}" "0\.2\.152" "0\.2\.146" "0\.2\.96" "0\.2\.93" "0\.2\.92"\)/);
   // Last known-safe pre-incident source must pass a separate live two-DB
   // restore in the exact publishing run; v0.2.147 is not a safe intermediate.
   assert.match(prepublishSmoke.run,/--arg source "0\.2\.146" --arg commit "\$GITHUB_SHA" --argjson run "\$GITHUB_RUN_ID"/);

@@ -29,6 +29,14 @@ For RP's *native* clients, `TenantNativeAppGrant` stores separate `web` and `cli
 
 Known deployment blocker at development stage: bootstrap login/invitation acceptance and dynamic-client-registration behavior need explicit reviewed treatment under issuer-global **default deny**. Do not bypass this by allowing unknown clients.
 
+**Release recovery:** The official v0.2.155 manifest excluded v0.2.152
+from supportedFromVersions, although the installed RP stayed on v0.2.152
+after v0.2.153 upgrade failures. Do not require v0.2.153–155 as stepping
+stones. The next immutable release v0.2.156 must independently certify
+v0.2.152 source RP/ZITADEL database restoration at both pre-merge and
+post-merge checks before its signed manifest may advertise direct upgrade.
+The actual live installation still requires operator validation.
+
 ## First-time invitation onboarding (separate physical OIDC client)
 
 A new ZITADEL identity has no RP `UserIdentity`, `TenantMembership` or Web/CLI grants. With issuer-global Actions V2 active, its first token for the regular RP Web client is correctly denied. The browser invitation flow therefore uses a separate **identity-proof-only** OIDC client, not a special `sso-login` bypass on RP Web.

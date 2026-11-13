@@ -330,6 +330,31 @@ test("published upgrade sources include only exact-commit real rollback certific
     certifiedSupportedUpgradeSources(candidates, proofs, hash, "0.2.146", runId),
     ["0.2.92", "0.2.96", "0.2.146"],
   );
+  // Incident #430: v0.2.155 is signed but omits the installed v0.2.152.
+  // A newer target MUST independently certify direct source-152 rollback.
+  const incidentSources = ["0.2.152", "0.2.155"];
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(incidentSources, [certified("0.2.155")], hash, "0.2.155", runId),
+    ["0.2.155"],
+    "published version history alone must never authorize 0.2.152",
+  );
+  assert.deepEqual(
+    certifiedSupportedUpgradeSources(incidentSources, [
+      certified("0.2.152"), certified("0.2.155"),
+    ], hash, "0.2.155", runId),
+    ["0.2.152", "0.2.155"],
+    "genuine run-bound source-152 certification allows direct upgrade",
+  );
+  for (const forged152 of [
+    {targetCommit: "b".repeat(40)}, {workflowRunId: runId + 1},
+    {databaseSnapshotRestored: false}, {zitadelDatabaseRestored: false},
+    {previousApiReadWriteAfterRollback: false}, {policy: "none"},
+  ]) {
+    assert.throws(() => certifiedSupportedUpgradeSources(incidentSources, [
+      certified("0.2.152", forged152), certified("0.2.155"),
+    ], hash, "0.2.155", runId), /Release blocked/);
+  }
+
   // Incident recovery: a future v0.2.148+ may have v0.2.147 as immediate
   // source, but v0.2.146 remains the last safe upgrade source. These are
   // TWO independent exact-SHA/Actions-run certifications, not an alias.
