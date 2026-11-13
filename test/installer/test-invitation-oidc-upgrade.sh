@@ -15,6 +15,7 @@ export RP_CFG_OIDC_CLI_CLIENT_ID=native-cli
 unset RP_CFG_INVITATION_OIDC_CLIENT_ID RP_CFG_INVITATION_OIDC_SWARM_REF
 mock_created=false mock_post_count=0 mock_secret_found=true mock_wrong_redirect=false
 mock_outage=false mock_overflow=false mock_delete_count=0
+mock_sparse_client_read=false mock_invalid_client_field=none
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
 # A fake HTTPS ZITADEL management API only. All production validation,
@@ -50,7 +51,8 @@ rp_invitation_oidc_http(){
       printf '{}\n' > "$output" ;;
     'GET /management/v1/projects/987654321/apps/321')
       jq -n --arg callback "https://rp.example.test/api/invitations/onboard/callback" \
-        --argjson corrupt "$mock_wrong_redirect" '{
+        --argjson corrupt "$mock_wrong_redirect" \
+        --argjson sparse "$mock_sparse_client_read" --arg invalid "$mock_invalid_client_field" '{
           app:{oidcConfig:{clientId:"invitation-physical-123",
             appType:"OIDC_APP_TYPE_WEB",
             authMethodType:"OIDC_AUTH_METHOD_TYPE_BASIC",
@@ -58,7 +60,14 @@ rp_invitation_oidc_http(){
             responseTypes:["OIDC_RESPONSE_TYPE_CODE"],
             grantTypes:["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"],
             redirectUris:[(if $corrupt then "https://evil.example.test/callback" else $callback end)]}}
-        }' > "$output" ;;
+        } |
+        if $sparse then .app.oidcConfig |= del(.appType,.authMethodType,.devMode) else . end |
+        if $invalid == "appType" then .app.oidcConfig.appType = "OIDC_APP_TYPE_NATIVE"
+        elif $invalid == "authMethodType" then .app.oidcConfig.authMethodType = "OIDC_AUTH_METHOD_TYPE_NONE"
+        elif $invalid == "devMode" then .app.oidcConfig.devMode = true
+        elif $invalid == "nullAppType" then .app.oidcConfig.appType = null
+        else . end
+        ' > "$output" ;;
     *) fail "unexpected ZITADEL endpoint $method $path" ;;
   esac
 }
@@ -89,6 +98,18 @@ rp_invitation_oidc_prepare || fail 'old certified source did not auto-provision'
 rp_invitation_oidc_prepare || fail 're-entrant provision failed'
 [[ "$mock_post_count" == 1 ]] || fail 'duplicate OAuth client created'
 echo 'PASS: v0.2.152 legacy certified Action -> private distinct code-only invitation client, idempotent'
+# Physical ZITADEL v4 drops default-valued fields from JSON readback.
+mock_sparse_client_read=true
+rp_invitation_oidc_preflight || fail 'omitted WEB/BASIC/false defaults prevented official upgrade'
+mock_sparse_client_read=false
+for mock_invalid_client_field in appType authMethodType devMode nullAppType; do
+  if rp_invitation_oidc_preflight >/dev/null 2>&1; then
+    fail "explicit unsafe invitation client readback accepted: $mock_invalid_client_field"
+  fi
+done
+mock_invalid_client_field=none
+rp_invitation_oidc_preflight || fail 'valid client failed after rejecting unsafe readback'
+echo 'PASS: sparse ZITADEL readback is valid, explicit unsafe/null client settings are denied'
 
 RP_CFG_APP_CONSUMER_ACTIONS_V2_CERTIFIED=false
 if rp_invitation_oidc_preflight > /dev/null 2>&1; then

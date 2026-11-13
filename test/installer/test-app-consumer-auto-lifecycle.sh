@@ -4,6 +4,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$root/scripts/installer/identity.sh"
 source "$root/scripts/installer/secrets.sh"
 tmp="$(mktemp -d)"
+export RP_INSTALLER_STATE_DIR="$tmp"
 trap 'rm -rf -- "$tmp"' EXIT
 export RP_CFG_DOMAIN=rp.example.test RP_CFG_ZITADEL_DOMAIN=auth.example.test
 export RP_CFG_ZITADEL_ORGANIZATION_ID=12345678
@@ -15,6 +16,7 @@ remote_execution=none
 created=0
 writes=0
 probe_http=403
+probe_http_sequence="$tmp/probe-http-sequence"
 partial=false
 search_response=''
 search_error=''
@@ -91,6 +93,10 @@ signer="$(declare -f rp_app_action_sign_probe)"
 # Real HMAC signature validity is separately verified by HTTPS issuer E2E.
 rp_app_action_sign_probe() {
   local tmp="$1"
+  # The installer can run INSIDE an updater container, but the inner
+  # Docker daemon resolves bind sources against the host filesystem.
+  [[ "$tmp" == "$RP_INSTALLER_STATE_DIR"/.rp-action-probe.* &&
+     -d "$tmp" ]] || return 1
   printf 'header = "ZITADEL-Signature: t=%s,v1=%064d"\n' "$(date +%s)" 0 >"$tmp/conf"
 }
 # Probe must pass real signing code and recognize only a precise 403.
@@ -104,8 +110,15 @@ curl() {
   done
   [[ "$path" == "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken" ]] || return 1
   grep -Eq '^header = "ZITADEL-Signature: t=[0-9]{10},v1=[a-f0-9]{64}"$' "$conf" || return 1
-  [[ "$probe_http" == 403 || "$probe_http" == 503 ]] || return 1
-  printf '%s' "$probe_http"
+  local current="$probe_http"
+  if [[ -s "$probe_http_sequence" ]]; then
+    current="$(head -n 1 "$probe_http_sequence")"
+    tail -n +2 "$probe_http_sequence" >"$tmp/next-probe-sequence"
+    mv "$tmp/next-probe-sequence" "$probe_http_sequence"
+  fi
+  [[ "$current" == 403 || "$current" == 503 || "$current" == 404 ||
+     "$current" == 502 || "$current" == 401 ]] || return 1
+  printf '%s' "$current"
 }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 ok() { printf 'PASS: %s\n' "$*"; }
@@ -200,6 +213,23 @@ probe_http=503
 if rp_app_action_activate >/dev/null 2>&1; then fail 'activated unhealthy callback'; fi
 [[ "$remote_execution" == none && "$writes" == 0 ]] || fail 'mutated global execution before callback health'
 ok 'callback HTTP 503 blocks global activation'
+# A brief ingress cutover is retried but only the exact signed HTTP 403
+# authorizes the global action; permanent denial never gets retried.
+sleep() { :; }  # In this fixture only; production backs off two seconds.
+printf '502\n404\n403\n' > "$probe_http_sequence"
+rp_app_action_activate || fail 'short ingress cutover blocked valid signed callback probe'
+[[ ! -s "$probe_http_sequence" && "$remote_execution" == ours ]] ||
+  fail 'signed callback did not retry 502/404 before 403'
+remote_execution=none
+writes=0
+printf '401\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" >/dev/null 2>&1; then
+  fail 'HTTP 401 was accepted as signed negative callback proof'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] || fail 'permanent denial was retried'
+: > "$probe_http_sequence"
+probe_http=503
+ok 'bounded ingress retries preserve exact 403 and fail closed on 401'
 probe_http=403
 rp_app_action_activate
 [[ "$remote_execution" == ours && "$writes" == 1 ]] || fail 'did not activate exact hook'

@@ -1,4 +1,4 @@
-import { Injectable, Optional, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
 import { FederationProofService } from "./federation-proof.service";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
@@ -47,6 +47,7 @@ type ServiceIdentityRecord = {
 
 @Injectable()
 export class OidcAuthService {
+  private readonly logger = new Logger(OidcAuthService.name);
   private discovery?: OidcDiscovery;
   private discoveryPromise?: Promise<OidcDiscovery>;
   private jwks?: RemoteJWKSet;
@@ -71,8 +72,12 @@ export class OidcAuthService {
     identityProviderId?: string,
     loginNonce?: string,
     rejectFederated = false,
+    trustedWebCodeExchange = false,
   ): Promise<AuthenticatedUser> {
-    const idTokenClaims = await this.verifyToken(idToken);
+    // Only AuthFlowService.handleCallback may set this after exchanging the
+    // state/PKCE-bound code with the configured Web client.
+    const idTokenClaims = await this.verifyToken(idToken, undefined, trustedWebCodeExchange);
+    this.assertOidcClientBinding(idTokenClaims, this.config.get<string>("OIDC_CLIENT_ID"), "browser");
     let authenticatedIdpId = this.verifiedAuthenticationIdpId(idTokenClaims);
     if (identityProviderId) {
       const selected = await this.prisma.identityProvider.findUnique({
@@ -122,6 +127,7 @@ export class OidcAuthService {
       throw new UnauthorizedException("Isolated invitation client unavailable");
     }
     const claims = await this.verifyToken(idToken, client);
+    this.assertOidcClientBinding(claims, client, "invitation");
     if (!nonce || claims.nonce !== nonce || this.verifiedAuthenticationIdpId(claims)) {
       throw new UnauthorizedException("Invitation identity proof is invalid");
     }
@@ -234,7 +240,7 @@ export class OidcAuthService {
     return claims;
   }
 
-  private async verifyToken(token: string, invitationAudience?: string) {
+  private async verifyToken(token: string, invitationAudience?: string, trustedWebCodeExchange = false) {
     const { jwtVerify } = await import("jose");
     const issuer = this.getIssuer();
     const jwks = await this.getJwks();
@@ -251,19 +257,97 @@ export class OidcAuthService {
         const onboardingClient = this.config.get<string>("OIDC_INVITATION_CLIENT_ID");
         const aud = Array.isArray(result.payload.aud) ? result.payload.aud
           : typeof result.payload.aud === "string" ? [result.payload.aud] : [];
-        // Identity-only onboarding tokens cannot be replayed as normal RP,
-        // CLI, MCP or tenant management bearer tokens.
-        if (onboardingClient && (
-          aud.includes(onboardingClient) ||
+        // ZITADEL can put several audiences on an issued token. An audience
+        // is a resource recipient, NOT proof of which OAuth client obtained the
+        // authorization code. Do not reject a genuine Web/CLI token merely
+        // because it also lists the invitation application as an audience.
+        //
+        // Conversely, neither an invitation-origin token nor an ambiguous
+        // multi-audience token may become a normal RP API credential.
+        const webClient = this.config.get<string>("OIDC_CLIENT_ID");
+        const cliClient = this.config.get<string>("OIDC_CLI_CLIENT_ID");
+        const nativeClients = [webClient, cliClient].filter(
+          (value): value is string => Boolean(value),
+        );
+        const issuedForInvitation = Boolean(onboardingClient && (
           result.payload.azp === onboardingClient ||
           result.payload.client_id === onboardingClient
-        )) {
+        ));
+        const audienceIncludesInvitation = Boolean(
+          onboardingClient && aud.includes(onboardingClient),
+        );
+        const nativeAudience = nativeClients.some((value) => aud.includes(value));
+        const nativeIssuerProof = nativeClients.some((value) =>
+          result.payload.azp === value || result.payload.client_id === value,
+        );
+        // For callback ID tokens, a successful confidential code+PKCE
+        // exchange also proves the Web client, even when the issuer omits
+        // azp/client_id on a multi-audience ID token. NEVER apply this
+        // exception to arbitrary bearer/CLI/MCP credentials.
+        const rejected = issuedForInvitation ||
+          (audienceIncludesInvitation &&
+            (!nativeAudience || (!nativeIssuerProof && !trustedWebCodeExchange)));
+        if (rejected) {
+          this.logger.warn(JSON.stringify({
+            code: "OIDC_INVITATION_CLIENT_CONFLICT",
+            audienceMatched: audienceIncludesInvitation,
+            azpMatched: result.payload.azp === onboardingClient,
+            clientIdMatched: result.payload.client_id === onboardingClient,
+            nativeAudience,
+            nativeIssuerProof,
+            trustedWebCodeExchange,
+          }));
           throw new UnauthorizedException("Invitation token is not an RP API credential");
         }
       }
       return result.payload;
     } catch {
       throw new UnauthorizedException("OIDC bearer token is invalid");
+    }
+  }
+
+  /**
+   * Bind an ID token to the OAuth application used in the corresponding
+   * authorization-code exchange. Project/global audiences are insufficient.
+   * Reject contradictory azp/client_id; these are signed issuer claims.
+   */
+  private assertOidcClientBinding(
+    claims: JWTPayload,
+    expectedClient: string | undefined,
+    purpose: "browser" | "invitation",
+  ) {
+    if (!expectedClient) {
+      throw new UnauthorizedException("OIDC client ID is required");
+    }
+    const aud = Array.isArray(claims.aud) ? claims.aud
+      : typeof claims.aud === "string" ? [claims.aud] : [];
+    if (!aud.includes(expectedClient) ||
+        (claims.azp !== undefined && claims.azp !== expectedClient) ||
+        (claims.client_id !== undefined && claims.client_id !== expectedClient)) {
+      // Log only fixed error code, flow and boolean comparison results;
+      // never record client IDs, JWT claims, token bytes, or OAuth code.
+      this.logger.warn(JSON.stringify({
+        code: "OIDC_CLIENT_BINDING_MISMATCH",
+        purpose,
+        audienceMatched: aud.includes(expectedClient),
+        azpPresent: claims.azp !== undefined,
+        azpMatched: claims.azp === expectedClient,
+        clientIdPresent: claims.client_id !== undefined,
+        clientIdMatched: claims.client_id === expectedClient,
+      }));
+      throw new UnauthorizedException("OIDC token client does not match the login");
+    }
+    // A native Web token must not be repurposed for identity-only onboarding,
+    // including a multi-audience token with no authorized-party claim.
+    if (purpose === "invitation") {
+      const nativeClients = [
+        this.config.get<string>("OIDC_CLIENT_ID"),
+        this.config.get<string>("OIDC_CLI_CLIENT_ID"),
+      ].filter((value): value is string => Boolean(value));
+      if (nativeClients.some((value) => aud.includes(value)) &&
+          claims.azp !== expectedClient && claims.client_id !== expectedClient) {
+        throw new UnauthorizedException("Ambiguous invitation token audience");
+      }
     }
   }
 
