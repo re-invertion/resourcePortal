@@ -49,13 +49,52 @@ bootstrap="$(rp_render_stack bootstrap)"
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 
-# Enforce unique YAML keys: a previous draft of #437 accidentally moved
-# rp-web-api's attachable declaration onto the new private overlay.
-# Docker may silently accept the last duplicate instead of failing closed.
-if node -e 'const Y=require("yaml"); const fs=require("node:fs"); const doc=Y.parseDocument(fs.readFileSync(0,"utf8"),{uniqueKeys:true}); if(doc.errors.length){console.error(doc.errors.map(e=>e.message).join("\n"));process.exit(1);}' <<<"$final"; then
-  pass 'final stack YAML has no duplicate mapping keys'
+# Earlier versions of #437 accidentally emitted two attachable: keys for
+# rp-oidc-private and none for rp-web-api. This shell-only installer gate runs
+# with NO npm dependencies, so do not require the external "yaml" package.
+# Check both overlay declarations for unique direct attributes and exactly
+# one "attachable: false", without relying on YAML's last-key-wins behavior.
+check_internal_oidc_network_keys() {
+  node -e '
+    const fs = require("node:fs");
+    const lines = fs.readFileSync(0, "utf8").split(/\r?\n/);
+    const roots = lines.map((line, i) => line === "networks:" ? i : -1).filter(i => i !== -1);
+    if (roots.length !== 1) process.exit(1);
+    const section = [];
+    for (let i = roots[0] + 1; i < lines.length && !/^[^\s#]/.test(lines[i]); i++) {
+      section.push(lines[i]);
+    }
+    for (const name of ["rp-web-api", "rp-oidc-private"]) {
+      const heading = "  " + name + ":";
+      const positions = section.map((line, i) => line === heading ? i : -1).filter(i => i !== -1);
+      if (positions.length !== 1) process.exit(1);
+      const seen = new Set();
+      let attachableFalse = 0;
+      for (let i = positions[0] + 1; i < section.length; i++) {
+        if (/^  [^\s#]/.test(section[i])) break;
+        const match = /^    ([a-zA-Z_][\w-]*):(?:\s*(.*))?$/.exec(section[i]);
+        if (!match) continue;
+        if (seen.has(match[1])) process.exit(1);
+        seen.add(match[1]);
+        if (match[1] === "attachable" && match[2] === "false") attachableFalse++;
+      }
+      if (attachableFalse !== 1) process.exit(1);
+    }
+  '
+}
+if check_internal_oidc_network_keys <<<"$final"; then
+  pass 'internal OIDC and Web/API overlay keys are unique and non-attachable'
 else
-  fail 'final stack YAML has no duplicate mapping keys'
+  fail 'internal OIDC and Web/API overlay keys are unique and non-attachable'
+fi
+
+# Negative proof: a duplicated key must be rejected by this dependency-free
+# gate even though Docker/YAML could silently accept the last value.
+duplicated_overlay="${final/$'  rp-oidc-private:\n    driver: overlay\n    attachable: false'/$'  rp-oidc-private:\n    driver: overlay\n    attachable: false\n    attachable: false'}"
+if [[ "$duplicated_overlay" != "$final" ]] && ! check_internal_oidc_network_keys <<<"$duplicated_overlay"; then
+  pass 'internal OIDC duplicate attachable key is rejected'
+else
+  fail 'internal OIDC duplicate attachable key is rejected'
 fi
 
 # Issue #398: new installations and ordinary upgrades must not require an
