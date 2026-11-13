@@ -30,10 +30,34 @@ function percentile(values, percent) {
   return ordered[Math.max(0, Math.ceil(percent * ordered.length) - 1)];
 }
 
+function attemptNumber(job) {
+  return Number.isSafeInteger(job?.run_attempt) && job.run_attempt > 0 ? job.run_attempt : null;
+}
+
 export function summarizeRun(run, jobs) {
   if (!Number.isSafeInteger(run.id) || !Array.isArray(jobs)) {
     throw new Error("Invalid workflow run or jobs payload");
   }
+  const expectedAttempts = Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0
+    ? run.run_attempt
+    : Math.max(1, ...jobs.map((job) => attemptNumber(job) ?? 1));
+  const byAttempt = new Map();
+  for (const job of jobs) {
+    const attempt = attemptNumber(job);
+    if (expectedAttempts > 1 && (attempt === null || attempt > expectedAttempts)) {
+      throw new Error("Incomplete or invalid GitHub workflow attempt metadata");
+    }
+    const number = attempt ?? 1;
+    const group = byAttempt.get(number) ?? [];
+    group.push(job);
+    byAttempt.set(number, group);
+  }
+  if (expectedAttempts > 1) {
+    for (let number = 1; number <= expectedAttempts; number++) {
+      if (!byAttempt.has(number)) throw new Error("Missing jobs for workflow attempt " + number);
+    }
+  }
+
   const timed = jobs.flatMap((job) => {
     if (job.conclusion === "skipped") return [];
     const start = timestamp(job.started_at);
@@ -41,10 +65,26 @@ export function summarizeRun(run, jobs) {
     const durationMinutes = minutes(start, end);
     if (durationMinutes === null) return [];
     return [{ name: job.name ?? "(unnamed)", conclusion: job.conclusion ?? null,
-      start, end, minutes: durationMinutes }];
+      attempt: attemptNumber(job) ?? 1, start, end, minutes: durationMinutes }];
+  });
+  const attemptStats = [...byAttempt].sort(([a], [b]) => a - b).map(([number, group]) => {
+    const measured = timed.filter((job) => job.attempt === number);
+    const first = measured.length ? Math.min(...measured.map((job) => job.start)) : null;
+    const last = measured.length ? Math.max(...measured.map((job) => job.end)) : null;
+    return {
+      number,
+      observedWallMinutes: minutes(first, last),
+      runnerMinutes: Math.round(measured.reduce((sum, job) => sum + job.minutes, 0) * 100) / 100,
+      jobCount: group.length,
+      skippedJobs: group.filter((job) => job.conclusion === "skipped").length,
+    };
   });
   const firstStart = timed.length ? Math.min(...timed.map((job) => job.start)) : null;
   const lastEnd = timed.length ? Math.max(...timed.map((job) => job.end)) : null;
+  const lifecycleWall = minutes(firstStart, lastEnd);
+  const activeAttemptWall = timed.length
+    ? Math.round(attemptStats.reduce((sum, item) => sum + (item.observedWallMinutes ?? 0), 0) * 100) / 100
+    : null;
   const earliestCreated = timestamp(run.created_at);
   const slowestJob = [...timed].sort((a, b) => b.minutes - a.minutes)[0];
   return {
@@ -53,14 +93,19 @@ export function summarizeRun(run, jobs) {
     event: run.event ?? null,
     headSha: run.head_sha ?? null,
     conclusion: run.conclusion ?? null,
+    attemptCount: expectedAttempts,
+    attempts: attemptStats,
     queuedMinutes: minutes(earliestCreated, firstStart),
-    observedWallMinutes: minutes(firstStart, lastEnd),
+    observedWallMinutes: lifecycleWall,
+    activeAttemptWallMinutes: activeAttemptWall,
+    retryIdleMinutes: lifecycleWall === null || activeAttemptWall === null
+      ? null : Math.max(0, Math.round((lifecycleWall - activeAttemptWall) * 100) / 100),
     runnerMinutes: Math.round(timed.reduce((sum, job) => sum + job.minutes, 0) * 100) / 100,
     slowestJob: slowestJob ? { name: slowestJob.name, minutes: slowestJob.minutes } : null,
     skippedJobs: jobs.filter((job) => job.conclusion === "skipped").length,
     untimedJobs: jobs.length - timed.length - jobs.filter((job) => job.conclusion === "skipped").length,
-    jobs: timed.map(({ name, conclusion, minutes: durationMinutes }) =>
-      ({ name, conclusion, minutes: durationMinutes })),
+    jobs: timed.map(({ name, conclusion, attempt, minutes: durationMinutes }) =>
+      ({ name, conclusion, attempt, minutes: durationMinutes })),
   };
 }
 
@@ -77,6 +122,7 @@ export function summarizeRuns(samples) {
     sampledRuns: runs.length,
     workflows: [...grouped].map(([workflow, matches]) => {
       const values = matches.map((run) => run.observedWallMinutes).filter((n) => n !== null);
+      const activeValues = matches.map((run) => run.activeAttemptWallMinutes).filter((n) => n !== null);
       const bottlenecks = matches.flatMap((run) => run.slowestJob ? [run.slowestJob] : []);
       bottlenecks.sort((a, b) => b.minutes - a.minutes);
       return {
@@ -84,6 +130,8 @@ export function summarizeRuns(samples) {
         sampledRuns: matches.length,
         p50ObservedWallMinutes: percentile(values, 0.5),
         p90ObservedWallMinutes: percentile(values, 0.9),
+        p50ActiveAttemptMinutes: percentile(activeValues, 0.5),
+        p90ActiveAttemptMinutes: percentile(activeValues, 0.9),
         slowestObservedJob: bottlenecks[0] ?? null,
       };
     }),
@@ -119,6 +167,37 @@ async function github(path, token) {
   return response.json();
 }
 
+// GitHub defaults /jobs to filter=latest, omitting successful work from
+// earlier attempts when only failed jobs are rerun. Require filter=all and
+// check the complete pagination and attempt history before calculating timings.
+export async function allAttemptJobs(repo, run, token, api = github) {
+  const jobs = [];
+  for (let page = 1; page <= 10; page++) {
+    const path = "/repos/" + repo + "/actions/runs/" + run.id +
+      "/jobs?filter=all&per_page=100&page=" + page;
+    const result = await api(path, token);
+    const total = result?.total_count;
+    if (!Array.isArray(result?.jobs) || !Number.isSafeInteger(total) || total < 0) {
+      throw new Error("Invalid complete GitHub jobs response for run " + run.id);
+    }
+    jobs.push(...result.jobs);
+    if (jobs.length > total) throw new Error("GitHub jobs exceeded reported total");
+    if (jobs.length === total) {
+      // A rerun-failed-jobs attempt contains only the rerun jobs, not all the
+      // original successful ones. Every started attempt still has a job row.
+      if (Number.isSafeInteger(run.run_attempt) && run.run_attempt > 1) {
+        const attempts = new Set(jobs.map((job) => attemptNumber(job)));
+        for (let number = 1; number <= run.run_attempt; number++) {
+          if (!attempts.has(number)) throw new Error("Missing jobs for workflow attempt " + number);
+        }
+      }
+      return jobs;
+    }
+    if (!result.jobs.length) throw new Error("Incomplete GitHub jobs pagination");
+  }
+  throw new Error("GitHub jobs history exceeds safe pagination limit");
+}
+
 async function sampleGithub({ repo, workflows, limit }) {
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) throw new Error("Set GH_TOKEN or GITHUB_TOKEN; or pass --input for offline analysis");
@@ -129,16 +208,7 @@ async function sampleGithub({ repo, workflows, limit }) {
     const payload = await github(query, token);
     if (!Array.isArray(payload.workflow_runs)) throw new Error("Invalid workflow_runs response");
     for (const run of payload.workflow_runs) {
-      const jobs = [];
-      for (let page = 1; page <= 10; page++) {
-        const result = await github("/repos/" + repo + "/actions/runs/" + run.id +
-          "/jobs?per_page=100&page=" + page, token);
-        if (!Array.isArray(result.jobs)) throw new Error("Invalid jobs response");
-        jobs.push(...result.jobs);
-        if (result.jobs.length < 100) break;
-        if (page === 10) throw new Error("Job pagination exceeded safety limit for run " + run.id);
-      }
-      samples.push({ run, jobs });
+      samples.push({ run, jobs: await allAttemptJobs(repo, run, token) });
     }
   }
   return samples;
@@ -146,18 +216,21 @@ async function sampleGithub({ repo, workflows, limit }) {
 
 function format(report) {
   const rows = [
-    "Workflow | runs | p50 wall | p90 wall | slowest observed job",
-    "--- | ---: | ---: | ---: | ---",
+    "Workflow | runs | p50 active attempts | p90 active attempts | p50 lifecycle | slowest observed job",
+    "--- | ---: | ---: | ---: | ---: | ---",
   ];
   for (const workflow of report.workflows) {
     const slowest = workflow.slowestObservedJob;
     rows.push([workflow.workflow, workflow.sampledRuns,
+      workflow.p50ActiveAttemptMinutes ?? "n/a",
+      workflow.p90ActiveAttemptMinutes ?? "n/a",
       workflow.p50ObservedWallMinutes ?? "n/a",
-      workflow.p90ObservedWallMinutes ?? "n/a",
       slowest ? slowest.name + " (" + slowest.minutes + " min)" : "n/a"].join(" | "));
   }
   return rows.join("\n") +
-    "\n\nObserved wall excludes GitHub queue time; runner minutes count overlap." +
+    "\n\nActive attempt wall sums elapsed time within every attempt; lifecycle wall also includes gaps between reruns." +
+    "\nRunner-minutes sum job durations across all attempts (including parallel overlap)." +
+    "\nQueue delay is measured from original run creation, never from a retry." +
     "\nA job duration does not identify duplicate test commands or prove end-to-end release latency.";
 }
 

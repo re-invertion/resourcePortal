@@ -23,11 +23,17 @@ be a JSON array of `{ "run": { ... GitHub workflow run ... }, "jobs": [ ... GitH
 objects. No token is required for offline replay. The script never modifies
 repository state, runs Docker or accesses a production ResourcePortal.
 
-The report provides observed wall duration (from first running job to last
-completed job), queue delay when timestamps exist, sum of job durations
-(runner-minutes, including parallel overlap), and longest individual jobs.
-It excludes skipped jobs, and treats invalid/inverted timestamps as missing
-rather than as negative elapsed time. p50/p90 use nearest-rank percentiles.
+The report requests **all workflow attempts** (GitHub jobs `filter=all`),
+including earlier successful jobs when a later rerun only retries failures.
+It separates active attempt wall time (sum of each attempt's elapsed duration)
+from lifecycle wall time (first job in the original attempt to last job in
+the final attempt, including human-triggered gaps), retry idle time, queue
+delay measured from original run creation and runner-minutes (including
+parallel overlap). Percentiles are reported for both active time and
+lifecycle time; active-time p50/p90 is the primary CI speed metric.
+It excludes skipped jobs and treats invalid/inverted timestamps as missing.
+Missing earlier attempt history fails closed instead of reporting a misleading
+short measurement. p50/p90 use nearest-rank percentiles.
 These are **per workflow** observations, not automatically an end-to-end
 PR → merge queue → main → signed-release critical path: GitHub concurrency,
 review wait, dependencies, caching and PR/merge-group SHAs need separate

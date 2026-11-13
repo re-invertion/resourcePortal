@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { summarizeRun, summarizeRuns } from "../scripts/report-ci-timings.mjs";
+import { allAttemptJobs, summarizeRun, summarizeRuns } from "../scripts/report-ci-timings.mjs";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
 const time = (minute) => new Date(Date.UTC(2026, 10, 13, 10, minute)).toISOString();
@@ -72,6 +72,70 @@ test("offline CLI produces the same report and requires no GitHub credentials", 
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+
+test("rerun-failed-jobs includes original successful jobs and separates retry gaps", () => {
+  const rerun = { ...run(42), run_attempt: 2 };
+  const jobs = [
+    { ...job("candidate", 2, 12), run_attempt: 1 },
+    { ...job("review", 12, 13, "failure"), run_attempt: 1 },
+    { ...job("review", 49, 50), run_attempt: 2 },
+  ];
+  const result = summarizeRun(rerun, jobs);
+  assert.equal(result.attemptCount, 2);
+  assert.equal(result.queuedMinutes, 2);
+  assert.equal(result.observedWallMinutes, 48);
+  assert.equal(result.activeAttemptWallMinutes, 12);
+  assert.equal(result.retryIdleMinutes, 36);
+  assert.equal(result.runnerMinutes, 12);
+  assert.deepEqual(result.attempts.map((attempt) => attempt.observedWallMinutes), [11, 1]);
+  assert.deepEqual(result.jobs.map((row) => row.attempt), [1, 1, 2]);
+});
+
+test("all-attempt API uses filter=all with pagination and fails on truncated history", async () => {
+  const rerun = { ...run(73), run_attempt: 2 };
+  const first = Array.from({ length: 100 }, (_, i) => ({
+    ...job("candidate-" + i, 2, 3), run_attempt: 1,
+  }));
+  const last = { ...job("review", 49, 50), run_attempt: 2 };
+  const paths = [];
+  const api = async (path) => {
+    paths.push(path);
+    return path.endsWith("page=1")
+      ? { total_count: 101, jobs: first }
+      : { total_count: 101, jobs: [last] };
+  };
+  const history = await allAttemptJobs("re-invertion/resourcePortal", rerun, "token", api);
+  assert.equal(history.length, 101);
+  assert.equal(paths.length, 2);
+  assert.ok(paths.every((path) => path.includes("filter=all")));
+  assert.ok(paths.every((path) => !path.includes("filter=latest")));
+  await assert.rejects(
+    () => allAttemptJobs("re-invertion/resourcePortal", rerun, "token",
+      async () => ({ total_count: 1, jobs: [last] })),
+    /Missing jobs for workflow attempt 1/,
+  );
+  await assert.rejects(
+    () => allAttemptJobs("re-invertion/resourcePortal", rerun, "token",
+      async () => ({ total_count: 101, jobs: [] })),
+    /Incomplete GitHub jobs pagination/,
+  );
+  assert.throws(() => summarizeRun(rerun, [last]), /Missing jobs for workflow attempt 1/);
+});
+
+test("workflow percentiles use active attempt wall without manual rerun delay", () => {
+  const rerun = { ...run(43), run_attempt: 2 };
+  const report = summarizeRuns([
+    { run: run(1), jobs: [job("normal", 0, 10)] },
+    { run: rerun, jobs: [
+      { ...job("first", 0, 2, "failure"), run_attempt: 1 },
+      { ...job("retry", 58, 59), run_attempt: 2 },
+    ] },
+  ]);
+  assert.equal(report.workflows[0].p50ActiveAttemptMinutes, 3);
+  assert.equal(report.workflows[0].p90ActiveAttemptMinutes, 10);
+  assert.equal(report.workflows[0].p90ObservedWallMinutes, 59);
 });
 
 test("new timing script and tests participate in workflow gate selection", () => {
