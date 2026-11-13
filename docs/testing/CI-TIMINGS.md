@@ -37,10 +37,10 @@ correlation before claiming savings.
 
 | Run | Relevant measured job durations | Evidence |
 | --- | --- | --- |
-| Release Readiness (13 Nov) | candidate `12 min; federation/browser `4 min; real HTTPS OIDC `2 min | [run 43426539943](https://github.com/re-invertion/resourcePortal/actions/runs/43426539943) |
-| Release publisher (13 Nov) | publish `18 min | [run 43428850906](https://github.com/re-invertion/resourcePortal/actions/runs/43428850906) |
-| Release Readiness (2 Nov) | candidate `8 min; Real Swarm `18 min | [run 41495517323](https://github.com/re-invertion/resourcePortal/actions/runs/41495517323) |
-| Release Readiness (6 Nov) | candidate `8 min; Real Swarm `29 min | [run 42189630636](https://github.com/re-invertion/resourcePortal/actions/runs/42189630636) |
+| Release Readiness (13 Nov) | candidate approx. 12 min; federation/browser approx. 4 min; real HTTPS OIDC approx. 2 min | [run 43426539943](https://github.com/re-invertion/resourcePortal/actions/runs/43426539943) |
+| Release publisher (13 Nov) | publish approx. 18 min | [run 43428850906](https://github.com/re-invertion/resourcePortal/actions/runs/43428850906) |
+| Release Readiness (2 Nov) | candidate approx. 8 min; Real Swarm approx. 18 min | [run 41495517323](https://github.com/re-invertion/resourcePortal/actions/runs/41495517323) |
+| Release Readiness (6 Nov) | candidate approx. 8 min; Real Swarm approx. 29 min | [run 42189630636](https://github.com/re-invertion/resourcePortal/actions/runs/42189630636) |
 
 This four-run convenience sample is not a statistically representative
 distribution. Re-run the script for complete per-workflow measurements before
