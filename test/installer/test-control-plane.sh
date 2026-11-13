@@ -49,6 +49,54 @@ bootstrap="$(rp_render_stack bootstrap)"
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 
+# Earlier versions of #437 accidentally emitted two attachable: keys for
+# rp-oidc-private and none for rp-web-api. This shell-only installer gate runs
+# with NO npm dependencies, so do not require the external "yaml" package.
+# Check both overlay declarations for unique direct attributes and exactly
+# one "attachable: false", without relying on YAML's last-key-wins behavior.
+check_internal_oidc_network_keys() {
+  node -e '
+    const fs = require("node:fs");
+    const lines = fs.readFileSync(0, "utf8").split(/\r?\n/);
+    const roots = lines.map((line, i) => line === "networks:" ? i : -1).filter(i => i !== -1);
+    if (roots.length !== 1) process.exit(1);
+    const section = [];
+    for (let i = roots[0] + 1; i < lines.length && !/^[^\s#]/.test(lines[i]); i++) {
+      section.push(lines[i]);
+    }
+    for (const name of ["rp-web-api", "rp-oidc-private"]) {
+      const heading = "  " + name + ":";
+      const positions = section.map((line, i) => line === heading ? i : -1).filter(i => i !== -1);
+      if (positions.length !== 1) process.exit(1);
+      const seen = new Set();
+      let attachableFalse = 0;
+      for (let i = positions[0] + 1; i < section.length; i++) {
+        if (/^  [^\s#]/.test(section[i])) break;
+        const match = /^    ([a-zA-Z_][\w-]*):(?:\s*(.*))?$/.exec(section[i]);
+        if (!match) continue;
+        if (seen.has(match[1])) process.exit(1);
+        seen.add(match[1]);
+        if (match[1] === "attachable" && match[2] === "false") attachableFalse++;
+      }
+      if (attachableFalse !== 1) process.exit(1);
+    }
+  '
+}
+if check_internal_oidc_network_keys <<<"$final"; then
+  pass 'internal OIDC and Web/API overlay keys are unique and non-attachable'
+else
+  fail 'internal OIDC and Web/API overlay keys are unique and non-attachable'
+fi
+
+# Negative proof: a duplicated key must be rejected by this dependency-free
+# gate even though Docker/YAML could silently accept the last value.
+duplicated_overlay="${final/$'  rp-oidc-private:\n    driver: overlay\n    attachable: false'/$'  rp-oidc-private:\n    driver: overlay\n    attachable: false\n    attachable: false'}"
+if [[ "$duplicated_overlay" != "$final" ]] && ! check_internal_oidc_network_keys <<<"$duplicated_overlay"; then
+  pass 'internal OIDC duplicate attachable key is rejected'
+else
+  fail 'internal OIDC duplicate attachable key is rejected'
+fi
+
 # Issue #398: new installations and ordinary upgrades must not require an
 # Action HMAC secret nor activate a global ZITADEL execution by default.
 not_contains "$final" 'rp_app_consumer_action_hmac:' 'unconfigured Action HMAC secret is not a deployment dependency'
@@ -145,6 +193,7 @@ busybox_stack_template_test() (
 status 0 'final stack deploy uses BusyBox-compatible mktemp template' busybox_stack_template_test
 
 original_ingress_deploy="$(declare -f rp_deploy_control_plane)"
+original_oidc_wait="$(declare -f rp_wait_api_oidc_connectivity)"
 rp_validate_domain_dns(){ return 0; }
 mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
 install(){ printf 'install:%s\n' "$*" >>"$ingress_prepare_log"; }
@@ -153,6 +202,7 @@ rp_acme_restore_cached_state(){ return 0; }
 rp_wait_for_acme_certificate(){ printf 'cert:%s:%s\n' "$1" "$2" >>"$ingress_prepare_log"; return 0; }
 rp_acme_cache_active_state(){ printf 'cache\n' >>"$ingress_prepare_log"; return 0; }
 rp_wait_for_https_origin(){ printf 'origin:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
+rp_wait_api_oidc_connectivity(){ printf 'oidc:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
 rp_primary_enable_ingress
 rp_primary_deploy_final
 prepare_text="$(cat "$ingress_prepare_log")"
@@ -164,11 +214,12 @@ ingress_deploy_line="$(grep -nF 'deploy:ingress' "$ingress_prepare_log" | head -
 [[ -n "$platform_prepare_line" && -n "$ingress_deploy_line" && "$platform_prepare_line" -lt "$ingress_deploy_line" ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
 contains "$prepare_text" 'cert:auth.rp.example.com:staging' 'ingress validates ZITADEL ACME challenge with staging'
 not_contains "$(sed -n '/deploy:ingress/,/deploy:final/p' "$ingress_prepare_log")" 'cert:rp.example.com' 'ingress does not wait for Web certificate before Web is enabled'
-order_tail="$(grep -E '^(deploy|cert|origin|cache)' "$ingress_prepare_log")"
-expected_order=$'deploy:ingress\ncert:auth.rp.example.com:staging\ndeploy:final\ncert:auth.rp.example.com:production\ncert:rp.example.com:production\norigin:rp.example.com\ncache'
+order_tail="$(grep -E '^(deploy|cert|origin|oidc|cache)' "$ingress_prepare_log")"
+expected_order=$'deploy:ingress\ncert:auth.rp.example.com:staging\ndeploy:final\ncert:auth.rp.example.com:production\ncert:rp.example.com:production\norigin:rp.example.com\noidc:rp.example.com\ncache'
 [[ "$order_tail" == "$expected_order" ]] && pass 'certificate and health checks follow service availability' || fail 'certificate and health checks follow service availability'
-unset -f rp_validate_domain_dns mountpoint install rp_acme_restore_cached_state rp_wait_for_acme_certificate rp_acme_cache_active_state rp_wait_for_https_origin
+unset -f rp_validate_domain_dns mountpoint install rp_acme_restore_cached_state rp_wait_for_acme_certificate rp_acme_cache_active_state rp_wait_for_https_origin rp_wait_api_oidc_connectivity
 eval "$original_ingress_deploy"
+eval "$original_oidc_wait"
 rm -f "$ingress_prepare_log"
 
 contains "$final" 'replicas: 1 # RP_API_REPLICAS' 'final enables API'
@@ -330,6 +381,14 @@ api_section="$(sed -n '/^  api:/,/^  worker:/p' <<<"$final")"
 worker_section="$(sed -n '/^  worker:/,/^  dr-reconciliation:/p' <<<"$final")"
 web_section="$(sed -n '/^  web:/,/^  egress-guard:/p' <<<"$final")"
 traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
+contains "$final" $'  rp-web-api:\n    driver: overlay\n    attachable: false' 'Web-to-API overlay remains non-attachable'
+contains "$final" $'  rp-oidc-private:\n    driver: overlay\n    attachable: false\n\n  host:' 'private OIDC overlay has exactly one non-attachable setting'
+contains "$final" '  rp-oidc-private:' 'private TLS OIDC overlay declared in control plane'
+contains "$api_section" '      - rp-oidc-private' 'API connects to private TLS OIDC overlay'
+contains "$api_section" 'OIDC_PRIVATE_TLS_ROUTE: traefik' 'API routes issuer TLS by Swarm-local Traefik DNS'
+contains "$traefik_section" '      - rp-oidc-private' 'Traefik exposes private TLS to API'
+not_contains "$web_section" '      - rp-oidc-private' 'Web cannot access the private OIDC overlay'
+not_contains "$worker_section" '      - rp-oidc-private' 'Worker cannot access the private OIDC overlay'
 contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
 contains "$final" '  rp-terminal-secure:' 'terminal node communication has dedicated overlay'
 contains "$final" '      encrypted: "true"' 'node communication overlay requests Swarm dataplane encryption'

@@ -26,6 +26,7 @@ function fixture() {
     },
   };
   const oidc = {
+    fetchIssuerEndpoint: vi.fn((url: string, _stage: string, options?: RequestInit) => fetch(url, options)),
     getDiscovery: vi.fn().mockResolvedValue({
       authorizationEndpoint: "https://login.example.com/oauth/v2/authorize",
       tokenEndpoint: "https://login.example.com/oauth/v2/token",

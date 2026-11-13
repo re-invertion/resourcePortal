@@ -1,6 +1,7 @@
 import { Controller, Get, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Public } from "../auth/public.decorator";
+import { OidcAuthService } from "../auth/oidc-auth.service";
 import { WorkerRuntimeObservabilityService } from "../observability/worker-runtime-observability.service";
 import { AllowDuringPlatformMaintenance } from "../platform-maintenance/allow-during-platform-maintenance.decorator";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,6 +19,7 @@ export class HealthController {
     private readonly config?: ConfigService,
     @Optional()
     private readonly tenantOidcRollout?: TenantOidcAutoRolloutService,
+    @Optional() private readonly oidcAuth?: OidcAuthService,
   ) {}
 
   @Get()
@@ -85,6 +87,13 @@ export class HealthController {
 
   // Public minimal readiness for the installer. Never expose tenant IDs,
   // membership information, management credentials or grant details.
+  @Get("oidc")
+  async getOidcConnectivity() {
+    if (!this.oidcAuth) throw new ServiceUnavailableException("OIDC readiness is unavailable");
+    await this.oidcAuth.probeIssuerConnectivity();
+    return { status: "ready", service: "resource-portal-oidc" };
+  }
+
   @Get("tenant-oidc")
   async getTenantOidcReadiness() {
     const readiness = this.tenantOidcRollout

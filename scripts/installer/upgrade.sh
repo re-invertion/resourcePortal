@@ -1057,6 +1057,10 @@ rp_upgrade_apply() {
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "tenant OIDC activation"
     return 1
   fi
+  if ! rp_wait_api_oidc_connectivity "${RP_CFG_DOMAIN:?RP_CFG_DOMAIN is required}" 180; then
+    rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "API to ZITADEL private TLS connectivity"
+    return 1
+  fi
   rp_upgrade_checkpoint_stage target-stack-healthy || { rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "checkpoint target-stack-healthy"; return 1; }
   if ! rp_upgrade_refresh_enrollment_listener; then
     rp_upgrade_restore_after_failure "$manifest" "$previous_stack" "enrollment listener"

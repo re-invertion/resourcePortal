@@ -53,6 +53,13 @@ jobs:
       - name: Run ShellCheck
         run: shellcheck --severity=warning -x resourceportal-install.sh scripts/installer/*.sh packages/resourceportal-postgres/postgres-fence.sh test/installer/*.sh
 
+      # The #437 installer OIDC smoke compiles and executes the actual API
+      # runtime when no built artifact exists. This minimal shell runner must
+      # use the lockfile-pinned TypeScript compiler (not the runner's global
+      # TypeScript, which may reject the repository tsconfig).
+      - name: Install pinned dependencies for OIDC TLS integration proof
+        run: npm ci --no-audit --no-fund
+
       - name: Run complete Production Installer regression suite
         run: npm run test:installer
 
