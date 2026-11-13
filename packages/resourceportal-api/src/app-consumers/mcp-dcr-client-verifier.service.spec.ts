@@ -66,8 +66,88 @@ describe("ChatGPT MCP DCR issuance proof (#442)", () => {
     "https://chatgpt.com/other/oauth/callback",
     "https://chatgpt.com/connector/oauth/example#fragment",
     "https://chatgpt.com/connector/oauth/example?next=evil",
+    "https://chatgpt.com/connector/oauth/",
+    "https://chatgpt.com/connector/oauth/a/b",
+    "https://chatgpt.com/connector/oauth/%2f",
+    "https://chatgpt.com/connector/oauth/%2E%2E",
+    "https://chatgpt.com/connector/oauth/callback%2Fother",
   ])("rejects untrusted ChatGPT redirect %s", (uri) => {
     expect(isChatGptOAuthRedirect(uri)).toBe(false);
+  });
+
+  it("paginates DCR apps instead of silently denying a client after the default first 100", async () => {
+    const otherClients = Array.from({ length: 100 }, (_, index) => ({
+      id: `other-${index}`, oidcConfig: { clientId: `other-client-${index}`, redirectUris: [] },
+    }));
+    const calls = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: "1" },
+        result: [{ id: "dcr-project", name: "ZITADEL DCR" }],
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: "101" }, result: otherClients,
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: "101" },
+        result: [{ id: "target", oidcConfig: {
+          clientId: "registered-chatgpt-client",
+          redirectUris: ["https://chatgpt.com/connector/oauth/unique-id"],
+        } }],
+      })));
+    global.fetch = calls as typeof fetch;
+
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(true);
+    expect(calls).toHaveBeenCalledTimes(3);
+    const projectRequest = calls.mock.calls[0]?.[1] as unknown as RequestInit;
+    expect(JSON.parse((projectRequest.body as string)) as unknown).toMatchObject({
+      query: { limit: 100 },
+      queries: [{ nameQuery: { name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS" } }],
+    });
+    const secondPageRequest = calls.mock.calls[2]?.[1] as unknown as RequestInit;
+    expect(JSON.parse((secondPageRequest.body as string)) as unknown).toEqual({
+      query: { limit: 100, offset: 100 },
+    });
+  });
+
+  it("fails closed for ambiguous DCR projects and truncated or malformed app pages", async () => {
+    const project = { id: "dcr-project", name: "ZITADEL DCR" };
+    global.fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      details: { totalResult: 2 }, result: [project],
+    }))) as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [project] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        details: { totalResult: 201 },
+        result: [{ id: "other", oidcConfig: { clientId: "different" } }],
+      }))) as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+
+    const calls = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: [project] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        result: [{ id: "one", oidcConfig: { clientId: "registered-chatgpt-client",
+          redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"] } },
+          { id: "two", oidcConfig: { clientId: "registered-chatgpt-client",
+            redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"] } }],
+      })));
+    global.fetch = calls as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+  });
+
+  it("rejects a response that exceeds the bounded streaming limit", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response("x".repeat(512_001), { status: 200 }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+    await expect(new McpDcrClientVerifierService(config)
+      .isTrustedChatGptClient("registered-chatgpt-client")).resolves.toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when ZITADEL app/project discovery fails or is unavailable", async () => {
