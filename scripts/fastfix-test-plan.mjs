@@ -555,7 +555,7 @@ const classifiers = [
   [/^\.github\/workflows\//, ["workflow"]],
 
   [/^scripts\/next-main-release\.mjs$/, ["platform-release", "workflow"]],
-  [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix)\.mjs$/, ["workflow"]],
+  [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix|report-ci-timings)\.mjs$/, ["workflow"]],
   [/^test\/cli\/test-release-package\.sh$/, ["cli"]],
   [/^test\/.*\.test\.mjs$/, ["workflow"]],
   [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],
