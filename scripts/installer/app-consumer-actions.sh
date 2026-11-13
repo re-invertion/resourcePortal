@@ -200,24 +200,55 @@ const signature = createHmac("sha256", key)
 process.stdout.write('header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n');
 NODE
 }
+# Probe files are mounted into a second Docker container by the host Docker
+# daemon. /tmp of the updater container is NOT a host path. The installer-state
+# directory is mounted at the same absolute path on host and target installer.
 rp_app_action_probe() {
-  local id="$1" ref="$2" tmp code
-  tmp="$(umask 077; mktemp -d)" || return 1
+  local id="$1" ref="$2" tmp code rc attempt=0
+  local state_dir="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}"
+  [[ "$state_dir" == /* && -d "$state_dir" && ! -L "$state_dir" ]] || {
+    printf 'Signed App Consumer probe requires an existing host-shared installer-state directory.\n' >&2
+    return 1
+  }
+  tmp="$(umask 077; mktemp -d "$state_dir/.rp-action-probe.XXXXXX")" || return 1
   rp_app_action_read_key "$id" "$tmp/key" "$ref" || { rm -rf -- "$tmp"; return 1; }
   printf '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
   if ! rp_app_action_sign_probe "$tmp"; then
     rm -rf -- "$tmp"
     return 1
   fi
-  chmod 0600 "$tmp/conf"
-  code="$(curl --silent --show-error --no-location --proto '=https' --max-time 15 \
-    --config "$tmp/conf" --header 'Content-Type: application/json' \
-    --data-binary "@$tmp/body" --output "$tmp/response" --write-out '%{http_code}' \
-    "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken")" ||
-    { rm -rf -- "$tmp"; return 1; }
+  chmod 0600 "$tmp/conf" || { rm -rf -- "$tmp"; return 1; }
+  for attempt in 1 2 3; do
+    # Only the same signed negative probe is retried; never modify grants,
+    # follow redirects, weaken HTTPS/TLS, or accept any status except 403.
+    rc=0
+    code="$(curl --silent --show-error --no-location --proto '=https' --max-time 15 \
+      --config "$tmp/conf" --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/body" --output "$tmp/response" --write-out '%{http_code}' \
+      "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken")" || rc=$?
+    if [[ "$rc" == 0 && "$code" == 403 ]]; then
+      rm -rf -- "$tmp"
+      return 0
+    fi
+    # Deployment may momentarily return 404/502/503/504 or a transport
+    # failure during Traefik replacement. Even certificate failures are
+    # never ignored: a retry still performs full TLS verification.
+    if [[ "$attempt" -lt 3 ]] && {
+      [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|28|35|52|56|60)$ ]] ||
+      [[ "$rc" == 0 && "$code" =~ ^(000|404|502|503|504)$ ]]
+    }; then
+      sleep 2
+      continue
+    fi
+    printf 'App Consumer signed callback probe failed (attempt %s/3, curl status %s, HTTP %s).\n' \
+      "$attempt" "$rc" "${code:-000}" >&2
+    rm -rf -- "$tmp"
+    return 1
+  done
   rm -rf -- "$tmp"
-  [[ "$code" == 403 ]] || { printf 'App Consumer signed callback probe returned HTTP %s.\n' "$code" >&2; return 1; }
+  return 1
 }
+
 rp_app_action_detach_if_owned() {
   local id="$1" state tmp
   rp_app_action_execution_state "$id" state || return 1
@@ -360,9 +391,12 @@ rp_invitation_oidc_verify() {
   jq -e --arg client "$client" --arg callback "$callback" '
     (.app // .).oidcConfig as $o |
     $o.clientId == $client and
-    $o.appType == "OIDC_APP_TYPE_WEB" and
-    $o.authMethodType == "OIDC_AUTH_METHOD_TYPE_BASIC" and
-    $o.devMode == false and
+    # ZITADEL omits proto3 default-valued fields from the physical
+    # readback. An omitted appType/authMethodType/devMode is exactly
+    # WEB/BASIC/false; an explicitly wrong or null value remains unsafe.
+    (($o | has("appType") | not) or $o.appType == "OIDC_APP_TYPE_WEB") and
+    (($o | has("authMethodType") | not) or $o.authMethodType == "OIDC_AUTH_METHOD_TYPE_BASIC") and
+    (($o | has("devMode") | not) or $o.devMode == false) and
     $o.responseTypes == ["OIDC_RESPONSE_TYPE_CODE"] and
     $o.grantTypes == ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"] and
     $o.redirectUris == [$callback]

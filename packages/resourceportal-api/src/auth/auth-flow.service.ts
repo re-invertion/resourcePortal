@@ -113,6 +113,7 @@ export class AuthFlowService {
       identityProviderId,
       state,
       await this.nativeOnly(),
+      true, // A successful server-side Web-client code + PKCE exchange.
     );
     // A hosted ZITADEL login may select an upstream IdP even without an RP
     // identityProviderId query argument. Reject positively attested external
