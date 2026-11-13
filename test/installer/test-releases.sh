@@ -704,7 +704,8 @@ upgrade_orders_dependencies_before_final_rollout() (
   zitadel_line="$(grep -n '^zitadel-ready$' "$log" | cut -d: -f1)"
   migration_line="$(grep -n '^migrations$' "$log" | cut -d: -f1)"
   deploy_line="$(grep -n '^deploy:final$' "$log" | cut -d: -f1)"
-  local oidc_line="$(grep -n '^api-oidc-ready$' "$log" | cut -d: -f1)"
+  local oidc_line
+  oidc_line="$(grep -n '^api-oidc-ready$' "$log" | cut -d: -f1)"
   [[ "$firewall_line" -lt "$quiesce_line" && "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" && "$deploy_line" -lt "$oidc_line" ]]
 )
 status 0 'upgrade gates PostgreSQL before ZITADEL, migrations and final rollout' upgrade_orders_dependencies_before_final_rollout
