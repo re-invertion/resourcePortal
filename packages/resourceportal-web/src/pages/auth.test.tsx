@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { AuthPage, PublicHealthPage, interactiveAuthUrl } from "./auth";
+import { AuthPage, PublicHealthPage, interactiveAuthUrl, probeOidcBeforeLogin } from "./auth";
 
 function json(value: unknown){return new Response(JSON.stringify(value),{status:200,headers:{"content-type":"application/json"}})}
 
@@ -59,17 +59,40 @@ it("preserves invitation returnTo and tenant context in interactive auth URLs",(
   );
 });
 
+it("checks public issuer reachability without stale browser session cookies (#439 Codex)", async () => {
+  document.cookie = "rp_session=stale-browser-session; path=/";
+  const fetchMock = vi.fn().mockResolvedValue(json({ status: "ready" }));
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(probeOidcBeforeLogin()).resolves.toBeUndefined();
+
+  expect(fetchMock).toHaveBeenCalledWith("/api/health/oidc", {
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+  });
+  // Other application requests may require cookies; only the public OIDC
+  // readiness check omits them. Sign-in redirects still use browser cookies.
+  document.cookie = "rp_session=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+});
+
 it("shows a retryable identity-provider outage instead of navigating to raw HTTP 500", async () => {
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     if (String(input).startsWith("/api/auth/providers")) return json([]);
     if (String(input) === "/api/health/oidc") return new Response(JSON.stringify({
       code: "OIDC_PROVIDER_UNAVAILABLE",
       message: "Identity provider is temporarily unavailable",
     }), { status: 503, headers: { "content-type": "application/json" } });
     return json({});
-  }));
+  });
+  vi.stubGlobal("fetch", fetchMock);
   render(<AuthPage mode="login"/>);
   const button = await screen.findByRole("button", { name: "Continue with SSO" });
   fireEvent.click(button);
   expect(await screen.findByText(/ResourcePortal cannot connect to the sign-in provider/)).toBeTruthy();
+  expect(fetchMock).toHaveBeenCalledWith("/api/health/oidc", {
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+  });
 });

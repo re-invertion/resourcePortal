@@ -25,6 +25,24 @@ function providerItems(value: unknown): Record<string, unknown>[] {
   return [];
 }
 
+/**
+ * This is a PUBLIC reachability probe, not an authenticated API request.
+ * Browser sessions can contain expired/revoked cookies while the user tries
+ * to sign in again. Never attach that cookie to the preflight: otherwise
+ * the session guard may return 401/503 before probing a healthy issuer.
+ * Interactive /api/auth/login still owns normal cookie creation/state.
+ */
+export async function probeOidcBeforeLogin(): Promise<void> {
+  const response = await fetch("/api/health/oidc", {
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (!response.ok) {
+    throw new Error("OIDC issuer readiness unavailable");
+  }
+}
+
 export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
   const search = typeof location === "undefined" ? new URLSearchParams() : new URLSearchParams(location.search);
   const tenantId = search.get("tenantId") ?? "";
@@ -51,7 +69,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
     try {
       // Preflight from the API's perspective BEFORE a full browser navigation,
       // so unreachable private issuer shows an actionable message, not raw 500.
-      await apiRequest("/api/health/oidc");
+      await probeOidcBeforeLogin();
       window.location.assign(interactiveAuthUrl(mode, tenantId, identityProviderId, returnTo));
     } catch {
       setSignInError(true);
