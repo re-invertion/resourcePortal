@@ -679,6 +679,7 @@ upgrade_orders_dependencies_before_final_rollout() (
   rp_ensure_control_plane_capabilities() { return 0; }
   rp_upgrade_rollback_allowed(){ printf 'rollback-verified\n' >>"$log"; }
   rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'tenant-sso-ready\n' >>"$log"; }
+  rp_wait_api_oidc_connectivity(){ printf 'api-oidc-ready\n' >>"$log"; }
   rp_upgrade_identity_preflight(){ printf 'identity-verified\n' >>"$log"; }
   rp_config_apply_defaults(){ printf 'defaults\n' >>"$log"; }
   rp_pull_release_images(){ printf 'pull\n' >>"$log"; }
@@ -703,7 +704,8 @@ upgrade_orders_dependencies_before_final_rollout() (
   zitadel_line="$(grep -n '^zitadel-ready$' "$log" | cut -d: -f1)"
   migration_line="$(grep -n '^migrations$' "$log" | cut -d: -f1)"
   deploy_line="$(grep -n '^deploy:final$' "$log" | cut -d: -f1)"
-  [[ "$firewall_line" -lt "$quiesce_line" && "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" ]]
+  local oidc_line="$(grep -n '^api-oidc-ready$' "$log" | cut -d: -f1)"
+  [[ "$firewall_line" -lt "$quiesce_line" && "$quiesce_line" -lt "$postgres_line" && "$postgres_line" -lt "$zitadel_line" && "$zitadel_line" -lt "$migration_line" && "$migration_line" -lt "$deploy_line" && "$deploy_line" -lt "$oidc_line" ]]
 )
 status 0 'upgrade gates PostgreSQL before ZITADEL, migrations and final rollout' upgrade_orders_dependencies_before_final_rollout
 

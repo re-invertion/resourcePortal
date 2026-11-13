@@ -392,6 +392,7 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "identity",
     "installer",
     "networking",
+    "oidc-private-tls",
     "platform-admin-ui",
     "platform-release",
     "security",
@@ -1000,4 +1001,29 @@ test("changing the real Swarm workflow runs both real core and VPN smoke gates",
   const unrelated = selectProfiles([".github/workflows/tenant-oidc-live.yml"]);
   assert.equal(unrelated.vpnSmoke, false);
   assert.equal(unrelated.swarmSmoke, false);
+});
+
+
+test("#437 private OIDC TLS transport + real smoke fixture cannot disappear from Fast Fix gates", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.ts",
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.spec.ts",
+    "packages/resourceportal-web/src/pages/auth.tsx",
+    "packages/resourceportal-web/src/pages/auth.test.tsx",
+    "test/installer/test-oidc-private-tls.sh",
+    "test/installer/oidc-private-tls-smoke.cjs",
+  ]);
+  for (const required of ["oidc-private-tls", "security", "identity", "installer", "platform-release"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+  assert.equal(plan.vpnSmoke, false);
+  assert.equal(plan.changedPaths.length, 6);
+});
+
+
+test("#437 issuer TLS+ACME installer ordering is classified as identity/release/security work", () => {
+  const plan = selectProfiles(["test/installer/test-acme-resilience.sh"]);
+  for (const required of ["identity", "installer", "platform-release", "security"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
 });

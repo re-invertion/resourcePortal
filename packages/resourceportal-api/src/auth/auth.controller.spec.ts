@@ -94,6 +94,7 @@ describe("AuthController cookie flow", () => {
   let oidcAuth: {
     authenticateBrowserTokens: ReturnType<typeof vi.fn>;
     getDiscovery: ReturnType<typeof vi.fn>;
+    fetchIssuerEndpoint: ReturnType<typeof vi.fn>;
   };
   let prisma: {
     auditLogEntry: {
@@ -132,7 +133,8 @@ describe("AuthController cookie flow", () => {
       ZITADEL_PROJECT_ID: "390305435971748110",
     };
     oidcAuth = {
-      getDiscovery: vi.fn().mockResolvedValue({
+      fetchIssuerEndpoint: vi.fn((url: string, _stage: string, options?: RequestInit) => fetch(url, options)),
+    getDiscovery: vi.fn().mockResolvedValue({
         authorizationEndpoint: `${issuer}/oauth/v2/authorize`,
         issuer,
         jwksUri: `${issuer}/oauth/v2/keys`,

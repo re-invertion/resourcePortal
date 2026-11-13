@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { AuthPage, PublicHealthPage, interactiveAuthUrl } from "./auth";
 
@@ -57,4 +57,19 @@ it("preserves invitation returnTo and tenant context in interactive auth URLs",(
   )).toBe(
     "/api/auth/login?tenantId=22222222-2222-4222-8222-222222222222&identityProviderId=provider-id&returnTo=%2Finvitations%2Fopaque-token",
   );
+});
+
+it("shows a retryable identity-provider outage instead of navigating to raw HTTP 500", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/auth/providers")) return json([]);
+    if (String(input) === "/api/health/oidc") return new Response(JSON.stringify({
+      code: "OIDC_PROVIDER_UNAVAILABLE",
+      message: "Identity provider is temporarily unavailable",
+    }), { status: 503, headers: { "content-type": "application/json" } });
+    return json({});
+  }));
+  render(<AuthPage mode="login"/>);
+  const button = await screen.findByRole("button", { name: "Continue with SSO" });
+  fireEvent.click(button);
+  expect(await screen.findByText(/ResourcePortal cannot connect to the sign-in provider/)).toBeTruthy();
 });

@@ -307,7 +307,7 @@ export class AuthFlowService {
       ).toString("base64")}`;
     }
 
-    const response = await fetch(discovery.tokenEndpoint, {
+    const response = await this.oidcAuth.fetchIssuerEndpoint(discovery.tokenEndpoint, "code-exchange", {
       signal: AbortSignal.timeout(10_000),
       method: "POST",
       headers,

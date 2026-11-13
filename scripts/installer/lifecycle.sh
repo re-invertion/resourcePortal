@@ -598,6 +598,8 @@ rp_primary_deploy_final() {
   rp_wait_for_acme_certificate "$RP_CFG_DOMAIN" "$environment" 300 || return 1
   if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final 'Waiting for ResourcePortal health' || true; fi
   rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300 || return 1
+  # Reject a successful install with a broken API -> public issuer hairpin.
+  rp_wait_api_oidc_connectivity "$RP_CFG_DOMAIN" 180 || return 1
   if [[ "$environment" == production ]]; then
     rp_acme_cache_active_state || { printf 'Failed to preserve production ACME state for safe reinstall reuse.\n' >&2; return 1; }
   fi

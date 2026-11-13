@@ -36,6 +36,7 @@ rp_run_migrations(){ printf 'MIGRATE\n'; }
 rp_deploy_control_plane(){ printf 'DEPLOY\n'; }
 rp_wait_for_https_origin(){ printf 'HEALTH\n'; }
 rp_upgrade_wait_for_tenant_oidc_ready(){ printf 'OIDC-READY\n'; }
+rp_wait_api_oidc_connectivity(){ printf 'API-OIDC-READY\n'; [[ "${FORCE_OIDC_FAIL:-false}" != true ]]; }
 rp_app_action_activate(){
   printf 'ACTION-ACTIVATE\n'
   [[ "${FORCE_ACTION_FAIL:-false}" != true ]]
@@ -67,7 +68,7 @@ testcase(){
   if [[ "$expect_fail" == true ]]; then
     expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE DB-RESTORED ACTION-DETACHED OLD-STACK HEALTH INVITATION-RECOVER:image-only)"
   else
-    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE OIDC-READY ENROLL CONFIG STACK-PERSIST)"
+    expected="$(printf '%s\n' QUIESCE SNAPSHOT POSTGRES ZITADEL MCP PROVISION ACTION-JOURNAL INVITATION-READY MIGRATE DEPLOY HEALTH ACTION-ACTIVATE OIDC-READY API-OIDC-READY ENROLL CONFIG STACK-PERSIST)"
   fi
   if [[ "$actual" != "$expected" ]]; then
     printf 'FAIL: unexpected upgrade/rollback stage order (failed=%s)\nEXPECTED:\n%s\nACTUAL:\n%s\n' "$expect_fail" "$expected" "$actual" >&2; exit 1
@@ -77,6 +78,23 @@ testcase false
 echo 'PASS: standard upgrade activates ZITADEL Action only after migrated RP API and HTTPS health, before dependent OIDC readiness'
 testcase true
 echo 'PASS: failed Action activation restores database before detach, and detach before previous stack'
+
+# P0 #437: the API can be DB-healthy while it cannot fetch the public issuer
+# from inside Swarm. This must abort the release and invoke the SAME certified
+# rollback, not report success based on /health/ready alone.
+FORCE_ACTION_FAIL=false FORCE_OIDC_FAIL=true rp_upgrade_apply "$tmp/manifest" "$tmp/previous.yml" >"$tmp/oidc-trace" 2>"$tmp/oidc-error" && {
+  echo 'FAIL: broken API -> ZITADEL connectivity was accepted by upgrade' >&2; exit 1
+}
+grep -q 'API to ZITADEL private TLS connectivity' "$tmp/oidc-error" &&
+grep -q 'API-OIDC-READY' "$tmp/oidc-trace" &&
+grep -q 'DB-RESTORED' "$tmp/oidc-trace" &&
+grep -q 'ACTION-DETACHED' "$tmp/oidc-trace" &&
+grep -q 'OLD-STACK' "$tmp/oidc-trace" || {
+  echo 'FAIL: API issuer-connectivity outage did not trigger certified rollback' >&2
+  exit 1
+}
+echo 'PASS: API issuer-connectivity outage fails closed and restores old database, Action and Swarm stack'
+
 
 # Integration regression: actual v0.2.146 -> v0.2.149 installer apply with
 # sparse ZITADEL Actions V2 response. Other components are mocked here;

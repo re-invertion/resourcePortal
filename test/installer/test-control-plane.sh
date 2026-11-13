@@ -49,6 +49,15 @@ bootstrap="$(rp_render_stack bootstrap)"
 ingress="$(rp_render_stack ingress)"
 final="$(rp_render_stack final)"
 
+# Enforce unique YAML keys: a previous draft of #437 accidentally moved
+# rp-web-api's attachable declaration onto the new private overlay.
+# Docker may silently accept the last duplicate instead of failing closed.
+if node -e 'const Y=require("yaml"); const fs=require("node:fs"); const doc=Y.parseDocument(fs.readFileSync(0,"utf8"),{uniqueKeys:true}); if(doc.errors.length){console.error(doc.errors.map(e=>e.message).join("\n"));process.exit(1);}' <<<"$final"; then
+  pass 'final stack YAML has no duplicate mapping keys'
+else
+  fail 'final stack YAML has no duplicate mapping keys'
+fi
+
 # Issue #398: new installations and ordinary upgrades must not require an
 # Action HMAC secret nor activate a global ZITADEL execution by default.
 not_contains "$final" 'rp_app_consumer_action_hmac:' 'unconfigured Action HMAC secret is not a deployment dependency'
@@ -145,6 +154,7 @@ busybox_stack_template_test() (
 status 0 'final stack deploy uses BusyBox-compatible mktemp template' busybox_stack_template_test
 
 original_ingress_deploy="$(declare -f rp_deploy_control_plane)"
+original_oidc_wait="$(declare -f rp_wait_api_oidc_connectivity)"
 rp_validate_domain_dns(){ return 0; }
 mountpoint(){ printf 'mountpoint:%s\n' "$*" >>"$ingress_prepare_log"; return 0; }
 install(){ printf 'install:%s\n' "$*" >>"$ingress_prepare_log"; }
@@ -153,6 +163,7 @@ rp_acme_restore_cached_state(){ return 0; }
 rp_wait_for_acme_certificate(){ printf 'cert:%s:%s\n' "$1" "$2" >>"$ingress_prepare_log"; return 0; }
 rp_acme_cache_active_state(){ printf 'cache\n' >>"$ingress_prepare_log"; return 0; }
 rp_wait_for_https_origin(){ printf 'origin:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
+rp_wait_api_oidc_connectivity(){ printf 'oidc:%s\n' "$1" >>"$ingress_prepare_log"; return 0; }
 rp_primary_enable_ingress
 rp_primary_deploy_final
 prepare_text="$(cat "$ingress_prepare_log")"
@@ -164,11 +175,12 @@ ingress_deploy_line="$(grep -nF 'deploy:ingress' "$ingress_prepare_log" | head -
 [[ -n "$platform_prepare_line" && -n "$ingress_deploy_line" && "$platform_prepare_line" -lt "$ingress_deploy_line" ]] && pass 'Traefik state directory is prepared before ingress deploy' || fail 'Traefik state directory is prepared before ingress deploy'
 contains "$prepare_text" 'cert:auth.rp.example.com:staging' 'ingress validates ZITADEL ACME challenge with staging'
 not_contains "$(sed -n '/deploy:ingress/,/deploy:final/p' "$ingress_prepare_log")" 'cert:rp.example.com' 'ingress does not wait for Web certificate before Web is enabled'
-order_tail="$(grep -E '^(deploy|cert|origin|cache)' "$ingress_prepare_log")"
-expected_order=$'deploy:ingress\ncert:auth.rp.example.com:staging\ndeploy:final\ncert:auth.rp.example.com:production\ncert:rp.example.com:production\norigin:rp.example.com\ncache'
+order_tail="$(grep -E '^(deploy|cert|origin|oidc|cache)' "$ingress_prepare_log")"
+expected_order=$'deploy:ingress\ncert:auth.rp.example.com:staging\ndeploy:final\ncert:auth.rp.example.com:production\ncert:rp.example.com:production\norigin:rp.example.com\noidc:rp.example.com\ncache'
 [[ "$order_tail" == "$expected_order" ]] && pass 'certificate and health checks follow service availability' || fail 'certificate and health checks follow service availability'
-unset -f rp_validate_domain_dns mountpoint install rp_acme_restore_cached_state rp_wait_for_acme_certificate rp_acme_cache_active_state rp_wait_for_https_origin
+unset -f rp_validate_domain_dns mountpoint install rp_acme_restore_cached_state rp_wait_for_acme_certificate rp_acme_cache_active_state rp_wait_for_https_origin rp_wait_api_oidc_connectivity
 eval "$original_ingress_deploy"
+eval "$original_oidc_wait"
 rm -f "$ingress_prepare_log"
 
 contains "$final" 'replicas: 1 # RP_API_REPLICAS' 'final enables API'
@@ -330,6 +342,14 @@ api_section="$(sed -n '/^  api:/,/^  worker:/p' <<<"$final")"
 worker_section="$(sed -n '/^  worker:/,/^  dr-reconciliation:/p' <<<"$final")"
 web_section="$(sed -n '/^  web:/,/^  egress-guard:/p' <<<"$final")"
 traefik_section="$(sed -n '/^  traefik:/,/^configs:/p' <<<"$final")"
+contains "$final" $'  rp-web-api:\n    driver: overlay\n    attachable: false' 'Web-to-API overlay remains non-attachable'
+contains "$final" $'  rp-oidc-private:\n    driver: overlay\n    attachable: false\n\n  host:' 'private OIDC overlay has exactly one non-attachable setting'
+contains "$final" '  rp-oidc-private:' 'private TLS OIDC overlay declared in control plane'
+contains "$api_section" '      - rp-oidc-private' 'API connects to private TLS OIDC overlay'
+contains "$api_section" 'OIDC_PRIVATE_TLS_ROUTE: traefik' 'API routes issuer TLS by Swarm-local Traefik DNS'
+contains "$traefik_section" '      - rp-oidc-private' 'Traefik exposes private TLS to API'
+not_contains "$web_section" '      - rp-oidc-private' 'Web cannot access the private OIDC overlay'
+not_contains "$worker_section" '      - rp-oidc-private' 'Worker cannot access the private OIDC overlay'
 contains "$api_section" '      - rp-web-api' 'API joins the dedicated Web-to-API overlay'
 contains "$final" '  rp-terminal-secure:' 'terminal node communication has dedicated overlay'
 contains "$final" '      encrypted: "true"' 'node communication overlay requests Swarm dataplane encryption'
