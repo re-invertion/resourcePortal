@@ -182,6 +182,53 @@ export class AppConsumersService {
     return sso && membership.appGrants.length > 0;
   }
 
+  /**
+   * MCP DCR token entitlement is independent of RP Web/CLI and tenant app
+   * grants. The DCR client itself is verified separately against ZITADEL's
+   * DCR project. At token/refresh time require a currently enabled MCP tenant,
+   * active membership, explicit MCP access and the SSO login capability.
+   *
+   * A DCR token can carry the RP project audience; it is not a tenant grant.
+   * TenantMcpAccessGuard rechecks the exact requested tenant on every call.
+   */
+  async mayIssueMcpDcrToken(issuer: string, externalSubject: string): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject)) return false;
+    const identity = await this.verifiedIdentity(issuer, externalSubject);
+    if (!identity) return false;
+    const memberships = await this.prisma.tenantMembership.findMany({
+      where: {
+        userId: identity.userId,
+        status: MembershipStatus.Active,
+        tenant: { status: "Active" },
+        OR: [
+          { roles: { some: { roleId: SSO_ROLE } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: SSO_ROLE } } } } } },
+        ],
+      },
+      select: {
+        id: true,
+        tenant: {
+          select: {
+            mcpSettings: {
+              select: {
+                enabled: true,
+                accessMode: true,
+                allowedMembers: { select: { membershipId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    return memberships.some(({ id, tenant }) => {
+      const settings = tenant.mcpSettings;
+      return settings?.enabled === true &&
+        (settings.accessMode === "AllMembers" ||
+          (settings.accessMode === "SelectedMembers" &&
+            settings.allowedMembers.some((row) => row.membershipId === id)));
+    });
+  }
+
   private async verifiedIdentity(issuer: string, externalSubject: string) {
     const identity = await this.prisma.userIdentity.findUnique({
       where: { issuer_externalSubject: { issuer, externalSubject } },

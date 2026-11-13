@@ -5,6 +5,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AppConsumersService } from "./app-consumers.service";
+import { McpDcrClientVerifierService } from "./mcp-dcr-client-verifier.service";
 
 type CallbackPayload = {
   function?: string;
@@ -22,6 +23,7 @@ export class AppConsumerActionService {
   constructor(
     private readonly config: ConfigService,
     private readonly consumers: AppConsumersService,
+    private readonly mcpDcr: McpDcrClientVerifierService,
   ) {}
 
   async authorize(
@@ -107,6 +109,15 @@ export class AppConsumerActionService {
     } catch {
       // No user, grant or secret details in the denied response or HTTP logs.
       throw new ForbiddenException("OIDC client access denied");
+    }
+    try {
+      // A separately verified ChatGPT DCR application may obtain MCP tokens
+      // only while this subject has an active, tenant-scoped MCP entitlement.
+      // This is never an RP Web/CLI or tenant application grant.
+      if (await this.consumers.mayIssueMcpDcrToken(issuer, subject) &&
+          await this.mcpDcr.isTrustedChatGptClient(clientId)) return {};
+    } catch {
+      // Unavailable ZITADEL management or RP DB must fail closed at refresh.
     }
     throw new ForbiddenException("OIDC client access denied");
   }
