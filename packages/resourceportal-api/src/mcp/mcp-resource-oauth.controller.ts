@@ -115,9 +115,22 @@ export class McpResourceOAuthController {
         signed: true, httpOnly: true, secure: this.sessions.isCookieSecure(),
         sameSite: "lax", path: "/api/mcp/oauth", maxAge: 600,
       });
-      reply.header("referrer-policy", "no-referrer");
+      // A no-referrer document policy turns Chromium/Brave HTML form POSTs
+      // into Origin: null. Restrict referrers to our own issuer instead:
+      // nothing about this authorization request is sent to outside sites.
+      reply.header("referrer-policy", "same-origin");
+      const styleNonce = randomBytes(16).toString("base64");
+      // Chromium enforces form-action on redirects after the form POST.
+      // The verified registered OAuth callback must therefore be an allowed
+      // navigation destination, otherwise approve/deny cannot reach ChatGPT.
+      // Only the validated client's callback origin is added, not a wildcard.
+      const callbackOrigin = new URL(options.redirectUri).origin;
+      reply.header(
+        "content-security-policy",
+        `default-src 'none'; style-src 'nonce-${styleNonce}'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'; object-src 'none'`,
+      );
       return reply.status(200).type("text/html; charset=utf-8").send(
-        `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autoryzacja ChatGPT MCP</title></head><body><main style="max-width:38rem;margin:4rem auto;font-family:system-ui,sans-serif;padding:1rem"><h1>Połącz ChatGPT z ResourcePortal</h1><p>ChatGPT będzie mógł używać narzędzi w tenantcie <strong>${escapeHtml(tenant.displayName)}</strong>, zgodnie z Twoimi uprawnieniami ResourcePortal. Narzędzia mogą odczytywać i modyfikować dane; dostęp możesz później cofnąć.</p><form action="/api/mcp/oauth/approve" method="post"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="consent_nonce" value="${escapeHtml(nonce)}"><button type="submit" name="decision" value="approve">Zezwól na połączenie</button> <button type="submit" name="decision" value="deny">Odmów</button></form></main></body></html>`,
+        renderMcpConsentPage(tenant.displayName, options.scope, csrf, nonce, styleNonce),
       );
     });
   }
@@ -202,8 +215,13 @@ export class McpResourceOAuthController {
           !timingSafeEqual(Buffer.from(csrf), Buffer.from(posted))) {
         throw new ForbiddenException("MCP OAuth consent CSRF proof is invalid");
       }
-      const origin = request.headers.origin;
-      if (origin !== undefined && origin !== this.oauth.getOrigin()) {
+      // The consent page permits same-origin referrers only. Some privacy
+      // browsers send Origin: null even for a valid form POST. In that case
+      // demand an explicit same-origin authorize Referer; never accept a
+      // foreign Origin or an unverifiable opaque-origin request.
+      if (!hasTrustedConsentOrigin(
+        request.headers.origin, request.headers.referer, this.oauth.getOrigin(),
+      )) {
         throw new ForbiddenException("MCP OAuth consent origin mismatch");
       }
       const cookie = request.cookies.rp_mcp_oauth_pending;
@@ -335,4 +353,83 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function escapeHtml(raw: string): string {
   return raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+
+function hasTrustedConsentOrigin(
+  origin: string | undefined,
+  referer: string | undefined,
+  expectedOrigin: string,
+): boolean {
+  if (origin === expectedOrigin) return true;
+  // Do not trust a Referer to override a different, explicit Origin.
+  if (origin !== undefined && origin !== "null") return false;
+  if (typeof referer !== "string" || referer.length > 4096) return false;
+  try {
+    const source = new URL(referer);
+    return source.origin === expectedOrigin &&
+      source.pathname === "/api/mcp/oauth/authorize" &&
+      source.username === "" && source.password === "";
+  } catch {
+    return false;
+  }
+}
+
+/** Standalone OAuth consent is delivered by the API before RP Web has loaded.
+ * Use the same slate/blue visual language as ResourcePortal without linking
+ * to a third-party stylesheet or needing JavaScript in a privileged form. */
+function renderMcpConsentPage(
+  tenant: string, scope: string, csrf: string, nonce: string, styleNonce: string,
+): string {
+  const scopes = scope.split(" ").filter(Boolean);
+  const renderedScopes = scopes.map((item) => {
+    const label = item === "mcp"
+      ? "Narzędzia MCP — wyłącznie w ramach bieżących uprawnień"
+      : item === "offline_access"
+        ? "Odświeżanie połączenia — dopóki dostęp pozostaje przyznany"
+        : item;
+    return `<li><span class="scope-icon" aria-hidden="true">✓</span><div><strong>${escapeHtml(item)}</strong><span>${escapeHtml(label)}</span></div></li>`;
+  }).join("");
+  return `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Połącz ChatGPT — ResourcePortal</title><style nonce="${styleNonce}">
+    :root{color-scheme:light;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#f8fafc}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh}
+    .topbar{background:#fff;border-bottom:1px solid #e2e8f0;padding:17px clamp(20px,5vw,56px);box-shadow:0 1px 2px #0f172a08}
+    .brand{font-weight:750;font-size:18px;letter-spacing:-.025em}.brand-mark{display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:3px;margin-right:11px}
+    main{width:min(100% - 36px,620px);margin:clamp(34px,8vh,78px) auto 40px}
+    .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:750;color:#2563eb;margin:0 0 13px}
+    .panel{border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 12px 32px #0f172a0c;background:#fff;padding:clamp(22px,5vw,40px)}
+    h1{font-size:clamp(24px,4.8vw,31px);letter-spacing:-.04em;line-height:1.2;margin:0 0 12px}
+    .intro,.notice{color:#475569;font-size:14px;line-height:1.7;margin:0 0 25px}
+    .meta-label{display:block;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+    .tenant{border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:16px 18px;margin-bottom:24px;overflow-wrap:anywhere}
+    .tenant strong{display:block;font-size:17px;color:#1e3a8a}
+    h2{font-size:15px;margin:0 0 13px}
+    .scopes{list-style:none;padding:0;margin:0 0 25px}
+    .scopes li{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #f1f5f9}
+    .scopes li:first-child{border-top:1px solid #f1f5f9}
+    .scopes strong,.scopes span{display:block;font-size:13px;line-height:1.5}
+    .scopes span{color:#64748b}.scope-icon{width:24px;min-width:24px;height:24px;display:grid!important;place-items:center;color:#1d4ed8!important;background:#dbeafe;border-radius:7px;font-weight:800}
+    .notice{padding:13px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;margin-bottom:24px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap}
+    button{border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;min-height:44px;cursor:pointer}
+    button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+    .allow{background:#2563eb;color:#fff;border:1px solid #2563eb}
+    .allow:hover{background:#1d4ed8}.deny{background:#fff;border:1px solid #cbd5e1;color:#334155}
+    .deny:hover{background:#f1f5f9}
+    .footnote{font-size:12px;color:#64748b;line-height:1.5;margin:18px 0 0}
+    @media(max-width:450px){.actions{flex-direction:column}.actions button{width:100%}}
+  </style></head><body><header class="topbar"><span class="brand-mark" aria-hidden="true"></span><span class="brand">ResourcePortal</span></header>
+  <main><div class="panel"><p class="eyebrow">Autoryzacja połączenia</p><h1>Połącz ChatGPT z ResourcePortal</h1>
+  <p class="intro">Zatwierdzasz dostęp aplikacji ChatGPT do ResourcePortal na swoim koncie. Połączenie nie przyznaje nowych ról.</p>
+  <section class="tenant" aria-label="Wybrany tenant"><span class="meta-label">Tenant</span><strong>${escapeHtml(tenant)}</strong></section>
+  <h2>Żądany zakres dostępu</h2><ul class="scopes">${renderedScopes}</ul>
+  <p class="notice">Narzędzia mogą odczytywać lub zmieniać dane, ale każde wywołanie podlega uprawnieniom użytkownika, polityce tenanta i katalogowi MCP. Dostęp można cofnąć.</p>
+  <form action="/api/mcp/oauth/approve" method="post">
+    <input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}">
+    <input type="hidden" name="consent_nonce" value="${escapeHtml(nonce)}">
+    <div class="actions"><button class="allow" type="submit" name="decision" value="approve">Zezwól na połączenie</button>
+    <button class="deny" type="submit" name="decision" value="deny">Odmów</button></div>
+  </form>
+  <p class="footnote">Zezwolenie dotyczy wyłącznie wybranego tenanta i aktualnie przypisanych uprawnień.</p>
+  </div></main></body></html>`;
 }

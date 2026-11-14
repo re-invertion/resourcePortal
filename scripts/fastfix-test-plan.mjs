@@ -196,7 +196,10 @@ const commands = {
     ["node", "scripts/test-catalog.mjs"],
     ["bash", "-n", "scripts/run-device-vpn-dataplane-smoke.sh"],
   ],
-  "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
+  "mcp-oauth": [
+    ["npm", "run", "test:fastfix:mcp-oauth"],
+    ["node", "--check", "scripts/run-mcp-oauth-consent-browser-e2e.mjs"],
+  ],
   "domains": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domains-certificate-diagnostics.spec.ts", "src/domains/domains-certificate-controller.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-tls-recovery.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/internal/domain-certificate-reconciler.service.spec.ts", "src/internal/traefik-certificate-observer.service.spec.ts", "src/operations/executors/domain-operation.executors.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-domain-tls-recovery.test.tsx"],
@@ -243,6 +246,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/auth\/oidc-issuer-transport(?:\.spec)?\.ts$/, ["oidc-private-tls", "identity", "security"]],
   [/^packages\/resourceportal-web\/src\/pages\/auth(?:\.test)?\.tsx$/, ["oidc-private-tls", "identity", "security"]],
   [/^test\/installer\/(?:oidc-private-tls-smoke\.cjs|test-oidc-private-tls\.sh)$/, ["oidc-private-tls", "installer", "identity", "security", "platform-release"]],
+  [/^test\/installer\/test-zitadel-transient-management\.sh$/, ["installer", "identity", "security", "platform-release"]],
   [/^test\/installer\/test-acme-resilience\.sh$/, ["identity", "installer", "platform-release", "security"]],
   // Capacity admission and tenant quota share a scheduler/resource-limit contract.
   // Do not let either implementation or new regression fixtures evade patch CI.
@@ -502,6 +506,7 @@ const classifiers = [
   // outside the /mcp and /auth directories. An unclassified change to this
   // public routing could silently disable issuer discovery or expose tokens.
   [/^packages\/resourceportal-api\/src\/config\/global-prefix-config\.ts$/, ["mcp-oauth", "security", "identity", "workflow"]],
+  [/^scripts\/run-mcp-oauth-consent-browser-e2e\.mjs$/, ["mcp-oauth", "identity", "security", "workflow"]],
   [/^packages\/resourceportal-api\/src\/mcp\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/auth\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/bug-reports\//, ["bug-reports"]],
