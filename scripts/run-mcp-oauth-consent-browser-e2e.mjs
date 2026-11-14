@@ -158,6 +158,9 @@ try {
   const consentResponse = await page.request.get(authorize);
   assert.equal(consentResponse.headers()["referrer-policy"], "same-origin");
   assert.match(consentResponse.headers()["content-security-policy"], /style-src 'nonce-/);
+  assert.ok(consentResponse.headers()["content-security-policy"].includes(
+    `form-action 'self' ${callbackOrigin}`,
+  ));
   assert.equal(await page.locator(".scope-icon").count(), 2);
   await Promise.all([
     page.waitForURL(`${callbackOrigin}/callback?**`),

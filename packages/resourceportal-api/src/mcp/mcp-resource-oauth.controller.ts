@@ -120,9 +120,14 @@ export class McpResourceOAuthController {
       // nothing about this authorization request is sent to outside sites.
       reply.header("referrer-policy", "same-origin");
       const styleNonce = randomBytes(16).toString("base64");
+      // Chromium enforces form-action on redirects after the form POST.
+      // The verified registered OAuth callback must therefore be an allowed
+      // navigation destination, otherwise approve/deny cannot reach ChatGPT.
+      // Only the validated client's callback origin is added, not a wildcard.
+      const callbackOrigin = new URL(options.redirectUri).origin;
       reply.header(
         "content-security-policy",
-        `default-src 'none'; style-src 'nonce-${styleNonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'`,
+        `default-src 'none'; style-src 'nonce-${styleNonce}'; form-action 'self' ${callbackOrigin}; base-uri 'none'; frame-ancestors 'none'; object-src 'none'`,
       );
       return reply.status(200).type("text/html; charset=utf-8").send(
         renderMcpConsentPage(tenant.displayName, options.scope, csrf, nonce, styleNonce),

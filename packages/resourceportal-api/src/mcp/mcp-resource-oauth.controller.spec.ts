@@ -306,8 +306,10 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
       "content-security-policy",
       expect.stringContaining("form-action 'self'"),
     );
-    const cssPolicy = r.header.mock.calls.find(([key]) => key === "content-security-policy")?.[1];
+    const cssPolicy: unknown = r.header.mock.calls.find(([key]) => key === "content-security-policy")?.[1];
     expect(cssPolicy).toMatch(/style-src 'nonce-[a-zA-Z0-9+/=]{24}'/);
+    expect(cssPolicy).toContain("form-action 'self' https://chatgpt.com");
+    expect(cssPolicy).not.toContain("form-action *");
     expect(html).toContain('style nonce="');
     expect(html).not.toContain("https://cdn.");
     expect(f.oauth.beginConsent).toHaveBeenCalledWith(expect.objectContaining({
