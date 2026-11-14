@@ -71,8 +71,30 @@ describe("validateEnv", () => {
       OIDC_ISSUER_URL: "https://auth.example.com",
       OIDC_CLIENT_ID: "rp-web",
       OIDC_AUDIENCE: "rp-web",
+      RESOURCE_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "certified-signature-key-longer-than-32-characters",
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "12345",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL:
+        "https://rp.example.com/api/app-consumer-actions/preaccesstoken",
+      ZITADEL_MANAGEMENT_TOKEN: "test-management-token",
+      ZITADEL_ORGANIZATION_ID: "123456",
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "rp-invite-client",
+      OIDC_INVITATION_CLIENT_SECRET: "invitation-credential-more-than-24-characters",
+      OIDC_INVITATION_REDIRECT_URI:
+        "https://rp.example.com/api/invitations/onboard/callback",
     };
     expect(validateEnv(configured)).toBe(configured);
+    expect(validateEnv({ ...configured, RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" }))
+      .toMatchObject({ RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" });
+    expect(() => validateEnv({ ...configured, RP_MCP_RESOURCE_OAUTH_ENABLED: "unknown" }))
+      .toThrow("RP_MCP_RESOURCE_OAUTH_ENABLED must be true, false, or auto");
+    expect(() => validateEnv({ ...configured, RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "false" }))
+      .toThrow("MCP resource OAuth requires certified issuer-global App Consumer Action");
+    expect(() => validateEnv({ ...configured, RESOURCE_ENCRYPTION_KEY: "" }))
+      .toThrow("MCP resource OAuth requires a 32-byte RESOURCE_ENCRYPTION_KEY");
   });
 
   it("rejects enabling App User login with an unbound, ambiguous or non-HTTPS ZITADEL target", () => {

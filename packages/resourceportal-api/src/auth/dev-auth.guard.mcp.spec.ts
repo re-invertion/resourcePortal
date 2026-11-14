@@ -10,9 +10,10 @@ import { DevAuthGuard } from "./dev-auth.guard";
 import { OidcAuthService } from "./oidc-auth.service";
 import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
 
-function context(url: string) {
+function context(url: string, method = "POST") {
   const request = {
     url,
+    method,
     protocol: "https",
     headers: {
       authorization: "Bearer mcp-token",
@@ -66,6 +67,31 @@ const userPrincipal = {
 };
 
 describe("DevAuthGuard MCP bearer authentication", () => {
+  it.each([
+    ["GET", "/api/mcp/oauth/authorize?client_id=abc"],
+    ["GET", "/api/mcp/oauth/upstream/callback?state=abc&code=def"],
+    ["POST", "/api/mcp/oauth/approve"],
+  ])("allows dedicated MCP-only authorization (%s %s) despite a stale RP Web session", async (method, url) => {
+    const sessions = {
+      hasSessionCookie: vi.fn().mockReturnValue(true),
+      getSessionIdFromRequest: vi.fn().mockReturnValue("stale-rp-web-session"),
+      authenticateSession: vi.fn().mockRejectedValue(Error("No native RP Web grant")),
+    };
+    const mcp = new DevAuthGuard(
+      { getAllAndOverride: vi.fn((key: string) => key === IS_PUBLIC_KEY) } as unknown as Reflector,
+      { get: vi.fn((key: string, fallback?: string) =>
+        ({ AUTH_MODE: "oidc", NODE_ENV: "test" } as Record<string, string>)[key] ?? fallback),
+      } as unknown as ConfigService,
+      {} as PrismaService,
+      {} as OidcAuthService,
+      sessions as unknown as AuthSessionService,
+    );
+    const req = context(url, method);
+    delete (req.request.headers as { authorization?: string }).authorization;
+    await expect(mcp.canActivate(req.executionContext)).resolves.toBe(true);
+    expect(sessions.authenticateSession).not.toHaveBeenCalled();
+  });
+
   it("uses MCP-specific token validation for tenant MCP requests", async () => {
     const oidcAuth = {
       authenticateMcpPrincipalToken: vi.fn().mockResolvedValue(userPrincipal),

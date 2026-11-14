@@ -3,7 +3,7 @@ import { lookup as dnsLookup } from "node:dns";
 import { Agent, type Dispatcher } from "undici";
 
 type OidcStage = "discovery" | "code-exchange" | "jwks" | "userinfo" |
-  "refresh" | "revoke" | "readiness";
+  "refresh" | "revoke" | "registration" | "readiness";
 
 const providerUnavailable = () => new ServiceUnavailableException({
   code: "OIDC_PROVIDER_UNAVAILABLE",

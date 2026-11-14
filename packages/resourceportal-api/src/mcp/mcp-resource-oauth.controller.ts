@@ -3,7 +3,9 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { McpUpstreamLoginService } from "../auth/mcp-upstream-login.service";
+import { OidcAuthService } from "../auth/oidc-auth.service";
 import { AuthSessionService } from "../auth/auth-session.service";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { Public } from "../auth/public.decorator";
@@ -37,7 +39,7 @@ export class McpResourceOAuthDiscoveryController {
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
       scopes_supported: ["mcp", "offline_access"],
-      authorization_response_iss_parameter_supported: false,
+      authorization_response_iss_parameter_supported: true,
     };
   }
 }
@@ -52,6 +54,8 @@ export class McpResourceOAuthController {
     private readonly nativeMode: NativeLoginModeService,
     private readonly config: ConfigService,
     private readonly sessions: AuthSessionService,
+    private readonly upstream: McpUpstreamLoginService,
+    private readonly oidc: OidcAuthService,
   ) {}
 
   @Post("register")
@@ -75,18 +79,23 @@ export class McpResourceOAuthController {
       const options = this.oauth.parseAuthorization(params);
       await this.oauth.requireClient(options.clientId, options.redirectUri);
       await this.settings.assertMcpEnabled(options.tenantId);
-      const user = await this.oauth.browserUser(request);
+      const user = await this.oauth.browserUser(request, options.tenantId);
       if (!user) {
-        // The existing Web login uses signed state, PKCE and a validated local
-        // returnTo. Do not invent a separate upstream OAuth redirect callback.
-        const returnTo = request.url;
-        if (!returnTo.startsWith("/api/mcp/oauth/authorize?")) {
-          throw new McpOAuthProtocolError("invalid_request");
-        }
+        // Do not require a native Web grant merely to connect tenant MCP.
+        // ZITADEL signs an identity-only ID token for a tenant-specific
+        // allow-listed client; ResourcePortal will mint the resource token.
+        const upstream = await this.upstream.start({
+          tenantId: options.tenantId, clientId: options.clientId,
+          resource: this.oauth.resourceForTenant(options.tenantId),
+          redirectUri: options.redirectUri, clientState: options.state,
+          challenge: options.challenge, scope: options.scope,
+        }, this.oauth.getOrigin());
+        reply.setCookie("rp_mcp_upstream_state", upstream.state, {
+          signed: true, httpOnly: true, secure: this.sessions.isCookieSecure(),
+          sameSite: "lax", path: "/api/mcp/oauth/upstream/callback", maxAge: 600,
+        });
         reply.header("cache-control", "no-store");
-        return reply.status(302).redirect(
-          `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`,
-        );
+        return reply.status(302).redirect(upstream.url);
       }
       await this.assertUser(options.tenantId, user.id, user.authenticatedIdpId);
       const tenant = await this.prisma.tenant.findUnique({
@@ -110,6 +119,65 @@ export class McpResourceOAuthController {
       return reply.status(200).type("text/html; charset=utf-8").send(
         `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autoryzacja ChatGPT MCP</title></head><body><main style="max-width:38rem;margin:4rem auto;font-family:system-ui,sans-serif;padding:1rem"><h1>Połącz ChatGPT z ResourcePortal</h1><p>ChatGPT będzie mógł używać narzędzi w tenantcie <strong>${escapeHtml(tenant.displayName)}</strong>, zgodnie z Twoimi uprawnieniami ResourcePortal. Narzędzia mogą odczytywać i modyfikować dane; dostęp możesz później cofnąć.</p><form action="/api/mcp/oauth/approve" method="post"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><button type="submit" name="decision" value="approve">Zezwól na połączenie</button> <button type="submit" name="decision" value="deny">Odmów</button></form></main></body></html>`,
       );
+    });
+  }
+
+  @Get("upstream/callback")
+  async upstreamCallback(
+    @Query() params: Record<string, unknown>,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    return this.respond(reply, async () => {
+      this.oauth.requireEnabled();
+      const saved = request.cookies.rp_mcp_upstream_state;
+      if (!saved || typeof request.unsignCookie !== "function") {
+        throw new McpOAuthProtocolError("invalid_request");
+      }
+      const unsigned = request.unsignCookie(saved);
+      if (!unsigned.valid || unsigned.value !== params.state) {
+        throw new McpOAuthProtocolError("invalid_request");
+      }
+      // Cookie must not be reused even if an earlier callback was unsuccessful.
+      reply.clearCookie("rp_mcp_upstream_state", {
+        path: "/api/mcp/oauth/upstream/callback",
+      });
+      if (typeof params.error === "string") {
+        throw new McpOAuthProtocolError("access_denied");
+      }
+      const result = await this.upstream.exchange(
+        params.code, params.state, this.oauth.getOrigin(),
+      );
+      const user = await this.oidc.authenticateMcpBootstrapTokens(
+        result.idToken, result.record.upstreamClientId, unsigned.value,
+      );
+      await this.assertUser(result.record.tenantId, user.id, user.authenticatedIdpId);
+      const identityCookie = await this.upstream.createIdentitySession(
+        user, result.record.tenantId,
+      );
+      reply.setCookie("rp_mcp_identity_session", identityCookie, {
+        signed: true, httpOnly: true, secure: this.sessions.isCookieSecure(),
+        sameSite: "lax", path: "/api/mcp/oauth", maxAge: 600,
+      });
+      // The MCP-only browser has no RP Web login and therefore no RP Web
+      // CSRF cookie. Issue just the CSRF double-submit cookie: it grants no
+      // RP Web/API access, and consent still requires a signed identity proof.
+      reply.setCookie(this.sessions.getCsrfCookieName(),
+        randomBytes(32).toString("base64url"), {
+          httpOnly: false, secure: this.sessions.isCookieSecure(),
+          sameSite: "lax", path: "/api/mcp/oauth", maxAge: 600,
+        });
+      const target = new URL("/api/mcp/oauth/authorize", this.oauth.getOrigin());
+      target.searchParams.set("response_type", "code");
+      target.searchParams.set("client_id", result.record.clientId);
+      target.searchParams.set("redirect_uri", result.record.redirectUri);
+      target.searchParams.set("resource", result.record.resource);
+      target.searchParams.set("scope", result.record.scope);
+      target.searchParams.set("state", result.record.clientState);
+      target.searchParams.set("code_challenge", result.record.codeChallenge);
+      target.searchParams.set("code_challenge_method", "S256");
+      reply.header("referrer-policy", "no-referrer");
+      return reply.status(302).redirect(target.pathname + target.search);
     });
   }
 
@@ -146,7 +214,7 @@ export class McpResourceOAuthController {
         throw new McpOAuthProtocolError("invalid_request");
       }
       const pending = await this.oauth.inspectConsent(unsigned.value);
-      const user = await this.oauth.browserUser(request);
+      const user = await this.oauth.browserUser(request, pending.tenantId);
       if (!user || pending.userId !== user.id) {
         throw new ForbiddenException("MCP OAuth consent requires the same signed-in user");
       }
@@ -166,6 +234,10 @@ export class McpResourceOAuthController {
         location.searchParams.set("code", code);
       }
       location.searchParams.set("state", pending.state);
+      // RFC 9207 issuer identification protects the ChatGPT callback from
+      // OAuth mix-up and enables its stable connector callback URI. The exact
+      // value MUST match our AS metadata and protected-resource advertisement.
+      location.searchParams.set("iss", this.oauth.getIssuer());
       reply.header("referrer-policy", "no-referrer");
       return reply.status(302).redirect(location.toString());
     });

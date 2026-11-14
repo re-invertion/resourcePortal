@@ -37,6 +37,7 @@ function reply() {
 }
 function fixture() {
   const oauth = {
+    resourceForTenant: vi.fn().mockReturnValue(resource),
     getOrigin: vi.fn().mockReturnValue(origin),
     getIssuer: vi.fn().mockReturnValue(`${origin}/api/mcp/oauth`),
     isEnabled: vi.fn().mockReturnValue(true),
@@ -82,6 +83,24 @@ function fixture() {
     getCsrfCookieName: vi.fn().mockReturnValue("rp_csrf"),
     isCookieSecure: vi.fn().mockReturnValue(true),
   };
+  const upstream = {
+    start: vi.fn().mockResolvedValue({
+      state: "S".repeat(43),
+      url: "https://zitadel.example.test/oauth/v2/authorize?client_id=12345",
+    }),
+    exchange: vi.fn().mockResolvedValue({
+      record: {
+        upstreamClientId: "12345", tenantId, clientId: options.clientId,
+        redirectUri: callback, resource, scope: options.scope,
+        clientState: options.state, codeChallenge: options.challenge,
+      },
+      idToken: "signed-jwt",
+    }),
+    createIdentitySession: vi.fn().mockResolvedValue("Z".repeat(43)),
+  };
+  const oidc = {
+    authenticateMcpBootstrapTokens: vi.fn().mockResolvedValue(user),
+  };
   const controller = new McpResourceOAuthController(
     oauth as unknown as McpResourceOAuthService,
     settings as unknown as TenantMcpSettingsService,
@@ -89,8 +108,10 @@ function fixture() {
     native as unknown as NativeLoginModeService,
     config as unknown as ConfigService,
     sessions as unknown as AuthSessionService,
+    upstream as never,
+    oidc as never,
   );
-  return { oauth, settings, prisma, controller };
+  return { oauth, settings, prisma, controller, upstream, oidc };
 }
 function request(input: {
   cookies?: Record<string, string>; origin?: string; contentType?: string;
@@ -145,18 +166,76 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
       registration_endpoint: `${origin}/api/mcp/oauth/register`,
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
+      authorization_response_iss_parameter_supported: true,
     });
   });
 
-  it("redirects an anonymous valid authorization request to the existing RP login", async () => {
+  it("MCP-only user without RP Web grant uses identity-only ZITADEL client", async () => {
     const f = fixture();
     f.oauth.browserUser.mockResolvedValueOnce(null);
     const r = reply();
     await f.controller.authorize({}, request(), r as unknown as FastifyReply);
     expect(r.status).toHaveBeenCalledWith(302);
-    expect(String(r.redirect.mock.calls[0]?.[0])).toContain("/api/auth/login?returnTo=");
+    expect(String(r.redirect.mock.calls[0]?.[0])).toContain("https://zitadel.example.test/oauth/v2/authorize");
+    expect(f.upstream.start).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId, clientId: options.clientId, resource, redirectUri: callback,
+    }), origin);
+    expect(r.setCookie).toHaveBeenCalledWith("rp_mcp_upstream_state", "S".repeat(43),
+      expect.objectContaining({ signed: true, sameSite: "lax", httpOnly: true }));
+
     expect(f.oauth.beginConsent).not.toHaveBeenCalled();
     expect(f.oauth.issueCode).not.toHaveBeenCalled();
+  });
+
+  it("MCP-only ZITADEL callback creates a tenant-bound identity session, never a Web grant", async () => {
+    const f = fixture();
+    const r = reply();
+    const state = "S".repeat(43);
+    const req = request({ cookies: { rp_mcp_upstream_state: "signed" } });
+    req.unsignCookie = vi.fn().mockReturnValue({ valid: true, value: state });
+    await f.controller.upstreamCallback({
+      code: "zitadel-code", state,
+    }, req, r as unknown as FastifyReply);
+    expect(f.upstream.exchange).toHaveBeenCalledWith("zitadel-code", state, origin);
+    expect(f.oidc.authenticateMcpBootstrapTokens).toHaveBeenCalledWith(
+      "signed-jwt", "12345", state,
+    );
+    expect(f.settings.assertUserCanUseMcp).toHaveBeenCalledWith(tenantId, userId);
+    expect(f.upstream.createIdentitySession).toHaveBeenCalledWith(user, tenantId);
+    expect(r.setCookie).toHaveBeenCalledWith(
+      "rp_mcp_identity_session", "Z".repeat(43),
+      expect.objectContaining({ signed: true, sameSite: "lax", httpOnly: true }),
+    );
+    expect(r.setCookie).toHaveBeenCalledWith(
+      "rp_csrf", expect.any(String),
+      expect.objectContaining({ sameSite: "lax", path: "/api/mcp/oauth" }),
+    );
+    const next = new URL(String(r.redirect.mock.calls[0]?.[0]), origin);
+    expect(next.pathname).toBe("/api/mcp/oauth/authorize");
+    expect(next.searchParams.get("resource")).toBe(resource);
+    expect(next.searchParams.get("state")).toBe(options.state);
+    expect(next.searchParams.get("code_challenge")).toBe(options.challenge);
+  });
+
+  it("rejects forged upstream OAuth state and revoked tenant role before consent", async () => {
+    const f = fixture();
+    const r = reply();
+    const state = "S".repeat(43);
+    const req = request({ cookies: { rp_mcp_upstream_state: "signed" } });
+    req.unsignCookie = vi.fn().mockReturnValue({
+      valid: true, value: "X".repeat(43),
+    });
+    await f.controller.upstreamCallback({
+      code: "code", state,
+    }, req, r as unknown as FastifyReply);
+    expect(r.status).toHaveBeenCalledWith(400);
+    expect(f.upstream.exchange).not.toHaveBeenCalled();
+    req.unsignCookie = vi.fn().mockReturnValue({ valid: true, value: state });
+    f.settings.assertUserCanUseMcp.mockRejectedValue(new Error("MCP revoked"));
+    await expect(f.controller.upstreamCallback({
+      code: "code", state,
+    }, req, reply() as unknown as FastifyReply)).rejects.toThrow("MCP revoked");
+    expect(f.upstream.createIdentitySession).not.toHaveBeenCalled();
   });
 
   it("renders escaped explicit tenant consent with a signed, short-lived cookie", async () => {
@@ -193,6 +272,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(redirected.origin).toBe("https://chatgpt.com");
     expect(redirected.searchParams.get("code")).toBe("rpoc_valid-code");
     expect(redirected.searchParams.get("state")).toBe("some-client-state");
+    expect(redirected.searchParams.get("iss")).toBe(`${origin}/api/mcp/oauth`);
   });
 
   it("rejects a cross-origin or cross-user OAuth consent without minting a code", async () => {
@@ -223,6 +303,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     }, request({ origin }), r as unknown as FastifyReply);
     const redirect = new URL(r.redirect.mock.calls[0]?.[0] as string);
     expect(redirect.searchParams.get("error")).toBe("access_denied");
+    expect(redirect.searchParams.get("iss")).toBe(`${origin}/api/mcp/oauth`);
     expect(redirect.searchParams.get("code")).toBeNull();
     expect(f.oauth.issueCode).not.toHaveBeenCalled();
   });

@@ -24,10 +24,11 @@ async function createTokenFixture(
   authenticatedIdpId?: string,
   nonce?: string,
   clientClaims?: { audience?: string | string[]; azp?: string; client_id?: string },
+  subjectId = "zitadel-user-1",
 ) {
   const issuer = "https://issuer.example.com";
   const audience = "resource-portal";
-  const subject = "zitadel-user-1";
+  const subject = subjectId;
   const { privateKey, publicKey } = await generateKeyPair("RS256");
   const publicJwk = await exportJWK(publicKey);
   const keyId = "test-key";
@@ -959,3 +960,84 @@ describe("#430 onboarding ID tokens cannot authorize ordinary RP API or link unr
   });
 });
 
+
+describe("#442 signed isolated MCP-only identity proof without Web grant", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const nonce = "N".repeat(43);
+  const client = "340396026519785524";
+  const subject = "1234567890123";
+  const user = {
+    id: "00000000-0000-4000-8000-000000000123",
+    email: "user@example.com",
+    displayName: "MCP-only",
+    status: UserStatus.Active,
+  };
+
+  function prepare(fixture: Awaited<ReturnType<typeof createTokenFixture>>,
+      linked = true, userStatus: UserStatus = UserStatus.Active) {
+    installOidcFetch(fixture);
+    const prisma = {
+      userIdentity: {
+        findUnique: vi.fn().mockResolvedValue(linked ? {
+          providerType: "zitadel", identityProviderId: null,
+          user: { ...user, status: userStatus },
+        } : null),
+      },
+      user: { create: vi.fn(), update: vi.fn() },
+    };
+    const svc = new OidcAuthService(createConfig({
+      OIDC_ISSUER_URL: fixture.issuer,
+      OIDC_CLIENT_ID: "rp-native-web",
+      OIDC_CLI_CLIENT_ID: "rp-native-cli",
+      OIDC_INVITATION_CLIENT_ID: "rp-native-invite",
+      OIDC_AUDIENCE: "rp-native-web",
+    }), prisma as unknown as PrismaService);
+    return { svc, prisma };
+  }
+
+  it("accepts an existing MCP-only member's signed client+nonce ID proof without any Web grant", async () => {
+    const fixture = await createTokenFixture(true, true, undefined, nonce,
+      { audience: client }, subject);
+    const { svc, prisma } = prepare(fixture);
+    await expect(svc.authenticateMcpBootstrapTokens(fixture.token, client, nonce))
+      .resolves.toMatchObject(user);
+    expect(prisma.userIdentity.findUnique).toHaveBeenCalledWith({
+      where: { issuer_externalSubject: {
+        issuer: fixture.issuer, externalSubject: subject,
+      } },
+      include: { user: true },
+    });
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different tenant client, a replay with another nonce, and client-spoofed signed claims", async () => {
+    const fixture = await createTokenFixture(true, true, undefined, nonce,
+      { audience: client, azp: client }, subject);
+    const { svc } = prepare(fixture);
+    await expect(svc.authenticateMcpBootstrapTokens(fixture.token,
+      "340396026519785999", nonce)).rejects.toThrow();
+    await expect(svc.authenticateMcpBootstrapTokens(fixture.token,
+      client, "X".repeat(43))).rejects.toThrow();
+    const forged = await createTokenFixture(true, true, undefined, nonce,
+      { audience: client, azp: "different-application" }, subject);
+    vi.unstubAllGlobals();
+    const other = prepare(forged);
+    await expect(other.svc.authenticateMcpBootstrapTokens(
+      forged.token, client, nonce,
+    )).rejects.toThrow("Unbound MCP upstream identity proof");
+  });
+
+  it("rejects an unlinked or suspended identity, never provisioning from email", async () => {
+    const fixture = await createTokenFixture(true, true, undefined, nonce,
+      { audience: client }, subject);
+    let f = prepare(fixture, false);
+    await expect(f.svc.authenticateMcpBootstrapTokens(fixture.token,
+      client, nonce)).rejects.toThrow("not an active linked account");
+    expect(f.prisma.user.create).not.toHaveBeenCalled();
+    f = prepare(fixture, true, UserStatus.Suspended);
+    await expect(f.svc.authenticateMcpBootstrapTokens(fixture.token,
+      client, nonce)).rejects.toThrow("not an active linked account");
+  });
+});

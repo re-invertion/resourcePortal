@@ -155,6 +155,17 @@ export class DevAuthGuard implements CanActivate {
     // the public re-authentication path. Bearer tokens remain verified above;
     // no other public or protected endpoints receive this exception.
     const path = request.url.split("?", 1)[0];
+    // The RP-owned OAuth authorization server handles these exact routes'
+    // identity and consent independently. A stale/ungranted RP Web cookie
+    // must not prevent an MCP-only user from starting an upstream identity
+    // login, returning from ZITADEL, or posting a signed consent form.
+    if (isPublic && (
+      (request.method === "GET" && [
+        "/api/mcp/oauth/authorize", "/api/mcp/oauth/upstream/callback",
+      ].includes(path)) ||
+      (request.method === "POST" && path === "/api/mcp/oauth/approve")
+    )) return true;
+
     if(isPublic && request.method === "GET" &&
        ["/api/auth/login", "/api/auth/providers", "/api/auth/register",
         "/api/auth/recover", "/api/auth/callback"].includes(path)) return true;

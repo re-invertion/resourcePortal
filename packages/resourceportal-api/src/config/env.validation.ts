@@ -33,7 +33,15 @@ export function validateEnv(config: Env) {
     } catch { /* Fail closed for absent/malformed callback or public API URL. */ }
     if (!validRedirect) errors.push("Invitation OIDC callback must match public HTTPS RP API origin");
   }
-  if (config.RP_MCP_RESOURCE_OAUTH_ENABLED === "true") {
+  const mcpOAuthMode = config.RP_MCP_RESOURCE_OAUTH_ENABLED ?? "false";
+  if (!["true", "false", "auto"].includes(mcpOAuthMode)) {
+    errors.push("RP_MCP_RESOURCE_OAUTH_ENABLED must be true, false, or auto");
+  }
+  const resourceOAuthActive = mcpOAuthMode === "true" ||
+    (mcpOAuthMode === "auto" &&
+      config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&
+      config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED === "true");
+  if (resourceOAuthActive) {
     const apiUrl = config.PUBLIC_API_URL ?? "";
     let canonicalOrigin = false;
     try {
@@ -48,6 +56,21 @@ export function validateEnv(config: Env) {
       errors.push("MCP resource OAuth requires an OIDC-authenticated RP session");
     }
     requireMinLength(config, errors, "AUTH_COOKIE_SECRET", 20);
+    // Without a certified issuer-global pre-token Action, the dedicated
+    // ZITADEL identity client gets HTTP 403 even for a permitted MCP-only user.
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED !== "true" ||
+        config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED !== "true") {
+      errors.push("MCP resource OAuth requires certified issuer-global App Consumer Action");
+    }
+    // PKCE verifiers for in-flight upstream logins must never be encrypted
+    // using the EncryptionService development fallback in production.
+    let keyLength = 0;
+    try {
+      keyLength = Buffer.from(config.RESOURCE_ENCRYPTION_KEY ?? "", "base64").length;
+    } catch { /* Fail closed. */ }
+    if (keyLength !== 32) {
+      errors.push("MCP resource OAuth requires a 32-byte RESOURCE_ENCRYPTION_KEY");
+    }
   }
 
   if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&

@@ -175,6 +175,7 @@ model User {
   sessions                   PortalSession[]
   mcpOAuthCodes              McpOAuthCode[]
   mcpOAuthPendingConsents    McpOAuthPendingConsent[]
+  mcpOAuthBrowserSessions   McpOAuthBrowserSession[]
   mcpOAuthGrants             McpOAuthGrant[]
   identities                 UserIdentity[]
   tenantOidcGrants           TenantOidcGrant[]
@@ -232,6 +233,9 @@ model Tenant {
   memberships                TenantMembership[]
   mcpOAuthCodes              McpOAuthCode[]
   mcpOAuthPendingConsents    McpOAuthPendingConsent[]
+  mcpOAuthUpstreamClient    McpOAuthUpstreamClient?
+  mcpOAuthUpstreamLogins    McpOAuthUpstreamLogin[]
+  mcpOAuthBrowserSessions  McpOAuthBrowserSession[]
   mcpOAuthGrants             McpOAuthGrant[]
   invitations                TenantInvitation[]
   groups                     TenantGroup[]
@@ -324,6 +328,7 @@ model McpOAuthClient {
   revokedAt    DateTime?
   codes        McpOAuthCode[]
   pendingConsents McpOAuthPendingConsent[]
+  upstreamLogins McpOAuthUpstreamLogin[]
   grants       McpOAuthGrant[]
 }
 
@@ -360,6 +365,47 @@ model McpOAuthPendingConsent {
   client        McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+/// An RP-created ZITADEL DCR client used ONLY for upstream identity login
+/// of MCP-approved users. Never accept its JWT as an RP Web or MCP API token.
+model McpOAuthUpstreamClient {
+  tenantId     String   @id @db.Uuid
+  clientId     String   @unique
+  createdAt    DateTime @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model McpOAuthUpstreamLogin {
+  stateHash       String         @id
+  tenantId        String         @db.Uuid
+  clientId        String
+  upstreamClientId String
+  resource        String
+  redirectUri     String
+  clientState     String
+  scope           String
+  codeChallenge   String
+  verifierCipher  String         @db.Text
+  expiresAt       DateTime
+  createdAt       DateTime       @default(now())
+  client          McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model McpOAuthBrowserSession {
+  sessionHash       String   @id
+  tenantId          String   @db.Uuid
+  userId            String   @db.Uuid
+  authenticatedIdpId String?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
 }

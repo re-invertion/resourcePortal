@@ -65,6 +65,9 @@ function fixture(enabled = true) {
         return { count: 1 };
       }),
     },
+    mcpOAuthBrowserSession: {
+      findUnique: vi.fn(),
+    },
     mcpOAuthGrant: {
       create: vi.fn(({ data }: { data: Record<string, unknown> }) => {
         const id = `grant-${++counter}`;
@@ -207,6 +210,36 @@ describe("RP tenant MCP OAuth resource isolation (#442)", () => {
     expect(() => f.service.parseAuthorization({ ...query, redirect_uri: "https://evil.test" })).toThrow();
   });
 
+  it("isolates the MCP-only signed browser proof by tenant even before consent", async () => {
+    const f = fixture();
+    const session = "I".repeat(43);
+    f.prisma.mcpOAuthBrowserSession.findUnique.mockResolvedValue({
+      tenantId: a, userId, authenticatedIdpId: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        id: userId, email: "mcp-only@example.test", displayName: "MCP-only",
+        status: UserStatus.Active,
+      },
+    });
+    const request = {
+      cookies: { rp_mcp_identity_session: "signed-identity-proof" },
+      unsignCookie: vi.fn().mockReturnValue({ valid: true, value: session }),
+    } as unknown as import("fastify").FastifyRequest;
+    await expect(f.service.browserUser(request, a)).resolves.toMatchObject({
+      id: userId,
+    });
+    await expect(f.service.browserUser(request, b)).resolves.toBeNull();
+    // No RP Web session is needed or created during this check.
+    expect(f.sessions.authenticateSession).not.toHaveBeenCalled();
+    expect(f.prisma.mcpOAuthBrowserSession.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { sessionHash: sha(session) },
+      }),
+    );
+    request.unsignCookie = vi.fn().mockReturnValue({ valid: false });
+    await expect(f.service.browserUser(request, a)).resolves.toBeNull();
+  });
+
   it("binds opaque tokens to one MCP tenant even when the subject can access others", async () => {
     const f = fixture();
     const { tokens } = await issued(f, a);
@@ -282,7 +315,7 @@ describe("RP tenant MCP OAuth resource isolation (#442)", () => {
     };
     const inspect = await f.service.inspectRefresh(input);
     await expect(f.service.inspectRefresh({ ...input, resource: resource(b) }))
-      .rejects.toThrow("invalid_grant");
+      .rejects.toThrow("invalid_target");
     await expect(f.service.inspectRefresh({
       client_id: clientId, refresh_token: tokens.refresh_token,
     })).resolves.toMatchObject({ tenantId: a, resource: resource(a) });

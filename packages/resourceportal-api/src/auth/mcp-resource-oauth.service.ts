@@ -57,7 +57,13 @@ export class McpResourceOAuthService {
     private readonly sessions: AuthSessionService,
   ) {}
 
-  isEnabled() { return this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED") === "true"; }
+  isEnabled() {
+    const mode = this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED");
+    if (mode === "true") return true;
+    return mode === "auto" &&
+      this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+      this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+  }
 
   requireEnabled() {
     if (!this.isEnabled()) {
@@ -150,7 +156,18 @@ export class McpResourceOAuthService {
     return client;
   }
 
-  async browserUser(request: FastifyRequest): Promise<AuthenticatedUser | null> {
+  async browserUser(request: FastifyRequest, tenantId?: string): Promise<AuthenticatedUser | null> {
+    // A tenant-specific identity-only session takes priority over a
+    // potentially unrelated logged-in RP Web user. The explicit OAuth
+    // redirect authenticates the user who approved the connector consent.
+    // A user permitted to access tenant MCP may deliberately NOT have any
+    // native RP Web grant. The dedicated upstream OIDC callback provides a
+    // short-lived, signed cookie proof usable only for that exact tenant.
+    if (tenantId && typeof request.unsignCookie === "function" &&
+        request.cookies.rp_mcp_identity_session) {
+      const proof = await this.lookupMcpIdentityCookie(request, tenantId);
+      if (proof) return proof;
+    }
     const sessionId = this.sessions.getSessionIdFromRequest(request);
     if (!sessionId) return null;
     try { return await this.sessions.authenticateSession(sessionId); }
@@ -158,6 +175,28 @@ export class McpResourceOAuthService {
       if (error instanceof UnauthorizedException) return null;
       throw error;
     }
+  }
+
+  private async lookupMcpIdentityCookie(request: FastifyRequest, tenantId: string) {
+    const cookie = request.cookies.rp_mcp_identity_session;
+    if (!cookie) return null;
+    const unsigned = request.unsignCookie(cookie);
+    const token = unsigned.valid ? unsigned.value : undefined;
+    if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+    const proof = await this.prisma.mcpOAuthBrowserSession.findUnique({
+      where: { sessionHash: hash(token) },
+      include: {
+        user: { select: { id: true, email: true, displayName: true, status: true } },
+      },
+    });
+    if (!proof || proof.tenantId !== tenantId ||
+        proof.expiresAt.getTime() <= Date.now() ||
+        proof.user.status !== UserStatus.Active) return null;
+    return {
+      ...proof.user,
+      ...(proof.authenticatedIdpId ?
+        { authenticatedIdpId: proof.authenticatedIdpId } : {}),
+    };
   }
 
   parseAuthorization(query: unknown) {
@@ -296,8 +335,7 @@ export class McpResourceOAuthService {
       include: { user: { select: { id: true, status: true } } },
     });
     if (!row || row.clientId !== clientId || row.revokedAt ||
-        row.refreshExpiresAt.getTime() <= Date.now() || row.user.status !== UserStatus.Active ||
-        (input.resource !== undefined && input.resource !== row.resource)) {
+        row.refreshExpiresAt.getTime() <= Date.now() || row.user.status !== UserStatus.Active) {
       throw new McpOAuthProtocolError("invalid_grant");
     }
     // A refresh without resource inherits the original grant's audience.

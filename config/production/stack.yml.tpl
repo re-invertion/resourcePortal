@@ -235,7 +235,7 @@ services:
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
       RP_NATIVE_LOGIN_ONLY: "auto" # only when there are no inbound IdPs, links, sessions or policies
-      RP_MCP_RESOURCE_OAUTH_ENABLED: "false" # activate only after certified RP+ZITADEL DB restore and live OAuth E2E
+      RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" # on only with certified Actions V2; no change on unconfigured installations
       TENANT_OIDC_AUTO_ROLLOUT: "true"
       TENANT_OIDC_ACTIVATION_ALLOWED: "auto" # automatic, only after issuer + tenant checks
       # RP_APP_CONSUMER_ACTIONS_V2_ENV

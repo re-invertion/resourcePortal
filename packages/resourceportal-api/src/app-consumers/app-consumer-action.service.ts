@@ -102,6 +102,25 @@ export class AppConsumerActionService {
       throw new ForbiddenException("RP native login denied");
     }
 
+    const mcpResourceMode = this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED");
+    const mcpResourceEnabled = mcpResourceMode === "true" ||
+      (mcpResourceMode === "auto" &&
+       this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+       this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true");
+
+    // This client exists only when RP initiated a tenant-bound identity
+    // bootstrap. Its ZITADEL ID token is never used as an RP API credential;
+    // the RP OAuth issuer creates separate per-resource opaque MCP tokens.
+    if (mcpResourceEnabled) {
+      try {
+        if (await this.consumers.mayIssueMcpUpstreamToken(
+          issuer, subject, clientId,
+        )) return {};
+      } catch {
+        // Fail closed on any database, issuer or entitlement error.
+      }
+    }
+
     try {
       // Registered RP tenant applications are checked per-client. Unknown
       // platform/DCR clients deny rather than inheriting an RP role fallback.
@@ -114,7 +133,7 @@ export class AppConsumerActionService {
       // A separately verified ChatGPT DCR application may obtain MCP tokens
       // only while this subject has an active, tenant-scoped MCP entitlement.
       // This is never an RP Web/CLI or tenant application grant.
-      if (this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED") !== "true" &&
+      if (!mcpResourceEnabled &&
           await this.consumers.mayIssueMcpDcrToken(issuer, subject) &&
           await this.mcpDcr.isTrustedChatGptClient(clientId)) return {};
     } catch {

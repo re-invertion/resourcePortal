@@ -45,6 +45,47 @@ CREATE TABLE "McpOAuthPendingConsent" (
 );
 CREATE INDEX "McpOAuthPendingConsent_expiresAt_idx" ON "McpOAuthPendingConsent"("expiresAt");
 
+CREATE TABLE "McpOAuthUpstreamClient" (
+  "tenantId" UUID NOT NULL,
+  "clientId" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "McpOAuthUpstreamClient_pkey" PRIMARY KEY ("tenantId"),
+  CONSTRAINT "McpOAuthUpstreamClient_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE UNIQUE INDEX "McpOAuthUpstreamClient_clientId_key" ON "McpOAuthUpstreamClient"("clientId");
+
+CREATE TABLE "McpOAuthUpstreamLogin" (
+  "stateHash" TEXT NOT NULL,
+  "tenantId" UUID NOT NULL,
+  "clientId" TEXT NOT NULL,
+  "upstreamClientId" TEXT NOT NULL,
+  "resource" TEXT NOT NULL,
+  "redirectUri" TEXT NOT NULL,
+  "clientState" TEXT NOT NULL,
+  "scope" TEXT NOT NULL,
+  "codeChallenge" TEXT NOT NULL,
+  "verifierCipher" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP(3) NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "McpOAuthUpstreamLogin_pkey" PRIMARY KEY ("stateHash"),
+  CONSTRAINT "McpOAuthUpstreamLogin_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "McpOAuthClient"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "McpOAuthUpstreamLogin_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX "McpOAuthUpstreamLogin_expiresAt_idx" ON "McpOAuthUpstreamLogin"("expiresAt");
+
+CREATE TABLE "McpOAuthBrowserSession" (
+  "sessionHash" TEXT NOT NULL,
+  "tenantId" UUID NOT NULL,
+  "userId" UUID NOT NULL,
+  "authenticatedIdpId" TEXT,
+  "expiresAt" TIMESTAMP(3) NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "McpOAuthBrowserSession_pkey" PRIMARY KEY ("sessionHash"),
+  CONSTRAINT "McpOAuthBrowserSession_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "McpOAuthBrowserSession_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX "McpOAuthBrowserSession_expiresAt_idx" ON "McpOAuthBrowserSession"("expiresAt");
+
 CREATE TABLE "McpOAuthGrant" (
   "id" UUID NOT NULL,
   "clientId" TEXT NOT NULL,

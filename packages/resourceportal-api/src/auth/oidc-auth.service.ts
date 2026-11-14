@@ -149,6 +149,56 @@ export class OidcAuthService {
     return user;
   }
 
+  /**
+   * Identity-only upstream OAuth for a resource-specific MCP authorization.
+   * An arbitrary ZITADEL bearer token (including a native RP Web or CLI token)
+   * cannot be used for MCP bootstrap. Require an ID token signed by our
+   * issuer, scoped to the exact upstream client ID, nonce, and an
+   * already-linked active account. No email-based account linking/provisioning.
+   * This is called only after RP itself exchanges a PKCE-bound code for
+   * that exact client; the signed azp/client_id must match IF present,
+   * because ZITADEL does not always emit them on single-audience ID tokens.
+   */
+  async authenticateMcpBootstrapTokens(
+    idToken: string, clientId: string, nonce: string,
+  ): Promise<AuthenticatedUser> {
+    if (!/^\d{1,64}$/.test(clientId) ||
+        !/^[A-Za-z0-9_-]{43}$/.test(nonce) ||
+        [this.config.get<string>("OIDC_CLIENT_ID"),
+          this.config.get<string>("OIDC_CLI_CLIENT_ID"),
+          this.config.get<string>("OIDC_INVITATION_CLIENT_ID")].includes(clientId)) {
+      throw new UnauthorizedException("Untrusted MCP identity OAuth client");
+    }
+    const claims = await this.verifyToken(idToken, clientId);
+    // Upstream PKCE code exchange proves the registration's exact client;
+    // a signed claim disagreeing with that client is always refused.
+    if ((claims.azp !== undefined && claims.azp !== clientId) ||
+        (claims.client_id !== undefined && claims.client_id !== clientId) ||
+        claims.nonce !== nonce || claims.email_verified !== true ||
+        typeof claims.sub !== "string" || !/^\d{1,64}$/.test(claims.sub)) {
+      throw new UnauthorizedException("Unbound MCP upstream identity proof");
+    }
+    const linked = await this.prisma.userIdentity.findUnique({
+      where: {
+        issuer_externalSubject: {
+          issuer: this.getIssuer(), externalSubject: claims.sub,
+        },
+      },
+      include: { user: true },
+    });
+    if (!linked || linked.providerType !== "zitadel" ||
+        linked.identityProviderId !== null ||
+        linked.user.status !== UserStatus.Active) {
+      throw new UnauthorizedException("MCP identity is not an active linked account");
+    }
+    const provider = this.verifiedAuthenticationIdpId(claims);
+    return {
+      id: linked.user.id, email: linked.user.email,
+      displayName: linked.user.displayName, status: linked.user.status,
+      ...(provider ? { authenticatedIdpId: provider } : {}),
+    };
+  }
+
   async authenticateMcpPrincipalToken(token: string, rejectFederated = false): Promise<AuthenticatedPrincipal> {
     const payload = await this.verifyToken(token);
     this.assertMcpTokenClaims(payload);

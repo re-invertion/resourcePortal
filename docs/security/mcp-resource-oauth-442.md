@@ -15,7 +15,17 @@ multiple tenants. See the official ZITADEL DCR limitations.
 RP therefore implements a separate OAuth authorization server for tenant MCP
 only: issuer `https://<RP_PUBLIC_API_ORIGIN>/api/mcp/oauth`, with OAuth 2
 authorization code + PKCE S256, DCR restricted to ChatGPT callback URLs, and
-explicit user consent based on a signed RP login session. The existing ZITADEL
+explicit user consent based on either a signed RP Web login session or a
+short-lived tenant-specific identity-only session. Users with MCP access but
+without a native RP Web grant authenticate using a separate per-tenant
+ZITADEL DCR OIDC client; the issuer-global Action verifies its exact saved
+client ID, the signed user subject, active tenant membership, SSO role,
+MCP allow-list and enabled MCP. The resulting ZITADEL ID token is verified
+against the upstream client, nonce, signed issuer, and existing linked user
+without creating an RP Web session or changing native grants. Issuer metadata
+advertises RFC 9207 authorization response identification and the callback
+always returns the exact `iss`, including after a denied consent, so ChatGPT
+can use its stable callback without an OAuth mix-up. The existing ZITADEL
 login remains the authentication source for the RP user session, but its JWT is
 **never accepted as the new tenant MCP resource token**.
 
@@ -30,9 +40,13 @@ cannot retarget a different resource, and re-evaluates current entitlements.
 The consent form requires signed, single-use, short-lived server-side state and
 double-submit CSRF protection.
 
-The new issuer is gated by `RP_MCP_RESOURCE_OAUTH_ENABLED`, **default false**
-in the production stack template. Tenant protected-resource metadata only
-advertises it when explicitly enabled. Existing ZITADEL tokens are not silently
+The new issuer is gated by `RP_MCP_RESOURCE_OAUTH_ENABLED`. The production
+stack uses **auto**: enable only where the separately certified, issuer-global
+ZITADEL Actions V2 pre-token authorization target is already enabled. On
+installations without that target, remain disabled and preserve legacy OAuth
+behavior; manual `true` still requires strict startup validation. Tenant
+protected-resource metadata only advertises it when actually enabled.
+Existing ZITADEL tokens are not silently
 upgraded or reinterpreted; ChatGPT connections must be reconnected to the new
 issuer after a certified cutover.
 
@@ -48,10 +62,11 @@ issuer after a certified cutover.
    schema changes absent this certification.
 2. Verify a full network-level OAuth flow using **actual ChatGPT**: protected
    resource metadata, issuer discovery, DCR, sign-in, user consent, code+PKCE,
-   token, refresh, revoke/disconnect and new connection. Test users with only
-   `sso-login` (no RP native Web grant), since the current sign-in path uses
-   the RP Web session and may deny MCP-only users. This dependency is a
-   **separate outstanding compatibility requirement**, not proof of success.
+   token, refresh, revoke/disconnect and new connection. Exercise the new
+   identity-only ZITADEL client with a user having `sso-login` and MCP but
+   **no** native RP Web grant. Local signed-ID-token/nonce, browser-cookie,
+   webhook, and PKCE regression tests pass; live ChatGPT/ZITADEL behavior
+   remains unproven until the issuer-backed E2E run.
 3. Test user belonging to two active tenants A and B: token minted after
    consent for A must be refused for B; verify tenant MCP disabled, selected
    member revoked, `sso-login` revoked, and privileged/write tools forbidden
