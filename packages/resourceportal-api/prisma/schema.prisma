@@ -173,6 +173,10 @@ model User {
   status                     UserStatus                  @default(Pending)
   memberships                TenantMembership[]
   sessions                   PortalSession[]
+  mcpOAuthCodes              McpOAuthCode[]
+  mcpOAuthPendingConsents    McpOAuthPendingConsent[]
+  mcpOAuthBrowserSessions   McpOAuthBrowserSession[]
+  mcpOAuthGrants             McpOAuthGrant[]
   identities                 UserIdentity[]
   tenantOidcGrants           TenantOidcGrant[]
   cloudflareOAuthStates      CloudflareOAuthState[]
@@ -227,6 +231,12 @@ model Tenant {
   authPolicy                 TenantAuthPolicy?
   tenantOidcProvider         TenantOidcProvider?
   memberships                TenantMembership[]
+  mcpOAuthCodes              McpOAuthCode[]
+  mcpOAuthPendingConsents    McpOAuthPendingConsent[]
+  mcpOAuthUpstreamClient    McpOAuthUpstreamClient?
+  mcpOAuthUpstreamLogins    McpOAuthUpstreamLogin[]
+  mcpOAuthBrowserSessions  McpOAuthBrowserSession[]
+  mcpOAuthGrants             McpOAuthGrant[]
   invitations                TenantInvitation[]
   groups                     TenantGroup[]
   identityProviders          IdentityProvider[]
@@ -307,6 +317,132 @@ model MembershipRole {
   role         Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@id([membershipId, roleId])
+}
+
+/// RP authorization server: no upstream ZITADEL OAuth access token is ever
+/// used as an MCP token. A client is not trusted by its self-asserted name.
+model McpOAuthClient {
+  id           String          @id
+  redirectUris String[]
+  createdAt    DateTime        @default(now())
+  revokedAt    DateTime?
+  codes        McpOAuthCode[]
+  pendingConsents McpOAuthPendingConsent[]
+  upstreamLogins McpOAuthUpstreamLogin[]
+  grants       McpOAuthGrant[]
+}
+
+model McpOAuthCode {
+  codeHash      String         @id
+  clientId      String
+  userId        String         @db.Uuid
+  tenantId      String         @db.Uuid
+  resource      String
+  redirectUri   String
+  codeChallenge String
+  authenticatedIdpId String?
+  scope         String
+  expiresAt     DateTime
+  createdAt     DateTime       @default(now())
+  client        McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model McpOAuthPendingConsent {
+  id            String         @id
+  clientId      String
+  userId        String         @db.Uuid
+  tenantId      String         @db.Uuid
+  redirectUri   String
+  codeChallenge String
+  scope         String
+  state         String
+  expiresAt     DateTime
+  createdAt     DateTime       @default(now())
+  client        McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+/// An RP-created ZITADEL DCR client used ONLY for upstream identity login
+/// of MCP-approved users. Never accept its JWT as an RP Web or MCP API token.
+model McpOAuthUpstreamClient {
+  tenantId     String   @id @db.Uuid
+  clientId     String   @unique
+  createdAt    DateTime @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model McpOAuthUpstreamLogin {
+  stateHash       String         @id
+  tenantId        String         @db.Uuid
+  clientId        String
+  upstreamClientId String
+  resource        String
+  redirectUri     String
+  clientState     String
+  scope           String
+  codeChallenge   String
+  verifierCipher  String         @db.Text
+  expiresAt       DateTime
+  createdAt       DateTime       @default(now())
+  client          McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model McpOAuthBrowserSession {
+  sessionHash       String   @id
+  tenantId          String   @db.Uuid
+  userId            String   @db.Uuid
+  authenticatedIdpId String?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model McpOAuthGrant {
+  id                  String         @id @default(uuid()) @db.Uuid
+  clientId            String
+  userId              String         @db.Uuid
+  tenantId            String         @db.Uuid
+  resource            String
+  scope               String
+  authenticatedIdpId  String?
+  accessTokenHash     String         @unique
+  refreshTokenHash    String?        @unique
+  spentRefreshTokens  McpOAuthSpentRefreshToken[]
+  accessExpiresAt     DateTime
+  refreshExpiresAt    DateTime
+  revokedAt           DateTime?
+  createdAt           DateTime       @default(now())
+  client              McpOAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant              Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+  @@index([refreshExpiresAt])
+}
+
+/// SHA-256 of a previously rotated OAuth refresh token. Retained for the
+/// lifetime of the parent grant, so replay can revoke the entire successor
+/// chain instead of merely rejecting the spent token in isolation.
+model McpOAuthSpentRefreshToken {
+  tokenHash  String        @id
+  grantId    String        @db.Uuid
+  consumedAt DateTime      @default(now())
+  grant      McpOAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
 }
 
 model TenantMcpSettings {

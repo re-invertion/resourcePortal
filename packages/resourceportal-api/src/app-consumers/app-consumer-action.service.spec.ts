@@ -24,8 +24,17 @@ function fixture(overrides: Record<string, string> = {}) {
   const config = { get: vi.fn((key: string) => env[key]) } as unknown as ConfigService;
   const mayIssueLegacyClientToken = vi.fn().mockResolvedValue(false);
   const mayIssueNativeRpToken = vi.fn().mockResolvedValue(true);
-  const svc = new AppConsumerActionService(config, { mayIssueLegacyClientToken, mayIssueNativeRpToken } as never);
-  return { svc, mayIssueLegacyClientToken, mayIssueNativeRpToken };
+  const mayIssueMcpDcrToken = vi.fn().mockResolvedValue(false);
+  const mayIssueMcpUpstreamToken = vi.fn().mockResolvedValue(false);
+  const isTrustedChatGptClient = vi.fn().mockResolvedValue(false);
+  const svc = new AppConsumerActionService(
+    config,
+    { mayIssueLegacyClientToken, mayIssueNativeRpToken,
+      mayIssueMcpDcrToken, mayIssueMcpUpstreamToken } as never,
+    { isTrustedChatGptClient } as never,
+  );
+  return { svc, mayIssueLegacyClientToken, mayIssueNativeRpToken,
+    mayIssueMcpDcrToken, mayIssueMcpUpstreamToken, isTrustedChatGptClient };
 }
 const client = { function: "function/preaccesstoken", user: { id: "12131" }, application: { client_id: "home-assistant" } };
 
@@ -75,6 +84,46 @@ describe("fail closed ZITADEL Actions V2 production entitlement target", () => {
     f.mayIssueLegacyClientToken.mockResolvedValueOnce(false);
     await expect(f.svc.authorize(legacy.raw, legacy.header)).rejects.toBeInstanceOf(ForbiddenException);
     expect(f.mayIssueLegacyClientToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131", "preexisting-mcp-dcr");
+  });
+
+  it("links and refreshes an actually registered ChatGPT DCR only with current MCP entitlement", async () => {
+    const f = fixture();
+    const payload = signed({ ...client, application: { client_id: "chatgpt-dcr-123" } });
+    f.isTrustedChatGptClient.mockResolvedValue(true);
+    f.mayIssueMcpDcrToken.mockResolvedValue(true);
+    expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({});
+    expect(await f.svc.authorize(payload.raw, payload.header)).toEqual({}); // refresh
+    expect(f.mayIssueMcpDcrToken).toHaveBeenCalledWith("https://zitadel.example.test", "12131");
+
+    f.mayIssueMcpDcrToken.mockResolvedValue(false); // permission revoked before next refresh
+    await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
+    f.isTrustedChatGptClient.mockResolvedValue(false);
+    f.mayIssueMcpDcrToken.mockResolvedValue(true);
+    await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
+    f.isTrustedChatGptClient.mockRejectedValue(new Error("ZITADEL unavailable"));
+    await expect(f.svc.authorize(payload.raw, payload.header)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("accepts only a persisted per-tenant MCP-only upstream client after signed user entitlement", async () => {
+    const f = fixture({ RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" });
+    const payload = signed({
+      ...client, application: { client_id: "340396026519785524" },
+    });
+    f.mayIssueMcpUpstreamToken.mockResolvedValueOnce(true);
+    await expect(f.svc.authorize(payload.raw, payload.header)).resolves.toEqual({});
+    expect(f.mayIssueMcpUpstreamToken).toHaveBeenCalledWith(
+      "https://zitadel.example.test", "12131", "340396026519785524",
+    );
+    expect(f.mayIssueNativeRpToken).not.toHaveBeenCalled();
+    expect(f.mayIssueMcpDcrToken).not.toHaveBeenCalled();
+
+    // Role revoked / unknown issuer client: never inherit the global DCR grant.
+    await expect(f.svc.authorize(payload.raw, payload.header))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(f.isTrustedChatGptClient).not.toHaveBeenCalled();
+    f.mayIssueMcpUpstreamToken.mockRejectedValueOnce(Error("ZITADEL unavailable"));
+    await expect(f.svc.authorize(payload.raw, payload.header))
+      .rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it("preserves explicitly identified RP-native login client without granting any tenant OAuth client", async () => {

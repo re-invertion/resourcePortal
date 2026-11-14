@@ -15,6 +15,7 @@ type DcrRegistrationResponse = {
 
 type ProjectSearchResponse = {
   result?: Array<{ id?: string; name?: string }>;
+  details?: { totalResult?: number | string };
 };
 
 type DcrOidcConfig = {
@@ -25,6 +26,7 @@ type DcrOidcConfig = {
 
 type AppSearchResponse = {
   result?: Array<{ id?: string; oidcConfig?: DcrOidcConfig }>;
+  details?: { totalResult?: number | string };
 };
 
 @Injectable()
@@ -107,11 +109,23 @@ export class McpOAuthDcrService {
       const projects = await this.managementRequest<ProjectSearchResponse>(
         "POST",
         "/management/v1/projects/_search",
-        {},
+        {
+          query: { limit: 100 },
+          queries: [{ nameQuery: {
+            name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS",
+          } }],
+        },
         {},
         deadline,
       );
-      const project = projects.result?.find((candidate) => candidate.name === "ZITADEL DCR");
+      const matches = (projects.result ?? []).filter((candidate) =>
+        candidate.name === "ZITADEL DCR" && Boolean(candidate.id));
+      const rawTotal = projects.details?.totalResult;
+      const total = rawTotal === undefined ? matches.length : Number(rawTotal);
+      if (matches.length > 1 || total > 1 || !Number.isSafeInteger(total)) {
+        throw new BadGatewayException("ZITADEL DCR project search was ambiguous");
+      }
+      const project = matches[0];
       if (project?.id) return project.id;
       await sleep(100);
     }
@@ -119,16 +133,49 @@ export class McpOAuthDcrService {
   }
 
   private async findDcrApp(projectId: string, clientId: string, deadline: number) {
+    // ListApps defaults to 100 results. Polling only the first page retries
+    // the wrong set forever as more DCR clients accumulate. Page through the
+    // bounded result set while honoring the existing registration deadline.
+    const pageSize = 100;
+    const maxPages = 20;
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      const apps = await this.managementRequest<AppSearchResponse>(
-        "POST",
-        `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
-        {},
-        {},
-        deadline,
-      );
-      const app = apps.result?.find((candidate) => candidate.oidcConfig?.clientId === clientId);
-      if (app?.id) return app as typeof app & { id: string };
+      for (let page = 0; page < maxPages; page += 1) {
+        const offset = page * pageSize;
+        const apps = await this.managementRequest<AppSearchResponse>(
+          "POST",
+          `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
+          { query: { limit: pageSize, offset } },
+          {},
+          deadline,
+        );
+        // A newly registered application may not yet be projected. Protobuf
+        // JSON omits an empty result array, so retry an absent list as empty.
+        const results = apps.result ?? [];
+        if (!Array.isArray(results) || results.length > pageSize) {
+          throw new BadGatewayException("ZITADEL DCR application search returned invalid page");
+        }
+        const matches = results.filter((candidate) => candidate.oidcConfig?.clientId === clientId);
+        if (matches.length > 1) {
+          throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
+        }
+        const app = matches[0];
+        if (app?.id) return app as typeof app & { id: string };
+        // The projection can briefly advertise the total before returning
+        // its rows. Retry an empty page instead of deleting a valid client.
+        if (results.length === 0) break;
+        const rawTotal = apps.details?.totalResult;
+        const parsed = Number(rawTotal);
+        const total = rawTotal !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+          ? parsed : null;
+        if (results.length < pageSize || (total !== null && offset + results.length >= total)) {
+          // An underfull page with more results advertised is not a trustworthy
+          // complete scan: fail closed and let the registration rollback.
+          if (total !== null && offset + results.length < total) {
+            throw new BadGatewayException("ZITADEL DCR application search was incomplete");
+          }
+          break;
+        }
+      }
       await sleep(100);
     }
     throw new BadGatewayException("ZITADEL DCR application was not visible after registration");

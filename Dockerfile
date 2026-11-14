@@ -27,6 +27,8 @@ FROM ${RP_NODE_BASE_IMAGE} AS build
 WORKDIR /app/packages/resourceportal-api
 
 COPY --from=dependencies /app/node_modules /app/node_modules
+# All runtime imports must resolve from /app/node_modules. The API pins
+# the same undici major as the hoisted lockfile (not workspace node_modules).
 COPY package.json package-lock.json /app/
 COPY packages/resourceportal-api/package.json ./
 COPY packages/resourceportal-api/nest-cli.json packages/resourceportal-api/tsconfig.json packages/resourceportal-api/tsconfig.build.json ./
@@ -67,6 +69,9 @@ RUN apk add --no-cache \
     xfsprogs-extra
 
 COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules
+# Verify the production module layout at IMAGE BUILD time; a successful
+# TypeScript build cannot certify Node module resolution in the final image.
+RUN node -e 'require.resolve("undici")'
 COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
 # Prisma CLI is a production dependency, but production npm ci runs with --ignore-scripts.
 # Copy the pre-fetched engine bundle from the dependency stage so migrate deploy works offline.

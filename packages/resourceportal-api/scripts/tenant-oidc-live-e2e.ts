@@ -430,7 +430,12 @@ async function main() {
       OIDC_ISSUER_URL: issuer,
       OIDC_CLIENT_ID: "rp-native-client-not-in-this-e2e",
     } as Record<string, string>)[key] } as unknown as ConfigService;
-    const realAuthorization = new AppConsumerActionService(actionConfig, consumerService);
+    // Existing integration exercises tenant application grants, not ChatGPT
+    // DCR. Keep an explicit fail-closed verifier for the newer constructor.
+    const realAuthorization = new AppConsumerActionService(
+      actionConfig, consumerService,
+      { isTrustedChatGptClient: () => Promise.resolve(false) } as never,
+    );
     const consumerGate = await startActionProof({
       api, issuer, testUserId: userAId, testProjectId: projectA,
       targetName: "rp-398-real-prisma-client-grants-" + suffix,

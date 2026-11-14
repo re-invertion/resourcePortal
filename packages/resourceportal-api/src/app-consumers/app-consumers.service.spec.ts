@@ -46,6 +46,7 @@ function fixture() {
     oAuthApplication: {
       findUnique: vi.fn().mockResolvedValue(app),
     },
+    mcpOAuthUpstreamClient: { findUnique: vi.fn().mockResolvedValue(null) },
     userIdentity: { findUnique: vi.fn().mockResolvedValue(identity) },
     $transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) => callback(tx)),
   };
@@ -166,6 +167,65 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
     });
     await expect(f.svc.grantNative(tenantId, membershipId, "unknown" as "web", actor))
       .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("limits MCP DCR issuance to verified users with active SSO and tenant MCP allowance", async () => {
+    const f = fixture();
+    const active = {
+      id: membershipId,
+      tenant: {
+        mcpSettings: { enabled: true, accessMode: "SelectedMembers",
+          allowedMembers: [{ membershipId }] },
+      },
+    };
+    f.prisma.tenantMembership.findMany.mockResolvedValue([active]);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(true);
+    const where = (f.prisma.tenantMembership.findMany.mock.calls[0]?.[0] as unknown as {
+      where: { userId: string; status: string; tenant: { status: string }; OR: unknown[] };
+    }).where;
+    expect(where).toMatchObject({ userId, status: "Active", tenant: { status: "Active" } });
+    expect(where.OR).toContainEqual({ roles: { some: { roleId: "sso-login" } } });
+    f.prisma.tenantMembership.findMany.mockResolvedValueOnce([{ ...active,
+      tenant: { mcpSettings: { ...active.tenant.mcpSettings, allowedMembers: [] } } }]);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(false);
+    f.prisma.tenantMembership.findMany.mockResolvedValueOnce([{ ...active,
+      tenant: { mcpSettings: { enabled: false, accessMode: "AllMembers", allowedMembers: [] } } }]);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(false);
+    f.prisma.tenantMembership.findMany.mockResolvedValueOnce([{ ...active,
+      tenant: { mcpSettings: { enabled: true, accessMode: "AllMembers", allowedMembers: [] } } }]);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(true);
+    f.prisma.tenantMembership.findMany.mockResolvedValueOnce([]);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(false);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "bad-subject")).toBe(false);
+    f.prisma.userIdentity.findUnique.mockResolvedValueOnce(null);
+    expect(await f.svc.mayIssueMcpDcrToken(issuer, "123456")).toBe(false);
+  });
+
+  it("authorizes an identity-only MCP client for precisely its tenant, independently of Web grants", async () => {
+    const f = fixture();
+    f.prisma.mcpOAuthUpstreamClient.findUnique.mockResolvedValue({
+      tenantId, clientId: "340396026519785524",
+    });
+    f.prisma.tenantMembership.findMany.mockResolvedValue([{
+      id: membershipId,
+      tenant: { mcpSettings: { enabled: true, accessMode: "AllMembers", allowedMembers: [] } },
+    }]);
+    await expect(f.svc.mayIssueMcpUpstreamToken(
+      issuer, "123456", "340396026519785524",
+    )).resolves.toBe(true);
+    const where = (f.prisma.tenantMembership.findMany.mock.calls[0]?.[0] as unknown as {
+      where: { tenantId: string };
+    }).where;
+    expect(where.tenantId).toBe(tenantId);
+    expect(f.prisma.tenantMembership.findFirst).not.toHaveBeenCalled(); // no Web grants
+    f.prisma.tenantMembership.findMany.mockResolvedValue([]);
+    await expect(f.svc.mayIssueMcpUpstreamToken(
+      issuer, "123456", "340396026519785524",
+    )).resolves.toBe(false);
+    f.prisma.mcpOAuthUpstreamClient.findUnique.mockResolvedValue(null);
+    await expect(f.svc.mayIssueMcpUpstreamToken(
+      issuer, "123456", "random-unregistered-client",
+    )).resolves.toBe(false);
   });
 
   it("does not fall back to ZITADEL project roles for unknown, global or DCR clients", async () => {

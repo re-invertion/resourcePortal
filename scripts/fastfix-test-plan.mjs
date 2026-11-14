@@ -498,6 +498,10 @@ const classifiers = [
   [/^scripts\/verify-stage20-management-matrix\.mjs$/, ["platform-release", "platform-admin-ui"]],
   [/^packages\/resourceportal-api\/src\/(domains|platform-dns)\//, ["domains"]],
   [/^packages\/resourceportal-api\/src\/mcp\/admin-mcp-protocol\.service(\.spec)?\.ts$/, ["bug-reports", "platform-admin-ui"]],
+  // OAuth protected-resource/authorization-server .well-known routing lives
+  // outside the /mcp and /auth directories. An unclassified change to this
+  // public routing could silently disable issuer discovery or expose tokens.
+  [/^packages\/resourceportal-api\/src\/config\/global-prefix-config\.ts$/, ["mcp-oauth", "security", "identity", "workflow"]],
   [/^packages\/resourceportal-api\/src\/mcp\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/auth\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/bug-reports\//, ["bug-reports"]],

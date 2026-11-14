@@ -57,6 +57,10 @@ async function bootstrap() {
       : undefined,
   );
 
+  // Nest's FastifyAdapter registers its urlencoded parser during app.init().
+  // Do not register @fastify/formbody again: doing so prevents all API
+  // startup (FST_ERR_CTP_ALREADY_PRESENT). OAuth forms are parsed natively.
+
   app.setGlobalPrefix("api", {
     exclude: globalPrefixExcludes,
   });
@@ -222,6 +226,13 @@ function applySecurityHeaders(
 
 function isCsrfValid(request: FastifyRequest, config: ConfigService) {
   if (!unsafeMethods.has(request.method.toUpperCase())) {
+    return true;
+  }
+  // Native HTML form OAuth consent cannot set x-csrf-token. This exact
+  // endpoint enforces the same RP cookie proof plus signed one-time state and
+  // Origin verification inside McpResourceOAuthController.approve().
+  if (request.method === "POST" &&
+      request.url.split("?", 1)[0] === "/api/mcp/oauth/approve") {
     return true;
   }
 

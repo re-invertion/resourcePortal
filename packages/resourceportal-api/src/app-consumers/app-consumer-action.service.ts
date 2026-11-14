@@ -5,6 +5,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AppConsumersService } from "./app-consumers.service";
+import { McpDcrClientVerifierService } from "./mcp-dcr-client-verifier.service";
 
 type CallbackPayload = {
   function?: string;
@@ -22,6 +23,7 @@ export class AppConsumerActionService {
   constructor(
     private readonly config: ConfigService,
     private readonly consumers: AppConsumersService,
+    private readonly mcpDcr: McpDcrClientVerifierService,
   ) {}
 
   async authorize(
@@ -100,6 +102,25 @@ export class AppConsumerActionService {
       throw new ForbiddenException("RP native login denied");
     }
 
+    const mcpResourceMode = this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED");
+    const mcpResourceEnabled = mcpResourceMode === "true" ||
+      (mcpResourceMode === "auto" &&
+       this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+       this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true");
+
+    // This client exists only when RP initiated a tenant-bound identity
+    // bootstrap. Its ZITADEL ID token is never used as an RP API credential;
+    // the RP OAuth issuer creates separate per-resource opaque MCP tokens.
+    if (mcpResourceEnabled) {
+      try {
+        if (await this.consumers.mayIssueMcpUpstreamToken(
+          issuer, subject, clientId,
+        )) return {};
+      } catch {
+        // Fail closed on any database, issuer or entitlement error.
+      }
+    }
+
     try {
       // Registered RP tenant applications are checked per-client. Unknown
       // platform/DCR clients deny rather than inheriting an RP role fallback.
@@ -107,6 +128,16 @@ export class AppConsumerActionService {
     } catch {
       // No user, grant or secret details in the denied response or HTTP logs.
       throw new ForbiddenException("OIDC client access denied");
+    }
+    try {
+      // A separately verified ChatGPT DCR application may obtain MCP tokens
+      // only while this subject has an active, tenant-scoped MCP entitlement.
+      // This is never an RP Web/CLI or tenant application grant.
+      if (!mcpResourceEnabled &&
+          await this.consumers.mayIssueMcpDcrToken(issuer, subject) &&
+          await this.mcpDcr.isTrustedChatGptClient(clientId)) return {};
+    } catch {
+      // Unavailable ZITADEL management or RP DB must fail closed at refresh.
     }
     throw new ForbiddenException("OIDC client access denied");
   }

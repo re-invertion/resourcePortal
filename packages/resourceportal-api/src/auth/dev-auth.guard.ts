@@ -12,7 +12,8 @@ import { ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
-import { applyMcpBearerChallenge, isMcpRequest } from "../mcp/mcp-oauth";
+import { applyMcpBearerChallenge, isMcpRequest, isTenantMcpRequest } from "../mcp/mcp-oauth";
+import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY, MACHINE_BEARER_AUTH_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
@@ -28,6 +29,7 @@ export class DevAuthGuard implements CanActivate {
     private readonly oidcAuth: OidcAuthService,
     private readonly sessions: AuthSessionService,
     @Optional() private readonly nativeMode?: NativeLoginModeService,
+    @Optional() private readonly resourceOAuth?: McpResourceOAuthService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -93,6 +95,27 @@ export class DevAuthGuard implements CanActivate {
     const token = this.extractBearerToken(request.headers.authorization);
 
     if (token) {
+      // A RP-minted OAuth token is opaque, bound in PostgreSQL to the exact
+      // tenant MCP resource and MUST NOT be accepted by normal RP APIs.
+      // When resource-aware OAuth is enabled, generic ZITADEL JWTs are also
+      // rejected for tenant MCP even if their shared project aud matches.
+      if (isTenantMcpRequest(request) && this.resourceOAuth?.isEnabled()) {
+        try {
+          const tenantId = (request.params as { tenantId?: string }).tenantId;
+          if (!tenantId) throw new UnauthorizedException("Tenant MCP resource is missing");
+          const user = await this.resourceOAuth.authenticateAccessToken(token, tenantId);
+          // A previously minted opaque token must not bypass a later
+          // native-only cutover. Match the signed JWT branch below.
+          if (user.authenticatedIdpId && await this.nativeOnly()) {
+            throw new UnauthorizedException("External identity provider login is disabled");
+          }
+          request.user = user;
+          return true;
+        } catch (error) {
+          applyMcpBearerChallenge(request, reply);
+          throw error;
+        }
+      }
       let principal;
       try {
         // The verifier MUST check signed authentication provenance before
@@ -138,6 +161,17 @@ export class DevAuthGuard implements CanActivate {
     // the public re-authentication path. Bearer tokens remain verified above;
     // no other public or protected endpoints receive this exception.
     const path = request.url.split("?", 1)[0];
+    // The RP-owned OAuth authorization server handles these exact routes'
+    // identity and consent independently. A stale/ungranted RP Web cookie
+    // must not prevent an MCP-only user from starting an upstream identity
+    // login, returning from ZITADEL, or posting a signed consent form.
+    if (isPublic && (
+      (request.method === "GET" && [
+        "/api/mcp/oauth/authorize", "/api/mcp/oauth/upstream/callback",
+      ].includes(path)) ||
+      (request.method === "POST" && path === "/api/mcp/oauth/approve")
+    )) return true;
+
     if(isPublic && request.method === "GET" &&
        ["/api/auth/login", "/api/auth/providers", "/api/auth/register",
         "/api/auth/recover", "/api/auth/callback"].includes(path)) return true;
