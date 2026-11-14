@@ -10,6 +10,9 @@ import { FastifyRequest } from "fastify";
 export const MCP_LOOPBACK_HEADER = "x-rp-mcp-loopback-proof";
 const ttlMs = 15_000;
 const maxOutstanding = 4096;
+// A target may be up to 2048 bytes of URL. The JSON/base64url proof adds
+// ~1/3 encoding overhead plus fixed claims; 4096 covers every issued proof.
+const maxProofHeaderLength = 4096;
 const tenantIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 type DelegationClaims = {
@@ -52,15 +55,19 @@ export class McpLoopbackDelegationService {
     };
     const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
     const signature = this.sign(encoded);
+    const proof = `v1.${encoded}.${signature}`;
+    if (proof.length > maxProofHeaderLength) {
+      throw new UnauthorizedException("Invalid MCP loopback delegation");
+    }
     this.outstanding.set(nonce, {
       token: input.resourceAccessToken, expires: now + ttlMs,
     });
-    return `v1.${encoded}.${signature}`;
+    return proof;
   }
 
   consume(request: FastifyRequest): { userId: string; tenantId: string; accessToken: string } {
     const header = request.headers[MCP_LOOPBACK_HEADER];
-    if (typeof header !== "string" || header.length > 1024 ||
+    if (typeof header !== "string" || header.length > maxProofHeaderLength ||
         !this.isLoopback(request.raw?.socket?.remoteAddress)) {
       throw new UnauthorizedException("Invalid MCP loopback delegation");
     }

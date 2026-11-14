@@ -32,6 +32,23 @@ describe("MCP one-time same-process loopback delegation", () => {
     expect(() => service.consume(req(proof))).toThrow("Invalid MCP loopback delegation");
   });
 
+  it.each([500, 2048])("accepts search with %i-query or maximal bounded target", (size) => {
+    const service = new McpLoopbackDelegationService();
+    const prefix = `/api/tenants/${tenant}/search?q=`;
+    const path = prefix + "a".repeat(size === 2048 ? 2048 - prefix.length : size);
+    const proof = issue(service, path);
+    expect(proof.length).toBeGreaterThan(1024);
+    expect(proof.length).toBeLessThanOrEqual(4096);
+    expect(service.consume(req(proof, path))).toEqual({ userId, tenantId: tenant, accessToken });
+  });
+
+  it("rejects requests exceeding the 2048-character bounded target", () => {
+    const service = new McpLoopbackDelegationService();
+    const prefix = `/api/tenants/${tenant}/search?q=`;
+    const path = prefix + "a".repeat(2049 - prefix.length);
+    expect(() => issue(service, path)).toThrow("Invalid MCP loopback delegation");
+  });
+
   it.each([
     ["wrong method", target, "POST"],
     ["different endpoint", `/api/tenants/${tenant}/volumes`, "GET"],
