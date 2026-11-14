@@ -7,7 +7,6 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import fastifyCookie from "@fastify/cookie";
-import fastifyFormbody from "@fastify/formbody";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { SwaggerModule } from "@nestjs/swagger";
 import { ApiModule } from "./api.module";
@@ -58,9 +57,9 @@ async function bootstrap() {
       : undefined,
   );
 
-  // OAuth token/refresh/revocation endpoints and HTML consent require
-  // application/x-www-form-urlencoded bodies. Register before route setup.
-  await app.register(fastifyFormbody);
+  // Nest's FastifyAdapter registers its urlencoded parser during app.init().
+  // Do not register @fastify/formbody again: doing so prevents all API
+  // startup (FST_ERR_CTP_ALREADY_PRESENT). OAuth forms are parsed natively.
 
   app.setGlobalPrefix("api", {
     exclude: globalPrefixExcludes,

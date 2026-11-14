@@ -46,10 +46,20 @@ canonical tenant MCP `resource` URI, user, client, expiry and revocation state.
 The token verifier uses the resource URI plus tenant ID as mandatory checks;
 a token for tenant A is denied for tenant B **even if the same user is a member
 of both**. At execution time, RP separately checks active membership, SSO role,
-MCP allow-list, tenant IdP policy and tool-level RBAC. Refresh rotates tokens,
-cannot retarget a different resource, and re-evaluates current entitlements.
-The consent form requires signed, single-use, short-lived server-side state and
-double-submit CSRF protection.
+MCP allow-list, tenant IdP policy and tool-level RBAC. Refresh rotates tokens, cannot retarget a different resource, and
+re-evaluates current entitlements. Each spent refresh-token SHA-256 hash is
+persisted transactionally in `McpOAuthSpentRefreshToken` with a foreign key
+to the grant; reuse of an already-rotated token revokes the **entire current
+grant** (all successor access and refresh tokens), including simultaneous
+competing refresh attempts. Revocation using a spent token also disconnects
+the grant. Consumed-token history is cascade-deleted when the parent grant
+is deleted; periodic expired-grant cleanup is a separate operational lifecycle
+concern.
+The consent form requires signed, single-use, short-lived server-side state,
+double-submit CSRF protection, and a constant-time checked displayed
+`consent_nonce` binding the **specific** tenant/client/PKCE transaction to
+the signed pending cookie. Opening another OAuth flow in a separate browser
+tab can no longer substitute the grant behind a previously displayed form.
 
 The new issuer is gated by `RP_MCP_RESOURCE_OAUTH_ENABLED`. The production
 stack uses **auto**: enable only where the separately certified, issuer-global
@@ -63,7 +73,9 @@ issuer after a certified cutover.
 
 ## Hard release prerequisites
 
-1. Certify the additive Prisma migration `20261114002000_mcp_resource_oauth`
+1. Certify both additive Prisma migrations
+   `20261114002000_mcp_resource_oauth` and
+   `20261114011000_mcp_refresh_replay_lineage`
    against a disposable copy of the immediately preceding *official* RP
    PostgreSQL and ZITADEL event-store databases. Demonstrate a real
    previous-release → exact candidate → injected failure → previous-release

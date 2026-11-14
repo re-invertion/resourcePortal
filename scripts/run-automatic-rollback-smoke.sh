@@ -355,7 +355,8 @@ rp_run_migrations() {
     "SELECT (to_regclass('public.\"TenantOidcProvider\"') IS NOT NULL AND to_regclass('public.\"TenantOidcGrant\"') IS NOT NULL)::text")"
   [[ "$present" == true ]] || return 1
   # A schema-changing MCP OAuth release must prove that the exact candidate
-  # actually installed all new resource-binding and identity-bootstrap tables
+  # actually installed all resource-binding, identity-bootstrap and spent
+  # refresh replay tables
   # before we deliberately fail and restore the source databases.
   if [[ -f packages/resourceportal-api/prisma/migrations/20261114002000_mcp_resource_oauth/migration.sql ]]; then
     present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
@@ -365,7 +366,8 @@ rp_run_migrations() {
                to_regclass('public.\"McpOAuthGrant\"') IS NOT NULL AND
                to_regclass('public.\"McpOAuthUpstreamClient\"') IS NOT NULL AND
                to_regclass('public.\"McpOAuthUpstreamLogin\"') IS NOT NULL AND
-               to_regclass('public.\"McpOAuthBrowserSession\"') IS NOT NULL)::text")"
+               to_regclass('public.\"McpOAuthBrowserSession\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthSpentRefreshToken\"') IS NOT NULL)::text")"
     [[ "$present" == true ]] || {
       echo "MCP OAuth candidate tables were not all installed before rollback" >&2
       return 1

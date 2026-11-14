@@ -21,6 +21,7 @@ function fixture(enabled = true) {
   const codes = new Map<string, Record<string, unknown>>();
   const pendingConsents = new Map<string, Record<string, unknown>>();
   const grants = new Map<string, Record<string, unknown>>();
+  const spent = new Map<string, string>();
   let counter = 0;
   const prisma = {
     mcpOAuthClient: {
@@ -68,6 +69,21 @@ function fixture(enabled = true) {
     mcpOAuthBrowserSession: {
       findUnique: vi.fn(),
     },
+    mcpOAuthSpentRefreshToken: {
+      create: vi.fn(({ data }: { data: { tokenHash: string; grantId: string } }) => {
+        if (spent.has(data.tokenHash)) throw new Error("Duplicate spent refresh token");
+        spent.set(data.tokenHash, data.grantId);
+        return data;
+      }),
+      findUnique: vi.fn(({ where }: { where: { tokenHash: string } }) => {
+        const grantId = spent.get(where.tokenHash);
+        if (!grantId) return null;
+        return {
+          grantId, tokenHash: where.tokenHash,
+          grant: { clientId: grants.get(grantId)?.clientId },
+        };
+      }),
+    },
     mcpOAuthGrant: {
       create: vi.fn(({ data }: { data: Record<string, unknown> }) => {
         const id = `grant-${++counter}`;
@@ -105,6 +121,12 @@ function fixture(enabled = true) {
       }),
     },
   };
+  // The real Prisma interactive transaction atomically commits the
+  // refresh hash swap and spent-token insert (or neither operation).
+  Object.assign(prisma, {
+    $transaction: vi.fn((callback: (tx: typeof prisma) => Promise<boolean>) =>
+      callback(prisma)),
+  });
   const config = {
     get: vi.fn((key: string) => ({
       RP_MCP_RESOURCE_OAUTH_ENABLED: enabled ? "true" : "false",
@@ -118,7 +140,7 @@ function fixture(enabled = true) {
       prisma as unknown as PrismaService,
       sessions as unknown as AuthSessionService,
     ),
-    clients, codes, pendingConsents, grants, prisma, config, sessions,
+    clients, codes, pendingConsents, grants, spent, prisma, config, sessions,
   };
 }
 
@@ -321,12 +343,88 @@ describe("RP tenant MCP OAuth resource isolation (#442)", () => {
     })).resolves.toMatchObject({ tenantId: a, resource: resource(a) });
     const rotated = await f.service.rotateRefresh(input, inspect.id);
     expect(rotated.refresh_token).not.toBe(tokens.refresh_token);
-    await expect(f.service.inspectRefresh(input)).rejects.toThrow("invalid_grant");
     await expect(f.service.authenticateAccessToken(tokens.access_token, a)).rejects.toThrow();
     await expect(f.service.authenticateAccessToken(rotated.access_token, a)).resolves.toHaveProperty("id", userId);
     await expect(f.service.authenticateAccessToken(rotated.access_token, b)).rejects.toThrow();
-    await f.service.revoke(rotated.refresh_token, clientId);
+    expect(f.spent.get(sha(tokens.refresh_token!))).toBe(inspect.id);
+    // Reusing the spent refresh token now revokes the WHOLE active successor
+    // instead of leaving it available for a thief.
+    await expect(f.service.inspectRefresh(input)).rejects.toThrow("invalid_grant");
+    await expect(f.service.inspectRefresh({
+      ...input, refresh_token: rotated.refresh_token,
+    })).rejects.toThrow("invalid_grant");
     await expect(f.service.authenticateAccessToken(rotated.access_token, a)).rejects.toThrow();
+    await f.service.revoke(rotated.refresh_token, clientId); // idempotent after replay
+  });
+
+  it("retains every rotated hash and revokes the latest successor after a spent ancestor is replayed", async () => {
+    const f = fixture();
+    const { clientId, tokens } = await issued(f, a);
+    const firstInput = { client_id: clientId, refresh_token: tokens.refresh_token,
+      resource: resource(a), grant_type: "refresh_token" };
+    const first = await f.service.inspectRefresh(firstInput);
+    const successor1 = await f.service.rotateRefresh(firstInput, first.id);
+    const secondInput = { ...firstInput, refresh_token: successor1.refresh_token };
+    const second = await f.service.inspectRefresh(secondInput);
+    const successor2 = await f.service.rotateRefresh(secondInput, second.id);
+    await expect(f.service.authenticateAccessToken(successor2.access_token, a))
+      .resolves.toHaveProperty("id", userId);
+    expect(f.spent.get(sha(tokens.refresh_token!))).toBe(first.id);
+    expect(f.spent.get(sha(successor1.refresh_token))).toBe(first.id);
+    expect([...f.spent.keys()]).not.toContain(tokens.refresh_token);
+    await expect(f.service.inspectRefresh(firstInput)).rejects.toThrow("invalid_grant");
+    await expect(f.service.authenticateAccessToken(successor2.access_token, a)).rejects.toThrow();
+    await expect(f.service.inspectRefresh({ ...firstInput,
+      refresh_token: successor2.refresh_token })).rejects.toThrow("invalid_grant");
+  });
+
+  it("does not let a different client's token error revoke the original client's grant", async () => {
+    const f = fixture();
+    const { clientId, tokens } = await issued(f, a);
+    const input = { client_id: clientId, refresh_token: tokens.refresh_token,
+      resource: resource(a), grant_type: "refresh_token" };
+    const grant = await f.service.inspectRefresh(input);
+    const rotated = await f.service.rotateRefresh(input, grant.id);
+    const otherClientId = await registered(f);
+    await expect(f.service.inspectRefresh({
+      ...input, client_id: otherClientId,
+    })).rejects.toThrow("invalid_grant");
+    await expect(f.service.authenticateAccessToken(rotated.access_token, a))
+      .resolves.toHaveProperty("id", userId);
+  });
+
+  it("revoke with an already-spent refresh token disconnects its active successor", async () => {
+    const f = fixture();
+    const { clientId, tokens } = await issued(f, a);
+    const input = { client_id: clientId, refresh_token: tokens.refresh_token,
+      resource: resource(a), grant_type: "refresh_token" };
+    const grant = await f.service.inspectRefresh(input);
+    const rotated = await f.service.rotateRefresh(input, grant.id);
+    await expect(f.service.authenticateAccessToken(rotated.access_token, a))
+      .resolves.toHaveProperty("id", userId);
+    await f.service.revoke(tokens.refresh_token, clientId);
+    await expect(f.service.authenticateAccessToken(rotated.access_token, a))
+      .rejects.toThrow();
+    await f.service.revoke(tokens.refresh_token, clientId); // idempotent
+  });
+
+  it("revokes the grant when simultaneous attempts race with the same old refresh token", async () => {
+    const f = fixture();
+    const { clientId, tokens } = await issued(f, a);
+    const input = { client_id: clientId, refresh_token: tokens.refresh_token,
+      resource: resource(a), grant_type: "refresh_token" };
+    const grant = await f.service.inspectRefresh(input);
+    const results = await Promise.allSettled([
+      f.service.rotateRefresh(input, grant.id),
+      f.service.rotateRefresh(input, grant.id),
+    ]);
+    const accepted = results.filter(x => x.status === "fulfilled");
+    const denied = results.filter(x => x.status === "rejected");
+    expect(accepted).toHaveLength(1);
+    expect(denied).toHaveLength(1);
+    const grantRow = f.grants.get(grant.id);
+    expect(grantRow?.revokedAt).toBeInstanceOf(Date);
+    expect(f.spent.get(sha(tokens.refresh_token!))).toBe(grant.id);
   });
 
   it("never issues refresh tokens without offline_access", async () => {

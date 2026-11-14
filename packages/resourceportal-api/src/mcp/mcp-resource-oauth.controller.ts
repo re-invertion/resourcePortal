@@ -117,7 +117,7 @@ export class McpResourceOAuthController {
       });
       reply.header("referrer-policy", "no-referrer");
       return reply.status(200).type("text/html; charset=utf-8").send(
-        `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autoryzacja ChatGPT MCP</title></head><body><main style="max-width:38rem;margin:4rem auto;font-family:system-ui,sans-serif;padding:1rem"><h1>Połącz ChatGPT z ResourcePortal</h1><p>ChatGPT będzie mógł używać narzędzi w tenantcie <strong>${escapeHtml(tenant.displayName)}</strong>, zgodnie z Twoimi uprawnieniami ResourcePortal. Narzędzia mogą odczytywać i modyfikować dane; dostęp możesz później cofnąć.</p><form action="/api/mcp/oauth/approve" method="post"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><button type="submit" name="decision" value="approve">Zezwól na połączenie</button> <button type="submit" name="decision" value="deny">Odmów</button></form></main></body></html>`,
+        `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autoryzacja ChatGPT MCP</title></head><body><main style="max-width:38rem;margin:4rem auto;font-family:system-ui,sans-serif;padding:1rem"><h1>Połącz ChatGPT z ResourcePortal</h1><p>ChatGPT będzie mógł używać narzędzi w tenantcie <strong>${escapeHtml(tenant.displayName)}</strong>, zgodnie z Twoimi uprawnieniami ResourcePortal. Narzędzia mogą odczytywać i modyfikować dane; dostęp możesz później cofnąć.</p><form action="/api/mcp/oauth/approve" method="post"><input type="hidden" name="csrf_token" value="${escapeHtml(csrf)}"><input type="hidden" name="consent_nonce" value="${escapeHtml(nonce)}"><button type="submit" name="decision" value="approve">Zezwól na połączenie</button> <button type="submit" name="decision" value="deny">Odmów</button></form></main></body></html>`,
       );
     });
   }
@@ -212,6 +212,18 @@ export class McpResourceOAuthController {
       }
       const unsigned = request.unsignCookie(cookie);
       if (!unsigned.valid || !unsigned.value) {
+        throw new McpOAuthProtocolError("invalid_request");
+      }
+      // The consent HTML and signed pending cookie MUST name the exact same
+      // transaction. A second tab may overwrite this shared cookie; a valid
+      // CSRF value alone does not prove that the displayed tenant/client was
+      // the one approved. The nonce is a single-use secret already bound in
+      // PostgreSQL to the resource, client, user, redirect and PKCE challenge.
+      const shownNonce = raw.consent_nonce;
+      if (typeof shownNonce !== "string" ||
+          !/^[A-Za-z0-9_-]{12,128}$/.test(shownNonce) ||
+          shownNonce.length !== unsigned.value.length ||
+          !timingSafeEqual(Buffer.from(shownNonce), Buffer.from(unsigned.value))) {
         throw new McpOAuthProtocolError("invalid_request");
       }
       const pending = await this.oauth.inspectConsent(unsigned.value);

@@ -1,5 +1,10 @@
 import fastify from "fastify";
 import fastifyFormbody from "@fastify/formbody";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { Body, Controller, Module, Post } from "@nestjs/common";
+import { NestFactory } from "@nestjs/core";
+import { FastifyAdapter, NestFastifyApplication } from "@nestjs/platform-fastify";
 import { ConfigService } from "@nestjs/config";
 import { AuthSessionService } from "../auth/auth-session.service";
 import { UserStatus } from "@prisma/client";
@@ -12,6 +17,19 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
 import {
   McpResourceOAuthController, McpResourceOAuthDiscoveryController,
 } from "./mcp-resource-oauth.controller";
+
+// Nest's real FastifyAdapter installs its own application/x-www-form-urlencoded
+// parser at app.init(). Validate the production framework lifecycle without
+// registering an extra Fastify formbody plugin.
+@Controller("api/mcp/oauth")
+class NestedOAuthFormController {
+  @Post("approve")
+  approve(@Body() body: { decision: string; consent_nonce: string }) {
+    return body;
+  }
+}
+@Module({ controllers: [NestedOAuthFormController] })
+class NestedOAuthFormModule {}
 
 const tenantId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const userId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -155,6 +173,30 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     await app.close();
   });
 
+  it("starts Nest's FastifyAdapter once and parses OAuth HTML forms without duplicate parser registration", async () => {
+    // Prevent regressions in the REAL bootstrap, not only the test adapter.
+    const bootstrap = readFileSync(resolve(__dirname, "../main.ts"), "utf8");
+    expect(bootstrap).not.toMatch(/app\.register\s*\(\s*fastifyFormbody/);
+    const nest = await NestFactory.create<NestFastifyApplication>(
+      NestedOAuthFormModule, new FastifyAdapter(), { logger: false },
+    );
+    try {
+      await nest.init(); // previously threw FST_ERR_CTP_ALREADY_PRESENT
+      const response = await nest.getHttpAdapter().getInstance().inject({
+        method: "POST",
+        url: "/api/mcp/oauth/approve",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: "decision=approve&consent_nonce=rpocons_bound",
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json()).toEqual({
+        decision: "approve", consent_nonce: "rpocons_bound",
+      });
+    } finally {
+      await nest.close();
+    }
+  });
+
   it("advertises real RP AS endpoints and does not advertise global Zitadel DCR", () => {
     const f = fixture();
     const controller = new McpResourceOAuthDiscoveryController(
@@ -250,6 +292,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(html).toContain("&lt;script&gt;");
     expect(html).not.toContain("<script>alert");
     expect(html).toContain('name="csrf_token"');
+    expect(html).toContain('name="consent_nonce" value="rpocons_secret"');
     expect(html).toContain("Połącz ChatGPT");
     expect(f.oauth.beginConsent).toHaveBeenCalledWith(expect.objectContaining({
       tenantId, userId, clientId: options.clientId,
@@ -259,12 +302,39 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(f.oauth.issueCode).not.toHaveBeenCalled();
   });
 
+  it.each(["approve", "deny"])(
+    "rejects a stale A-tab %s when a second B-tab replaces its consent cookie",
+    async (decision) => {
+      const f = fixture();
+      const replyForA = reply();
+      const previousTabAForm = {
+        decision,
+        csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+        consent_nonce: "rpocons_secret",
+      };
+      const browserAfterVisitingTenantB = request({ origin });
+      // The same browser's cookie now refers to an unrelated tenant B grant.
+      // Its old A page still contains the original A nonce and CSRF.
+      browserAfterVisitingTenantB.unsignCookie = vi.fn().mockReturnValue({
+        valid: true, value: "rpocons_other_tenant_B",
+      });
+      await f.controller.approve(previousTabAForm,
+        browserAfterVisitingTenantB, replyForA as unknown as FastifyReply);
+      expect(replyForA.status).toHaveBeenCalledWith(400);
+      expect(replyForA.send).toHaveBeenCalledWith({ error: "invalid_request" });
+      expect(f.oauth.inspectConsent).not.toHaveBeenCalled();
+      expect(f.oauth.consumeConsent).not.toHaveBeenCalled();
+      expect(f.oauth.issueCode).not.toHaveBeenCalled();
+    },
+  );
+
   it("only issues an OAuth code after same-session signed consent and CSRF proof", async () => {
     const f = fixture();
     const r = reply();
     const req = request({ origin });
     await f.controller.approve({
-      csrf_token: "verylongvalidcsrfvalue_0123456789012345", decision: "approve",
+      csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+      consent_nonce: "rpocons_secret", decision: "approve",
     }, req, r as unknown as FastifyReply);
     expect(f.oauth.inspectConsent).toHaveBeenCalledWith("rpocons_secret");
     expect(f.oauth.consumeConsent).toHaveBeenCalledWith("rpocons_secret", userId);
@@ -284,6 +354,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     }, request({ origin }), r as unknown as FastifyReply)).rejects.toThrow("CSRF");
     await expect(f.controller.approve({
       decision: "approve", csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+      consent_nonce: "rpocons_secret",
     }, request({ origin: "https://attacker.test" }), r as unknown as FastifyReply))
       .rejects.toThrow("origin mismatch");
     f.oauth.browserUser.mockResolvedValueOnce({
@@ -291,6 +362,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     });
     await expect(f.controller.approve({
       decision: "approve", csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+      consent_nonce: "rpocons_secret",
     }, request({ origin }), r as unknown as FastifyReply)).rejects.toThrow("same signed-in user");
     expect(f.oauth.issueCode).not.toHaveBeenCalled();
     expect(f.oauth.consumeConsent).not.toHaveBeenCalled();
@@ -301,6 +373,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     const r = reply();
     await f.controller.approve({
       decision: "deny", csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+      consent_nonce: "rpocons_secret",
     }, request({ origin }), r as unknown as FastifyReply);
     const redirect = new URL(r.redirect.mock.calls[0]?.[0] as string);
     expect(redirect.searchParams.get("error")).toBe("access_denied");

@@ -420,6 +420,7 @@ model McpOAuthGrant {
   authenticatedIdpId  String?
   accessTokenHash     String         @unique
   refreshTokenHash    String?        @unique
+  spentRefreshTokens  McpOAuthSpentRefreshToken[]
   accessExpiresAt     DateTime
   refreshExpiresAt    DateTime
   revokedAt           DateTime?
@@ -430,6 +431,18 @@ model McpOAuthGrant {
 
   @@index([tenantId, userId])
   @@index([refreshExpiresAt])
+}
+
+/// SHA-256 of a previously rotated OAuth refresh token. Retained for the
+/// lifetime of the parent grant, so replay can revoke the entire successor
+/// chain instead of merely rejecting the spent token in isolation.
+model McpOAuthSpentRefreshToken {
+  tokenHash  String        @id
+  grantId    String        @db.Uuid
+  consumedAt DateTime      @default(now())
+  grant      McpOAuthGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@index([grantId])
 }
 
 model TenantMcpSettings {

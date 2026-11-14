@@ -330,11 +330,25 @@ export class McpResourceOAuthService {
       throw new McpOAuthProtocolError("invalid_grant");
     }
     await this.requireClient(clientId);
+    const tokenHash = hash(token);
     const row = await this.prisma.mcpOAuthGrant.findUnique({
-      where: { refreshTokenHash: hash(token) },
+      where: { refreshTokenHash: tokenHash },
       include: { user: { select: { id: true, status: true } } },
     });
-    if (!row || row.clientId !== clientId || row.revokedAt ||
+    if (!row) {
+      // A rotated token is no longer indexed on the active grant. Retain its
+      // hash so reuse can invalidate the ENTIRE successor grant, not merely
+      // reject the old secret and leave a stolen successor refreshable.
+      const spent = await this.prisma.mcpOAuthSpentRefreshToken.findUnique({
+        where: { tokenHash },
+        include: { grant: { select: { clientId: true } } },
+      });
+      if (spent?.grant.clientId === clientId) {
+        await this.revokeRefreshLineage(spent.grantId, clientId);
+      }
+      throw new McpOAuthProtocolError("invalid_grant");
+    }
+    if (row.clientId !== clientId || row.revokedAt ||
         row.refreshExpiresAt.getTime() <= Date.now() || row.user.status !== UserStatus.Active) {
       throw new McpOAuthProtocolError("invalid_grant");
     }
@@ -348,26 +362,67 @@ export class McpResourceOAuthService {
 
   async rotateRefresh(input: Record<string, unknown>, grantId: string) {
     const row = await this.inspectRefresh(input);
-    if (row.id !== grantId) throw new McpOAuthProtocolError("invalid_grant");
+    // Refresh grants require offline_access. Guard the nullable Prisma field
+    // before recording or querying the rotated (spent) refresh-token hash.
+    const refreshHash = row.refreshTokenHash;
+    if (row.id !== grantId || !refreshHash) {
+      throw new McpOAuthProtocolError("invalid_grant");
+    }
     const accessToken = randomToken(accessPrefix);
     const refreshToken = randomToken(refreshPrefix);
     const now = Date.now();
-    const updated = await this.prisma.mcpOAuthGrant.updateMany({
-      where: {
-        id: row.id, refreshTokenHash: row.refreshTokenHash,
-        revokedAt: null, refreshExpiresAt: { gt: new Date() },
-      },
-      data: {
-        accessTokenHash: hash(accessToken),
-        refreshTokenHash: hash(refreshToken),
-        accessExpiresAt: new Date(now + accessTtlSeconds * 1000),
-      },
-    });
-    if (updated.count !== 1) throw new McpOAuthProtocolError("invalid_grant");
+    let rotated: boolean;
+    try {
+      rotated = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.mcpOAuthGrant.updateMany({
+          where: {
+            id: row.id, refreshTokenHash: refreshHash,
+            revokedAt: null, refreshExpiresAt: { gt: new Date() },
+          },
+          data: {
+            accessTokenHash: hash(accessToken),
+            refreshTokenHash: hash(refreshToken),
+            accessExpiresAt: new Date(now + accessTtlSeconds * 1000),
+          },
+        });
+        if (updated.count !== 1) return false;
+        // Persist the *spent* hash in the same transaction as rotation:
+        // an interrupted transaction must not leave the old token marked
+        // consumed while a still-active grant accepts it, or vice versa.
+        await tx.mcpOAuthSpentRefreshToken.create({
+          data: { tokenHash: refreshHash, grantId: row.id },
+        });
+        return true;
+      });
+    } catch (error) {
+      // A concurrent rotation can win the unique spent-hash insert. Revoke
+      // only if durable history proves the same grant was already rotated;
+      // other DB faults remain errors, never a permissive fallback.
+      const spent = await this.prisma.mcpOAuthSpentRefreshToken.findUnique({
+        where: { tokenHash: refreshHash },
+        select: { grantId: true },
+      });
+      if (spent?.grantId !== row.id) throw error;
+      await this.revokeRefreshLineage(row.id, row.clientId);
+      throw new McpOAuthProtocolError("invalid_grant");
+    }
+    if (!rotated) {
+      // The old token was valid at inspect but lost a concurrent compare-
+      // and-swap; assume compromise, revoke the successor grant.
+      await this.revokeRefreshLineage(row.id, row.clientId);
+      throw new McpOAuthProtocolError("invalid_grant");
+    }
     return {
       access_token: accessToken, refresh_token: refreshToken, token_type: "Bearer",
       expires_in: accessTtlSeconds, scope: row.scope,
     };
+  }
+
+  private async revokeRefreshLineage(grantId: string, clientId: string) {
+    await this.prisma.mcpOAuthGrant.updateMany({
+      where: { id: grantId, clientId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   async revoke(token: unknown, clientId: unknown) {
@@ -377,7 +432,21 @@ export class McpResourceOAuthService {
     const where = token.startsWith(refreshPrefix)
       ? { refreshTokenHash: hash(token), clientId: client.id }
       : { accessTokenHash: hash(token), clientId: client.id };
-    await this.prisma.mcpOAuthGrant.updateMany({ where, data: { revokedAt: new Date() } });
+    const revoked = await this.prisma.mcpOAuthGrant.updateMany({
+      where, data: { revokedAt: new Date() },
+    });
+    if (!revoked.count && token.startsWith(refreshPrefix)) {
+      // RFC 7009 revocation is idempotent. A client may retain an earlier
+      // refresh token even after rotation; its explicit disconnect must
+      // still invalidate the full successor chain.
+      const spent = await this.prisma.mcpOAuthSpentRefreshToken.findUnique({
+        where: { tokenHash: hash(token) },
+        include: { grant: { select: { clientId: true } } },
+      });
+      if (spent?.grant.clientId === client.id) {
+        await this.revokeRefreshLineage(spent.grantId, client.id);
+      }
+    }
   }
 
   async authenticateAccessToken(raw: string, tenantId: string): Promise<AuthenticatedUser> {
