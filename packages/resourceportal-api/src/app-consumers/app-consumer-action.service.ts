@@ -114,7 +114,8 @@ export class AppConsumerActionService {
       // A separately verified ChatGPT DCR application may obtain MCP tokens
       // only while this subject has an active, tenant-scoped MCP entitlement.
       // This is never an RP Web/CLI or tenant application grant.
-      if (await this.consumers.mayIssueMcpDcrToken(issuer, subject) &&
+      if (this.config.get<string>("RP_MCP_RESOURCE_OAUTH_ENABLED") !== "true" &&
+          await this.consumers.mayIssueMcpDcrToken(issuer, subject) &&
           await this.mcpDcr.isTrustedChatGptClient(clientId)) return {};
     } catch {
       // Unavailable ZITADEL management or RP DB must fail closed at refresh.

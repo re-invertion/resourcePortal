@@ -57,6 +57,24 @@ describe("validateEnv", () => {
     expect(validateEnv(valid)).toBe(valid);
   });
 
+  it("requires OIDC and a canonical HTTPS API origin when resource-bound MCP OAuth is enabled", () => {
+    const base = { ...validBaseEnv, RP_MCP_RESOURCE_OAUTH_ENABLED: "true" };
+    expect(() => validateEnv(base)).toThrow("MCP resource OAuth requires PUBLIC_API_URL");
+    expect(() => validateEnv({ ...base, PUBLIC_API_URL: "http://rp.example.com" }))
+      .toThrow("MCP resource OAuth requires PUBLIC_API_URL");
+    expect(() => validateEnv({ ...base, PUBLIC_API_URL: "https://rp.example.com",
+      AUTH_MODE: "dev" })).toThrow("MCP resource OAuth requires an OIDC-authenticated RP session");
+    const configured = {
+      ...base, AUTH_MODE: "oidc",
+      PUBLIC_API_URL: "https://rp.example.com",
+      AUTH_COOKIE_SECRET: "correct-32-character-secret-value",
+      OIDC_ISSUER_URL: "https://auth.example.com",
+      OIDC_CLIENT_ID: "rp-web",
+      OIDC_AUDIENCE: "rp-web",
+    };
+    expect(validateEnv(configured)).toBe(configured);
+  });
+
   it("rejects enabling App User login with an unbound, ambiguous or non-HTTPS ZITADEL target", () => {
     const certified = {
       ...validBaseEnv,

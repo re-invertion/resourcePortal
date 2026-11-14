@@ -7,6 +7,7 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import fastifyCookie from "@fastify/cookie";
+import fastifyFormbody from "@fastify/formbody";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { SwaggerModule } from "@nestjs/swagger";
 import { ApiModule } from "./api.module";
@@ -56,6 +57,10 @@ async function bootstrap() {
         }
       : undefined,
   );
+
+  // OAuth token/refresh/revocation endpoints and HTML consent require
+  // application/x-www-form-urlencoded bodies. Register before route setup.
+  await app.register(fastifyFormbody);
 
   app.setGlobalPrefix("api", {
     exclude: globalPrefixExcludes,
@@ -222,6 +227,13 @@ function applySecurityHeaders(
 
 function isCsrfValid(request: FastifyRequest, config: ConfigService) {
   if (!unsafeMethods.has(request.method.toUpperCase())) {
+    return true;
+  }
+  // Native HTML form OAuth consent cannot set x-csrf-token. This exact
+  // endpoint enforces the same RP cookie proof plus signed one-time state and
+  // Origin verification inside McpResourceOAuthController.approve().
+  if (request.method === "POST" &&
+      request.url.split("?", 1)[0] === "/api/mcp/oauth/approve") {
     return true;
   }
 

@@ -7,11 +7,12 @@ import { AuthSessionService } from "./auth-session.service";
 import { OidcAuthService } from "./oidc-auth.service";
 import { FederationProofService } from "./federation-proof.service";
 import { NativeLoginModeService } from "./native-login-mode.service";
+import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
 
 @Module({
   imports: [PrismaModule, SecurityModule],
   controllers: [AuthController],
-  providers: [AuthFlowService, AuthSessionService, OidcAuthService, FederationProofService, NativeLoginModeService],
-  exports: [AuthSessionService, OidcAuthService, NativeLoginModeService],
+  providers: [AuthFlowService, AuthSessionService, OidcAuthService, FederationProofService, NativeLoginModeService, McpResourceOAuthService],
+  exports: [AuthSessionService, OidcAuthService, NativeLoginModeService, McpResourceOAuthService],
 })
 export class AuthModule {}

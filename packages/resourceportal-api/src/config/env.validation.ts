@@ -33,6 +33,23 @@ export function validateEnv(config: Env) {
     } catch { /* Fail closed for absent/malformed callback or public API URL. */ }
     if (!validRedirect) errors.push("Invitation OIDC callback must match public HTTPS RP API origin");
   }
+  if (config.RP_MCP_RESOURCE_OAUTH_ENABLED === "true") {
+    const apiUrl = config.PUBLIC_API_URL ?? "";
+    let canonicalOrigin = false;
+    try {
+      const url = new URL(apiUrl);
+      canonicalOrigin = url.protocol === "https:" && !url.username && !url.password &&
+        !url.search && !url.hash && url.pathname === "/";
+    } catch { /* Fail closed. */ }
+    if (!canonicalOrigin) {
+      errors.push("MCP resource OAuth requires PUBLIC_API_URL to be a canonical HTTPS origin");
+    }
+    if (!["oidc", "zitadel"].includes(authMode)) {
+      errors.push("MCP resource OAuth requires an OIDC-authenticated RP session");
+    }
+    requireMinLength(config, errors, "AUTH_COOKIE_SECRET", 20);
+  }
+
   if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&
       config.RP_INVITATION_ONBOARDING_ENABLED !== "true") {
     errors.push("Global exact-client Action requires a dedicated first-login invitation client");

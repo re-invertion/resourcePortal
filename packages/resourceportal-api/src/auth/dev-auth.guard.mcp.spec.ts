@@ -8,6 +8,7 @@ import { IS_PUBLIC_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { DevAuthGuard } from "./dev-auth.guard";
 import { OidcAuthService } from "./oidc-auth.service";
+import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
 
 function context(url: string) {
   const request = {
@@ -79,6 +80,62 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     expect(oidcAuth.authenticateMcpPrincipalToken).toHaveBeenCalledWith("mcp-token", false);
     expect(oidcAuth.authenticatePrincipalToken).not.toHaveBeenCalled();
     expect(request).toMatchObject({ user: userPrincipal.user });
+  });
+
+  it("uses the exact RP resource-bound token when native MCP OAuth is enabled", async () => {
+    const oidc = {
+      authenticateMcpPrincipalToken: vi.fn(), authenticatePrincipalToken: vi.fn(),
+    };
+    const user = userPrincipal.user;
+    const resourceOAuth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      authenticateAccessToken: vi.fn().mockResolvedValue(user),
+    };
+    const mcp = new DevAuthGuard(
+      { getAllAndOverride: vi.fn((key: string) => key === IS_PUBLIC_KEY) } as unknown as Reflector,
+      { get: vi.fn((key: string, fallback?: string) =>
+        ({ AUTH_MODE: "oidc", NODE_ENV: "test" } as Record<string, string>)[key] ?? fallback),
+      } as unknown as ConfigService,
+      {} as PrismaService,
+      oidc as unknown as OidcAuthService,
+      { hasSessionCookie: vi.fn().mockReturnValue(false), getSessionIdFromRequest: vi.fn() } as unknown as AuthSessionService,
+      undefined,
+      resourceOAuth as unknown as McpResourceOAuthService,
+    );
+    const { executionContext, request } = context(
+      "/api/tenants/00000000-0000-4000-8000-000000000001/mcp",
+    );
+    await expect(mcp.canActivate(executionContext)).resolves.toBe(true);
+    expect(resourceOAuth.authenticateAccessToken).toHaveBeenCalledWith("mcp-token",
+      "00000000-0000-4000-8000-000000000001");
+    expect(oidc.authenticateMcpPrincipalToken).not.toHaveBeenCalled();
+    expect(request).toMatchObject({ user });
+  });
+
+  it("denies legacy ZITADEL bearer tokens on tenant MCP after the resource-bound cutover", async () => {
+    const oidc = {
+      authenticateMcpPrincipalToken: vi.fn().mockResolvedValue(userPrincipal),
+      authenticatePrincipalToken: vi.fn(),
+    };
+    const resourceOAuth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      authenticateAccessToken: vi.fn().mockRejectedValue(new Error("not RP resource token")),
+    };
+    const mcp = new DevAuthGuard(
+      { getAllAndOverride: vi.fn((key: string) => key === IS_PUBLIC_KEY) } as unknown as Reflector,
+      { get: vi.fn((key: string, fallback?: string) =>
+        ({ AUTH_MODE: "oidc", NODE_ENV: "test" } as Record<string, string>)[key] ?? fallback),
+      } as unknown as ConfigService,
+      {} as PrismaService,
+      oidc as unknown as OidcAuthService,
+      { hasSessionCookie: vi.fn().mockReturnValue(false), getSessionIdFromRequest: vi.fn() } as unknown as AuthSessionService,
+      undefined,
+      resourceOAuth as unknown as McpResourceOAuthService,
+    );
+    await expect(mcp.canActivate(context(
+      "/api/tenants/00000000-0000-4000-8000-000000000001/mcp",
+    ).executionContext)).rejects.toThrow("not RP resource token");
+    expect(oidc.authenticateMcpPrincipalToken).not.toHaveBeenCalled();
   });
 
   it("uses MCP-specific token validation for Platform Admin MCP requests", async () => {
