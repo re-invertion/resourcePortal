@@ -88,7 +88,7 @@ it("shows a loading state without diagnostic conclusions while the API is pendin
     return json([]);
   }));
   render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
-  expect(await screen.findByRole("status", { name: "" })).toBeTruthy();
+  expect(await screen.findByText("Loading TLS diagnostics…")).toBeTruthy();
   expect(screen.queryByText("No evidence")).toBeNull();
   expect(screen.queryByText("None")).toBeNull();
 });
