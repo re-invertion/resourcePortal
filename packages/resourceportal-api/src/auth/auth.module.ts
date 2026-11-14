@@ -9,11 +9,12 @@ import { FederationProofService } from "./federation-proof.service";
 import { NativeLoginModeService } from "./native-login-mode.service";
 import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
 import { McpUpstreamLoginService } from "./mcp-upstream-login.service";
+import { McpLoopbackDelegationService } from "./mcp-loopback-delegation.service";
 
 @Module({
   imports: [PrismaModule, SecurityModule],
   controllers: [AuthController],
-  providers: [AuthFlowService, AuthSessionService, OidcAuthService, FederationProofService, NativeLoginModeService, McpResourceOAuthService, McpUpstreamLoginService],
-  exports: [AuthSessionService, OidcAuthService, NativeLoginModeService, McpResourceOAuthService, McpUpstreamLoginService],
+  providers: [AuthFlowService, AuthSessionService, OidcAuthService, FederationProofService, NativeLoginModeService, McpResourceOAuthService, McpUpstreamLoginService, McpLoopbackDelegationService],
+  exports: [AuthSessionService, OidcAuthService, NativeLoginModeService, McpResourceOAuthService, McpUpstreamLoginService, McpLoopbackDelegationService],
 })
 export class AuthModule {}

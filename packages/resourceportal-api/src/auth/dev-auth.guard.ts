@@ -14,6 +14,7 @@ import { UserStatus } from "@prisma/client";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { applyMcpBearerChallenge, isMcpRequest, isTenantMcpRequest } from "../mcp/mcp-oauth";
 import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
+import { MCP_LOOPBACK_HEADER, McpLoopbackDelegationService } from "./mcp-loopback-delegation.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { IS_PUBLIC_KEY, MACHINE_BEARER_AUTH_KEY } from "./auth.constants";
 import { AuthSessionService } from "./auth-session.service";
@@ -30,6 +31,7 @@ export class DevAuthGuard implements CanActivate {
     private readonly sessions: AuthSessionService,
     @Optional() private readonly nativeMode?: NativeLoginModeService,
     @Optional() private readonly resourceOAuth?: McpResourceOAuthService,
+    @Optional() private readonly loopback?: McpLoopbackDelegationService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -92,6 +94,25 @@ export class DevAuthGuard implements CanActivate {
     reply: FastifyReply,
     isPublic: boolean | undefined,
   ) {
+    // A one-time, same-process proof replaces the RP OAuth bearer only for
+    // an exact internal tenant/platform REST request. The native RBAC and
+    // TenantContextGuard still execute with this freshly validated user.
+    if (request.headers[MCP_LOOPBACK_HEADER] !== undefined) {
+      if (!this.loopback || !this.resourceOAuth?.isEnabled()) {
+        throw new UnauthorizedException("Invalid MCP loopback delegation");
+      }
+      const proof = this.loopback.consume(request);
+      const user = await this.resourceOAuth.authenticateAccessToken(
+        proof.accessToken, proof.tenantId,
+      );
+      if (user.id !== proof.userId ||
+          (user.authenticatedIdpId && await this.nativeOnly())) {
+        throw new UnauthorizedException("Invalid MCP loopback delegation");
+      }
+      request.user = user;
+      return true;
+    }
+
     const token = this.extractBearerToken(request.headers.authorization);
 
     if (token) {
