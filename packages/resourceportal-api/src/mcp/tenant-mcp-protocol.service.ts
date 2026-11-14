@@ -6,6 +6,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { isPlatformAdminUser } from "../auth/platform-admin.guard";
+import { MCP_LOOPBACK_HEADER, McpLoopbackDelegationService } from "../auth/mcp-loopback-delegation.service";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { protectedResourceMetadataUrl } from "./mcp-oauth";
@@ -64,6 +65,7 @@ export class TenantMcpProtocolService {
     private readonly config: ConfigService,
     private readonly settings: TenantMcpSettingsService,
     private readonly prisma: PrismaService,
+    private readonly delegation: McpLoopbackDelegationService,
   ) {}
 
   async createHttpHandler(context: McpCallContext) {
@@ -667,7 +669,18 @@ export class TenantMcpProtocolService {
       accept: "application/json, text/plain;q=0.8",
     };
     const bearer = this.bearer(context.request.headers.authorization);
-    if (bearer) {
+    if (bearer?.startsWith("rpoat_v1_")) {
+      if (!context.actor || !context.hasInteractiveCredential) {
+        throw new BadRequestException("MCP authentication is required for delegated API calls");
+      }
+      // Recheck the live MCP access policy before each native API call.
+      await this.settings.assertUserCanUseMcp(context.tenantId, context.actor.id);
+      headers[MCP_LOOPBACK_HEADER] = this.delegation.issue({
+        userId: context.actor.id, tenantId: context.tenantId,
+        method, target: target.pathname + target.search,
+        resourceAccessToken: bearer,
+      });
+    } else if (bearer) {
       headers.authorization = `Bearer ${bearer}`;
     } else {
       const devUserId = this.header(context.request, "x-dev-user-id");
@@ -775,7 +788,18 @@ export class TenantMcpProtocolService {
       accept: "application/json, text/plain;q=0.8",
     };
     const bearer = this.bearer(context.request.headers.authorization);
-    if (bearer) {
+    if (bearer?.startsWith("rpoat_v1_")) {
+      if (!context.actor || !context.hasInteractiveCredential) {
+        throw new BadRequestException("MCP authentication is required for delegated API calls");
+      }
+      // Recheck the live MCP access policy before each native API call.
+      await this.settings.assertUserCanUseMcp(context.tenantId, context.actor.id);
+      headers[MCP_LOOPBACK_HEADER] = this.delegation.issue({
+        userId: context.actor.id, tenantId: context.tenantId,
+        method, target: target.pathname + target.search,
+        resourceAccessToken: bearer,
+      });
+    } else if (bearer) {
       headers.authorization = `Bearer ${bearer}`;
     } else {
       const devUserId = this.header(context.request, "x-dev-user-id");

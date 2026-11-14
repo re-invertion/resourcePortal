@@ -9,6 +9,7 @@ import { AuthSessionService } from "./auth-session.service";
 import { DevAuthGuard } from "./dev-auth.guard";
 import { OidcAuthService } from "./oidc-auth.service";
 import { McpResourceOAuthService } from "./mcp-resource-oauth.service";
+import { McpLoopbackDelegationService, MCP_LOOPBACK_HEADER } from "./mcp-loopback-delegation.service";
 
 function context(url: string, method = "POST") {
   const request = {
@@ -90,6 +91,81 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     delete (req.request.headers as { authorization?: string }).authorization;
     await expect(mcp.canActivate(req.executionContext)).resolves.toBe(true);
     expect(sessions.authenticateSession).not.toHaveBeenCalled();
+  });
+
+  it("authenticates a one-time opaque MCP loopback proof while preserving native guard enforcement", async () => {
+    const tenant = "00000000-0000-4000-8000-000000000001";
+    const method = "GET";
+    const path = `/api/tenants/${tenant}/app-groups`;
+    const delegation = new McpLoopbackDelegationService();
+    const oauth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      authenticateAccessToken: vi.fn().mockResolvedValue(userPrincipal.user),
+    };
+    const oidc = {
+      authenticateMcpPrincipalToken: vi.fn(),
+      authenticatePrincipalToken: vi.fn(),
+    };
+    const target = new DevAuthGuard(
+      { getAllAndOverride: vi.fn().mockReturnValue(false) } as unknown as Reflector,
+      { get: vi.fn((key: string) => key === "AUTH_MODE" ? "oidc" : "test") } as unknown as ConfigService,
+      {} as PrismaService,
+      oidc as unknown as OidcAuthService,
+      {} as AuthSessionService,
+      undefined,
+      oauth as unknown as McpResourceOAuthService,
+      delegation,
+    );
+    const proof = delegation.issue({
+      userId: userPrincipal.user.id, tenantId: tenant, method, target: path,
+      resourceAccessToken: "rpoat_v1_opaque",
+    });
+    const ctx = context(path, method);
+    Object.assign(ctx.request.headers, { [MCP_LOOPBACK_HEADER]: proof });
+    (ctx.request as unknown as { raw: unknown }).raw =
+      { socket: { remoteAddress: "127.0.0.1" } };
+    delete (ctx.request.headers as { authorization?: string }).authorization;
+    await expect(target.canActivate(ctx.executionContext)).resolves.toBe(true);
+    expect(ctx.request).toMatchObject({ user: userPrincipal.user });
+    expect(oauth.authenticateAccessToken).toHaveBeenCalledWith("rpoat_v1_opaque", tenant);
+    expect(oidc.authenticatePrincipalToken).not.toHaveBeenCalled();
+    await expect(target.canActivate(ctx.executionContext))
+      .rejects.toThrow("Invalid MCP loopback delegation");
+  });
+
+  it("rejects delegation if the original MCP token belongs to another user", async () => {
+    const tenant = "00000000-0000-4000-8000-000000000001";
+    const path = `/api/tenants/${tenant}/volumes`;
+    const delegation = new McpLoopbackDelegationService();
+    const oauth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      authenticateAccessToken: vi.fn().mockResolvedValue({
+        ...userPrincipal.user, id: "11111111-1111-4111-8111-111111111111",
+      }),
+    };
+    const target = new DevAuthGuard(
+      { getAllAndOverride: vi.fn().mockReturnValue(false) } as unknown as Reflector,
+      { get: vi.fn((key: string) => key === "AUTH_MODE" ? "oidc" : "test") } as unknown as ConfigService,
+      {} as PrismaService,
+      {} as OidcAuthService,
+      {} as AuthSessionService,
+      undefined,
+      oauth as unknown as McpResourceOAuthService,
+      delegation,
+    );
+    const ctx = context(path, "GET");
+    Object.assign(ctx.request.headers, {
+      [MCP_LOOPBACK_HEADER]: delegation.issue({
+        userId: userPrincipal.user.id, tenantId: tenant,
+        method: "GET", target: path,
+        resourceAccessToken: "rpoat_v1_valid",
+      }),
+    });
+    (ctx.request as unknown as { raw: unknown }).raw =
+      { socket: { remoteAddress: "127.0.0.1" } };
+    await expect(target.canActivate(ctx.executionContext))
+      .rejects.toThrow("Invalid MCP loopback delegation");
+    expect(ctx.request).not.toHaveProperty("user");
   });
 
   it("uses MCP-specific token validation for tenant MCP requests", async () => {
