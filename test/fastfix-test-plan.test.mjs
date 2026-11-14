@@ -1027,3 +1027,14 @@ test("#437 issuer TLS+ACME installer ordering is classified as identity/release/
     assert.ok(plan.profiles.includes(required), required);
   }
 });
+
+test("#442 MCP OAuth metadata global-prefix routing requires identity and security gates", () => {
+  const path = "packages/resourceportal-api/src/config/global-prefix-config.ts";
+  const plan = selectProfiles([path]);
+  for (const required of ["identity", "mcp-oauth", "security", "workflow"]) {
+    assert.ok(plan.profiles.includes(required), required + " missing for " + path);
+  }
+  assert.throws(() => selectProfiles([
+    "packages/resourceportal-api/src/config/unregistered-oauth-route.ts",
+  ]), /unclassified changes/);
+});
