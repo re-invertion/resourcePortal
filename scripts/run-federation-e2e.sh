@@ -283,6 +283,7 @@ browser_login() {
   trap 'stop_web; stop_api' RETURN
   node scripts/run-service-identity-e2e.mjs
   node scripts/run-federation-browser-e2e.mjs
+  node scripts/run-mcp-oauth-consent-browser-e2e.mjs
   node scripts/run-v019-final-ui-e2e.mjs
   stop_web
   stop_api

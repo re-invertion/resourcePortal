@@ -133,7 +133,7 @@ function fixture() {
   return { oauth, settings, prisma, controller, upstream, oidc, native };
 }
 function request(input: {
-  cookies?: Record<string, string>; origin?: string; contentType?: string;
+  cookies?: Record<string, string>; origin?: string; referer?: string; contentType?: string;
   nonceValid?: boolean; url?: string;
 } = {}) {
   return {
@@ -141,6 +141,7 @@ function request(input: {
     headers: {
       "content-type": input.contentType ?? "application/x-www-form-urlencoded",
       ...(input.origin !== undefined ? { origin: input.origin } : {}),
+      ...(input.referer !== undefined ? { referer: input.referer } : {}),
     },
     cookies: input.cookies ?? { rp_csrf: "verylongvalidcsrfvalue_0123456789012345", rp_mcp_oauth_pending: "signed-cookie" },
     unsignCookie: vi.fn().mockReturnValue({
@@ -294,6 +295,21 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(html).toContain('name="csrf_token"');
     expect(html).toContain('name="consent_nonce" value="rpocons_secret"');
     expect(html).toContain("Połącz ChatGPT");
+    expect(html).toContain("Wybrany tenant");
+    expect(html).toContain("Żądany zakres dostępu");
+    expect(html).toContain("offline_access");
+    expect(html).toContain('name="decision" value="approve"');
+    expect(html).toContain('name="decision" value="deny"');
+    expect(html).toContain('form action="/api/mcp/oauth/approve" method="post"');
+    expect(r.header).toHaveBeenCalledWith("referrer-policy", "same-origin");
+    expect(r.header).toHaveBeenCalledWith(
+      "content-security-policy",
+      expect.stringContaining("form-action 'self'"),
+    );
+    const cssPolicy = r.header.mock.calls.find(([key]) => key === "content-security-policy")?.[1];
+    expect(cssPolicy).toMatch(/style-src 'nonce-[a-zA-Z0-9+/=]{24}'/);
+    expect(html).toContain('style nonce="');
+    expect(html).not.toContain("https://cdn.");
     expect(f.oauth.beginConsent).toHaveBeenCalledWith(expect.objectContaining({
       tenantId, userId, clientId: options.clientId,
     }));
@@ -345,6 +361,44 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(redirected.searchParams.get("state")).toBe("some-client-state");
     expect(redirected.searchParams.get("iss")).toBe(`${origin}/api/mcp/oauth`);
   });
+
+  it.each(["null", undefined])(
+    "accepts privacy-browser HTML POST Origin %s only with a same-origin authorization Referer",
+    async (originHeader) => {
+      const f = fixture();
+      const r = reply();
+      await f.controller.approve({
+        csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+        consent_nonce: "rpocons_secret", decision: "approve",
+      }, request({
+        origin: originHeader,
+        referer: `${origin}/api/mcp/oauth/authorize?client_id=rpocli_client&state=sensitive`,
+      }), r as unknown as FastifyReply);
+      expect(r.redirect).toHaveBeenCalledTimes(1);
+      expect(f.oauth.issueCode).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    { origin: "null", referer: undefined },
+    { origin: "null", referer: "https://attacker.test/api/mcp/oauth/authorize" },
+    { origin: undefined, referer: "https://attacker.test/api/mcp/oauth/authorize" },
+    { origin: "https://attacker.test", referer: `${origin}/api/mcp/oauth/authorize` },
+    { origin: "null", referer: `${origin}/api/mcp/oauth/token` },
+    { origin: "null", referer: "not-a-url" },
+  ])("rejects opaque/foreign form origin without trusted consent referrer %#",
+    async (headers) => {
+      const f = fixture();
+      const r = reply();
+      await expect(f.controller.approve({
+        csrf_token: "verylongvalidcsrfvalue_0123456789012345",
+        consent_nonce: "rpocons_secret", decision: "approve",
+      }, request(headers), r as unknown as FastifyReply))
+        .rejects.toThrow("MCP OAuth consent origin mismatch");
+      expect(f.oauth.inspectConsent).not.toHaveBeenCalled();
+      expect(f.oauth.issueCode).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects a cross-origin or cross-user OAuth consent without minting a code", async () => {
     const f = fixture();

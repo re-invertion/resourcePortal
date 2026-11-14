@@ -22,8 +22,9 @@ ok() { printf 'PASS: %s\n' "$1"; }
 # Mock only HTTPS ZITADEL HTTP replies. The production verifier itself runs
 # unchanged with real jq and real private input files.
 curl() {
-  local mock_response_path='' last='' previous='' item
+  local mock_response_path='' last='' previous='' item needs_code=false
   for item in "$@"; do
+    [[ "$item" != --write-out ]] || needs_code=true
     [[ "$item" != *'test-public-pat-not-production'* ]] || fail 'PAT appeared in curl argv'
     [[ "$item" != *'test-only-key-with-more-than-'* ]] || fail 'HMAC key appeared in curl argv'
     if [[ "$previous" == --output ]]; then mock_response_path="$item"; fi
@@ -57,6 +58,8 @@ curl() {
   else
     fail "unexpected management endpoint"
   fi
+  # Verified read-only curl paths explicitly inspect the HTTP status.
+  [[ "$needs_code" != true ]] || printf '200'
 }
 rp_ensure_versioned_swarm_secret() {
   [[ "$1" == rp_app_consumer_action_hmac && "$2" == "$test_tmp/action.key" ]] || fail 'unexpected secret provisioning'

@@ -1,4 +1,51 @@
 #!/usr/bin/env bash
+# Read-only management verification uses the *same* authenticated HTTPS route
+# as the installer. A Traefik task replacement can briefly return 404 before
+# ZITADEL or its management router is attached, or terminate a TLS connection.
+# Retries are allowed only for checked READ operations (including POST /search).
+# Never retry client creation, target mutation, execution binding or deletion:
+# these have non-idempotent security effects and need explicit reconciliation.
+rp_zitadel_verified_read() (
+  local stage="$1" method="$2" path="$3" host="$4" conf="$5" output="$6" data="${7:-}"
+  local attempt rc code retry
+  local -a args=(
+    --silent --show-error --no-location --proto '=https' --max-time 15
+    --config "$conf" --request "$method" --output "$output" --write-out '%{http_code}'
+  )
+  [[ "$stage" == actions-v2 || "$stage" == invitation-oidc ]] || return 1
+  [[ "$method" == GET || "$method" == POST ]] || return 1
+  [[ "$path" == /* && "$host" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ &&
+     "$conf" == /* && -r "$conf" &&
+     "$output" == /* && ! -L "$output" ]] || return 1
+  if [[ -n "$data" ]]; then
+    [[ "$data" == /* && -r "$data" && ! -L "$data" ]] || return 1
+    args+=(--header 'Content-Type: application/json' --data-binary "@$data")
+  fi
+  for attempt in 1 2 3 4 5 6; do
+    rc=0
+    code="$(curl "${args[@]}" "https://$host$path")" || rc=$?
+    if [[ "$rc" == 0 && "$code" =~ ^2[0-9]{2}$ ]]; then
+      return 0
+    fi
+    retry=false
+    if [[ "$rc" == 0 && "$code" =~ ^(404|408|425|429|500|502|503|504)$ ]]; then
+      retry=true
+    elif [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|18|28|35|52|56|60)$ ]]; then
+      # A bad certificate still fails TLS validation on *every* attempt;
+      # no -k, scheme downgrade, CA override, or redirect following.
+      retry=true
+    fi
+    printf '[ZITADEL %s] verify method=%s path=%s attempt=%s/6 curl=%s http=%s%s\n' \
+      "$stage" "$method" "$path" "$attempt" "$rc" "${code:-000}" \
+      "$(if [[ "$retry" == true && "$attempt" -lt 6 ]]; then printf ' retrying'; else printf ' stopped'; fi)" >&2
+    if [[ "$retry" != true || "$attempt" -eq 6 ]]; then
+      return 1
+    fi
+    sleep 3
+  done
+  return 1
+)
+
 # ZITADEL Actions V2 controlled lifecycle: global execution owned exclusively by RP.
 rp_app_action_http() (
   local method="$1" path="$2" output="$3" data="${4:-}"
@@ -15,7 +62,10 @@ rp_app_action_http() (
   trap 'rm -f -- "$conf"' EXIT
   (umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "x-zitadel-orgid: %s"\n' "$pat" "$org") > "$conf" || return 1
   unset pat
-  if [[ -n "$data" ]]; then
+  if [[ "$method" == GET ||
+        ( "$method" == POST && "$path" == /v2/actions/executions/search ) ]]; then
+    rp_zitadel_verified_read actions-v2 "$method" "$path" "$host" "$conf" "$output" "$data"
+  elif [[ -n "$data" ]]; then
     curl --silent --show-error --fail --no-location --proto '=https' --max-time 15 \
       --config "$conf" --header 'Content-Type: application/json' \
       --request "$method" --data-binary "@$data" --output "$output" "https://$host$path"
@@ -339,7 +389,10 @@ rp_invitation_oidc_http() (
   trap 'rm -f -- "$conf"' EXIT
   (umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "x-zitadel-orgid: %s"\n' "$pat" "$org") > "$conf" || return 1
   unset pat
-  if [[ -n "$data" ]]; then
+  if [[ "$method" == GET ||
+        ( "$method" == POST && "$path" == "/management/v1/projects/$project/apps/_search" ) ]]; then
+    rp_zitadel_verified_read invitation-oidc "$method" "$path" "$host" "$conf" "$output" "$data"
+  elif [[ -n "$data" ]]; then
     curl --silent --show-error --fail --no-location --proto '=https' --max-time 15 \
       --config "$conf" --header 'Content-Type: application/json' \
       --request "$method" --data-binary "@$data" --output "$output" "https://$host$path"
