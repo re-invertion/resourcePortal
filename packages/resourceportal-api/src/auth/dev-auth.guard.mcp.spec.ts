@@ -138,6 +138,41 @@ describe("DevAuthGuard MCP bearer authentication", () => {
     expect(request).toMatchObject({ user });
   });
 
+  it("immediately denies an opaque MCP grant from an external IdP after native-only cutover", async () => {
+    const oidc = {
+      authenticateMcpPrincipalToken: vi.fn(),
+      authenticatePrincipalToken: vi.fn(),
+    };
+    const resourceOAuth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      authenticateAccessToken: vi.fn().mockResolvedValue({
+        ...userPrincipal.user, authenticatedIdpId: "external-zitadel-idp",
+      }),
+    };
+    const native = { isNativeOnly: vi.fn().mockResolvedValue(true) };
+    const mcp = new DevAuthGuard(
+      { getAllAndOverride: vi.fn((key: string) => key === IS_PUBLIC_KEY) } as unknown as Reflector,
+      { get: vi.fn((key: string, fallback?: string) =>
+        ({ AUTH_MODE: "oidc", NODE_ENV: "test" } as Record<string, string>)[key] ?? fallback),
+      } as unknown as ConfigService,
+      {} as PrismaService,
+      oidc as unknown as OidcAuthService,
+      { hasSessionCookie: vi.fn().mockReturnValue(false),
+        getSessionIdFromRequest: vi.fn() } as unknown as AuthSessionService,
+      native as never,
+      resourceOAuth as unknown as McpResourceOAuthService,
+    );
+    const { executionContext, request } = context(
+      "/api/tenants/00000000-0000-4000-8000-000000000001/mcp",
+    );
+    await expect(mcp.canActivate(executionContext))
+      .rejects.toThrow("External identity provider login is disabled");
+    expect(native.isNativeOnly).toHaveBeenCalledOnce();
+    expect(resourceOAuth.authenticateAccessToken).toHaveBeenCalledOnce();
+    expect(request).not.toHaveProperty("user");
+    expect(oidc.authenticateMcpPrincipalToken).not.toHaveBeenCalled();
+  });
+
   it("denies legacy ZITADEL bearer tokens on tenant MCP after the resource-bound cutover", async () => {
     const oidc = {
       authenticateMcpPrincipalToken: vi.fn().mockResolvedValue(userPrincipal),

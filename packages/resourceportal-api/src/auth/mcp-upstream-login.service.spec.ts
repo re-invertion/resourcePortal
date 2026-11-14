@@ -91,7 +91,9 @@ function fixture() {
         expect(form.get("code_verifier")).toMatch(/^[A-Za-z0-9_-]{43}$/);
         expect(form.get("redirect_uri")).toBe(`${origin}/api/mcp/oauth/upstream/callback`);
         return Promise.resolve(new Response(
-          JSON.stringify({ id_token: "signed-issuer-jwt" }), { status: 200 },
+          JSON.stringify({
+            id_token: "signed-issuer-jwt", access_token: "short-lived-userinfo-access",
+          }), { status: 200 },
         ));
       }
       throw new Error("Unexpected stage");
@@ -130,7 +132,7 @@ describe("#442 MCP identity-only upstream OAuth PKCE, tenant scope and replay", 
     const f = fixture();
     const { state } = await f.svc.start(input, origin);
     await expect(f.svc.exchange("zita-code", state, origin)).resolves.toMatchObject({
-      idToken: "signed-issuer-jwt", record: {
+      idToken: "signed-issuer-jwt", accessToken: "short-lived-userinfo-access", record: {
         tenantId: tenant, resource: input.resource, upstreamClientId,
       },
     });

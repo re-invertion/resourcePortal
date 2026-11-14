@@ -95,6 +95,7 @@ function fixture() {
         clientState: options.state, codeChallenge: options.challenge,
       },
       idToken: "signed-jwt",
+      accessToken: "zitadel-userinfo-access",
     }),
     createIdentitySession: vi.fn().mockResolvedValue("Z".repeat(43)),
   };
@@ -111,7 +112,7 @@ function fixture() {
     upstream as never,
     oidc as never,
   );
-  return { oauth, settings, prisma, controller, upstream, oidc };
+  return { oauth, settings, prisma, controller, upstream, oidc, native };
 }
 function request(input: {
   cookies?: Record<string, string>; origin?: string; contentType?: string;
@@ -198,7 +199,7 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     }, req, r as unknown as FastifyReply);
     expect(f.upstream.exchange).toHaveBeenCalledWith("zitadel-code", state, origin);
     expect(f.oidc.authenticateMcpBootstrapTokens).toHaveBeenCalledWith(
-      "signed-jwt", "12345", state,
+      "signed-jwt", "12345", state, "zitadel-userinfo-access",
     );
     expect(f.settings.assertUserCanUseMcp).toHaveBeenCalledWith(tenantId, userId);
     expect(f.upstream.createIdentitySession).toHaveBeenCalledWith(user, tenantId);
@@ -306,6 +307,25 @@ describe("ResourcePortal MCP OAuth 2.1 issuer and tenant consent (#442)", () => 
     expect(redirect.searchParams.get("iss")).toBe(`${origin}/api/mcp/oauth`);
     expect(redirect.searchParams.get("code")).toBeNull();
     expect(f.oauth.issueCode).not.toHaveBeenCalled();
+  });
+
+  it("denies a previously federated OAuth actor after native-only cutover, for both consent and refresh", async () => {
+    const f = fixture();
+    const r = reply();
+    f.native.isNativeOnly.mockResolvedValue(true);
+    f.oauth.browserUser.mockResolvedValueOnce({
+      ...user, authenticatedIdpId: "external-idp",
+    });
+    await expect(f.controller.authorize({}, request(),
+      r as unknown as FastifyReply)).rejects.toThrow("External identity provider login is disabled");
+    expect(f.oauth.beginConsent).not.toHaveBeenCalled();
+    f.oauth.inspectRefresh.mockResolvedValueOnce({
+      id: "old-grant", userId, tenantId, authenticatedIdpId: "external-idp",
+    });
+    await expect(f.controller.token({ grant_type: "refresh_token", resource },
+      request(), r as unknown as FastifyReply)).rejects.toThrow(
+      "External identity provider login is disabled");
+    expect(f.oauth.rotateRefresh).not.toHaveBeenCalled();
   });
 
   it("validates tenant RBAC at both code exchange and token refresh", async () => {

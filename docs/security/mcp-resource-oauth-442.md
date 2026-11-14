@@ -29,6 +29,17 @@ can use its stable callback without an OAuth mix-up. The existing ZITADEL
 login remains the authentication source for the RP user session, but its JWT is
 **never accepted as the new tenant MCP resource token**.
 
+The public issuer discovery at
+`/.well-known/oauth-authorization-server/api/mcp/oauth` is routed through the
+production Web proxy to the API, not HTML/SSR. The per-tenant upstream
+ZITADEL code exchange retains the short-lived access token **only** within
+the RP server-side callback to query UserInfo if the signed ID token omits
+`email_verified`; RP checks the signed issuer/client/nonce first and requires
+the UserInfo subject to match the ID token. Neither token is persisted as an
+RP Web session or returned to ChatGPT. A later native-only policy cutover
+immediately rejects opaque MCP grants from external identity providers,
+including refresh, consent and protected resource requests.
+
 The RP authorization server creates cryptographically random opaque access
 and refresh tokens; PostgreSQL stores only SHA-256 hashes with the exact
 canonical tenant MCP `resource` URI, user, client, expiry and revocation state.

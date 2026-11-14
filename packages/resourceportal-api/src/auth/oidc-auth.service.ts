@@ -160,7 +160,7 @@ export class OidcAuthService {
    * because ZITADEL does not always emit them on single-audience ID tokens.
    */
   async authenticateMcpBootstrapTokens(
-    idToken: string, clientId: string, nonce: string,
+    idToken: string, clientId: string, nonce: string, accessToken?: string,
   ): Promise<AuthenticatedUser> {
     if (!/^\d{1,64}$/.test(clientId) ||
         !/^[A-Za-z0-9_-]{43}$/.test(nonce) ||
@@ -174,9 +174,23 @@ export class OidcAuthService {
     // a signed claim disagreeing with that client is always refused.
     if ((claims.azp !== undefined && claims.azp !== clientId) ||
         (claims.client_id !== undefined && claims.client_id !== clientId) ||
-        claims.nonce !== nonce || claims.email_verified !== true ||
+        claims.nonce !== nonce ||
         typeof claims.sub !== "string" || !/^\d{1,64}$/.test(claims.sub)) {
       throw new UnauthorizedException("Unbound MCP upstream identity proof");
+    }
+    // Some ZITADEL code-flow clients place email verification only in the
+    // UserInfo response, not the signed ID token. We accept that ONLY after
+    // the signed client+nonce+subject proof above, only with the access token
+    // returned by the SAME server-side PKCE code exchange, and only if
+    // the UserInfo subject equals the ID token's signed subject.
+    if (claims.email_verified !== true) {
+      if (claims.email_verified === false || !accessToken) {
+        throw new UnauthorizedException("MCP upstream email verification required");
+      }
+      const userInfo = await this.fetchUserInfo(accessToken, claims.sub);
+      if (userInfo.email_verified !== true) {
+        throw new UnauthorizedException("MCP upstream email verification required");
+      }
     }
     const linked = await this.prisma.userIdentity.findUnique({
       where: {

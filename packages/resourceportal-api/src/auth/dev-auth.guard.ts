@@ -103,7 +103,13 @@ export class DevAuthGuard implements CanActivate {
         try {
           const tenantId = (request.params as { tenantId?: string }).tenantId;
           if (!tenantId) throw new UnauthorizedException("Tenant MCP resource is missing");
-          request.user = await this.resourceOAuth.authenticateAccessToken(token, tenantId);
+          const user = await this.resourceOAuth.authenticateAccessToken(token, tenantId);
+          // A previously minted opaque token must not bypass a later
+          // native-only cutover. Match the signed JWT branch below.
+          if (user.authenticatedIdpId && await this.nativeOnly()) {
+            throw new UnauthorizedException("External identity provider login is disabled");
+          }
+          request.user = user;
           return true;
         } catch (error) {
           applyMcpBearerChallenge(request, reply);

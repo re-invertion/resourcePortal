@@ -182,10 +182,16 @@ export class McpUpstreamLoginService {
     });
     if (!response.ok) throw new UnauthorizedException("MCP identity code exchange denied");
     const payload = await boundedJson(response);
-    if (typeof payload.id_token !== "string" || payload.id_token.length > 32_768) {
-      throw new UnauthorizedException("ZITADEL MCP identity ID token missing");
+    if (typeof payload.id_token !== "string" || payload.id_token.length > 32_768 ||
+        typeof payload.access_token !== "string" || !payload.access_token ||
+        payload.access_token.length > 32_768) {
+      throw new UnauthorizedException("ZITADEL MCP identity code exchange tokens missing");
     }
-    return { record, idToken: payload.id_token };
+    // Only the server-side callback receives this short-lived access token.
+    // Never return it to ChatGPT, expose it as an RP Web session, or persist it.
+    // Its sole purpose is subject-bound UserInfo when signed ID tokens omit
+    // email_verified, as permitted by ZITADEL's OIDC code flow.
+    return { record, idToken: payload.id_token, accessToken: payload.access_token };
   }
 
   async createIdentitySession(user: AuthenticatedUser, tenantId: string) {

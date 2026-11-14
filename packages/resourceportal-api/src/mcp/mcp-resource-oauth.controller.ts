@@ -150,6 +150,7 @@ export class McpResourceOAuthController {
       );
       const user = await this.oidc.authenticateMcpBootstrapTokens(
         result.idToken, result.record.upstreamClientId, unsigned.value,
+        result.accessToken,
       );
       await this.assertUser(result.record.tenantId, user.id, user.authenticatedIdpId);
       const identityCookie = await this.upstream.createIdentitySession(
@@ -277,6 +278,11 @@ export class McpResourceOAuthController {
   }
 
   private async assertUser(tenantId: string, userId: string, authenticatedIdpId?: string | null) {
+    // Enforce live RP native-only policy before any new code issuance,
+    // consent or refresh. Historical external grants cannot survive cutover.
+    if (authenticatedIdpId && await this.nativeMode.isNativeOnly()) {
+      throw new ForbiddenException("External identity provider login is disabled");
+    }
     await this.settings.assertUserCanUseMcp(tenantId, userId);
     await assertTenantProviderPolicy(
       this.prisma, tenantId, authenticatedIdpId ?? undefined,

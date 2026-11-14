@@ -25,6 +25,7 @@ async function createTokenFixture(
   nonce?: string,
   clientClaims?: { audience?: string | string[]; azp?: string; client_id?: string },
   subjectId = "zitadel-user-1",
+  omitVerifiedEmail = false,
 ) {
   const issuer = "https://issuer.example.com";
   const audience = "resource-portal";
@@ -38,7 +39,7 @@ async function createTokenFixture(
 
   const token = await new SignJWT({
     ...(includeEmail ? { email: "User@Example.com" } : {}),
-    email_verified: emailVerified,
+    ...(omitVerifiedEmail ? {} : { email_verified: emailVerified }),
     name: "Example User",
     ...(nonce ? { nonce } : {}),
     ...(clientClaims?.azp ? { azp: clientClaims.azp } : {}),
@@ -975,8 +976,9 @@ describe("#442 signed isolated MCP-only identity proof without Web grant", () =>
   };
 
   function prepare(fixture: Awaited<ReturnType<typeof createTokenFixture>>,
-      linked = true, userStatus: UserStatus = UserStatus.Active) {
-    installOidcFetch(fixture);
+      linked = true, userStatus: UserStatus = UserStatus.Active,
+      userInfo?: Record<string, unknown>) {
+    const fetchMock = installOidcFetch(fixture, userInfo);
     const prisma = {
       userIdentity: {
         findUnique: vi.fn().mockResolvedValue(linked ? {
@@ -993,7 +995,7 @@ describe("#442 signed isolated MCP-only identity proof without Web grant", () =>
       OIDC_INVITATION_CLIENT_ID: "rp-native-invite",
       OIDC_AUDIENCE: "rp-native-web",
     }), prisma as unknown as PrismaService);
-    return { svc, prisma };
+    return { svc, prisma, fetchMock };
   }
 
   it("accepts an existing MCP-only member's signed client+nonce ID proof without any Web grant", async () => {
@@ -1010,6 +1012,48 @@ describe("#442 signed isolated MCP-only identity proof without Web grant", () =>
     });
     expect(prisma.user.create).not.toHaveBeenCalled();
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("uses verified UserInfo for an identity-only token lacking signed email_verified, without creating an RP Web user", async () => {
+    const fixture = await createTokenFixture(true, false, undefined, nonce,
+      { audience: client }, subject, true);
+    const f = prepare(fixture, true, UserStatus.Active, {
+      sub: subject, email: "mcp-only@example.test", email_verified: true,
+    });
+    await expect(f.svc.authenticateMcpBootstrapTokens(
+      fixture.token, client, nonce, "short-lived-userinfo-access",
+    )).resolves.toMatchObject(user);
+    expect(f.fetchMock).toHaveBeenCalledWith(
+      fixture.issuer + "/oidc/v1/userinfo",
+      expect.objectContaining({
+        headers: { authorization: "Bearer short-lived-userinfo-access" },
+      }),
+    );
+    expect(f.prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for unverified or mismatched UserInfo and without same-code-flow access token", async () => {
+    const fixture = await createTokenFixture(true, false, undefined, nonce,
+      { audience: client }, subject, true);
+    let f = prepare(fixture, true, UserStatus.Active, {
+      sub: "attacker-subject", email_verified: true,
+    });
+    await expect(f.svc.authenticateMcpBootstrapTokens(
+      fixture.token, client, nonce, "short-lived-userinfo-access",
+    )).rejects.toThrow("OIDC UserInfo subject mismatch");
+    expect(f.prisma.userIdentity.findUnique).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+
+    f = prepare(fixture, true, UserStatus.Active, {
+      sub: subject, email_verified: false,
+    });
+    await expect(f.svc.authenticateMcpBootstrapTokens(
+      fixture.token, client, nonce, "short-lived-userinfo-access",
+    )).rejects.toThrow("MCP upstream email verification required");
+    await expect(f.svc.authenticateMcpBootstrapTokens(
+      fixture.token, client, nonce,
+    )).rejects.toThrow("MCP upstream email verification required");
+    expect(f.prisma.user.create).not.toHaveBeenCalled();
   });
 
   it("rejects a different tenant client, a replay with another nonce, and client-spoofed signed claims", async () => {
