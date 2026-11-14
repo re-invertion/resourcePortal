@@ -26,6 +26,22 @@ sudo ./resourceportal-install.sh --mode diagnostics --non-interactive
 
 Failure handling in the interactive TUI provides `Retry`, `View details`, and `Exit`. Retry reruns only the failed stage under the existing checkpoint rules; resuming the installer reconstructs completed progress from `/var/lib/resourceportal/installer-state`. `Ctrl+C` and normal exit restore the terminal before termination.
 
+## Private OIDC TLS route (issue #437)
+
+The final Swarm stack creates isolated, non-attachable `rp-oidc-private`
+overlay shared only by the API and Traefik. `OIDC_PRIVATE_TLS_ROUTE=traefik`
+routes discovery, token exchange, JWKS, UserInfo, session refresh and
+revocation to Traefik's private service VIP. Public ZITADEL issuer URL,
+Host header, TLS SNI, certificate hostname, signed JWT issuer and OAuth
+redirects stay unchanged. No `--host-add`, hard-coded LAN IP,
+WAN NAT hairpin or TLS bypass is required.
+
+`GET /api/health/oidc` runs fresh HTTPS discovery and JWKS reads from the
+API's perspective. Installer deploy/upgrade fails closed if it never becomes
+ready and the supported upgrade invokes automatic rollback. Web sign-in
+checks this probe before navigation and gives an actionable retry message
+instead of raw HTTP 500. Browser-to-ZITADEL Internet access is still needed.
+
 ## Public WAN / NAT prerequisite
 
 The public ResourcePortal and ZITADEL hostnames must resolve to the public ingress IPv4 address. When the ingress node itself uses a private RFC1918 address behind an edge router or ONT, that device must forward **TCP 80** and **TCP 443** from the public WAN address to the ResourcePortal ingress node on the same ports. The production installer configures the host firewall and Docker Swarm ingress, but it does not configure an external router, ONT, ISP NAT or CGNAT.

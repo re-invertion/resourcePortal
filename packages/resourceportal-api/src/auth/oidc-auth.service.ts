@@ -1,5 +1,6 @@
-import { Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, Optional, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { FederationProofService } from "./federation-proof.service";
+import { OidcIssuerTransport } from "./oidc-issuer-transport";
 import { ConfigService } from "@nestjs/config";
 import { UserStatus } from "@prisma/client";
 import type { JWTPayload, JWTVerifyOptions } from "jose";
@@ -51,6 +52,8 @@ export class OidcAuthService {
   private discovery?: OidcDiscovery;
   private discoveryPromise?: Promise<OidcDiscovery>;
   private jwks?: RemoteJWKSet;
+  private issuerTransport?: OidcIssuerTransport;
+  private issuerConnectivityProbe?: Promise<void>;
 
   constructor(
     private readonly config: ConfigService,
@@ -216,6 +219,56 @@ export class OidcAuthService {
       : null;
   }
 
+  private transport(): OidcIssuerTransport {
+    return this.issuerTransport ??= new OidcIssuerTransport(
+      this.getIssuer(),
+      this.config.get<string>("OIDC_PRIVATE_TLS_ROUTE"),
+    );
+  }
+
+  fetchIssuerEndpoint(url: string | URL, stage: "code-exchange" | "refresh" | "revoke",
+    init: RequestInit = {}): Promise<Response> {
+    return this.transport().fetch(url, stage, init);
+  }
+
+  // Always probe through a fresh network connection from the API container;
+  // cached discovery alone does not establish readiness after Swarm rollout.
+  async probeIssuerConnectivity(): Promise<void> {
+    // Public /health/oidc is rate-limited, but one concurrent probe per API
+    // replica also bounds IdP sockets during an outage or distributed flood.
+    // No success cache: release health always checks the actual current path.
+    this.issuerConnectivityProbe ??= this.fetchIssuerConnectivity().finally(() => {
+      this.issuerConnectivityProbe = undefined;
+    });
+    return this.issuerConnectivityProbe;
+  }
+
+  private async fetchIssuerConnectivity(): Promise<void> {
+    const response = await this.transport().fetch(
+      this.getIssuer() + "/.well-known/openid-configuration", "readiness",
+      { signal: AbortSignal.timeout(6000) },
+    );
+    if (!response.ok) throw new ServiceUnavailableException("OIDC discovery is unavailable");
+    let metadata: Record<string, unknown>;
+    try { metadata = await response.json() as Record<string, unknown>; } catch {
+      throw new ServiceUnavailableException("OIDC discovery response is malformed");
+    }
+    if (metadata.issuer !== this.getIssuer() || typeof metadata.jwks_uri !== "string") {
+      throw new ServiceUnavailableException("OIDC discovery issuer or JWKS URI is invalid");
+    }
+    this.transport().assertIssuerEndpoint(metadata.jwks_uri, "jwks");
+    const keys = await this.transport().fetch(metadata.jwks_uri, "jwks",
+      { signal: AbortSignal.timeout(6000) });
+    if (!keys.ok) throw new ServiceUnavailableException("OIDC JWKS endpoint is unavailable");
+    let jwks: { keys?: unknown };
+    try { jwks = await keys.json() as { keys?: unknown }; } catch {
+      throw new ServiceUnavailableException("OIDC JWKS response is malformed");
+    }
+    if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+      throw new ServiceUnavailableException("OIDC JWKS response is empty");
+    }
+  }
+
   private async fetchUserInfo(
     token: string,
     expectedSubject: string,
@@ -225,7 +278,7 @@ export class OidcAuthService {
       throw new UnauthorizedException("OIDC UserInfo endpoint is unavailable");
     }
 
-    const response = await fetch(discovery.userInfoEndpoint, {
+    const response = await this.transport().fetch(discovery.userInfoEndpoint, "userinfo", {
       signal: AbortSignal.timeout(10_000),
       headers: { authorization: `Bearer ${token}` },
     });
@@ -301,7 +354,10 @@ export class OidcAuthService {
         }
       }
       return result.payload;
-    } catch {
+    } catch (error) {
+      // Unreachable JWKS is not proof of invalid credentials. Preserve a
+      // retryable 503 without weakening JWT signature/issuer verification.
+      if (error instanceof ServiceUnavailableException) throw error;
       throw new UnauthorizedException("OIDC bearer token is invalid");
     }
   }
@@ -479,9 +535,20 @@ export class OidcAuthService {
 
   private async getJwks(): Promise<RemoteJWKSet> {
     if (!this.jwks) {
-      const { createRemoteJWKSet } = await import("jose");
+      const { createRemoteJWKSet, customFetch } = await import("jose");
       const discovery = await this.getDiscovery();
-      this.jwks = createRemoteJWKSet(new URL(discovery.jwksUri));
+      this.transport().assertIssuerEndpoint(discovery.jwksUri, "jwks");
+      this.jwks = createRemoteJWKSet(new URL(discovery.jwksUri), {
+        [customFetch]: async (url: string, options: { headers: Headers; method: "GET"; redirect: "manual"; signal: AbortSignal }) => {
+          const response = await this.transport().fetch(url, "jwks", options);
+          // HTTP 5xx/4xx from the identity service are availability failures,
+          // never evidence that a cryptographically valid token is invalid.
+          if (!response.ok) {
+            throw new ServiceUnavailableException("OIDC JWKS endpoint is unavailable");
+          }
+          return response;
+        },
+      });
     }
     return this.jwks;
   }
@@ -501,15 +568,23 @@ export class OidcAuthService {
 
   private async fetchDiscovery(): Promise<OidcDiscovery> {
     const issuer = this.getIssuer();
-    const response = await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`, {
+    const response = await this.transport().fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`, "discovery", {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      throw new UnauthorizedException("OIDC discovery document is unavailable");
+      throw new ServiceUnavailableException("OIDC discovery document is unavailable");
     }
 
-    const discovery = (await response.json()) as Record<string, unknown>;
+    let discovery: Record<string, unknown>;
+    try {
+      discovery = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw new ServiceUnavailableException("OIDC discovery document is malformed");
+    }
     const discoveredIssuer = discovery.issuer;
+    if (discoveredIssuer !== issuer) {
+      throw new UnauthorizedException("OIDC discovery issuer mismatch");
+    }
     const authorizationEndpoint = discovery.authorization_endpoint;
     const jwksUri = discovery.jwks_uri;
     const tokenEndpoint = discovery.token_endpoint;
@@ -543,6 +618,18 @@ export class OidcAuthService {
     }
     if (typeof tokenEndpoint !== "string" || tokenEndpoint.length === 0) {
       throw new UnauthorizedException("OIDC discovery document misses token_endpoint");
+    }
+
+    for (const [url, stage] of [
+      [authorizationEndpoint, "discovery"],
+      [jwksUri, "jwks"],
+      [tokenEndpoint, "code-exchange"],
+    ] as const) this.transport().assertIssuerEndpoint(url, stage);
+    for (const optional of [
+      registrationEndpoint, deviceAuthorizationEndpoint, userInfoEndpoint,
+      revocationEndpoint, introspectionEndpoint, endSessionEndpoint,
+    ]) if (typeof optional === "string" && optional) {
+      this.transport().assertIssuerEndpoint(optional, "discovery");
     }
 
     return {

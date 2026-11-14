@@ -156,6 +156,31 @@ describe("OidcAuthService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("classifies a temporary JWKS HTTP outage as 503, never an invalid bearer credential", async () => {
+    const fixture = await createTokenFixture();
+    const successfulFetch = installOidcFetch(fixture);
+    vi.stubGlobal("fetch", vi.fn((input: string | URL | Request, init?: RequestInit) =>
+      requestUrl(input) === fixture.jwksUri
+        ? Promise.resolve(new Response("temporarily unavailable", { status: 503 }))
+        : successfulFetch(input, init),
+    ));
+    const service = new OidcAuthService(
+      createConfig({ OIDC_ISSUER_URL: fixture.issuer, OIDC_CLIENT_ID: fixture.audience }),
+      {} as PrismaService,
+    );
+    await expect(service.authenticateBearerToken(fixture.token))
+      .rejects.toMatchObject({ status: 503 });
+  });
+
+  it("classifies malformed OIDC discovery as service unavailability instead of raw 500", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{ malformed-json", { status: 200 })));
+    const service = new OidcAuthService(
+      createConfig({ OIDC_ISSUER_URL: "https://issuer.example.com" }),
+      {} as PrismaService,
+    );
+    await expect(service.getDiscovery()).rejects.toMatchObject({ status: 503 });
+  });
+
   it("exposes optional device authorization and userinfo discovery endpoints", async () => {
     const fixture = await createTokenFixture();
     installOidcFetch(fixture);

@@ -25,6 +25,24 @@ function providerItems(value: unknown): Record<string, unknown>[] {
   return [];
 }
 
+/**
+ * This is a PUBLIC reachability probe, not an authenticated API request.
+ * Browser sessions can contain expired/revoked cookies while the user tries
+ * to sign in again. Never attach that cookie to the preflight: otherwise
+ * the session guard may return 401/503 before probing a healthy issuer.
+ * Interactive /api/auth/login still owns normal cookie creation/state.
+ */
+export async function probeOidcBeforeLogin(): Promise<void> {
+  const response = await fetch("/api/health/oidc", {
+    credentials: "omit",
+    cache: "no-store",
+    redirect: "error",
+  });
+  if (!response.ok) {
+    throw new Error("OIDC issuer readiness unavailable");
+  }
+}
+
 export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
   const search = typeof location === "undefined" ? new URLSearchParams() : new URLSearchParams(location.search);
   const tenantId = search.get("tenantId") ?? "";
@@ -32,6 +50,8 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
   const [providers, setProviders] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>();
+  const [signInError, setSignInError] = useState(false);
+  const [checkingSignIn, setCheckingSignIn] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -43,8 +63,19 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
     return () => { active = false; };
   }, [tenantId]);
 
-  function start(identityProviderId?: string) {
-    window.location.assign(interactiveAuthUrl(mode, tenantId, identityProviderId, returnTo));
+  async function start(identityProviderId?: string) {
+    setSignInError(false);
+    setCheckingSignIn(true);
+    try {
+      // Preflight from the API's perspective BEFORE a full browser navigation,
+      // so unreachable private issuer shows an actionable message, not raw 500.
+      await probeOidcBeforeLogin();
+      window.location.assign(interactiveAuthUrl(mode, tenantId, identityProviderId, returnTo));
+    } catch {
+      setSignInError(true);
+    } finally {
+      setCheckingSignIn(false);
+    }
   }
 
   const isLogin = mode === "login";
@@ -78,8 +109,9 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
 
         {tenantId ? <div className="mt-4 min-w-0"><Callout title="Organization-specific sign-in">This sign-in request is scoped to the selected organization.</Callout></div> : null}
         {error ? <div className="mt-4 min-w-0"><Callout tone="danger" title="Authentication providers unavailable">ResourcePortal could not load the configured sign-in providers. You can retry by reloading this page.</Callout></div> : null}
+        {signInError ? <div role="alert" className="mt-4 min-w-0"><Callout tone="danger" title="Identity provider is temporarily unavailable">ResourcePortal cannot connect to the sign-in provider. Retry in a moment or contact your administrator.</Callout></div> : null}
 
-        <div className="mt-8 grid min-w-0 gap-2.5" aria-busy={loading}>
+        <div className="mt-8 grid min-w-0 gap-2.5" aria-busy={loading || checkingSignIn}>
           {loading ? <div className="flex h-12 min-w-0 items-center rounded-md border border-[#D7E0EC] bg-[#F8FAFD] px-4 text-sm text-[#5B6678]">Loading sign-in options…</div> : providers.length === 0 ? <Button variant="primary" className="h-12 w-full min-w-0 justify-start" onClick={() => start()}><span className="min-w-0 flex-1 truncate text-left">Continue with SSO</span><span className="shrink-0" aria-hidden="true">→</span></Button> : <>{providers.map((provider,index)=>{const id=String(provider.id??provider.identityProviderId??"");const label=String(provider.name??provider.displayName??provider.label??(id||`Provider ${index+1}`));return <Button variant="primary" className="h-12 w-full min-w-0 justify-start" key={id||index} onClick={()=>start(id||undefined)}><LockIcon size={16} className="shrink-0"/><span className="min-w-0 flex-1 truncate text-left">Continue with {label}</span></Button>})}<Button className="h-12 w-full min-w-0" onClick={()=>start()}>Use organization SSO</Button></>}
         </div>
 

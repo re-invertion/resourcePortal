@@ -220,6 +220,38 @@ rp_write_stack() {
   mv -f "$tmp" "$target"
 }
 
+# The API readiness check below is deliberately independent of the public
+# WAN address: client connects to the locally running HTTPS ingress and asks
+# the API to probe the issuer over its PRIVATE TLS network. Both discovery and
+# JWKS must succeed inside the API container. A green DB-only /health/ready is
+# insufficient for the release.
+rp_validate_api_oidc_connectivity() {
+  local domain="$1" local_ingress="${RP_HTTPS_LOCAL_INGRESS_ADDRESS:-127.0.0.1}"
+  local -a args=(--fail --silent --show-error --proto '=https' --tlsv1.2
+    --connect-timeout 10 --max-time 20
+    --resolve "${domain}:443:${local_ingress}")
+  if [[ "${RP_CFG_ACME_ENVIRONMENT:-production}" == staging ]]; then
+    # Installer-to-API validation may use the staging certificate, but the
+    # API's upstream OIDC probe NEVER disables issuer TLS verification.
+    args+=(--insecure)
+  fi
+  curl "${args[@]}" "https://${domain}/api/health/oidc" >/dev/null 2>&1
+}
+
+rp_wait_api_oidc_connectivity() {
+  local domain="$1" timeout="${2:-180}" elapsed=0
+  [[ "$timeout" =~ ^[0-9]+$ && "$timeout" -ge 5 ]] || return 1
+  while (( elapsed < timeout )); do
+    if rp_validate_api_oidc_connectivity "$domain"; then
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  printf 'OIDC connectivity from the API container did not become ready (%ss).\n' "$timeout" >&2
+  return 1
+}
+
 rp_wait_control_plane_converged() {
   local stack_name="${1:-${RP_CFG_STACK_NAME:-resourceportal-control-plane}}"
   local timeout="${2:-${RP_CONTROL_PLANE_CONVERGENCE_TIMEOUT_SECONDS:-300}}"

@@ -338,6 +338,10 @@ upgrade_preserves_management_state() (
   rp_upgrade_database_snapshot_prepare(){ return 0; }
   rp_upgrade_database_restore(){ return 0; }
   rp_upgrade_wait_for_tenant_oidc_ready(){ return 0; }
+  # Separate OIDC transport readiness is certified in the private TLS smoke
+  # and the negative upgrade rollback scenario; this fixture isolates
+  # management-secret persistence through a successful upgrade.
+  rp_wait_api_oidc_connectivity(){ return 0; }
   rp_upgrade_identity_preflight(){ return 0; }
   rp_pull_release_images(){ return 0; }
   rp_apply_release_manifest_images(){ return 0; }

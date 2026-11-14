@@ -483,7 +483,7 @@ export class AuthSessionService {
       ).toString("base64")}`;
     }
 
-    const response = await fetch(discovery.tokenEndpoint, {
+    const response = await this.oidcAuth.fetchIssuerEndpoint(discovery.tokenEndpoint, "refresh", {
       signal: AbortSignal.timeout(10_000),
       method: "POST",
       headers,
@@ -531,7 +531,7 @@ export class AuthSessionService {
     }
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await this.oidcAuth.fetchIssuerEndpoint(endpoint, "revoke", {
         signal: AbortSignal.timeout(10_000),
         method: "POST",
         headers,

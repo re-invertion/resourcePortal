@@ -107,6 +107,16 @@ const commands = {
   "egress": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
+  // #437: prove TLS Host/SNI and certificate verification over the
+  // private API -> Traefik route while public issuer DNS is unavailable.
+  // Build the actual API transport first: the fixture imports its shipped JS.
+  "oidc-private-tls": [
+    ["npm", "run", "build", "--workspace", "@resource-portal/api"],
+    ["bash", "test/installer/test-oidc-private-tls.sh"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--",
+      "src/auth/oidc-issuer-transport.spec.ts", "src/health/health.controller.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/auth.test.tsx"],
+  ],
   "identity": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities", "src/app-consumers"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
@@ -228,6 +238,12 @@ const commands = {
 };
 
 const classifiers = [
+  // #437 private-issuer connection is a new security boundary. These files
+  // must not silently drop out of deterministic patch checks.
+  [/^packages\/resourceportal-api\/src\/auth\/oidc-issuer-transport(?:\.spec)?\.ts$/, ["oidc-private-tls", "identity", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/auth(?:\.test)?\.tsx$/, ["oidc-private-tls", "identity", "security"]],
+  [/^test\/installer\/(?:oidc-private-tls-smoke\.cjs|test-oidc-private-tls\.sh)$/, ["oidc-private-tls", "installer", "identity", "security", "platform-release"]],
+  [/^test\/installer\/test-acme-resilience\.sh$/, ["identity", "installer", "platform-release", "security"]],
   // Capacity admission and tenant quota share a scheduler/resource-limit contract.
   // Do not let either implementation or new regression fixtures evade patch CI.
   // Capacity sampling is a runtime cgroup/Swarm contract, not just a unit-test surface.
@@ -318,7 +334,7 @@ const classifiers = [
   [/^scripts\/installer\/upgrade\.sh$/, ["identity", "installer", "platform-release", "security", "upgrade-recovery"]],
   [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
   [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],
-  [/^config\/production\/stack\.yml\.tpl$/, ["identity", "installer", "networking", "platform-release", "security"]],
+  [/^config\/production\/stack\.yml\.tpl$/, ["identity", "installer", "networking", "platform-release", "security", "oidc-private-tls"]],
   [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
   [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Signed ZITADEL webhook secrets loaded from *_FILE are authentication
