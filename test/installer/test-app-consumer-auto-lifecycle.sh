@@ -91,7 +91,9 @@ signer="$(declare -f rp_app_action_sign_probe)"
 # The real signer executes digest-pinned production Node inside an isolated
 # Docker container; mocked installer tests do not require a production image.
 # Real HMAC signature validity is separately verified by HTTPS issuer E2E.
+sign_calls=0
 rp_app_action_sign_probe() {
+  sign_calls=$((sign_calls + 1))
   local tmp="$1"
   # The installer can run INSIDE an updater container, but the inner
   # Docker daemon resolves bind sources against the host filesystem.
@@ -233,7 +235,10 @@ writes=0
 # Regression #460: the three immediate connection failures that previously
 # exhausted a ~4-second window must recover when the ingress returns.
 printf 'curl:7\ncurl:7\ncurl:7\n403\n' > "$probe_http_sequence"
+signs_before=$sign_calls
 rp_app_action_activate || fail 'three curl 7 faults incorrectly triggered rollback before signed 403'
+[[ "$sign_calls" -eq "$((signs_before + 4))" ]] ||
+  fail 'HMAC signature not refreshed before each retry'
 [[ ! -s "$probe_http_sequence" && "$remote_execution" == ours && "$writes" == 1 ]] ||
   fail 'transient connection failures did not produce exactly one owned execution'
 ok 'three immediate curl 7 transport failures recover to signed 403'
