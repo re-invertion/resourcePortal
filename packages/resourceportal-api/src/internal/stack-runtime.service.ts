@@ -175,16 +175,44 @@ export class StackRuntimeService {
     const results: RuntimeResult[] = [];
 
     for (const service of services) {
-      results.push(
-        await this.runDocker([
-          "service",
-          "scale",
-          `${service.stackName}_${service.serviceName}=${service.replicas}`,
-        ]),
-      );
+      const serviceName = `${service.stackName}_${service.serviceName}`;
+      const result = await this.runDocker([
+        "service", "scale", `${serviceName}=${service.replicas}`,
+      ]);
+      if (result.exitCode !== 0) {
+        // The CLI often only reports a timeout while Swarm knows the exact
+        // scheduling/image failure. Only expose fixed allow-listed diagnoses.
+        const tasks = await this.runDocker([
+          "service", "ps", "--no-trunc", "--format", "{{.Error}}", serviceName,
+        ], 10_000);
+        const diagnosis = tasks.exitCode === 0
+          ? this.classifyScaleTaskError(tasks.stdout)
+          : null;
+        results.push({
+          ...result,
+          stderr: diagnosis
+            ? `${diagnosis}; service=${serviceName}; replicas=${service.replicas}`
+            : `SwarmScaleOutcomeUnknown; service=${serviceName}; replicas=${service.replicas}; task diagnostics unavailable`,
+        });
+      } else {
+        results.push(result);
+      }
     }
 
     return results;
+  }
+
+  /** Never forward raw task errors: Docker may include confidential image URLs. */
+  private classifyScaleTaskError(raw: string): string | null {
+    const normalized = raw.toLowerCase().slice(0, 16_384);
+    if (/unauthorized|authentication required|denied:|pull access denied|no basic auth credentials|insufficient_scope/.test(normalized)) {
+      return "ImagePullAuthorizationFailed";
+    }
+    if (/manifest unknown|not found|no such image/.test(normalized)) return "ImageNotFound";
+    if (/no suitable node|no node available|insufficient resources|no such node/.test(normalized)) return "SwarmPlacementRejected";
+    if (/out of memory|oomkilled|oom killed/.test(normalized)) return "ContainerOutOfMemory";
+    if (/health check|healthcheck/.test(normalized)) return "ContainerHealthcheckFailed";
+    return null;
   }
 
   async restartServices(
@@ -783,9 +811,9 @@ export class StackRuntimeService {
     return { running, desired };
   }
 
-  private runDocker(args: string[]): Promise<RuntimeResult> {
+  private runDocker(args: string[], timeoutOverrideMs?: number): Promise<RuntimeResult> {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
-    const timeoutMs = this.config.get<number>(
+    const timeoutMs = timeoutOverrideMs ?? this.config.get<number>(
       "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
       120000,
     );
