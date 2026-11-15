@@ -9,6 +9,12 @@ const appA = "33333333-3333-4333-8333-333333333333";
 const appB = "44444444-4444-4444-8444-444444444444";
 const email = "new-person@example.com";
 const actor = { id: creatorId, email: "owner@example.com", displayName: "Owner" };
+type InvitationCreateCall = { data: {
+  tenantId: string;
+  roleIds: string[];
+  nativeApplicationKeys: string[];
+  appInvitationGrants?: { create: Array<{ oauthApplicationId: string }> };
+} };
 
 function fixture() {
   const created = {
@@ -19,9 +25,7 @@ function fixture() {
   };
   const tx = {
     tenantInvitation: {
-      create: vi.fn().mockImplementation(async ({ data }: { data: {
-        appInvitationGrants?: { create: Array<{ oauthApplicationId: string }> };
-      } }) => ({
+      create: vi.fn().mockImplementation(({ data }: InvitationCreateCall) => Promise.resolve({
         ...created,
         appInvitationGrants: data.appInvitationGrants?.create ?? [],
       })),
@@ -52,7 +56,7 @@ describe("tenant SSO-only invitations (#458)", () => {
       email, roleIds: ["sso-login"], nativeApplicationKeys: [], oauthApplicationIds: [appA],
     }, actor as never);
 
-    const data = f.tx.tenantInvitation.create.mock.calls[0]?.[0].data;
+    const data = (f.tx.tenantInvitation.create.mock.calls[0]?.[0] as unknown as InvitationCreateCall).data;
     expect(data.tenantId).toBe(tenantId);
     expect(data.roleIds).toEqual(["sso-login"]);
     expect(data.nativeApplicationKeys).toEqual([]);
@@ -85,7 +89,7 @@ describe("tenant SSO-only invitations (#458)", () => {
     await f.service.createInvitation(tenantId, {
       email, roleIds: ["sso-login"], nativeApplicationKeys: [], oauthApplicationIds: [appA, appB],
     }, actor as never);
-    expect(f.tx.tenantInvitation.create.mock.calls[0]?.[0].data.appInvitationGrants).toEqual({
+    expect((f.tx.tenantInvitation.create.mock.calls[0]?.[0] as unknown as InvitationCreateCall).data.appInvitationGrants).toEqual({
       create: [{ oauthApplicationId: appA }, { oauthApplicationId: appB }],
     });
   });
@@ -95,7 +99,7 @@ describe("tenant SSO-only invitations (#458)", () => {
     await f.service.createInvitation(tenantId, {
       email, roleIds: ["sso-login"], nativeApplicationKeys: ["web"], oauthApplicationIds: [],
     }, actor as never);
-    const data = f.tx.tenantInvitation.create.mock.calls[0]?.[0].data;
+    const data = (f.tx.tenantInvitation.create.mock.calls[0]?.[0] as unknown as InvitationCreateCall).data;
     expect(data.appInvitationGrants).toBeUndefined();
     expect(data.nativeApplicationKeys).toEqual(["web"]);
   });
