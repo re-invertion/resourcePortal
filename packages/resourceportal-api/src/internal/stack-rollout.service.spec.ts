@@ -159,3 +159,49 @@ describe("StackRolloutService healthcheck stability gate", () => {
     expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+
+describe("Rollout task diagnostics persisted before rollback (#452)", () => {
+  beforeEach(() => {
+    spawnMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const config = {
+    get: (key: string, fallback?: unknown) =>
+      key === "DOCKER_ROLLOUT_TIMEOUT_MS" ? 20 :
+      key === "DOCKER_ROLLOUT_POLL_INTERVAL_MS" ? 5 : fallback,
+  };
+
+  it("identifies private image authorization failure without leaking raw task errors", async () => {
+    spawnMock.mockImplementation((_command: string, args: string[]) =>
+      dockerProcess(args.includes("ps")
+        ? "pull access denied: token=topsecret\\n"
+        : '{"Name":"rp_test_web","Replicas":"0/1"}\\n'),
+    );
+    const service = new StackRolloutService(config as unknown as ConfigService);
+    const promise = service.waitForRollout({
+      stackName: "rp_test", expectedServices: [{ name: "rp_test_web", desiredReplicas: 1 }],
+    });
+    await vi.advanceTimersByTimeAsync(70);
+    const result = await promise;
+    expect(result.details).toContain("rp_test_web: 0/1 replicas");
+    expect(result.details).toContain("ImagePullAuthorizationFailed");
+    expect(result.details).not.toContain("topsecret");
+  });
+
+  it("reports cause unknown rather than implying the rollout succeeded", async () => {
+    spawnMock.mockImplementation((_command: string, args: string[]) =>
+      dockerProcess(args.includes("ps")
+        ? ""
+        : '{"Name":"rp_test_web","Replicas":"0/1"}\\n'),
+    );
+    const service = new StackRolloutService(config as unknown as ConfigService);
+    const promise = service.waitForRollout({
+      stackName: "rp_test", expectedServices: [{ name: "rp_test_web", desiredReplicas: 1 }],
+    });
+    await vi.advanceTimersByTimeAsync(70);
+    expect((await promise).details).toContain("CauseUnknown");
+  });
+});
