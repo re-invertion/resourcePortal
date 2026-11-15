@@ -247,9 +247,21 @@ rp_app_action_read_key() {
     echo 'Test Action secret source missing (no key bytes printed)' >&2
     return 1
   }
-  cp -- "$RP_460_REAL_ACTION_KEY_SOURCE" "$2"
+  cp -- "$RP_460_REAL_ACTION_KEY_SOURCE" "$2" || return 1
+  # The one-off GitHub-hosted Docker daemon uses an isolated mount view for
+  # the nested signer. mktemp creates 0700 and umask 077 makes the copied key
+  # unreadable to the remapped container identity even with --user 0:0.
+  # Grant only traversal of THIS ephemeral probe directory and read access to
+  # THIS disposable key; do not weaken source secret or production installer.
+  chmod 0711 "$(dirname "$2")" || return 1
+  chmod 0644 "$2" || return 1
 }
 
+# The real production signer also reads the immutable probe body from the
+# same nested Docker bind mount. Its permission must match the disposable key.
+# Only this isolated runner's probe body is made readable (no credential).
+rp_460_prior_umask="$(umask)"
+umask 022
 # Force actual Traefik listener loss AFTER initial HTTPS readiness.
 docker service scale "$traefik_service=0" >/dev/null
 for attempt in $(seq 1 40); do
