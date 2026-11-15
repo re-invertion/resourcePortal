@@ -19,9 +19,11 @@ function fixture(stackConfig: string | null, draftReplicas = 1) {
   const findFirst = vi.fn().mockResolvedValue(stackConfig === null ? null : { stackConfig });
   const restartServices = vi.fn().mockResolvedValue([{ command: "docker service update", exitCode: 0, stderr: "", stdout: "" }]);
   const scaleServices = vi.fn().mockResolvedValue([{ command: "docker service scale", exitCode: 0, stderr: "", stdout: "" }]);
-  const prisma = { appGroup: { findUnique }, appGroupDeployment: { findFirst } } as unknown as PrismaService;
+  const updateGroup = vi.fn().mockResolvedValue({});
+  const updateApp = vi.fn().mockResolvedValue({ count: 1 });
+  const prisma = { appGroup: { findUnique, update: updateGroup }, singleApp: { updateMany: updateApp }, appGroupDeployment: { findFirst } } as unknown as PrismaService;
   const runtime = { restartServices, scaleServices } as unknown as StackRuntimeService;
-  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices, scaleServices };
+  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices, scaleServices, updateGroup, updateApp };
 }
 
 describe("SingleApp restart outcome (#365)", () => {
@@ -82,4 +84,47 @@ describe("Runtime start reservation consistency (#373 P1)", () => {
       });
     expect(scaleServices).not.toHaveBeenCalled();
   });
+});
+
+describe("Swarm scale failure classification (#450)", () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+  const start = { type: "SINGLE_APP_START", resourceId: singleAppId, input: { appGroupId } } as OperationRecord;
+
+  it("reports private image authorization failure without blind retries", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124, stderr: "ImagePullAuthorizationFailed", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ImagePullAuthorizationFailed", retryable: false,
+    });
+  });
+
+  it("does not repeat a timed-out scale while its outcome is unknown", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124, stderr: "SwarmScaleOutcomeUnknown", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ScaleOutcomeUnknown", retryable: false,
+    });
+  });
+
+  it("does not retry a missing image without operator correction", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 1, stderr: "ImageNotFound", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ImageNotFound", retryable: false,
+    });
+  });
+});
+
+
+it("invalidates stale Healthy readings before submitting a SingleApp start (#450)", async () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+  const { executor, scaleServices, updateApp, updateGroup } = fixture(deployed);
+  await executor.execute({ type: "SINGLE_APP_START", resourceId: singleAppId, input: { appGroupId } } as OperationRecord);
+  expect(updateApp).toHaveBeenCalledWith(expect.objectContaining({
+    data: { health: "Unknown" },
+  }));
+  expect(updateGroup).toHaveBeenCalledWith(expect.objectContaining({
+    data: { health: "Unknown", driftStatus: "Unknown" },
+  }));
+  expect(updateApp.mock.invocationCallOrder[0]).toBeLessThan(scaleServices.mock.invocationCallOrder[0]);
 });

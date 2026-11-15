@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { DeploymentStatus, RuntimeState } from "@prisma/client";
+import { DeploymentStatus, HealthState, RuntimeState } from "@prisma/client";
 import { StackRuntimeService } from "../../internal/stack-runtime.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { OperationExecutor } from "../operation-executor";
@@ -93,6 +93,9 @@ export class RuntimeOperationExecutor implements OperationExecutor {
         },
       ];
     });
+    if (operation.type === "APP_GROUP_START") {
+      await this.markStartPending(appGroup.id, targets.filter((target) => target.replicas > 0).map((target) => target.singleAppId));
+    }
     await this.applyScaleTargets(targets);
     return {
       resourceId: appGroup.id,
@@ -149,8 +152,25 @@ export class RuntimeOperationExecutor implements OperationExecutor {
       !singleApp.pendingDeletion
         ? this.deployedReplicaTarget(deployedService)
         : 0;
+    if (operation.type === "SINGLE_APP_START" && replicas > 0) {
+      await this.markStartPending(appGroup.id, [singleApp.id]);
+    }
     await this.applyScaleTargets([{ ...target, singleAppId, replicas }]);
     return { resourceId: singleApp.id, result: { replicas } };
+  }
+
+  /** A new start invalidates previous Healthy evidence before Docker is touched.
+   * Preserve observedAt so consumers can display the age of the last observation. */
+  private async markStartPending(appGroupId: string, singleAppIds: string[]) {
+    if (!singleAppIds.length) return;
+    await this.prisma.singleApp.updateMany({
+      where: { appGroupId, id: { in: singleAppIds } },
+      data: { health: HealthState.Unknown },
+    });
+    await this.prisma.appGroup.update({
+      where: { id: appGroupId },
+      data: { health: HealthState.Unknown, driftStatus: "Unknown" },
+    });
   }
 
   private async applyScaleTargets(targets: ScaleTarget[]) {
@@ -202,6 +222,15 @@ export class RuntimeOperationExecutor implements OperationExecutor {
   private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>, unknownOnTimeout = false) {
     const failed = results.find((result) => result.exitCode !== 0);
     if (failed) {
+      if (failed.stderr.includes("ImagePullAuthorizationFailed")) {
+        throw this.error("ImagePullAuthorizationFailed", "Swarm could not pull the private image: configure registry credentials with package read access before retrying", false);
+      }
+      if (failed.stderr.includes("ImageNotFound")) {
+        throw this.error("ImageNotFound", "Swarm could not locate the configured container image; verify its registry and tag", false);
+      }
+      if (!unknownOnTimeout && failed.exitCode === 124) {
+        throw this.error("ScaleOutcomeUnknown", "Swarm service scale did not converge; inspect current task state before retrying", false);
+      }
       if (unknownOnTimeout && failed.exitCode === 124) {
         throw this.error("RestartOutcomeUnknown", "Swarm restart did not converge before the runtime command ended; outcome must be inspected before retry", false);
       }
