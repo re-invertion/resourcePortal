@@ -236,9 +236,18 @@ export RP_INSTALLER_STATE_DIR="$tmp/installer-state"
 mkdir -p "$RP_INSTALLER_STATE_DIR"
 # Only the management key lookup is supplied from authenticated REAL
 # ZITADEL read-back; the PRODUCTION signer, curl and callback are unmodified.
+# Bash has dynamic local-variable scope: rp_app_action_probe declares its own
+# local 'tmp' after entering the production function. Never use that name for
+# the source secret in our test-only override, or the copy fails BEFORE the
+# probe prints its first attempt (the observed empty stderr).
+readonly RP_460_REAL_ACTION_KEY_SOURCE="$tmp/action.key"
 rp_app_action_read_key() {
   [[ "$1" == "$target_id" && "$3" == "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" ]] || return 1
-  cp -- "$tmp/action.key" "$2"
+  [[ -f "$RP_460_REAL_ACTION_KEY_SOURCE" && ! -L "$RP_460_REAL_ACTION_KEY_SOURCE" ]] || {
+    echo 'Test Action secret source missing (no key bytes printed)' >&2
+    return 1
+  }
+  cp -- "$RP_460_REAL_ACTION_KEY_SOURCE" "$2"
 }
 
 # Force actual Traefik listener loss AFTER initial HTTPS readiness.
