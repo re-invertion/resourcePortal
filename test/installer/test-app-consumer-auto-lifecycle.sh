@@ -92,9 +92,12 @@ signer="$(declare -f rp_app_action_sign_probe)"
 # Docker container; mocked installer tests do not require a production image.
 # Real HMAC signature validity is separately verified by HTTPS issuer E2E.
 sign_calls=0
+sign_delay=0
 rp_app_action_sign_probe() {
   sign_calls=$((sign_calls + 1))
-  local tmp="$1"
+  local tmp="$1" limit="${2:-15}"
+  [[ "$limit" =~ ^[0-9]+$ && "$limit" -le 10 ]] || return 1
+  SECONDS=$((SECONDS + sign_delay))
   # The installer can run INSIDE an updater container, but the inner
   # Docker daemon resolves bind sources against the host filesystem.
   [[ "$tmp" == "$RP_INSTALLER_STATE_DIR"/.rp-action-probe.* &&
@@ -242,6 +245,18 @@ rp_app_action_activate || fail 'three curl 7 faults incorrectly triggered rollba
 [[ ! -s "$probe_http_sequence" && "$remote_execution" == ours && "$writes" == 1 ]] ||
   fail 'transient connection failures did not produce exactly one owned execution'
 ok 'three immediate curl 7 transport failures recover to signed 403'
+remote_execution=none
+# A slow Docker signer must consume the shared deadline; a late 403 cannot
+# be accepted after signing has exhausted the budget.
+sign_delay=30
+printf '503\n503\n503\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/slow.stdout" 2>"$tmp/slow.stderr"; then
+  fail 'late callback accepted beyond 120-second deadline'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] ||
+  fail 'curl was invoked after signing consumed the callback budget'
+sign_delay=0
+ok 'slow signer consumes total deadline without sending or accepting late 403'
 remote_execution=none
 writes=0
 # Persistent connection refusal must reach the bounded total deadline, without
