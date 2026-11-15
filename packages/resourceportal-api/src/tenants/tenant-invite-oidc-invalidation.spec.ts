@@ -43,6 +43,28 @@ function fixture() {
 }
 
 describe("#430 unified invitations remain transactional", () => {
+  it("accepts a Home Assistant-only SSO invite without granting ResourcePortal Web, CLI or admin roles (#458)", async () => {
+    const f = fixture();
+    f.prisma.tenantInvitation.findUnique.mockResolvedValueOnce({
+      ...invitation,
+      roleIds: ["sso-login"],
+      nativeApplicationKeys: [],
+      appInvitationGrants: [{ oauthApplicationId: appId }],
+    });
+    await f.service.acceptInvitation({ token }, f.actor);
+    expect(f.tx.tenantMembership.create.mock.calls[0]?.[0] as unknown).toMatchObject({
+      data: { roles: { create: [{ roleId: "sso-login" }] } },
+    });
+    expect(f.tx.tenantAppClientGrant.createMany).toHaveBeenCalledWith({
+      data: [{ membershipId: "membership-1", tenantId: "tenant-1", oauthApplicationId: appId,
+        createdBy: "creator-1", updatedBy: "creator-1" }],
+      skipDuplicates: true,
+    });
+    expect(f.tx.tenantNativeAppGrant.createMany).not.toHaveBeenCalled();
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledOnce();
+    expect(f.tx.tenantInvitation.delete).toHaveBeenCalledOnce();
+  });
+
   it("creates one membership with independent SSO role and Web and OAuth app grants", async () => {
     const f = fixture();
     await f.service.acceptInvitation({ token }, f.actor);
