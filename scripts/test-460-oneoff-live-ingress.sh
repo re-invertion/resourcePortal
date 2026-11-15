@@ -58,8 +58,26 @@ target_id="$(jq -er '.id | select(type=="string" and test("^[0-9]{1,64}$"))' "$t
 jq -er '.signingKey | select(type=="string" and length>=32)' "$tmp/target-created.json" >"$tmp/action.key"
 # jq appends a newline; production secret bytes never contain it.
 truncate -s -1 "$tmp/action.key"
-curl --fail --silent --show-error --config "$tmp/management.conf" \
-  "http://127.0.0.1:8080/v2/actions/targets/$target_id" >"$tmp/readback.json"
+# ZITADEL serves management GET through asynchronous projections.
+# The immediately preceding target POST can succeed before its GET is visible.
+# Retry only 404 and 503 for the bounded read; fail closed on other statuses.
+readback_code=''
+for attempt in $(seq 1 20); do
+  readback_code="$(curl --silent --show-error --config "$tmp/management.conf" \
+    --output "$tmp/readback.json" --write-out '%{http_code}' \
+    "http://127.0.0.1:8080/v2/actions/targets/$target_id")"
+  echo "ZITADEL Actions target readback attempt=$attempt HTTP=$readback_code"
+  if [[ "$readback_code" == 200 ]]; then break; fi
+  if [[ "$readback_code" != 404 && "$readback_code" != 503 ]]; then
+    echo "Unexpected ZITADEL Actions readback HTTP $readback_code" >&2
+    exit 1
+  fi
+  sleep 2
+done
+if [[ "$readback_code" != 200 ]]; then
+  echo "ZITADEL target did not appear after 40s; last HTTP=$readback_code" >&2
+  exit 1
+fi
 jq -e --arg id "$target_id" --arg url 'https://rp-callback.test/api/app-consumer-actions/preaccesstoken' \
   --rawfile key "$tmp/action.key" \
   '.target.id==$id and .target.endpoint==$url and
@@ -81,7 +99,8 @@ RP_CFG_API_IMAGE="$(docker image inspect localhost:5000/rp-460-signer:oneoff --f
 }
 source scripts/installer/secrets.sh
 export RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF
-RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF="$(rp_ensure_versioned_swarm_secret rp_app_consumer_action_hmac "$tmp/action.key")"
+RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF="$(rp_versioned_secret_name rp_app_consumer_action_hmac "$tmp/action.key")"
+docker secret create "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" - <"$tmp/action.key" >/dev/null
 docker secret inspect "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" >/dev/null
 
 # A throwaway CA is trusted by system curl; never use -k or disable TLS.
