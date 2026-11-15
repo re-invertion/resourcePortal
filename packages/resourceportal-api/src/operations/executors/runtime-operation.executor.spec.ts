@@ -19,9 +19,11 @@ function fixture(stackConfig: string | null, draftReplicas = 1) {
   const findFirst = vi.fn().mockResolvedValue(stackConfig === null ? null : { stackConfig });
   const restartServices = vi.fn().mockResolvedValue([{ command: "docker service update", exitCode: 0, stderr: "", stdout: "" }]);
   const scaleServices = vi.fn().mockResolvedValue([{ command: "docker service scale", exitCode: 0, stderr: "", stdout: "" }]);
-  const prisma = { appGroup: { findUnique }, appGroupDeployment: { findFirst } } as unknown as PrismaService;
+  const updateGroup = vi.fn().mockResolvedValue({});
+  const updateApp = vi.fn().mockResolvedValue({ count: 1 });
+  const prisma = { appGroup: { findUnique, update: updateGroup }, singleApp: { updateMany: updateApp }, appGroupDeployment: { findFirst } } as unknown as PrismaService;
   const runtime = { restartServices, scaleServices } as unknown as StackRuntimeService;
-  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices, scaleServices };
+  return { executor: new RuntimeOperationExecutor(prisma, runtime), restartServices, scaleServices, updateGroup, updateApp };
 }
 
 describe("SingleApp restart outcome (#365)", () => {
@@ -111,4 +113,18 @@ describe("Swarm scale failure classification (#450)", () => {
       code: "ImageNotFound", retryable: false,
     });
   });
+});
+
+
+it("invalidates stale Healthy readings before submitting a SingleApp start (#450)", async () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+  const { executor, scaleServices, updateApp, updateGroup } = fixture(deployed);
+  await executor.execute({ type: "SINGLE_APP_START", resourceId: singleAppId, input: { appGroupId } } as OperationRecord);
+  expect(updateApp).toHaveBeenCalledWith(expect.objectContaining({
+    data: { health: "Unknown" },
+  }));
+  expect(updateGroup).toHaveBeenCalledWith(expect.objectContaining({
+    data: { health: "Unknown", driftStatus: "Unknown" },
+  }));
+  expect(updateApp.mock.invocationCallOrder[0]).toBeLessThan(scaleServices.mock.invocationCallOrder[0]);
 });
