@@ -256,6 +256,7 @@ NODE
 rp_app_action_probe() {
   local id="$1" ref="$2" tmp code rc attempt=0
   local state_dir="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}"
+  local deadline_seconds=120 started elapsed remaining wait_seconds
   [[ "$state_dir" == /* && -d "$state_dir" && ! -L "$state_dir" ]] || {
     printf 'Signed App Consumer probe requires an existing host-shared installer-state directory.\n' >&2
     return 1
@@ -268,33 +269,44 @@ rp_app_action_probe() {
     return 1
   fi
   chmod 0600 "$tmp/conf" || { rm -rf -- "$tmp"; return 1; }
-  for attempt in 1 2 3; do
-    # Only the same signed negative probe is retried; never modify grants,
-    # follow redirects, weaken HTTPS/TLS, or accept any status except 403.
+  # Use a total deadline rather than a fixed attempt count: curl 7 can fail
+  # immediately while Traefik replaces its listener after initial readiness.
+  # SECONDS is Bash's monotonic-enough elapsed clock for this bounded wait.
+  started=$SECONDS
+  while :; do
+    elapsed=$((SECONDS - started))
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
+    attempt=$((attempt + 1))
     rc=0
-    code="$(curl --silent --show-error --no-location --proto '=https' --max-time 15 \
+    code="$(curl --silent --show-error --no-location --proto '=https' \
+      --max-time "$((remaining < 15 ? remaining : 15))" \
       --config "$tmp/conf" --header 'Content-Type: application/json' \
       --data-binary "@$tmp/body" --output "$tmp/response" --write-out '%{http_code}' \
       "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken")" || rc=$?
+    elapsed=$((SECONDS - started))
+    printf 'App Consumer signed callback probe: attempt=%s elapsed=%ss curl=%s http=%s.\n' \
+      "$attempt" "$elapsed" "$rc" "${code:-000}" >&2
     if [[ "$rc" == 0 && "$code" == 403 ]]; then
       rm -rf -- "$tmp"
       return 0
     fi
-    # Deployment may momentarily return 404/502/503/504 or a transport
-    # failure during Traefik replacement. Even certificate failures are
-    # never ignored: a retry still performs full TLS verification.
-    if [[ "$attempt" -lt 3 ]] && {
-      [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|28|35|52|56|60)$ ]] ||
-      [[ "$rc" == 0 && "$code" =~ ^(000|404|502|503|504)$ ]]
-    }; then
-      sleep 2
-      continue
+    # Retry only transient ingress/transport failures. TLS trust errors,
+    # unexpected callback responses and all other failures remain fatal.
+    if ! { [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|18|28|35|52|56)$ ]] ||
+           [[ "$rc" == 0 && "$code" =~ ^(404|502|503|504)$ ]]; }; then
+      printf 'App Consumer signed callback probe rejected non-transient result (curl %s, HTTP %s).\n' \
+        "$rc" "${code:-000}" >&2
+      rm -rf -- "$tmp"
+      return 1
     fi
-    printf 'App Consumer signed callback probe failed (attempt %s/3, curl status %s, HTTP %s).\n' \
-      "$attempt" "$rc" "${code:-000}" >&2
-    rm -rf -- "$tmp"
-    return 1
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
+    wait_seconds=$((remaining < 3 ? remaining : 3))
+    sleep "$wait_seconds"
   done
+  printf 'App Consumer signed callback probe timed out after %ss (%s attempts, last curl %s, HTTP %s).\n' \
+    "$deadline_seconds" "$attempt" "${rc:-0}" "${code:-000}" >&2
   rm -rf -- "$tmp"
   return 1
 }
