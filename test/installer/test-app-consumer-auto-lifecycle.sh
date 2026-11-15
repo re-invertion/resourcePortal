@@ -116,8 +116,13 @@ curl() {
     tail -n +2 "$probe_http_sequence" >"$tmp/next-probe-sequence"
     mv "$tmp/next-probe-sequence" "$probe_http_sequence"
   fi
+  # A deterministic transport fault produces no HTTP response.
+  if [[ "$current" =~ ^curl:([0-9]+)$ ]]; then
+    printf '000'
+    return "${BASH_REMATCH[1]}"
+  fi
   [[ "$current" == 403 || "$current" == 503 || "$current" == 404 ||
-     "$current" == 502 || "$current" == 401 ]] || return 1
+     "$current" == 502 || "$current" == 401 || "$current" == 500 ]] || return 1
   printf '%s' "$current"
 }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -215,13 +220,50 @@ if rp_app_action_activate >/dev/null 2>&1; then fail 'activated unhealthy callba
 ok 'callback HTTP 503 blocks global activation'
 # A brief ingress cutover is retried but only the exact signed HTTP 403
 # authorizes the global action; permanent denial never gets retried.
-sleep() { :; }  # In this fixture only; production backs off two seconds.
+# Virtual elapsed time makes the 120-second retry deadline test instantly.
+# Bash SECONDS is advanced without sleeping or a real network dependency.
+sleep() { SECONDS=$((SECONDS + $1)); }
 printf '502\n404\n403\n' > "$probe_http_sequence"
 rp_app_action_activate || fail 'short ingress cutover blocked valid signed callback probe'
 [[ ! -s "$probe_http_sequence" && "$remote_execution" == ours ]] ||
   fail 'signed callback did not retry 502/404 before 403'
 remote_execution=none
 writes=0
+# Regression #460: the three immediate connection failures that previously
+# exhausted a ~4-second window must recover when the ingress returns.
+printf 'curl:7\ncurl:7\ncurl:7\n403\n' > "$probe_http_sequence"
+rp_app_action_activate || fail 'three curl 7 faults incorrectly triggered rollback before signed 403'
+[[ ! -s "$probe_http_sequence" && "$remote_execution" == ours && "$writes" == 1 ]] ||
+  fail 'transient connection failures did not produce exactly one owned execution'
+ok 'three immediate curl 7 transport failures recover to signed 403'
+remote_execution=none
+writes=0
+# Persistent connection refusal must reach the bounded total deadline, without
+# ever mutating issuer-global grants.
+: > "$probe_http_sequence"
+probe_http=503
+if rp_app_action_activate >"$tmp/persistent.stdout" 2>"$tmp/persistent.stderr"; then
+  fail 'persistent 503 unexpectedly activated issuer'
+fi
+grep -q 'timed out after 120s' "$tmp/persistent.stderr" ||
+  fail 'persistent ingress failure did not exhaust bounded deadline'
+[[ "$remote_execution" == none && "$writes" == 0 ]] ||
+  fail 'persistent failure modified issuer execution'
+ok 'persistent ingress failures time out without activation'
+probe_http=403
+# curl 60 is a TLS certificate validation failure, not a retryable ingress gap.
+printf 'curl:60\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/tls.stdout" 2>"$tmp/tls.stderr"; then
+  fail 'TLS validation failure accepted'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] || fail 'TLS failure was retried'
+ok 'invalid TLS fails closed without retries'
+printf '500\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/unexpected.stdout" 2>"$tmp/unexpected.stderr"; then
+  fail 'unexpected HTTP 500 accepted'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] || fail 'unexpected HTTP response was retried'
+ok 'unexpected HTTP response fails closed'
 printf '401\n403\n' > "$probe_http_sequence"
 if rp_app_action_probe "$id" "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" >/dev/null 2>&1; then
   fail 'HTTP 401 was accepted as signed negative callback proof'
