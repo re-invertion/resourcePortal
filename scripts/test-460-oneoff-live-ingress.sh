@@ -51,8 +51,15 @@ for attempt in $(seq 1 90); do
   sleep 1
 done
 curl --fail --silent --show-error http://localhost:8080/debug/healthz >/dev/null
-docker exec federation-zitadel-1 getent hosts rp-callback.test | grep -F '127.0.0.1' >/dev/null
-echo 'PASS: isolated ZITADEL DNS resolves test callback to loopback'
+# The ZITADEL image may not contain getent (distroless). Read the actual
+# Docker-generated /etc/hosts without requiring a shell or NSS inside it.
+docker cp federation-zitadel-1:/etc/hosts "$tmp/zitadel-etc-hosts"
+if ! grep -Eq '^127[.]0[.]0[.]1[[:space:]]+rp-callback[.]test([[:space:]]|$)' "$tmp/zitadel-etc-hosts"; then
+  echo 'Isolated ZITADEL /etc/hosts lacks callback mapping' >&2
+  docker inspect federation-zitadel-1 --format '{{json .HostConfig.ExtraHosts}}' >&2 || true
+  exit 1
+fi
+echo 'PASS: isolated ZITADEL /etc/hosts contains test callback mapping'
 bash scripts/run-federation-e2e.sh bootstrap
 bash scripts/run-federation-e2e.sh database
 bash scripts/run-federation-e2e.sh build
