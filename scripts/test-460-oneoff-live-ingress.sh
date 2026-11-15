@@ -45,7 +45,9 @@ printf 'header = "Authorization: Bearer %s"\nheader = "x-zitadel-orgid: %s"\n' \
   "$(tr -d '\r\n' <var/federation/zitadel/admin.pat)" "$ZITADEL_ORGANIZATION_ID" >"$tmp/management.conf"
 chmod 0600 "$tmp/management.conf"
 
-# Real ZITADEL Actions V2 target. Read back its signing secret from the
+# Real ZITADEL Actions V2 target. ZITADEL uses ExternalDomain=localhost
+# for instance selection; HTTP Host 127.0.0.1:8080 returns instance-not-found.
+# Read back its signing secret from the
 # isolated ZITADEL database, not a fabricated key.
 cat >"$tmp/target.json" <<'JSON'
 {"name":"rp-460-oneoff-action","endpoint":"https://rp-callback.test/api/app-consumer-actions/preaccesstoken","timeout":"5s","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}
@@ -57,7 +59,7 @@ search_http="$(curl --silent --show-error --config "$tmp/management.conf" \
   --request POST --header 'Content-Type: application/json' \
   --data-binary "@$tmp/target-search.json" \
   --output "$tmp/target-search-response.json" --write-out '%{http_code}' \
-  http://127.0.0.1:8080/v2/actions/targets/search)"
+  http://localhost:8080/v2/actions/targets/search)"
 echo "Isolated ZITADEL Actions V2 target search HTTP=$search_http"
 if [[ "$search_http" != 200 ]]; then
   echo "Actions V2 management route unavailable; diagnostic (not production):" >&2
@@ -69,7 +71,7 @@ create_http="$(curl --silent --show-error --config "$tmp/management.conf" \
   --request POST --header 'Content-Type: application/json' \
   --data-binary "@$tmp/target.json" \
   --output "$tmp/target-created.json" --write-out '%{http_code}' \
-  http://127.0.0.1:8080/v2/actions/targets)"
+  http://localhost:8080/v2/actions/targets)"
 echo "Isolated ZITADEL Actions V2 target CREATE HTTP=$create_http"
 if [[ "$create_http" != 200 ]]; then
   echo "CreateTarget rejected. No retry of non-idempotent mutation." >&2
@@ -88,7 +90,7 @@ readback_code=''
 for attempt in $(seq 1 20); do
   readback_code="$(curl --silent --show-error --config "$tmp/management.conf" \
     --output "$tmp/readback.json" --write-out '%{http_code}' \
-    "http://127.0.0.1:8080/v2/actions/targets/$target_id")"
+    "http://localhost:8080/v2/actions/targets/$target_id")"
   echo "ZITADEL Actions target readback attempt=$attempt HTTP=$readback_code"
   if [[ "$readback_code" == 200 ]]; then break; fi
   if [[ "$readback_code" != 404 && "$readback_code" != 503 ]]; then
@@ -247,12 +249,12 @@ jq -n --arg id "$target_id" \
 curl --fail --silent --show-error --config "$tmp/management.conf" \
   --request PUT -H 'Content-Type: application/json' \
   --data-binary "@$tmp/execution.json" \
-  http://127.0.0.1:8080/v2/actions/executions >"$tmp/bind.json"
+  http://localhost:8080/v2/actions/executions >"$tmp/bind.json"
 printf '{"pagination":{"limit":100}}' >"$tmp/search.json"
 curl --fail --silent --show-error --config "$tmp/management.conf" \
   --request POST -H 'Content-Type: application/json' \
   --data-binary "@$tmp/search.json" \
-  http://127.0.0.1:8080/v2/actions/executions/search >"$tmp/executions.json"
+  http://localhost:8080/v2/actions/executions/search >"$tmp/executions.json"
 jq -e --arg id "$target_id" \
   '[.executions[]? | select(.condition.function.name=="preaccesstoken")] as $e |
    ($e|length)==1 and $e[0].targets==[$id]' "$tmp/executions.json" >/dev/null
