@@ -302,7 +302,18 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
         <div className="border-b border-[#E1E7F0] p-4"><h2 className="font-semibold">Invitations</h2></div>
         <div className="divide-y divide-[#E1E7F0]">
           {inviteRows.map(i => <div key={idOf(i)} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <div><strong className="block text-sm">{text(i.email)}</strong><span className="text-xs text-[#718096]">Pending</span></div>
+            <div>
+              <strong className="block text-sm">{text(i.email)}</strong>
+              <span className="text-xs text-[#718096]">Pending</span>
+              {Array.isArray(i.oauthApplicationIds) && i.oauthApplicationIds.length > 0 ?
+                <span className="block text-xs text-[#526070]">SSO applications: {
+                  (i.oauthApplicationIds as string[]).map(appId =>
+                    text(oauthRows.find(app => idOf(app) === appId)?.name, "Unknown application"),
+                  ).join(", ")
+                }</span> : null}
+              {Array.isArray(i.nativeApplicationKeys) && i.nativeApplicationKeys.length > 0 ?
+                <span className="block text-xs text-[#526070]">RP clients: {(i.nativeApplicationKeys as string[]).join(", ")}</span> : null}
+            </div>
             <div className="flex gap-1">
               {can("membership.invite") ? <Button size="sm" onClick={() => void regenerateInvite(i)} disabled={working}>Generate new link</Button> : null}
               {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete invitation ${text(i.email)}`} confirmTitle={`Revoke invitation for ${text(i.email)}?`} confirmDescription="The old invitation link becomes invalid."

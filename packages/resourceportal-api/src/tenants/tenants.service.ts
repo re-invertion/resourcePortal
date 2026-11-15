@@ -6,6 +6,8 @@ import {
   Injectable,
   Optional,
   NotFoundException,
+  InternalServerErrorException,
+  Logger,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -42,6 +44,8 @@ const TENANT_OWNER_ROLE_ID = "tenant-owner";
 
 @Injectable()
 export class TenantsService {
+  private readonly logger = new Logger(TenantsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: PlatformEmailService,
@@ -518,6 +522,7 @@ export class TenantsService {
     const invitations = await this.prisma.tenantInvitation.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
+      include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
     });
 
     return invitations.map(mapTenantInvitation);
@@ -581,12 +586,16 @@ export class TenantsService {
             createdBy: actor.id,
             ...(oauthApplicationIds.length
               ? { appInvitationGrants: {
-                create: oauthApplicationIds.map((oauthApplicationId) => ({
-                  tenantId, oauthApplicationId,
+                // Nested Prisma create automatically supplies the composite
+                // invitationId + tenantId FK from its parent. Providing
+                // tenantId here is invalid in CreateWithoutInvitationInput.
+                create: oauthApplicationIds.map((oauthApplicationId): Prisma.TenantAppInvitationGrantUncheckedCreateWithoutInvitationInput => ({
+                  oauthApplicationId,
                 })),
               } }
               : {}),
           },
+          include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
         });
 
         await tx.auditLogEntry.create({
@@ -614,12 +623,24 @@ export class TenantsService {
         return created;
       });
 
-      const emailDelivery = await this.email.sendTenantInvitation({
-        recipient: invitation.email,
-        tenantName: tenant.name,
-        token,
-        expiresAt: invitation.expiresAt,
-      });
+      // The transaction has already committed. Mail/settings failures must
+      // not return 500 and hide the durable one-time invitation link.
+      let emailDelivery: { attempted: boolean; sent: boolean; reason?: string };
+      try {
+        emailDelivery = await this.email.sendTenantInvitation({
+          recipient: invitation.email,
+          tenantName: tenant.name,
+          token,
+          expiresAt: invitation.expiresAt,
+        });
+      } catch {
+        this.logger.warn("Tenant invitation persisted but email delivery is unavailable");
+        emailDelivery = {
+          attempted: false,
+          sent: false,
+          reason: "Email delivery unavailable; share the invitation link manually.",
+        };
+      }
 
       return {
         ...mapTenantInvitation(invitation),
@@ -634,7 +655,20 @@ export class TenantsService {
         throw new ConflictException("TenantInvitation already exists");
       }
 
-      throw error;
+      // Keep actionable diagnostics without logging email, token, raw SQL
+      // values or Prisma exception messages that can contain user input.
+      const requestId = randomUUID();
+      const errorCode = error instanceof Prisma.PrismaClientKnownRequestError
+        ? error.code
+        : error instanceof Prisma.PrismaClientValidationError
+          ? "PRISMA_VALIDATION"
+          : "UNEXPECTED";
+      this.logger.error(`Tenant invitation creation failed requestId=${requestId} code=${errorCode}`);
+      throw new InternalServerErrorException({
+        message: "Invitation could not be saved. Retry or contact support with the request ID.",
+        code: "TenantInvitationCreateFailed",
+        requestId,
+      });
     }
   }
 
@@ -656,6 +690,7 @@ export class TenantsService {
           expiresAt: invitationExpiry(),
           lastSentAt: new Date(),
         },
+        include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
       });
 
       await tx.auditLogEntry.create({
@@ -681,12 +716,23 @@ export class TenantsService {
       return updated;
     });
 
-    const emailDelivery = await this.email.sendTenantInvitation({
-      recipient: invitation.email,
-      tenantName: tenant.name,
-      token,
-      expiresAt: invitation.expiresAt,
-    });
+    // As in creation, token rotation committed even if SMTP subsequently fails.
+    let emailDelivery: { attempted: boolean; sent: boolean; reason?: string };
+    try {
+      emailDelivery = await this.email.sendTenantInvitation({
+        recipient: invitation.email,
+        tenantName: tenant.name,
+        token,
+        expiresAt: invitation.expiresAt,
+      });
+    } catch {
+      this.logger.warn("Tenant invitation resend persisted but email delivery is unavailable");
+      emailDelivery = {
+        attempted: false,
+        sent: false,
+        reason: "Email delivery unavailable; share the invitation link manually.",
+      };
+    }
 
     return {
       ...mapTenantInvitation(invitation),
