@@ -1,0 +1,52 @@
+name: One-off #460 isolated live ingress proof
+
+# Runs automatically exactly on this temporary test branch when committed.
+# This is NOT a protected release/merge check and never touches production.
+on:
+  push:
+    branches:
+      - test/460-disposable-swarm-ingress
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rp-460-oneoff-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  disposable-swarm-zitadel-traefik:
+    name: Real Swarm, ZITADEL, TLS Traefik and signed callback interruption
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      GITHUB_ACTIONS: "true"
+      RP_460_ISOLATED: "true"
+      ZITADEL_VERSION: v4.17.0
+    steps:
+      - name: Checkout isolated branch from reviewed PR commit
+        uses: actions/checkout@v4
+      - name: Setup pinned Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify isolated origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/test/460-disposable-swarm-ingress'
+          git merge-base --is-ancestor 871174c88cb8bed6a680007fa5f2800f1cf52eb0 HEAD
+          bash -n scripts/test-460-oneoff-live-ingress.sh
+          docker info >/dev/null
+          docker compose version
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Execute real isolated Swarm and ZITADEL callback outage proof
+        run: bash scripts/test-460-oneoff-live-ingress.sh
+      - name: Report evidence scope
+        if: success()
+        run: |
+          echo 'Isolated Swarm/Traefik/ZITADEL and actual RP API signed negative callback validated.'
+          echo 'This does not replace full installer transaction rollback under the same outage.'
