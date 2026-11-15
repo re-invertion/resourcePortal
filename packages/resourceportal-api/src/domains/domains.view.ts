@@ -1,7 +1,9 @@
-import { CustomRootDomain, Domain } from "@prisma/client";
+import { CustomRootDomain, Domain, CustomRootDomainVerificationStatus } from "@prisma/client";
+import { domainPublicationDiagnostics } from "./domain-publication";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 
 type DomainWithEndpoint = Domain & {
+  customRootDomain?: { tenantId: string; rootDomain: string; verificationStatus: CustomRootDomainVerificationStatus } | null;
   httpEndpoint?: {
     id: string;
     name: string;
@@ -20,7 +22,10 @@ export function mapDomain(domain: DomainWithEndpoint) {
     ? protocolModeRequiresTls(domain.httpEndpoint.protocolMode)
     : false;
 
+  const publication = domainPublicationDiagnostics(domain, domain.tenantId);
+
   return {
+    publication,
     id: domain.id,
     tenantId: domain.tenantId,
     type: domain.type,
