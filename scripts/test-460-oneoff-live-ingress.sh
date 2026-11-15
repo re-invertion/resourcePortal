@@ -50,10 +50,33 @@ chmod 0600 "$tmp/management.conf"
 cat >"$tmp/target.json" <<'JSON'
 {"name":"rp-460-oneoff-action","endpoint":"https://rp-callback.test/api/app-consumer-actions/preaccesstoken","timeout":"5s","payloadType":"PAYLOAD_TYPE_JSON","restWebhook":{"interruptOnError":true}}
 JSON
-curl --fail --silent --show-error --config "$tmp/management.conf" \
+# Probe the READ-ONLY Actions V2 search route before any non-idempotent
+# POST /targets. A 404 on target creation must not be retried blindly.
+printf '{"pagination":{"limit":1}}' >"$tmp/target-search.json"
+search_http="$(curl --silent --show-error --config "$tmp/management.conf" \
+  --request POST --header 'Content-Type: application/json' \
+  --data-binary "@$tmp/target-search.json" \
+  --output "$tmp/target-search-response.json" --write-out '%{http_code}' \
+  http://127.0.0.1:8080/v2/actions/targets/search)"
+echo "Isolated ZITADEL Actions V2 target search HTTP=$search_http"
+if [[ "$search_http" != 200 ]]; then
+  echo "Actions V2 management route unavailable; diagnostic (not production):" >&2
+  head -c 1500 "$tmp/target-search-response.json" >&2
+  echo >&2
+  exit 1
+fi
+create_http="$(curl --silent --show-error --config "$tmp/management.conf" \
   --request POST --header 'Content-Type: application/json' \
   --data-binary "@$tmp/target.json" \
-  http://127.0.0.1:8080/v2/actions/targets >"$tmp/target-created.json"
+  --output "$tmp/target-created.json" --write-out '%{http_code}' \
+  http://127.0.0.1:8080/v2/actions/targets)"
+echo "Isolated ZITADEL Actions V2 target CREATE HTTP=$create_http"
+if [[ "$create_http" != 200 ]]; then
+  echo "CreateTarget rejected. No retry of non-idempotent mutation." >&2
+  head -c 1500 "$tmp/target-created.json" >&2
+  echo >&2
+  exit 1
+fi
 target_id="$(jq -er '.id | select(type=="string" and test("^[0-9]{1,64}$"))' "$tmp/target-created.json")"
 jq -er '.signingKey | select(type=="string" and length>=32)' "$tmp/target-created.json" >"$tmp/action.key"
 # jq appends a newline; production secret bytes never contain it.
