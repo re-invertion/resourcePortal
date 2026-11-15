@@ -74,7 +74,7 @@ export class StackRolloutService {
     return {
       success: false,
       message: "Rollout timed out",
-      details: [lastDetails || "No rollout status available", diagnosis].join("\\n"),
+      details: [lastDetails || "No rollout status available", diagnosis].join("\n"),
     };
   }
 
