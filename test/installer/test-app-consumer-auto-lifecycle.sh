@@ -99,6 +99,9 @@ rp_app_action_sign_probe() {
      -d "$tmp" ]] || return 1
   printf 'header = "ZITADEL-Signature: t=%s,v1=%064d"\n' "$(date +%s)" 0 >"$tmp/conf"
 }
+# Virtual elapsed time makes the 120-second retry deadline test instantly.
+# Bash SECONDS is advanced without sleeping or a real network dependency.
+sleep() { SECONDS=$((SECONDS + $1)); }
 # Probe must pass real signing code and recognize only a precise 403.
 curl() {
   local previous="" path="" conf="" arg
@@ -220,9 +223,7 @@ if rp_app_action_activate >/dev/null 2>&1; then fail 'activated unhealthy callba
 ok 'callback HTTP 503 blocks global activation'
 # A brief ingress cutover is retried but only the exact signed HTTP 403
 # authorizes the global action; permanent denial never gets retried.
-# Virtual elapsed time makes the 120-second retry deadline test instantly.
-# Bash SECONDS is advanced without sleeping or a real network dependency.
-sleep() { SECONDS=$((SECONDS + $1)); }
+
 printf '502\n404\n403\n' > "$probe_http_sequence"
 rp_app_action_activate || fail 'short ingress cutover blocked valid signed callback probe'
 [[ ! -s "$probe_http_sequence" && "$remote_execution" == ours ]] ||
