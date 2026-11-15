@@ -177,8 +177,8 @@ describe("Rollout task diagnostics persisted before rollback (#452)", () => {
   it("identifies private image authorization failure without leaking raw task errors", async () => {
     spawnMock.mockImplementation((_command: string, args: string[]) =>
       dockerProcess(args.includes("ps")
-        ? "pull access denied: token=topsecret\\n"
-        : '{"Name":"rp_test_web","Replicas":"0/1"}\\n'),
+        ? "pull access denied: token=topsecret\n"
+        : '{"Name":"rp_test_web","Replicas":"0/1"}\n'),
     );
     const service = new StackRolloutService(config as unknown as ConfigService);
     const promise = service.waitForRollout({
@@ -195,7 +195,7 @@ describe("Rollout task diagnostics persisted before rollback (#452)", () => {
     spawnMock.mockImplementation((_command: string, args: string[]) =>
       dockerProcess(args.includes("ps")
         ? ""
-        : '{"Name":"rp_test_web","Replicas":"0/1"}\\n'),
+        : '{"Name":"rp_test_web","Replicas":"0/1"}\n'),
     );
     const service = new StackRolloutService(config as unknown as ConfigService);
     const promise = service.waitForRollout({
