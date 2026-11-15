@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { DeploymentStatus, RuntimeState } from "@prisma/client";
+import { DeploymentStatus, HealthState, RuntimeState } from "@prisma/client";
 import { StackRuntimeService } from "../../internal/stack-runtime.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { OperationExecutor } from "../operation-executor";
@@ -93,6 +93,9 @@ export class RuntimeOperationExecutor implements OperationExecutor {
         },
       ];
     });
+    if (operation.type === "APP_GROUP_START") {
+      await this.markStartPending(appGroup.id, targets.filter((target) => target.replicas > 0).map((target) => target.singleAppId));
+    }
     await this.applyScaleTargets(targets);
     return {
       resourceId: appGroup.id,
@@ -149,8 +152,25 @@ export class RuntimeOperationExecutor implements OperationExecutor {
       !singleApp.pendingDeletion
         ? this.deployedReplicaTarget(deployedService)
         : 0;
+    if (operation.type === "SINGLE_APP_START" && replicas > 0) {
+      await this.markStartPending(appGroup.id, [singleApp.id]);
+    }
     await this.applyScaleTargets([{ ...target, singleAppId, replicas }]);
     return { resourceId: singleApp.id, result: { replicas } };
+  }
+
+  /** A new start invalidates previous Healthy evidence before Docker is touched.
+   * Preserve observedAt so consumers can display the age of the last observation. */
+  private async markStartPending(appGroupId: string, singleAppIds: string[]) {
+    if (!singleAppIds.length) return;
+    await this.prisma.singleApp.updateMany({
+      where: { appGroupId, id: { in: singleAppIds } },
+      data: { health: HealthState.Unknown },
+    });
+    await this.prisma.appGroup.update({
+      where: { id: appGroupId },
+      data: { health: HealthState.Unknown, driftStatus: "Unknown" },
+    });
   }
 
   private async applyScaleTargets(targets: ScaleTarget[]) {
