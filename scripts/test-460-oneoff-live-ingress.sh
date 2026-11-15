@@ -33,6 +33,26 @@ trap cleanup EXIT
 # Use the exact real ZITADEL v4 instance, DB, bootstrap PAT and API build
 # already exercised by the repo's live federation suite.
 bash scripts/run-federation-e2e.sh services
+# Actions V2 validates DNS during target creation. Unlike the runner's own
+# /etc/hosts, a container has an independent hosts file even in host network
+# mode. Provide an explicit ONE-OFF hostname binding to the real loopback
+# Traefik listener, using only this disposable ZITADEL container. Do not
+# change production DNS, bypass DNS rebinding checks, or use external tunnels.
+cat >"$tmp/zitadel-hosts.yml" <<'YAML'
+services:
+  zitadel:
+    extra_hosts:
+      - "rp-callback.test:127.0.0.1"
+YAML
+docker compose -f test/federation/docker-compose.yml -f "$tmp/zitadel-hosts.yml" \
+  up -d --no-deps --force-recreate zitadel
+for attempt in $(seq 1 90); do
+  if curl --fail --silent http://localhost:8080/debug/healthz >/dev/null; then break; fi
+  sleep 1
+done
+curl --fail --silent --show-error http://localhost:8080/debug/healthz >/dev/null
+docker exec federation-zitadel-1 getent hosts rp-callback.test | grep -F '127.0.0.1' >/dev/null
+echo 'PASS: isolated ZITADEL DNS resolves test callback to loopback'
 bash scripts/run-federation-e2e.sh bootstrap
 bash scripts/run-federation-e2e.sh database
 bash scripts/run-federation-e2e.sh build
