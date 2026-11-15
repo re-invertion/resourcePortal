@@ -233,10 +233,13 @@ rp_app_action_prepare() {
 # in an isolated, read-only and network-less ephemeral container. The signing
 # secret remains in the protected root-only directory; no key reaches argv.
 rp_app_action_sign_probe() {
-  local tmp="$1" image="${RP_CFG_API_IMAGE:-}"
-  [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
-  docker run --rm --interactive --network none --read-only --cap-drop ALL \
-    --security-opt no-new-privileges --user 0:0 \
+  local tmp="$1" limit="${2:-15}" image="${RP_CFG_API_IMAGE:-}" rc=0
+  [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$limit" =~ ^[0-9]{1,3}$ && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
+  (( limit >= 1 && limit <= 120 )) || return 1
+  rm -f -- "$tmp/cid" || return 1
+  # Bound signing independently; account for all elapsed time in the caller.
+  timeout --signal=TERM --kill-after=1 "$limit" docker run --rm --interactive --network none --read-only --cap-drop ALL \
+    --cidfile "$tmp/cid" --security-opt no-new-privileges --user 0:0 \
     --mount "type=bind,src=$tmp,dst=/rp-action-probe,readonly" \
     --entrypoint node "$image" - /rp-action-probe/key /rp-action-probe/body >"$tmp/conf" <<'NODE'
 const { readFileSync } = require("node:fs");
@@ -248,7 +251,13 @@ const timestamp = String(Math.floor(Date.now() / 1000));
 const signature = createHmac("sha256", key)
   .update(timestamp + ".").update(body).digest("hex");
 process.stdout.write('header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n');
-NODE
+NODE  rc=$?
+  if (( rc != 0 )) && [[ -s "$tmp/cid" ]]; then
+    # A timed-out Docker CLI may leave a container holding the read-only key mount.
+    timeout --signal=TERM --kill-after=1 5 docker rm -f -- "$(cat "$tmp/cid")" >/dev/null 2>&1 || true
+  fi
+  rm -f -- "$tmp/cid"
+  return "$rc"
 }
 # Probe files are mounted into a second Docker container by the host Docker
 # daemon. /tmp of the updater container is NOT a host path. The installer-state
@@ -275,10 +284,15 @@ rp_app_action_probe() {
     remaining=$((deadline_seconds - elapsed))
     (( remaining > 0 )) || break
     attempt=$((attempt + 1))
-    if ! rp_app_action_sign_probe "$tmp" || ! chmod 0600 "$tmp/conf"; then
+    if ! rp_app_action_sign_probe "$tmp" "$((remaining < 10 ? remaining : 10))" ||
+       ! chmod 0600 "$tmp/conf"; then
+      printf 'App Consumer signer failed or timed out (attempt %s).\n' "$attempt" >&2
       rm -rf -- "$tmp"
       return 1
     fi
+    elapsed=$((SECONDS - started))
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
     rc=0
     code="$(curl --silent --show-error --no-location --proto '=https' \
       --max-time "$((remaining < 15 ? remaining : 15))" \
@@ -288,6 +302,10 @@ rp_app_action_probe() {
     elapsed=$((SECONDS - started))
     printf 'App Consumer signed callback probe: attempt=%s elapsed=%ss curl=%s http=%s.\n' \
       "$attempt" "$elapsed" "$rc" "${code:-000}" >&2
+    # Never accept a success after the absolute retry budget expires.
+    if (( elapsed >= deadline_seconds )); then
+      break
+    fi
     if [[ "$rc" == 0 && "$code" == 403 ]]; then
       rm -rf -- "$tmp"
       return 0
