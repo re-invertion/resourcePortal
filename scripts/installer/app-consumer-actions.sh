@@ -264,11 +264,8 @@ rp_app_action_probe() {
   tmp="$(umask 077; mktemp -d "$state_dir/.rp-action-probe.XXXXXX")" || return 1
   rp_app_action_read_key "$id" "$tmp/key" "$ref" || { rm -rf -- "$tmp"; return 1; }
   printf '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
-  if ! rp_app_action_sign_probe "$tmp"; then
-    rm -rf -- "$tmp"
-    return 1
-  fi
-  chmod 0600 "$tmp/conf" || { rm -rf -- "$tmp"; return 1; }
+  # Sign again for every request, so a delayed ingress recovery never
+  # replays an expired HMAC timestamp from the start of the retry window.
   # Use a total deadline rather than a fixed attempt count: curl 7 can fail
   # immediately while Traefik replaces its listener after initial readiness.
   # SECONDS is Bash's monotonic-enough elapsed clock for this bounded wait.
@@ -278,6 +275,10 @@ rp_app_action_probe() {
     remaining=$((deadline_seconds - elapsed))
     (( remaining > 0 )) || break
     attempt=$((attempt + 1))
+    if ! rp_app_action_sign_probe "$tmp" || ! chmod 0600 "$tmp/conf"; then
+      rm -rf -- "$tmp"
+      return 1
+    fi
     rc=0
     code="$(curl --silent --show-error --no-location --proto '=https' \
       --max-time "$((remaining < 15 ? remaining : 15))" \
