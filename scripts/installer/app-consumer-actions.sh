@@ -251,7 +251,8 @@ const timestamp = String(Math.floor(Date.now() / 1000));
 const signature = createHmac("sha256", key)
   .update(timestamp + ".").update(body).digest("hex");
 process.stdout.write('header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n');
-NODE  rc=$?
+NODE
+  rc=$?
   if (( rc != 0 )) && [[ -s "$tmp/cid" ]]; then
     # A timed-out Docker CLI may leave a container holding the read-only key mount.
     timeout --signal=TERM --kill-after=1 5 docker rm -f -- "$(cat "$tmp/cid")" >/dev/null 2>&1 || true
