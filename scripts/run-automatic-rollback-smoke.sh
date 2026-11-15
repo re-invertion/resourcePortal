@@ -40,6 +40,10 @@ old_api_probe="${stack}-previous-api-probe"
 db_created=false
 swarm_started=false
 cleanup() {
+  if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+    docker rm -f rp460-candidate-api rp460-source-api rp460-rollback-registry >/dev/null 2>&1 || true
+    docker service rm rp460-rollback-traefik >/dev/null 2>&1 || true
+  fi
   docker rm -f "$old_api_probe" "$zitadel_runtime_container" >/dev/null 2>&1 || true
   # Actual Swarm services are removed BEFORE detaching their volumes/network.
   docker service rm "$db_service_rp" "$db_service_zitadel" >/dev/null 2>&1 || true
@@ -269,6 +273,12 @@ jq --arg commit "$current_sha" --arg source "$source_version" \
 # bound to an older target SHA. The release workflow independently certifies
 # each source only after the real smoke and database recovery complete.
 jq -e '(.migrations | has("rollbackCertifiedSources") | not)' "$root/target-release.json" >/dev/null
+# Isolated candidate MUST exercise real issuer-global activation.
+# Old published source manifests may predate this capability.
+if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+  jq '.apiCapabilities.appConsumerActionsV2Callback=true'     "$root/target-release.json" > "$root/rp460-target-release.json"
+  mv "$root/rp460-target-release.json" "$root/target-release.json"
+fi
 rp_validate_release_manifest "$root/target-release.json"
 service_images_match() {
   local phase="$1" role expected observed
@@ -401,6 +411,15 @@ rp_wait_for_https_origin() {
   # no pretend-healthy return value can mask incorrect restoration.
   wait_services previous
 }
+
+# #460 opt-in extension runs actual ZITADEL Actions V2 management, real signed
+# callback and the SAME issuer's Swarm PostgreSQL transaction. The normal
+# release rollback smoke remains unchanged when this flag is absent.
+if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+  [[ "${GITHUB_ACTIONS:-}" == true && "${RP_ROLLBACK_E2E_ISOLATED:-}" == true ]] || exit 1
+  # shellcheck source=scripts/test-460-upgrade-rollback-actions.sh
+  source "$repo_root/scripts/test-460-upgrade-rollback-actions.sh"
+fi
 
 if rp_upgrade_apply "$root/target-release.json" "$root/previous-stack.yml"; then
   echo "Injected failed upgrade unexpectedly succeeded" >&2

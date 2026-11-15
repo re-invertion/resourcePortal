@@ -96,7 +96,12 @@ rp_rollback_zitadel_stop() {
 rp_rollback_zitadel_start() {
   local image="$1" phase="$2" config_dir="$root/zitadel-real-runtime" ready=false attempt
   rp_rollback_zitadel_stop || return 1
-  docker run -d --name "$zitadel_runtime_container" --network "$db_network" \
+  local -a test_dns=()
+  if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+    [[ "${GITHUB_ACTIONS:-}" == true && "${RP_ROLLBACK_E2E_ISOLATED:-}" == true ]] || return 1
+    test_dns=(--add-host rp-callback.test:127.0.0.1)
+  fi
+  docker run -d --name "$zitadel_runtime_container" --network "$db_network" "${test_dns[@]}" \
     --user 0 -p 127.0.0.1:18080:8080 \
     -v "$config_dir/public.yaml:/zitadel-config.yaml:ro" \
     -v "$config_dir/secrets.yaml:/zitadel-secrets.yaml:ro" \

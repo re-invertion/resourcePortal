@@ -52,3 +52,54 @@ jobs:
         run: |
           echo 'Isolated Swarm/Traefik/ZITADEL and actual RP API signed negative callback validated.'
           echo 'This does not replace full installer transaction rollback under the same outage.'
+
+  full-installer-rollback:
+    name: Real installer RP+ZITADEL database/Swarm rollback during HMAC HTTPS loss
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      GITHUB_ACTIONS: 'true'
+      RP_ROLLBACK_E2E_ISOLATED: 'true'
+      RP_460_VERIFY_SAME_OUTAGE_ROLLBACK: 'true'
+      RP_ROLLBACK_CANDIDATE_ZITADEL_IMAGE: ghcr.io/zitadel/zitadel:v4.17.0
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Assert isolated branch, reviewed PR ancestry and shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/test/460-disposable-swarm-ingress
+          git merge-base --is-ancestor 871174c88cb8bed6a680007fa5f2800f1cf52eb0 HEAD
+          bash -n scripts/run-automatic-rollback-smoke.sh
+          bash -n scripts/rollback-zitadel-runtime.sh
+          bash -n scripts/test-460-upgrade-rollback-actions.sh
+          docker info >/dev/null
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Build exact candidate API, web and PostgreSQL images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t resourceportal-api-candidate .
+          docker build -t resourceportal-web-candidate -f packages/resourceportal-web/Dockerfile .
+          docker build -t resourceportal-postgres-candidate -f packages/resourceportal-postgres/Dockerfile .
+      - name: Verify same-outage real installer rollback from published v0.2.146
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/run-automatic-rollback-smoke.sh 0.2.146
+      - name: Report certified test scope
+        if: success()
+        run: |
+          echo 'PASS: real rp_upgrade_apply with live Actions V2 and 120s HTTPS outage'
+          echo 'PASS: physical RP/ZITADEL PG rollback and actual previous Swarm images'
