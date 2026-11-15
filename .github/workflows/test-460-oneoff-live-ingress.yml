@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout isolated branch from reviewed PR commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Setup pinned Node
         uses: actions/setup-node@v4
         with:
