@@ -237,8 +237,9 @@ rp_app_action_sign_probe() {
   [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$limit" =~ ^[0-9]{1,3}$ && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
   (( limit >= 1 && limit <= 120 )) || return 1
   rm -f -- "$tmp/cid" || return 1
+  # BusyBox and GNU timeout both support -s/-k; updater runs Alpine.
   # Bound signing independently; account for all elapsed time in the caller.
-  timeout --signal=TERM --kill-after=1 "$limit" docker run --rm --interactive --network none --read-only --cap-drop ALL \
+  timeout -s TERM -k 1 "$limit" docker run --rm --interactive --network none --read-only --cap-drop ALL \
     --cidfile "$tmp/cid" --security-opt no-new-privileges --user 0:0 \
     --mount "type=bind,src=$tmp,dst=/rp-action-probe,readonly" \
     --entrypoint node "$image" - /rp-action-probe/key /rp-action-probe/body >"$tmp/conf" <<'NODE'
@@ -255,7 +256,7 @@ NODE
   rc=$?
   if (( rc != 0 )) && [[ -s "$tmp/cid" ]]; then
     # A timed-out Docker CLI may leave a container holding the read-only key mount.
-    timeout --signal=TERM --kill-after=1 5 docker rm -f -- "$(cat "$tmp/cid")" >/dev/null 2>&1 || true
+    timeout -s TERM -k 1 5 docker rm -f -- "$(cat "$tmp/cid")" >/dev/null 2>&1 || true
   fi
   rm -f -- "$tmp/cid"
   return "$rc"
