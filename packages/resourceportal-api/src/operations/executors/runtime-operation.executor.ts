@@ -202,6 +202,15 @@ export class RuntimeOperationExecutor implements OperationExecutor {
   private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>, unknownOnTimeout = false) {
     const failed = results.find((result) => result.exitCode !== 0);
     if (failed) {
+      if (failed.stderr.includes("ImagePullAuthorizationFailed")) {
+        throw this.error("ImagePullAuthorizationFailed", "Swarm could not pull the private image: configure registry credentials with package read access before retrying", false);
+      }
+      if (failed.stderr.includes("ImageNotFound")) {
+        throw this.error("ImageNotFound", "Swarm could not locate the configured container image; verify its registry and tag", false);
+      }
+      if (!unknownOnTimeout && failed.exitCode === 124) {
+        throw this.error("ScaleOutcomeUnknown", "Swarm service scale did not converge; inspect current task state before retrying", false);
+      }
       if (unknownOnTimeout && failed.exitCode === 124) {
         throw this.error("RestartOutcomeUnknown", "Swarm restart did not converge before the runtime command ended; outcome must be inspected before retry", false);
       }
