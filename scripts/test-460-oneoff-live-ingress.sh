@@ -257,8 +257,20 @@ rp_app_action_probe "$target_id" "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_
 probe_pid=$!
 sleep 8
 docker service scale "$traefik_service=1" >/dev/null
-wait "$probe_pid"
+probe_result=0
+wait "$probe_pid" || probe_result=$?
 probe_pid=''
+# The real probe's stderr was previously discarded whenever wait failed
+# under set -e, hiding important diagnostics from the ephemeral CI runner.
+echo '--- Real signed probe diagnostics (no secret bytes) ---'
+cat "$tmp/probe-err.log" >&2
+echo "--- Real signed probe exit=$probe_result ---"
+if (( probe_result != 0 )); then
+  echo "Signed callback probe failed after ingress recovery (exit $probe_result)" >&2
+  docker service ps "$traefik_service" --no-trunc >&2 || true
+  docker service logs "$traefik_service" --tail 35 >&2 || true
+  exit 1
+fi
 grep -Eq 'curl=7 http=000|curl=7 http=' "$tmp/probe-err.log" || {
   cat "$tmp/probe-err.log" >&2
   echo 'No real curl 7 during ingress outage' >&2; exit 1;
