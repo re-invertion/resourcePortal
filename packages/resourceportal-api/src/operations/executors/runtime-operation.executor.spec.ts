@@ -83,3 +83,32 @@ describe("Runtime start reservation consistency (#373 P1)", () => {
     expect(scaleServices).not.toHaveBeenCalled();
   });
 });
+
+describe("Swarm scale failure classification (#450)", () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+  const start = { type: "SINGLE_APP_START", resourceId: singleAppId, input: { appGroupId } } as OperationRecord;
+
+  it("reports private image authorization failure without blind retries", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124, stderr: "ImagePullAuthorizationFailed", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ImagePullAuthorizationFailed", retryable: false,
+    });
+  });
+
+  it("does not repeat a timed-out scale while its outcome is unknown", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124, stderr: "SwarmScaleOutcomeUnknown", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ScaleOutcomeUnknown", retryable: false,
+    });
+  });
+
+  it("does not retry a missing image without operator correction", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 1, stderr: "ImageNotFound", stdout: "" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({
+      code: "ImageNotFound", retryable: false,
+    });
+  });
+});
