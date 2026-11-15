@@ -12,6 +12,14 @@ printf '%s' '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-i
 RP_CFG_API_IMAGE="ghcr.io/re-invertion/resourceportal-api@sha256:$(printf 'a%.0s' {1..64})"
 export RP_CFG_API_IMAGE
 called=0
+# The signer now invokes the host's GNU timeout around Docker. This fixture
+# preserves the existing mocked Docker boundary while asserting its limit.
+timeout() {
+  [[ "$1" == "--signal=TERM" && "$2" == "--kill-after=1" &&
+     "$3" =~ ^[0-9]+$ && "$3" -ge 1 && "$3" -le 120 ]] || return 1
+  shift 3
+  "$@"
+}
 # The exact production command is intercepted only at the Docker boundary.
 # Node executes the real production inline program.
 docker() {
