@@ -37,6 +37,7 @@ function fixture(overrides: Record<string, string> = {}) {
     oAuthApplication: { count: vi.fn().mockResolvedValue(0) },
     tenantOidcProvider: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
       upsert: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -75,6 +76,59 @@ describe("Tenant OIDC automatic rollout", () => {
     } finally {
       f.service.onModuleDestroy();
     }
+  });
+
+  it("retries durable explicit-mode recovery after issuer failure without initial activation", async () => {
+    const f = fixture({
+      TENANT_OIDC_AUTO_ROLLOUT: "false",
+      TENANT_OIDC_ACTIVATION_ALLOWED: "true",
+    });
+    f.prisma.tenantOidcProvider.findMany.mockResolvedValue([{ tenantId: "t1" }]);
+    f.oidc.activate.mockRejectedValueOnce(new Error("issuer temporarily offline"))
+      .mockResolvedValueOnce({ enabled: true });
+    await f.service.reconcilePromptly();
+    expect(f.oidc.activate).toHaveBeenCalledWith("t1", false);
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({
+        tenantId: "t1", lastActivatedAt: { not: null },
+        status: { notIn: ["Disabling", "Disabled", "Deleted"] },
+      }) }),
+    );
+    await f.service.reconcilePromptly();
+    expect(f.oidc.activate).toHaveBeenCalledTimes(2);
+    expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({
+        tenantId: "t1", autoRolloutLeaseOwner: expect.any(String),
+      }), data: { autoRolloutLeaseOwner: null, autoRolloutLeaseUntil: null } }),
+    );
+  });
+
+  it("never retries initial activation or tenant opt-out in explicit mode", async () => {
+    const f = fixture({
+      TENANT_OIDC_AUTO_ROLLOUT: "false",
+      TENANT_OIDC_ACTIVATION_ALLOWED: "true",
+    });
+    await f.service.reconcilePromptly();
+    expect(f.prisma.tenantOidcProvider.findMany).toHaveBeenCalledWith({
+      where: {
+        enabled: false, lastActivatedAt: { not: null },
+        status: { notIn: ["Disabling", "Disabled", "Deleted"] },
+        tenant: { status: "Active" },
+      },
+      select: { tenantId: true },
+    });
+    expect(f.oidc.activate).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit recovery blocked when App Consumer safety fails", async () => {
+    const f = fixture({
+      TENANT_OIDC_AUTO_ROLLOUT: "false",
+      TENANT_OIDC_ACTIVATION_ALLOWED: "true",
+    });
+    f.oidc.enforceAppConsumerActionsV2Safety.mockRejectedValue(new Error("unsafe binding"));
+    await f.service.reconcilePromptly();
+    expect(f.prisma.tenantOidcProvider.findMany).not.toHaveBeenCalled();
+    expect(f.oidc.activate).not.toHaveBeenCalled();
   });
 
   it("does not auto-regrant during the same monitoring pass that revoked unsafe upstream roles", async () => {
