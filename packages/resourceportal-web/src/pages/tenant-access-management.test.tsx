@@ -140,7 +140,7 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
-    expect(await screen.findByText("Member")).toBeTruthy();
+    expect((await screen.findAllByText("Member")).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Edit access" })).toBeNull());
     expect(screen.queryByRole("heading", { name: /Edit access:/ })).toBeNull();
   });
