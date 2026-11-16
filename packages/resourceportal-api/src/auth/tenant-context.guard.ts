@@ -35,6 +35,10 @@ export class TenantContextGuard implements CanActivate {
 
     if (!tenantId) return true;
 
+    if (request.serviceIdentity && this.reflector.getAllAndOverride<boolean>(
+      "tenant:sso-self-readiness", [context.getHandler(), context.getClass()],
+    )) throw new ForbiddenException("Human SSO member required");
+
     if (request.serviceIdentity) {
       return this.activateServiceIdentityContext(
         request,
