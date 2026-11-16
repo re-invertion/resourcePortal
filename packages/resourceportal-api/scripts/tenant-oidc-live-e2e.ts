@@ -543,7 +543,7 @@ async function main() {
       await prisma.tenantAppClientGrant.update({
         where: { id: onlyA.id }, data: { enabled: false, updatedBy: userA.id },
       });
-      const cRevoked = await refreshClient(web.clientId, web.clientSecret, tokenC.refresh_token!);
+      const cRevoked = await refreshClient(web.clientId, web.clientSecret, tokenC.refresh_token);
       assert.ok(!cRevoked.ok, "SECURITY: newly onboarded SSO-only client access survived revocation");
       assert.ok(consumerGate.events().some(e => e.userId === userCId &&
         e.clientId === web.clientId && e.decision === "deny"));
