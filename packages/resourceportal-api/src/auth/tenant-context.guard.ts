@@ -37,7 +37,7 @@ export class TenantContextGuard implements CanActivate {
 
     if (request.serviceIdentity && this.reflector.getAllAndOverride<boolean>(
       "tenant:sso-self-readiness", [context.getHandler(), context.getClass()],
-    )) throw new ForbiddenException("Human SSO member required");
+    ) === true) throw new ForbiddenException("Human SSO member required");
 
     if (request.serviceIdentity) {
       return this.activateServiceIdentityContext(
@@ -136,7 +136,7 @@ export class TenantContextGuard implements CanActivate {
       const selfReadiness = this.reflector.getAllAndOverride<boolean>(
         "tenant:sso-self-readiness", [context.getHandler(), context.getClass()],
       );
-      if (!selfReadiness) throw new ForbiddenException("No tenant permissions assigned");
+      if (selfReadiness !== true) throw new ForbiddenException("No tenant permissions assigned");
     }
 
     return true;
