@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
 
 /** The same User/TenantMembership owns RP RBAC and application-specific SSO. */
 export type NativeClientKey = "web" | "cli";
@@ -15,7 +16,8 @@ const NATIVE_KEYS: NativeClientKey[] = ["web", "cli"];
 @Injectable()
 export class AppConsumersService {
   constructor(private readonly prisma: PrismaService,
-    @Optional() private readonly oidc?: TenantOidcService) {}
+    @Optional() private readonly oidc?: TenantOidcService,
+    @Optional() private readonly oidcAutoRollout?: TenantOidcAutoRolloutService) {}
 
   async list(tenantId: string) {
     const memberships = await this.prisma.tenantMembership.findMany({
@@ -75,6 +77,9 @@ export class AppConsumersService {
     if (!member) return result;
     try {
       const readiness = await this.oidc.onClientEntitlementGranted(tenantId, member.userId);
+      if (readiness.status === "pending" && this.oidcAutoRollout) {
+        void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+      }
       return { ...result, ssoProvisioning: readiness };
     } catch {
       return { ...result, ssoProvisioning: { status: "pending" as const } };
