@@ -10,6 +10,7 @@ import {
   Query,
   UnauthorizedException,
   Req,
+  SetMetadata,
   Res,
 } from "@nestjs/common";
 import { Authenticated } from "../auth/authenticated.decorator";
@@ -39,6 +40,7 @@ import { UpdateTenantGroupDto } from "./dto/update-tenant-group.dto";
 import { TenantsService } from "./tenants.service";
 import { TenantInvitationOnboardingService } from "./tenant-invitation-onboarding.service";
 import { AuthSessionService } from "../auth/auth-session.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
 import { FastifyRequest, FastifyReply } from "fastify";
 
 @Controller("tenants")
@@ -336,6 +338,7 @@ export class TenantInvitationsController {
     private readonly tenantsService: TenantsService,
     private readonly onboarding: TenantInvitationOnboardingService,
     private readonly sessions: AuthSessionService,
+    private readonly oidcReadiness: TenantOidcService,
   ) {}
 
   private readonly onboardingPath = "/api/invitations/onboard";
@@ -384,6 +387,14 @@ export class TenantInvitationsController {
         reply.clearCookie(name, { path: this.onboardingPath });
       }
     }
+    if (result.ssoProvisioning.status !== "ready") {
+      // Do not bounce a new member into a ZITADEL no-grant denial.
+      // No RP session is issued from this isolated onboarding callback.
+      return reply.status(202).type("text/plain; charset=utf-8").send(
+        "Invitation accepted. SSO application access is still being provisioned. " +
+        "Please try signing in again shortly. If this persists, contact your tenant administrator.",
+      );
+    }
     if (result.webGranted) {
       // Now use an ordinary RP Web auth-code flow; the exact-client Action
       // will find active membership + sso-login + explicit Web grant.
@@ -394,6 +405,16 @@ export class TenantInvitationsController {
       .send("Invitation accepted. Your application access is activated; you may close this page.");
   }
 
+
+  // Authenticated membership owners can check readiness even when sso-login
+  // grants no ResourcePortal RBAC permission to read tenant settings.
+  @Authenticated()
+  @SetMetadata("tenant:sso-self-readiness", true)
+  @Get("provisioning/:tenantId")
+  readiness(@Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @CurrentUser() actor: AuthenticatedUser) {
+    return this.oidcReadiness.memberReadiness(tenantId, actor.id);
+  }
 
   @Public()
   @Get(":token")

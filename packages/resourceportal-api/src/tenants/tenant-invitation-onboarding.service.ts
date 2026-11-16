@@ -120,6 +120,7 @@ export class TenantInvitationOnboardingService {
     // ordinary Web login is authorized against that committed membership.
     const membership = await this.tenants.acceptInvitation({ token }, actor);
     return { tenantId: membership.tenantId,
+      ssoProvisioning: membership.ssoProvisioning,
       webGranted: invite.nativeApplicationKeys.includes("web") };
   }
 }
