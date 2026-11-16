@@ -425,6 +425,16 @@ if rp_upgrade_apply "$root/target-release.json" "$root/previous-stack.yml"; then
   echo "Injected failed upgrade unexpectedly succeeded" >&2
   exit 1
 fi
+# The old smoke deliberately injected a fake health failure. For #460, a
+# successful rollback is NOT evidence unless the real callback activation was
+# reached and the production probe exhausted its 120s HTTPS retry budget.
+if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+  [[ "${RP_460_ACTIVATION_ATTEMPTED:-false}" == true &&
+     "${RP_460_ACTIVATION_120S_PROVEN:-false}" == true ]] || {
+    echo "FAIL: rollback happened before REAL 120s signed callback outage" >&2
+    exit 1
+  }
+fi
 [[ "$health_checks" -eq 2 ]] || {
   echo "Upgrade entry point did not automatically invoke rollback health verification" >&2
   exit 1
