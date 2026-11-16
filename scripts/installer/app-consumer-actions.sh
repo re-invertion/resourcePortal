@@ -233,10 +233,14 @@ rp_app_action_prepare() {
 # in an isolated, read-only and network-less ephemeral container. The signing
 # secret remains in the protected root-only directory; no key reaches argv.
 rp_app_action_sign_probe() {
-  local tmp="$1" image="${RP_CFG_API_IMAGE:-}"
-  [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
-  docker run --rm --interactive --network none --read-only --cap-drop ALL \
-    --security-opt no-new-privileges --user 0:0 \
+  local tmp="$1" limit="${2:-15}" image="${RP_CFG_API_IMAGE:-}" rc=0
+  [[ "$tmp" == /* && -d "$tmp" && ! -L "$tmp" && "$limit" =~ ^[0-9]{1,3}$ && "$image" =~ @sha256:[a-f0-9]{64}$ ]] || return 1
+  (( limit >= 1 && limit <= 120 )) || return 1
+  rm -f -- "$tmp/cid" || return 1
+  # BusyBox and GNU timeout both support -s/-k; updater runs Alpine.
+  # Bound signing independently; account for all elapsed time in the caller.
+  timeout -s TERM -k 1 "$limit" docker run --rm --interactive --network none --read-only --cap-drop ALL \
+    --cidfile "$tmp/cid" --security-opt no-new-privileges --user 0:0 \
     --mount "type=bind,src=$tmp,dst=/rp-action-probe,readonly" \
     --entrypoint node "$image" - /rp-action-probe/key /rp-action-probe/body >"$tmp/conf" <<'NODE'
 const { readFileSync } = require("node:fs");
@@ -249,6 +253,13 @@ const signature = createHmac("sha256", key)
   .update(timestamp + ".").update(body).digest("hex");
 process.stdout.write('header = "ZITADEL-Signature: t=' + timestamp + ',v1=' + signature + '"\n');
 NODE
+  rc=$?
+  if (( rc != 0 )) && [[ -s "$tmp/cid" ]]; then
+    # A timed-out Docker CLI may leave a container holding the read-only key mount.
+    timeout -s TERM -k 1 5 docker rm -f -- "$(cat "$tmp/cid")" >/dev/null 2>&1 || true
+  fi
+  rm -f -- "$tmp/cid"
+  return "$rc"
 }
 # Probe files are mounted into a second Docker container by the host Docker
 # daemon. /tmp of the updater container is NOT a host path. The installer-state
@@ -256,6 +267,7 @@ NODE
 rp_app_action_probe() {
   local id="$1" ref="$2" tmp code rc attempt=0
   local state_dir="${RP_INSTALLER_STATE_DIR:-/var/lib/resourceportal/installer-state}"
+  local deadline_seconds=120 started elapsed remaining wait_seconds
   [[ "$state_dir" == /* && -d "$state_dir" && ! -L "$state_dir" ]] || {
     printf 'Signed App Consumer probe requires an existing host-shared installer-state directory.\n' >&2
     return 1
@@ -263,38 +275,59 @@ rp_app_action_probe() {
   tmp="$(umask 077; mktemp -d "$state_dir/.rp-action-probe.XXXXXX")" || return 1
   rp_app_action_read_key "$id" "$tmp/key" "$ref" || { rm -rf -- "$tmp"; return 1; }
   printf '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-id"},"application":{"client_id":"rp-nonexistent-probe"}}' >"$tmp/body"
-  if ! rp_app_action_sign_probe "$tmp"; then
-    rm -rf -- "$tmp"
-    return 1
-  fi
-  chmod 0600 "$tmp/conf" || { rm -rf -- "$tmp"; return 1; }
-  for attempt in 1 2 3; do
-    # Only the same signed negative probe is retried; never modify grants,
-    # follow redirects, weaken HTTPS/TLS, or accept any status except 403.
+  # Sign again for every request, so a delayed ingress recovery never
+  # replays an expired HMAC timestamp from the start of the retry window.
+  # Use a total deadline rather than a fixed attempt count: curl 7 can fail
+  # immediately while Traefik replaces its listener after initial readiness.
+  # SECONDS is Bash's monotonic-enough elapsed clock for this bounded wait.
+  started=$SECONDS
+  while :; do
+    elapsed=$((SECONDS - started))
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
+    attempt=$((attempt + 1))
+    if ! rp_app_action_sign_probe "$tmp" "$((remaining < 10 ? remaining : 10))" ||
+       ! chmod 0600 "$tmp/conf"; then
+      printf 'App Consumer signer failed or timed out (attempt %s).\n' "$attempt" >&2
+      rm -rf -- "$tmp"
+      return 1
+    fi
+    elapsed=$((SECONDS - started))
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
     rc=0
-    code="$(curl --silent --show-error --no-location --proto '=https' --max-time 15 \
+    code="$(curl --silent --show-error --no-location --proto '=https' \
+      --max-time "$((remaining < 15 ? remaining : 15))" \
       --config "$tmp/conf" --header 'Content-Type: application/json' \
       --data-binary "@$tmp/body" --output "$tmp/response" --write-out '%{http_code}' \
       "https://$RP_CFG_DOMAIN/api/app-consumer-actions/preaccesstoken")" || rc=$?
+    elapsed=$((SECONDS - started))
+    printf 'App Consumer signed callback probe: attempt=%s elapsed=%ss curl=%s http=%s.\n' \
+      "$attempt" "$elapsed" "$rc" "${code:-000}" >&2
+    # Never accept a success after the absolute retry budget expires.
+    if (( elapsed >= deadline_seconds )); then
+      break
+    fi
     if [[ "$rc" == 0 && "$code" == 403 ]]; then
       rm -rf -- "$tmp"
       return 0
     fi
-    # Deployment may momentarily return 404/502/503/504 or a transport
-    # failure during Traefik replacement. Even certificate failures are
-    # never ignored: a retry still performs full TLS verification.
-    if [[ "$attempt" -lt 3 ]] && {
-      [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|28|35|52|56|60)$ ]] ||
-      [[ "$rc" == 0 && "$code" =~ ^(000|404|502|503|504)$ ]]
-    }; then
-      sleep 2
-      continue
+    # Retry only transient ingress/transport failures. TLS trust errors,
+    # unexpected callback responses and all other failures remain fatal.
+    if ! { [[ "$rc" != 0 && "$rc" =~ ^(5|6|7|18|28|35|52|56)$ ]] ||
+           [[ "$rc" == 0 && "$code" =~ ^(404|502|503|504)$ ]]; }; then
+      printf 'App Consumer signed callback probe rejected non-transient result (curl %s, HTTP %s).\n' \
+        "$rc" "${code:-000}" >&2
+      rm -rf -- "$tmp"
+      return 1
     fi
-    printf 'App Consumer signed callback probe failed (attempt %s/3, curl status %s, HTTP %s).\n' \
-      "$attempt" "$rc" "${code:-000}" >&2
-    rm -rf -- "$tmp"
-    return 1
+    remaining=$((deadline_seconds - elapsed))
+    (( remaining > 0 )) || break
+    wait_seconds=$((remaining < 3 ? remaining : 3))
+    sleep "$wait_seconds"
   done
+  printf 'App Consumer signed callback probe timed out after %ss (%s attempts, last curl %s, HTTP %s).\n' \
+    "$deadline_seconds" "$attempt" "${rc:-0}" "${code:-000}" >&2
   rm -rf -- "$tmp"
   return 1
 }
