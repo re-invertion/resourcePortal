@@ -39,6 +39,71 @@ export class TenantOidcService {
     };
   }
 
+  /**
+   * A local exact-client entitlement is not proof of ZITADEL project membership.
+   * Resolve readiness for the authenticated principal only; never expose an
+   * arbitrary member's identity, issuer grant identifier or remote response.
+   */
+  async memberReadiness(tenantId: string, userId: string):
+    Promise<{ status: "ready" | "pending" | "blocked"; reason?: string }> {
+    const membership = await this.prisma.tenantMembership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { status: true, user: { select: { status: true, identities: true } },
+        roles: { select: { roleId: true } },
+        groupMemberships: { select: { group: { select: {
+          roles: { select: { roleId: true } },
+        } } } } },
+    });
+    if (!membership || membership.status !== MembershipStatus.Active ||
+        membership.user.status !== UserStatus.Active) {
+      throw new NotFoundException("Active tenant membership not found");
+    }
+    const eligible = membership.roles.some(r => r.roleId === "sso-login") ||
+      membership.groupMemberships.some(m => m.group.roles.some(r => r.roleId === "sso-login"));
+    if (!eligible) return { status: "blocked", reason: "SSO_ROLE_REQUIRED" };
+    const provider = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
+    if (!provider || ["Disabling", "Disabled", "Deleted"].includes(provider.status)) {
+      return { status: "blocked", reason: "TENANT_SSO_DISABLED" };
+    }
+    const issuer = provider.issuer?.replace(/\/$/, "");
+    const identity = membership.user.identities.find(row =>
+      row.providerType === "zitadel" && row.identityProviderId === null &&
+      row.issuer.replace(/\/$/, "") === issuer,
+    );
+    if (!identity) return { status: "blocked", reason: "NATIVE_IDENTITY_REQUIRED" };
+    const grant = await this.prisma.tenantOidcGrant.findFirst({
+      where: { tenantId, userId, zitadelUserId: identity.externalSubject },
+    });
+    if (provider.enabled && provider.status === "Active" &&
+        provider.zitadelProjectId && grant?.status === "Active" && grant.zitadelGrantId) {
+      try {
+        await this.zitadel.verifyMemberGrant(
+          identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId,
+        );
+        return { status: "ready" };
+      } catch {
+        return { status: "pending", reason: "UPSTREAM_GRANT_UNVERIFIED" };
+      }
+    }
+    if (["ReconciliationFailed", "ProvisioningFailed", "ActivationFailed"].includes(provider.status)) {
+      return { status: "blocked", reason: provider.lastErrorCode ?? "PROVISIONING_FAILED" };
+    }
+    return { status: "pending", reason: "UPSTREAM_GRANT_PENDING" };
+  }
+
+  /** Best-effort prompt reconciliation after commit; durable rollout retries remain enabled. */
+  async expediteMemberReadiness(tenantId: string, userId: string) {
+    const before = await this.memberReadiness(tenantId, userId);
+    if (before.status !== "pending") return before;
+    try {
+      await this.activate(tenantId, true);
+    } catch {
+      // Never leak issuer exceptions into a committed invitation response.
+      // The provider records its sanitized failure state for the next retry.
+    }
+    return this.memberReadiness(tenantId, userId);
+  }
+
   async provision(tenantId: string, fromAutoRollout = false) {
     await this.requireActiveTenant(tenantId);
     // The service never enables a tenant IdP based on an unverified project alone.
