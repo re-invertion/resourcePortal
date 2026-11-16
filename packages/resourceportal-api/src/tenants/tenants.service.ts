@@ -15,6 +15,7 @@ import { AuthenticatedUser } from "../auth/types";
 import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
 import { PlatformEmailService } from "../email/platform-email.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
@@ -51,6 +52,7 @@ export class TenantsService {
     private readonly email: PlatformEmailService,
     @Optional() private readonly tenantOidc?: TenantOidcService,
     @Optional() private readonly nativeLoginMode?: NativeLoginModeService,
+    @Optional() private readonly oidcAutoRollout?: TenantOidcAutoRolloutService,
   ) {}
 
   listTenants(userId: string) {
@@ -945,8 +947,15 @@ export class TenantsService {
     }
     // Do not hold the invitation HTTP request open during a slow issuer call.
     // The committed NeedsReconciliation marker is the durable retry signal.
-    void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
-      .catch(() => this.logger.warn("Tenant SSO provisioning remains pending"));
+    // Auto policy must use the guarded rollout worker, not a direct activate()
+    // that could bypass federation/cohort safety. The timer retries on failure.
+    if (this.oidcAutoRollout) {
+      void this.oidcAutoRollout.reconcilePromptly()
+        .catch(() => this.logger.warn("Tenant SSO guarded rollout remains pending"));
+    } else {
+      void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
+        .catch(() => this.logger.warn("Tenant SSO provisioning remains pending"));
+    }
     const readiness = await this.tenantOidc.memberReadiness(invitation.tenantId, actor.id);
     return { ...mapped, ssoProvisioning: readiness };
   }
