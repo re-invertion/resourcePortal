@@ -98,6 +98,23 @@ describe("Tenant OIDC automatic rollout", () => {
     expect(f.oidc.activate).not.toHaveBeenCalled();
   });
 
+  it("prompt wake-up preserves the inbound federation barrier in automatic mode", async () => {
+    const f = fixture({ TENANT_OIDC_ACTIVATION_ALLOWED: "auto" });
+    f.prisma.userIdentity.count.mockResolvedValue(1);
+    await f.service.reconcilePromptly();
+    expect(f.oidc.enforceAppConsumerActionsV2Safety).toHaveBeenCalledOnce();
+    expect(f.oidc.reconcileGrants).not.toHaveBeenCalled();
+    expect(f.oidc.activate).not.toHaveBeenCalled();
+  });
+
+  it("prompt wake-up preserves the all-tenant atomic activation barrier", async () => {
+    const f = fixture({ TENANT_OIDC_ACTIVATION_ALLOWED: "auto" });
+    f.prisma.tenant.findMany.mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
+    f.prisma.oAuthApplication.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    await f.service.reconcilePromptly();
+    expect(f.oidc.activate).not.toHaveBeenCalled();
+  });
+
   it("blocks all tenant cutovers if any inbound federation exists", async () => {
     const f = fixture();
     f.prisma.userIdentity.count.mockResolvedValue(1);
