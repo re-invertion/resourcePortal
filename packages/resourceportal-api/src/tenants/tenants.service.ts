@@ -935,7 +935,14 @@ export class TenantsService {
       return created;
     });
 
-    return mapMembership(membership);
+    // The entitlement has committed, but tenant project membership is a
+    // separate upstream operation. Attempt it immediately; do not claim the
+    // newly invited member can use SSO until the issuer grant is verified.
+    // An interrupted attempt is recoverable from NeedsReconciliation.
+    const mapped = mapMembership(membership);
+    if (!this.tenantOidc || !invitation.roleIds.includes("sso-login")) return mapped;
+    const readiness = await this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id);
+    return { ...mapped, ssoProvisioning: readiness };
   }
 
   async listGroups(tenantId: string) {
