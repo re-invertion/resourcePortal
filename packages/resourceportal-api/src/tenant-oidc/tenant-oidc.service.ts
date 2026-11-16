@@ -121,6 +121,14 @@ export class TenantOidcService {
     if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") !== "true") {
       return before; // Auto mode runs exclusively through guarded AutoRollout.
     }
+    // A local application grant or invitation can also be submitted by a
+    // machine principal. They must NEVER act as first-time OIDC activation:
+    // only the human-gated tenant activation endpoint (or the guarded auto
+    // rollout) can establish the durable first-activation marker.
+    const provider = await this.prisma.tenantOidcProvider.findUnique({
+      where: { tenantId }, select: { lastActivatedAt: true },
+    });
+    if (!provider?.lastActivatedAt) return before;
     try {
       await this.activate(tenantId, false);
     } catch {
@@ -510,7 +518,7 @@ export class TenantOidcService {
         status: "GrantsReconciled",
         grantsReconciledAt: provider.grantsReconciledAt,
       },
-      data: { enabled: true, status: "Active", lastErrorCode: null },
+      data: { enabled: true, status: "Active", lastErrorCode: null, lastActivatedAt: new Date() },
     });
     if (activated.count !== 1) {
       throw new ConflictException("Tenant membership changed before OIDC activation; reconcile grants again");
