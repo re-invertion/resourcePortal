@@ -92,14 +92,14 @@ describe("Tenant OIDC automatic rollout", () => {
       expect.objectContaining({ where: expect.objectContaining({
         tenantId: "t1", lastActivatedAt: { not: null },
         status: { notIn: ["Disabling", "Disabled", "Deleted"] },
-      }) }),
+      }) as Record<string, unknown> }),
     );
     await f.service.reconcilePromptly();
     expect(f.oidc.activate).toHaveBeenCalledTimes(2);
     expect(f.prisma.tenantOidcProvider.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({
-        tenantId: "t1", autoRolloutLeaseOwner: expect.any(String),
-      }), data: { autoRolloutLeaseOwner: null, autoRolloutLeaseUntil: null } }),
+        tenantId: "t1", autoRolloutLeaseOwner: expect.any(String) as string,
+      }) as Record<string, unknown>, data: { autoRolloutLeaseOwner: null, autoRolloutLeaseUntil: null } }),
     );
   });
 
