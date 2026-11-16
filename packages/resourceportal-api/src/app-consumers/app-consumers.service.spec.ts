@@ -92,6 +92,22 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
       .toBeLessThan(f.tx.auditLogEntry.create.mock.invocationCallOrder[0]);
   });
 
+  it("wakes explicit and guarded automatic provisioning after native Web/CLI grant", async () => {
+    const f = fixture();
+    const expediteMemberReadiness = vi.fn().mockResolvedValue({ status: "pending" });
+    const reconcilePromptly = vi.fn().mockResolvedValue(undefined);
+    const svc = new AppConsumersService(f.prisma as never,
+      { expediteMemberReadiness } as never, { reconcilePromptly } as never);
+    await expect(svc.grantNative(tenantId, membershipId, "web", actor))
+      .resolves.toEqual({ clientKey: "web", enabled: true });
+    expect(expediteMemberReadiness).toHaveBeenCalledWith(tenantId, userId);
+    expect(reconcilePromptly).toHaveBeenCalledOnce();
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
+  });
+
   it("rejects cross-tenant app, self-service and inactive membership with no write", async () => {
     const f = fixture();
     f.tx.oAuthApplication.findFirst.mockResolvedValueOnce(null);
