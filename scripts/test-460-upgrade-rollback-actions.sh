@@ -44,6 +44,11 @@ rp460_zitadel_http() {
   fi
 }
 rp_app_action_http() { rp460_zitadel_http "$@"; }
+# Invitation OIDC provisioning is unrelated to this Action/TLS rollback
+# experiment and requires separate issuer client credentials. The dedicated
+# invitation lifecycle suite covers it. Keep real Action management and both
+# physical database snapshot/restore paths fully enabled here.
+rp_invitation_oidc_prepare() { return 0; }
 rp_app_action_prepare() {
   # After both physical source DB snapshots, create a candidate-only target
   # in the same real ZITADEL eventstore that rp_upgrade_apply will restore.
@@ -133,7 +138,11 @@ YAML
 health_checks=0
 rp_wait_for_https_origin() {
   health_checks=$((health_checks+1))
-  if [[ "$health_checks" == 1 ]]; then
+  local checkpoint_phase
+  checkpoint_phase="$(jq -r '.phase // ""' "$RP_UPGRADE_STATE_DIR/state.json" 2>/dev/null)" || return 1
+  if [[ "$checkpoint_phase" != rolling-back ]]; then
+    # Never misclassify a rollback as target readiness just because an
+    # earlier provisioning step aborted before the first health probe.
     wait_services target && rp460_start_api_and_ingress
   else
     wait_services previous || return 1
