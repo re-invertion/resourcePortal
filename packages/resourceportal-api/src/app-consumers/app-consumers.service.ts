@@ -124,8 +124,18 @@ export class AppConsumersService {
         membershipId, undefined, { membershipId, clientKey, enabled: true });
       return { clientKey, enabled: record.enabled };
     });
-    // Both native and third-party grants use the same durable upstream project
-    // membership; never leave the first Web/CLI entitlement on a timer alone.
+    // Native Web/CLI grants must wake BOTH supported provisioning paths:
+    // explicit administrator-authorized activation and guarded automatic rollout.
+    // The committed NeedsReconciliation row remains durable across crashes.
+    if (this.oidc) {
+      const member = await this.prisma.tenantMembership.findUnique({
+        where: { id: membershipId }, select: { userId: true },
+      });
+      if (member) {
+        void this.oidc.expediteMemberReadiness(tenantId, member.userId)
+          .catch(() => undefined);
+      }
+    }
     if (this.oidcAutoRollout) {
       void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
     }
