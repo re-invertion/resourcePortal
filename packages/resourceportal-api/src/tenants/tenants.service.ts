@@ -949,12 +949,14 @@ export class TenantsService {
     // The committed NeedsReconciliation marker is the durable retry signal.
     // Auto policy must use the guarded rollout worker, not a direct activate()
     // that could bypass federation/cohort safety. The timer retries on failure.
+    // Direct activation is authorized only with the explicit "true" policy.
+    // In "auto" mode, expediteMemberReadiness is read-only; the separate
+    // guarded cohort wake-up is the sole path to activation.
+    void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
+      .catch(() => this.logger.warn("Tenant SSO explicit provisioning remains pending"));
     if (this.oidcAutoRollout) {
       void this.oidcAutoRollout.reconcilePromptly()
         .catch(() => this.logger.warn("Tenant SSO guarded rollout remains pending"));
-    } else {
-      void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
-        .catch(() => this.logger.warn("Tenant SSO provisioning remains pending"));
     }
     const readiness = await this.tenantOidc.memberReadiness(invitation.tenantId, actor.id);
     return { ...mapped, ssoProvisioning: readiness };
