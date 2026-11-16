@@ -91,6 +91,22 @@ export class TenantOidcService {
     return { status: "pending", reason: "UPSTREAM_GRANT_PENDING" };
   }
 
+  /**
+   * The first direct client grant can follow membership creation by minutes or
+   * days. Invalidate a stale project-grant snapshot before allowing readiness
+   * to become visible, and start the same recoverable reconciliation path.
+   */
+  async onClientEntitlementGranted(tenantId: string, userId: string) {
+    const before = await this.memberReadiness(tenantId, userId);
+    if (before.status !== "pending") return before;
+    await this.prisma.tenantOidcProvider.updateMany({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
+    void this.expediteMemberReadiness(tenantId, userId).catch(() => undefined);
+    return { status: "pending" as const, reason: "UPSTREAM_GRANT_PENDING" };
+  }
+
   /** Best-effort prompt reconciliation after commit; durable rollout retries remain enabled. */
   async expediteMemberReadiness(tenantId: string, userId: string) {
     const before = await this.memberReadiness(tenantId, userId);
