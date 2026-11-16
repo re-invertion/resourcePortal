@@ -75,7 +75,8 @@ export class TenantOidcService {
       where: { tenantId, userId, zitadelUserId: identity.externalSubject },
     });
     if (provider.enabled && provider.status === "Active" &&
-        provider.zitadelProjectId && grant?.status === "Active" && grant.zitadelGrantId) {
+        provider.zitadelProjectId && grant?.zitadelUserId === identity.externalSubject &&
+        grant.status === "Active" && grant.zitadelGrantId) {
       try {
         await this.zitadel.verifyMemberGrant(
           identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId,
