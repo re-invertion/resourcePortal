@@ -35,7 +35,13 @@ rp460_zitadel_http() {
     --write-out '%{http_code}' --request "$method")
   if [[ -n "$input" ]]; then args+=(--data-binary "@$input"); fi
   http="$(curl "${args[@]}" "http://127.0.0.1:18080$path")" || return 1
-  [[ "$http" == 200 ]] || { echo "ZITADEL $method $path HTTP=$http" >&2; return 1; }
+  if [[ "$http" != 200 ]]; then
+    echo "ZITADEL $method $path HTTP=$http" >&2
+    # ZITADEL management error is JSON; report status/code/message only, not
+    # PAT, signature, target signing key or arbitrary response bytes.
+    jq -c '{code, message, details}' "$out" >&2 2>/dev/null || true
+    return 1
+  fi
 }
 rp_app_action_http() { rp460_zitadel_http "$@"; }
 rp_app_action_prepare() {
@@ -187,6 +193,12 @@ rp_upgrade_quiesce_database_clients() {
 rp_app_action_checkpoint_detach() {
   rp_rollback_zitadel_start "$source_zitadel" "source after rollback" || return 1
   rp460_original_action_detach "$1" || return 1
+  # If creation failed before the candidate target existed, the source
+  # database has no candidate identifier and must still be rollback-safe.
+  if [[ -z "${RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID:-}" ]]; then
+    echo 'PASS: rollback after rejected target create left no candidate ID'
+    return 0
+  fi
   local code
   code="$(curl --silent --show-error --no-location \
     --config "$root/rp460-management.conf" \
