@@ -53,6 +53,28 @@ Database:
       SSL:
         Mode: disable
 YAML
+  # Only the disposable #460 job may accept local loopback webhook targets.
+  # ZITADEL v4.17's default SSRF deny list blocks 127.0.0.0/8; the
+  # previously green isolated federation E2E explicitly keeps all other
+  # private/link-local deny ranges while excluding ONLY loopback.
+  # This file belongs to a throwaway GitHub Actions ZITADEL instance.
+  if [[ "${RP_460_VERIFY_SAME_OUTAGE_ROLLBACK:-false}" == true ]]; then
+    [[ "${GITHUB_ACTIONS:-}" == true && "${RP_ROLLBACK_E2E_ISOLATED:-}" == true ]] || return 1
+    cat >>"$config_dir/public.yaml" <<'YAML'
+HTTPClient:
+  DenyList:
+    - "0.0.0.0/8"
+    - "10.0.0.0/8"
+    - "100.64.0.0/10"
+    - "169.254.0.0/16"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "198.18.0.0/15"
+    - "::/128"
+    - "fc00::/7"
+    - "fe80::/10"
+YAML
+  fi
   cat >"$config_dir/secrets.yaml" <<'YAML'
 Database:
   postgres:
