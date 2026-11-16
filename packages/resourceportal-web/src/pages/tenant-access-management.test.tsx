@@ -103,6 +103,50 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     });
   });
 
+  it("never opens member B with member A's values when B's grant snapshot is missing", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.endsWith("/memberships")) return json([owner, member]);
+      if (url.endsWith("/membership-app-grants")) return json([
+        { membershipId: "m-owner", grants: [{ applicationId: "app-a", enabled: true }], nativeGrants: [] },
+      ]);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/oauth-applications")) return json([{ id: "app-a", name: "Application A" }]);
+      if (url.endsWith("/invitations") || url.endsWith("/groups")) return json([]);
+      return json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    const edit = await screen.findAllByRole("button", { name: "Edit access" });
+    await waitFor(() => expect(edit[0].hasAttribute("disabled")).toBe(false));
+    fireEvent.click(edit[0]);
+    expect(screen.getByRole("heading", { name: "Edit access: Tenant Owner" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(edit[1]);
+    expect(screen.queryByRole("heading", { name: /Edit access:/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save access" })).toBeNull();
+    expect(calls.some(c => c.init?.method === "PATCH")).toBe(false);
+  });
+
+  it("does not open an editor when the grants request fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/memberships")) return json([owner, member]);
+      if (url.endsWith("/membership-app-grants")) return json({ error: "Unavailable" }, 503);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/invitations") || url.endsWith("/groups")) return json([]);
+      return json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect((await screen.findAllByText("Member")).length).toBeGreaterThan(0);
+    const editButtons = await screen.findAllByRole("button", { name: "Edit access" });
+    await waitFor(() => expect(editButtons.every(button => button.hasAttribute("disabled"))).toBe(true));
+    fireEvent.click(editButtons[1]);
+    expect(screen.queryByRole("heading", { name: /Edit access:/ })).toBeNull();
+  });
+
   it("adds group members and inherited roles through real tenant-scoped API operations", async () => {
     const calls = fetcher();
     render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);

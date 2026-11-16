@@ -155,17 +155,23 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     finally { setWorking(false); }
   }
   function beginMember(m: R) {
-    setEditingMembership(m);
+    // Do not open a form until every field can be initialized from this member's snapshot.
+    // In particular, never carry another member's roles or grants into an incomplete edit.
     if (memberGrants.loading || memberGrants.error) return;
     const grants = memberGrantRows.find(row => row.membershipId === idOf(m));
-    if (!grants) return;
+    if (!grants) {
+      toast.error("Access grants for this member are unavailable. Refresh and retry.");
+      return;
+    }
     setMemberRoles(membershipRoleIds(m));
     setMemberApps(items<R>(grants.grants).filter(g => g.enabled === true).map(g => text(g.applicationId)));
     setMemberNative(items<R>(grants.nativeGrants).filter(g => g.enabled === true).map(g => text(g.clientKey)));
     setMemberStatus(text(m.status, "Active"));
+    setEditingMembership(m);
   }
   async function saveMembership() {
     if (!editingMembership || !can("membership.update") || memberGrants.loading || memberGrants.error ||
+        !memberGrantRows.some(row => row.membershipId === idOf(editingMembership)) ||
         oauthApps.loading || oauthApps.error) return;
     try {
       await action(
