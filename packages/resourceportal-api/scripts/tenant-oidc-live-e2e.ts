@@ -490,6 +490,72 @@ async function main() {
       });
     let suspendedB = false;
     try {
+      // #463: simulate the actual delay between the local exact-client
+      // entitlement and assignment of a native tenant project grant, using
+      // a NEW sso-login-only member (no RP management permissions).
+      // Upstream assignment is deliberately held until readiness is observed
+      // pending; the already certified real Actions V2 execution remains live.
+      const userCId = await createZitadelHuman(suffix + "-c");
+      const userC = await prisma.user.create({ data: {
+        email: "oidc-live-" + suffix + "-c@rp.invalid",
+        displayName: "RP Delayed SSO E2E",
+        status: UserStatus.Active,
+        identities: { create: { providerType: "zitadel", issuer, externalSubject: userCId } },
+      } });
+      const memberC = await prisma.tenantMembership.create({ data: {
+        tenantId: tenantA.id, userId: userC.id, createdBy: userA.id,
+        status: MembershipStatus.Active,
+        roles: { create: [{ roleId: "sso-login" }] },
+      } });
+      const onlyA = await prisma.tenantAppClientGrant.create({ data: {
+        tenantId: tenantA.id, membershipId: memberC.id,
+        oauthApplicationId: apps[0].id, createdBy: userA.id, updatedBy: userA.id,
+      } });
+      // RP's per-client Action alone would approve A, but ZITADEL's native
+      // project check does not yet have the corresponding membership grant.
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, web.clientId), true);
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, secondWeb.clientId), false);
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id),
+        { status: "pending", reason: "UPSTREAM_GRANT_PENDING" });
+      // Controlled barrier release: real Management API persists the missing
+      // role assignment. This proves readiness against the actual issuer,
+      // not against mocked verification or merely an RP local grant.
+      const remoteGrantC = await projects.assignMember(userCId, projectA);
+      const grantC = await prisma.tenantOidcGrant.create({ data: {
+        tenantId: tenantA.id, userId: userC.id, zitadelUserId: userCId,
+        zitadelGrantId: remoteGrantC, status: "Active",
+      } });
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id), { status: "ready" });
+      const issuedC = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userCId, userName: "oidc-live-" + suffix + "-c",
+        password: "E2e!Test-" + suffix + "-c", skipLogout: true,
+      });
+      const renewedC = await refreshClient(web.clientId, web.clientSecret, issuedC.refreshToken);
+      assert.equal(renewedC.status, 200, "Newly provisioned user C could not refresh allowed client A");
+      const tokenC = await renewedC.json() as { refresh_token?: string };
+      assert.ok(tokenC.refresh_token);
+      assert.ok(consumerGate.events().some(e => e.userId === userCId &&
+        e.clientId === web.clientId && e.decision === "allow"));
+      // A and B share tenant project, but only A is entitled for C.
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, secondWeb.clientId), false);
+      await prisma.tenantAppClientGrant.update({
+        where: { id: onlyA.id }, data: { enabled: false, updatedBy: userA.id },
+      });
+      const cRevoked = await refreshClient(web.clientId, web.clientSecret, tokenC.refresh_token!);
+      assert.ok(!cRevoked.ok, "SECURITY: newly onboarded SSO-only client access survived revocation");
+      assert.ok(consumerGate.events().some(e => e.userId === userCId &&
+        e.clientId === web.clientId && e.decision === "deny"));
+      // Removing the real remote grant must withdraw readiness even while
+      // RP still has a locally Active grant row.
+      await projects.revokeMember(userCId, remoteGrantC);
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id),
+        { status: "pending", reason: "UPSTREAM_GRANT_UNVERIFIED" });
+      await prisma.tenantOidcGrant.delete({ where: { id: grantC.id } });
+      console.log("PASS: #463 real delayed SSO-only member: pending before grant, " +
+        "native verified ready, client A token, B denied, revocation and remote-loss pending");
+
       // Real signed approval for both isolated tenants.
       const allowA = await runOidcAuthorizationE2E({
         issuer, projectId: projectA, foreignProjectId: projectB,
