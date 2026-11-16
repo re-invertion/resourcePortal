@@ -940,7 +940,9 @@ export class TenantsService {
     // newly invited member can use SSO until the issuer grant is verified.
     // An interrupted attempt is recoverable from NeedsReconciliation.
     const mapped = mapMembership(membership);
-    if (!this.tenantOidc || !invitation.roleIds.includes("sso-login")) return mapped;
+    if (!this.tenantOidc || !invitation.roleIds.includes("sso-login")) {
+      return { ...mapped, ssoProvisioning: { status: "not_required" as const } };
+    }
     const readiness = await this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id);
     return { ...mapped, ssoProvisioning: readiness };
   }
