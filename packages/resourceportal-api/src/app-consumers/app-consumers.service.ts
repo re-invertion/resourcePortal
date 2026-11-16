@@ -1,10 +1,11 @@
 import {
-  ForbiddenException, Injectable, NotFoundException,
+  ForbiddenException, Injectable, NotFoundException, Optional,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
 
 /** The same User/TenantMembership owns RP RBAC and application-specific SSO. */
 export type NativeClientKey = "web" | "cli";
@@ -13,7 +14,8 @@ const NATIVE_KEYS: NativeClientKey[] = ["web", "cli"];
 
 @Injectable()
 export class AppConsumersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService,
+    @Optional() private readonly oidc?: TenantOidcService) {}
 
   async list(tenantId: string) {
     const memberships = await this.prisma.tenantMembership.findMany({
@@ -47,7 +49,7 @@ export class AppConsumersService {
   }
 
   async grant(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const member = await this.lockedMember(tx, tenantId, membershipId, actor);
       const application = await tx.oAuthApplication.findFirst({
         where: { id: applicationId, tenantId }, select: { id: true, name: true },
@@ -63,6 +65,20 @@ export class AppConsumersService {
         applicationId, application.name, { membershipId, applicationId, enabled: true });
       return { id: record.id, applicationId, enabled: record.enabled };
     });
+
+    // A first grant may target a member who has never received the upstream
+    // tenant-project role. Never report SSO ready based on the local row alone.
+    if (!this.oidc) return result;
+    const member = await this.prisma.tenantMembership.findUnique({
+      where: { id: membershipId }, select: { userId: true },
+    });
+    if (!member) return result;
+    try {
+      const readiness = await this.oidc.onClientEntitlementGranted(tenantId, member.userId);
+      return { ...result, ssoProvisioning: readiness };
+    } catch {
+      return { ...result, ssoProvisioning: { status: "pending" as const } };
+    }
   }
 
   async revoke(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
