@@ -558,7 +558,7 @@ describe("Tenant OIDC management fails closed", () => {
         tenantId, zitadelProjectId: reconciled.zitadelProjectId,
         enabled: false, status: "GrantsReconciled", grantsReconciledAt: snapshot,
       },
-      data: { enabled: true, status: "Active", lastErrorCode: null },
+      data: { enabled: true, status: "Active", lastErrorCode: null, lastActivatedAt: expect.any(Date) },
     });
     expect(f.prisma.tenantOidcProvider.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ enabled: true }) as unknown as Record<string, unknown> }),
