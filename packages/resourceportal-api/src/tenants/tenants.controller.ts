@@ -10,6 +10,7 @@ import {
   Query,
   UnauthorizedException,
   Req,
+  SetMetadata,
   Res,
 } from "@nestjs/common";
 import { Authenticated } from "../auth/authenticated.decorator";
@@ -408,6 +409,7 @@ export class TenantInvitationsController {
   // Authenticated membership owners can check readiness even when sso-login
   // grants no ResourcePortal RBAC permission to read tenant settings.
   @Authenticated()
+  @SetMetadata("tenant:sso-self-readiness", true)
   @Get("provisioning/:tenantId")
   readiness(@Param("tenantId", ParseUUIDPipe) tenantId: string,
     @CurrentUser() actor: AuthenticatedUser) {
