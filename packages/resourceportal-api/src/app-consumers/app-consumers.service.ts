@@ -66,10 +66,22 @@ export class AppConsumersService {
       // Persist the durable work signal atomically with the exact-client
       // entitlement: a crash between grant and worker wake-up must not strand
       // a member with local access but no upstream project assignment.
-      await tx.tenantOidcProvider.updateMany({
-        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
-        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
-      });
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.app_grant.grant",
         applicationId, application.name, { membershipId, applicationId, enabled: true });
       return { id: record.id, applicationId, enabled: record.enabled };
@@ -116,10 +128,22 @@ export class AppConsumersService {
         create: { membershipId, tenantId, clientKey, createdBy: actor.id, updatedBy: actor.id },
         update: { enabled: true, updatedBy: actor.id },
       });
-      await tx.tenantOidcProvider.updateMany({
-        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
-        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
-      });
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.native_grant.grant",
         membershipId, undefined, { membershipId, clientKey, enabled: true });
       return { clientKey, enabled: record.enabled };
