@@ -91,6 +91,9 @@ rp460_start_api_and_ingress() {
     -e AUTH_MODE=dev -e PUBLIC_API_URL=https://rp-callback.test \
     -e RESOURCE_ENCRYPTION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
     -e INTERNAL_WORKER_TOKEN=rollback-test-only \
+    -e ZITADEL_MANAGEMENT_TOKEN="$(tr -d '\\r\\n' <"$root/zitadel-real-runtime/bootstrap/admin.pat")" \
+    -e ZITADEL_ORGANIZATION_ID=1 \
+    -e OIDC_ISSUER_URL=http://localhost:18080 \
     -e RP_APP_CONSUMER_ACTIONS_V2_ENABLED=true -e RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED=true \
     -e RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID="$RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID" \
     -e RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL=https://rp-callback.test/api/app-consumer-actions/preaccesstoken \
@@ -172,6 +175,7 @@ rp_wait_for_https_origin() {
   fi
 }
 rp_app_action_activate() {
+  RP_460_ACTIVATION_ATTEMPTED=true
   docker service scale rp460-rollback-traefik=0 >/dev/null || return 1
   for attempt in $(seq 1 40); do
     if ! curl --silent --fail --connect-timeout 1 --max-time 2 \
@@ -192,6 +196,7 @@ rp_app_action_activate() {
     return 1
   fi
   docker service scale rp460-rollback-traefik=1 >/dev/null || return 1
+  RP_460_ACTIVATION_120S_PROVEN=true
   echo 'PASS: installer action activation failed on real 120s HTTPS outage'
   return 1
 }
