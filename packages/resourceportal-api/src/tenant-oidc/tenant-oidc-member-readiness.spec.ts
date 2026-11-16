@@ -67,6 +67,21 @@ describe("tenant SSO onboarding readiness (#463)", () => {
     });
   });
 
+
+  it("never activates an auto-rollout tenant outside guarded cohort worker", async () => {
+    const { service } = setup(null, "NeedsReconciliation");
+    // This is the auto mode that must preserve inbound-federation and
+    // all-tenant rollout gates. No direct activation is permitted.
+    const config = { get: (key: string) => key === "TENANT_OIDC_ACTIVATION_ALLOWED" ? "auto" : "true" };
+    const instance = service as unknown as { config: typeof config; activate: (...args: unknown[]) => Promise<unknown> };
+    instance.config = config;
+    const activate = vi.spyOn(instance, "activate").mockResolvedValue({});
+    expect(await service.expediteMemberReadiness(tenantId, userId)).toEqual({
+      status: "pending", reason: "UPSTREAM_GRANT_PENDING",
+    });
+    expect(activate).not.toHaveBeenCalled();
+  });
+
   it("never promotes a foreign-subject grant to ready", async () => {
     const { service, verifyMemberGrant } = setup({
       status: "Active", zitadelUserId: "999999", zitadelGrantId: "grant-1",
