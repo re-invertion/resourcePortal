@@ -943,7 +943,11 @@ export class TenantsService {
     if (!this.tenantOidc || !invitation.roleIds.includes("sso-login")) {
       return { ...mapped, ssoProvisioning: { status: "not_required" as const } };
     }
-    const readiness = await this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id);
+    // Do not hold the invitation HTTP request open during a slow issuer call.
+    // The committed NeedsReconciliation marker is the durable retry signal.
+    void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
+      .catch(() => this.logger.warn("Tenant SSO provisioning remains pending"));
+    const readiness = await this.tenantOidc.memberReadiness(invitation.tenantId, actor.id);
     return { ...mapped, ssoProvisioning: readiness };
   }
 
