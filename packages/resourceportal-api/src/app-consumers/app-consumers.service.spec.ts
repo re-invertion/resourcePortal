@@ -22,7 +22,7 @@ const membership = {
 function fixture() {
   const tx = {
     $queryRaw: vi.fn().mockResolvedValue([]),
-    tenantMembership: { findFirst: vi.fn().mockResolvedValue({
+    tenantMembership: { count: vi.fn().mockResolvedValue(1), findFirst: vi.fn().mockResolvedValue({
       ...membership, user: { status: UserStatus.Active },
       tenant: { name: "Acme", status: "Active" },
     }) },
@@ -90,6 +90,17 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
     });
     expect(f.tx.tenantOidcProvider.updateMany.mock.invocationCallOrder[0])
       .toBeLessThan(f.tx.auditLogEntry.create.mock.invocationCallOrder[0]);
+  });
+
+  it("never disables existing tenant SSO for an RP-only member's app or native grant", async () => {
+    const f = fixture();
+    f.tx.tenantMembership.count.mockResolvedValue(0);
+    await expect(f.svc.grant(tenantId, membershipId, appId, actor))
+      .resolves.toMatchObject({ enabled: true });
+    await expect(f.svc.grantNative(tenantId, membershipId, "web", actor))
+      .resolves.toEqual({ clientKey: "web", enabled: true });
+    expect(f.tx.tenantMembership.count).toHaveBeenCalledTimes(2);
+    expect(f.tx.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
   });
 
   it("wakes explicit and guarded automatic provisioning after native Web/CLI grant", async () => {
