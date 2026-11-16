@@ -109,7 +109,7 @@ export class AppConsumersService {
 
   async grantNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {
     this.assertNativeKey(clientKey);
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const member = await this.lockedMember(tx, tenantId, membershipId, actor);
       const record = await tx.tenantNativeAppGrant.upsert({
         where: { membershipId_clientKey: { membershipId, clientKey } },
@@ -124,6 +124,12 @@ export class AppConsumersService {
         membershipId, undefined, { membershipId, clientKey, enabled: true });
       return { clientKey, enabled: record.enabled };
     });
+    // Both native and third-party grants use the same durable upstream project
+    // membership; never leave the first Web/CLI entitlement on a timer alone.
+    if (this.oidcAutoRollout) {
+      void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+    }
+    return result;
   }
 
   async revokeNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {
