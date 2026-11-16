@@ -65,7 +65,7 @@ export class TenantOidcService {
     if (!provider || ["Disabling", "Disabled", "Deleted"].includes(provider.status)) {
       return { status: "blocked", reason: "TENANT_SSO_DISABLED" };
     }
-    const issuer = provider.issuer?.replace(/\/$/, "");
+    const issuer = (provider.issuer ?? this.zitadel.issuer).replace(/\/$/, "");
     const identity = membership.user.identities.find(row =>
       row.providerType === "zitadel" && row.identityProviderId === null &&
       row.issuer.replace(/\/$/, "") === issuer,
