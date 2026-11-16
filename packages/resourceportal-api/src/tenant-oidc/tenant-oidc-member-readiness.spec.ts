@@ -82,6 +82,41 @@ describe("tenant SSO onboarding readiness (#463)", () => {
     expect(activate).not.toHaveBeenCalled();
   });
 
+  it("never allows a machine-triggerable grant to perform initial human-only activation", async () => {
+    const { service, prisma } = setup(null, "NeedsReconciliation");
+    const config = { get: (key: string) =>
+      key === "TENANT_OIDC_ACTIVATION_ALLOWED" ? "true" : undefined };
+    const instance = service as unknown as {
+      config: typeof config; activate: (...args: unknown[]) => Promise<unknown>;
+    };
+    instance.config = config;
+    const activate = vi.spyOn(instance, "activate").mockResolvedValue({});
+    expect(await service.expediteMemberReadiness(tenantId, userId)).toEqual({
+      status: "pending", reason: "UPSTREAM_GRANT_PENDING",
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(prisma.tenantOidcProvider.findUnique).toHaveBeenCalledWith({
+      where: { tenantId }, select: { lastActivatedAt: true },
+    });
+  });
+
+  it("reconciles explicit grants only after an earlier authorized OIDC activation", async () => {
+    const { service, prisma } = setup(null, "NeedsReconciliation");
+    prisma.tenantOidcProvider.findUnique.mockResolvedValue({
+      status: "NeedsReconciliation", enabled: false, issuer: "https://issuer.example",
+      zitadelProjectId: "project-1", lastActivatedAt: new Date(),
+    });
+    const config = { get: (key: string) =>
+      key === "TENANT_OIDC_ACTIVATION_ALLOWED" ? "true" : undefined };
+    const instance = service as unknown as {
+      config: typeof config; activate: (...args: unknown[]) => Promise<unknown>;
+    };
+    instance.config = config;
+    const activate = vi.spyOn(instance, "activate").mockResolvedValue({});
+    await service.expediteMemberReadiness(tenantId, userId);
+    expect(activate).toHaveBeenCalledWith(tenantId, false);
+  });
+
   it("never promotes a foreign-subject grant to ready", async () => {
     const { service, verifyMemberGrant } = setup({
       status: "Active", zitadelUserId: "999999", zitadelGrantId: "grant-1",
