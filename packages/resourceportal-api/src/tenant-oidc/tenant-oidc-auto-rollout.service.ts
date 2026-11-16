@@ -42,6 +42,14 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
     this.timer = undefined;
   }
 
+  /** Kick the existing guarded safety/cohort pipeline after a committed membership
+   * mutation. The periodic timer remains the durable retry for crashes or leases.
+   * Never invoke TenantOidcService.activate directly in auto mode.
+   */
+  async reconcilePromptly() {
+    await this.reconcileOnce();
+  }
+
   private async reconcileOnce() {
     if (this.running) return;
     this.running = true;
