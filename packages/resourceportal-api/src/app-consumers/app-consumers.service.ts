@@ -63,6 +63,13 @@ export class AppConsumersService {
           createdBy: actor.id, updatedBy: actor.id, enabled: true },
         update: { enabled: true, updatedBy: actor.id },
       });
+      // Persist the durable work signal atomically with the exact-client
+      // entitlement: a crash between grant and worker wake-up must not strand
+      // a member with local access but no upstream project assignment.
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+      });
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.app_grant.grant",
         applicationId, application.name, { membershipId, applicationId, enabled: true });
       return { id: record.id, applicationId, enabled: record.enabled };
@@ -108,6 +115,10 @@ export class AppConsumersService {
         where: { membershipId_clientKey: { membershipId, clientKey } },
         create: { membershipId, tenantId, clientKey, createdBy: actor.id, updatedBy: actor.id },
         update: { enabled: true, updatedBy: actor.id },
+      });
+      await tx.tenantOidcProvider.updateMany({
+        where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+        data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
       });
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.native_grant.grant",
         membershipId, undefined, { membershipId, clientKey, enabled: true });
