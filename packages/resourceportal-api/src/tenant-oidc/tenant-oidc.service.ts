@@ -104,7 +104,11 @@ export class TenantOidcService {
       where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
       data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
     });
-    void this.expediteMemberReadiness(tenantId, userId).catch(() => undefined);
+    // Explicit activation is allowed; automatic activation MUST pass the
+    // complete guarded cohort and inbound-federation checks in AutoRollout.
+    if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") === "true") {
+      void this.expediteMemberReadiness(tenantId, userId).catch(() => undefined);
+    }
     return { status: "pending" as const, reason: "UPSTREAM_GRANT_PENDING" };
   }
 
@@ -112,8 +116,13 @@ export class TenantOidcService {
   async expediteMemberReadiness(tenantId: string, userId: string) {
     const before = await this.memberReadiness(tenantId, userId);
     if (before.status !== "pending") return before;
+    // Never use fromAutoRollout=true for a direct request: that would
+    // circumvent the worker's federation and all-tenant cohort barriers.
+    if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") !== "true") {
+      return before; // Auto mode runs exclusively through guarded AutoRollout.
+    }
     try {
-      await this.activate(tenantId, true);
+      await this.activate(tenantId, false);
     } catch {
       // Never leak issuer exceptions into a committed invitation response.
       // The provider records its sanitized failure state for the next retry.
