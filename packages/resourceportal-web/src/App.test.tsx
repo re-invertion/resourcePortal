@@ -80,6 +80,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.queryByLabelText("Display name")).toBeNull();
     expect(screen.queryByText(/Stable name used to identify this resource/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo Tenant" } });
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Demo Tenant");
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "not-an-email" } });
     expect(screen.getByRole("alert").textContent).toContain("valid email");
     // Formik schedules asynchronous schema validation on every edit. Wait
@@ -88,6 +89,8 @@ describe("Web Console bootstrap", () => {
       fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
     });
     expect(screen.queryByRole("alert")).toBeNull();
+    // Preserve the first edit across asynchronous validation and app refreshes.
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Demo Tenant");
     expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
     // Under a saturated CI runner React may not have committed the final
     // validation update yet. Assert the form is actually submittable before
