@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeState } from "@prisma/client";
 import { RuntimeOperationExecutor } from "./runtime-operation.executor";
 import type { PrismaService } from "../../prisma/prisma.service";
-import type { StackRuntimeService } from "../../internal/stack-runtime.service";
+import { classifyScaleTaskFailure, type StackRuntimeService } from "../../internal/stack-runtime.service";
 import type { OperationRecord } from "../operation.types";
 
 const appGroupId = "11111111-1111-4111-8111-111111111111";
@@ -81,5 +81,41 @@ describe("Runtime start reservation consistency (#373 P1)", () => {
         code: "DeploymentSnapshotInvalid", retryable: false,
       });
     expect(scaleServices).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("runtime scale failure handling (#450)", () => {
+  const deployed = JSON.stringify({ singleApps: [{ id: singleAppId, name: "test", desiredReplicas: 1 }] });
+  const start = { type: "SINGLE_APP_START", resourceId: singleAppId, input: { appGroupId } } as OperationRecord;
+
+  for (const code of ["ImagePullAuthorizationFailed", "ImageNotFound", "SwarmPlacementRejected"]) {
+    it(`stops automatic retries on deterministic ${code}`, async () => {
+      const { executor, scaleServices } = fixture(deployed);
+      scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124,
+        stdout: "", stderr: `Swarm scale did not converge; cause=${code}`, diagnosticCode: code }]);
+      await expect(executor.execute(start)).rejects.toMatchObject({ code, retryable: false });
+    });
+  }
+
+  it("does not blindly retry when a timed-out scale outcome cannot be classified", async () => {
+    const { executor, scaleServices } = fixture(deployed);
+    scaleServices.mockResolvedValue([{ command: "docker service scale", exitCode: 124,
+      stdout: "", stderr: "Swarm scale did not converge; cause=TaskFailureUnknown", diagnosticCode: "TaskFailureUnknown" }]);
+    await expect(executor.execute(start)).rejects.toMatchObject({ code: "RuntimeOutcomeUnknown", retryable: false });
+  });
+});
+
+
+describe("bounded Swarm task error classification (#450)", () => {
+  it("classifies registry authorization failure without copying secrets", () => {
+    expect(classifyScaleTaskFailure("pull access denied: token=supersecret")).toBe("ImagePullAuthorizationFailed");
+  });
+  it("classifies missing image and capacity placement errors", () => {
+    expect(classifyScaleTaskFailure("manifest unknown: image missing")).toBe("ImageNotFound");
+    expect(classifyScaleTaskFailure("no suitable node (insufficient resources)")).toBe("SwarmPlacementRejected");
+  });
+  it("returns unknown instead of leaking unclassified task errors", () => {
+    expect(classifyScaleTaskFailure("private user=alice token=secret")).toBe("TaskFailureUnknown");
   });
 });

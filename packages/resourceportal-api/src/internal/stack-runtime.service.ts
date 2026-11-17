@@ -12,7 +12,17 @@ type RuntimeResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
+  diagnosticCode?: "ImagePullAuthorizationFailed" | "ImageNotFound" | "SwarmPlacementRejected" | "TaskFailureUnknown";
 };
+
+/** Return only stable, safe diagnosis codes; never retain raw task errors. */
+export function classifyScaleTaskFailure(raw: string): RuntimeResult["diagnosticCode"] {
+  const message = raw.toLowerCase().slice(0, 16_384);
+  if (/unauthorized|authentication required|pull access denied|insufficient_scope|denied:/.test(message)) return "ImagePullAuthorizationFailed";
+  if (/manifest unknown|no such image|image not found/.test(message)) return "ImageNotFound";
+  if (/no suitable node|insufficient resources|no node available/.test(message)) return "SwarmPlacementRejected";
+  return "TaskFailureUnknown";
+}
 
 @Injectable()
 export class StackRuntimeService {
@@ -175,13 +185,33 @@ export class StackRuntimeService {
     const results: RuntimeResult[] = [];
 
     for (const service of services) {
-      results.push(
-        await this.runDocker([
-          "service",
-          "scale",
-          `${service.stackName}_${service.serviceName}=${service.replicas}`,
-        ]),
-      );
+      const serviceName = `${service.stackName}_${service.serviceName}`;
+      const result = await this.runDocker([
+        "service", "scale", `${serviceName}=${service.replicas}`,
+      ]);
+      if (result.exitCode === 0) {
+        results.push(result);
+        continue;
+      }
+      // A timed-out Swarm scale may have been accepted but failed task
+      // scheduling. Diagnose the task before automatic operation retries.
+      // Only persist allow-listed failure codes, never raw Docker output.
+      let diagnosticCode: RuntimeResult["diagnosticCode"] = "TaskFailureUnknown";
+      if (/^[a-zA-Z0-9_-]{1,128}$/.test(serviceName)) {
+        const tasks = await this.runDocker([
+          "service", "ps", "--no-trunc", "--format", "{{.Error}}", serviceName,
+        ], 5_000);
+        if (tasks.exitCode === 0) {
+          diagnosticCode = classifyScaleTaskFailure(tasks.stdout);
+        }
+      }
+      results.push({
+        command: "docker service scale",
+        exitCode: result.exitCode,
+        stdout: "",
+        stderr: `Swarm scale did not converge; cause=${diagnosticCode}`,
+        diagnosticCode,
+      });
     }
 
     return results;
@@ -783,9 +813,9 @@ export class StackRuntimeService {
     return { running, desired };
   }
 
-  private runDocker(args: string[]): Promise<RuntimeResult> {
+  private runDocker(args: string[], timeoutOverrideMs?: number): Promise<RuntimeResult> {
     const dockerContext = this.config.get<string>("DOCKER_CONTEXT");
-    const timeoutMs = this.config.get<number>(
+    const timeoutMs = timeoutOverrideMs ?? this.config.get<number>(
       "DOCKER_RUNTIME_OPERATION_TIMEOUT_MS",
       120000,
     );
