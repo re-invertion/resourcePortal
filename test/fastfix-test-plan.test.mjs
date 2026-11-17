@@ -842,3 +842,15 @@ test("OIDC client/action refresh proof requires identity and security certificat
   ];
   assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
 });
+
+
+test("issue #412 Bug Report screenshot reset selects exact Web and API tests without weakening fail-closed classification", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/bug-report-dialog.tsx",
+    "packages/resourceportal-web/src/components/bug-report-dialog.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["bug-reports"]);
+  const plan = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(plan, /src\/components\/bug-report-dialog\.test\.tsx/);
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/components/bug-report-dialog-unsafe.tsx"]), /unclassified changes/);
+});
