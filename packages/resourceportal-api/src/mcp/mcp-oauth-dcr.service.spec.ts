@@ -280,3 +280,70 @@ describe("MCP DCR bounded response and deadline (#213)", () => {
     }
   });
 });
+
+
+describe("DCR partial registration compensation (#213)", () => {
+  function registration(uri = "https://auth.resource-portal.test/oauth/v2/register/client-1") {
+    return new Response(JSON.stringify({
+      client_id: "client-1",
+      registration_access_token: "sensitive-registration-token",
+      registration_client_uri: uri,
+    }), { status: 201 });
+  }
+
+  async function partialRegistrationResponse(fetchMock: ReturnType<typeof vi.fn>) {
+    global.fetch = fetchMock as typeof fetch;
+    try {
+      await service().register({});
+      throw new Error("Expected DCR partial-registration failure");
+    } catch (cause) {
+      const response = cause && typeof cause === "object" && "getResponse" in cause
+        ? (cause as { getResponse: () => unknown }).getResponse() : cause;
+      expect(response).toMatchObject({
+        code: "DCR_PARTIAL_REGISTRATION",
+        clientId: "client-1",
+      });
+      expect(JSON.stringify(response)).not.toContain("sensitive-registration-token");
+      expect(JSON.stringify(response)).not.toContain("management-token");
+      expect(JSON.stringify(response)).toContain("manual reconciliation");
+    }
+  }
+
+  it("reports the partial client when rollback DELETE returns HTTP 503", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("http://zitadel:8080/oauth/v2/register/client-1");
+    expect((fetchMock.mock.calls[2][1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("reports partial state when upstream DELETE fails with a network error", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockRejectedValueOnce(new TypeError("connection reset"));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not send registration bearer to a rollback URI outside the DCR endpoint", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration("https://auth.resource-portal.test/management/v1/projects/_search"))
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }));
+    await partialRegistrationResponse(fetchMock);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the original compatibility error after confirmed rollback success", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(registration())
+      .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    global.fetch = fetchMock as typeof fetch;
+    await expect(service().register({})).rejects.toThrow("compatibility update failed with HTTP 503");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
