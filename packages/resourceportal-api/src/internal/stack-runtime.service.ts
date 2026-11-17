@@ -24,6 +24,34 @@ export function classifyScaleTaskFailure(raw: string): RuntimeResult["diagnostic
   return "TaskFailureUnknown";
 }
 
+/** Only task IDs absent from the pre-mutation snapshot may explain a failed scale. */
+export function classifyNewScaleTaskFailures(
+  beforeIds: string,
+  afterJsonLines: string,
+): RuntimeResult["diagnosticCode"] {
+  if (beforeIds.length > 65_536 || afterJsonLines.length > 65_536) return "TaskFailureUnknown";
+  const validId = (value: unknown): value is string =>
+    typeof value === "string" && /^[a-z0-9]{20,64}$/i.test(value);
+  const before = beforeIds.trim() ? beforeIds.trim().split("\n") : [];
+  const after = afterJsonLines.trim() ? afterJsonLines.trim().split("\n") : [];
+  if (before.length > 256 || after.length > 256 ||
+      before.some((id) => !validId(id))) return "TaskFailureUnknown";
+  const known = new Set(before);
+  for (const line of after) {
+    let row: unknown;
+    try { row = JSON.parse(line); } catch { return "TaskFailureUnknown"; }
+    if (!row || typeof row !== "object" || !("ID" in row) ||
+        !validId(row.ID) || !("Error" in row) || typeof row.Error !== "string" ||
+        !("CurrentState" in row) || typeof row.CurrentState !== "string") {
+      return "TaskFailureUnknown";
+    }
+    if (known.has(row.ID) || !/^(Rejected|Failed)\b/i.test(row.CurrentState)) continue;
+    const diagnostic = classifyScaleTaskFailure(row.Error);
+    if (diagnostic !== "TaskFailureUnknown") return diagnostic;
+  }
+  return "TaskFailureUnknown";
+}
+
 @Injectable()
 export class StackRuntimeService {
   constructor(private readonly config: ConfigService) {}
@@ -186,6 +214,12 @@ export class StackRuntimeService {
 
     for (const service of services) {
       const serviceName = `${service.stackName}_${service.serviceName}`;
+      const safeName = /^[a-zA-Z0-9_-]{1,128}$/.test(serviceName);
+      // Capture IDs BEFORE submitting the scale command. Historical task
+      // failures must never be attributed to the current operation.
+      const before = safeName ? await this.runDocker([
+        "service", "ps", "--no-trunc", "--format", "{{.ID}}", serviceName,
+      ], 5_000) : null;
       const result = await this.runDocker([
         "service", "scale", `${serviceName}=${service.replicas}`,
       ]);
@@ -193,16 +227,16 @@ export class StackRuntimeService {
         results.push(result);
         continue;
       }
-      // A timed-out Swarm scale may have been accepted but failed task
-      // scheduling. Diagnose the task before automatic operation retries.
-      // Only persist allow-listed failure codes, never raw Docker output.
+      // A timed-out scale may have been accepted but failed scheduling. Only
+      // new failed task IDs may explain this attempt. If task discovery fails,
+      // preserve Unknown and never automatically retry an ambiguous timeout.
       let diagnosticCode: RuntimeResult["diagnosticCode"] = "TaskFailureUnknown";
-      if (/^[a-zA-Z0-9_-]{1,128}$/.test(serviceName)) {
+      if (before?.exitCode === 0 && before.stdout.length <= 65_536) {
         const tasks = await this.runDocker([
-          "service", "ps", "--no-trunc", "--format", "{{.Error}}", serviceName,
+          "service", "ps", "--no-trunc", "--format", "{{json .}}", serviceName,
         ], 5_000);
         if (tasks.exitCode === 0) {
-          diagnosticCode = classifyScaleTaskFailure(tasks.stdout);
+          diagnosticCode = classifyNewScaleTaskFailures(before.stdout, tasks.stdout);
         }
       }
       results.push({

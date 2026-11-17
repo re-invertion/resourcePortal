@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { RuntimeState } from "@prisma/client";
 import { RuntimeOperationExecutor } from "./runtime-operation.executor";
 import type { PrismaService } from "../../prisma/prisma.service";
-import { classifyScaleTaskFailure, type StackRuntimeService } from "../../internal/stack-runtime.service";
+import { classifyNewScaleTaskFailures, classifyScaleTaskFailure, type StackRuntimeService } from "../../internal/stack-runtime.service";
 import type { OperationRecord } from "../operation.types";
 
 const appGroupId = "11111111-1111-4111-8111-111111111111";
@@ -117,5 +117,32 @@ describe("bounded Swarm task error classification (#450)", () => {
   });
   it("returns unknown instead of leaking unclassified task errors", () => {
     expect(classifyScaleTaskFailure("private user=alice token=secret")).toBe("TaskFailureUnknown");
+  });
+});
+
+
+describe("Swarm task generation baseline (#450)", () => {
+  const oldId = "abcdefghijklmnopqrstuvwxy";
+  const newId = "zyxwvutsrqponmlkjihgfedcba";
+  const row = (ID: string, Error: string, CurrentState = "Rejected 3 seconds ago") =>
+    JSON.stringify({ ID, Error, CurrentState });
+
+  it("does not attribute a prior private GHCR pull rejection to the next scale attempt", () => {
+    expect(classifyNewScaleTaskFailures(oldId, row(oldId, "pull access denied")))
+      .toBe("TaskFailureUnknown");
+  });
+  it("classifies only a fresh rejected task, ignoring an older different failure", () => {
+    const errors = [row(oldId, "manifest unknown"), row(newId, "pull access denied")].join("\n");
+    expect(classifyNewScaleTaskFailures(oldId, errors)).toBe("ImagePullAuthorizationFailed");
+  });
+  it("returns Unknown if no newly rejected task can be authenticated", () => {
+    expect(classifyNewScaleTaskFailures(oldId, row(newId, "pull access denied", "Running 2 seconds ago")))
+      .toBe("TaskFailureUnknown");
+    expect(classifyNewScaleTaskFailures("invalid id", row(newId, "pull access denied")))
+      .toBe("TaskFailureUnknown");
+    expect(classifyNewScaleTaskFailures(oldId, "{bad json"))
+      .toBe("TaskFailureUnknown");
+    expect(classifyNewScaleTaskFailures(oldId, "x".repeat(65_537)))
+      .toBe("TaskFailureUnknown");
   });
 });
