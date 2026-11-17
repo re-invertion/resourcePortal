@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "picomatch": "npm:@ryotsu/picomatch@4.0.7-a",
-    "playwright": "^1.63.0"
+    "playwright": "^1.65.1"
   },
   "overrides": {
     "picomatch": "$picomatch"
