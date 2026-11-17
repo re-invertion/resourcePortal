@@ -32,6 +32,55 @@ function AppLoading({ route, error }: { route: AppRoute; error?: unknown }) {
   return <main {...routeAttributes(route)} className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5"><Card className="w-full max-w-md p-6"><ResourcePortalLogo/><h1 className="mt-6 text-xl font-semibold">ResourcePortal</h1><p className="mt-2 text-sm text-[#5B6678]">{error ? "ResourcePortal is restarting, upgrading, or temporarily unreachable. The application will become available after the platform recovers." : routeLoadingText(route)}</p>{error ? <div className="mt-4"><ErrorState error={error}/></div> : null}</Card></main>;
 }
 
+function TenantRouteGate({ route, user, tenants, platformAdmin }: {
+  route: Extract<AppRoute, { kind: "tenant" }>;
+  user: User;
+  tenants: Tenant[];
+  platformAdmin: boolean;
+}) {
+  const [retry, setRetry] = useState(0);
+  const [result, setResult] = useState<{ tenantId: string; state: "allowed" | "denied" | "error"; cause?: unknown }>();
+
+  useEffect(() => {
+    let active = true;
+    const tenantId = route.tenantId;
+    setResult(undefined);
+    // The tenant list is a navigation hint, not proof of tenant.read access.
+    // Verify the protected endpoint before rendering any tenant shell or page.
+    void apiRequest(`/api/tenants/${encodeURIComponent(tenantId)}`)
+      .then(() => { if (active) setResult({ tenantId, state: "allowed" }); })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        const denied = cause instanceof ApiError && (cause.status === 403 || cause.status === 404);
+        setResult({ tenantId, state: denied ? "denied" : "error", cause });
+      });
+    return () => { active = false; };
+  }, [route.tenantId, retry]);
+
+  const state = result?.tenantId === route.tenantId ? result.state : undefined;
+  if (!state) return <AppLoading route={route} />;
+  if (state === "denied") return <main className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5">
+    <Card className="w-full max-w-lg p-7">
+      <ResourcePortalLogo />
+      <h1 className="mt-6 text-2xl font-semibold text-[#172033]">No access to this tenant</h1>
+      <p className="mt-3 text-sm leading-6 text-[#5B6678]">Your account does not have permission to view this workspace.</p>
+      <a href="/tenants" className="mt-5 inline-block text-sm font-semibold text-[#0F56A7] hover:underline">Choose a tenant</a>
+    </Card>
+  </main>;
+  if (state === "error") return <main className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5">
+    <Card className="w-full max-w-lg p-7">
+      <ResourcePortalLogo />
+      <h1 className="mt-6 text-2xl font-semibold text-[#172033]">Unable to verify tenant access</h1>
+      <p className="mt-3 text-sm leading-6 text-[#5B6678]">The server or network could not complete the access check. No tenant data has been loaded.</p>
+      <div className="mt-5 flex gap-4"><Button onClick={() => setRetry(value => value + 1)}>Retry access check</Button>
+        <a href="/tenants" className="self-center text-sm font-semibold text-[#0F56A7] hover:underline">Choose a tenant</a></div>
+    </Card>
+  </main>;
+  return <AppShell user={user} route={route} tenants={tenants} showPlatformAdmin={platformAdmin} onLogout={signOutBrowser}>
+    <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} userId={user.id} />
+  </AppShell>;
+}
+
 export function App({ initialPath }: AppProps = {}) {
   const route = useRoute(initialPath);
   const [user, setUser] = useState<User | null | undefined>();
@@ -76,7 +125,8 @@ export function App({ initialPath }: AppProps = {}) {
   if (!tenants) return <AppLoading route={route} error={error}/>;
   if (route.kind === "not-found") return <main className="min-h-screen bg-[#F4F7FB] p-6" {...routeAttributes(route)}><div className="mx-auto max-w-2xl"><ResourcePortalLogo/><h1 className="sr-only">Page not found</h1><Card className="mt-8 p-6"><EmptyState title="Page not found" description="The requested ResourcePortal page does not exist." action={<a className="text-sm font-semibold text-[#0F56A7] hover:underline" href="/tenants">Choose tenant</a>}/></Card></div></main>;
   if (route.kind === "tenants" || route.kind === "public") return <TenantSelector user={user} tenants={tenants} reload={reloadTenants} />;
-  return <AppShell user={user} route={route} tenants={tenants} showPlatformAdmin={platformAdmin} onLogout={signOutBrowser}>{route.kind === "tenant" ? <TenantPage tenantId={route.tenantId} section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} userId={user.id} /> : <PlatformPage section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} />}</AppShell>;
+  if (route.kind === "tenant") return <TenantRouteGate route={route} user={user} tenants={tenants} platformAdmin={platformAdmin} />;
+  return <AppShell user={user} route={route} tenants={tenants} showPlatformAdmin={platformAdmin} onLogout={signOutBrowser}><PlatformPage section={route.section} resourceId={route.resourceId} segments={route.segments ?? []} /></AppShell>;
 }
 
 function TenantSelector({ user, tenants, reload }: { user: User; tenants: Tenant[]; reload: () => Promise<void> }) {
