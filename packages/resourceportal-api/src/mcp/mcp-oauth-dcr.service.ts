@@ -57,7 +57,21 @@ export class McpOAuthDcrService {
     try {
       await this.forceJwtAccessToken(registration.client_id, deadline);
     } catch (error) {
-      await this.rollbackRegistration(registration).catch(() => undefined);
+      try {
+        await this.rollbackRegistration(registration);
+      } catch {
+        // A failed compensation leaves a real OAuth client in ZITADEL. Do
+        // not conceal that partial state by rethrowing only the update error.
+        // Expose the client id (never the registration bearer/URI) so an
+        // operator can locate and remove it before retrying registration.
+        const clientId = /^[a-zA-Z0-9._-]{1,128}$/.test(registration.client_id)
+          ? registration.client_id : "(inspect ZITADEL registration records)";
+        throw new BadGatewayException({
+          code: "DCR_PARTIAL_REGISTRATION",
+          message: "ZITADEL DCR compatibility update failed and cleanup of the newly registered client could not be confirmed; manual reconciliation is required before retrying",
+          clientId,
+        });
+      }
       throw error;
     }
 
@@ -212,9 +226,24 @@ export class McpOAuthDcrService {
   }
 
   private async rollbackRegistration(registration: DcrRegistrationResponse) {
-    if (!registration.registration_access_token || !registration.registration_client_uri) return;
-    const path = new URL(registration.registration_client_uri).pathname;
-    await fetch(`${this.internalUrl()}${path}`, {
+    if (!registration.registration_access_token || !registration.registration_client_uri) {
+      throw new BadGatewayException("ZITADEL DCR rollback credentials were missing");
+    }
+    let url: URL;
+    try {
+      url = new URL(registration.registration_client_uri);
+    } catch {
+      throw new BadGatewayException("ZITADEL DCR rollback URI was invalid");
+    }
+    // Registration metadata is returned by the upstream. Restrict which
+    // internal endpoint is contacted and never send its bearer to an
+    // unrelated management path or a URL with embedded credentials.
+    if (url.protocol !== "https:" || url.host !== this.issuerHost() ||
+        url.username || url.password || url.search || url.hash ||
+        !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname)) {
+      throw new BadGatewayException("ZITADEL DCR rollback URI was not trusted");
+    }
+    const response = await fetch(`${this.internalUrl()}${url.pathname}`, {
       signal: AbortSignal.timeout(10_000),
       method: "DELETE",
       headers: {
@@ -223,6 +252,9 @@ export class McpOAuthDcrService {
         "x-zitadel-public-host": this.issuerHost(),
       },
     });
+    if (!response.ok) {
+      throw new BadGatewayException(`ZITADEL DCR rollback failed with HTTP ${response.status}`);
+    }
   }
 
   private internalUrl() {
