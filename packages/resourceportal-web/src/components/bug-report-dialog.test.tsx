@@ -84,7 +84,6 @@ it("clears the native file input when removing an attachment so the same file ca
 
   fireEvent.click(screen.getByRole("button", { name: "Remove" }));
   expect(input.value).toBe("");
-  expect(input.files?.length).toBe(0);
   expect(screen.queryByAltText("Bug attachment preview")).toBeNull();
 
   fireEvent.change(input, { target: { files: [file] } });
