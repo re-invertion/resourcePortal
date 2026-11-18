@@ -1,6 +1,6 @@
 import { DeploymentPhase, DeploymentStatus } from "@prisma/client";
 import { describe, expect, it } from "vitest";
-import { mapAppGroupDeployment, mapSingleApp } from "./app-groups.view";
+import { mapAppGroup, mapAppGroupDeployment, mapSingleApp } from "./app-groups.view";
 
 describe("mapAppGroupDeployment", () => {
   it("parses stackConfig JSON without altering deployment fields", () => {
@@ -106,5 +106,44 @@ describe("mapSingleApp", () => {
   it("omits the Web UI URL when no HTTP domain is assigned", () => {
     const mapped = mapSingleApp({ ...baseApp, httpEndpoints: [] } as never);
     expect(mapped.webUiUrl).toBeUndefined();
+  });
+});
+
+describe("do not expose stale Healthy while Swarm start has 0/1 replicas (#450)", () => {
+  const observedAt = new Date("2026-11-14T12:00:00Z");
+  const singleApp = {
+    id: "app", name: "app", cpu: 1n, memoryBytes: 1000n,
+    runtimeState: "Running", desiredReplicas: 1, actualReplicas: 0,
+    health: "Healthy", pendingDeletion: false, observedAt,
+  };
+  const group = {
+    id: "group", health: "Healthy", runtimeState: "Running",
+    status: "Ready", currentDeploymentVersion: 1,
+    singleApps: [singleApp],
+  };
+  it("does not claim Healthy for 0/1 running while preserving observedAt", () => {
+    const view = mapSingleApp(singleApp as never);
+    expect(view.health).toBe("Unknown");
+    expect(view.actualReplicas).toBe(0);
+    expect(view.effectiveReplicas).toBe(1);
+    expect(view.observedAt).toEqual(observedAt);
+  });
+  it("does not keep Healthy on the parent App Group when a running child is unverified", () => {
+    const view = mapAppGroup(group as never);
+    expect(view.health).toBe("Unknown");
+    expect(view.singleApps?.[0].health).toBe("Unknown");
+  });
+  it("preserves Healthy when 1/1 replicas are confirmed", () => {
+    expect(mapSingleApp({ ...singleApp, actualReplicas: 1 } as never).health).toBe("Healthy");
+    expect(mapAppGroup({ ...group, singleApps: [{ ...singleApp, actualReplicas: 1 }] } as never).health)
+      .toBe("Healthy");
+  });
+  it("does not mark stopped/blocked applications as pending start", () => {
+    expect(mapSingleApp({ ...singleApp, runtimeState: "Stopped" } as never).health).toBe("Healthy");
+    expect(mapSingleApp(singleApp as never, ["AppGroupStopped"]).health).toBe("Healthy");
+  });
+  it("never overwrites existing Unhealthy or Degraded status", () => {
+    expect(mapSingleApp({ ...singleApp, health: "Unhealthy" } as never).health).toBe("Unhealthy");
+    expect(mapSingleApp({ ...singleApp, health: "Degraded" } as never).health).toBe("Degraded");
   });
 });

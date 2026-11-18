@@ -199,16 +199,22 @@ export class RuntimeOperationExecutor implements OperationExecutor {
     return service.desiredReplicas;
   }
 
-  private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string }>, unknownOnTimeout = false) {
+  private assertRuntimeResults(results: Array<{ exitCode: number; stderr: string; command: string; diagnosticCode?: string }>, unknownOnTimeout = false) {
     const failed = results.find((result) => result.exitCode !== 0);
     if (failed) {
       if (unknownOnTimeout && failed.exitCode === 124) {
         throw this.error("RestartOutcomeUnknown", "Swarm restart did not converge before the runtime command ended; outcome must be inspected before retry", false);
       }
+      const deterministic = failed.diagnosticCode === "ImagePullAuthorizationFailed" ||
+        failed.diagnosticCode === "ImageNotFound" ||
+        failed.diagnosticCode === "SwarmPlacementRejected";
+      if (failed.exitCode === 124 && failed.diagnosticCode === "TaskFailureUnknown") {
+        throw this.error("RuntimeOutcomeUnknown", "Swarm scale did not converge and task failure is unknown; inspect task state before retry", false);
+      }
       throw this.error(
-        "RuntimeOperationFailed",
+        deterministic ? failed.diagnosticCode! : "RuntimeOperationFailed",
         failed.stderr || `${failed.command} exited with ${failed.exitCode}`,
-        true,
+        !deterministic,
       );
     }
   }

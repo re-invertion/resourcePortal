@@ -45,16 +45,24 @@ export function mapAppGroup(
   const runtimeContext =
     typeof runtimeContextOrIndex === "number" ? {} : runtimeContextOrIndex;
   const runtimeBlockers = appGroupRuntimeBlockers(appGroup, runtimeContext);
+  const singleApps = appGroup.singleApps?.map((singleApp) =>
+    mapSingleApp(singleApp, runtimeBlockers));
+  // A start request can update desired state before the next Swarm census.
+  // Do not keep displaying a historical Healthy App Group while a running
+  // child has zero observed replicas and its current health is not verified.
+  const hasUnverifiedRunningChild = singleApps?.some((app) =>
+    app.health === "Unknown" &&
+    app.runtimeState === "Running" && app.effectiveReplicas > 0);
 
   return {
     ...appGroup,
+    health: appGroup.health === "Healthy" && hasUnverifiedRunningChild
+      ? "Unknown" : appGroup.health,
     tenant: undefined,
     effectiveRuntimeState:
       runtimeBlockers.length > 0 ? "Stopped" : appGroup.runtimeState,
     runtimeBlockers,
-    singleApps: appGroup.singleApps?.map((singleApp) =>
-      mapSingleApp(singleApp, runtimeBlockers),
-    ),
+    singleApps,
   };
 }
 
@@ -75,14 +83,22 @@ export function mapSingleApp(
   const { httpEndpoints: _httpEndpoints, ...view } = singleApp;
   void _httpEndpoints;
 
+  const effectiveReplicas = runtimeBlockers.length > 0 ? 0 : singleApp.desiredReplicas;
+  // The last Healthy observation can predate a requested start. If there
+  // are still zero observed replicas, report Unknown until the next trusted
+  // runtime census rather than claiming the application is up.
+  const unverifiedStart = singleApp.runtimeState === "Running" &&
+    effectiveReplicas > 0 && singleApp.actualReplicas === 0 &&
+    singleApp.health === "Healthy";
+
   return {
     ...view,
+    health: unverifiedStart ? "Unknown" : singleApp.health,
     cpu: singleApp.cpu.toString(),
     memoryBytes: singleApp.memoryBytes.toString(),
     effectiveRuntimeState:
       runtimeBlockers.length > 0 ? "Stopped" : singleApp.runtimeState,
-    effectiveReplicas:
-      runtimeBlockers.length > 0 ? 0 : singleApp.desiredReplicas,
+    effectiveReplicas,
     runtimeBlockers,
     webUiUrl,
   };
