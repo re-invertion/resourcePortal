@@ -9,6 +9,7 @@ import { AccessTabs } from "../components/tenant-section-tabs";
 type R=Record<string,unknown>;
 function roleName(role:R){return text(role.displayName,text(role.name,"Role"));}
 function roleOptions(roles:R[]){return roles.map(r=><option key={idOf(r)} value={idOf(r)}>{roleName(r)}</option>)}
+function permissionLabel(permission:string):string { return permission === "*" ? "All ResourcePortal permissions" : permission.split(".").map(part => part.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,c=>c.toUpperCase())).join(" › "); }
 function invitationLink(token:string){const path=`/invitations/${encodeURIComponent(token)}`;return typeof window==="undefined"?path:new URL(path,window.location.origin).toString();}
 
 /** Effective permissions are for UI affordances only. Every write is still enforced by the tenant-scoped backend guards. */
@@ -67,6 +68,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     oauthApplicationIds: [] as string[], nativeApplicationKeys: [] as string[],
   });
   const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
+  const [catalogTab, setCatalogTab] = useState<"groups"|"roles">("groups");
   const [groupOpen, setGroupOpen] = useState(false);
   const [group, setGroup] = useState({ name: "", description: "" });
   const [working, setWorking] = useState(false);
@@ -370,11 +372,22 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
       </div>
     </Card> : null}
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+    <div role="tablist" aria-label="Access catalogs" className="mt-6 flex gap-2 border-b border-[#D7E0EC] pb-2">
+      <button type="button" role="tab" id="access-groups-tab" aria-selected={catalogTab === "groups"} aria-controls="access-groups-panel" tabIndex={catalogTab === "groups" ? 0 : -1}
+        onClick={()=>setCatalogTab("groups")}
+        onKeyDown={e=>{if(e.key==="ArrowRight"){e.preventDefault();setCatalogTab("roles");e.currentTarget.nextElementSibling instanceof HTMLElement && e.currentTarget.nextElementSibling.focus();}}}
+        className={`rounded-md px-3 py-2 text-sm font-semibold ${catalogTab==="groups"?"bg-[#E7F1FF] text-[#135FBB]":"text-[#526070] hover:bg-[#EEF3F9]"}`}>Groups</button>
+      <button type="button" role="tab" id="access-roles-tab" aria-selected={catalogTab === "roles"} aria-controls="access-roles-panel" tabIndex={catalogTab === "roles" ? 0 : -1}
+        onClick={()=>{setCatalogTab("roles");setEditingGroup(undefined);}}
+        onKeyDown={e=>{if(e.key==="ArrowLeft"){e.preventDefault();setCatalogTab("groups");e.currentTarget.previousElementSibling instanceof HTMLElement && e.currentTarget.previousElementSibling.focus();}}}
+        className={`rounded-md px-3 py-2 text-sm font-semibold ${catalogTab==="roles"?"bg-[#E7F1FF] text-[#135FBB]":"text-[#526070] hover:bg-[#EEF3F9]"}`}>Roles catalog</button>
+    </div>
+    {catalogTab==="groups" ? <div id="access-groups-panel" role="tabpanel" aria-labelledby="access-groups-tab" className="mt-5">
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-[#E1E7F0] px-4 py-3"><h2 className="font-semibold">Groups</h2>
           {can("group.create") ? <Button size="sm" onClick={() => setGroupOpen(true)}><PlusIcon size={14}/>Create group</Button> : null}
         </div>
+        <p className="px-4 pt-3 text-xs text-[#526070]">sso-login has no RP permissions. Group roles grant inherited ResourcePortal access; they do not grant OAuth application login.</p>
         {groupOpen && can("group.create") ? <div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-2">
           <Field label="Name" required><TextInput value={group.name} onChange={e => setGroup({ ...group, name: e.target.value })}/></Field>
           <Field label="Description"><TextInput value={group.description} onChange={e => setGroup({ ...group, description: e.target.value })}/></Field>
@@ -391,15 +404,28 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
           }}))}
           empty={<EmptyState icon={<UsersIcon />} title="No groups" description="Create a group to assign members and inherited roles."/>}/>
       </Card>
+    </div> : null}
+    {catalogTab==="roles" ? <div id="access-roles-panel" role="tabpanel" aria-labelledby="access-roles-tab" className="mt-5">
       <Card className="p-5">
-        <h2 className="font-semibold">Built-in ResourcePortal roles</h2>
-        <p className="mt-2 text-xs text-[#526070]">These role definitions are read-only. sso-login has no RP permissions. Operational roles do not grant other OAuth clients.</p>
-        <div className="mt-4 divide-y divide-[#E1E7F0]">{roles.map(role => <div key={idOf(role)} className="py-3"><strong className="text-sm">{roleName(role)}</strong><p className="mt-1 break-words text-xs text-[#718096]">{Array.isArray(role.permissions) ? role.permissions.join(", ") : "Permissions unavailable"}</p></div>)}</div>
-        <a className="mt-4 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a>
+        <h2 className="font-semibold">ResourcePortal role catalog</h2>
+        <p className="mt-2 text-sm text-[#526070]">These built-in roles are read-only. SSO application access and ResourcePortal permissions are separate grants. Roles cannot be edited here.</p>
+        {rolesQ.error ? <p role="alert" className="mt-4 text-sm text-[#C42B1C]">Role definitions could not be loaded. Use Retry in the access error banner.</p> :
+          rolesQ.loading ? <p role="status" className="mt-4 text-sm">Loading role definitions…</p> :
+          roles.length ? <ul className="mt-4 divide-y divide-[#E1E7F0]">{roles.map(role => {
+            const permissions = Array.isArray(role.permissions) ? role.permissions.filter((value): value is string => typeof value === "string") : [];
+            return <li key={idOf(role)} className="py-4">
+              <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">{roleName(role)}</h3><span className="rounded bg-[#F5F7FA] px-2 py-1 text-xs text-[#526070]">Read-only definition</span></div>
+              {text(role.description,"") ? <p className="mt-1 text-xs text-[#526070]">{text(role.description)}</p> : null}
+              <p className="mt-3 text-xs font-semibold">ResourcePortal permissions</p>
+              {permissions.length ? <ul className="mt-2 grid gap-2 sm:grid-cols-2">{permissions.map(permission => <li key={permission} className="rounded-md border border-[#E1E7F0] p-2 text-xs">
+                <span className="block font-medium">{permissionLabel(permission)}</span><code className="block break-all text-[#526070]">{permission}</code>
+              </li>)}</ul> : <p className="mt-1 text-xs text-[#526070]">No ResourcePortal permissions. This role may be used only for sign-in.</p>}
+            </li>;
+          })}</ul> : <p className="mt-4 text-sm text-[#526070]">No role definitions available. Refresh Access to try again.</p>}
       </Card>
-    </div>
+    </div> : null}
 
-    {editingGroup ? <Card className="mt-6 p-5">
+    {catalogTab==="groups" && editingGroup ? <Card className="mt-6 p-5">
       <h2 className="text-lg font-semibold">Group: {text(editingGroup.name)}</h2>
       <p className="mt-1 text-xs text-[#526070]">Group membership and role assignments affect inherited ResourcePortal permissions. All changes are validated and audited server-side.</p>
       {can("group.update") ? <div className="mt-4 grid gap-3 sm:grid-cols-2">

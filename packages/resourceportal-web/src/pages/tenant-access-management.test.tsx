@@ -25,7 +25,7 @@ const roleList = [
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 }
-function fetcher() {
+function fetcher(options: { failRoles?: boolean } = {}) {
   let activeGroup = {
     id: "g-admin", name: "Developers", description: "App team",
     members: [{ ...member, id: "m-member" }], roles: [{ id: "tenant-viewer", name: "Viewer", permissions: ["tenant.read"] }],
@@ -35,7 +35,7 @@ function fetcher() {
     const url = String(input); calls.push({ url, init });
     if (url.endsWith("/memberships") && (!init?.method || init.method === "GET")) return json([owner, viewer, member]);
     if (url.endsWith("/memberships/m-member") && init?.method === "PATCH") return json({ success: true });
-    if (url.endsWith("/roles")) return json(roleList);
+    if (url.endsWith("/roles")) return options.failRoles ? json({message:"role fetch failed"},503) : json(roleList);
     if (url.endsWith("/membership-app-grants")) return json([
       { membershipId: "m-owner", grants: [], nativeGrants: [] },
       { membershipId: "m-viewer", grants: [], nativeGrants: [] },
@@ -280,5 +280,60 @@ describe("Invitations fetch states (#417)", () => {
     render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
     expect(await screen.findByText("No pending invitations")).toBeTruthy();
     expect(screen.queryByText("Access data could not be loaded")).toBeNull();
+  });
+});
+
+
+describe("#399 standalone role catalog with tenant-scoped read-only permissions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("provides a dedicated Roles tab with readable permissions without mutation actions for a Viewer", async () => {
+    const calls = fetcher();
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-viewer" />);
+    expect(await screen.findByText("Read Only")).toBeTruthy();
+    const groupsTab = screen.getByRole("tab", { name: "Groups" });
+    const rolesTab = screen.getByRole("tab", { name: "Roles catalog" });
+    expect(groupsTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("heading", { name: "ResourcePortal role catalog" })).toBeNull();
+    fireEvent.click(rolesTab);
+    expect(rolesTab.getAttribute("aria-selected")).toBe("true");
+    expect(groupsTab.getAttribute("aria-selected")).toBe("false");
+    const panel = screen.getByRole("tabpanel", { name: "Roles catalog" });
+    expect(within(panel).getByRole("heading", { name: "ResourcePortal role catalog" })).toBeTruthy();
+    expect(within(panel).getByText("All ResourcePortal permissions")).toBeTruthy();
+    expect(within(panel).getByText("Tenant › Read")).toBeTruthy();
+    expect(within(panel).getByText("Membership › Update")).toBeTruthy();
+    expect(within(panel).getByText("Group › Member › Manage")).toBeTruthy();
+    expect(within(panel).getAllByText("Read-only definition")).toHaveLength(roleList.length);
+    expect(within(panel).queryByRole("button", { name: /edit|delete|create/i })).toBeNull();
+    expect(calls.filter(c => /\/roles(?:\/|$)/.test(c.url) && c.init?.method && c.init.method !== "GET")).toHaveLength(0);
+    fireEvent.click(groupsTab);
+    expect(screen.getByRole("tabpanel", { name: "Groups" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "ResourcePortal role catalog" })).toBeNull();
+  });
+
+  it("supports arrow navigation between Groups and Roles without exposing write controls", async () => {
+    fetcher();
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-viewer" />);
+    await screen.findByText("Read Only");
+    const groups = screen.getByRole("tab", { name: "Groups" });
+    const roles = screen.getByRole("tab", { name: "Roles catalog" });
+    groups.focus();
+    fireEvent.keyDown(groups, { key: "ArrowRight" });
+    expect(roles.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(roles);
+    fireEvent.keyDown(roles, { key: "ArrowLeft" });
+    expect(groups.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(groups);
+  });
+
+  it("shows roles API failure rather than a false empty role catalog", async () => {
+    fetcher({ failRoles: true });
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-viewer" />);
+    fireEvent.click(screen.getByRole("tab", { name: "Roles catalog" }));
+    const panel = screen.getByRole("tabpanel", { name: "Roles catalog" });
+    expect(await within(panel).findByRole("alert")).toBeTruthy();
+    expect(within(panel).getByText(/Role definitions could not be loaded/)).toBeTruthy();
+    expect(within(panel).queryByText(/No role definitions available/)).toBeNull();
   });
 });
