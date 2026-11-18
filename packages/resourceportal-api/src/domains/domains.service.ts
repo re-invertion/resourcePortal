@@ -395,11 +395,32 @@ export class DomainsService {
     actor: AuthenticatedUser,
   ) {
     const existing = await this.findDomainOrThrow(tenantId, domainId);
+    // This narrowly repairs legacy custom domains lacking an ownership link.
+    // It never transfers an already linked domain or changes hostname, DNS, TLS
+    // certificates or the existing endpoint association.
+    let verifiedRoot: Awaited<ReturnType<typeof this.findCustomRootDomainOrThrow>> | undefined;
+    if (dto.customRootDomainId !== undefined) {
+      if (typeof dto.customRootDomainId !== "string" ||
+          existing.type !== DomainType.Custom || existing.customRootDomainId != null) {
+        throw new ConflictException("LegacyCustomRootLinkOnly");
+      }
+      const root = await this.findCustomRootDomainOrThrow(tenantId, dto.customRootDomainId);
+      if (root.verificationStatus !== CustomRootDomainVerificationStatus.Verified) {
+        throw new ConflictException("CustomRootDomainNotVerified");
+      }
+      const hostname = existing.hostname.toLowerCase().replace(/\.$/, "");
+      const suffix = root.rootDomain.toLowerCase().replace(/\.$/, "");
+      if (!hostname.endsWith(`.${suffix}`) || hostname.length <= suffix.length + 1) {
+        throw new ConflictException("HostnameOutsideVerifiedRoot");
+      }
+      verifiedRoot = root;
+    }
+    const effectiveRoot = verifiedRoot ?? existing.customRootDomain;
     if (
       existing.type === DomainType.Custom &&
       dto.httpEndpointId !== null &&
-      (existing.customRootDomain?.verificationStatus !== CustomRootDomainVerificationStatus.Verified ||
-        existing.customRootDomain.tenantId !== tenantId)
+      (effectiveRoot?.verificationStatus !== CustomRootDomainVerificationStatus.Verified ||
+        effectiveRoot.tenantId !== tenantId)
     ) {
       throw new ConflictException("CustomRootDomainNotVerified");
     }
@@ -432,6 +453,7 @@ export class DomainsService {
         data: {
           httpEndpointId:
             dto.httpEndpointId === undefined ? undefined : dto.httpEndpointId,
+          customRootDomainId: verifiedRoot?.id,
           ...tlsState,
           updatedBy: actor.id,
         },

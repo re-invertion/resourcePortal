@@ -126,6 +126,7 @@ type CustomRootCreateCall = {
 function domainServiceFor(input: {
   endpointProtocolMode?: string;
   existingDomain?: DomainFixture;
+  customRoot?: ReturnType<typeof root> | null;
 }) {
   const endpointProtocolMode = input.endpointProtocolMode ?? "HTTP";
   const existingDomain = input.existingDomain ?? domainRecord();
@@ -149,6 +150,10 @@ function domainServiceFor(input: {
     },
   };
   const prisma = {
+    customRootDomain: {
+      findFirst: vi.fn().mockResolvedValue(input.customRoot ?? null),
+      update: vi.fn().mockResolvedValue(input.customRoot ?? null),
+    },
     domain: {
       findFirst: vi.fn().mockResolvedValue(existingDomain),
     },
@@ -605,5 +610,64 @@ describe("DomainsService custom hostname ownership enforcement (#204)", () => {
       actor,
     )).rejects.toThrow("verified customRootDomainId");
     expect(tx.domain.create).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("#394 safe legacy custom-domain root linking", () => {
+  const legacy = () => domainRecord({
+    type: DomainType.Custom,
+    hostname: "photos.example.com",
+    subdomain: "photos",
+    customRootDomainId: null,
+    customRootDomain: null,
+  });
+  const verifiedRoot = () => root({ verificationStatus: CustomRootDomainVerificationStatus.Verified });
+
+  it("links only a verified tenant-owned root without resetting DNS, TLS, certificate or endpoint", async () => {
+    const existingDomain = legacy();
+    const targetRoot = verifiedRoot();
+    const { service, prisma, tx } = domainServiceFor({ existingDomain, customRoot: targetRoot, endpointProtocolMode: "HTTPS" });
+    await service.updateDomain(existingDomain.tenantId, existingDomain.id, { customRootDomainId: targetRoot.id }, actor);
+    expect(prisma.customRootDomain.findFirst).toHaveBeenCalledWith({
+      where: { id: targetRoot.id, tenantId: existingDomain.tenantId },
+      include: { domains: true },
+    });
+    const call = tx.domain.update.mock.calls[0]?.[0] as DomainUpdateCall;
+    expect(call.data).toMatchObject({ customRootDomainId: targetRoot.id, updatedBy: actor.id });
+    expect(call.data.httpEndpointId).toBeUndefined();
+    expect(call.data.certificateStatus).toBeUndefined();
+    expect(call.data.certificateIssuer).toBeUndefined();
+    expect(call.data.dnsStatus).toBeUndefined();
+    expect(call.data.hostname).toBeUndefined();
+    expect(tx.appGroup.update).toHaveBeenCalled();
+  });
+
+  it("rejects missing tenant root and unverified or mismatching root without writing", async () => {
+    const existingDomain = legacy();
+    for (const targetRoot of [null, root(), root({rootDomain: "another.example.org", verificationStatus: CustomRootDomainVerificationStatus.Verified})]) {
+      const { service, tx, prisma } = domainServiceFor({ existingDomain, customRoot: targetRoot });
+      await expect(service.updateDomain(existingDomain.tenantId, existingDomain.id, {
+        customRootDomainId: verifiedRoot().id,
+      }, actor)).rejects.toThrow();
+      expect(prisma.customRootDomain.findFirst).toHaveBeenCalledWith({
+        where: { id: verifiedRoot().id, tenantId: existingDomain.tenantId }, include: { domains: true },
+      });
+      expect(tx.domain.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects managed domains, already linked custom domains and clearing root IDs", async () => {
+    for (const existingDomain of [domainRecord(), legacy()]) {
+      const first = (existingDomain.type === DomainType.Managed
+        ? existingDomain : { ...existingDomain, customRootDomainId: verifiedRoot().id, customRootDomain: verifiedRoot() }) as DomainFixture;
+      const { service, tx } = domainServiceFor({ existingDomain: first });
+      await expect(service.updateDomain(first.tenantId, first.id, { customRootDomainId: verifiedRoot().id }, actor)).rejects.toThrow("LegacyCustomRootLinkOnly");
+      expect(tx.domain.update).not.toHaveBeenCalled();
+    }
+    const current = legacy();
+    const { service, tx } = domainServiceFor({ existingDomain: current });
+    await expect(service.updateDomain(current.tenantId, current.id, { customRootDomainId: null as unknown as string }, actor)).rejects.toThrow("LegacyCustomRootLinkOnly");
+    expect(tx.domain.update).not.toHaveBeenCalled();
   });
 });
