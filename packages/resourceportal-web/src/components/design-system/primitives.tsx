@@ -57,23 +57,144 @@ export function Callout({ tone = "info", title, children, action }: { tone?: "in
 
 export function Tabs({ items, label = "Sections" }: { items: Array<{ label: string; href: string; active?: boolean }>; label?: string }) { return <nav aria-label={label} className="mb-6 max-w-full min-w-0 overflow-x-auto rounded-lg border border-[#D7E0EC] bg-white overscroll-x-contain [contain:layout_paint]"><div className="flex min-w-max px-2">{items.map(item => <a key={item.href} href={item.href} aria-current={item.active ? "page" : undefined} className={cx("relative flex h-12 items-center px-4 text-[13px] font-medium text-[#526070] hover:text-[#135FBB]", item.active && "text-[#0F4F9B] after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-[#1769E0]")}>{item.label}</a>)}</div></nav>; }
 
+/** Block page/background accessibility while a React-portal modal is open.
+ * Store and restore existing states even when another modal is opened above it.
+ */
+export const DIALOG_LAYER_CHANGE_EVENT = "resourceportal:dialog-layer-change";
+const openDialogOverlays: HTMLDivElement[] = [];
+
+/**
+ * Notifications must be rendered *inside* the topmost role=dialog rather
+ * than #root, which is inert and aria-hidden while a modal is open.
+ * Return null on SSR and after the last modal closes.
+ */
+export function getActiveDialogContent(): HTMLElement | null {
+  return openDialogOverlays.at(-1)?.querySelector<HTMLElement>('[role="dialog"]') ?? null;
+}
+const originalBackgroundState = new Map<Element, { inert: string | null; ariaHidden: string | null }>();
+let dialogBodyObserver: MutationObserver | undefined;
+// The outer modal can unmount before an inner modal in the same React commit.
+// Retain the *page* trigger until the final overlay leaves; the inner trigger
+// may already have been removed when its own effect cleanup runs.
+let rootPageReturnFocus: HTMLElement | null = null;
+
+
+function updateDialogBackground() {
+  for (const [element, previous] of originalBackgroundState) {
+    if (previous.inert === null) element.removeAttribute("inert");
+    else element.setAttribute("inert", previous.inert);
+    if (previous.ariaHidden === null) element.removeAttribute("aria-hidden");
+    else element.setAttribute("aria-hidden", previous.ariaHidden);
+  }
+  originalBackgroundState.clear();
+  const topmost = openDialogOverlays.at(-1);
+  if (!topmost) return;
+  for (const child of Array.from(document.body.children)) {
+    if (child === topmost) continue;
+    originalBackgroundState.set(child, {
+      inert: child.getAttribute("inert"),
+      ariaHidden: child.getAttribute("aria-hidden"),
+    });
+    child.setAttribute("inert", "");
+    child.setAttribute("aria-hidden", "true");
+  }
+}
+
 export function Dialog({ open, title, description, children, actions, onClose, danger = false }: { open: boolean; title: string; description?: ReactNode; children?: ReactNode; actions?: ReactNode; onClose: () => void; danger?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null); const onCloseRef = useRef(onClose); const titleId = useId(); const descId = useId();
+  const ref = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose); const titleId = useId(); const descId = useId();
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement as HTMLElement | null;
+    if (!open || !ref.current || !overlayRef.current) return;
     const dialog = ref.current;
-    const body = dialog?.querySelector<HTMLElement>("[data-dialog-body]");
-    const formControl = body?.querySelector<HTMLElement>('input:not([type="hidden"]):not(.sr-only):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]');
-    const fallback = dialog?.querySelector<HTMLElement>('[data-dialog-initial-focus], button:not([disabled]), input:not([type="hidden"]):not(.sr-only):not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]');
-    (formControl ?? fallback)?.focus();
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
+    const overlay = overlayRef.current;
+    const previous = document.activeElement as HTMLElement | null;
+    if (openDialogOverlays.length === 0) rootPageReturnFocus = previous;
+    openDialogOverlays.push(overlay);
+    updateDialogBackground();
+    window.dispatchEvent(new Event(DIALOG_LAYER_CHANGE_EVENT));
+    if (!dialogBodyObserver && typeof MutationObserver !== "undefined") {
+      dialogBodyObserver = new MutationObserver(updateDialogBackground);
+      dialogBodyObserver.observe(document.body, { childList: true });
+    }
+
+    // Query at keypress time: conditional/disabled controls can change.
+    const focusableSelector = 'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]';
+    const isVisibleThroughParents = (element: HTMLElement) => {
+      // A descendant of display:none still has its own computed display:block.
+      // Inspect every wrapper, including dynamic Tailwind "hidden" elements.
+      for (let node: HTMLElement | null = element; node && dialog.contains(node); node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" ||
+            style.visibility === "collapse") return false;
+      }
+      return true;
+    };
+    const focusable = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+      .filter(element => element.tabIndex >= 0 &&
+        !element.matches(":disabled") &&
+        !element.closest("[hidden], [inert], [aria-hidden='true']") &&
+        isVisibleThroughParents(element));
+    const body = dialog.querySelector<HTMLElement>("[data-dialog-body]");
+    const initial = Array.from(body?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])
+      .find(element => focusable().includes(element));
+    (initial ?? focusable()[0] ?? dialog).focus();
+
+    const isTopmost = () => openDialogOverlays.at(-1) === overlay;
+    const key = (event: KeyboardEvent) => {
+      if (!isTopmost()) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (elements.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const containFocus = (event: FocusEvent) => {
+      if (!isTopmost() || dialog.contains(event.target as Node)) return;
+      (focusable()[0] ?? dialog).focus();
+    };
     document.addEventListener("keydown", key);
-    return () => { document.removeEventListener("keydown", key); previous?.focus?.(); };
+    document.addEventListener("focusin", containFocus);
+    return () => {
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("focusin", containFocus);
+      const index = openDialogOverlays.indexOf(overlay);
+      if (index >= 0) openDialogOverlays.splice(index, 1);
+      updateDialogBackground();
+      window.dispatchEvent(new Event(DIALOG_LAYER_CHANGE_EVENT));
+      if (openDialogOverlays.length === 0) {
+        dialogBodyObserver?.disconnect();
+        dialogBodyObserver = undefined;
+      }
+      // Only the final cleanup can restore the page trigger if an outer
+      // overlay was torn down before its inner overlay in the same React batch.
+      const returnTarget = previous?.isConnected && !previous.closest("[inert]")
+        ? previous
+        : openDialogOverlays.length === 0 ? rootPageReturnFocus : null;
+      if (returnTarget?.isConnected && !returnTarget.closest("[inert]")) returnTarget.focus();
+      if (openDialogOverlays.length === 0) rootPageReturnFocus = null;
+    };
   }, [open]);
   if (!open) return null;
-  const dialog = <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0E1A2B]/45 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}><div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descId : undefined} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg min-w-0 overflow-y-auto rounded-xl border border-[#D7E0EC] bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-[#E1E7F0] p-5"><div><h2 id={titleId} className={cx("text-lg font-semibold", danger ? "text-[#A92317]" : "text-[#172033]")}>{title}</h2>{description ? <p id={descId} className="mt-1 text-sm text-[#5B6678]">{description}</p> : null}</div><IconButton label="Close dialog" onClick={() => onCloseRef.current()}><XIcon /></IconButton></header>{children ? <div data-dialog-body className="p-5">{children}</div> : null}{actions ? <footer className="flex justify-end gap-2 border-t border-[#E1E7F0] bg-[#F8FAFD] p-4">{actions}</footer> : null}</div></div>;
+  const dialog = <div ref={overlayRef} data-rp-dialog-overlay className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0E1A2B]/45 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCloseRef.current(); }}><div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={description ? descId : undefined} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg min-w-0 overflow-y-auto rounded-xl border border-[#D7E0EC] bg-white shadow-2xl"><header className="flex items-start justify-between gap-4 border-b border-[#E1E7F0] p-5"><div><h2 id={titleId} className={cx("text-lg font-semibold", danger ? "text-[#A92317]" : "text-[#172033]")}>{title}</h2>{description ? <p id={descId} className="mt-1 text-sm text-[#5B6678]">{description}</p> : null}</div><IconButton label="Close dialog" onClick={() => onCloseRef.current()}><XIcon /></IconButton></header>{children ? <div data-dialog-body className="p-5">{children}</div> : null}{actions ? <footer className="flex justify-end gap-2 border-t border-[#E1E7F0] bg-[#F8FAFD] p-4">{actions}</footer> : null}</div></div>;
   return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }
 
@@ -84,7 +205,7 @@ export function ConfirmActionButton({ children, confirmTitle, confirmDescription
     setWorking(true);
     try { await onConfirm(); setOpen(false); } finally { setWorking(false); }
   }
-  return <><Button type="button" variant={triggerVariant} size={size} className={className} aria-label={ariaLabel} disabled={disabled || working} onClick={() => setOpen(true)}>{children}</Button><Dialog open={open} onClose={() => { if (!working) setOpen(false); }} title={confirmTitle} description={confirmDescription} danger={confirmVariant === "danger"} actions={<><Button disabled={working} onClick={() => setOpen(false)}>Cancel</Button><Button variant={confirmVariant} disabled={working} onClick={() => void confirm()}>{working ? "Working…" : confirmLabel}</Button></>} /></>;
+  return <><Button type="button" variant={triggerVariant} size={size} className={className} aria-label={ariaLabel} disabled={disabled || working} onClick={event => { event.currentTarget.focus(); setOpen(true); }}>{children}</Button><Dialog open={open} onClose={() => { if (!working) setOpen(false); }} title={confirmTitle} description={confirmDescription} danger={confirmVariant === "danger"} actions={<><Button disabled={working} onClick={() => setOpen(false)}>Cancel</Button><Button variant={confirmVariant} disabled={working} onClick={() => void confirm()}>{working ? "Working…" : confirmLabel}</Button></>} /></>;
 }
 
 export function EmptyState({ title, description, action, icon }: { title: string; description?: string; action?: ReactNode; icon?: ReactNode }) { return <div className="flex min-h-44 flex-col items-center justify-center px-6 py-10 text-center">{icon ? <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[#E7F1FF] text-[#1769E0]">{icon}</div> : null}<strong className="text-sm text-[#172033]">{title}</strong>{description ? <p className="mt-1 max-w-md break-words text-sm text-[#5B6678]">{description}</p> : null}{action ? <div className="mt-4">{action}</div> : null}</div>; }
