@@ -68,6 +68,10 @@ RUN apk add --no-cache \
     quota-tools \
     xfsprogs-extra
 
+# Installer signed-callback recovery invokes timeout inside this Alpine
+# runtime image. Verify the BusyBox implementation accepts the exact flags.
+RUN timeout -s TERM -k 1 2 true
+
 COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules
 # Verify the production module layout at IMAGE BUILD time; a successful
 # TypeScript build cannot certify Node module resolution in the final image.

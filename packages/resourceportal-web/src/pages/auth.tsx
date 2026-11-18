@@ -50,6 +50,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
   const [providers, setProviders] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>();
+  const [providerRefreshKey, setProviderRefreshKey] = useState(0);
   const [signInError, setSignInError] = useState(false);
   const [checkingSignIn, setCheckingSignIn] = useState(false);
 
@@ -57,11 +58,12 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
     let active = true;
     const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
     setLoading(true);
+    setError(undefined);
     apiRequest(`/api/auth/providers${query}`).then((result) => {
       if (active) { setProviders(providerItems(result)); setError(undefined); }
     }).catch((cause) => { if (active) setError(cause); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [tenantId]);
+  }, [tenantId, providerRefreshKey]);
 
   async function start(identityProviderId?: string) {
     setSignInError(false);
@@ -108,11 +110,11 @@ export function AuthPage({ mode }: { mode: "login" | "register" | "recover" }) {
         <p className="mt-6 break-words text-[14px] leading-5 text-[#5B6678]">{intro}</p>
 
         {tenantId ? <div className="mt-4 min-w-0"><Callout title="Organization-specific sign-in">This sign-in request is scoped to the selected organization.</Callout></div> : null}
-        {error ? <div className="mt-4 min-w-0"><Callout tone="danger" title="Authentication providers unavailable">ResourcePortal could not load the configured sign-in providers. You can retry by reloading this page.</Callout></div> : null}
+        {error ? <div className="mt-4 min-w-0"><Callout tone="danger" title="Authentication providers unavailable">ResourcePortal could not load the configured sign-in providers. Retry loading the available sign-in options.</Callout></div> : null}
         {signInError ? <div role="alert" className="mt-4 min-w-0"><Callout tone="danger" title="Identity provider is temporarily unavailable">ResourcePortal cannot connect to the sign-in provider. Retry in a moment or contact your administrator.</Callout></div> : null}
 
         <div className="mt-8 grid min-w-0 gap-2.5" aria-busy={loading || checkingSignIn}>
-          {loading ? <div className="flex h-12 min-w-0 items-center rounded-md border border-[#D7E0EC] bg-[#F8FAFD] px-4 text-sm text-[#5B6678]">Loading sign-in options…</div> : providers.length === 0 ? <Button variant="primary" className="h-12 w-full min-w-0 justify-start" onClick={() => start()}><span className="min-w-0 flex-1 truncate text-left">Continue with SSO</span><span className="shrink-0" aria-hidden="true">→</span></Button> : <>{providers.map((provider,index)=>{const id=String(provider.id??provider.identityProviderId??"");const label=String(provider.name??provider.displayName??provider.label??(id||`Provider ${index+1}`));return <Button variant="primary" className="h-12 w-full min-w-0 justify-start" key={id||index} onClick={()=>start(id||undefined)}><LockIcon size={16} className="shrink-0"/><span className="min-w-0 flex-1 truncate text-left">Continue with {label}</span></Button>})}<Button className="h-12 w-full min-w-0" onClick={()=>start()}>Use organization SSO</Button></>}
+          {loading ? <div className="flex h-12 min-w-0 items-center rounded-md border border-[#D7E0EC] bg-[#F8FAFD] px-4 text-sm text-[#5B6678]">Loading sign-in options…</div> : error ? <Button className="h-12 w-full min-w-0" onClick={() => setProviderRefreshKey(value => value + 1)}>Retry loading sign-in options</Button> : providers.length === 0 ? <Button variant="primary" className="h-12 w-full min-w-0 justify-start" onClick={() => start()}><span className="min-w-0 flex-1 truncate text-left">Continue with SSO</span><span className="shrink-0" aria-hidden="true">→</span></Button> : <>{providers.map((provider,index)=>{const id=String(provider.id??provider.identityProviderId??"");const label=String(provider.name??provider.displayName??provider.label??(id||`Provider ${index+1}`));return <Button variant="primary" className="h-12 w-full min-w-0 justify-start" key={id||index} onClick={()=>start(id||undefined)}><LockIcon size={16} className="shrink-0"/><span className="min-w-0 flex-1 truncate text-left">Continue with {label}</span></Button>})}<Button className="h-12 w-full min-w-0" onClick={()=>start()}>Use organization SSO</Button></>}
         </div>
 
         <div className="mt-5 flex min-w-0 gap-3 rounded-md border border-[#C9DDF8] bg-[#F2F7FF] px-4 py-3 text-[12px] leading-[17px] text-[#42526B]"><LockIcon size={16} className="mt-0.5 shrink-0 text-[#172033]"/><span className="min-w-0 break-words">You’ll be redirected to your organization identity provider to complete sign-in securely.</span></div>

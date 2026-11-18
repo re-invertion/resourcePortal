@@ -297,6 +297,7 @@ function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSub
 
 function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { initialValue: Payload }) {
   const initial = useStableInitialPayload(initialValue);
+  const [sourceInitial, setSourceInitial] = useState(initial);
   const [values, setValues] = useState<Payload>(initial);
   const [touched, setTouched] = useState<Record<string, unknown>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -306,11 +307,16 @@ function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, di
     () => submitAttempted ? Object.fromEntries(Object.keys(values).map((key) => [key, true])) : touched,
     [submitAttempted, touched, values],
   );
-  useEffect(() => {
+  // Synchronize a changed template during render rather than in a passive
+  // effect. An effect can run after the first keystroke during hydration or a
+  // concurrent parent update and silently replace that edit with the template.
+  // The stable initial reference changes only when the template content does.
+  if (sourceInitial !== initial) {
+    setSourceInitial(initial);
     setValues(cloneValue(initial));
     setTouched({});
     setSubmitAttempted(false);
-  }, [initial]);
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitAttempted(true);

@@ -91,14 +91,22 @@ signer="$(declare -f rp_app_action_sign_probe)"
 # The real signer executes digest-pinned production Node inside an isolated
 # Docker container; mocked installer tests do not require a production image.
 # Real HMAC signature validity is separately verified by HTTPS issuer E2E.
+sign_calls=0
+sign_delay=0
 rp_app_action_sign_probe() {
-  local tmp="$1"
+  sign_calls=$((sign_calls + 1))
+  local tmp="$1" limit="${2:-15}"
+  [[ "$limit" =~ ^[0-9]+$ && "$limit" -le 10 ]] || return 1
+  SECONDS=$((SECONDS + sign_delay))
   # The installer can run INSIDE an updater container, but the inner
   # Docker daemon resolves bind sources against the host filesystem.
   [[ "$tmp" == "$RP_INSTALLER_STATE_DIR"/.rp-action-probe.* &&
      -d "$tmp" ]] || return 1
   printf 'header = "ZITADEL-Signature: t=%s,v1=%064d"\n' "$(date +%s)" 0 >"$tmp/conf"
 }
+# Virtual elapsed time makes the 120-second retry deadline test instantly.
+# Bash SECONDS is advanced without sleeping or a real network dependency.
+sleep() { SECONDS=$((SECONDS + $1)); }
 # Probe must pass real signing code and recognize only a precise 403.
 curl() {
   local previous="" path="" conf="" arg
@@ -116,8 +124,13 @@ curl() {
     tail -n +2 "$probe_http_sequence" >"$tmp/next-probe-sequence"
     mv "$tmp/next-probe-sequence" "$probe_http_sequence"
   fi
+  # A deterministic transport fault produces no HTTP response.
+  if [[ "$current" =~ ^curl:([0-9]+)$ ]]; then
+    printf '000'
+    return "${BASH_REMATCH[1]}"
+  fi
   [[ "$current" == 403 || "$current" == 503 || "$current" == 404 ||
-     "$current" == 502 || "$current" == 401 ]] || return 1
+     "$current" == 502 || "$current" == 401 || "$current" == 500 ]] || return 1
   printf '%s' "$current"
 }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -215,13 +228,63 @@ if rp_app_action_activate >/dev/null 2>&1; then fail 'activated unhealthy callba
 ok 'callback HTTP 503 blocks global activation'
 # A brief ingress cutover is retried but only the exact signed HTTP 403
 # authorizes the global action; permanent denial never gets retried.
-sleep() { :; }  # In this fixture only; production backs off two seconds.
+
 printf '502\n404\n403\n' > "$probe_http_sequence"
 rp_app_action_activate || fail 'short ingress cutover blocked valid signed callback probe'
 [[ ! -s "$probe_http_sequence" && "$remote_execution" == ours ]] ||
   fail 'signed callback did not retry 502/404 before 403'
 remote_execution=none
 writes=0
+# Regression #460: the three immediate connection failures that previously
+# exhausted a ~4-second window must recover when the ingress returns.
+printf 'curl:7\ncurl:7\ncurl:7\n403\n' > "$probe_http_sequence"
+signs_before=$sign_calls
+rp_app_action_activate || fail 'three curl 7 faults incorrectly triggered rollback before signed 403'
+[[ "$sign_calls" -eq "$((signs_before + 4))" ]] ||
+  fail 'HMAC signature not refreshed before each retry'
+[[ ! -s "$probe_http_sequence" && "$remote_execution" == ours && "$writes" == 1 ]] ||
+  fail 'transient connection failures did not produce exactly one owned execution'
+ok 'three immediate curl 7 transport failures recover to signed 403'
+remote_execution=none
+# A slow Docker signer must consume the shared deadline; a late 403 cannot
+# be accepted after signing has exhausted the budget.
+sign_delay=30
+printf '503\n503\n503\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/slow.stdout" 2>"$tmp/slow.stderr"; then
+  fail 'late callback accepted beyond 120-second deadline'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] ||
+  fail 'curl was invoked after signing consumed the callback budget'
+sign_delay=0
+ok 'slow signer consumes total deadline without sending or accepting late 403'
+remote_execution=none
+writes=0
+# Persistent connection refusal must reach the bounded total deadline, without
+# ever mutating issuer-global grants.
+: > "$probe_http_sequence"
+probe_http=503
+if rp_app_action_activate >"$tmp/persistent.stdout" 2>"$tmp/persistent.stderr"; then
+  fail 'persistent 503 unexpectedly activated issuer'
+fi
+grep -q 'timed out after 120s' "$tmp/persistent.stderr" ||
+  fail 'persistent ingress failure did not exhaust bounded deadline'
+[[ "$remote_execution" == none && "$writes" == 0 ]] ||
+  fail 'persistent failure modified issuer execution'
+ok 'persistent ingress failures time out without activation'
+probe_http=403
+# curl 60 is a TLS certificate validation failure, not a retryable ingress gap.
+printf 'curl:60\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/tls.stdout" 2>"$tmp/tls.stderr"; then
+  fail 'TLS validation failure accepted'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] || fail 'TLS failure was retried'
+ok 'invalid TLS fails closed without retries'
+printf '500\n403\n' > "$probe_http_sequence"
+if rp_app_action_probe "$id" "$ref" >"$tmp/unexpected.stdout" 2>"$tmp/unexpected.stderr"; then
+  fail 'unexpected HTTP 500 accepted'
+fi
+[[ "$(cat "$probe_http_sequence")" == 403 ]] || fail 'unexpected HTTP response was retried'
+ok 'unexpected HTTP response fails closed'
 printf '401\n403\n' > "$probe_http_sequence"
 if rp_app_action_probe "$id" "$RP_CFG_APP_CONSUMER_ACTIONS_V2_SIGNING_SWARM_REF" >/dev/null 2>&1; then
   fail 'HTTP 401 was accepted as signed negative callback proof'

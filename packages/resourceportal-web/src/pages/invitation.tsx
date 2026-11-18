@@ -43,26 +43,59 @@ export function InvitationPage({
 }) {
   const [preview, setPreview] = useState<InvitationPreview>();
   const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
   const [working, setWorking] = useState(false);
+  const [provisioning, setProvisioning] = useState<"pending" | "blocked" | null>(null);
+  const [acceptedTenantId, setAcceptedTenantId] = useState<string>();
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setPreview(undefined);
+    setError(undefined);
     apiRequest<InvitationPreview>(`/api/invitations/${encodeURIComponent(token)}`)
       .then((value) => {
         if (active) {
           setPreview(value);
           setError(undefined);
+          setLoading(false);
         }
       })
       .catch((cause) => {
         if (active) {
+          setPreview(undefined);
           setError(cause instanceof Error ? cause.message : "Invitation could not be loaded.");
+          setLoading(false);
         }
       });
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, retryCount]);
+
+  useEffect(() => {
+    if (provisioning !== "pending" || !acceptedTenantId) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const result = await apiRequest<{ status: "ready" | "pending" | "blocked" }>(
+          `/api/invitations/provisioning/${encodeURIComponent(acceptedTenantId)}`,
+        );
+        if (!active) return;
+        if (result.status === "ready") {
+          navigate(tenantHref(acceptedTenantId, "overview"));
+        } else if (result.status === "blocked") {
+          setProvisioning("blocked");
+        }
+      } catch {
+        // Connectivity may be transient; polling resumes without granting access.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [provisioning, acceptedTenantId, navigate]);
 
   function authHref(mode: "login" | "register") {
     if (preview?.onboardingAvailable === true) {
@@ -82,11 +115,21 @@ export function InvitationPage({
     if (!preview || preview.status === "Expired") return;
     setWorking(true);
     try {
-      const membership = await apiRequest<{ tenantId: string }>("/api/invitations/accept", {
+      const membership = await apiRequest<{
+        tenantId: string;
+        ssoProvisioning?: { status: "ready" | "pending" | "blocked" | "not_required" };
+      }>("/api/invitations/accept", {
         method: "POST",
         body: { token },
       });
-      navigate(tenantHref(membership.tenantId || preview.tenant.id, "overview"));
+      const tenantId = membership.tenantId || preview.tenant.id;
+      if (membership.ssoProvisioning?.status === "pending" ||
+          membership.ssoProvisioning?.status === "blocked") {
+        setAcceptedTenantId(tenantId);
+        setProvisioning(membership.ssoProvisioning.status);
+      } else {
+        navigate(tenantHref(tenantId, "overview"));
+      }
     } catch (cause) {
       toast.errorFrom(cause, "Invitation could not be accepted.");
     } finally {
@@ -112,9 +155,9 @@ export function InvitationPage({
     >
       <Card className="p-6 sm:p-8">
         <p className="text-[11px] font-semibold uppercase tracking-[.04em] text-[#1769E0]">Tenant invitation</p>
-        <h1 className="mt-3 text-[28px] font-semibold tracking-[-.025em] text-[#172033]">{preview ? `Join ${tenantName}` : "Loading invitation…"}</h1>
+        <h1 className="mt-3 text-[28px] font-semibold tracking-[-.025em] text-[#172033]">{loading ? "Loading invitation…" : error ? "Invitation unavailable" : `Join ${tenantName}`}</h1>
 
-        {error ? <div className="mt-5"><Callout tone="danger" title="Invitation unavailable">{error}</Callout></div> : null}
+        {error ? <div className="mt-5"><Callout tone="danger" title="Invitation unavailable">{error}</Callout><Button className="mt-4" onClick={() => setRetryCount((count) => count + 1)}>Try again</Button></div> : null}
 
         {preview ? (
           <>
@@ -135,7 +178,16 @@ export function InvitationPage({
               </dl>
             </div>
 
-            {preview.status === "Expired" ? (
+            {provisioning ? (
+              <div className="mt-5"><Callout
+                tone={provisioning === "blocked" ? "danger" : "warning"}
+                title={provisioning === "blocked" ? "SSO provisioning needs attention" : "SSO access is being prepared"}
+              >
+                {provisioning === "blocked"
+                  ? "Your membership has been saved, but issuer provisioning failed or requires an administrator. Contact your tenant administrator; do not accept the invitation again."
+                  : "Your membership has been saved. ResourcePortal is verifying your account's upstream project grant before continuing. This page checks readiness automatically."}
+              </Callout></div>
+            ) : preview.status === "Expired" ? (
               <div className="mt-5"><Callout tone="warning" title="This invitation has expired">Ask the tenant administrator to generate a new invitation link.</Callout></div>
             ) : user ? (
               <>
