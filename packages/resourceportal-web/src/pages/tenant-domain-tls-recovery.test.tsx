@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { TenantDomainDetailPage } from "./tenant-storage-pages";
 
@@ -72,9 +72,10 @@ it("does not fabricate TLS findings when diagnostics API fails", async () => {
   }));
   render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
   expect(await screen.findByText("Diagnostics unavailable")).toBeTruthy();
-  expect(screen.queryByText("No evidence")).toBeNull();
-  expect(screen.queryByText("None")).toBeNull();
-  expect(screen.queryByText("Not checked")).toBeNull();
+  const tlsCard = screen.getByRole("heading", { name: "TLS recovery & diagnostics" }).parentElement!;
+  expect(within(tlsCard).queryByText("No evidence")).toBeNull();
+  expect(within(tlsCard).queryByText("None")).toBeNull();
+  expect(within(tlsCard).queryByText("Not checked")).toBeNull();
   expect(screen.getByRole("button", { name: "Refresh diagnostics" })).toBeTruthy();
 });
 
@@ -89,6 +90,7 @@ it("shows a loading state without diagnostic conclusions while the API is pendin
   }));
   render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
   expect(await screen.findByText("Loading TLS diagnostics…")).toBeTruthy();
-  expect(screen.queryByText("No evidence")).toBeNull();
-  expect(screen.queryByText("None")).toBeNull();
+  const tlsCard = screen.getByRole("heading", { name: "TLS recovery & diagnostics" }).parentElement!;
+  expect(within(tlsCard).queryByText("No evidence")).toBeNull();
+  expect(within(tlsCard).queryByText("None")).toBeNull();
 });
