@@ -290,3 +290,40 @@ it("offers Cloudflare and standard methods when adding a custom root domain", as
   expect(screen.getByRole("dialog", { name: "Add root domain using DNS" })).toBeTruthy();
   expect(screen.getByPlaceholderText("apps.example.com")).toBeTruthy();
 });
+
+it("does not report no volumes when the volumes API fails and supports retry", async () => {
+  let attempts = 0;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    if (String(input).endsWith("/api/tenants/t1/volumes")) {
+      attempts++;
+      return Promise.resolve(attempts === 1
+        ? new Response("Server error", { status: 500 })
+        : json([{ id: "v1", name: "recovered-volume", status: "Ready" }]));
+    }
+    return Promise.resolve(json({}));
+  }));
+  render(<TenantVolumesPage tenantId="t1" />);
+  const retry = await screen.findByRole("button", { name: "Retry loading volumes" });
+  expect(screen.getByText("Volumes could not be loaded")).toBeTruthy();
+  expect(screen.queryByText("No volumes")).toBeNull();
+  fireEvent.click(retry);
+  expect(await screen.findByText("recovered-volume")).toBeTruthy();
+  expect(screen.queryByText("Volumes could not be loaded")).toBeNull();
+});
+
+it("does not show an empty volumes state while loading", () => {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+    String(input).endsWith("/api/tenants/t1/volumes")
+      ? new Promise<Response>(() => {})
+      : Promise.resolve(json({}))));
+  render(<TenantVolumesPage tenantId="t1" />);
+  expect(screen.queryByText("No volumes")).toBeNull();
+  expect(screen.queryByText("Volumes could not be loaded")).toBeNull();
+});
+
+it("shows no volumes after a successful empty response", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(json([]))));
+  render(<TenantVolumesPage tenantId="t1" />);
+  expect(await screen.findByText("No volumes")).toBeTruthy();
+  expect(screen.queryByText("Volumes could not be loaded")).toBeNull();
+});
