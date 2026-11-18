@@ -388,6 +388,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
           {can("group.create") ? <Button size="sm" onClick={() => setGroupOpen(true)}><PlusIcon size={14}/>Create group</Button> : null}
         </div>
         <p className="px-4 pt-3 text-xs text-[#526070]">sso-login has no RP permissions. Group roles grant inherited ResourcePortal access; they do not grant OAuth application login.</p>
+        <a className="mx-4 mb-3 mt-2 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a>
         {groupOpen && can("group.create") ? <div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-2">
           <Field label="Name" required><TextInput value={group.name} onChange={e => setGroup({ ...group, name: e.target.value })}/></Field>
           <Field label="Description"><TextInput value={group.description} onChange={e => setGroup({ ...group, description: e.target.value })}/></Field>
@@ -409,6 +410,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
       <Card className="p-5">
         <h2 className="font-semibold">ResourcePortal role catalog</h2>
         <p className="mt-2 text-sm text-[#526070]">These built-in roles are read-only. SSO application access and ResourcePortal permissions are separate grants. Roles cannot be edited here.</p>
+        <a className="mt-3 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a>
         {rolesQ.error ? <p role="alert" className="mt-4 text-sm text-[#C42B1C]">Role definitions could not be loaded. Use Retry in the access error banner.</p> :
           rolesQ.loading ? <p role="status" className="mt-4 text-sm">Loading role definitions…</p> :
           roles.length ? <ul className="mt-4 divide-y divide-[#E1E7F0]">{roles.map(role => {

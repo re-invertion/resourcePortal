@@ -294,11 +294,13 @@ describe("#399 standalone role catalog with tenant-scoped read-only permissions"
     const groupsTab = screen.getByRole("tab", { name: "Groups" });
     const rolesTab = screen.getByRole("tab", { name: "Roles catalog" });
     expect(groupsTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("link", { name: "Open tenant Identity & SSO" }).getAttribute("href")).toBe("/tenants/tenant-a/identity-sso");
     expect(screen.queryByRole("heading", { name: "ResourcePortal role catalog" })).toBeNull();
     fireEvent.click(rolesTab);
     expect(rolesTab.getAttribute("aria-selected")).toBe("true");
     expect(groupsTab.getAttribute("aria-selected")).toBe("false");
     const panel = screen.getByRole("tabpanel", { name: "Roles catalog" });
+    expect(within(panel).getByRole("link", { name: "Open tenant Identity & SSO" }).getAttribute("href")).toBe("/tenants/tenant-a/identity-sso");
     expect(within(panel).getByRole("heading", { name: "ResourcePortal role catalog" })).toBeTruthy();
     expect(within(panel).getByText("All ResourcePortal permissions")).toBeTruthy();
     expect(within(panel).getByText("Tenant › Read")).toBeTruthy();
