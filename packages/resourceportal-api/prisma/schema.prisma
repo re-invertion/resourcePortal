@@ -634,6 +634,7 @@ model TenantOidcProvider {
   status            String   @default("Pending")
   enabled           Boolean  @default(false)
   grantsReconciledAt DateTime?
+  lastActivatedAt    DateTime?
   lastErrorCode     String?
   autoRolloutLeaseOwner String?
   autoRolloutLeaseUntil DateTime?

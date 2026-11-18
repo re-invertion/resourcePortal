@@ -22,7 +22,7 @@ const membership = {
 function fixture() {
   const tx = {
     $queryRaw: vi.fn().mockResolvedValue([]),
-    tenantMembership: { findFirst: vi.fn().mockResolvedValue({
+    tenantMembership: { count: vi.fn().mockResolvedValue(1), findFirst: vi.fn().mockResolvedValue({
       ...membership, user: { status: UserStatus.Active },
       tenant: { name: "Acme", status: "Active" },
     }) },
@@ -33,6 +33,9 @@ function fixture() {
     },
     tenantNativeAppGrant: {
       upsert: vi.fn().mockResolvedValue({ id: "native-1", enabled: true }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    tenantOidcProvider: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
@@ -81,6 +84,39 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
       where: { membershipId_oauthApplicationId: { membershipId, oauthApplicationId: appId } },
     }));
     expect(f.tx.auditLogEntry.create).toHaveBeenCalledOnce();
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
+    expect(f.tx.tenantOidcProvider.updateMany.mock.invocationCallOrder[0])
+      .toBeLessThan(f.tx.auditLogEntry.create.mock.invocationCallOrder[0]);
+  });
+
+  it("never disables existing tenant SSO for an RP-only member's app or native grant", async () => {
+    const f = fixture();
+    f.tx.tenantMembership.count.mockResolvedValue(0);
+    await expect(f.svc.grant(tenantId, membershipId, appId, actor))
+      .resolves.toMatchObject({ enabled: true });
+    await expect(f.svc.grantNative(tenantId, membershipId, "web", actor))
+      .resolves.toEqual({ clientKey: "web", enabled: true });
+    expect(f.tx.tenantMembership.count).toHaveBeenCalledTimes(2);
+    expect(f.tx.tenantOidcProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("wakes explicit and guarded automatic provisioning after native Web/CLI grant", async () => {
+    const f = fixture();
+    const expediteMemberReadiness = vi.fn().mockResolvedValue({ status: "pending" });
+    const reconcilePromptly = vi.fn().mockResolvedValue(undefined);
+    const svc = new AppConsumersService(f.prisma as never,
+      { expediteMemberReadiness } as never, { reconcilePromptly } as never);
+    await expect(svc.grantNative(tenantId, membershipId, "web", actor))
+      .resolves.toEqual({ clientKey: "web", enabled: true });
+    expect(expediteMemberReadiness).toHaveBeenCalledWith(tenantId, userId);
+    expect(reconcilePromptly).toHaveBeenCalledOnce();
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
   });
 
   it("rejects cross-tenant app, self-service and inactive membership with no write", async () => {
@@ -161,6 +197,10 @@ describe("#430 unified membership / exact OAuth client authorization", () => {
     const f = fixture();
     expect(await f.svc.grantNative(tenantId, membershipId, "web", actor)).toEqual({
       clientKey: "web", enabled: true,
+    });
+    expect(f.tx.tenantOidcProvider.updateMany).toHaveBeenCalledWith({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
     });
     expect(await f.svc.revokeNative(tenantId, membershipId, "cli", actor)).toEqual({
       clientKey: "cli", enabled: false,

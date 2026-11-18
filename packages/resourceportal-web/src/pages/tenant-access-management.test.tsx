@@ -103,6 +103,50 @@ describe("Tenant Access: role boundaries and connected controls", () => {
     });
   });
 
+  it("never opens member B with member A's values when B's grant snapshot is missing", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url.endsWith("/memberships")) return json([owner, member]);
+      if (url.endsWith("/membership-app-grants")) return json([
+        { membershipId: "m-owner", grants: [{ applicationId: "app-a", enabled: true }], nativeGrants: [] },
+      ]);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/oauth-applications")) return json([{ id: "app-a", name: "Application A" }]);
+      if (url.endsWith("/invitations") || url.endsWith("/groups")) return json([]);
+      return json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    const edit = await screen.findAllByRole("button", { name: "Edit access" });
+    await waitFor(() => expect(edit[0].hasAttribute("disabled")).toBe(false));
+    fireEvent.click(edit[0]);
+    expect(screen.getByRole("heading", { name: "Edit access: Tenant Owner" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(edit[1]);
+    expect(screen.queryByRole("heading", { name: /Edit access:/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save access" })).toBeNull();
+    expect(calls.some(c => c.init?.method === "PATCH")).toBe(false);
+  });
+
+  it("does not open an editor when the grants request fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/memberships")) return json([owner, member]);
+      if (url.endsWith("/membership-app-grants")) return json({ error: "Unavailable" }, 503);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/invitations") || url.endsWith("/groups")) return json([]);
+      return json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect((await screen.findAllByText("Member")).length).toBeGreaterThan(0);
+    const editButtons = await screen.findAllByRole("button", { name: "Edit access" });
+    await waitFor(() => expect(editButtons.every(button => button.hasAttribute("disabled"))).toBe(true));
+    fireEvent.click(editButtons[1]);
+    expect(screen.queryByRole("heading", { name: /Edit access:/ })).toBeNull();
+  });
+
   it("adds group members and inherited roles through real tenant-scoped API operations", async () => {
     const calls = fetcher();
     render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
@@ -197,5 +241,44 @@ it("refreshes memberships after group deletion so inherited permissions do not r
   await waitFor(() => {
     expect(membershipReads).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText(/inherited: Admin/)).toBeNull();
+  });
+});
+
+describe("Invitations fetch states (#417)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stubInvitations(reply: () => Promise<Response>) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/invitations")) return reply();
+      if (url.endsWith("/memberships")) return json([owner]);
+      if (url.endsWith("/roles")) return json(roleList);
+      if (url.endsWith("/groups")) return json([]);
+      return json([]);
+    }));
+  }
+
+  it("does not claim there are no invitations when the API fails", async () => {
+    stubInvitations(async () => json({ message: "Service unavailable" }, 500));
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(await screen.findByText("Access data could not be loaded")).toBeTruthy();
+    expect(screen.queryByText("No pending invitations")).toBeNull();
+  });
+
+  it("does not show an empty state while invitations are loading", async () => {
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { finish = resolve; });
+    stubInvitations(() => pending);
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(screen.queryByText("No pending invitations")).toBeNull();
+    finish(json([]));
+    expect(await screen.findByText("No pending invitations")).toBeTruthy();
+  });
+
+  it("shows the empty state after a successful empty response", async () => {
+    stubInvitations(async () => json([]));
+    render(<TenantAdministrationPage tenantId="tenant-a" userId="user-owner" />);
+    expect(await screen.findByText("No pending invitations")).toBeTruthy();
+    expect(screen.queryByText("Access data could not be loaded")).toBeNull();
   });
 });

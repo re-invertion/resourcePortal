@@ -96,3 +96,50 @@ it("shows a retryable identity-provider outage instead of navigating to raw HTTP
     redirect: "error",
   });
 });
+
+it("does not offer a misleading SSO action after providers HTTP 500 (#447)", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: "Server error" }), {
+    status: 500, headers: { "content-type": "application/json" },
+  })));
+  render(<AuthPage mode="login" />);
+  expect(await screen.findByText("Authentication providers unavailable")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry loading sign-in options" })).toBeTruthy();
+});
+
+it("recovers from provider network error on retry without stale SSO options (#447)", async () => {
+  let resolveRetry!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { resolveRetry = resolve; });
+  const fetchMock = vi.fn()
+    .mockRejectedValueOnce(new Error("Network unavailable"))
+    .mockImplementationOnce(() => pending);
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AuthPage mode="login" />);
+  const retry = await screen.findByRole("button", { name: "Retry loading sign-in options" });
+  fireEvent.click(retry);
+  expect(screen.getByText("Loading sign-in options…")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+  resolveRetry(json([{ id: "org-a", name: "Organization A" }, { id: "org-b", name: "Organization B" }]));
+  expect(await screen.findByRole("button", { name: "Continue with Organization A" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Continue with Organization B" })).toBeTruthy();
+  expect(screen.queryByText("Authentication providers unavailable")).toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("offers generic SSO only after successful empty provider discovery (#447)", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json([])));
+  render(<AuthPage mode="login" />);
+  expect(await screen.findByRole("button", { name: "Continue with SSO" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry loading sign-in options" })).toBeNull();
+});
+
+it("renders each configured provider rather than a misleading empty-list SSO (#447)", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ providers: [
+    { id: "provider-1", name: "Company One" },
+    { id: "provider-2", name: "Company Two" },
+  ] })));
+  render(<AuthPage mode="login" />);
+  expect(await screen.findByRole("button", { name: "Continue with Company One" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Continue with Company Two" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Continue with SSO" })).toBeNull();
+});

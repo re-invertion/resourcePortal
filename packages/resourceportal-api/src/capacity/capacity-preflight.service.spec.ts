@@ -602,6 +602,93 @@ describe("Stage 15 capacity preflight", () => {
       });
   });
 
+  describe("Hybrid strict-fallback diagnostics (#409)", () => {
+    function nearLimitReservation() {
+      platform({ cpuNano: 10_000_000_000n, memoryBytes: 8_192n });
+      const otherAppGroupId = "00000000-0000-0000-0000-000000000409";
+      findDeployments.mockResolvedValue([{
+        appGroupId: otherAppGroupId,
+        version: 1,
+        status: DeploymentStatus.Succeeded,
+        phase: DeploymentPhase.Completed,
+        stackConfig: serializedSnapshot(deploymentSnapshot({
+          id: otherAppGroupId, cpu: "1", memoryBytes: "7000",
+        })),
+      }]);
+    }
+
+    it("reports telemetry unavailable/stale reason without bypassing strict reservation limits", async () => {
+      nearLimitReservation();
+      const evaluateAdmission = vi.fn().mockResolvedValue({
+        usable: false,
+        reason: "fresh worker-published Hybrid admission telemetry is unavailable",
+      });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2000" }));
+      expect(evaluateAdmission).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ success: false, errorCode: "InsufficientCapacity" });
+      if (result.success) throw new Error("expected conservative denial");
+      expect(result.message).toContain("admissionMode=StrictFallback");
+      expect(result.message).toContain("reason=WorkerTelemetryUnavailableOrStale");
+      expect(result.message).toContain("unreserved=1192 bytes");
+    });
+
+    it("identifies missing node coverage and never echoes untrusted telemetry reasons", async () => {
+      nearLimitReservation();
+      service = new CapacityPreflightService(
+        { evaluateAdmission: vi.fn().mockResolvedValue({
+          usable: false,
+          reason: "node tenant-id sensitive arbitrary failure",
+        }) } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2000" }));
+      if (result.success) throw new Error("expected denial");
+      expect(result.message).toContain("reason=HybridEvidenceUnavailable");
+      expect(result.message).not.toContain("tenant-id sensitive");
+    });
+
+    it("explains a missing telemetry service under Hybrid mode", async () => {
+      nearLimitReservation();
+      service = new CapacityPreflightService(
+        undefined,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      const result = await service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2000" }));
+      if (result.success) throw new Error("expected denial");
+      expect(result.message).toContain("reason=TelemetryServiceUnavailable");
+    });
+
+    it("uses a healthy Hybrid admission decision instead of rejecting high declared reservations", async () => {
+      nearLimitReservation();
+      const evaluateAdmission = vi.fn().mockResolvedValue({ usable: true, decision: { allowed: true } });
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      await expect(service.admitDeployment(tx, deploymentSnapshot({ cpu: "1", memoryBytes: "2000" })))
+        .resolves.toMatchObject({ success: true });
+      expect(evaluateAdmission).toHaveBeenCalledOnce();
+    });
+
+    it("keeps CPU admission strict regardless of Hybrid telemetry", async () => {
+      platform({ cpuNano: 1_000_000_000n });
+      const evaluateAdmission = vi.fn();
+      service = new CapacityPreflightService(
+        { evaluateAdmission } as never,
+        { current: () => ({ mode: "Hybrid" }) } as never,
+      );
+      const result = await service.admitDeployment(tx, deploymentSnapshot());
+      if (result.success) throw new Error("expected CPU denial");
+      expect(result.message).toContain("platform cpu capacity");
+      expect(result.message).not.toContain("StrictFallback");
+      expect(evaluateAdmission).not.toHaveBeenCalled();
+    });
+  });
+
   it("passes an effective deployed AppGroup start target to Hybrid admission", async () => {
     const GiB = 1_073_741_824n;
     platform({ cpuNano: 10_000_000_000n, memoryBytes: 32n * GiB });
