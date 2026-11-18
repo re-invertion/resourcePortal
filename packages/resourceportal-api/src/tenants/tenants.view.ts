@@ -62,12 +62,16 @@ export function mapTenantAuthPolicy(policy: TenantAuthPolicy) {
   };
 }
 
-export function mapTenantInvitation(invitation: TenantInvitation) {
+export function mapTenantInvitation(
+  invitation: TenantInvitation & { appInvitationGrants?: Array<{ oauthApplicationId: string }> },
+) {
   return {
     id: invitation.id,
     tenantId: invitation.tenantId,
     email: invitation.email,
     roleIds: invitation.roleIds,
+    nativeApplicationKeys: invitation.nativeApplicationKeys,
+    oauthApplicationIds: (invitation.appInvitationGrants ?? []).map((grant) => grant.oauthApplicationId),
     expiresAt: invitation.expiresAt,
     lastSentAt: invitation.lastSentAt,
     createdBy: invitation.createdBy,

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { PrismaModule } from "../prisma/prisma.module";
+import { TenantOidcModule } from "../tenant-oidc/tenant-oidc.module";
 import { AppConsumersController, MembershipAppGrantsController } from "./app-consumers.controller";
 import { AppConsumerActionController } from "./app-consumer-action.controller";
 import { AppConsumerActionService } from "./app-consumer-action.service";
@@ -7,7 +8,7 @@ import { AppConsumersService } from "./app-consumers.service";
 import { McpDcrClientVerifierService } from "./mcp-dcr-client-verifier.service";
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, TenantOidcModule],
   controllers: [MembershipAppGrantsController, AppConsumersController, AppConsumerActionController],
   providers: [AppConsumersService, AppConsumerActionService, McpDcrClientVerifierService],
   exports: [AppConsumersService],

@@ -1,10 +1,12 @@
 import {
-  ForbiddenException, Injectable, NotFoundException,
+  ForbiddenException, Injectable, NotFoundException, Optional,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
 
 /** The same User/TenantMembership owns RP RBAC and application-specific SSO. */
 export type NativeClientKey = "web" | "cli";
@@ -13,7 +15,9 @@ const NATIVE_KEYS: NativeClientKey[] = ["web", "cli"];
 
 @Injectable()
 export class AppConsumersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService,
+    @Optional() private readonly oidc?: TenantOidcService,
+    @Optional() private readonly oidcAutoRollout?: TenantOidcAutoRolloutService) {}
 
   async list(tenantId: string) {
     const memberships = await this.prisma.tenantMembership.findMany({
@@ -47,7 +51,7 @@ export class AppConsumersService {
   }
 
   async grant(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const member = await this.lockedMember(tx, tenantId, membershipId, actor);
       const application = await tx.oAuthApplication.findFirst({
         where: { id: applicationId, tenantId }, select: { id: true, name: true },
@@ -59,10 +63,46 @@ export class AppConsumersService {
           createdBy: actor.id, updatedBy: actor.id, enabled: true },
         update: { enabled: true, updatedBy: actor.id },
       });
+      // Persist the durable work signal atomically with the exact-client
+      // entitlement: a crash between grant and worker wake-up must not strand
+      // a member with local access but no upstream project assignment.
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.app_grant.grant",
         applicationId, application.name, { membershipId, applicationId, enabled: true });
       return { id: record.id, applicationId, enabled: record.enabled };
     });
+
+    // A first grant may target a member who has never received the upstream
+    // tenant-project role. Never report SSO ready based on the local row alone.
+    if (!this.oidc) return result;
+    const member = await this.prisma.tenantMembership.findUnique({
+      where: { id: membershipId }, select: { userId: true },
+    });
+    if (!member) return result;
+    try {
+      const readiness = await this.oidc.onClientEntitlementGranted(tenantId, member.userId);
+      if (readiness.status === "pending" && this.oidcAutoRollout) {
+        void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+      }
+      return { ...result, ssoProvisioning: readiness };
+    } catch {
+      return { ...result, ssoProvisioning: { status: "pending" as const } };
+    }
   }
 
   async revoke(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
@@ -81,17 +121,49 @@ export class AppConsumersService {
 
   async grantNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {
     this.assertNativeKey(clientKey);
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const member = await this.lockedMember(tx, tenantId, membershipId, actor);
       const record = await tx.tenantNativeAppGrant.upsert({
         where: { membershipId_clientKey: { membershipId, clientKey } },
         create: { membershipId, tenantId, clientKey, createdBy: actor.id, updatedBy: actor.id },
         update: { enabled: true, updatedBy: actor.id },
       });
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
       await this.audit(tx, tenantId, member.tenant.name, actor, "membership.native_grant.grant",
         membershipId, undefined, { membershipId, clientKey, enabled: true });
       return { clientKey, enabled: record.enabled };
     });
+    // Native Web/CLI grants must wake BOTH supported provisioning paths:
+    // explicit administrator-authorized activation and guarded automatic rollout.
+    // The committed NeedsReconciliation row remains durable across crashes.
+    if (this.oidc) {
+      const member = await this.prisma.tenantMembership.findUnique({
+        where: { id: membershipId }, select: { userId: true },
+      });
+      if (member) {
+        void this.oidc.expediteMemberReadiness(tenantId, member.userId)
+          .catch(() => undefined);
+      }
+    }
+    if (this.oidcAutoRollout) {
+      void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+    }
+    return result;
   }
 
   async revokeNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {

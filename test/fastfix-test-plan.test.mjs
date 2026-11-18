@@ -954,6 +954,18 @@ test("OIDC client/action refresh proof requires identity and security certificat
   assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
 });
 
+
+test("issue #412 Bug Report screenshot reset selects exact Web and API tests without weakening fail-closed classification", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/bug-report-dialog.tsx",
+    "packages/resourceportal-web/src/components/bug-report-dialog.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["bug-reports"]);
+  const plan = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(plan, /src\/components\/bug-report-dialog\.test\.tsx/);
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/components/bug-report-dialog-unsafe.tsx"]), /unclassified changes/);
+});
+
 test("Codex review recheck dispatcher cannot skip identity, security or release tests", () => {
   for (const path of ["scripts/release-review-recheck.mjs", "test/test-release-review-recheck.test.mjs"]) {
     const selected = selectProfiles([path]);
@@ -1036,5 +1048,4 @@ test("#442 MCP OAuth metadata global-prefix routing requires identity and securi
   }
   assert.throws(() => selectProfiles([
     "packages/resourceportal-api/src/config/unregistered-oauth-route.ts",
-  ]), /unclassified changes/);
-});
+  ]), /unclassified changes/);});
