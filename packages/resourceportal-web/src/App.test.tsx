@@ -23,10 +23,38 @@ describe("Web Console bootstrap", () => {
   });
 
   it("renders controlled re-login when the BFF session is missing", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ error: { message: "Unauthorized" } }, 401)));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input) === "/api/health/upgrade"
+      ? json({ updating: false }) : json({ error: { message: "Unauthorized" } }, 401)));
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Sign in to ResourcePortal" })).toBeTruthy();
   });
+
+  for (const failure of ["http-503", "network"] as const) {
+    it(`offers session verification retry for ${failure} without displaying login`, async () => {
+      let attempts = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/health/upgrade") return json({ updating: false });
+        if (path === "/api/auth/me") {
+          attempts += 1;
+          if (attempts === 1) {
+            if (failure === "network") throw new Error("Offline");
+            return json({ error: { message: "Unavailable" } }, 503);
+          }
+          return json({ id: "u1", email: "user@example.test", status: "Active" });
+        }
+        if (path === "/api/tenants") return json([{ id: "t1", name: "Tenant", status: "Active" }]);
+        return json({ error: { message: "Unexpected" } }, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Unable to verify your session" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Sign in to ResourcePortal" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Retry session check" }));
+      expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
+      expect(attempts).toBe(2);
+    });
+  }
 
   it("shows tenant selection for multiple active tenants", async () => {
     const fetchMock = vi.fn()
