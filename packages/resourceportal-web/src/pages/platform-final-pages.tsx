@@ -309,6 +309,13 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const capacityPredictions = items<Row>(capacityRow.predictions);
   const capacityPolicy = asRecord(capacityRow.policy);
   const capacityTelemetryState = asRecord(capacityRow.telemetryState);
+  const retainedSamples = numberOf(capacityRow.observations, NaN);
+  const hasNodeTelemetry = capacityNodes.some(item => item.nodeMemoryAvailableBytes !== null && item.nodeMemoryAvailableBytes !== undefined);
+  const hasAppHistory = capacityPredictions.some(item => numberOf(item.sampleCount, 0) > 0);
+  const predictionSummary = capacityPredictions.length === 0 ? "No prediction history" : formatBytes(capacityRow.predictedDemandBytes);
+  const predictionExplanation = !capacityPredictions.length ? "No application predictions yet; zero is not a measured demand." :
+    !hasAppHistory ? "Conservative policy fallback; no application memory samples yet." :
+    "Worst-node same-time P99 " + formatBytes(capacityRow.nodePredictedP99Bytes);
   const pct = (used: number, total: number) => total > 0 ? `${Math.round((used / total) * 100)}% used` : "Capacity unavailable";
   return <main>
     <PageHeader eyebrow="Platform Admin" title="Infrastructure" description="Swarm health, capacity, GPUs, storage backends, remote locations and updates in separate workspaces."
@@ -341,14 +348,14 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Capacity prediction summary">
             <MetricCard label="Physical RAM available" value={capacityRow.physicalMemoryAvailableBytes ? formatBytes(capacityRow.physicalMemoryAvailableBytes) : "Unavailable"} detail={capacityRow.physicalMemoryTotalBytes ? "of "+formatBytes(capacityRow.physicalMemoryTotalBytes)+" total" : "No fresh node telemetry"} loading={capacity.loading} />
             <MetricCard label="Hard limits" value={formatBytes(capacityRow.hardLimitBytes)} detail="Running container hard-limit total" loading={capacity.loading} />
-            <MetricCard label="Predicted demand" value={formatBytes(capacityRow.predictedDemandBytes)} detail={"Worst-node same-time P99 "+formatBytes(capacityRow.nodePredictedP99Bytes)} loading={capacity.loading} />
-            <MetricCard label="Real headroom" value={formatBytes(capacityRow.minimumNodeHeadroomBytes)} detail="Minimum node headroom after safety reserve" loading={capacity.loading} />
+            <MetricCard label="Predicted demand" value={predictionSummary} detail={predictionExplanation} loading={capacity.loading} />
+            <MetricCard label="Real headroom" value={hasNodeTelemetry ? formatBytes(capacityRow.minimumNodeHeadroomBytes) : "Unavailable"} detail={hasNodeTelemetry ? "Minimum node headroom after safety reserve" : "No current node telemetry; zero is not a measured headroom"} loading={capacity.loading} />
             <MetricCard label="Safety reserve" value={formatBytes(capacityRow.safetyReserveBytes)} detail={String(numberOf(capacityPolicy.nodeSafetyBufferPercent,20))+"% node buffer · "+String(Array.isArray(capacityRow.activeDeploymentReservations)?capacityRow.activeDeploymentReservations.length:0)+" active deployment reservation(s)"} loading={capacity.loading} />
           </section>
           <DetailList columns={3} items={[
             {label:"Mode",value:<StatusBadge tone={text(capacityPolicy.mode)==="Hybrid"?"success":"warning"}>{text(capacityPolicy.mode,"Unknown")}</StatusBadge>},
             {label:"Telemetry confidence",value:capacityPredictions.length?String(Math.round(Math.min(...capacityPredictions.map((item)=>numberOf(item.confidence,0)))*100))+"% minimum":"No application history"},
-            {label:"Samples retained",value:String(numberOf(capacityRow.observations,0))},
+            {label:"Samples retained",value:Number.isFinite(retainedSamples) && retainedSamples > 0 ? String(retainedSamples) : "No samples"},
             {label:"Fresh observation",value:formatDate(capacityNode.observedAt)},
             {label:"Worker snapshot",value:formatDate(capacityTelemetryState.lastSuccessAt)},
           ]}/>
@@ -368,16 +375,18 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
           </div>
           <div>
             <h3 className="text-sm font-semibold text-[#172033]">Application predictions</h3>
+            <p className="mt-1 text-xs leading-5 text-[#526070]">P99 is the historical 99th-percentile memory; 7d peak is the highest observed seven-day peak. Prediction includes policy margins and may use a conservative fallback. Confidence reflects history coverage, not a guarantee. A missing sample is never shown as 0 B of measured usage.</p>
             <div className="mt-3 overflow-hidden rounded-lg border border-[#E1E7F0]">
               <DataTable embedded className="rounded-none border-0" loading={capacity.loading} columns={[
-                {key:"app",label:"Application ID"},{key:"predicted",label:"Predicted"},{key:"p99",label:"P99"},{key:"peak",label:"7d peak"},{key:"confidence",label:"Confidence"},{key:"oom",label:"OOM events"}
+                {key:"app",label:"Application ID"},{key:"samples",label:"Samples"},{key:"predicted",label:"Predicted"},{key:"p99",label:"P99"},{key:"peak",label:"7d peak"},{key:"confidence",label:"Confidence"},{key:"oom",label:"OOM events"}
               ]} rows={capacityPredictions.map((item)=>({key:text(item.appId),cells:{
                 app:<code className="text-xs">{text(item.appId)}</code>,
-                predicted:formatBytes(item.predictedBytes),
-                p99:formatBytes(item.p99Bytes),
-                peak:formatBytes(item.max7dBytes),
-                confidence:String(Math.round(numberOf(item.confidence,0)*100))+"%",
-                oom:text(item.recentOomEvents,"0"),
+                samples:item.sampleCount === undefined || item.sampleCount === null ? "Not reported" : numberOf(item.sampleCount,0) === 0 ? "No samples" : String(numberOf(item.sampleCount,0)),
+                predicted:numberOf(item.sampleCount,NaN) === 0 ? `${formatBytes(item.predictedBytes)} (policy fallback)` : formatBytes(item.predictedBytes),
+                p99:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.p99Bytes),
+                peak:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.max7dBytes),
+                confidence:item.confidence === undefined || item.confidence === null ? "Unavailable" : `${Math.round(numberOf(item.confidence,0)*100)}%${numberOf(item.sampleCount,NaN) === 0 ? " · fallback" : ""}`,
+                oom:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : text(item.recentOomEvents,"0"),
               }}))} empty={<EmptyState title="No prediction history yet" description="Hybrid starts conservatively from fresh telemetry and improves confidence as 7/30/90-day history accumulates."/>}/>
             </div>
           </div>
