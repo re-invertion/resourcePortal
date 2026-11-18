@@ -16,6 +16,27 @@ const preview = {
 describe("InvitationPage", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("shows a terminal error rather than a loading heading for HTTP 500 and retries", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ message: "Temporary failure" }, 500)).mockResolvedValueOnce(json(preview));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InvitationPage token="opaque-token" user={null} />);
+    expect(await screen.findByRole("heading", { name: "Invitation unavailable" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Loading invitation…" })).toBeNull();
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: "Join Acme Corp" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows retry after a network rejection", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("Network unavailable")).mockResolvedValueOnce(json(preview));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<InvitationPage token="opaque-token" user={null} />);
+    expect(await screen.findByText("Network unavailable")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: "Join Acme Corp" })).toBeTruthy();
+  });
+
   it("uses identity-only onboarding client links with an opaque invitation proof when the Action is enabled", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ ...preview, onboardingAvailable: true })));
     render(<InvitationPage token="opaque-token" user={null} />);
