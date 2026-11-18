@@ -15,7 +15,7 @@ export class GateLanObservationDto {
   capabilities!:Array<"ManagedSharedUplink"|"LANDiscoveryV1">;
   @IsIn(["host-verified"]) discoveryMethod!: "host-verified";
   @IsISO8601() observedAt!: string;
-  @IsIn(["gate-l2-v2", "gate-l2-v3"]) agentVersion!: "gate-l2-v2" | "gate-l2-v3";
+  @IsIn(["gate-l2-v2", "gate-l2-v3", "gate-l2-v4"]) agentVersion!: "gate-l2-v2" | "gate-l2-v3" | "gate-l2-v4";
   @IsIn(["Ready"]) state!: "Ready";
 }
 export class GateLanAttachmentProofDto {
@@ -40,8 +40,13 @@ export class GateL2DiagnosticDto {
   errorCode?:"none"|"collector_execution_failed"|"invalid_collector_output";
 }
 export class GateHeartbeatDto {
-  @IsIn(["gate-l2-v1", "gate-l2-v2", "gate-l2-v3"])
-  agentVersion!: "gate-l2-v1" | "gate-l2-v2" | "gate-l2-v3";
+  @IsIn(["gate-l2-v1", "gate-l2-v2", "gate-l2-v3", "gate-l2-v4"])
+  agentVersion!: "gate-l2-v1" | "gate-l2-v2" | "gate-l2-v3" | "gate-l2-v4";
+
+  // Fresh one-use challenge binds response to THIS authenticated heartbeat,
+  // preventing an old HTTPS response from manufacturing a new lease.
+  @IsOptional() @IsString() @Matches(/^[0-9a-f]{64}$/)
+  leaseNonce?: string;
 
   @IsOptional() @ValidateNested() @Type(() => GateLanObservationDto)
   lanObservation?: GateLanObservationDto;

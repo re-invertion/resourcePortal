@@ -1,175 +1,223 @@
 import {
-  ConflictException, ForbiddenException, Injectable, NotFoundException,
+  ForbiddenException, Injectable, NotFoundException, Optional,
 } from "@nestjs/common";
-import { MembershipStatus, UserStatus } from "@prisma/client";
+import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { AuthenticatedUser } from "../auth/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
+
+/** The same User/TenantMembership owns RP RBAC and application-specific SSO. */
+export type NativeClientKey = "web" | "cli";
+const SSO_ROLE = "sso-login";
+const NATIVE_KEYS: NativeClientKey[] = ["web", "cli"];
 
 @Injectable()
 export class AppConsumersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService,
+    @Optional() private readonly oidc?: TenantOidcService,
+    @Optional() private readonly oidcAutoRollout?: TenantOidcAutoRolloutService) {}
 
   async list(tenantId: string) {
-    const consumers = await this.prisma.tenantAppConsumer.findMany({
+    const memberships = await this.prisma.tenantMembership.findMany({
       where: { tenantId },
       include: {
-        membership: {
-          include: { user: { select: { id: true, email: true, displayName: true, status: true } } },
-        },
-        grants: {
-          include: { application: { select: { id: true, name: true } } },
-        },
+        user: { select: { id: true, email: true, displayName: true, status: true } },
+        appGrants: { include: {
+          application: { select: { id: true, name: true } },
+        } },
+        nativeAppGrants: true,
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
     });
-    // Never return ZITADEL grant IDs, external subject, client secrets, OAuth
-    // credentials, session tokens or any tenant resource inventories here.
-    return consumers.map((consumer) => ({
-      membershipId: consumer.membershipId,
-      status: consumer.membership.status,
-      user: consumer.membership.user,
-      createdAt: consumer.createdAt,
-      grants: consumer.grants.map((grant) => ({
+    return memberships.map((membership) => ({
+      membershipId: membership.id,
+      status: membership.status,
+      user: membership.user,
+      createdAt: membership.createdAt,
+      grants: membership.appGrants.map((grant) => ({
         applicationId: grant.oauthApplicationId,
         applicationName: grant.application.name,
+        enabled: grant.enabled,
+        updatedAt: grant.updatedAt,
+      })),
+      nativeGrants: membership.nativeAppGrants.map((grant) => ({
+        clientKey: grant.clientKey,
         enabled: grant.enabled,
         updatedAt: grant.updatedAt,
       })),
     }));
   }
 
-  async grant(
-    tenantId: string,
-    membershipId: string,
-    applicationId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const consumer = await this.requireActiveConsumer(tenantId, membershipId);
-    if (actor.id === consumer.membership.userId) {
-      throw new ForbiddenException("Consumers cannot modify their own grants");
-    }
-    const application = await this.prisma.oAuthApplication.findFirst({
-      where: { id: applicationId, tenantId },
-      select: { id: true, name: true },
-    });
-    if (!application) throw new NotFoundException("OAuthApplication not found in tenant");
-
-    return this.prisma.$transaction(async (tx) => {
+  async grant(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const member = await this.lockedMember(tx, tenantId, membershipId, actor);
+      const application = await tx.oAuthApplication.findFirst({
+        where: { id: applicationId, tenantId }, select: { id: true, name: true },
+      });
+      if (!application) throw new NotFoundException("OAuthApplication not found in tenant");
       const record = await tx.tenantAppClientGrant.upsert({
         where: { membershipId_oauthApplicationId: { membershipId, oauthApplicationId: applicationId } },
         create: { membershipId, tenantId, oauthApplicationId: applicationId,
           createdBy: actor.id, updatedBy: actor.id, enabled: true },
         update: { enabled: true, updatedBy: actor.id },
       });
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId, tenantName: consumer.tenant.name, actor: actor.id, actorName: actor.displayName,
-          action: "app_consumer.grant", resourceType: "OAuthApplication",
-          resourceId: applicationId, resourceName: application.name, result: "Success",
-          correlationId: randomUUID(),
-          changes: { membershipId, applicationId, enabled: true },
-        },
-      });
+      // Persist the durable work signal atomically with the exact-client
+      // entitlement: a crash between grant and worker wake-up must not strand
+      // a member with local access but no upstream project assignment.
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
+      await this.audit(tx, tenantId, member.tenant.name, actor, "membership.app_grant.grant",
+        applicationId, application.name, { membershipId, applicationId, enabled: true });
       return { id: record.id, applicationId, enabled: record.enabled };
     });
+
+    // A first grant may target a member who has never received the upstream
+    // tenant-project role. Never report SSO ready based on the local row alone.
+    if (!this.oidc) return result;
+    const member = await this.prisma.tenantMembership.findUnique({
+      where: { id: membershipId }, select: { userId: true },
+    });
+    if (!member) return result;
+    try {
+      const readiness = await this.oidc.onClientEntitlementGranted(tenantId, member.userId);
+      if (readiness.status === "pending" && this.oidcAutoRollout) {
+        void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+      }
+      return { ...result, ssoProvisioning: readiness };
+    } catch {
+      return { ...result, ssoProvisioning: { status: "pending" as const } };
+    }
   }
 
-  async revoke(
-    tenantId: string,
-    membershipId: string,
-    applicationId: string,
-    actor: AuthenticatedUser,
-  ) {
-    const consumer = await this.requireActiveConsumer(tenantId, membershipId);
-    if (actor.id === consumer.membership.userId) {
-      throw new ForbiddenException("Consumers cannot modify their own grants");
-    }
+  async revoke(tenantId: string, membershipId: string, applicationId: string, actor: AuthenticatedUser) {
     return this.prisma.$transaction(async (tx) => {
+      const member = await this.lockedMember(tx, tenantId, membershipId, actor);
       const result = await tx.tenantAppClientGrant.updateMany({
-        where: { tenantId, membershipId, oauthApplicationId: applicationId, enabled: true },
+        where: { membershipId, tenantId, oauthApplicationId: applicationId, enabled: true },
         data: { enabled: false, updatedBy: actor.id },
       });
-      if (result.count === 0) throw new NotFoundException("Active app grant not found");
-      await tx.auditLogEntry.create({
-        data: {
-          tenantId, tenantName: consumer.tenant.name, actor: actor.id, actorName: actor.displayName,
-          action: "app_consumer.revoke", resourceType: "OAuthApplication",
-          resourceId: applicationId, result: "Success", correlationId: randomUUID(),
-          changes: { membershipId, applicationId, enabled: false },
-        },
-      });
+      if (!result.count) throw new NotFoundException("Active app grant not found");
+      await this.audit(tx, tenantId, member.tenant.name, actor, "membership.app_grant.revoke",
+        applicationId, undefined, { membershipId, applicationId, enabled: false });
       return { applicationId, enabled: false };
     });
   }
 
-  /**
-   * Native RP login is an infrastructure client, not an app grant. Preserve
-   * normal first-time RP login, but never mint an RP token for an App Consumer
-   * (including a suspended consumer whose old session could still exist).
-   * Identity is resolved solely from the verified signed ZITADEL subject.
-   * A DB outage must reject token issuance; callers must not bypass errors.
-   */
-  async mayIssueNativeRpToken(issuer: string, externalSubject: string): Promise<boolean> {
-    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject)) return false;
-    const consumer = await this.prisma.tenantAppConsumer.findFirst({
-      where: {
-        membership: {
-          user: {
-            identities: {
-              some: {
-                issuer, externalSubject, providerType: "zitadel", identityProviderId: null,
-              },
-            },
-          },
-        },
-      },
-      select: { membershipId: true },
+  async grantNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {
+    this.assertNativeKey(clientKey);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const member = await this.lockedMember(tx, tenantId, membershipId, actor);
+      const record = await tx.tenantNativeAppGrant.upsert({
+        where: { membershipId_clientKey: { membershipId, clientKey } },
+        create: { membershipId, tenantId, clientKey, createdBy: actor.id, updatedBy: actor.id },
+        update: { enabled: true, updatedBy: actor.id },
+      });
+      // Only a member in the tenant SSO cohort can change its upstream grant
+      // snapshot. App entitlements for RP-only users must not disable SSO for
+      // all existing members, even when explicit auto rollout is disabled.
+      const eligible = await tx.tenantMembership.count({ where: {
+        id: membershipId,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+        ],
+      } });
+      if (eligible) {
+        await tx.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+        });
+      }
+      await this.audit(tx, tenantId, member.tenant.name, actor, "membership.native_grant.grant",
+        membershipId, undefined, { membershipId, clientKey, enabled: true });
+      return { clientKey, enabled: record.enabled };
     });
-    return consumer === null;
-  }
-
-  /**
-   * Issuer-global pre-token Actions V2 also runs for pre-existing OAuth and
-   * dynamically registered MCP clients not managed by RP. Do not change their
-   * ZITADEL authorization model: non-App-Consumers remain eligible for those
-   * upstream-managed clients. App Consumers never get that legacy path.
-   *
-   * Registered tenant OAuthApplication clients always use their exact tenant
-   * grants, so this path cannot bypass App Consumer client entitlements.
-   */
-  async mayIssueLegacyClientToken(
-    issuer: string,
-    externalSubject: string,
-    clientId: string,
-  ): Promise<boolean> {
-    if (!clientId || !issuer.startsWith("https://") ||
-        !/^\d{1,64}$/.test(externalSubject)) return false;
-    const managed = await this.prisma.oAuthApplication.findUnique({
-      where: { clientId },
-      select: { id: true, tenantId: true },
-    });
-    // Platform applications have tenantId=null and are authorized by
-    // ZITADEL upstream for ordinary identities. Only tenant-managed apps
-    // require exact RP tenant/project/entitlement checks.
-    if (managed?.tenantId) {
-      return this.mayIssueClientToken(issuer, externalSubject, clientId);
+    // Native Web/CLI grants must wake BOTH supported provisioning paths:
+    // explicit administrator-authorized activation and guarded automatic rollout.
+    // The committed NeedsReconciliation row remains durable across crashes.
+    if (this.oidc) {
+      const member = await this.prisma.tenantMembership.findUnique({
+        where: { id: membershipId }, select: { userId: true },
+      });
+      if (member) {
+        void this.oidc.expediteMemberReadiness(tenantId, member.userId)
+          .catch(() => undefined);
+      }
     }
-    // Never bypass the App Consumer boundary for platform/legacy clients.
-    return this.mayIssueNativeRpToken(issuer, externalSubject);
+    if (this.oidcAutoRollout) {
+      void this.oidcAutoRollout.reconcilePromptly().catch(() => undefined);
+    }
+    return result;
+  }
+
+  async revokeNative(tenantId: string, membershipId: string, clientKey: NativeClientKey, actor: AuthenticatedUser) {
+    this.assertNativeKey(clientKey);
+    return this.prisma.$transaction(async (tx) => {
+      const member = await this.lockedMember(tx, tenantId, membershipId, actor);
+      const result = await tx.tenantNativeAppGrant.updateMany({
+        where: { membershipId, tenantId, clientKey, enabled: true },
+        data: { enabled: false, updatedBy: actor.id },
+      });
+      if (!result.count) throw new NotFoundException("Active native app grant not found");
+      await this.audit(tx, tenantId, member.tenant.name, actor, "membership.native_grant.revoke",
+        membershipId, undefined, { membershipId, clientKey, enabled: false });
+      return { clientKey, enabled: false };
+    });
+  }
+
+  /** A signed ZITADEL user subject and exactly one physical RP client. */
+  async mayIssueNativeRpToken(issuer: string, externalSubject: string, clientKey: NativeClientKey): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject) ||
+        !NATIVE_KEYS.includes(clientKey)) return false;
+    const identity = await this.verifiedIdentity(issuer, externalSubject);
+    if (!identity) return false;
+    return Boolean(await this.prisma.tenantMembership.findFirst({
+      where: {
+        userId: identity.userId, status: MembershipStatus.Active,
+        tenant: { status: "Active" },
+        nativeAppGrants: { some: { clientKey, enabled: true } },
+        OR: [
+          { roles: { some: { roleId: SSO_ROLE } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: SSO_ROLE } } } } } },
+        ],
+      },
+      select: { id: true },
+    }));
   }
 
   /**
-   * Only call with issuer, subject and client ID obtained from an authenticated
-   * ZITADEL Actions V2 webhook. Unknown identities, projects, apps or grants
-   * deny by default. This service does not itself expose a public webhook.
+   * Only registered tenant OAuth applications are covered by this entitlement.
+   * An unknown client, platform OAuth app or MCP DCR is not a fallback from the
+   * issuer-global pre-token hook; onboard it via a separately certified policy.
    */
-  async mayIssueClientToken(
-    issuer: string,
-    externalSubject: string,
-    clientId: string,
-  ): Promise<boolean> {
-    if (!issuer.startsWith("https://") || !externalSubject || !clientId) return false;
+  async mayIssueLegacyClientToken(issuer: string, externalSubject: string, clientId: string): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !clientId || !/^\d{1,64}$/.test(externalSubject)) return false;
+    const application = await this.prisma.oAuthApplication.findUnique({
+      where: { clientId }, select: { tenantId: true },
+    });
+    return application?.tenantId
+      ? this.mayIssueClientToken(issuer, externalSubject, clientId)
+      : false;
+  }
+
+  async mayIssueClientToken(issuer: string, externalSubject: string, clientId: string): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject) || !clientId) return false;
     const application = await this.prisma.oAuthApplication.findUnique({
       where: { clientId },
       select: {
@@ -181,64 +229,136 @@ export class AppConsumersService {
     });
     const tenantId = application?.tenantId;
     const provider = application?.tenant?.tenantOidcProvider;
-    if (!tenantId || !application.zitadelProjectId || !provider?.enabled ||
+    if (!tenantId || !application?.zitadelProjectId || !provider?.enabled ||
         provider.issuer?.replace(/\/$/, "") !== issuer.replace(/\/$/, "") ||
         provider.zitadelProjectId !== application.zitadelProjectId ||
         application.tenant?.status !== "Active") return false;
 
-    const identity = await this.prisma.userIdentity.findUnique({
-      where: { issuer_externalSubject: { issuer, externalSubject } },
-      include: { user: { select: { id: true, status: true } } },
-    });
-    if (!identity || identity.user.status !== UserStatus.Active ||
-        identity.providerType !== "zitadel" || identity.identityProviderId !== null) return false;
-
+    const identity = await this.verifiedIdentity(issuer, externalSubject);
+    if (!identity) return false;
     const membership = await this.prisma.tenantMembership.findUnique({
       where: { userId_tenantId: { userId: identity.userId, tenantId } },
       include: {
-        roles: true,
-        groupMemberships: { include: { group: { include: { roles: true } } } },
-        appConsumer: {
-          include: { grants: { where: { enabled: true },
-            select: { oauthApplicationId: true } } },
-        },
+        roles: { select: { roleId: true } },
+        groupMemberships: { include: { group: {
+          include: { roles: { select: { roleId: true } } },
+        } } },
+        appGrants: { where: { oauthApplicationId: application.id, enabled: true },
+          select: { id: true } },
       },
     });
     if (!membership || membership.status !== MembershipStatus.Active) return false;
-
-    // Existing role-bearing RP members historically used project-scoped
-    // ZITADEL roles for these OAuth applications. Preserve that behavior
-    // during the issuer-global cutover. The App Consumer category below
-    // remains per-client and has no fallback.
-    if (!membership.appConsumer) {
-      return membership.roles.length > 0 ||
-        membership.groupMemberships.some((row) => row.group.roles.length > 0);
-    }
-    // A consumer with any RP role (direct/inherited) is an invalid state:
-    // do not let a malformed consumer also inherit portal permissions.
-    if (membership.roles.length || membership.groupMemberships.some((g) => g.group.roles.length)) return false;
-    return membership.appConsumer.grants.some((g) => g.oauthApplicationId === application.id);
+    const sso = membership.roles.some((row) => row.roleId === SSO_ROLE) ||
+      membership.groupMemberships.some((row) =>
+        row.group.roles.some((role) => role.roleId === SSO_ROLE));
+    return sso && membership.appGrants.length > 0;
   }
 
-  private async requireActiveConsumer(tenantId: string, membershipId: string) {
-    const consumer = await this.prisma.tenantAppConsumer.findFirst({
-      where: { membershipId, tenantId },
-      include: { tenant: { select: { name: true } },
-        membership: { include: {
-        user: { select: { status: true } },
-        roles: true,
-        groupMemberships: { include: { group: { include: { roles: true } } } },
-      } } },
+  /**
+   * MCP DCR token entitlement is independent of RP Web/CLI and tenant app
+   * grants. The DCR client itself is verified separately against ZITADEL's
+   * DCR project. At token/refresh time require a currently enabled MCP tenant,
+   * active membership, explicit MCP access and the SSO login capability.
+   *
+   * A DCR token can carry the RP project audience; it is not a tenant grant.
+   * TenantMcpAccessGuard rechecks the exact requested tenant on every call.
+   */
+  /** RP-created, issuer-isolated identity bootstrap for exactly one MCP
+   * tenant. Does not authorize RP Web/CLI or any MCP tool by itself.
+   * Unregistered/forged upstream client IDs always fail closed.
+   */
+  async mayIssueMcpUpstreamToken(
+    issuer: string, externalSubject: string, clientId: string,
+  ): Promise<boolean> {
+    if (!clientId || !issuer.startsWith("https://") ||
+        !/^\d{1,64}$/.test(externalSubject)) return false;
+    const registered = await this.prisma.mcpOAuthUpstreamClient.findUnique({
+      where: { clientId },
+      select: { tenantId: true },
     });
-    if (!consumer) throw new NotFoundException("App Consumer not found in tenant");
-    if (consumer.membership.status !== MembershipStatus.Active ||
-        consumer.membership.user.status !== UserStatus.Active) {
-      throw new ForbiddenException("Active App Consumer required");
-    }
-    if (consumer.membership.roles.length ||
-        consumer.membership.groupMemberships.some((g) => g.group.roles.length)) {
-      throw new ConflictException("App Consumer must not possess ResourcePortal roles");
-    }
-    return consumer;
+    return registered
+      ? this.mayIssueMcpDcrToken(issuer, externalSubject, registered.tenantId)
+      : false;
+  }
+
+  async mayIssueMcpDcrToken(
+    issuer: string, externalSubject: string, tenantId?: string,
+  ): Promise<boolean> {
+    if (!issuer.startsWith("https://") || !/^\d{1,64}$/.test(externalSubject)) return false;
+    const identity = await this.verifiedIdentity(issuer, externalSubject);
+    if (!identity) return false;
+    const memberships = await this.prisma.tenantMembership.findMany({
+      where: {
+        userId: identity.userId,
+        ...(tenantId ? { tenantId } : {}),
+        status: MembershipStatus.Active,
+        tenant: { status: "Active" },
+        OR: [
+          { roles: { some: { roleId: SSO_ROLE } } },
+          { groupMemberships: { some: { group: { roles: { some: { roleId: SSO_ROLE } } } } } },
+        ],
+      },
+      select: {
+        id: true,
+        tenant: {
+          select: {
+            mcpSettings: {
+              select: {
+                enabled: true,
+                accessMode: true,
+                allowedMembers: { select: { membershipId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    return memberships.some(({ id, tenant }) => {
+      const settings = tenant.mcpSettings;
+      return settings?.enabled === true &&
+        (settings.accessMode === "AllMembers" ||
+          (settings.accessMode === "SelectedMembers" &&
+            settings.allowedMembers.some((row) => row.membershipId === id)));
+    });
+  }
+
+  private async verifiedIdentity(issuer: string, externalSubject: string) {
+    const identity = await this.prisma.userIdentity.findUnique({
+      where: { issuer_externalSubject: { issuer, externalSubject } },
+      include: { user: { select: { status: true } } },
+    });
+    return identity && identity.user.status === UserStatus.Active &&
+      identity.providerType === "zitadel" && identity.identityProviderId === null ? identity : null;
+  }
+
+  private assertNativeKey(value: string): asserts value is NativeClientKey {
+    if (!NATIVE_KEYS.includes(value as NativeClientKey)) throw new ForbiddenException("Unknown native client");
+  }
+
+  /** Tenant lock serializes membership deletion, role changes and grants. */
+  private async lockedMember(
+    tx: Prisma.TransactionClient, tenantId: string, membershipId: string, actor: AuthenticatedUser,
+  ) {
+    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+    const member = await tx.tenantMembership.findFirst({
+      where: { id: membershipId, tenantId },
+      include: { tenant: { select: { name: true, status: true } }, user: { select: { status: true } } },
+    });
+    if (!member) throw new NotFoundException("Tenant membership not found");
+    if (actor.id === member.userId) throw new ForbiddenException("Self-granting application access is forbidden");
+    if (member.status !== MembershipStatus.Active || member.user.status !== UserStatus.Active ||
+        member.tenant.status !== "Active") throw new ForbiddenException("Active tenant membership is required");
+    return member;
+  }
+
+  private async audit(
+    tx: Prisma.TransactionClient, tenantId: string, tenantName: string, actor: AuthenticatedUser,
+    action: string, resourceId: string, resourceName: string | undefined, changes: Record<string, unknown>,
+  ) {
+    await tx.auditLogEntry.create({ data: {
+      tenantId, tenantName, actor: actor.id, actorName: actor.displayName,
+      action, resourceType: "TenantApplicationGrant", resourceId, resourceName,
+      result: "Success", correlationId: randomUUID(), changes: changes as Prisma.InputJsonValue,
+    } });
   }
 }

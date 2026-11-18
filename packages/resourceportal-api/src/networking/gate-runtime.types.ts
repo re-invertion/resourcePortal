@@ -14,6 +14,8 @@ export type GateRuntimeLanAttachment = {
   status?: string;
   verifiedAddress?: string | null;
   leaseExpiresAt?: string | null;
+  authorizationExpiresAt?: string | null;
+  authorizationRequired?: boolean;
 };
 /**
  * Authenticated encrypted L2 underlay and app-scoped bridge grants only.

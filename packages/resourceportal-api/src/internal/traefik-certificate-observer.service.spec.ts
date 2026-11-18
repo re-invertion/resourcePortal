@@ -28,7 +28,8 @@ function socketWithCertificate(certificate: Record<string, unknown>) {
 function service(timeout = "5000") {
   const config = {
     get: vi.fn((key: string, fallback?: unknown) =>
-      key === "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS" ? timeout : fallback,
+      key === "TRAEFIK_TLS_OBSERVE_TIMEOUT_MS" ? timeout :
+      key === "INSTALLER_SWARM_ADVERTISE_ADDR" ? "10.0.0.10" : fallback,
     ),
   };
   return new TraefikCertificateObserverService(
@@ -57,7 +58,7 @@ describe("TraefikCertificateObserverService", () => {
 
     expect(connectMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        host: "app.example.com",
+        host: "10.0.0.10",
         port: 443,
         servername: "app.example.com",
         rejectUnauthorized: true,
@@ -72,6 +73,41 @@ describe("TraefikCertificateObserverService", () => {
     });
     expect(result).not.toHaveProperty("privateKey");
     expect(result).not.toHaveProperty("raw");
+  });
+
+  it("never falls back to public DNS when the managed ingress address is missing", async () => {
+    const noIngress = new TraefikCertificateObserverService({
+      get: vi.fn(() => undefined),
+    } as unknown as ConfigService);
+    await expect(noIngress.observe("app.example.com")).rejects.toThrow("ManagedIngressAddressUnavailable");
+    expect(connectMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fabricate hostname coverage when peer SAN is absent", async () => {
+    const socket = socketWithCertificate({
+      valid_to: "Nov 30 12:00:00 2026 GMT",
+      issuer: { CN: "R12" },
+    });
+    connectMock.mockImplementation((_options, callback: () => void) => {
+      queueMicrotask(callback);
+      return socket;
+    });
+    const result = await service().observe("app.example.com");
+    expect(result.domains).toEqual([]);
+  });
+
+  it("times out and destroys the socket for an unresponsive ingress", async () => {
+    const socket = socketWithCertificate({});
+    let onTimeout: (() => void) | undefined;
+    socket.setTimeout.mockImplementation((_ms: number, callback: () => void) => {
+      onTimeout = callback;
+    });
+    connectMock.mockReturnValue(socket);
+    const request = service("100").observe("app.example.com");
+    expect(socket.setTimeout).toHaveBeenCalledWith(100, expect.any(Function));
+    onTimeout?.();
+    await expect(request).rejects.toThrow("timed out");
+    expect(socket.destroy).toHaveBeenCalled();
   });
 
   it("returns an observation error when the TLS connection fails", async () => {

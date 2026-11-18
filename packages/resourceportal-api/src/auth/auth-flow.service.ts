@@ -113,6 +113,7 @@ export class AuthFlowService {
       identityProviderId,
       state,
       await this.nativeOnly(),
+      true, // A successful server-side Web-client code + PKCE exchange.
     );
     // A hosted ZITADEL login may select an upstream IdP even without an RP
     // identityProviderId query argument. Reject positively attested external
@@ -306,7 +307,7 @@ export class AuthFlowService {
       ).toString("base64")}`;
     }
 
-    const response = await fetch(discovery.tokenEndpoint, {
+    const response = await this.oidcAuth.fetchIssuerEndpoint(discovery.tokenEndpoint, "code-exchange", {
       signal: AbortSignal.timeout(10_000),
       method: "POST",
       headers,

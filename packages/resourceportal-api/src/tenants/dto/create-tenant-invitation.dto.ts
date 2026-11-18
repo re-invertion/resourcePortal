@@ -15,7 +15,15 @@ export class CreateTenantInvitationDto {
 
   @IsArray()
   @IsString({ each: true })
-  roleIds!: string[];
+  @IsOptional()
+  @ArrayUnique()
+  roleIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  nativeApplicationKeys?: string[];
 
   @IsOptional()
   @IsArray()

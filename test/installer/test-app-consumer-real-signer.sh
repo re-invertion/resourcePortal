@@ -12,6 +12,14 @@ printf '%s' '{"function":"function/preaccesstoken","user":{"id":"invalid-probe-i
 RP_CFG_API_IMAGE="ghcr.io/re-invertion/resourceportal-api@sha256:$(printf 'a%.0s' {1..64})"
 export RP_CFG_API_IMAGE
 called=0
+# Assert portable -s/-k timeout flags; the production updater uses BusyBox.
+# The test still executes actual inline Node signing at the Docker boundary.
+timeout() {
+  [[ "$1" == "-s" && "$2" == "TERM" && "$3" == "-k" && "$4" == "1" &&
+     "$5" =~ ^[0-9]+$ && "$5" -ge 1 && "$5" -le 120 ]] || return 1
+  shift 5
+  "$@"
+}
 # The exact production command is intercepted only at the Docker boundary.
 # Node executes the real production inline program.
 docker() {

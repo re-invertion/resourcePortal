@@ -1,3 +1,4 @@
+import { ServiceUnavailableException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { PrismaService } from "../prisma/prisma.service";
 import { HealthController } from "./health.controller";
@@ -28,6 +29,20 @@ describe("HealthController", () => {
       service: "resource-portal-api",
       status: "ok",
     });
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("checks real API-to-ZITADEL discovery/JWKS connectivity separately from database readiness", async () => {
+    const queryRaw = vi.fn();
+    const prisma = { $queryRaw: queryRaw } as unknown as PrismaService;
+    const probe = vi.fn().mockResolvedValue(undefined);
+    const controller = new HealthController(prisma, undefined, undefined, undefined,
+      { probeIssuerConnectivity: probe } as never);
+    await expect(controller.getOidcConnectivity()).resolves.toEqual({
+      status: "ready", service: "resource-portal-oidc",
+    });
+    probe.mockRejectedValueOnce(new ServiceUnavailableException("Issuer unreachable"));
+    await expect(controller.getOidcConnectivity()).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(queryRaw).not.toHaveBeenCalled();
   });
 

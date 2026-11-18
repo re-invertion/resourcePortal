@@ -11,10 +11,11 @@ import {
 } from "./tenants.controller";
 import { PlatformTenantsController } from "./platform-tenants.controller";
 import { TenantsService } from "./tenants.service";
+import { TenantInvitationOnboardingService } from "./tenant-invitation-onboarding.service";
 
 @Module({
   imports: [PrismaModule, BillingModule, EmailModule, TenantOidcModule, AuthModule],
   controllers: [TenantsController, TenantInvitationsController, PlatformTenantsController],
-  providers: [TenantsService, PlatformAdminGuard],
+  providers: [TenantsService, TenantInvitationOnboardingService, PlatformAdminGuard],
 })
 export class TenantsModule {}

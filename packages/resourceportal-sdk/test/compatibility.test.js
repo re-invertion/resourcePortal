@@ -71,6 +71,9 @@ test("classifies every API controller so new public surface cannot drift silentl
     "internal/installer-enrollment.controller.ts",
     "mcp/admin-mcp.controller.ts",
     "mcp/mcp-oauth-dcr.controller.ts",
+    // Separate RP OAuth AS for MCP only: public registration, PKCE,
+    // consent and revoke; no native SDK method may bypass user consent.
+    "mcp/mcp-resource-oauth.controller.ts",
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
     "networking/networking.controller.ts",

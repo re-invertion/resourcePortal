@@ -110,6 +110,35 @@ async function main() {
   const ownedApps: Array<{ id: string; projectId: string }> = [];
   const createdTenants = [tenantA.id, tenantB.id];
   try {
+    // Preserve the legacy RP member path before the exact-client gate is
+    // certified. A role-free/sso-only member must NOT receive a project-wide
+    // grant merely because it can authenticate through ZITADEL.
+    await prisma.permission.upsert({
+      where: { id: "*" }, create: { id: "*" }, update: {},
+    });
+    await prisma.role.upsert({
+      where: { id: "tenant-owner" },
+      create: { id: "tenant-owner", name: "Tenant Owner", permissions: ["*"] },
+      update: {},
+    });
+    await prisma.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: "tenant-owner", permissionId: "*" } },
+      create: { roleId: "tenant-owner", permissionId: "*" }, update: {},
+    });
+    const legacyMembers = await Promise.all([
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userA.id, tenantId: tenantA.id } },
+        select: { id: true },
+      }),
+      prisma.tenantMembership.findUniqueOrThrow({
+        where: { userId_tenantId: { userId: userB.id, tenantId: tenantB.id } },
+        select: { id: true },
+      }),
+    ]);
+    await prisma.membershipRole.createMany({
+      data: legacyMembers.map(({ id }) => ({ membershipId: id, roleId: "tenant-owner" })),
+      skipDuplicates: true,
+    });
     process.env.TENANT_OIDC_AUTO_ROLLOUT = "true";
     // Prove the same zero-touch activation mode used by the real installer.
     process.env.TENANT_OIDC_ACTIVATION_ALLOWED = "auto";
@@ -299,7 +328,7 @@ async function main() {
       await gate.close();
     }
 
-    // Full #398 test: real RP app consumer and grant rows, four real ZITADEL
+    // Unified #430 test: one member and grant rows, four real ZITADEL
     // OAuth client IDs in two separate tenant projects, signed Actions V2
     // preaccesstoken on real OAuth refresh. Unlike the preceding #404 proof,
     // authorization decisions come from the production Prisma-backed service.
@@ -328,9 +357,8 @@ async function main() {
       } }),
     ));
     // Obtain refresh tokens while these are still ordinary tenant members.
-    // Once App Consumer records are created, these clients are unauthorized
-    // and even the initial OAuth code exchange must be denied. This setup
-    // deliberately precedes both consumer enrollment and Actions V2 target.
+    // Once the exact-client gate is bound, these ungranted clients are denied
+    // even though a valid refresh token was obtained before policy activation.
     const denyAToken = await runOidcAuthorizationE2E({
       issuer, projectId: projectA, foreignProjectId: projectB,
       clientId: secondWeb.clientId, clientSecret: secondWeb.clientSecret,
@@ -344,10 +372,27 @@ async function main() {
       password: "E2e!Test-" + suffix + "-b", skipLogout: true,
     });
 
-    await Promise.all(members.map((member, index) => prisma.tenantAppConsumer.create({ data: {
-      tenantId: index === 0 ? tenantA.id : tenantB.id,
-      membershipId: member.id, createdBy: index === 0 ? userA.id : userB.id,
-    } })));
+    // #430: a person is not an App User account category. Authorize existing
+    // tenant members independently from their RP management roles.
+    await prisma.role.upsert({
+      where: { id: "sso-login" },
+      create: { id: "sso-login", name: "SSO Login (no ResourcePortal permissions)", permissions: [] },
+      update: {},
+    });
+    await prisma.membershipRole.createMany({
+      data: members.map(member => ({ membershipId: member.id, roleId: "sso-login" })),
+      skipDuplicates: true,
+    });
+    const nativeWeb = await prisma.tenantNativeAppGrant.create({ data: {
+      membershipId: members[0].id, tenantId: tenantA.id, clientKey: "web",
+      createdBy: userA.id, updatedBy: userA.id,
+    } });
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId, "web"), true);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId, "cli"), false);
+    await prisma.tenantNativeAppGrant.update({
+      where: { id: nativeWeb.id }, data: { enabled: false, updatedBy: userA.id },
+    });
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId, "web"), false);
     const grantedA = await prisma.tenantAppClientGrant.create({ data: {
       membershipId: members[0].id, tenantId: tenantA.id,
       oauthApplicationId: apps[0].id, createdBy: userA.id, updatedBy: userA.id,
@@ -368,12 +413,12 @@ async function main() {
         assert.equal(
           await consumerService.mayIssueClientToken(issuer, subject, client.clientId),
           client.clientId === allowedClient,
-          "SECURITY: isolated App Consumer exact subject/client/tenant grant mismatch",
+          "SECURITY: isolated unified SSO exact subject/client/tenant grant mismatch",
         );
       }
     }
-    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId), false);
-    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId), false);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userAId, "web"), false);
+    assert.equal(await consumerService.mayIssueNativeRpToken(issuer, userBId, "web"), false);
 
     // The live target's signing key is returned by ZITADEL at creation.
     // Use exactly that key for the production validator, not a fixture secret.
@@ -385,7 +430,12 @@ async function main() {
       OIDC_ISSUER_URL: issuer,
       OIDC_CLIENT_ID: "rp-native-client-not-in-this-e2e",
     } as Record<string, string>)[key] } as unknown as ConfigService;
-    const realAuthorization = new AppConsumerActionService(actionConfig, consumerService);
+    // Existing integration exercises tenant application grants, not ChatGPT
+    // DCR. Keep an explicit fail-closed verifier for the newer constructor.
+    const realAuthorization = new AppConsumerActionService(
+      actionConfig, consumerService,
+      { isTrustedChatGptClient: () => Promise.resolve(false) } as never,
+    );
     const consumerGate = await startActionProof({
       api, issuer, testUserId: userAId, testProjectId: projectA,
       targetName: "rp-398-real-prisma-client-grants-" + suffix,
@@ -440,6 +490,72 @@ async function main() {
       });
     let suspendedB = false;
     try {
+      // #463: simulate the actual delay between the local exact-client
+      // entitlement and assignment of a native tenant project grant, using
+      // a NEW sso-login-only member (no RP management permissions).
+      // Upstream assignment is deliberately held until readiness is observed
+      // pending; the already certified real Actions V2 execution remains live.
+      const userCId = await createZitadelHuman(suffix + "-c");
+      const userC = await prisma.user.create({ data: {
+        email: "oidc-live-" + suffix + "-c@rp.invalid",
+        displayName: "RP Delayed SSO E2E",
+        status: UserStatus.Active,
+        identities: { create: { providerType: "zitadel", issuer, externalSubject: userCId } },
+      } });
+      const memberC = await prisma.tenantMembership.create({ data: {
+        tenantId: tenantA.id, userId: userC.id, createdBy: userA.id,
+        status: MembershipStatus.Active,
+        roles: { create: [{ roleId: "sso-login" }] },
+      } });
+      const onlyA = await prisma.tenantAppClientGrant.create({ data: {
+        tenantId: tenantA.id, membershipId: memberC.id,
+        oauthApplicationId: apps[0].id, createdBy: userA.id, updatedBy: userA.id,
+      } });
+      // RP's per-client Action alone would approve A, but ZITADEL's native
+      // project check does not yet have the corresponding membership grant.
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, web.clientId), true);
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, secondWeb.clientId), false);
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id),
+        { status: "pending", reason: "UPSTREAM_GRANT_PENDING" });
+      // Controlled barrier release: real Management API persists the missing
+      // role assignment. This proves readiness against the actual issuer,
+      // not against mocked verification or merely an RP local grant.
+      const remoteGrantC = await projects.assignMember(userCId, projectA);
+      const grantC = await prisma.tenantOidcGrant.create({ data: {
+        tenantId: tenantA.id, userId: userC.id, zitadelUserId: userCId,
+        zitadelGrantId: remoteGrantC, status: "Active",
+      } });
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id), { status: "ready" });
+      const issuedC = await runOidcAuthorizationE2E({
+        issuer, projectId: projectA, foreignProjectId: projectB,
+        clientId: web.clientId, clientSecret: web.clientSecret,
+        userId: userCId, userName: "oidc-live-" + suffix + "-c",
+        password: "E2e!Test-" + suffix + "-c", skipLogout: true,
+      });
+      const renewedC = await refreshClient(web.clientId, web.clientSecret, issuedC.refreshToken);
+      assert.equal(renewedC.status, 200, "Newly provisioned user C could not refresh allowed client A");
+      const tokenC = await renewedC.json() as { refresh_token?: string };
+      assert.ok(tokenC.refresh_token);
+      assert.ok(consumerGate.events().some(e => e.userId === userCId &&
+        e.clientId === web.clientId && e.decision === "allow"));
+      // A and B share tenant project, but only A is entitled for C.
+      assert.equal(await consumerService.mayIssueClientToken(issuer, userCId, secondWeb.clientId), false);
+      await prisma.tenantAppClientGrant.update({
+        where: { id: onlyA.id }, data: { enabled: false, updatedBy: userA.id },
+      });
+      const cRevoked = await refreshClient(web.clientId, web.clientSecret, tokenC.refresh_token);
+      assert.ok(!cRevoked.ok, "SECURITY: newly onboarded SSO-only client access survived revocation");
+      assert.ok(consumerGate.events().some(e => e.userId === userCId &&
+        e.clientId === web.clientId && e.decision === "deny"));
+      // Removing the real remote grant must withdraw readiness even while
+      // RP still has a locally Active grant row.
+      await projects.revokeMember(userCId, remoteGrantC);
+      assert.deepEqual(await tenants.memberReadiness(tenantA.id, userC.id),
+        { status: "pending", reason: "UPSTREAM_GRANT_UNVERIFIED" });
+      await prisma.tenantOidcGrant.delete({ where: { id: grantC.id } });
+      console.log("PASS: #463 real delayed SSO-only member: pending before grant, " +
+        "native verified ready, client A token, B denied, revocation and remote-loss pending");
+
       // Real signed approval for both isolated tenants.
       const allowA = await runOidcAuthorizationE2E({
         issuer, projectId: projectA, foreignProjectId: projectB,
@@ -569,7 +685,7 @@ async function main() {
     assert.equal(stillB.userGrant.projectId, projectB, "Tenant A revocation harmed Tenant B");
     console.log("PASS: real HTTPS issuer/discovery/JWKS, two independent projects and client types,");
     console.log("  membership-backed grants, cross-tenant denial and live grant revocation.");
-    console.log("PENDING: safe migration of all actual RP login accounts, production MFA/recovery,");
+    console.log("PENDING: production migration certification, RP Web/CLI live refresh and MFA/recovery,");
     console.log("  formal consent coverage and already-issued token expiry are not certified by this suite.");
   } finally {
     for (const app of ownedApps.reverse()) {

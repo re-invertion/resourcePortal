@@ -14,6 +14,10 @@ export const globalPrefixExcludes = [
     method: RequestMethod.GET,
   },
   {
+    path: ".well-known/oauth-authorization-server/api/mcp/oauth",
+    method: RequestMethod.GET,
+  },
+  {
     path: "oauth/v2/register",
     method: RequestMethod.POST,
   },

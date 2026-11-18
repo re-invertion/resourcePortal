@@ -15,6 +15,7 @@ type DcrRegistrationResponse = {
 
 type ProjectSearchResponse = {
   result?: Array<{ id?: string; name?: string }>;
+  details?: { totalResult?: number | string };
 };
 
 type DcrOidcConfig = {
@@ -25,6 +26,7 @@ type DcrOidcConfig = {
 
 type AppSearchResponse = {
   result?: Array<{ id?: string; oidcConfig?: DcrOidcConfig }>;
+  details?: { totalResult?: number | string };
 };
 
 @Injectable()
@@ -55,7 +57,21 @@ export class McpOAuthDcrService {
     try {
       await this.forceJwtAccessToken(registration.client_id, deadline);
     } catch (error) {
-      await this.rollbackRegistration(registration).catch(() => undefined);
+      try {
+        await this.rollbackRegistration(registration);
+      } catch {
+        // A failed compensation leaves a real OAuth client in ZITADEL. Do
+        // not conceal that partial state by rethrowing only the update error.
+        // Expose the client id (never the registration bearer/URI) so an
+        // operator can locate and remove it before retrying registration.
+        const clientId = /^[a-zA-Z0-9._-]{1,128}$/.test(registration.client_id)
+          ? registration.client_id : "(inspect ZITADEL registration records)";
+        throw new BadGatewayException({
+          code: "DCR_PARTIAL_REGISTRATION",
+          message: "ZITADEL DCR compatibility update failed and cleanup of the newly registered client could not be confirmed; manual reconciliation is required before retrying",
+          clientId,
+        });
+      }
       throw error;
     }
 
@@ -107,11 +123,23 @@ export class McpOAuthDcrService {
       const projects = await this.managementRequest<ProjectSearchResponse>(
         "POST",
         "/management/v1/projects/_search",
-        {},
+        {
+          query: { limit: 100 },
+          queries: [{ nameQuery: {
+            name: "ZITADEL DCR", method: "TEXT_QUERY_METHOD_EQUALS",
+          } }],
+        },
         {},
         deadline,
       );
-      const project = projects.result?.find((candidate) => candidate.name === "ZITADEL DCR");
+      const matches = (projects.result ?? []).filter((candidate) =>
+        candidate.name === "ZITADEL DCR" && Boolean(candidate.id));
+      const rawTotal = projects.details?.totalResult;
+      const total = rawTotal === undefined ? matches.length : Number(rawTotal);
+      if (matches.length > 1 || total > 1 || !Number.isSafeInteger(total)) {
+        throw new BadGatewayException("ZITADEL DCR project search was ambiguous");
+      }
+      const project = matches[0];
       if (project?.id) return project.id;
       await sleep(100);
     }
@@ -119,16 +147,49 @@ export class McpOAuthDcrService {
   }
 
   private async findDcrApp(projectId: string, clientId: string, deadline: number) {
+    // ListApps defaults to 100 results. Polling only the first page retries
+    // the wrong set forever as more DCR clients accumulate. Page through the
+    // bounded result set while honoring the existing registration deadline.
+    const pageSize = 100;
+    const maxPages = 20;
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      const apps = await this.managementRequest<AppSearchResponse>(
-        "POST",
-        `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
-        {},
-        {},
-        deadline,
-      );
-      const app = apps.result?.find((candidate) => candidate.oidcConfig?.clientId === clientId);
-      if (app?.id) return app as typeof app & { id: string };
+      for (let page = 0; page < maxPages; page += 1) {
+        const offset = page * pageSize;
+        const apps = await this.managementRequest<AppSearchResponse>(
+          "POST",
+          `/management/v1/projects/${encodeURIComponent(projectId)}/apps/_search`,
+          { query: { limit: pageSize, offset } },
+          {},
+          deadline,
+        );
+        // A newly registered application may not yet be projected. Protobuf
+        // JSON omits an empty result array, so retry an absent list as empty.
+        const results = apps.result ?? [];
+        if (!Array.isArray(results) || results.length > pageSize) {
+          throw new BadGatewayException("ZITADEL DCR application search returned invalid page");
+        }
+        const matches = results.filter((candidate) => candidate.oidcConfig?.clientId === clientId);
+        if (matches.length > 1) {
+          throw new BadGatewayException("ZITADEL DCR application search was ambiguous");
+        }
+        const app = matches[0];
+        if (app?.id) return app as typeof app & { id: string };
+        // The projection can briefly advertise the total before returning
+        // its rows. Retry an empty page instead of deleting a valid client.
+        if (results.length === 0) break;
+        const rawTotal = apps.details?.totalResult;
+        const parsed = Number(rawTotal);
+        const total = rawTotal !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+          ? parsed : null;
+        if (results.length < pageSize || (total !== null && offset + results.length >= total)) {
+          // An underfull page with more results advertised is not a trustworthy
+          // complete scan: fail closed and let the registration rollback.
+          if (total !== null && offset + results.length < total) {
+            throw new BadGatewayException("ZITADEL DCR application search was incomplete");
+          }
+          break;
+        }
+      }
       await sleep(100);
     }
     throw new BadGatewayException("ZITADEL DCR application was not visible after registration");
@@ -165,9 +226,24 @@ export class McpOAuthDcrService {
   }
 
   private async rollbackRegistration(registration: DcrRegistrationResponse) {
-    if (!registration.registration_access_token || !registration.registration_client_uri) return;
-    const path = new URL(registration.registration_client_uri).pathname;
-    await fetch(`${this.internalUrl()}${path}`, {
+    if (!registration.registration_access_token || !registration.registration_client_uri) {
+      throw new BadGatewayException("ZITADEL DCR rollback credentials were missing");
+    }
+    let url: URL;
+    try {
+      url = new URL(registration.registration_client_uri);
+    } catch {
+      throw new BadGatewayException("ZITADEL DCR rollback URI was invalid");
+    }
+    // Registration metadata is returned by the upstream. Restrict which
+    // internal endpoint is contacted and never send its bearer to an
+    // unrelated management path or a URL with embedded credentials.
+    if (url.protocol !== "https:" || url.host !== this.issuerHost() ||
+        url.username || url.password || url.search || url.hash ||
+        !/^\/oauth\/v2\/register\/[a-zA-Z0-9._~-]+$/.test(url.pathname)) {
+      throw new BadGatewayException("ZITADEL DCR rollback URI was not trusted");
+    }
+    const response = await fetch(`${this.internalUrl()}${url.pathname}`, {
       signal: AbortSignal.timeout(10_000),
       method: "DELETE",
       headers: {
@@ -176,6 +252,9 @@ export class McpOAuthDcrService {
         "x-zitadel-public-host": this.issuerHost(),
       },
     });
+    if (!response.ok) {
+      throw new BadGatewayException(`ZITADEL DCR rollback failed with HTTP ${response.status}`);
+    }
   }
 
   private internalUrl() {

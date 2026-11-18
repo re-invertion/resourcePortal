@@ -3,6 +3,22 @@ import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { selectProfiles, commandsForProfiles } from "../scripts/fastfix-test-plan.mjs";
 
+test("issue #414 TLS recovery changes remain covered by security and domain CI", () => {
+  const paths = [
+    "packages/resourceportal-api/src/internal/traefik-certificate-observer.service.ts",
+    "packages/resourceportal-api/src/internal/domain-certificate-reconciler.service.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-tls-recovery.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/domain-operation.executors.ts",
+    "packages/resourceportal-web/src/pages/tenant-domain-tls-recovery.test.tsx",
+  ];
+  for (const path of paths) {
+    const profiles = selectProfiles([path]).profiles;
+    assert.ok(profiles.includes("domains"), `domains missing for ${path}`);
+    assert.ok(profiles.includes("security"), `security missing for ${path}`);
+  }
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/internal/unreviewed-tls-bypass.ts"]), /unclassified changes/);
+});
+
 test("Web anti-clickjacking server and regression fixture select security header checks", () => {
   const plan = selectProfiles([
     "packages/resourceportal-web/server.mjs",
@@ -376,6 +392,7 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "identity",
     "installer",
     "networking",
+    "oidc-private-tls",
     "platform-admin-ui",
     "platform-release",
     "security",
@@ -683,6 +700,10 @@ test("stack apply changes always run deployment rollout and auth regressions", (
 test("LAN Attachment DHCP smoke and capability helper select security regression gates", () => {
   const plan = selectProfiles([
     "scripts/run-remote-lan-l2-dhcp-smoke.sh",
+    "scripts/remote-lan-lease-soak.py",
+    "test/test_remote_lan_lease_soak.py",
+    "scripts/run-remote-lan-real-controlplane-fault.sh",
+    "test/test_real_controlplane_fault_guard.py",
     "test/installer/test-remote-lan-dhcp.py",
     "test/installer/test-swarm-required-capabilities.sh",
   ]);
@@ -933,6 +954,18 @@ test("OIDC client/action refresh proof requires identity and security certificat
   assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
 });
 
+
+test("issue #412 Bug Report screenshot reset selects exact Web and API tests without weakening fail-closed classification", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/bug-report-dialog.tsx",
+    "packages/resourceportal-web/src/components/bug-report-dialog.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["bug-reports"]);
+  const plan = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(plan, /src\/components\/bug-report-dialog\.test\.tsx/);
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/components/bug-report-dialog-unsafe.tsx"]), /unclassified changes/);
+});
+
 test("Codex review recheck dispatcher cannot skip identity, security or release tests", () => {
   for (const path of ["scripts/release-review-recheck.mjs", "test/test-release-review-recheck.test.mjs"]) {
     const selected = selectProfiles([path]);
@@ -990,3 +1023,78 @@ test("each Dialog/Toast changed path actually runs modal regressions, not just a
   }
   assert.throws(() => commandsForProfiles(["unregistered-security-profile"]), /Unknown Fast Fix profile/);
 });
+
+test("issue #430 legacy PostgreSQL migration and restore fixtures stay on all IAM/security release gates", () => {
+  for (const path of [
+    "test/iam430/legacy-fixture.sql",
+    "test/iam430/legacy-upgrade-restore.sh",
+  ]) {
+    const plan = selectProfiles([path]);
+    assert.deepEqual(plan.profiles, [
+      "identity", "platform-release", "schema", "security", "upgrade-recovery", "workflow",
+    ]);
+  }
+  // Other IAM fixtures cannot enter releases until explicitly classified.
+  assert.throws(() => selectProfiles(["test/iam430/untested-restore-bypass.sh"]), /unclassified changes/);
+});
+
+test("#430 invitation login and registration UI must invoke exact IAM/security/tenant gates", () => {
+  for (const path of [
+    "packages/resourceportal-web/src/pages/invitation.tsx",
+    "packages/resourceportal-web/src/pages/invitation.test.tsx",
+  ]) {
+    assert.deepEqual(selectProfiles([path]).profiles, [
+      "identity", "security", "tenant-access", "tenant-ux-patch",
+    ]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/pages/invitation-unsafe-helper.tsx"]),
+    /unclassified changes/,
+  );
+});
+
+test("changing the real Swarm workflow runs both real core and VPN smoke gates", () => {
+  const plan = selectProfiles([".github/workflows/swarm-integration.yml"]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
+  for (const name of ["networking", "swarm-smoke-fixtures", "workflow"])
+    assert.ok(plan.profiles.includes(name), name);
+  const unrelated = selectProfiles([".github/workflows/tenant-oidc-live.yml"]);
+  assert.equal(unrelated.vpnSmoke, false);
+  assert.equal(unrelated.swarmSmoke, false);
+});
+
+
+test("#437 private OIDC TLS transport + real smoke fixture cannot disappear from Fast Fix gates", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.ts",
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.spec.ts",
+    "packages/resourceportal-web/src/pages/auth.tsx",
+    "packages/resourceportal-web/src/pages/auth.test.tsx",
+    "test/installer/test-oidc-private-tls.sh",
+    "test/installer/oidc-private-tls-smoke.cjs",
+  ]);
+  for (const required of ["oidc-private-tls", "security", "identity", "installer", "platform-release"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+  assert.equal(plan.vpnSmoke, false);
+  assert.equal(plan.changedPaths.length, 6);
+});
+
+
+test("#437 issuer TLS+ACME installer ordering is classified as identity/release/security work", () => {
+  const plan = selectProfiles(["test/installer/test-acme-resilience.sh"]);
+  for (const required of ["identity", "installer", "platform-release", "security"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+});
+
+test("#442 MCP OAuth metadata global-prefix routing requires identity and security gates", () => {
+  const path = "packages/resourceportal-api/src/config/global-prefix-config.ts";
+  const plan = selectProfiles([path]);
+  for (const required of ["identity", "mcp-oauth", "security", "workflow"]) {
+    assert.ok(plan.profiles.includes(required), required + " missing for " + path);
+  }
+  assert.throws(() => selectProfiles([
+    "packages/resourceportal-api/src/config/unregistered-oauth-route.ts",
+  ]), /unclassified changes/);});

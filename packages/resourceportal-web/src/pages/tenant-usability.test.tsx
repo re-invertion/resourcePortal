@@ -131,8 +131,8 @@ describe("guided access and routing", () => {
     expect(screen.queryByLabelText("User ID")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Invite user" }));
     expect(screen.getByRole("textbox", { name: /Email/i })).toBeTruthy();
-    expect((screen.getByRole("combobox", { name: /Role/i }) as HTMLElement).tagName).toBe("SELECT");
-    expect(screen.getByRole("option", { name: "Viewer" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Viewer" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /SSO login/ })).toBeTruthy();
   });
 
   it("keeps backend endpoint IDs out of normal domain creation", async () => {

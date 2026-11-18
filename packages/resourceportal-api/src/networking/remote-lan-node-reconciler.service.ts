@@ -1,3 +1,4 @@
+import { remoteLanAuthorizationExpiry } from "./remote-lan-authorization-lease";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { spawnSync } from "node:child_process";
@@ -171,6 +172,93 @@ export class RemoteLanNodeReconcilerService {
       },
       orderBy: { createdAt: "asc" },
     }) : [];
+    // Managed LAN observation is a *fresh provisioning prerequisite*, not
+    // an instruction to destroy a previously installed v4 attachment during
+    // a short control-plane partition. Do not write any new service policy,
+    // renew authorization or admit a new app from a stale observation.
+    const managedObservationStale = (row: (typeof rows)[number]): boolean => {
+      if (row.uplinkMode !== "ManagedSharedUplink") return false;
+      try {
+        const observed = verifiedManagedLan(row.gateId, row.lanInterface,
+          row.gate.observedLan, row.gate.observedLanAt);
+        return observed.networkCidr !== row.lanCidr;
+      } catch { return true; }
+    };
+    const stale = rows.some(managedObservationStale);
+    if (stale && featureOn) {
+      const stack = this.config.get<string>("RESOURCEPORTAL_CONTROL_PLANE_STACK_NAME",
+        "resourceportal-control-plane");
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(stack))
+        throw new Error("Invalid control-plane Swarm stack");
+      const service = stack + "_remote-lan-node";
+      const env = JSON.parse(this.docker(["service", "inspect", service, "--format",
+        "{{json .Spec.TaskTemplate.ContainerSpec.Env}}"]) || "[]") as unknown;
+      if (!Array.isArray(env) || !env.every(item => typeof item === "string") ||
+          !env.includes("RP_REMOTE_LAN_NODE_ENABLED=true"))
+        throw new Error("Node LAN continuity has no active verified policy");
+      const encoded = env.find((item:string) => item.startsWith(POLICY_ENV + "="));
+      if (!encoded || encoded.length > 300_000)
+        throw new Error("Missing existing node LAN grant snapshot");
+      const snapshot = JSON.parse(Buffer.from(encoded.slice(POLICY_ENV.length + 1),
+        "base64").toString("utf8")) as unknown;
+      if (!snapshot || typeof snapshot !== "object" ||
+          (snapshot as {version?:unknown}).version !== 1 ||
+          !Array.isArray((snapshot as {attachments?:unknown}).attachments))
+        throw new Error("Untrusted existing node LAN snapshot");
+      const existing = validateNodeLanSnapshot(snapshot);
+      const now = Date.now();
+      const keyed = new Map(rows.map(row => [row.id, row]));
+      // A newly pending/provisioning row is NOT itself a reason to revoke
+      // an existing lease, but it must not be added to the old node policy.
+      if (existing.length > rows.length || existing.some(item => {
+          const row = keyed.get(item.attachmentId);
+          if (!row || !["Provisioning","Active"].includes(row.status) ||
+              row.gate.revokedAt ||
+              row.gate.status !== "Ready" || row.network.status !== "Ready" ||
+              row.gate.tenantId !== row.tenantId ||
+              row.network.tenantId !== row.tenantId ||
+              row.singleApp.appGroup.tenantId !== row.tenantId ||
+              row.singleApp.pendingDeletion || row.singleApp.desiredReplicas !== 1 ||
+              !["gate-l2-v3","gate-l2-v4"].includes(row.gate.agentVersion ?? "") ||
+              !row.gate.serverTunnelAddress || !row.gate.clientTunnelAddress)
+            return true;
+          // A managed Gate with CURRENT authenticated LAN evidence does not
+          // need to borrow another Gate's offline grant. This is essential in
+          // mixed v3/v4 installs: v3 never has a v4 offline lease.
+          // Dedicated handoffs instead need a fresh authenticated heartbeat.
+          const fresh = row.uplinkMode === "ManagedSharedUplink" ?
+            !managedObservationStale(row) :
+            !!row.gate.lastSeenAt && row.gate.lastSeenAt.getTime() <= now + 5_000 &&
+            now - row.gate.lastSeenAt.getTime() < 60_000;
+          // Only the Gate whose own observation is stale needs a v4
+          // offline authorization and an ALREADY Active attachment. Another
+          // healthy Gate may have an unchanged, previously installed
+          // Provisioning attachment (e.g. waiting for DHCP). Requiring
+          // Active globally would revoke the shared node service, including
+          // all otherwise authorized leased v4 attachments.
+          if (!fresh && (row.status !== "Active" ||
+            remoteLanAuthorizationExpiry({
+              ...row.gate, gateId:row.gate.id,
+            },{
+              attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
+              singleAppId:row.singleAppId,networkId:row.networkId,
+              macAddress:row.macAddress,configurationRevision:row.configurationRevision,
+            },now)===null)) return true;
+          return item.tenantId !== row.tenantId ||
+            item.gateId !== row.gateId || item.singleAppId !== row.singleAppId ||
+            item.configurationRevision !== row.configurationRevision ||
+            item.macAddress.toLowerCase() !== row.macAddress.toLowerCase() ||
+            item.networkName !== row.network.swarmNetworkName ||
+            item.overlayCidr !== row.network.overlayCidr ||
+            item.lanCidr !== row.lanCidr ||
+            item.addressMode !== row.addressMode ||
+            item.staticAddress !== row.staticAddress ||
+            item.staticGateway !== row.staticGateway;
+        }))
+        throw new Error("Stale Gate observation has no matching active authorization");
+      return { changed:false, attachments:existing.length,agentTasks:0,
+        disabled:false, degraded:true };
+    }
     const gatewayIp = new Map<string, string>();
     const records: NodeLanAttachment[] = [];
 
@@ -180,7 +268,7 @@ export class RemoteLanNodeReconcilerService {
           row.gate.revokedAt || row.gate.status !== "Ready" ||
           row.network.status !== "Ready" || row.singleApp.pendingDeletion ||
           row.singleApp.desiredReplicas !== 1 ||
-          row.gate.agentVersion !== "gate-l2-v3" ||
+          !["gate-l2-v3","gate-l2-v4"].includes(row.gate.agentVersion ?? "") ||
           !row.gate.serverTunnelAddress || !row.gate.clientTunnelAddress)
         throw new Error("Remote LAN attachment lacks certified Gate, app or network authorization");
 

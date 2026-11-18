@@ -18,6 +18,7 @@ function createConfig(values: Record<string, string | undefined> = {}) {
 
 function createOidcAuth() {
   return {
+    fetchIssuerEndpoint: vi.fn((url: string, _stage: string, options?: RequestInit) => fetch(url, options)),
     getDiscovery: vi.fn().mockResolvedValue({
       authorizationEndpoint: `${issuer}/oauth/v2/authorize`,
       issuer,

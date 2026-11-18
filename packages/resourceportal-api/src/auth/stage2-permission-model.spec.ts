@@ -130,34 +130,65 @@ describe("Stage 2 Permission model", () => {
     });
   });
 
-  it("never gives App User tenant API access even after an accidentally inherited admin group role", async () => {
+  it("never treats the system sso-login role as RP permissions even if bindings are misconfigured", async () => {
     const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
-    const tenantAuthPolicyFindUnique = vi.fn();
+    const prisma = {
+      tenantMembership: { findUnique: vi.fn().mockResolvedValue({
+        id: "158e191e-967a-4fe9-9480-3ea28010a714",
+        status: MembershipStatus.Active,
+        roles: [{ role: { id: "sso-login", permissionBindings: [{ permission: { id: "tenant.read" } }] } }],
+        groupMemberships: [],
+      }) },
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]) } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+    await expect(guard.canActivate(contextFor({
+      params: { tenantId }, user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
+    }))).rejects.toThrow("No tenant permissions assigned");
+  });
+
+  it("SSO-only membership never bypasses RP management, even with app grants", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
     const prisma = {
       tenantMembership: {
         findUnique: vi.fn().mockResolvedValue({
           id: "158e191e-967a-4fe9-9480-3ea28010a714",
           status: MembershipStatus.Active,
-          appConsumer: { membershipId: "158e191e-967a-4fe9-9480-3ea28010a714" },
-          roles: [],
-          groupMemberships: [{
-            group: { roles: [{ role: {
-              permissionBindings: [{ permission: { id: "*" } }],
-            } }] },
-          }],
+          roles: [{ role: { permissionBindings: [] } }],
+          groupMemberships: [],
+          appGrants: [{ id: "external-grant" }],
+          nativeAppGrants: [{ clientKey: "web" }],
         }),
       },
-      tenantAuthPolicy: { findUnique: tenantAuthPolicyFindUnique },
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
-    const reflector = {
-      getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]),
-    } as unknown as Reflector;
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(undefined) } as unknown as Reflector;
     const guard = new TenantContextGuard(reflector, prisma);
     await expect(guard.canActivate(contextFor({
-      params: { tenantId },
-      user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
-    }))).rejects.toThrow("App Consumer identities have no ResourcePortal access");
-    expect(tenantAuthPolicyFindUnique).not.toHaveBeenCalled();
+      params: { tenantId }, user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" },
+    }))).rejects.toThrow("No tenant permissions assigned");
+  });
+
+  it("existing application grants cannot prevent legitimate group-based RP permissions", async () => {
+    const tenantId = "255d43ba-43fd-49f7-8546-824760045ecd";
+    const request = { params: { tenantId }, user: { id: "2694b58e-578d-4360-a3e1-eb907320b873" } };
+    const prisma = {
+      tenantMembership: { findUnique: vi.fn().mockResolvedValue({
+        id: "158e191e-967a-4fe9-9480-3ea28010a714",
+        status: MembershipStatus.Active,
+        appConsumer: { membershipId: "legacy-app-marker" },
+        roles: [{ role: { permissionBindings: [] } }],
+        groupMemberships: [{
+          group: { roles: [{ role: { permissionBindings: [{ permission: { id: "tenant.read" } }] } }] },
+        }],
+      }) },
+      tenantAuthPolicy: { findUnique: vi.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(["tenant.read"]) } as unknown as Reflector;
+    const guard = new TenantContextGuard(reflector, prisma);
+    await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
+    expect(request).toMatchObject({ tenantContext: { permissions: ["tenant.read"] } });
   });
 
   it("resolves service identity permissions through RolePermission instead of the legacy Role array", async () => {

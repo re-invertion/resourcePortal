@@ -14,6 +14,8 @@ import {
 type MembershipWithRelations = TenantMembership & {
   user: Pick<User, "id" | "email" | "displayName" | "status">;
   roles: Array<{ role: Role }>;
+  appGrants?: Array<{ oauthApplicationId: string; enabled: boolean }>;
+  nativeAppGrants?: Array<{ clientKey: string; enabled: boolean }>;
   groupMemberships?: Array<{
     group: Pick<TenantGroup, "id" | "name"> & {
       roles: Array<{ role: Role }>;
@@ -33,6 +35,8 @@ export function mapMembership(membership: MembershipWithRelations) {
       name: role.name,
       permissions: role.permissions,
     })),
+    appGrants: membership.appGrants?.map(g => ({ applicationId: g.oauthApplicationId, enabled: g.enabled })),
+    nativeGrants: membership.nativeAppGrants?.map(g => ({ clientKey: g.clientKey, enabled: g.enabled })),
     groups: membership.groupMemberships?.map(({ group }) => ({
       id: group.id,
       name: group.name,
@@ -58,12 +62,16 @@ export function mapTenantAuthPolicy(policy: TenantAuthPolicy) {
   };
 }
 
-export function mapTenantInvitation(invitation: TenantInvitation) {
+export function mapTenantInvitation(
+  invitation: TenantInvitation & { appInvitationGrants?: Array<{ oauthApplicationId: string }> },
+) {
   return {
     id: invitation.id,
     tenantId: invitation.tenantId,
     email: invitation.email,
     roleIds: invitation.roleIds,
+    nativeApplicationKeys: invitation.nativeApplicationKeys,
+    oauthApplicationIds: (invitation.appInvitationGrants ?? []).map((grant) => grant.oauthApplicationId),
     expiresAt: invitation.expiresAt,
     lastSentAt: invitation.lastSentAt,
     createdBy: invitation.createdBy,

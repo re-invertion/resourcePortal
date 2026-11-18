@@ -212,6 +212,39 @@ export class DomainsController {
     });
   }
 
+  @RequirePermissions("domain.read")
+  @Get(":domainId/certificate/diagnostics")
+  certificateDiagnostics(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("domainId", ParseUUIDPipe) domainId: string,
+  ) {
+    return this.domainsService.getCertificateDiagnostics(tenantId, domainId);
+  }
+
+  @RequirePermissions("domain.validate")
+  @Post(":domainId/certificate/reconcile")
+  @HttpCode(HttpStatus.ACCEPTED)
+  async reconcileCertificate(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("domainId", ParseUUIDPipe) domainId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    // Enforce tenant ownership before queueing a worker operation.
+    await this.domainsService.getDomain(tenantId, domainId);
+    // Per-actor/per-domain five-minute idempotency window prevents retry storms.
+    const bucket = Math.floor(Date.now() / 300_000);
+    return this.operationsService.enqueue({
+      type: "DOMAIN_CERTIFICATE_RECONCILE",
+      tenantId,
+      resourceType: "Domain",
+      resourceId: domainId,
+      actor: user,
+      input: {},
+      idempotencyKey: `tls-reconcile:${domainId}:${user.id}:${bucket}`,
+      maxAttempts: 1,
+    });
+  }
+
   @RequirePermissions("domain.delete")
   @Delete(":domainId")
   deleteDomain(

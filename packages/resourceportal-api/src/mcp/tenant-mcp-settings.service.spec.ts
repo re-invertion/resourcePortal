@@ -18,7 +18,7 @@ function fixture() {
     tenantMcpMemberAccess: {},
     tenantMembership: {
       count: vi.fn().mockResolvedValue(1),
-      findUnique: vi.fn().mockResolvedValue({ id: "membership-id", status: MembershipStatus.Active }),
+      findUnique: vi.fn().mockResolvedValue({ id: "membership-id", status: MembershipStatus.Active, user: { status: "Active" }, tenant: { status: "Active" }, roles: [{ roleId: "sso-login" }], groupMemberships: [] }),
     },
     auditLogEntry: { create: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn((callback: (client: typeof tx) => unknown) => Promise.resolve(callback(tx))),
@@ -142,6 +142,40 @@ describe("TenantMcpSettingsService", () => {
     await expect(service.assertMcpEnabled("tenant-id")).resolves.toBeUndefined();
   });
 
+  it("revokes MCP tool access immediately after sso-login role removal, including group grants", async () => {
+    const { service, prisma } = fixture();
+    prisma.tenantMcpSettings.findUnique.mockResolvedValue({
+      enabled: true, accessMode: "AllMembers", allowedMembers: [],
+    });
+    const member = { id: "membership-id", status: "Active", user: { status: "Active" },
+      tenant: { status: "Active" }, roles: [], groupMemberships: [] };
+    prisma.tenantMembership.findUnique.mockResolvedValueOnce(member);
+    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).rejects.toThrow(
+      "SSO login permission is required for MCP",
+    );
+    prisma.tenantMembership.findUnique.mockResolvedValueOnce({
+      ...member, groupMemberships: [{ group: { roles: [{ roleId: "sso-login" }] } }],
+    });
+    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).resolves.toMatchObject({
+      id: "membership-id",
+    });
+  });
+
+  it("revokes MCP calls for suspended users or tenants even with a cached bearer", async () => {
+    const { service, prisma } = fixture();
+    prisma.tenantMcpSettings.findUnique.mockResolvedValue({
+      enabled: true, accessMode: "AllMembers", allowedMembers: [],
+    });
+    prisma.tenantMembership.findUnique.mockResolvedValueOnce({
+      id: "membership-id", status: "Active", user: { status: "Suspended" }, tenant: { status: "Active" },
+    });
+    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).rejects.toBeInstanceOf(ForbiddenException);
+    prisma.tenantMembership.findUnique.mockResolvedValueOnce({
+      id: "membership-id", status: "Active", user: { status: "Active" }, tenant: { status: "Suspended" },
+    });
+    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it("enforces disabled, active membership and selected-member access", async () => {
     const { service, prisma } = fixture();
     prisma.tenantMcpSettings.findUnique.mockResolvedValue({ enabled: false, accessMode: "SelectedMembers", allowedMembers: [] });
@@ -151,7 +185,32 @@ describe("TenantMcpSettingsService", () => {
     await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).rejects.toBeInstanceOf(ForbiddenException);
 
     prisma.tenantMcpSettings.findUnique.mockResolvedValue({ enabled: true, accessMode: "SelectedMembers", allowedMembers: [{ membershipId: "membership-id" }] });
-    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).resolves.toEqual({ id: "membership-id", status: MembershipStatus.Active });
+    await expect(service.assertUserCanUseMcp("tenant-id", "user-id")).resolves.toMatchObject({ id: "membership-id", status: MembershipStatus.Active });
+  });
+
+  it("rejects a token holder authorized for tenant A when requesting tenant B MCP", async () => {
+    const { service, prisma } = fixture();
+    const tenantB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const userId = "user-with-tenant-a-access";
+    // A user grant in another tenant cannot satisfy the exact requested tenant's lookup.
+    prisma.tenantMcpSettings.findUnique.mockResolvedValue({
+      enabled: true, accessMode: "AllMembers", allowedMembers: [],
+    });
+    prisma.tenantMembership.findUnique.mockResolvedValueOnce(null);
+    await expect(service.assertUserCanUseMcp(tenantB, userId))
+      .rejects.toThrow("Active tenant membership is required for MCP");
+    expect(prisma.tenantMembership.findUnique).toHaveBeenCalledWith({
+      where: { userId_tenantId: { userId, tenantId: tenantB } },
+      select: {
+        id: true, status: true,
+        user: { select: { status: true } },
+        tenant: { select: { status: true } },
+        roles: { select: { roleId: true } },
+        groupMemberships: {
+          select: { group: { select: { roles: { select: { roleId: true } } } } },
+        },
+      },
+    });
   });
 
   it("allows any active member when access mode is AllMembers", async () => {

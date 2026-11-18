@@ -19,6 +19,7 @@ import {
 import { McpOAuthDcrController } from "./mcp-oauth-dcr.controller";
 import { McpOAuthDcrService } from "./mcp-oauth-dcr.service";
 import { TenantMcpAccessGuard } from "./tenant-mcp-access.guard";
+import { McpResourceOAuthController, McpResourceOAuthDiscoveryController } from "./mcp-resource-oauth.controller";
 import { TenantMcpProtocolService } from "./tenant-mcp-protocol.service";
 import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
 
@@ -33,6 +34,8 @@ import { TenantMcpSettingsService } from "./tenant-mcp-settings.service";
     AdminMcpOAuthMetadataController,
     McpOAuthAuthorizationServerMetadataController,
     McpOAuthDcrController,
+    McpResourceOAuthController,
+    McpResourceOAuthDiscoveryController,
   ],
   providers: [
     TenantMcpSettingsService,

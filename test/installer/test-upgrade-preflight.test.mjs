@@ -53,6 +53,12 @@ rp_run_migrations(){ printf 'MIGRATE\\n'; }
 rp_deploy_control_plane(){ printf 'DEPLOY\\n'; }
 rp_wait_for_https_origin(){ :; }
 rp_upgrade_wait_for_tenant_oidc_ready(){ :; }
+# #437: These cases exercise a later deliberate checkpoint failure; the new
+# issuer-connectivity precondition is independently tested for a 503-triggered
+# database/Action/Swarm rollback in test-app-consumer-upgrade-lifecycle.sh.
+# Mock successful issuer connectivity here so the selected checkpoint really
+# executes before the expected guarded recovery.
+rp_wait_api_oidc_connectivity(){ :; }
 rp_upgrade_refresh_enrollment_listener(){ :; }
 rp_persist_release_manifest(){ printf '/etc/hosts'; }
 rp_config_write(){ :; }

@@ -229,6 +229,7 @@ call_log="$fixture_dir/final-calls.log"
 rp_deploy_control_plane(){ printf 'deploy:%s\n' "$1" >>"$call_log"; }
 rp_wait_for_acme_certificate(){ printf 'cert:%s:%s\n' "$1" "$2" >>"$call_log"; return 0; }
 rp_wait_for_https_origin(){ printf 'origin:%s\n' "$1" >>"$call_log"; return 0; }
+rp_wait_api_oidc_connectivity(){ printf 'oidc:%s\n' "$1" >>"$call_log"; return 0; }
 rp_acme_cache_active_state(){ printf 'cache\n' >>"$call_log"; return 0; }
 export RP_CFG_ACME_ENVIRONMENT=production
 rp_primary_deploy_final
@@ -236,8 +237,9 @@ final_calls="$(cat "$call_log")"
 contains "$final_calls" 'cert:auth.rp.example.com:production' 'final production waits for auth certificate'
 contains "$final_calls" 'cert:rp.example.com:production' 'final production waits for web certificate'
 contains "$final_calls" 'origin:rp.example.com' 'final production verifies application health after certificates'
+contains "$final_calls" 'oidc:rp.example.com' 'final production validates API-to-issuer connectivity after HTTPS health'
 contains "$final_calls" 'cache' 'final production caches ACME state after successful issuance'
-unset -f rp_deploy_control_plane rp_wait_for_acme_certificate rp_wait_for_https_origin rp_acme_cache_active_state
+unset -f rp_deploy_control_plane rp_wait_for_acme_certificate rp_wait_for_https_origin rp_wait_api_oidc_connectivity rp_acme_cache_active_state
 
 # Factory reset must preserve the host ACME reuse cache while destroying ResourcePortal runtime data.
 reset_rm_log="$fixture_dir/reset-rm.log"

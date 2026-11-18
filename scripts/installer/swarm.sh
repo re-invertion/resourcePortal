@@ -162,7 +162,7 @@ rp_swarm_resourceportal_secret_name() {
     rp_postgres_password|zitadel_postgres_password|rp_encryption_key|rp_database_url|zitadel_secret_config|zitadel_init_steps|rp_first_admin_password|zitadel_masterkey)
       return 0
       ;;
-    rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|rp_zitadel_management_token_*|rp_app_consumer_action_hmac_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
+    rp_cookie_secret_*|rp_internal_worker_token_*|rp_oidc_client_secret_*|rp_zitadel_management_token_*|rp_app_consumer_action_hmac_*|rp_invitation_oidc_secret_*|zitadel_masterkey_*|rp_smtp_password_*|installer_swarm_worker_token_*|installer_swarm_manager_token_*|installer_enrollment_tls_cert_*|installer_enrollment_tls_key_*)
       return 0
       ;;
   esac

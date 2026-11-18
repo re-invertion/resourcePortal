@@ -27,6 +27,8 @@ FROM ${RP_NODE_BASE_IMAGE} AS build
 WORKDIR /app/packages/resourceportal-api
 
 COPY --from=dependencies /app/node_modules /app/node_modules
+# All runtime imports must resolve from /app/node_modules. The API pins
+# the same undici major as the hoisted lockfile (not workspace node_modules).
 COPY package.json package-lock.json /app/
 COPY packages/resourceportal-api/package.json ./
 COPY packages/resourceportal-api/nest-cli.json packages/resourceportal-api/tsconfig.json packages/resourceportal-api/tsconfig.build.json ./
@@ -66,7 +68,14 @@ RUN apk add --no-cache \
     quota-tools \
     xfsprogs-extra
 
+# Installer signed-callback recovery invokes timeout inside this Alpine
+# runtime image. Verify the BusyBox implementation accepts the exact flags.
+RUN timeout -s TERM -k 1 2 true
+
 COPY --chown=node:node --from=production-dependencies /app/node_modules /app/node_modules
+# Verify the production module layout at IMAGE BUILD time; a successful
+# TypeScript build cannot certify Node module resolution in the final image.
+RUN node -e 'require.resolve("undici")'
 COPY --from=build /app/node_modules/.prisma /app/node_modules/.prisma
 # Prisma CLI is a production dependency, but production npm ci runs with --ignore-scripts.
 # Copy the pre-fetched engine bundle from the dependency stage so migrate deploy works offline.
@@ -75,9 +84,10 @@ COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/packages/resourceportal-api/package.json ./package.json
 COPY --from=build /app/packages/resourceportal-api/dist ./dist
 COPY packages/resourceportal-api/src/networking/gate-lan-agent.py ./dist/src/networking/gate-lan-agent.py
-# gate-installer.ts reads both Python assets from its compiled __dirname.
-# Missing this asset makes every production Gate installer request fail ENOENT.
+# gate-installer.ts reads all three Python assets from its compiled __dirname.
+# Missing any asset makes the production Gate installer request fail ENOENT.
 COPY packages/resourceportal-api/src/networking/gate-managed-uplink.py ./dist/src/networking/gate-managed-uplink.py
+COPY packages/resourceportal-api/src/networking/gate-authorization-lease.py ./dist/src/networking/gate-authorization-lease.py
 COPY --chown=root:root packages/resourceportal-api/src/networking/remote-lan-dhcp.sh /usr/local/sbin/rp-remote-lan-dhcp.sh
 RUN chmod 0755 /usr/local/sbin/rp-remote-lan-dhcp.sh \
   && /bin/busybox --list | grep -qx udhcpc \

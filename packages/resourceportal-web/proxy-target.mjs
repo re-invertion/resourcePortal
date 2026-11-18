@@ -5,6 +5,9 @@ export function isApiProxyPath(pathname) {
     pathname === "/api" ||
     pathname.startsWith("/api/") ||
     pathname === "/.well-known/oauth-authorization-server" ||
+    // RFC 8414 path-based resource MCP AS issuer discovery. Proxy ONLY the
+    // exact public well-known endpoint; never widen public API ingress.
+    pathname === "/.well-known/oauth-authorization-server/api/mcp/oauth" ||
     pathname === "/oauth/v2/register" ||
     pathname === "/.well-known/oauth-protected-resource" ||
     pathname.startsWith("/.well-known/oauth-protected-resource/")

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FastifyRequest } from "fastify";
 import { TenantMcpProtocolService } from "./tenant-mcp-protocol.service";
+import { MCP_LOOPBACK_HEADER, McpLoopbackDelegationService } from "../auth/mcp-loopback-delegation.service";
 
 const tenantId = "22222222-2222-4222-8222-222222222222";
 const actor = {
@@ -26,20 +27,24 @@ function fixture(options: { platformAdmin?: boolean } = {}) {
   };
   const settings = {
     recordToolCall: vi.fn().mockResolvedValue(undefined),
+    assertUserCanUseMcp: vi.fn().mockResolvedValue(undefined),
   };
   const prisma = {
     userIdentity: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
   };
+  const delegation = new McpLoopbackDelegationService();
   return {
     service: new TenantMcpProtocolService(
       config as never,
       settings as never,
       prisma as never,
+      delegation,
     ),
     settings,
     prisma,
+    delegation,
   };
 }
 
@@ -297,6 +302,61 @@ describe("TenantMcpProtocolService", () => {
     } finally {
       await connection.close();
     }
+  });
+
+  it("delegates RP resource tokens only to loopback and rechecks current MCP allow-list", async () => {
+    const { service, settings, delegation } = fixture();
+    const apiFetch = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      expect(request.headers.get("authorization")).toBeNull();
+      const proof = request.headers.get(MCP_LOOPBACK_HEADER);
+      expect(proof).toBeTruthy();
+      const target = new URL(request.url);
+      const downstream = {
+        method: request.method,
+        url: target.pathname + target.search,
+        headers: { [MCP_LOOPBACK_HEADER]: proof },
+        raw: { socket: { remoteAddress: "127.0.0.1" } },
+      } as unknown as FastifyRequest;
+      const principal = delegation.consume(downstream);
+      expect(principal).toEqual({
+        userId: actor.id,
+        tenantId,
+        accessToken: "rpoat_v1_opaque",
+      });
+      expect(() => delegation.consume(downstream)).toThrow("Invalid MCP loopback delegation");
+      return Promise.resolve(new Response(JSON.stringify([{ id: "app-1" }]), {
+        status: 200, headers: { "content-type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", apiFetch);
+    const connection = await connectClient({
+      service, request: mcpRequest({ authorization: "Bearer rpoat_v1_opaque" }),
+      authenticated: true,
+    });
+    try {
+      const result = await connection.client.callTool({
+        name: "resourceportal_list_app_groups", arguments: {},
+      });
+      expect(result.structuredContent).toMatchObject({ status: 200, ok: true });
+      expect(settings.assertUserCanUseMcp).toHaveBeenCalledWith(tenantId, actor.id);
+      expect(apiFetch).toHaveBeenCalledOnce();
+    } finally { await connection.close(); }
+  });
+
+  it("fails closed when an RP resource token has lost MCP access before internal proxy", async () => {
+    const { service, settings } = fixture();
+    settings.assertUserCanUseMcp.mockRejectedValue(new Error("MCP access revoked"));
+    const request = mcpRequest({ authorization: "Bearer rpoat_v1_revoked" });
+    const apiFetch = vi.fn();
+    vi.stubGlobal("fetch", apiFetch);
+    const connection = await connectClient({ service, request, authenticated: true });
+    try {
+      await expect(connection.client.callTool({
+        name: "resourceportal_list_app_groups", arguments: {},
+      })).rejects.toThrow("MCP access revoked");
+      expect(apiFetch).not.toHaveBeenCalled();
+    } finally { await connection.close(); }
   });
 
   it("reads container logs using the connected tenant and actor, without accepting a service name", async () => {
