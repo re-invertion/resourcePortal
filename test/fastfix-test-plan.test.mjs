@@ -1052,6 +1052,15 @@ test("#442 MCP OAuth metadata global-prefix routing requires identity and securi
 });
 
 
+test("#417 invitation GET failure and retry executes a targeted UI regression without bypassing tenant/security gates", () => {
+  const path = "packages/resourceportal-web/src/pages/tenant-invitations-error.test.tsx";
+  const selected = selectProfiles([path]);
+  assert.deepEqual(selected.profiles, ["security", "tenant-access", "tenant-ux-patch"]);
+  const source = readFileSync(new URL("../scripts/fastfix-test-plan.mjs", import.meta.url), "utf8");
+  assert.match(source, /"src\/pages\/tenant-invitations-error\.test\.tsx"/);
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/pages/tenant-invitations-error-unsafe.tsx"]), /unclassified changes/);
+});
+
 test("final UI federation E2E changes select identity and security validation", () => {
   const plan = selectProfiles(["scripts/run-v019-final-ui-e2e.mjs"]);
   assert.ok(plan.profiles.includes("identity"));
