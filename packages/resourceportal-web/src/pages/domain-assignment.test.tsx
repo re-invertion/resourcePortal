@@ -93,3 +93,22 @@ it("#394 shows observed DNS mismatch separately from ingress reachability", asyn
   expect(screen.getByText("192.0.2.1")).toBeTruthy();
   expect(screen.getByText(/does not confirm that an application is running/)).toBeTruthy();
 });
+
+it("#394 visibly warns that a stopped App Group is excluded from ingress despite valid DNS and TLS", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "photos.example.com", type: "Custom", customRootDomainId: "root1",
+      dnsStatus: "Valid", certificateStatus: "Active", tlsEnabled: true,
+      publication: { eligible: true, reason: null },
+      ingress: { intentStatus: "AppGroupStopped", observedRouter: "NotChecked", currentDeploymentVersion: 3 },
+      httpEndpoint: { id: "e1", name: "web", containerPort: 8080 },
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", { name: "Ingress deployment status" })).toBeTruthy();
+  expect(screen.getByText("AppGroupStopped")).toBeTruthy();
+  expect(screen.getByText(/App Group is stopped; the ingress reconciler excludes its routes/)).toBeTruthy();
+  expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
+});

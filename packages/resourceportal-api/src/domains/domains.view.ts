@@ -13,6 +13,14 @@ type DomainWithEndpoint = Domain & {
       id: string;
       name: string;
       appGroupId: string;
+      runtimeState?: string;
+      pendingDeletion?: boolean;
+      appGroup?: {
+        tenantId: string;
+        runtimeState: string;
+        currentDeploymentVersion: number | null;
+        hasPendingChanges: boolean;
+      };
     };
   } | null;
 };
@@ -23,9 +31,26 @@ export function mapDomain(domain: DomainWithEndpoint) {
     : false;
 
   const publication = domainPublicationDiagnostics(domain, domain.tenantId);
+  const app = domain.httpEndpoint?.singleApp;
+  const group = app?.appGroup;
+  // Mirrors the ingress reconciler's stopped-app/stopped-group filter, but
+  // never claims that an actual Traefik route has been observed.
+  const ingressIntent = !publication.eligible ? "NotEligible" :
+    !app ? "NoEndpoint" :
+    !group || group.tenantId !== domain.tenantId ? "Unknown" :
+    group.runtimeState === "Stopped" ? "AppGroupStopped" :
+    app.runtimeState === "Stopped" ? "ApplicationStopped" :
+    app.pendingDeletion === true ? "ApplicationPendingDeletion" :
+    group.currentDeploymentVersion == null ? "NeverDeployed" :
+    group.hasPendingChanges ? "PendingDeployment" : "RouteEligibleNotObserved";
 
   return {
     publication,
+    ingress: {
+      intentStatus: ingressIntent,
+      observedRouter: "NotChecked" as const,
+      currentDeploymentVersion: group?.currentDeploymentVersion ?? null,
+    },
     id: domain.id,
     tenantId: domain.tenantId,
     type: domain.type,

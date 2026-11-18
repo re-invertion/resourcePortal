@@ -62,3 +62,44 @@ describe("mapDomain TLS semantics", () => {
     expect(result.certificateExpiresAt).toBeNull();
   });
 });
+
+describe("#394 ingress intent mirrors stopped-app reconciliation", () => {
+  function route(input: {
+    app?: string; group?: string; deployed?: number | null;
+    pending?: boolean; pendingDeletion?: boolean;
+  }) {
+    const d = domain("HTTPS");
+    const ep = d.httpEndpoint!;
+    return mapDomain({
+      ...d,
+      httpEndpoint: {
+        ...ep,
+        singleApp: {
+          ...ep.singleApp,
+          runtimeState: input.app ?? "Running",
+          pendingDeletion: input.pendingDeletion ?? false,
+          appGroup: {
+            tenantId: d.tenantId,
+            runtimeState: input.group ?? "Running",
+            currentDeploymentVersion: input.deployed === undefined ? 2 : input.deployed,
+            hasPendingChanges: input.pending ?? false,
+          },
+        },
+      },
+    }).ingress;
+  }
+  it("does not claim a router exists when app group or application is stopped", () => {
+    expect(route({group:"Stopped"}).intentStatus).toBe("AppGroupStopped");
+    expect(route({app:"Stopped"}).intentStatus).toBe("ApplicationStopped");
+    expect(route({pendingDeletion:true}).intentStatus).toBe("ApplicationPendingDeletion");
+  });
+  it("distinguishes deployment required from eligible but unobserved route", () => {
+    expect(route({deployed:null}).intentStatus).toBe("NeverDeployed");
+    expect(route({pending:true}).intentStatus).toBe("PendingDeployment");
+    expect(route({}).intentStatus).toBe("RouteEligibleNotObserved");
+    expect(route({}).observedRouter).toBe("NotChecked");
+  });
+  it("does not falsely claim an ingress router when app-group status is missing", () => {
+    expect(mapDomain(domain("HTTPS")).ingress.intentStatus).toBe("Unknown");
+  });
+});
