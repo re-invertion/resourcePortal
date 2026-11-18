@@ -178,6 +178,7 @@ function domainServiceFor(input: {
     provisionManagedDomain: vi.fn().mockResolvedValue({ created: false }),
     deleteManagedDomain: vi.fn().mockResolvedValue({ deleted: 1 }),
     managedDomainExists: vi.fn().mockResolvedValue(true),
+    getDomainTargetHostname: vi.fn().mockReturnValue("apps.resource-portal.local"),
     getTenantCapabilities: vi.fn().mockResolvedValue({ managedDomains: { enabled: true, provider: "Cloudflare", baseDomain: "apps.resource-portal.local" } }),
   };
   return {
@@ -669,5 +670,51 @@ describe("#394 safe legacy custom-domain root linking", () => {
     const { service, tx } = domainServiceFor({ existingDomain: current });
     await expect(service.updateDomain(current.tenantId, current.id, { customRootDomainId: null as unknown as string }, actor)).rejects.toThrow("LegacyCustomRootLinkOnly");
     expect(tx.domain.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("#394 tenant-scoped read-only DNS diagnostics", () => {
+  afterEach(() => { resolveCnameMock.mockReset(); resolve4Mock.mockReset(); resolve6Mock.mockReset(); });
+  const custom = () => domainRecord({
+    type: DomainType.Custom, hostname: "photos.example.com", subdomain: "photos",
+    customRootDomainId: root().id,
+    customRootDomain: root({ verificationStatus: CustomRootDomainVerificationStatus.Verified }),
+  });
+  it("reports matching CNAME target and actual evidence without changing DNS state", async () => {
+    resolveCnameMock.mockResolvedValue(["apps.resource-portal.local."]);
+    resolve4Mock.mockRejectedValue(Object.assign(new Error("missing"), {code: "ENODATA"}));
+    resolve6Mock.mockRejectedValue(Object.assign(new Error("missing"), {code: "ENODATA"}));
+    const { service, prisma } = domainServiceFor({ existingDomain: custom() });
+    const result = await service.getDnsDiagnostics(custom().tenantId, custom().id);
+    expect(result.status).toBe("Matches");
+    expect(result.expected).toEqual({ type: "CNAME", target: "apps.resource-portal.local" });
+    expect(result.observed.cname).toEqual(["apps.resource-portal.local"]);
+    expect(prisma.domain.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: custom().id, tenantId: custom().tenantId } }));
+  });
+  it("shows expected-vs-observed record mismatch instead of implying route reachability", async () => {
+    resolveCnameMock.mockResolvedValue(["wrong.example.net"]);
+    resolve4Mock.mockResolvedValue([]); resolve6Mock.mockResolvedValue([]);
+    const { service } = domainServiceFor({ existingDomain: custom() });
+    const result = await service.getDnsDiagnostics(custom().tenantId, custom().id);
+    expect(result.status).toBe("Mismatch");
+    expect(result.observed.cname).toEqual(["wrong.example.net"]);
+    expect(result.recommendation).toContain("CNAME photos.example.com to apps.resource-portal.local");
+  });
+  it("reports resolver failure separately from a mismatch", async () => {
+    resolveCnameMock.mockRejectedValue(new Error("resolver timeout"));
+    resolve4Mock.mockRejectedValue(new Error("resolver timeout"));
+    resolve6Mock.mockRejectedValue(new Error("resolver timeout"));
+    const { service } = domainServiceFor({ existingDomain: custom() });
+    const result = await service.getDnsDiagnostics(custom().tenantId, custom().id);
+    expect(result.status).toBe("Unavailable");
+    expect(result.recommendation).toContain("DNS lookup failed");
+  });
+  it("never probes DNS for a custom domain with unverified root", async () => {
+    const existing = custom();existing.customRootDomain = root();
+    const { service } = domainServiceFor({ existingDomain: existing });
+    const result = await service.getDnsDiagnostics(existing.tenantId, existing.id);
+    expect(result.status).toBe("OwnershipUnverified");
+    expect(resolveCnameMock).not.toHaveBeenCalled();
+    expect(resolve4Mock).not.toHaveBeenCalled();
   });
 });

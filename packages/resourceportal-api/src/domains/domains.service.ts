@@ -50,6 +50,50 @@ export class DomainsService {
     return mapDomain(domain);
   }
 
+  /** Tenant-scoped, read-only public DNS evidence; never implies route reachability. */
+  async getDnsDiagnostics(tenantId: string, domainId: string) {
+    const domain = await this.findDomainOrThrow(tenantId, domainId);
+    const hostname = domain.hostname.toLowerCase().replace(/\.$/, "");
+    const target = (this.managedDns?.getDomainTargetHostname() ??
+      this.config.get<string>("RESOURCEPORTAL_PUBLIC_HOSTNAME", this.managedBaseDomain()))
+      .trim().toLowerCase().replace(/\.$/, "");
+    const base = { hostname, expected: { type: "CNAME", target },
+      observed: { cname: [] as string[], a: [] as string[], aaaa: [] as string[] },
+      status: "Unavailable" as "Unavailable" | "Matches" | "Mismatch" | "OwnershipUnverified",
+      recommendation: "DNS observations are unavailable; retry after the resolver is available." };
+    // Do not probe externally for hostnames whose tenant ownership is not proven.
+    if (domain.type === DomainType.Custom && !isDomainPublishable(
+      { ...domain, dnsStatus: DnsStatus.Valid }, tenantId)) {
+      return { ...base, status: "OwnershipUnverified" as const,
+        recommendation: "Verify ownership of a matching tenant root before checking public DNS." };
+    }
+    if (domain.type === DomainType.Managed) {
+      return { ...base, status: "Unavailable" as const,
+        recommendation: "This domain uses managed DNS. Check its managed DNS status instead." };
+    }
+    const query = async (resolver: (host: string) => Promise<string[]>, host: string) => {
+      try { return { values: await resolver(host), available: true }; }
+      catch (error) { return { values: [] as string[], available: (error as { code?: string }).code === "ENODATA" || (error as { code?: string }).code === "ENOTFOUND" }; }
+    };
+    const [cname, a, aaaa, targetA, targetAaaa] = await Promise.all([
+      query(resolveCname, hostname), query(resolve4, hostname), query(resolve6, hostname),
+      query(resolve4, target), query(resolve6, target),
+    ]);
+    const observed = {
+      cname: cname.values.map(value => value.toLowerCase().replace(/\.$/, "")),
+      a: a.values, aaaa: aaaa.values,
+    };
+    const directMatch = hostname === target || observed.cname.includes(target);
+    const targetAddresses = new Set([...targetA.values, ...targetAaaa.values]);
+    const flattenedMatch = targetAddresses.size > 0 && [...observed.a, ...observed.aaaa].some(address => targetAddresses.has(address));
+    const known = cname.available && a.available && aaaa.available;
+    const status = directMatch || flattenedMatch ? "Matches" : known ? "Mismatch" : "Unavailable";
+    return { ...base, observed, status,
+      recommendation: status === "Matches" ? "Public DNS points at the configured target. Ingress reachability is not verified." :
+        status === "Mismatch" ? `Set CNAME ${hostname} to ${target}, or configure A/AAAA records matching the target's public addresses, then validate again.` :
+        "DNS lookup failed; do not treat an unavailable resolver as a record mismatch. Retry diagnostics." };
+  }
+
   /** Read-only, tenant-scoped TLS diagnostics from worker reconciliation audit.
    * DNS verification and route publication are independent from TLS readiness.
    * Never return raw observer/ACME errors: they may contain internal addresses.

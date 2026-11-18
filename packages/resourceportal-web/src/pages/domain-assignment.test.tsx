@@ -69,3 +69,27 @@ it("#394 links a legacy custom hostname only to an explicitly selected verified 
     expect(JSON.parse(String((patch?.[1] as RequestInit | undefined)?.body))).toEqual({ customRootDomainId: "root-v" });
   });
 });
+
+it("#394 shows observed DNS mismatch separately from ingress reachability", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1/dns-diagnostics")) return json({
+      hostname: "photos.example.com", status: "Mismatch", expected: {type: "CNAME", target: "edge.example.net"},
+      observed: {cname: ["wrong.example.net"], a: ["192.0.2.1"], aaaa: []},
+      recommendation: "Set CNAME photos.example.com to edge.example.net, then validate again.",
+    });
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "photos.example.com", type: "Custom", customRootDomainId: "root1",
+      dnsStatus: "Invalid", tlsEnabled: false, publication: {eligible:false,reason:"DnsNotValid"},
+    });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", {name:"Public DNS diagnostics"})).toBeTruthy();
+  expect(await screen.findByText("Mismatch")).toBeTruthy();
+  expect(screen.getAllByText(/CNAME photos\.example\.com.*edge\.example\.net/).length).toBeGreaterThan(0);
+  expect(screen.getByText("wrong.example.net")).toBeTruthy();
+  expect(screen.getByText("192.0.2.1")).toBeTruthy();
+  expect(screen.getByText(/does not confirm that an application is running/)).toBeTruthy();
+});
