@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TenantNetworkingPage } from "./tenant-networking";
 import type { Topology } from "./tenant-networking-graph";
@@ -98,7 +98,10 @@ describe("Tenant networking without routed Site VPN",()=>{
     render(<TenantNetworkingPage tenantId={tenantId}/>);
     fireEvent.click(screen.getAllByRole("button",{name:"Create Network"})[0]);
     fireEvent.change(screen.getByPlaceholderText("private-network"),{target:{value:"private-backend"}});
-    fireEvent.click(screen.getAllByRole("button",{name:"Create Network"})[1]);
+    // Opening the modal makes the page inert/aria-hidden. Target the visible
+    // confirmation action, never a background button hidden from accessibility.
+    const dialog = screen.getByRole("dialog", { name: "Create Network" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Network" }));
     await waitFor(()=>expect(mock.request).toHaveBeenCalledWith(root+"/networks",{
       method:"POST",body:{name:"private-backend",description:undefined,cidr:undefined},
     }));
