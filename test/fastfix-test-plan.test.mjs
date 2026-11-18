@@ -1048,4 +1048,13 @@ test("#442 MCP OAuth metadata global-prefix routing requires identity and securi
   }
   assert.throws(() => selectProfiles([
     "packages/resourceportal-api/src/config/unregistered-oauth-route.ts",
-  ]), /unclassified changes/);});
+  ]), /unclassified changes/);
+});
+
+
+test("final UI federation E2E changes select identity and security validation", () => {
+  const plan = selectProfiles(["scripts/run-v019-final-ui-e2e.mjs"]);
+  assert.ok(plan.profiles.includes("identity"));
+  assert.ok(plan.profiles.includes("security"));
+  assert.ok(plan.profiles.includes("workflow"));
+});
