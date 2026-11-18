@@ -87,6 +87,8 @@ export function App({ initialPath }: AppProps = {}) {
   const [tenants, setTenants] = useState<Tenant[] | undefined>();
   const [platformAdmin, setPlatformAdmin] = useState(false);
   const [error, setError] = useState<unknown>();
+  const [sessionError, setSessionError] = useState(false);
+  const [sessionRetry, setSessionRetry] = useState(0);
   const [upgrade, setUpgrade] = useState<{ updating: boolean; status?: string | null; phase?: string | null; version?: string | null } | null>(null);
   useEffect(() => {
     let active = true;
@@ -104,7 +106,24 @@ export function App({ initialPath }: AppProps = {}) {
     const interval = window.setInterval(refresh, 4000);
     return () => { active = false; window.clearInterval(interval); window.removeEventListener("rp-upgrade-started", onStart); };
   }, []);
-  useEffect(() => { if (route.kind === "public" && route.page === "health") return; apiRequest<User>("/api/auth/me").then(setUser).catch((cause) => { if (cause instanceof ApiError && cause.status === 401) setUser(null); else { setError(cause); setUser(null); } }); }, []);
+  useEffect(() => {
+    if (route.kind === "public" && route.page === "health") return;
+    let active = true;
+    apiRequest<User>("/api/auth/me").then((value) => {
+      if (!active) return;
+      setSessionError(false);
+      setUser(value);
+    }).catch((cause) => {
+      if (!active) return;
+      if (cause instanceof ApiError && cause.status === 401) {
+        setSessionError(false);
+        setUser(null);
+      } else {
+        setSessionError(true);
+      }
+    });
+    return () => { active = false; };
+  }, [sessionRetry]);
   const reloadTenants = async () => { const result = await apiRequest("/api/tenants"); setTenants(tenantList(result)); };
   useEffect(() => { if (user) void reloadTenants().catch(setError); }, [user]);
   useEffect(() => { if (!user || (route.kind !== "tenant" && route.kind !== "platform")) { setPlatformAdmin(false); return; } let active = true; apiRequest("/api/platform/maintenance").then(() => { if (active) setPlatformAdmin(true); }).catch(() => { if (active) setPlatformAdmin(false); }); return () => { active = false; }; }, [user, route.kind]);
@@ -119,6 +138,14 @@ export function App({ initialPath }: AppProps = {}) {
     </Card>
   </main>;
   if (route.kind === "public" && route.page === "health") return <PublicHealthPage />;
+  if (sessionError) return <main role="alert" className="flex min-h-screen items-center justify-center bg-[#F4F7FB] p-5">
+    <Card className="w-full max-w-lg p-7">
+      <ResourcePortalLogo />
+      <h1 className="mt-6 text-2xl font-semibold text-[#172033]">Unable to verify your session</h1>
+      <p className="mt-3 text-sm leading-6 text-[#5B6678]">The server or network is unavailable. This does not mean you have been signed out.</p>
+      <Button className="mt-5" onClick={() => { setSessionError(false); setSessionRetry((count) => count + 1); }}>Retry session check</Button>
+    </Card>
+  </main>;
   if (user === undefined) return <AppLoading route={route} error={error}/>;
   if (!user) { if (route.kind === "invitation") return <InvitationPage token={route.token} user={null} />; const mode = route.kind === "public" && route.page !== "health" ? route.page : "login"; return <AuthPage mode={mode} />; }
   if (route.kind === "invitation") return <InvitationPage token={route.token} user={user} />;
