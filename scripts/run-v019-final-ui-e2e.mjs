@@ -302,7 +302,15 @@ async function routeToKeycloak(page, providerLabel) {
       (await providerControl.count()) > 0 &&
       (await providerControl.isVisible().catch(() => false))
     ) {
-      await providerControl.dispatchEvent("click");
+      // A navigation can complete between the visibility check and dispatch.
+      // Never wait on the old ZITADEL control once Keycloak is already loaded.
+      if (new URL(page.url()).origin === keycloak.origin) return;
+      try {
+        await providerControl.dispatchEvent("click", { timeout: 2_000 });
+      } catch (error) {
+        if (new URL(page.url()).origin === keycloak.origin) return;
+        throw error;
+      }
     }
     await page.waitForTimeout(500);
   }
