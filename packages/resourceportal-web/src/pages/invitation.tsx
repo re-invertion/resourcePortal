@@ -43,28 +43,36 @@ export function InvitationPage({
 }) {
   const [preview, setPreview] = useState<InvitationPreview>();
   const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [retryCount, setRetryCount] = useState(0);
   const [working, setWorking] = useState(false);
   const [provisioning, setProvisioning] = useState<"pending" | "blocked" | null>(null);
   const [acceptedTenantId, setAcceptedTenantId] = useState<string>();
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setPreview(undefined);
+    setError(undefined);
     apiRequest<InvitationPreview>(`/api/invitations/${encodeURIComponent(token)}`)
       .then((value) => {
         if (active) {
           setPreview(value);
           setError(undefined);
+          setLoading(false);
         }
       })
       .catch((cause) => {
         if (active) {
+          setPreview(undefined);
           setError(cause instanceof Error ? cause.message : "Invitation could not be loaded.");
+          setLoading(false);
         }
       });
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, retryCount]);
 
   useEffect(() => {
     if (provisioning !== "pending" || !acceptedTenantId) return;
@@ -147,9 +155,9 @@ export function InvitationPage({
     >
       <Card className="p-6 sm:p-8">
         <p className="text-[11px] font-semibold uppercase tracking-[.04em] text-[#1769E0]">Tenant invitation</p>
-        <h1 className="mt-3 text-[28px] font-semibold tracking-[-.025em] text-[#172033]">{preview ? `Join ${tenantName}` : "Loading invitation…"}</h1>
+        <h1 className="mt-3 text-[28px] font-semibold tracking-[-.025em] text-[#172033]">{loading ? "Loading invitation…" : error ? "Invitation unavailable" : `Join ${tenantName}`}</h1>
 
-        {error ? <div className="mt-5"><Callout tone="danger" title="Invitation unavailable">{error}</Callout></div> : null}
+        {error ? <div className="mt-5"><Callout tone="danger" title="Invitation unavailable">{error}</Callout><Button className="mt-4" onClick={() => setRetryCount((count) => count + 1)}>Try again</Button></div> : null}
 
         {preview ? (
           <>
