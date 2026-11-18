@@ -8,6 +8,8 @@ export type LanAddressGrant = {
   status?: string;
   verifiedAddress?: string | null;
   leaseExpiresAt?: string | null;
+  authorizationExpiresAt?: string | null;
+  authorizationRequired?: boolean;
 };
 export type BoundLanSource = { ip: string; timeoutSeconds?: number };
 
@@ -22,6 +24,13 @@ export function boundLanSource(grant: LanAddressGrant, now = Date.now()): BoundL
     const address = grant.staticAddress ? parseIpv4Cidr(grant.staticAddress) : null;
     if (!address || address.normalized !== cidr.normalized) return null;
     ip = grant.staticAddress!.split("/")[0];
+    const authExpiry = grant.authorizationExpiresAt ?
+      Date.parse(grant.authorizationExpiresAt) : NaN;
+    if (grant.authorizationRequired) {
+      if (!Number.isFinite(authExpiry) || authExpiry <= now + 1_000 ||
+          authExpiry > now + 600_000) return null;
+      timeoutSeconds = Math.floor((authExpiry - now) / 1000);
+    }
   } else if (grant.addressMode === "DHCP" && grant.status === "Active") {
     const expiry = grant.leaseExpiresAt ? Date.parse(grant.leaseExpiresAt) : NaN;
     if (!Number.isFinite(expiry) || expiry <= now + 1000 ||

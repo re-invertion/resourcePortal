@@ -78,10 +78,12 @@ const commands: Command[] = [
       roleIds: arrayFlag(p.flags, "roleId"),
     }),
   ),
-  command("membership", "update", "<tenantId> <membershipId> [--status STATUS] [--role-id ID]", "Update membership.", (p, c) =>
+  command("membership", "update", "<tenantId> <membershipId> [--status STATUS] [--role-id ID] [--oauth-application-id ID] [--native-application-key web|cli]", "Update roles and independently selected SSO grants.", (p, c) =>
     c.tenants.updateMembership(arg(p, 0, "tenantId"), arg(p, 1, "membershipId"), optionalBody({
       status: optionalFlag(p.flags, "status"),
       roleIds: optionalArrayFlag(p.flags, "roleId"),
+      oauthApplicationIds: optionalArrayFlag(p.flags, "oauthApplicationId"),
+      nativeApplicationKeys: optionalArrayFlag(p.flags, "nativeApplicationKey"),
     })),
   ),
   command("membership", "delete", "<tenantId> <membershipId>", "Delete membership.", (p, c) =>
@@ -90,10 +92,12 @@ const commands: Command[] = [
   command("invitation", "list", "<tenantId>", "List tenant invitations.", (p, c) =>
     c.tenants.invitations(arg(p, 0, "tenantId")),
   ),
-  command("invitation", "create", "<tenantId> --email EMAIL --role-id ID", "Create tenant invitation.", (p, c) =>
+  command("invitation", "create", "<tenantId> --email EMAIL [--role-id sso-login] [--oauth-application-id ID] [--native-application-key web|cli]", "Invite a single user with independent RBAC and SSO grants.", (p, c) =>
     c.tenants.createInvitation(arg(p, 0, "tenantId"), {
       email: flag(p.flags, "email"),
       roleIds: arrayFlag(p.flags, "roleId"),
+      oauthApplicationIds: arrayFlag(p.flags, "oauthApplicationId"),
+      nativeApplicationKeys: arrayFlag(p.flags, "nativeApplicationKey"),
     }),
   ),
   command("invitation", "resend", "<tenantId> <invitationId>", "Resend tenant invitation.", (p, c) =>

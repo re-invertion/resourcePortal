@@ -1,3 +1,4 @@
+import { remoteLanAuthorizationExpiry } from "./remote-lan-authorization-lease";
 import {REMOTE_LAN_PROOF_MAX_AGE_MS} from "./remote-lan-proof-age";
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -54,7 +55,7 @@ export class RemoteLanLifecycleService {
         row.singleApp.appGroup.tenantId === row.tenantId &&
         row.gate.revokedAt === null &&
         row.gate.status === "Ready" &&
-        row.gate.agentVersion === "gate-l2-v3" &&
+        ["gate-l2-v3","gate-l2-v4"].includes(row.gate.agentVersion ?? "") &&
         row.network.status === "Ready" &&
         row.singleApp.pendingDeletion === false &&
         row.singleApp.desiredReplicas === 1 &&
@@ -133,7 +134,7 @@ export class RemoteLanLifecycleService {
     for(const row of rows) {
       const gate=row.gate;
       const gateFresh=gate.tenantId===row.tenantId&&
-        gate.agentVersion==="gate-l2-v3"&&gate.status==="Ready"&&
+        ["gate-l2-v3","gate-l2-v4"].includes(gate.agentVersion ?? "")&&gate.status==="Ready"&&
         !gate.revokedAt&&gate.observedL2At!==null&&
         now-gate.observedL2At.getTime()<=REMOTE_LAN_PROOF_MAX_AGE_MS&&
         gate.observedL2At.getTime()<=now+5000&&
@@ -221,6 +222,46 @@ export class RemoteLanLifecycleService {
             data:{lastError:reason},
           });
       }else if(row.status==="Active"){
+        // A transient API/worker outage must not turn an already authorized
+        // v4 data path into Provisioning. Local Gate/Swarm enforcement carries
+        // a separately bounded lease; this never promotes new attachments.
+        const nodeStillOwned = !nodeProofsReady || (() => {
+          // Fresh, explicit negative node evidence is a local data-plane
+          // failure, NOT an API outage. It must never be hidden by a Gate
+          // authorization lease.
+          const peers=nodes.flatMap(n=>n.proofs).filter(p=>p.attachmentId===row.id);
+          if(peers.length!==1) return false;
+          const p=peers[0];
+          return p.source==="node-agent" &&
+            p.tenantId===row.tenantId && p.singleAppId===row.singleAppId &&
+            p.gateId===row.gateId &&
+            p.configurationRevision===row.configurationRevision &&
+            p.macAddress.toLowerCase()===row.macAddress.toLowerCase() &&
+            p.appLinkOwned && p.appLinkUp && p.overlayPeerMatched &&
+            p.dockerDefaultPreserved &&
+            p.observedAtMs >= now-REMOTE_LAN_PROOF_MAX_AGE_MS &&
+            p.observedAtMs <= now+5_000;
+        })();
+        const permitted = gate.revokedAt === null &&
+          gate.status === "Ready" &&
+          row.network.status === "Ready" &&
+          row.network.tenantId === row.tenantId &&
+          row.singleApp.appGroup.tenantId === row.tenantId &&
+          !row.singleApp.pendingDeletion &&
+          row.singleApp.desiredReplicas === 1 &&
+          row.singleApp.networkAttachments.some(n => n.networkId === row.networkId) &&
+          nodeStillOwned &&
+          (!nodeProofsReady || !gateFresh) &&
+          remoteLanAuthorizationExpiry({ ...gate, gateId:gate.id }, {
+            attachmentId:row.id,tenantId:row.tenantId,gateId:row.gateId,
+            singleAppId:row.singleAppId,networkId:row.networkId,
+            macAddress:row.macAddress,configurationRevision:row.configurationRevision,
+          },now)!==null;
+        if(permitted) {
+          // Deliberately keep the previous DHCP-bound identity; do not alter
+          // lastVerifiedAt and do not report a fabricated successful proof.
+          continue;
+        }
         const claimed=await this.prisma.remoteLanAttachment.updateMany({
           where:{id:row.id,tenantId:row.tenantId,status:"Active",
             configurationRevision:row.configurationRevision},

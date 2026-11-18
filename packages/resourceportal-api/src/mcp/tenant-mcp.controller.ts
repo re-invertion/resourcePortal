@@ -15,6 +15,7 @@ import { ConfigService } from "@nestjs/config";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { OidcAuthService } from "../auth/oidc-auth.service";
+import { McpResourceOAuthService } from "../auth/mcp-resource-oauth.service";
 import { Public } from "../auth/public.decorator";
 import { RequirePermissions } from "../auth/require-permissions.decorator";
 import { AuthenticatedUser } from "../auth/types";
@@ -146,7 +147,10 @@ export class McpOAuthAuthorizationServerMetadataController {
 @AllowDuringPlatformMaintenance()
 @Controller(".well-known/oauth-protected-resource/api/tenants/:mcpTenantId/mcp")
 export class TenantMcpOAuthMetadataController {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly resourceOAuth?: McpResourceOAuthService,
+  ) {}
 
   @Get()
   @Header("access-control-allow-origin", "*")
@@ -155,8 +159,10 @@ export class TenantMcpOAuthMetadataController {
     @Param("mcpTenantId", ParseUUIDPipe) tenantId: string,
     @Req() request: FastifyRequest,
   ) {
-    const origin = requestOrigin(request);
-    const issuer = this.config.get<string>("OIDC_ISSUER_URL")?.replace(/\/$/, "");
+    const dedicated = this.resourceOAuth?.isEnabled() === true;
+    const origin = dedicated ? this.resourceOAuth?.getOrigin() : requestOrigin(request);
+    const issuer = dedicated ? this.resourceOAuth?.getIssuer() :
+      this.config.get<string>("OIDC_ISSUER_URL")?.replace(/\/$/, "");
     const projectId = this.config.get<string>("ZITADEL_PROJECT_ID");
     const organizationId = this.config.get<string>("ZITADEL_ORGANIZATION_ID");
     return {
@@ -164,7 +170,7 @@ export class TenantMcpOAuthMetadataController {
       resource_name: "ResourcePortal Tenant MCP",
       authorization_servers: issuer ? [issuer] : [],
       bearer_methods_supported: ["header"],
-      scopes_supported: [
+      scopes_supported: dedicated ? ["mcp", "offline_access"] : [
         "openid",
         "profile",
         "email",

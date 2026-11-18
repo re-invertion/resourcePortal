@@ -598,8 +598,33 @@ rp_primary_deploy_final() {
   rp_wait_for_acme_certificate "$RP_CFG_DOMAIN" "$environment" 300 || return 1
   if declare -F rp_ui_event >/dev/null; then rp_ui_event operation_started final 'Waiting for ResourcePortal health' || true; fi
   rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300 || return 1
+  # Reject a successful install with a broken API -> public issuer hairpin.
+  rp_wait_api_oidc_connectivity "$RP_CFG_DOMAIN" 180 || return 1
   if [[ "$environment" == production ]]; then
     rp_acme_cache_active_state || { printf 'Failed to preserve production ACME state for safe reinstall reuse.\n' >&2; return 1; }
+  fi
+}
+
+# A fresh RP install also delivers app-only OAuth grants automatically;
+# no installer wizard field or post-upgrade operator action.
+rp_primary_activate_app_consumer_actions() {
+  local manifest="${RP_CFG_RELEASE_MANIFEST:-}" id
+  [[ -r "$manifest" ]] || return 1
+  if ! jq -e '.apiCapabilities.appConsumerActionsV2Callback == true' "$manifest" >/dev/null; then
+    return 0
+  fi
+  rp_app_action_prepare || return 1
+  rp_invitation_oidc_prepare || return 1
+  id="$RP_CFG_APP_CONSUMER_ACTIONS_V2_TARGET_ID"
+  if ! rp_deploy_control_plane final ||
+     ! rp_wait_for_https_origin "$RP_CFG_DOMAIN" 300 ||
+     ! rp_app_action_activate; then
+    # Only detach a newly-created target; never delete or replace a foreign
+    # execution. New installs have no prior App Consumer project grants.
+    if [[ "${RP_APP_ACTION_UPGRADE_NEW:-false}" == true ]]; then
+      rp_app_action_detach_if_owned "$id" || return 1
+    fi
+    return 1
   fi
 }
 
@@ -655,6 +680,7 @@ rp_primary_install() {
   rp_run_phase "$state_file" dns rp_primary_wait_for_dns || return 1
   rp_run_phase "$state_file" ingress rp_primary_enable_ingress || return 1
   rp_run_phase "$state_file" final rp_primary_deploy_final || return 1
+  rp_run_phase "$state_file" app-consumer-authorization rp_primary_activate_app_consumer_actions || return 1
   rp_run_phase "$state_file" enrollment rp_primary_start_enrollment || return 1
   rp_run_phase "$state_file" persist rp_primary_persist || return 1
 }

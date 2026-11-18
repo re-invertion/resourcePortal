@@ -55,10 +55,14 @@ class TestGateRuntimeReconcilerService extends GateRuntimeReconcilerService {
 }
 
 function fixture(gates: any[], deletingNetworks: any[] = []) {
+  const liveGates=[...gates];
   const prisma = {
     resourcePortalGate: {
       findMany: vi.fn().mockResolvedValue(gates),
+      findUnique: vi.fn().mockImplementation(({where}:any)=>
+        Promise.resolve(liveGates.find(g=>g.id===where.id)??null)),
       update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({count:1}),
       delete: vi.fn().mockResolvedValue({}),
     },
     gateNetworkAttachment: {
@@ -100,6 +104,7 @@ function fixture(gates: any[], deletingNetworks: any[] = []) {
   } as unknown as StackSecretProvisionerService;
   return {
     prisma,
+    liveGates,
     encryption,
     runtime,
     secrets,
@@ -124,6 +129,7 @@ const readyGate = {
   serverTunnelAddress: "10.253.0.1/30",
   clientTunnelAddress: "10.253.0.2/30",
   revokedAt: null,
+  configRevision: 3,
   lanCidrs: ["192.168.50.0/24"],
   networks: [
     {
@@ -234,7 +240,7 @@ describe("Gate task network-namespace forwarding contract", () => {
     const {service,prisma}=fixture([gate]);
     service.applySysctlUpdate=false;
     await expect(service.reconcile()).resolves.toMatchObject({ready:0,failed:1});
-    expect(prisma.resourcePortalGate.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prisma.resourcePortalGate.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data:expect.objectContaining({status:"Error",lastError:expect.stringContaining("not applied")}),
     }));
     service.applySysctlUpdate=true;
@@ -278,6 +284,69 @@ describe("GateRuntimeReconcilerService", () => {
       networkId,
       macAddress:"02:aa:bb:cc:dd:ee",
     })]);
+  });
+
+  it("rejects stale Gate state after revoke lands while Docker deploy is pending",async()=>{
+    const networkId="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const row={
+      id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+      tenantId:readyGate.tenantId,gateId:readyGate.id,
+      singleAppId:"99999999-9999-4999-8999-999999999999",networkId,
+      macAddress:"02:aa:bb:cc:dd:ee",configurationRevision:3,
+      lanCidr:"192.168.50.0/24",addressMode:"DHCP",
+      status:"Active",dhcpAddress:"192.168.50.25",
+      singleApp:{name:"sensor",appGroupId:"88888888-8888-4888-8888-888888888888",
+        desiredReplicas:1,pendingDeletion:false,
+        appGroup:{tenantId:readyGate.tenantId}},
+      network:{id:networkId,tenantId:readyGate.tenantId,
+        swarmNetworkName:"rp-network-"+networkId,overlayCidr:"10.200.40.0/24"},
+    };
+    const gate={...readyGate,agentVersion:"gate-l2-v4",remoteLanAttachments:[row]};
+    const {service,prisma,liveGates}=fixture([gate]);
+    // A synchronous fake of the commit of revokeGate while the worker is
+    // awaiting an external Docker stack deploy. The worker's original
+    // snapshot still says Ready; its next fence must reject it.
+    const deploy=vi.fn().mockImplementation(()=>{
+      liveGates[0]={...gate,status:"Deleting",revokedAt:new Date(),configRevision:4,
+        remoteLanAttachments:[]};
+      return Promise.resolve({exitCode:0,stdout:"",stderr:""});
+    });
+    (service as any).deployStack=deploy;
+    expect(await service.reconcile()).toMatchObject({ready:0,failed:1});
+    expect(deploy).toHaveBeenCalledOnce();
+    expect(service.dockerCalls.some(call=>call.args[0]==="exec")).toBe(false);
+    expect((prisma.resourcePortalGate.updateMany as any).mock.calls.every(
+      (call:any[])=>call[0].data.status!=="Ready")).toBe(true);
+    expect(service.dockerCalls.some(call=>call.args[0]==="stack"&&call.args[1]==="rm")).toBe(true);
+  });
+  it("rejects a revoked attachment while the Gate worker prepares its overlay",async()=>{
+    const networkId="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const row={
+      id:"ffffffff-ffff-4fff-8fff-ffffffffffff",
+      tenantId:readyGate.tenantId,gateId:readyGate.id,
+      singleAppId:"99999999-9999-4999-8999-999999999999",networkId,
+      macAddress:"02:aa:bb:cc:dd:ee",configurationRevision:3,
+      lanCidr:"192.168.50.0/24",addressMode:"Static",
+      singleApp:{name:"sensor",appGroupId:"88888888-8888-4888-8888-888888888888",
+        desiredReplicas:1,pendingDeletion:false,
+        appGroup:{tenantId:readyGate.tenantId}},
+      network:{id:networkId,tenantId:readyGate.tenantId,
+        swarmNetworkName:"rp-network-"+networkId,overlayCidr:"10.200.40.0/24"},
+      status:"Active",
+    };
+    const gate={...readyGate,agentVersion:"gate-l2-v4",remoteLanAttachments:[row]};
+    const {service,prisma,liveGates,runtime}=fixture([gate]);
+    (runtime.reconcileTenantNetwork as any).mockImplementation(()=>{
+      liveGates[0]={...gate,remoteLanAttachments:[
+        {...row,status:"Revoking",configurationRevision:4},
+      ]};
+      return Promise.resolve({success:true,changed:false});
+    });
+    expect(await service.reconcile()).toMatchObject({ready:0,failed:1});
+    expect(service.dockerCalls.some(call=>call.args[0]==="stack"&&call.args[1]==="deploy")).toBe(false);
+    expect(service.dockerCalls.some(call=>call.args[0]==="exec")).toBe(false);
+    expect((prisma.resourcePortalGate.updateMany as any).mock.calls.every(
+      (call:any[])=>call[0].data.status!=="Ready")).toBe(true);
   });
 
   it("does not redeploy the same Gateway Swarm task after Active/proof/lease promotion", async () => {
@@ -402,8 +471,10 @@ describe("GateRuntimeReconcilerService", () => {
       failed: 1,
     });
     expect((prisma.resourcePortalGate.delete as any)).not.toHaveBeenCalled();
-    expect((prisma.resourcePortalGate.update as any)).toHaveBeenCalledWith({
-      where: { id: readyGate.id },
+    expect((prisma.resourcePortalGate.updateMany as any)).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: readyGate.id,revokedAt:null,configRevision:readyGate.configRevision,
+      }),
       data: expect.objectContaining({
         status: "Error",
         lastError: expect.stringContaining("secret is in use"),

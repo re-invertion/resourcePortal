@@ -37,6 +37,10 @@ export async function startActionProof(input: {
   issuer: string;
   testUserId: string;
   testProjectId: string;
+  targetName?: string;
+  // Optional production-service test policy. The HTTP listener stays CI-only,
+  // but delegated authorization uses real RP Prisma grants and signed bytes.
+  authorize?: (raw: Buffer, signature: string, signingKey: string) => Promise<void>;
 }) {
   assert.equal(process.env.TENANT_OIDC_E2E_ISOLATED, "true");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
@@ -47,6 +51,7 @@ export async function startActionProof(input: {
   const events: ActionProofEvent[] = [];
   let signingKey = "";
   let deniedClientId: string | null = null;
+  let temporarilyUnavailable = false;
   const server = createServer((request, response) => {
     if (request.url === "/health" && request.method === "GET") {
       response.writeHead(200).end("ok");
@@ -83,10 +88,28 @@ export async function startActionProof(input: {
       };
       const userId = payload.user?.id ?? null;
       const clientId = payload.application?.client_id ?? null;
+      // Model an issuer-global target outage, not a missing entitlement. The
+      // event records only immutable IDs from VERIFIED signed bytes. An
+      // interrupting ZITADEL action must DENY token issuance on HTTP 503.
+      if (temporarilyUnavailable) {
+        events.push({ userId, clientId, decision: "deny" });
+        response.writeHead(503).end();
+        return;
+      }
       // This probe is only authoritative for its one ephemeral user. Absent
       // client identity is always DENIED for this user; never infer by email.
-      const denied = userId === input.testUserId &&
+      let denied = userId === input.testUserId &&
         (!clientId || clientId === deniedClientId);
+      if (input.authorize) {
+        // Invoke the actual server authorization service, never an unsigned
+        // fixture policy. A rejection or database exception denies issuance.
+        try {
+          await input.authorize(raw, signature as string, signingKey);
+          denied = false;
+        } catch {
+          denied = true;
+        }
+      }
       events.push({ userId, clientId, decision: denied ? "deny" : "allow" });
       response.writeHead(denied ? 403 : 200, {
         "content-type": "application/json",
@@ -102,7 +125,7 @@ export async function startActionProof(input: {
   try {
     const target = await input.api<{ id?: string; signingKey?: string }>(
       "POST", "/v2/actions/targets",
-      { name: "rp-398-ephemeral-client-gate-proof", endpoint: "http://localhost:8090/action",
+      { name: input.targetName ?? "rp-398-ephemeral-client-gate-proof", endpoint: "http://localhost:8090/action",
         timeout: "5s", restWebhook: { interruptOnError: true },
         payloadType: "PAYLOAD_TYPE_JSON" },
     );
@@ -114,10 +137,44 @@ export async function startActionProof(input: {
       targets: [target.id],
     });
 
+    // Certify management read-back on the ACTUAL pinned ZITADEL container,
+    // not merely successful POST/PUT or mocked API shapes. Production gate
+    // verification uses these same two management endpoints and fields.
+    const readBack = await input.api<{ target?: {
+      id?: string; endpoint?: string; signingKey?: string;
+      payloadType?: string; restWebhook?: { interruptOnError?: boolean };
+    } }>("GET", "/v2/actions/targets/" + target.id);
+    assert.ok(readBack.target, "Isolated Action target metadata is missing");
+    assert.equal(readBack.target.id, target.id, "Isolated Action target readback lost its ID");
+    assert.equal(readBack.target.endpoint, "http://localhost:8090/action",
+      "Isolated Action target endpoint was modified during setup");
+    assert.equal(readBack.target.signingKey, signingKey,
+      "Isolated Action target signing key differs from creation response");
+    assert.equal(readBack.target.payloadType, "PAYLOAD_TYPE_JSON",
+      "Isolated Action target is not signed JSON");
+    assert.equal(readBack.target.restWebhook?.interruptOnError, true,
+      "Isolated Action target does not interrupt on authorization denial");
+    const executions = await input.api<{ pagination?: { totalResult?: string | number };
+      executions?: Array<{
+        condition?: { function?: { name?: string } };
+        targets?: string[];
+      }>;
+    }>("POST", "/v2/actions/executions/search", { pagination: { limit: 100 } });
+    assert.ok(Array.isArray(executions.executions), "Isolated Action execution list is missing");
+    assert.equal(Number(executions.pagination?.totalResult), executions.executions.length,
+      "Isolated Action execution search is incomplete");
+    const configured = executions.executions.filter(e =>
+      e.condition?.function?.name === "preaccesstoken");
+    assert.equal(configured.length, 1, "Isolated preaccesstoken execution is not unique");
+    assert.deepEqual(configured[0].targets, [target.id],
+      "Isolated signed Action target is not the sole preaccesstoken execution");
+    console.log("PASS: real ZITADEL Actions V2 target signing metadata and execution readback");
+
     let closed = false;
     return {
       events: () => events.map(e => ({ ...e })),
       denyClient(clientId: string) { assert.ok(clientId); deniedClientId = clientId; },
+      simulateOutage(enabled: boolean) { temporarilyUnavailable = enabled; },
       async close() {
         if (closed) return;
         closed = true;

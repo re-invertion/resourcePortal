@@ -35,6 +35,10 @@ export class TenantContextGuard implements CanActivate {
 
     if (!tenantId) return true;
 
+    if (request.serviceIdentity && this.reflector.getAllAndOverride<boolean>(
+      "tenant:sso-self-readiness", [context.getHandler(), context.getClass()],
+    ) === true) throw new ForbiddenException("Human SSO member required");
+
     if (request.serviceIdentity) {
       return this.activateServiceIdentityContext(
         request,
@@ -105,11 +109,13 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set([
         ...membership.roles.flatMap(({ role }) =>
-          role.permissionBindings.map(({ permission }) => permission.id),
+          role.id === "sso-login" ? [] :
+            role.permissionBindings.map(({ permission }) => permission.id),
         ),
         ...membership.groupMemberships.flatMap(({ group }) =>
           group.roles.flatMap(({ role }) =>
-            role.permissionBindings.map(({ permission }) => permission.id),
+            role.id === "sso-login" ? [] :
+              role.permissionBindings.map(({ permission }) => permission.id),
           ),
         ),
       ]),
@@ -121,11 +127,16 @@ export class TenantContextGuard implements CanActivate {
       permissions,
     };
 
-    // A role-free or zero-permission membership is not an RP access grant.
-    // This also protects older tenant routes that predate @RequirePermissions:
-    // do not let App Consumer identities enumerate infrastructure there.
+    // sso-login has zero RP permissions. Even older routes with no explicit
+    // @RequirePermissions cannot become readable through an SSO-only grant.
     if (permissions.length === 0) {
-      throw new ForbiddenException("No tenant permissions assigned");
+      // Only the self-service SSO provisioning status endpoint may be used by
+      // zero-RBAC sso-login members. The endpoint rechecks the principal's
+      // own active membership and never accepts an arbitrary user ID.
+      const selfReadiness = this.reflector.getAllAndOverride<boolean>(
+        "tenant:sso-self-readiness", [context.getHandler(), context.getClass()],
+      );
+      if (selfReadiness !== true) throw new ForbiddenException("No tenant permissions assigned");
     }
 
     return true;
@@ -159,7 +170,8 @@ export class TenantContextGuard implements CanActivate {
     const permissions = [
       ...new Set(
         roleBindings.flatMap(({ role }) =>
-          role.permissionBindings.map(({ permission }) => permission.id),
+          role.id === "sso-login" ? [] :
+            role.permissionBindings.map(({ permission }) => permission.id),
         ),
       ),
     ];

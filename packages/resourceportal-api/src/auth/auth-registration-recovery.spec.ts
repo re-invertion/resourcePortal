@@ -21,6 +21,7 @@ function createConfig() {
 
 function createService(userStatus = UserStatus.Active) {
   const oidc = {
+    fetchIssuerEndpoint: vi.fn((url: string, _stage: string, options?: RequestInit) => fetch(url, options)),
     getDiscovery: vi.fn().mockResolvedValue({
       authorizationEndpoint: "https://issuer.example.com/oauth/v2/authorize",
       issuer: "https://issuer.example.com",

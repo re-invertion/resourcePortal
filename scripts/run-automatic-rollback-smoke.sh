@@ -335,6 +335,17 @@ rp_upgrade_quiesce_database_clients() {
 rp_upgrade_prepare_postgres_services() { return 0; }
 rp_upgrade_prepare_zitadel_for_mcp_oauth() { return 0; }
 rp_run_zitadel_mcp_oauth_reconcile() { return 0; }
+# This real database/SWARM fault-injection test uses disposable source and
+# candidate containers but no externally reachable HTTPS RP or ZITADEL
+# management issuer. Those issuer-global operations are certified by the
+# dedicated live HTTPS ZITADEL E2E and installer lifecycle tests; do not let
+# local test infrastructure mutate any real issuer or replace the verified
+# PostgreSQL restore below.
+rp_app_action_prepare() { RP_APP_ACTION_UPGRADE_NEW=false; return 0; }
+rp_app_action_checkpoint_record() { return 0; }
+rp_app_action_activate() { return 0; }
+rp_app_action_checkpoint_detach() { return 0; }
+
 rp_run_migrations() {
   docker run --rm --network "$db_network" -e DATABASE_URL="$compat_url" \
     resourceportal-api-candidate /app/node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
@@ -343,6 +354,25 @@ rp_run_migrations() {
   present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
     "SELECT (to_regclass('public.\"TenantOidcProvider\"') IS NOT NULL AND to_regclass('public.\"TenantOidcGrant\"') IS NOT NULL)::text")"
   [[ "$present" == true ]] || return 1
+  # A schema-changing MCP OAuth release must prove that the exact candidate
+  # actually installed all resource-binding, identity-bootstrap and spent
+  # refresh replay tables
+  # before we deliberately fail and restore the source databases.
+  if [[ -f packages/resourceportal-api/prisma/migrations/20261114002000_mcp_resource_oauth/migration.sql ]]; then
+    present="$(docker exec "$db_container" psql -U resource_portal -d resource_portal -Atc \
+      "SELECT (to_regclass('public.\"McpOAuthClient\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthPendingConsent\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthCode\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthGrant\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthUpstreamClient\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthUpstreamLogin\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthBrowserSession\"') IS NOT NULL AND
+               to_regclass('public.\"McpOAuthSpentRefreshToken\"') IS NOT NULL)::text")"
+    [[ "$present" == true ]] || {
+      echo "MCP OAuth candidate tables were not all installed before rollback" >&2
+      return 1
+    }
+  fi
   # Run ACTUAL candidate Zitadel binary and migrations on restored-source DB.
   rp_rollback_zitadel_start "$candidate_zitadel" "release candidate" || return 1
   docker exec "$zitadel_db_container" psql -U postgres -d zitadel -v ON_ERROR_STOP=1 \

@@ -17,6 +17,11 @@ networks:
   rp-web-api:
     driver: overlay
     attachable: false
+  # No WAN hairpin: private TLS transit from API to Traefik's Swarm VIP.
+  # The issuer hostname is retained for HTTPS SNI and certificate validation.
+  rp-oidc-private:
+    driver: overlay
+    attachable: false
 
   host:
     external: true
@@ -50,6 +55,8 @@ secrets:
   rp_zitadel_management_token:
     external: true
     name: __ZITADEL_MANAGEMENT_SWARM_REF__
+  # RP_APP_CONSUMER_ACTIONS_V2_SECRET_DECL
+  # RP_INVITATION_ONBOARDING_SECRET_DECL
 
 volumes: {}
 
@@ -222,13 +229,17 @@ services:
       ZITADEL_PROJECT_ID: __ZITADEL_PROJECT_ID__
       ZITADEL_INTERNAL_URL: http://zitadel:8080
       OIDC_ISSUER_URL: https://__ZITADEL_DOMAIN__
+      OIDC_PRIVATE_TLS_ROUTE: traefik
       OIDC_CLIENT_ID: __OIDC_CLIENT_ID__
       OIDC_CLI_CLIENT_ID: __OIDC_CLI_CLIENT_ID__
       OIDC_AUDIENCE: __OIDC_CLIENT_ID__
       OIDC_PROVIDER_TYPE: zitadel
       RP_NATIVE_LOGIN_ONLY: "auto" # only when there are no inbound IdPs, links, sessions or policies
+      RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" # on only with certified Actions V2; no change on unconfigured installations
       TENANT_OIDC_AUTO_ROLLOUT: "true"
       TENANT_OIDC_ACTIVATION_ALLOWED: "auto" # automatic, only after issuer + tenant checks
+      # RP_APP_CONSUMER_ACTIONS_V2_ENV
+      # RP_INVITATION_ONBOARDING_ENV
       RP_OIDC_EXTRA_CA_B64: "__OIDC_EXTRA_CA_B64__"
       OIDC_REDIRECT_URI: https://__DOMAIN__/api/auth/callback
       OIDC_POST_LOGOUT_REDIRECT_URI: https://__DOMAIN__/api/auth/logout/callback
@@ -250,9 +261,12 @@ services:
       - rp_internal_worker_token
       - rp_oidc_client_secret
       - rp_zitadel_management_token
+      # RP_APP_CONSUMER_ACTIONS_V2_API_SECRET
+      # RP_INVITATION_ONBOARDING_API_SECRET
     networks:
       - rp-control
       - rp-web-api
+      - rp-oidc-private
       - rp-terminal-secure
     deploy:
       replicas: __API_REPLICAS__ # RP_API_REPLICAS
@@ -548,6 +562,7 @@ services:
       - /mnt/resourceportal/platform/traefik:/platform/traefik
     networks:
       - rp-ingress
+      - rp-oidc-private
     deploy:
       replicas: __TRAEFIK_REPLICAS__ # RP_TRAEFIK_REPLICAS
       placement:

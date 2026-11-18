@@ -9,6 +9,6 @@ export class GateEnrollDto {
   @MaxLength(128)
   publicKey!: string;
 
-  @IsIn(["gate-l2-v1", "gate-l2-v2", "gate-l2-v3"])
-  agentVersion!: "gate-l2-v1" | "gate-l2-v2" | "gate-l2-v3";
+  @IsIn(["gate-l2-v1", "gate-l2-v2", "gate-l2-v3", "gate-l2-v4"])
+  agentVersion!: "gate-l2-v1" | "gate-l2-v2" | "gate-l2-v3" | "gate-l2-v4";
 }

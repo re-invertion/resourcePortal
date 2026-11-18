@@ -43,6 +43,29 @@ describe("MCP OAuth metadata", () => {
     );
   });
 
+  it("advertises a resource-bound RP OAuth AS when the dedicated issuer is certified and enabled", () => {
+    const oauth = {
+      isEnabled: vi.fn().mockReturnValue(true),
+      getOrigin: vi.fn().mockReturnValue("https://resource-portal.test"),
+      getIssuer: vi.fn().mockReturnValue("https://resource-portal.test/api/mcp/oauth"),
+    };
+    const controller = new TenantMcpOAuthMetadataController(
+      config() as never, oauth as never,
+    );
+    const request = {
+      protocol: "http", headers: { host: "internal:3000" },
+    } as unknown as FastifyRequest;
+    const metadata = controller.metadata(tenantId, request);
+    expect(metadata).toMatchObject({
+      resource: `https://resource-portal.test/api/tenants/${tenantId}/mcp`,
+      authorization_servers: ["https://resource-portal.test/api/mcp/oauth"],
+      scopes_supported: ["mcp", "offline_access"],
+    });
+    expect(metadata.scopes_supported).not.toContain(
+      "urn:zitadel:iam:org:project:id:project-id:aud",
+    );
+  });
+
   it("publishes a separate Platform Admin protected-resource metadata document", () => {
     const controller = new AdminMcpOAuthMetadataController(config() as never);
     const request = {

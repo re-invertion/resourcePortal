@@ -6,6 +6,8 @@ import {
   Injectable,
   Optional,
   NotFoundException,
+  InternalServerErrorException,
+  Logger,
 } from "@nestjs/common";
 import { MembershipStatus, Prisma, UserStatus } from "@prisma/client";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -13,6 +15,7 @@ import { AuthenticatedUser } from "../auth/types";
 import { NativeLoginModeService } from "../auth/native-login-mode.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantOidcService } from "../tenant-oidc/tenant-oidc.service";
+import { TenantOidcAutoRolloutService } from "../tenant-oidc/tenant-oidc-auto-rollout.service";
 import { PlatformEmailService } from "../email/platform-email.service";
 import { AcceptTenantInvitationDto } from "./dto/accept-tenant-invitation.dto";
 import { AddTenantGroupMemberDto } from "./dto/add-tenant-group-member.dto";
@@ -42,11 +45,14 @@ const TENANT_OWNER_ROLE_ID = "tenant-owner";
 
 @Injectable()
 export class TenantsService {
+  private readonly logger = new Logger(TenantsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: PlatformEmailService,
     @Optional() private readonly tenantOidc?: TenantOidcService,
     @Optional() private readonly nativeLoginMode?: NativeLoginModeService,
+    @Optional() private readonly oidcAutoRollout?: TenantOidcAutoRolloutService,
   ) {}
 
   listTenants(userId: string) {
@@ -56,15 +62,15 @@ export class TenantsService {
           some: {
             userId,
             status: "Active",
-            // An application-only identity may have an active membership
-            // without any ResourcePortal read permissions. Never return
-            // tenant metadata, billing or other members on membership alone.
+            // Membership grants no RP access by itself. A user with only
+            // sso-login and application grants cannot enumerate tenants.
             // Evaluate effective RolePermission bindings (not legacy arrays).
             OR: [
               {
                 roles: {
                   some: {
                     role: {
+                      id: { not: "sso-login" },
                       permissionBindings: {
                         some: { permissionId: { in: ["tenant.read", "*"] } },
                       },
@@ -79,6 +85,7 @@ export class TenantsService {
                       roles: {
                         some: {
                           role: {
+                            id: { not: "sso-login" },
                             permissionBindings: {
                               some: { permissionId: { in: ["tenant.read", "*"] } },
                             },
@@ -200,6 +207,20 @@ export class TenantsService {
   async createTenant(dto: CreateTenantDto, actor: AuthenticatedUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        // A first-time user may create their initial tenant. Existing users
+        // must be an active owner in an existing tenant; SSO-only, Viewer and
+        // suspended users cannot mint themselves a fresh Owner role here.
+        // Lock the User to serialize with invitation acceptance.
+        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${actor.id}::uuid FOR UPDATE`);
+        const existingCount = await tx.tenantMembership.count({ where: { userId: actor.id } });
+        if (existingCount) {
+          const owned = await tx.tenantMembership.findFirst({
+            where: { userId: actor.id, status: MembershipStatus.Active,
+              roles: { some: { roleId: TENANT_OWNER_ROLE_ID } } },
+            select: { id: true },
+          });
+          if (!owned) throw new ForbiddenException("Tenant creation requires an existing Owner grant");
+        }
         const tenant = await tx.tenant.create({
           data: {
             name: dto.name,
@@ -503,6 +524,7 @@ export class TenantsService {
     const invitations = await this.prisma.tenantInvitation.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
+      include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
     });
 
     return invitations.map(mapTenantInvitation);
@@ -514,8 +536,27 @@ export class TenantsService {
     actor: AuthenticatedUser,
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
-    await this.ensureRolesExist(dto.roleIds);
-    await this.assertOwnerRoleChangeAllowed(tenantId, actor, dto.roleIds);
+    const roleIds = dto.roleIds ?? [];
+    const oauthApplicationIds = dto.oauthApplicationIds ?? [];
+    const nativeApplicationKeys = dto.nativeApplicationKeys ?? [];
+    if (nativeApplicationKeys.some(key => key !== "web" && key !== "cli") ||
+        new Set(nativeApplicationKeys).size !== nativeApplicationKeys.length) {
+      throw new BadRequestException("Invalid ResourcePortal client keys");
+    }
+    if (new Set(oauthApplicationIds).size !== oauthApplicationIds.length) {
+      throw new BadRequestException("OAuth application ids must be unique");
+    }
+    await this.ensureRolesExist(roleIds);
+    await this.assertOwnerRoleChangeAllowed(tenantId, actor, roleIds);
+    if (oauthApplicationIds.length) {
+      const applications = await this.prisma.oAuthApplication.findMany({
+        where: { tenantId, id: { in: oauthApplicationIds } },
+        select: { id: true },
+      });
+      if (applications.length !== oauthApplicationIds.length) {
+        throw new NotFoundException("OAuth application not found in this tenant");
+      }
+    }
     const email = normalizeEmail(dto.email);
     const existingMembership = await this.prisma.tenantMembership.findFirst({
       where: {
@@ -539,12 +580,24 @@ export class TenantsService {
           data: {
             tenantId,
             email,
-            roleIds: dto.roleIds,
+            roleIds,
+            nativeApplicationKeys,
             tokenHash: hashToken(token),
             expiresAt: invitationExpiry(),
             lastSentAt: new Date(),
             createdBy: actor.id,
+            ...(oauthApplicationIds.length
+              ? { appInvitationGrants: {
+                // Nested Prisma create automatically supplies the composite
+                // invitationId + tenantId FK from its parent. Providing
+                // tenantId here is invalid in CreateWithoutInvitationInput.
+                create: oauthApplicationIds.map((oauthApplicationId): Prisma.TenantAppInvitationGrantUncheckedCreateWithoutInvitationInput => ({
+                  oauthApplicationId,
+                })),
+              } }
+              : {}),
           },
+          include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
         });
 
         await tx.auditLogEntry.create({
@@ -561,7 +614,9 @@ export class TenantsService {
             correlationId: randomUUID(),
             changes: {
               email,
-              roleIds: dto.roleIds,
+              roleIds,
+              oauthApplicationIds,
+              nativeApplicationKeys,
               expiresAt: created.expiresAt,
             },
           },
@@ -570,12 +625,24 @@ export class TenantsService {
         return created;
       });
 
-      const emailDelivery = await this.email.sendTenantInvitation({
-        recipient: invitation.email,
-        tenantName: tenant.name,
-        token,
-        expiresAt: invitation.expiresAt,
-      });
+      // The transaction has already committed. Mail/settings failures must
+      // not return 500 and hide the durable one-time invitation link.
+      let emailDelivery: { attempted: boolean; sent: boolean; reason?: string };
+      try {
+        emailDelivery = await this.email.sendTenantInvitation({
+          recipient: invitation.email,
+          tenantName: tenant.name,
+          token,
+          expiresAt: invitation.expiresAt,
+        });
+      } catch {
+        this.logger.warn("Tenant invitation persisted but email delivery is unavailable");
+        emailDelivery = {
+          attempted: false,
+          sent: false,
+          reason: "Email delivery unavailable; share the invitation link manually.",
+        };
+      }
 
       return {
         ...mapTenantInvitation(invitation),
@@ -590,7 +657,20 @@ export class TenantsService {
         throw new ConflictException("TenantInvitation already exists");
       }
 
-      throw error;
+      // Keep actionable diagnostics without logging email, token, raw SQL
+      // values or Prisma exception messages that can contain user input.
+      const requestId = randomUUID();
+      const errorCode = error instanceof Prisma.PrismaClientKnownRequestError
+        ? error.code
+        : error instanceof Prisma.PrismaClientValidationError
+          ? "PRISMA_VALIDATION"
+          : "UNEXPECTED";
+      this.logger.error(`Tenant invitation creation failed requestId=${requestId} code=${errorCode}`);
+      throw new InternalServerErrorException({
+        message: "Invitation could not be saved. Retry or contact support with the request ID.",
+        code: "TenantInvitationCreateFailed",
+        requestId,
+      });
     }
   }
 
@@ -612,6 +692,7 @@ export class TenantsService {
           expiresAt: invitationExpiry(),
           lastSentAt: new Date(),
         },
+        include: { appInvitationGrants: { select: { oauthApplicationId: true } } },
       });
 
       await tx.auditLogEntry.create({
@@ -637,12 +718,23 @@ export class TenantsService {
       return updated;
     });
 
-    const emailDelivery = await this.email.sendTenantInvitation({
-      recipient: invitation.email,
-      tenantName: tenant.name,
-      token,
-      expiresAt: invitation.expiresAt,
-    });
+    // As in creation, token rotation committed even if SMTP subsequently fails.
+    let emailDelivery: { attempted: boolean; sent: boolean; reason?: string };
+    try {
+      emailDelivery = await this.email.sendTenantInvitation({
+        recipient: invitation.email,
+        tenantName: tenant.name,
+        token,
+        expiresAt: invitation.expiresAt,
+      });
+    } catch {
+      this.logger.warn("Tenant invitation resend persisted but email delivery is unavailable");
+      emailDelivery = {
+        attempted: false,
+        sent: false,
+        reason: "Email delivery unavailable; share the invitation link manually.",
+      };
+    }
 
     return {
       ...mapTenantInvitation(invitation),
@@ -698,6 +790,9 @@ export class TenantsService {
         tenant: {
           select: { id: true, name: true, displayName: true },
         },
+        appInvitationGrants: {
+          include: { application: { select: { id: true, name: true } } },
+        },
       },
     });
 
@@ -716,6 +811,8 @@ export class TenantsService {
       roles: invitation.roleIds
         .map((roleId) => rolesById.get(roleId))
         .filter((role): role is { id: string; name: string } => Boolean(role)),
+      applications: (invitation.appInvitationGrants ?? []).map(({ application }) => application),
+      nativeApplicationKeys: invitation.nativeApplicationKeys,
       expiresAt: invitation.expiresAt,
       status: invitation.expiresAt <= new Date() ? "Expired" : "Pending",
     };
@@ -731,7 +828,10 @@ export class TenantsService {
 
     const invitation = await this.prisma.tenantInvitation.findUnique({
       where: { tokenHash: hashToken(dto.token) },
-      include: { tenant: { select: { id: true, name: true } } },
+      include: {
+        tenant: { select: { id: true, name: true } },
+        appInvitationGrants: { select: { oauthApplicationId: true } },
+      },
     });
 
     if (!invitation) {
@@ -746,9 +846,15 @@ export class TenantsService {
       throw new ForbiddenException("InvitationEmailMismatch");
     }
 
+    const appIds = (invitation.appInvitationGrants ?? []).map((row) => row.oauthApplicationId);
+    const nativeKeys = invitation.nativeApplicationKeys;
+    if (nativeKeys.some(key => key !== "web" && key !== "cli")) {
+      throw new ForbiddenException("Invalid invitation client keys");
+    }
     await this.ensureRolesExist(invitation.roleIds);
 
     const membership = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${actor.id}::uuid FOR UPDATE`);
       const existingMembership = await tx.tenantMembership.findUnique({
         where: {
           userId_tenantId: {
@@ -774,6 +880,25 @@ export class TenantsService {
         },
         include: this.membershipIncludes(),
       });
+
+      if (appIds.length) {
+        await tx.tenantAppClientGrant.createMany({
+          data: appIds.map(oauthApplicationId => ({
+            membershipId: created.id, tenantId: invitation.tenantId, oauthApplicationId,
+            createdBy: invitation.createdBy, updatedBy: invitation.createdBy,
+          })),
+          skipDuplicates: true,
+        });
+      }
+      if (nativeKeys.length) {
+        await tx.tenantNativeAppGrant.createMany({
+          data: nativeKeys.map(clientKey => ({
+            membershipId: created.id, tenantId: invitation.tenantId, clientKey,
+            createdBy: invitation.createdBy, updatedBy: invitation.createdBy,
+          })),
+          skipDuplicates: true,
+        });
+      }
 
       // Atomically invalidate tenant SSO readiness with invitation acceptance;
       // otherwise a crash could persist active membership without its role grant.
@@ -803,6 +928,8 @@ export class TenantsService {
             invitationId: invitation.id,
             email: invitation.email,
             roleIds: invitation.roleIds,
+            oauthApplicationIds: appIds,
+            nativeApplicationKeys: nativeKeys,
           },
         },
       });
@@ -810,7 +937,29 @@ export class TenantsService {
       return created;
     });
 
-    return mapMembership(membership);
+    // The entitlement has committed, but tenant project membership is a
+    // separate upstream operation. Attempt it immediately; do not claim the
+    // newly invited member can use SSO until the issuer grant is verified.
+    // An interrupted attempt is recoverable from NeedsReconciliation.
+    const mapped = mapMembership(membership);
+    if (!this.tenantOidc || !invitation.roleIds.includes("sso-login")) {
+      return { ...mapped, ssoProvisioning: { status: "not_required" as const } };
+    }
+    // Do not hold the invitation HTTP request open during a slow issuer call.
+    // The committed NeedsReconciliation marker is the durable retry signal.
+    // Auto policy must use the guarded rollout worker, not a direct activate()
+    // that could bypass federation/cohort safety. The timer retries on failure.
+    // Direct activation is authorized only with the explicit "true" policy.
+    // In "auto" mode, expediteMemberReadiness is read-only; the separate
+    // guarded cohort wake-up is the sole path to activation.
+    void this.tenantOidc.expediteMemberReadiness(invitation.tenantId, actor.id)
+      .catch(() => this.logger.warn("Tenant SSO explicit provisioning remains pending"));
+    if (this.oidcAutoRollout) {
+      void this.oidcAutoRollout.reconcilePromptly()
+        .catch(() => this.logger.warn("Tenant SSO guarded rollout remains pending"));
+    }
+    const readiness = await this.tenantOidc.memberReadiness(invitation.tenantId, actor.id);
+    return { ...mapped, ssoProvisioning: readiness };
   }
 
   async listGroups(tenantId: string) {
@@ -1245,6 +1394,12 @@ export class TenantsService {
   ) {
     const tenant = await this.ensureTenantExists(tenantId);
     const existing = await this.findMembershipOrThrow(tenantId, membershipId);
+    // Administrators may manage app grants and RBAC independently, but never
+    // change their own membership through this management endpoint.
+    if (actor.id === existing.userId && (dto.roleIds !== undefined || dto.status !== undefined ||
+        dto.oauthApplicationIds !== undefined || dto.nativeApplicationKeys !== undefined)) {
+      throw new ForbiddenException("Self-service membership changes are forbidden");
+    }
 
     if (dto.roleIds !== undefined) {
       await this.ensureRolesExist(dto.roleIds);
@@ -1254,6 +1409,9 @@ export class TenantsService {
       actor,
       [...existing.roles.map(({ role }) => role.id), ...(dto.roleIds ?? [])],
     );
+    if (dto.nativeApplicationKeys?.some(key => key !== "web" && key !== "cli")) {
+      throw new BadRequestException("Invalid ResourcePortal client key");
+    }
 
     const membership = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
@@ -1265,6 +1423,42 @@ export class TenantsService {
         await this.tenantOidc?.revokeGrantBeforeMembershipRemoval(tenantId, lockedMembership.userId, tx);
       }
       await this.assertLastOwnerIsPreserved(tenantId, lockedMembership, dto, tx);
+      if (dto.oauthApplicationIds !== undefined) {
+        const apps = await tx.oAuthApplication.findMany({
+          where: { tenantId, id: { in: dto.oauthApplicationIds } }, select: { id: true },
+        });
+        if (apps.length !== dto.oauthApplicationIds.length) {
+          throw new NotFoundException("OAuth application not found in this tenant");
+        }
+        await tx.tenantAppClientGrant.updateMany({
+          where: { membershipId, tenantId, enabled: true,
+            oauthApplicationId: { notIn: dto.oauthApplicationIds } },
+          data: { enabled: false, updatedBy: actor.id },
+        });
+        for (const applicationId of dto.oauthApplicationIds) {
+          await tx.tenantAppClientGrant.upsert({
+            where: { membershipId_oauthApplicationId: { membershipId, oauthApplicationId: applicationId } },
+            create: { membershipId, tenantId, oauthApplicationId: applicationId,
+              createdBy: actor.id, updatedBy: actor.id },
+            update: { enabled: true, updatedBy: actor.id },
+          });
+        }
+      }
+      if (dto.nativeApplicationKeys !== undefined) {
+        await tx.tenantNativeAppGrant.updateMany({
+          where: { membershipId, tenantId, enabled: true,
+            clientKey: { notIn: dto.nativeApplicationKeys } },
+          data: { enabled: false, updatedBy: actor.id },
+        });
+        for (const clientKey of dto.nativeApplicationKeys) {
+          await tx.tenantNativeAppGrant.upsert({
+            where: { membershipId_clientKey: { membershipId, clientKey } },
+            create: { membershipId, tenantId, clientKey,
+              createdBy: actor.id, updatedBy: actor.id },
+            update: { enabled: true, updatedBy: actor.id },
+          });
+        }
+      }
       if (dto.roleIds !== undefined) {
         await tx.membershipRole.deleteMany({
           where: { membershipId },
@@ -1307,6 +1501,8 @@ export class TenantsService {
             status: dto.status,
             previousRoleIds: existing.roles.map(({ role }) => role.id),
             roleIds: dto.roleIds,
+            oauthApplicationIds: dto.oauthApplicationIds,
+            nativeApplicationKeys: dto.nativeApplicationKeys,
           },
         },
       });
@@ -1585,6 +1781,8 @@ export class TenantsService {
         },
         orderBy: { tenantGroupId: "asc" as const },
       },
+      appGrants: { select: { oauthApplicationId: true, enabled: true } },
+      nativeAppGrants: { select: { clientKey: true, enabled: true } },
     };
   }
 

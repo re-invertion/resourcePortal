@@ -264,10 +264,12 @@ export class CapacityPreflightService {
       return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
     }
 
-    if (
-      this.telemetry &&
-      this.policy?.current().mode === "Hybrid"
-    ) {
+    const configuredMode = this.policy?.current().mode;
+    let strictFallbackReason: string | undefined;
+    if (configuredMode === "Hybrid" && !this.telemetry) {
+      strictFallbackReason = "TelemetryServiceUnavailable";
+    }
+    if (configuredMode === "Hybrid" && this.telemetry) {
       const [runningApps, inFlightSnapshots] = await Promise.all([
         this.currentRunningApps(tx),
         this.inFlightSnapshots(tx, snapshot.appGroup.id),
@@ -298,13 +300,26 @@ export class CapacityPreflightService {
         };
       }
       // No guessing: missing/stale/incomplete Hybrid telemetry falls back to
-      // the pre-existing declared-reservation admission policy.
+      // declared reservations. Preserve an allow-listed explanation for the
+      // operator instead of presenting this as normal Strict policy.
+      strictFallbackReason = this.hybridFallbackReason(hybrid.reason);
     }
 
     if (fit.fits) {
       return { success: true, demand, occupied, supply };
     }
-    return this.strictCapacityFailure(fit.resource, supply, occupied, demand);
+    return this.strictCapacityFailure(fit.resource, supply, occupied, demand, strictFallbackReason);
+  }
+
+  private hybridFallbackReason(reason: string): string {
+    // Do not echo unchecked telemetry text or resource identifiers in a
+    // tenant-visible admission error. Reasons come from fixed internal states.
+    if (reason === "fresh worker-published Hybrid admission telemetry is unavailable") return "WorkerTelemetryUnavailableOrStale";
+    if (reason === "authenticated fresh per-node telemetry does not cover every schedulable Swarm node") return "IncompleteNodeCoverage";
+    if (reason === "schedulable Swarm node identity inventory is invalid") return "InvalidNodeInventory";
+    if (reason === "node capacity decision is unavailable") return "NodeDecisionUnavailable";
+    if (reason === "capacity mode is Strict") return "EffectivePolicyStrict";
+    return "HybridEvidenceUnavailable";
   }
 
   private strictCapacityFailure(
@@ -312,6 +327,7 @@ export class CapacityPreflightService {
     supply: CapacityDemand,
     occupied: CapacityDemand,
     demand: CapacityDemand,
+    strictFallbackReason?: string,
   ): CapacityAdmissionResult {
     const field = resource === "cpu" ? "cpuNano" : "memoryBytes";
     const unit = resource === "cpu" ? "NanoCPU" : "bytes";
@@ -326,7 +342,11 @@ export class CapacityPreflightService {
         " capacity (requested=" + demand[field] + " " + unit +
         ", reserved=" + occupied[field] + " " + unit +
         ", allocatable=" + supply[field] + " " + unit +
-        ", unreserved=" + available + " " + unit + ")",
+        ", unreserved=" + available + " " + unit + ")" +
+        (resource === "memory" && strictFallbackReason
+          ? " [admissionMode=StrictFallback, reason=" + strictFallbackReason +
+            "; Hybrid telemetry cannot be used; retry after worker telemetry recovers]"
+          : ""),
     };
   }
 

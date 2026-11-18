@@ -29,6 +29,127 @@ describe("validateEnv", () => {
     expect(validateEnv(validBaseEnv)).toBe(validBaseEnv);
   });
 
+  it("fails startup if App Consumer token gating is enabled without independent certification and signature key", () => {
+    expect(() => validateEnv({
+      ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+    })).toThrow("App Consumer Actions V2 requires explicit isolated HTTPS certification");
+    expect(() => validateEnv({
+      ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "too-short",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY must be at least 32 characters");
+    const valid = { ...validBaseEnv, RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "mock-isolated-hmac-key-32-or-more-characters",
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "123456789",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/api/app-consumer-actions/preaccesstoken",
+      ZITADEL_MANAGEMENT_TOKEN: "read-only-test-pat",
+      ZITADEL_ORGANIZATION_ID: "org-1",
+      OIDC_ISSUER_URL: "https://auth.example.com",
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "first-login-only-client",
+      OIDC_INVITATION_CLIENT_SECRET: "confidential-onboarding-client-secret-00001",
+      OIDC_INVITATION_REDIRECT_URI: "https://rp.example.com/api/invitations/onboard/callback",
+      PUBLIC_API_URL: "https://rp.example.com",
+      OIDC_CLIENT_ID: "rp-web-client",
+      OIDC_CLI_CLIENT_ID: "rp-cli-client",
+    };
+    expect(validateEnv(valid)).toBe(valid);
+  });
+
+  it("requires OIDC and a canonical HTTPS API origin when resource-bound MCP OAuth is enabled", () => {
+    const base = { ...validBaseEnv, RP_MCP_RESOURCE_OAUTH_ENABLED: "true" };
+    expect(() => validateEnv(base)).toThrow("MCP resource OAuth requires PUBLIC_API_URL");
+    expect(() => validateEnv({ ...base, PUBLIC_API_URL: "http://rp.example.com" }))
+      .toThrow("MCP resource OAuth requires PUBLIC_API_URL");
+    expect(() => validateEnv({ ...base, PUBLIC_API_URL: "https://rp.example.com",
+      AUTH_MODE: "dev" })).toThrow("MCP resource OAuth requires an OIDC-authenticated RP session");
+    const configured = {
+      ...base, AUTH_MODE: "oidc",
+      PUBLIC_API_URL: "https://rp.example.com",
+      AUTH_COOKIE_SECRET: "correct-32-character-secret-value",
+      OIDC_ISSUER_URL: "https://auth.example.com",
+      OIDC_CLIENT_ID: "rp-web",
+      OIDC_AUDIENCE: "rp-web",
+      RESOURCE_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "certified-signature-key-longer-than-32-characters",
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "12345",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL:
+        "https://rp.example.com/api/app-consumer-actions/preaccesstoken",
+      ZITADEL_MANAGEMENT_TOKEN: "test-management-token",
+      ZITADEL_ORGANIZATION_ID: "123456",
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "rp-invite-client",
+      OIDC_INVITATION_CLIENT_SECRET: "invitation-credential-more-than-24-characters",
+      OIDC_INVITATION_REDIRECT_URI:
+        "https://rp.example.com/api/invitations/onboard/callback",
+    };
+    expect(validateEnv(configured)).toBe(configured);
+    expect(validateEnv({ ...configured, RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" }))
+      .toMatchObject({ RP_MCP_RESOURCE_OAUTH_ENABLED: "auto" });
+    expect(() => validateEnv({ ...configured, RP_MCP_RESOURCE_OAUTH_ENABLED: "unknown" }))
+      .toThrow("RP_MCP_RESOURCE_OAUTH_ENABLED must be true, false, or auto");
+    expect(() => validateEnv({ ...configured, RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "false" }))
+      .toThrow("MCP resource OAuth requires certified issuer-global App Consumer Action");
+    expect(() => validateEnv({ ...configured, RESOURCE_ENCRYPTION_KEY: "" }))
+      .toThrow("MCP resource OAuth requires a 32-byte RESOURCE_ENCRYPTION_KEY");
+  });
+
+  it("rejects enabling App User login with an unbound, ambiguous or non-HTTPS ZITADEL target", () => {
+    const certified = {
+      ...validBaseEnv,
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "an-isolated-signature-key-longer-than-32-bytes",
+      ZITADEL_MANAGEMENT_TOKEN: "read-only-test-pat",
+      ZITADEL_ORGANIZATION_ID: "org-1",
+      OIDC_ISSUER_URL: "https://auth.example.com",
+    };
+    expect(() => validateEnv({ ...certified })).toThrow(
+      "RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID is required",
+    );
+    expect(() => validateEnv({ ...certified,
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "not-a-number",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "http://rp.example.com/api/app-consumer-actions/preaccesstoken",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID must be a ZITADEL target ID");
+    expect(() => validateEnv({ ...certified,
+      RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "12345",
+      RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/other",
+    })).toThrow("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL must be the exact secure callback URL");
+  });
+
+  it("requires isolated invitation client before activating issuer-global exact-client authorization", () => {
+    expect(() => validateEnv({
+      ...validBaseEnv,
+      RP_APP_CONSUMER_ACTIONS_V2_ENABLED: "true",
+      RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED: "true",
+    })).toThrow("Global exact-client Action requires a dedicated first-login invitation client");
+  });
+
+  it("rejects an invitation identity client sharing RP Web/CLI physical credentials or unsafe callback", () => {
+    const base = {
+      ...validBaseEnv,
+      RP_INVITATION_ONBOARDING_ENABLED: "true",
+      OIDC_INVITATION_CLIENT_ID: "invite",
+      OIDC_INVITATION_CLIENT_SECRET: "some-very-long-test-only-client-secret",
+      OIDC_INVITATION_REDIRECT_URI: "https://rp.example.com/api/invitations/onboard/callback",
+      PUBLIC_API_URL: "https://rp.example.com",
+      OIDC_CLIENT_ID: "web", OIDC_CLI_CLIENT_ID: "cli",
+    };
+    expect(validateEnv(base)).toBe(base);
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_ID: "web" }))
+      .toThrow("physically distinct");
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_ID: "cli" }))
+      .toThrow("physically distinct");
+    expect(() => validateEnv({ ...base,
+      OIDC_INVITATION_REDIRECT_URI: "https://attacker.example.com/api/invitations/onboard/callback",
+    })).toThrow("callback must match public HTTPS RP API origin");
+    expect(() => validateEnv({ ...base, OIDC_INVITATION_CLIENT_SECRET: "short" }))
+      .toThrow("OIDC_INVITATION_CLIENT_SECRET must be at least 24 characters");
+  });
+
   it("rejects unsupported auth modes", () => {
     expect(() => validateEnv({ ...validBaseEnv, AUTH_MODE: "unknown" })).toThrow(
       "AUTH_MODE must be one of",

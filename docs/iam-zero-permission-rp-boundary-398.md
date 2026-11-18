@@ -1,3 +1,5 @@
+> **Historical #398 design (superseded by #430).** The separate App User category is no longer the desired IAM model. See [Unified Identity / SSO grant migration](iam-unified-identity-430.md). This file documents past behavior and security constraints only; do not implement a new account-type split from it.
+
 # Issue #398 — ResourcePortal authorization boundary for application-only identities
 
 This is a schema-neutral **security prerequisite**, not the App User feature.

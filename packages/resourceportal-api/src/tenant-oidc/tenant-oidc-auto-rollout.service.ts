@@ -26,7 +26,9 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
   ) {}
 
   onModuleInit() {
-    if (this.config.get<string>("TENANT_OIDC_AUTO_ROLLOUT") !== "true") return;
+    // The App Consumer safety check runs even when automatic tenant OIDC
+    // provisioning is disabled. Disabling feature flags after a previous
+    // enrollment must revoke already-issued shared-project role grants.
     void this.reconcileOnce();
     const rawInterval = Number(this.config.get<string>("TENANT_OIDC_RECONCILE_INTERVAL_MS") ?? 60_000);
     const intervalMs = Number.isSafeInteger(rawInterval) && rawInterval >= 10_000
@@ -40,17 +42,91 @@ export class TenantOidcAutoRolloutService implements OnModuleInit, OnModuleDestr
     this.timer = undefined;
   }
 
+  /** Kick the existing guarded safety/cohort pipeline after a committed membership
+   * mutation. The periodic timer remains the durable retry for crashes or leases.
+   * Never invoke TenantOidcService.activate directly in auto mode.
+   */
+  async reconcilePromptly() {
+    await this.reconcileOnce();
+  }
+
   private async reconcileOnce() {
     if (this.running) return;
     this.running = true;
     try {
-      const result = await this.reconcile();
-      this.logger.log(`OIDC auto migration: ${JSON.stringify(result)}`);
+      const safety = await this.oidc.enforceAppConsumerActionsV2Safety();
+      if (safety.state === "app-consumer-grants-revoked") {
+        this.logger.warn("App Consumer Actions V2 binding invalid; upstream grants revoked");
+        return;
+      }
+      if (this.config.get<string>("TENANT_OIDC_AUTO_ROLLOUT") === "true") {
+        const result = await this.reconcile();
+        this.logger.log(`OIDC auto migration: ${JSON.stringify(result)}`);
+      } else if (this.config.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") === "true") {
+        // Explicit mode cannot do a first-time activation. Retry only tenants
+        // with a durable prior activation after interrupted/failed grant sync.
+        await this.recoverPreviouslyActivated();
+      }
     } catch {
-      // Never log raw upstream error responses or management tokens.
-      this.logger.warn("OIDC auto migration could not finish; retry scheduled");
+      // Never log raw upstream responses, client identities or HMAC secrets.
+      this.logger.warn("OIDC app-consumer safety or auto migration incomplete; retry scheduled");
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Durable recovery in explicit mode, independent of the automatic rollout
+   * cohort. The provider must have passed a prior human-authorized activation
+   * (lastActivatedAt), and opt-outs/tombstones are never re-enabled. All actual
+   * activation still performs issuer verification and certified grant checks.
+   *
+   * The compare-and-swap lease prevents parallel process instances from
+   * attempting the same tenant concurrently. The timer retries after failures
+   * and crashes (including a crash before the first post-commit wake-up).
+   */
+  private async recoverPreviouslyActivated() {
+    const pending = await this.prisma.tenantOidcProvider.findMany({
+      where: {
+        enabled: false,
+        lastActivatedAt: { not: null },
+        status: { notIn: ["Disabling", "Disabled", "Deleted"] },
+        tenant: { status: TenantStatus.Active },
+      },
+      select: { tenantId: true },
+    });
+    for (const { tenantId } of pending) {
+      const owner = randomUUID();
+      const now = Date.now();
+      const claimed = await this.prisma.tenantOidcProvider.updateMany({
+        where: {
+          tenantId,
+          enabled: false,
+          lastActivatedAt: { not: null },
+          status: { notIn: ["Disabling", "Disabled", "Deleted"] },
+          OR: [
+            { autoRolloutLeaseUntil: null },
+            { autoRolloutLeaseUntil: { lt: new Date(now) } },
+          ],
+        },
+        data: {
+          autoRolloutLeaseOwner: owner,
+          autoRolloutLeaseUntil: new Date(now + 60 * 60_000),
+        },
+      });
+      if (claimed.count !== 1) continue;
+      try {
+        await this.oidc.activate(tenantId, false);
+      } catch {
+        // No issuer payloads or member identifiers in logs. Periodic timer
+        // retries after the lease is released; the provider stays fail closed.
+        this.logger.warn("Previously activated tenant OIDC reconciliation pending secure retry");
+      } finally {
+        await this.prisma.tenantOidcProvider.updateMany({
+          where: { tenantId, autoRolloutLeaseOwner: owner },
+          data: { autoRolloutLeaseOwner: null, autoRolloutLeaseUntil: null },
+        });
+      }
     }
   }
 

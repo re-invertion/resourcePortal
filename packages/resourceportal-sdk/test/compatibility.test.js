@@ -50,6 +50,10 @@ test("classifies every API controller so new public surface cannot drift silentl
   const apiRoot = resolve(__dirname, "../../resourceportal-api/src");
   const actual = controllerFiles(apiRoot).sort();
   const classified = [
+    // Actions V2 callback is ZITADEL-to-RP and deliberately NOT an SDK route.
+    "app-consumers/app-consumer-action.controller.ts",
+    // Tenant-guarded App Consumer grant management is an explicit API surface.
+    "app-consumers/app-consumers.controller.ts",
     "app-groups/app-groups.controller.ts",
     "audit/audit.controller.ts",
     "audit/platform-audit.controller.ts",
@@ -67,6 +71,9 @@ test("classifies every API controller so new public surface cannot drift silentl
     "internal/installer-enrollment.controller.ts",
     "mcp/admin-mcp.controller.ts",
     "mcp/mcp-oauth-dcr.controller.ts",
+    // Separate RP OAuth AS for MCP only: public registration, PKCE,
+    // consent and revoke; no native SDK method may bypass user consent.
+    "mcp/mcp-resource-oauth.controller.ts",
     "mcp/tenant-mcp.controller.ts",
     "network-egress/network-egress.controller.ts",
     "networking/networking.controller.ts",

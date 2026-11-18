@@ -95,7 +95,7 @@ export function TenantRegistriesPage({tenantId}:{tenantId:string}){
 }
 
 export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;domainId:string}){
- const tenantRoot=`/api/tenants/${encodeURIComponent(tenantId)}`;const root=`${tenantRoot}/domains/${encodeURIComponent(domainId)}`;const q=useApi<R>(root);const appGroups=useApi<unknown>(`${tenantRoot}/app-groups`);const [working,setWorking]=useState(false);
+ const tenantRoot=`/api/tenants/${encodeURIComponent(tenantId)}`;const root=`${tenantRoot}/domains/${encodeURIComponent(domainId)}`;const q=useApi<R>(root);const tlsDiagnostics=useApi<R>(`${root}/certificate/diagnostics`);const appGroups=useApi<unknown>(`${tenantRoot}/app-groups`);const [working,setWorking]=useState(false);const [tlsWorking,setTlsWorking]=useState(false);const [tlsQueued,setTlsQueued]=useState(false);
  const [selectedGroup,setSelectedGroup]=useState("");const [selectedApp,setSelectedApp]=useState("");const [selectedEndpoint,setSelectedEndpoint]=useState("");
  const groupApps=useApi<unknown>(selectedGroup?`${tenantRoot}/app-groups/${encodeURIComponent(selectedGroup)}/single-apps`:undefined);
  const appEndpoints=useApi<unknown>(selectedGroup&&selectedApp?`${tenantRoot}/app-groups/${encodeURIComponent(selectedGroup)}/single-apps/${encodeURIComponent(selectedApp)}/http-endpoints`:undefined);
@@ -109,6 +109,22 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
   finally { setWorking(false); }
  }
  async function validate(){setWorking(true);try{await apiRequest(`${root}/validate`,{method:"POST"});await q.reload();toast.success("Domain validation completed.");}catch(c){toast.errorFrom(c,"Domain validation failed.");}finally{setWorking(false);}}
+ async function reconcileCertificate(){
+  setTlsWorking(true);
+  try{
+    const operation=await apiRequest<R>(`${root}/certificate/reconcile`,{method:"POST"});
+    if(text(operation.status)==="Failed"||text(operation.status)==="RollbackFailed"){
+      setTlsQueued(false);
+      toast.error("Previous TLS reconciliation failed. Retry after the five-minute rate limit.");
+    }else{
+      const inProgress=["Pending","Running"].includes(text(operation.status));
+      setTlsQueued(inProgress);
+      toast.success(inProgress?"Managed ingress TLS reconciliation queued or already running.":"TLS reconciliation already completed. Refresh diagnostics.");
+    }
+    await Promise.all([tlsDiagnostics.reload(),q.reload()]);
+  }catch(c){toast.errorFrom(c,"TLS reconciliation could not be queued.");}
+  finally{setTlsWorking(false);}
+ }
  if(q.loading)return <main><PageHeader eyebrow="Domain" title="Domain" description="Loading domain configuration…"/><NetworkingTabs tenantId={tenantId} active="domains"/><Card className="p-5"><p className="text-sm text-[#5B6678]">Loading domain…</p></Card></main>;
  if(!d)return <main><PageHeader eyebrow="Domain" title="Domain unavailable" description="This domain could not be loaded."/><NetworkingTabs tenantId={tenantId} active="domains"/><Callout tone="danger" title="Domain unavailable">{q.error instanceof Error ? q.error.message : "The domain does not exist or you do not have access."}</Callout></main>;
  const endpoint=d.httpEndpoint&&typeof d.httpEndpoint==="object"?d.httpEndpoint as R:undefined;const tlsEnabled=d.tlsEnabled===true;
@@ -119,7 +135,27 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
     <Field label="HTTP endpoint"><Select aria-label="Assign HTTP endpoint" value={selectedEndpoint} disabled={!selectedApp||appEndpoints.loading} onChange={e=>setSelectedEndpoint(e.target.value)}><option value="">Select endpoint</option>{items<R>(appEndpoints.data).map(ep=><option key={idOf(ep)} value={idOf(ep)}>{text(ep.name,idOf(ep))} · port {text(ep.containerPort,"?")}</option>)}</Select></Field>
     {selectedApp&&!appEndpoints.loading&&!items<R>(appEndpoints.data).length?<Callout title="No endpoints">Create an HTTP endpoint in the application Networking settings before assigning this domain.</Callout>:null}
     <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={!selectedEndpoint||working} confirmTitle="Confirm domain assignment" confirmDescription="Route this domain to the selected application endpoint?" confirmLabel="Assign domain" onConfirm={assignDomain}>Assign to endpoint</ConfirmActionButton>
-  </div></Card> : null}<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS certificate</h2><DetailList items={[{label:"TLS",value:tlsEnabled?"Enabled":"Off"},{label:"Certificate",value:<StatusText tone={tlsEnabled?statusTone(d.certificateStatus):"neutral"}>{tlsEnabled?text(d.certificateStatus,"Pending"):"Not required"}</StatusText>},{label:"Issuer",value:tlsEnabled?text(d.certificateIssuer,"—"):"—"},{label:"Expires",value:tlsEnabled?formatDate(d.certificateExpiresAt):"—"},{label:"Created",value:formatDate(d.createdAt)}]}/></Card></div></main>;
+  </div></Card> : null}<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS certificate</h2><DetailList items={[{label:"TLS",value:tlsEnabled?"Enabled":"Off"},{label:"Certificate",value:<StatusText tone={tlsEnabled?statusTone(d.certificateStatus):"neutral"}>{tlsEnabled?text(d.certificateStatus,"Pending"):"Not required"}</StatusText>},{label:"Issuer",value:tlsEnabled?text(d.certificateIssuer,"—"):"—"},{label:"Expires",value:tlsEnabled?formatDate(d.certificateExpiresAt):"—"},{label:"Created",value:formatDate(d.createdAt)}]}/></Card>
+ {tlsEnabled?<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS recovery &amp; diagnostics</h2>
+   {tlsDiagnostics.error?<Callout tone="danger" title="Diagnostics unavailable">Unable to load managed ingress TLS diagnostics. Retry after checking connectivity.</Callout>:null}
+   <DetailList items={[
+     {label:"DNS",value:<StatusText tone={statusTone(tlsDiagnostics.data?.dnsStatus??d.dnsStatus)}>{text(tlsDiagnostics.data?.dnsStatus,d.dnsStatus as string)}</StatusText>},
+     {label:"Managed ingress TLS",value:<StatusText tone={statusTone(tlsDiagnostics.data?.certificateStatus??d.certificateStatus)}>{text(tlsDiagnostics.data?.certificateStatus,d.certificateStatus as string)}</StatusText>},
+     {label:"Ingress publication",value:"Not independently verified"},
+     {label:"Certificate check",value:text(tlsDiagnostics.data?.observationStatus,"Not checked")},
+     {label:"Last checked",value:formatDate(tlsDiagnostics.data?.lastCheckedAt)},
+     {label:"Failure code",value:text(tlsDiagnostics.data?.errorCode,"None")},
+     {label:"Transient failure",value:tlsDiagnostics.data?.transient===true?"Possible":"No evidence"},
+   ]}/>
+   {text(tlsDiagnostics.data?.cause,"")?<div className="mt-4"><Callout tone={tlsDiagnostics.data?.transient===true?"warning":"danger"} title="TLS diagnostics">{text(tlsDiagnostics.data?.cause)}</Callout></div>:null}
+   {tlsDiagnostics.data?.deploymentBlocked===true?<div className="mt-4"><Callout tone="danger" title="Why deployment is blocked">{text(tlsDiagnostics.data?.deploymentBlockReason,"Managed ingress TLS is not ready.")} Successful DNS verification or a public HTTP 200 response does not prove a valid managed ingress certificate.</Callout></div>:null}
+   <p className="mt-4 text-xs leading-5 text-[#5B6678]">Ingress publication is checked separately from DNS and TLS. Route ownership and publication blockers are tracked under issue #394. Reconciliation does not disable TLS, replace keys or restart workloads.</p>
+   {tlsQueued?<p className="mt-3 text-xs text-[#5B6678]">Reconciliation queued. Refresh diagnostics after the worker processes the operation.</p>:null}
+   <div className="mt-4 flex flex-wrap gap-2">
+     <Button onClick={()=>void reconcileCertificate()} disabled={tlsWorking||tlsDiagnostics.data?.canReconcile!==true}>{tlsWorking?"Queueing…":"Retry TLS reconciliation"}</Button>
+     <Button variant="ghost" onClick={()=>void Promise.all([tlsDiagnostics.reload(),q.reload()])}>Refresh diagnostics</Button>
+   </div>
+ </Card>:null}</div></main>;
 }
 
 export function TenantDomainsPage({tenantId}:{tenantId:string}){

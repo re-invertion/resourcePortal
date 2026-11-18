@@ -9,6 +9,14 @@
     "installer": {"type": "object", "required": ["minimumVersion"], "properties": {"minimumVersion": {"type": "string"}}},
     "docker": {"type": "object", "required": ["minimumVersion"], "properties": {"minimumVersion": {"type": "string"}}},
     "configSchemaVersion": {"type": "integer", "minimum": 1},
+    "apiCapabilities": {
+      "type": "object",
+      "required": ["appConsumerActionsV2Callback"],
+      "additionalProperties": false,
+      "properties": {
+        "appConsumerActionsV2Callback": {"const": true}
+      }
+    },
     "images": {
       "type": "object",
       "required": ["api", "web", "postgres", "zitadel", "traefik"],

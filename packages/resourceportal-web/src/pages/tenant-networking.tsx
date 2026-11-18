@@ -279,6 +279,14 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
             <StatusBadge tone={statusTone(gate.status)}>{gate.status}</StatusBadge>
             <span className="ml-2 text-xs">{gate.agentVersion??"Not enrolled"}</span>
             <span className="ml-2 text-xs">{formatDate(gate.lastSeenAt)}</span>
+            {gate.authorizationLease ? <p className="mt-1 text-xs text-[#52637A]">
+              Control-plane: {gate.authorizationLease.controlPlane}.
+              Authorization lease (not DHCP): {gate.authorizationLease.state},
+              remaining {gate.authorizationLease.remainingSeconds}s,
+              {gate.authorizationLease.authorizedAttachments} authorized attachment(s).
+              Last renewal: {formatDate(gate.authorizationLease.lastRenewedAt)}.
+              Data-plane traffic requires separate verification.
+            </p> : null}
             {gate.lastError?<p className="text-sm text-red-700">{gate.lastError}</p>:null}
           </div>
           <div className="flex gap-2">

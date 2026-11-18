@@ -155,12 +155,81 @@ export function requireAutomaticRollback(result, evidence = null) {
   );
 }
 
+// A supported upgrade source is one with real restore evidence for THIS
+// immutable release commit. Listing an older Git tag alone is not a rollback
+// certification, and must not make it appear selectable in the updater.
+export function certifiedSupportedUpgradeSources(
+  candidates, certificates, targetCommit, requiredSource, expectedRunId = null,
+) {
+  const version = /^\d+\.\d+\.\d+$/;
+  const digest = /^ghcr\.io\/zitadel\/zitadel@sha256:[a-f0-9]{64}$/;
+  const requirements = [
+    "actualDatabaseMigration", "previousImagesRestored", "injectedHealthFailure",
+    "databaseSnapshotVerified", "databaseSnapshotRestored", "restoredSourceSchema",
+    "previousApiReadWriteAfterRollback", "previousApiRuntimeReadyAfterRollback",
+    "zitadelDatabaseRestored", "zitadelSourceRuntimeReadyAfterRollback",
+    "zitadelSourceEventstoreVerified", "candidateZitadelRuntimeReadyBeforeRollback",
+  ];
+  if (!Array.isArray(candidates) || !candidates.length ||
+      !candidates.every(x => typeof x === "string" && version.test(x)) ||
+      new Set(candidates).size !== candidates.length ||
+      !Array.isArray(certificates) || !certificates.length ||
+      !/^[a-f0-9]{40}$/.test(targetCommit) || !version.test(requiredSource) ||
+      (expectedRunId !== null && (!Number.isSafeInteger(expectedRunId) || expectedRunId <= 0))) {
+    throw new Error("Release blocked: invalid supported-source certification inputs");
+  }
+  const allowed = new Set(candidates);
+  const certified = new Set();
+  for (const proof of certificates) {
+    if (!proof || !version.test(proof.sourceVersion) ||
+        !allowed.has(proof.sourceVersion) || certified.has(proof.sourceVersion) ||
+        proof.targetCommit !== targetCommit ||
+        !Number.isSafeInteger(proof.workflowRunId) || proof.workflowRunId <= 0 ||
+        (expectedRunId !== null && proof.workflowRunId !== expectedRunId) ||
+        proof.kind !== "real-upgrade-and-restore" ||
+        !requirements.every(key => proof[key] === true) ||
+        !digest.test(proof.candidateZitadelImage) ||
+        !digest.test(proof.sourceZitadelImage) ||
+        !((proof.policy === "tested" && proof.reason === "verified-recovery-test") ||
+          (proof.policy === "image-only" && proof.reason === "no-resourceportal-database-schema-changes"))) {
+      throw new Error("Release blocked: source certificate is incomplete or belongs to another release");
+    }
+    certified.add(proof.sourceVersion);
+  }
+  if (!certified.has(requiredSource)) {
+    throw new Error("Release blocked: immediate published source lacks certified restore");
+  }
+  return candidates.filter(candidate => certified.has(candidate));
+}
+
 function option(flag) {
   const i = process.argv.indexOf(flag);
   return i < 0 ? null : process.argv[i + 1];
 }
 
-if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
+if (process.argv[1]?.endsWith("/release-rollback-policy.mjs") &&
+    process.argv.includes("--verified-supported-sources")) {
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const file = option("--certifications-file");
+  const target = option("--target-commit");
+  const required = option("--required-source");
+  const versions = option("--candidate-versions-json");
+  if (!file || !versions || !target || !required) {
+    throw new Error("Release blocked: supported-source CLI arguments missing");
+  }
+  const trustedRoot = process.env.RUNNER_TEMP;
+  if (process.env.GITHUB_ACTIONS === "true" &&
+      (!trustedRoot || !resolve(file).startsWith(resolve(trustedRoot) + "/") ||
+       !process.env.GITHUB_RUN_ID)) {
+    throw new Error("Release blocked: source certification must come from this Actions run");
+  }
+  const certified = certifiedSupportedUpgradeSources(
+    JSON.parse(versions), JSON.parse(readFileSync(file, "utf8")),
+    target, required, process.env.GITHUB_ACTIONS === "true" ? Number(process.env.GITHUB_RUN_ID) : null,
+  );
+  console.log(JSON.stringify(certified));
+} else if (process.argv[1]?.endsWith("/release-rollback-policy.mjs")) {
   const previous = option("--previous-tag");
   const head = option("--head");
   const mode = option("--mode");

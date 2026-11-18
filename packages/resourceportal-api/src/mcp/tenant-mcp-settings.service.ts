@@ -162,10 +162,28 @@ export class TenantMcpSettingsService {
 
     const membership = await this.prisma.tenantMembership.findUnique({
       where: { userId_tenantId: { userId, tenantId } },
-      select: { id: true, status: true },
+      select: {
+        id: true, status: true,
+        user: { select: { status: true } },
+        tenant: { select: { status: true } },
+        roles: { select: { roleId: true } },
+        groupMemberships: {
+          select: { group: { select: { roles: { select: { roleId: true } } } } },
+        },
+      },
     });
-    if (!membership || membership.status !== MembershipStatus.Active) {
+    if (!membership || membership.status !== MembershipStatus.Active ||
+        membership.user.status !== "Active" ||
+        membership.tenant.status !== "Active") {
       throw new ForbiddenException("Active tenant membership is required for MCP");
+    }
+    // Current SSO authorization is independent of MCP's member allow-list.
+    // Revoking sso-login must block existing JWTs at the next tool request.
+    const hasSsoLogin = membership.roles.some((role) => role.roleId === "sso-login") ||
+      membership.groupMemberships.some((entry) =>
+        entry.group.roles.some((role) => role.roleId === "sso-login"));
+    if (!hasSsoLogin) {
+      throw new ForbiddenException("SSO login permission is required for MCP");
     }
 
     const mode = this.accessMode(settings.accessMode);

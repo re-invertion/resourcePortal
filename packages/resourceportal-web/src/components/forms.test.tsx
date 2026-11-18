@@ -24,6 +24,33 @@ describe("functional Stage 20 forms", () => {
     expect(localSpy).not.toHaveBeenCalled();
   });
 
+  it("retains an in-progress form after a parent refresh with identical initial values", async () => {
+    const submit = vi.fn();
+    const initial = { name: "", contactEmail: "" };
+    const view = render(<JsonPayloadForm initialValue={initial} submitLabel="Review" onSubmit={submit} />);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "tenant-with-draft" } });
+    // Simulate a refetch in the surrounding page: same initial form fields,
+    // fresh object reference. This must not silently discard a user edit.
+    view.rerender(
+      <JsonPayloadForm initialValue={{ name: "", contactEmail: "" }} submitLabel="Review" onSubmit={submit} />,
+    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("tenant-with-draft");
+    fireEvent.change(screen.getByLabelText("Contact email"), {
+      target: { value: "owner@example.test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith({
+      name: "tenant-with-draft", contactEmail: "owner@example.test",
+    }));
+    // A meaningful template change still starts from the updated baseline.
+    view.rerender(
+      <JsonPayloadForm initialValue={{ name: "replacement", contactEmail: "" }}
+        submitLabel="Review" onSubmit={submit} />,
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("replacement"));
+  });
+
   it("offers addable form fields when an operation has no predefined template", () => {
     render(<JsonPayloadForm submitLabel="Run" onSubmit={vi.fn()} />);
 

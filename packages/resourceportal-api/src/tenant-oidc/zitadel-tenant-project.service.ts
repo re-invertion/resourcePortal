@@ -1,5 +1,6 @@
 import { BadGatewayException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { timingSafeEqual } from "node:crypto";
 
 type ProjectResponse = { id?: string };
 type RoleResponse = Record<string, unknown>;
@@ -209,6 +210,58 @@ export class ZitadelTenantProjectService {
       undefined,
       [404],
     );
+  }
+
+  /**
+   * A project role covers ALL OAuth applications in a ZITADEL tenant project.
+   * Never grant it to an App Consumer unless the live, configured, signed and
+   * interrupting Actions V2 preaccesstoken execution actually protects tokens.
+   * This is a read-only upstream proof, not a target installer or bypass.
+   */
+  async verifyAppConsumerActionsV2Gate(): Promise<void> {
+    const targetId = this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID") ?? "";
+    const callback = this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL") ?? "";
+    const secret = this.config.get<string>("RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY") ?? "";
+    const reject = () => {
+      throw new ServiceUnavailableException("App Consumer Actions V2 execution binding not verified");
+    };
+    if (!/^\d{1,64}$/.test(targetId) || secret.length < 32) return reject();
+    let parsed: URL;
+    try { parsed = new URL(callback); } catch { return reject(); }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
+        parsed.hash || parsed.search || !parsed.hostname ||
+        parsed.pathname !== "/api/app-consumer-actions/preaccesstoken") return reject();
+
+    const data = await this.request<{ target?: {
+      id?: string; endpoint?: string; signingKey?: string;
+      payloadType?: string; restWebhook?: { interruptOnError?: boolean };
+    } }>("GET", `/v2/actions/targets/${targetId}`);
+    const target = data.target;
+    if (target?.id !== targetId || target.endpoint !== callback ||
+        target.payloadType !== "PAYLOAD_TYPE_JSON" ||
+        target.restWebhook?.interruptOnError !== true ||
+        typeof target.signingKey !== "string") return reject();
+    const received = Buffer.from(target.signingKey, "utf8");
+    const expected = Buffer.from(secret, "utf8");
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) return reject();
+
+    const list = await this.request<{
+      pagination?: { totalResult?: number | string };
+      executions?: Array<{
+        condition?: { function?: { name?: string } };
+        targets?: string[];
+      }>;
+    }>("POST", "/v2/actions/executions/search", { pagination: { limit: 100 } });
+    const entries = list.executions;
+    const total = Number(list.pagination?.totalResult);
+    // A partial/ambiguous result must not claim that no other execution can
+    // bypass or conflict with the signed client-specific authorization check.
+    if (!Array.isArray(entries) || !Number.isSafeInteger(total) ||
+        total !== entries.length || entries.length > 100) return reject();
+    const bound = entries.filter((entry) =>
+      entry.condition?.function?.name === "preaccesstoken");
+    if (bound.length !== 1 || !Array.isArray(bound[0].targets) ||
+        bound[0].targets.length !== 1 || bound[0].targets[0] !== targetId) return reject();
   }
 
   private async request<T = Record<string, unknown>>(

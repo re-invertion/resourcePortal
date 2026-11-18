@@ -14,6 +14,95 @@ export function validateEnv(config: Env) {
 
   requireValue(config, errors, "DATABASE_URL");
 
+  if (config.RP_INVITATION_ONBOARDING_ENABLED === "true") {
+    requireValue(config, errors, "OIDC_INVITATION_CLIENT_ID");
+    requireMinLength(config, errors, "OIDC_INVITATION_CLIENT_SECRET", 24);
+    requireValue(config, errors, "OIDC_INVITATION_REDIRECT_URI");
+    if (config.OIDC_INVITATION_CLIENT_ID === config.OIDC_CLIENT_ID ||
+        config.OIDC_INVITATION_CLIENT_ID === config.OIDC_CLI_CLIENT_ID) {
+      errors.push("Invitation identity client must be physically distinct from RP Web and CLI");
+    }
+    let validRedirect = false;
+    try {
+      const callback = new URL(config.OIDC_INVITATION_REDIRECT_URI ?? "");
+      const publicApi = new URL(config.PUBLIC_API_URL ?? "");
+      validRedirect = callback.protocol === "https:" && publicApi.protocol === "https:" &&
+        callback.origin === publicApi.origin && !callback.search && !callback.hash &&
+        !callback.username && !callback.password &&
+        callback.pathname === "/api/invitations/onboard/callback";
+    } catch { /* Fail closed for absent/malformed callback or public API URL. */ }
+    if (!validRedirect) errors.push("Invitation OIDC callback must match public HTTPS RP API origin");
+  }
+  const mcpOAuthMode = config.RP_MCP_RESOURCE_OAUTH_ENABLED ?? "false";
+  if (!["true", "false", "auto"].includes(mcpOAuthMode)) {
+    errors.push("RP_MCP_RESOURCE_OAUTH_ENABLED must be true, false, or auto");
+  }
+  const resourceOAuthActive = mcpOAuthMode === "true" ||
+    (mcpOAuthMode === "auto" &&
+      config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&
+      config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED === "true");
+  if (resourceOAuthActive) {
+    const apiUrl = config.PUBLIC_API_URL ?? "";
+    let canonicalOrigin = false;
+    try {
+      const url = new URL(apiUrl);
+      canonicalOrigin = url.protocol === "https:" && !url.username && !url.password &&
+        !url.search && !url.hash && url.pathname === "/";
+    } catch { /* Fail closed. */ }
+    if (!canonicalOrigin) {
+      errors.push("MCP resource OAuth requires PUBLIC_API_URL to be a canonical HTTPS origin");
+    }
+    if (!["oidc", "zitadel"].includes(authMode)) {
+      errors.push("MCP resource OAuth requires an OIDC-authenticated RP session");
+    }
+    requireMinLength(config, errors, "AUTH_COOKIE_SECRET", 20);
+    // Without a certified issuer-global pre-token Action, the dedicated
+    // ZITADEL identity client gets HTTP 403 even for a permitted MCP-only user.
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED !== "true" ||
+        config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED !== "true") {
+      errors.push("MCP resource OAuth requires certified issuer-global App Consumer Action");
+    }
+    // PKCE verifiers for in-flight upstream logins must never be encrypted
+    // using the EncryptionService development fallback in production.
+    let keyLength = 0;
+    try {
+      keyLength = Buffer.from(config.RESOURCE_ENCRYPTION_KEY ?? "", "base64").length;
+    } catch { /* Fail closed. */ }
+    if (keyLength !== 32) {
+      errors.push("MCP resource OAuth requires a 32-byte RESOURCE_ENCRYPTION_KEY");
+    }
+  }
+
+  if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true" &&
+      config.RP_INVITATION_ONBOARDING_ENABLED !== "true") {
+    errors.push("Global exact-client Action requires a dedicated first-login invitation client");
+  }
+  if (config.RP_APP_CONSUMER_ACTIONS_V2_ENABLED === "true") {
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED !== "true") {
+      errors.push("App Consumer Actions V2 requires explicit isolated HTTPS certification");
+    }
+    requireMinLength(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY", 32);
+    requireValue(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID");
+    requireValue(config, errors, "RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL");
+    requireValue(config, errors, "ZITADEL_MANAGEMENT_TOKEN");
+    requireValue(config, errors, "ZITADEL_ORGANIZATION_ID");
+    requireValue(config, errors, "OIDC_ISSUER_URL");
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID &&
+        !/^[0-9]{1,64}$/.test(config.RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID)) {
+      errors.push("RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID must be a ZITADEL target ID");
+    }
+    if (config.RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL) {
+      let safe = false;
+      try {
+        const url = new URL(config.RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL);
+        safe = url.protocol === "https:" && Boolean(url.hostname) &&
+          !url.username && !url.password && !url.search && !url.hash &&
+          url.pathname === "/api/app-consumer-actions/preaccesstoken";
+      } catch { /* Missing or malformed callback cannot authorize App Users. */ }
+      if (!safe) errors.push("RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL must be the exact secure callback URL");
+    }
+  }
+
   if (!supportedAuthModes.has(authMode)) {
     errors.push("AUTH_MODE must be one of: dev, oidc, zitadel");
   }

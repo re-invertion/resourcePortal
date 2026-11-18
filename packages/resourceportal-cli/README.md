@@ -266,3 +266,19 @@ rp operation --help
 rp health --help
 rp app --help
 ```
+
+## Unified membership SSO grants (#430, unreleased)
+
+Every tenant member is one identity with independently managed ResourcePortal RBAC and exact-client SSO authorization. `sso-login` carries zero RP management permissions. In the compatibility CLI command family:
+
+```bash
+rp membership-grant list TENANT_ID
+rp membership-grant show TENANT_ID MEMBERSHIP_ID
+rp membership-grant grant TENANT_ID MEMBERSHIP_ID OAUTH_APPLICATION_ID
+rp membership-grant revoke TENANT_ID MEMBERSHIP_ID OAUTH_APPLICATION_ID
+rp membership-grant grant-native TENANT_ID MEMBERSHIP_ID web
+rp membership-grant revoke-native TENANT_ID MEMBERSHIP_ID cli
+rp membership-grant set TENANT_ID MEMBERSHIP_ID --role-ids 'sso-login,tenant-viewer' --oauth-application-ids OAUTH_APPLICATION_ID --native-application-keys web
+```
+
+The ordinary `rp invitation create` and `rp membership update` commands also accept `--oauth-application-id` and `--native-application-key`; `--role-id` is optional for invitations. Native Web and CLI have separate client IDs and cannot grant one another access. Do not enable issuer-global Actions V2 or move to production until the #430 certification is complete. See `docs/iam-unified-identity-430.md`.

@@ -1,7 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { UserStatus } from "@prisma/client";
 import type { AuthenticatedUser } from "../../auth/types";
 import { DomainsService } from "../../domains/domains.service";
+import { DomainCertificateReconcilerService } from "../../internal/domain-certificate-reconciler.service";
 import type { OperationExecutor } from "../operation-executor";
 import type {
   OperationRecord,
@@ -12,10 +13,14 @@ import type {
 export class DomainOperationExecutor implements OperationExecutor {
   readonly types = [
     "DOMAIN_VERIFY",
+    "DOMAIN_CERTIFICATE_RECONCILE",
     "CUSTOM_ROOT_DOMAIN_VERIFY",
   ] as const satisfies readonly OperationType[];
 
-  constructor(private readonly domains: DomainsService) {}
+  constructor(
+    private readonly domains: DomainsService,
+    @Optional() private readonly certificates?: DomainCertificateReconcilerService,
+  ) {}
 
   async execute(operation: OperationRecord) {
     const tenantId = this.requireTenantId(operation);
@@ -29,6 +34,11 @@ export class DomainOperationExecutor implements OperationExecutor {
           resourceId,
           actor,
         );
+        return { resourceId, result };
+      }
+      case "DOMAIN_CERTIFICATE_RECONCILE": {
+        if (!this.certificates) throw new Error("CertificateReconcilerUnavailable");
+        const result = await this.certificates.reconcileTenantDomain(tenantId, resourceId);
         return { resourceId, result };
       }
       case "CUSTOM_ROOT_DOMAIN_VERIFY": {

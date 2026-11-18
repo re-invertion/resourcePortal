@@ -42,6 +42,10 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
   const invitations = useApi<unknown>(`${root}/invitations`);
   const rolesQ = useApi<unknown>(`${root}/roles`);
   const groups = useApi<unknown>(`${root}/groups`);
+  const oauthApps = useApi<unknown>(root + "/oauth-applications");
+  const memberGrants = useApi<unknown>(root + "/membership-app-grants");
+  const oauthRows = items<R>(oauthApps.data);
+  const memberGrantRows = items<R>(memberGrants.data);
   const roles = items<R>(rolesQ.data);
   const memberRows = items<R>(memberships.data);
   const inviteRows = items<R>(invitations.data);
@@ -55,16 +59,21 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     !groups.loading && !groups.error &&
     mayManageAccess(current, permission);
   const refreshEffectiveAccess = async () => {
-    await Promise.all([groups.reload(), memberships.reload()]);
+    await Promise.all([groups.reload(), memberships.reload(), memberGrants.reload()]);
   };
   const [inviteOpen, setInviteOpen] = useState(section === "invite");
-  const [invite, setInvite] = useState({ email: "", roleId: "" });
+  const [invite, setInvite] = useState({
+    email: "", roleIds: [] as string[], ssoLogin: true,
+    oauthApplicationIds: [] as string[], nativeApplicationKeys: [] as string[],
+  });
   const [generatedInvite, setGeneratedInvite] = useState<{email:string;link:string;emailSent:boolean;deliveryAttempted:boolean;deliveryReason:string}>();
   const [groupOpen, setGroupOpen] = useState(false);
   const [group, setGroup] = useState({ name: "", description: "" });
   const [working, setWorking] = useState(false);
   const [editingMembership, setEditingMembership] = useState<R>();
   const [memberRoles, setMemberRoles] = useState<string[]>([]);
+  const [memberApps, setMemberApps] = useState<string[]>([]);
+  const [memberNative, setMemberNative] = useState<string[]>([]);
   const [memberStatus, setMemberStatus] = useState("Active");
   const [editingGroup, setEditingGroup] = useState<R>();
   const [groupEdit, setGroupEdit] = useState({ name: "", description: "" });
@@ -85,10 +94,16 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     }
   }
   async function createInvite() {
-    if (!can("membership.invite") || !invite.email.trim() || !invite.roleId) return;
+    if (!can("membership.invite") || !invite.email.trim() ||
+        oauthApps.loading || Boolean(oauthApps.error)) return;
     setWorking(true);
     try {
-      const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: { email: invite.email.trim(), roleIds: [invite.roleId] } });
+      const created = await apiRequest<R>(`${root}/invitations`, { method: "POST", body: {
+        email: invite.email.trim(),
+        roleIds: [...invite.roleIds, ...(invite.ssoLogin ? ["sso-login"] : [])],
+        oauthApplicationIds: invite.oauthApplicationIds,
+        nativeApplicationKeys: invite.nativeApplicationKeys,
+      } });
       const token = text(created.token);
       if (!token) throw new Error("Invitation token was not returned.");
       const delivery = (created.emailDelivery ?? {}) as R;
@@ -140,15 +155,27 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     finally { setWorking(false); }
   }
   function beginMember(m: R) {
-    setEditingMembership(m);
+    // Do not open a form until every field can be initialized from this member's snapshot.
+    // In particular, never carry another member's roles or grants into an incomplete edit.
+    if (memberGrants.loading || memberGrants.error) return;
+    const grants = memberGrantRows.find(row => row.membershipId === idOf(m));
+    if (!grants) {
+      toast.error("Access grants for this member are unavailable. Refresh and retry.");
+      return;
+    }
     setMemberRoles(membershipRoleIds(m));
+    setMemberApps(items<R>(grants.grants).filter(g => g.enabled === true).map(g => text(g.applicationId)));
+    setMemberNative(items<R>(grants.nativeGrants).filter(g => g.enabled === true).map(g => text(g.clientKey)));
     setMemberStatus(text(m.status, "Active"));
+    setEditingMembership(m);
   }
   async function saveMembership() {
-    if (!editingMembership || !can("membership.update") || !memberRoles.length) return;
+    if (!editingMembership || !can("membership.update") || memberGrants.loading || memberGrants.error ||
+        !memberGrantRows.some(row => row.membershipId === idOf(editingMembership)) ||
+        oauthApps.loading || oauthApps.error) return;
     try {
       await action(
-        () => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(editingMembership))}`, { method: "PATCH", body: { roleIds: memberRoles, status: memberStatus } }),
+        () => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(editingMembership))}`, { method: "PATCH", body: { roleIds: memberRoles, status: memberStatus, oauthApplicationIds: memberApps, nativeApplicationKeys: memberNative } }),
         refreshEffectiveAccess,
         "Membership access saved. Identity grants may need reconciliation.",
       );
@@ -187,7 +214,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
 
   return <main>
     <PageHeader eyebrow="Tenant security" title={section === "overview" ? "Access" : "Access management"}
-      description="Manage ResourcePortal memberships, inherited group permissions and invitations. OAuth application access is a separate entitlement, not the Viewer role."
+      description="One tenant member, one identity. SSO login, individual applications and ResourcePortal RBAC are independent."
       actions={can("membership.invite") ? <Button variant="primary" onClick={() => setInviteOpen(true)}><PlusIcon size={15}/>Invite user</Button> : undefined}
     />
     <AccessTabs tenantId={tenantId} active={section === "overview" ? "overview" : "administration"} />
@@ -201,11 +228,49 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
     </Card> : null}
     {inviteOpen && can("membership.invite") ? <Card className="mb-5 grid gap-4 p-5 md:grid-cols-2">
       <Field label="Email" required><TextInput type="email" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} /></Field>
-      <Field label="ResourcePortal role" required><Select value={invite.roleId} onChange={e => setInvite({ ...invite, roleId: e.target.value })}><option value="">Select a role</option>{roleOptions(roles)}</Select></Field>
-      {invite.roleId ? <div className="md:col-span-2 text-xs text-[#526070]">Selected RP role: {roleName(roles.find(role => idOf(role) === invite.roleId) ?? {})}. This is not external-application SSO access.</div> : null}
+       <label className="flex items-center gap-2 text-sm">
+         <input type="checkbox" checked={invite.ssoLogin} onChange={e => setInvite(prev => ({ ...prev, ssoLogin: e.target.checked }))} />
+         SSO login (does not grant ResourcePortal permissions)
+       </label>
+       <fieldset className="md:col-span-2">
+         <legend className="text-sm font-semibold">ResourcePortal roles (optional)</legend>
+         <div className="mt-2 flex flex-wrap gap-3">{roles.filter(role => idOf(role) !== "sso-login").map(role =>
+           <label key={idOf(role)} className="flex items-center gap-2 text-sm">
+             <input type="checkbox" checked={invite.roleIds.includes(idOf(role))}
+               onChange={e => setInvite(prev => ({ ...prev, roleIds: e.target.checked ?
+                 [...prev.roleIds, idOf(role)] : prev.roleIds.filter(id => id !== idOf(role)) }))} />
+             {roleName(role)}
+           </label>)}</div>
+       </fieldset>
+       <fieldset className="md:col-span-2">
+         <legend className="text-sm font-semibold">Allowed SSO applications</legend>
+         <p className="mt-1 text-xs text-[#526070]">Default deny. ResourcePortal Web and CLI are independent clients. Application access is separate from RP RBAC.</p>
+         <div className="mt-2 flex flex-wrap gap-3">
+           {([{ key: "web", name: "ResourcePortal Web" }, { key: "cli", name: "ResourcePortal CLI" }]).map(client =>
+             <label key={client.key} className="flex items-center gap-2 text-sm">
+               <input type="checkbox" checked={invite.nativeApplicationKeys.includes(client.key)}
+                 onChange={e => setInvite(prev => ({ ...prev, nativeApplicationKeys: e.target.checked ?
+                   [...prev.nativeApplicationKeys, client.key] : prev.nativeApplicationKeys.filter(key => key !== client.key) }))} />
+               {client.name}
+             </label>)}
+         </div>
+         {oauthApps.loading ? <p className="mt-2 text-xs">Loading OAuth applications…</p> :
+          oauthApps.error ? <p role="alert" className="mt-2 text-xs text-red-700">OAuth applications unavailable; invitation disabled.</p> :
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">{oauthRows.map(app => <label key={idOf(app)} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={invite.oauthApplicationIds.includes(idOf(app))}
+              onChange={e => setInvite(prev => ({ ...prev, oauthApplicationIds: e.target.checked ?
+                [...prev.oauthApplicationIds, idOf(app)] : prev.oauthApplicationIds.filter(id => id !== idOf(app)) }))} />
+            {text(app.name)}
+          </label>)}</div>}
+       </fieldset>
       <div className="flex gap-2 md:col-span-2">
-        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || !invite.email || !invite.roleId} confirmTitle="Confirm invitation"
-          confirmDescription={`Invite ${invite.email} with the selected ResourcePortal role?`} confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
+         <ConfirmActionButton triggerVariant="primary" confirmVariant="primary"
+           disabled={working || !invite.email || oauthApps.loading || Boolean(oauthApps.error)}
+           confirmTitle="Confirm invitation"
+           confirmDescription={"Invite " + invite.email + " with " + invite.roleIds.length + " RP role(s), " +
+             (invite.ssoLogin ? "SSO enabled" : "SSO disabled") + " and " +
+             (invite.oauthApplicationIds.length + invite.nativeApplicationKeys.length) + " application grant(s)?"}
+           confirmLabel="Send invitation" onConfirm={createInvite}>Create invitation</ConfirmActionButton>
         <Button onClick={() => setInviteOpen(false)}>Cancel</Button>
       </div>
     </Card> : null}
@@ -218,10 +283,16 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
               member: <div className="max-w-56 min-w-0"><strong className="block truncate">{memberName(m)}</strong><span className="block break-all text-xs text-[#718096]">{text(((m.user ?? {}) as R).email, "")}</span></div>,
               status: <StatusText tone={statusTone(m.status)}>{text(m.status, "Unknown")}</StatusText>,
               roles: <div className="min-w-0 text-xs"><strong className="block">{items<R>(m.roles).map(roleName).join(", ") || "No direct role"}</strong>
+                <span className="block text-[#526070]">{(() => {
+                   const access = memberGrantRows.find(g => g.membershipId === idOf(m));
+                   const apps = items<R>(access?.grants).filter(g => g.enabled === true).map(g => text(g.applicationName));
+                   const native = items<R>(access?.nativeGrants).filter(g => g.enabled === true).map(g => g.clientKey === "web" ? "ResourcePortal Web" : "ResourcePortal CLI");
+                   return "SSO apps: " + ([...native, ...apps].join(", ") || "none");
+                 })()}</span>
                 {items<R>(m.groups).map(g => <span key={idOf(g)} className="block text-[#526070]">{text(g.name)} (inherited: {items<R>(g.roles).map(roleName).join(", ") || "none"})</span>)}
               </div>,
               actions: <div className="flex flex-wrap gap-1">
-                {can("membership.update") ? <Button size="sm" onClick={() => beginMember(m)}>Edit access</Button> : null}
+                {can("membership.update") ? <Button size="sm" disabled={memberGrants.loading || Boolean(memberGrants.error)} onClick={() => beginMember(m)}>Edit access</Button> : null}
                 {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" disabled={working} ariaLabel={`Remove membership of ${memberName(m)}`} confirmTitle={`Remove ${memberName(m)} from this tenant?`}
                   confirmDescription="Removes tenant membership and revokes the subject's ResourcePortal tenant grants. The last owner cannot be removed."
                   confirmLabel="Remove access" onConfirm={() => action(() => apiRequest(`${root}/memberships/${encodeURIComponent(idOf(m))}`, { method: "DELETE" }), refreshEffectiveAccess, "Membership removed.")}>
@@ -230,21 +301,32 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
               </div>,
             },
           }))}
-          empty={<EmptyState icon={<UsersIcon />} title="No memberships" description="Invite a tenant member with explicit RP roles." />}
+          empty={<EmptyState icon={<UsersIcon />} title="No memberships" description="Invite a member with independent SSO and RBAC grants." />}
         />
       </Card>
       <Card className="overflow-hidden">
         <div className="border-b border-[#E1E7F0] p-4"><h2 className="font-semibold">Invitations</h2></div>
         <div className="divide-y divide-[#E1E7F0]">
           {inviteRows.map(i => <div key={idOf(i)} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <div><strong className="block text-sm">{text(i.email)}</strong><span className="text-xs text-[#718096]">Pending</span></div>
+            <div>
+              <strong className="block text-sm">{text(i.email)}</strong>
+              <span className="text-xs text-[#718096]">Pending</span>
+              {Array.isArray(i.oauthApplicationIds) && i.oauthApplicationIds.length > 0 ?
+                <span className="block text-xs text-[#526070]">SSO applications: {
+                  (i.oauthApplicationIds as string[]).map(appId =>
+                    text(oauthRows.find(app => idOf(app) === appId)?.name, "Unknown application"),
+                  ).join(", ")
+                }</span> : null}
+              {Array.isArray(i.nativeApplicationKeys) && i.nativeApplicationKeys.length > 0 ?
+                <span className="block text-xs text-[#526070]">RP clients: {(i.nativeApplicationKeys as string[]).join(", ")}</span> : null}
+            </div>
             <div className="flex gap-1">
               {can("membership.invite") ? <Button size="sm" onClick={() => void regenerateInvite(i)} disabled={working}>Generate new link</Button> : null}
               {can("membership.remove") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete invitation ${text(i.email)}`} confirmTitle={`Revoke invitation for ${text(i.email)}?`} confirmDescription="The old invitation link becomes invalid."
                 confirmLabel="Revoke invitation" onConfirm={() => action(() => apiRequest(`${root}/invitations/${encodeURIComponent(idOf(i))}`, { method: "DELETE" }), invitations.reload, "Invitation revoked.")}><TrashIcon size={14}/></ConfirmActionButton> : null}
             </div>
           </div>)}
-          {!inviteRows.length && !invitations.loading ? <EmptyState title="No pending invitations" /> : null}
+          {!inviteRows.length && !invitations.loading && !invitations.error ? <EmptyState title="No pending invitations" /> : null}
         </div>
       </Card>
     </div>
@@ -260,18 +342,35 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
             <span><strong>{roleName(role)}</strong><span className="block max-w-md break-words text-xs text-[#718096]">{Array.isArray(role.permissions) ? role.permissions.join(", ") : "Permissions unavailable"}</span></span>
           </label>)}
         </fieldset>
-        <div><Field label="Membership status"><Select value={memberStatus} onChange={e => setMemberStatus(e.target.value)}><option value="Active">Active</option><option value="Suspended">Suspended</option></Select></Field>
+        <fieldset className="md:col-span-2">
+           <legend className="text-sm font-semibold">Allowed SSO applications</legend>
+           <p className="mt-1 text-xs text-[#526070]">ResourcePortal Web, CLI and external OAuth clients are independent grants, not RP RBAC.</p>
+           <div className="mt-2 flex flex-wrap gap-3">{([{ key: "web", name: "ResourcePortal Web" }, { key: "cli", name: "ResourcePortal CLI" }]).map(client =>
+             <label key={client.key} className="flex items-center gap-2 text-sm">
+               <input type="checkbox" checked={memberNative.includes(client.key)}
+                 onChange={e => setMemberNative(prev => e.target.checked ? [...prev, client.key] : prev.filter(key => key !== client.key))} />
+               {client.name}
+             </label>)}</div>
+           {oauthApps.error ? <p role="alert">OAuth applications unavailable; updates disabled.</p> :
+             <div className="mt-3 grid gap-2 sm:grid-cols-2">{oauthRows.map(app =>
+               <label key={idOf(app)} className="flex items-center gap-2 text-sm">
+                 <input type="checkbox" checked={memberApps.includes(idOf(app))}
+                   onChange={e => setMemberApps(prev => e.target.checked ? [...prev, idOf(app)] : prev.filter(id => id !== idOf(app)))} />
+                 {text(app.name)}
+               </label>)}</div>}
+         </fieldset>
+         <div><Field label="Membership status"><Select value={memberStatus} onChange={e => setMemberStatus(e.target.value)}><option value="Active">Active</option><option value="Suspended">Suspended</option></Select></Field>
           <p className="mt-2 text-xs text-[#526070]">Suspending access also invalidates associated tenant OIDC grants through the backend.</p>
         </div>
       </div>
       <div className="mt-4 flex gap-2">
-        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || memberRoles.length === 0}
+        <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={working || memberGrants.loading || Boolean(memberGrants.error) || oauthApps.loading || Boolean(oauthApps.error)}
           confirmTitle="Save membership access?" confirmDescription="This changes the selected member's direct roles and/or active status." confirmLabel="Save access" onConfirm={saveMembership}>Save access</ConfirmActionButton>
         <Button onClick={() => setEditingMembership(undefined)}>Cancel</Button>
       </div>
     </Card> : null}
 
-    <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-[#E1E7F0] px-4 py-3"><h2 className="font-semibold">Groups</h2>
           {can("group.create") ? <Button size="sm" onClick={() => setGroupOpen(true)}><PlusIcon size={14}/>Create group</Button> : null}
@@ -294,7 +393,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
       </Card>
       <Card className="p-5">
         <h2 className="font-semibold">Built-in ResourcePortal roles</h2>
-        <p className="mt-2 text-xs text-[#526070]">These role definitions are read-only. Granting a role gives ResourcePortal rights, not external OAuth client entitlements.</p>
+        <p className="mt-2 text-xs text-[#526070]">These role definitions are read-only. sso-login has no RP permissions. Operational roles do not grant other OAuth clients.</p>
         <div className="mt-4 divide-y divide-[#E1E7F0]">{roles.map(role => <div key={idOf(role)} className="py-3"><strong className="text-sm">{roleName(role)}</strong><p className="mt-1 break-words text-xs text-[#718096]">{Array.isArray(role.permissions) ? role.permissions.join(", ") : "Permissions unavailable"}</p></div>)}</div>
         <a className="mt-4 inline-block text-sm font-semibold text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/identity-sso`}>Open tenant Identity &amp; SSO</a>
       </Card>

@@ -107,8 +107,18 @@ const commands = {
   "egress": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/network-egress"],
   ],
+  // #437: prove TLS Host/SNI and certificate verification over the
+  // private API -> Traefik route while public issuer DNS is unavailable.
+  // Build the actual API transport first: the fixture imports its shipped JS.
+  "oidc-private-tls": [
+    ["npm", "run", "build", "--workspace", "@resource-portal/api"],
+    ["bash", "test/installer/test-oidc-private-tls.sh"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--",
+      "src/auth/oidc-issuer-transport.spec.ts", "src/health/health.controller.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/auth.test.tsx"],
+  ],
   "identity": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/identity-providers", "src/tenant-oidc", "src/oauth-applications/redirect-uri.spec.ts", "src/oauth-applications/tenant-oauth-project.spec.ts", "src/auth/github-security-regressions.spec.ts", "src/auth/native-only-login.spec.ts", "src/service-identities", "src/app-consumers"],
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-identity-sso.test.tsx", "src/pages/tenant-access-pages.test.tsx"],
     ["node", "--check", "packages/resourceportal-api/scripts/tenant-oidc-live-preflight.mjs"],
     ["bash", "-n", "scripts/run-tenant-oidc-https-e2e.sh"],
@@ -133,6 +143,9 @@ const commands = {
     ["python3", "test/installer/test-remote-lan-dhcp.py"],
     ["bash", "-n", "scripts/run-remote-lan-gateway-sysctl-swarm-smoke.sh"],
     ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_gate*.py", "-v"],
+    ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_remote_lan_lease_soak.py", "-v"],
+    ["bash", "-n", "scripts/run-remote-lan-real-controlplane-fault.sh"],
+    ["python3", "-m", "unittest", "discover", "-s", "test", "-p", "test_real_controlplane_fault_guard.py", "-v"],
   ],
   "web-console": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/device-vpn-panel.test.tsx", "src/pages/tenant-networking.test.tsx", "src/pages/help.test.tsx"],
@@ -158,6 +171,10 @@ const commands = {
     ["bash", "test/installer/test-core.sh"],
     ["bash", "test/installer/test-v020-placement-networking.sh"],
     ["bash", "test/installer/test-zitadel-management.sh"],
+    ["bash", "test/installer/test-app-consumer-actions.sh"],
+    ["bash", "test/installer/test-app-consumer-auto-lifecycle.sh"],
+    ["bash", "test/installer/test-app-consumer-real-signer.sh"],
+    ["bash", "test/installer/test-app-consumer-upgrade-lifecycle.sh"],
     ["node", "--test", "test/installer/test-zitadel-admin-readiness.test.mjs"],
   ],
   // Previously covered by full real-Swarm and application CI. These individual
@@ -175,14 +192,17 @@ const commands = {
   ],
   "dependency": [["npm", "audit", "--audit-level=high"]],
   "workflow": [
-    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs"],
+    ["node", "--test", "test/fastfix-test-plan.test.mjs", "test/release-validation-mode.test.mjs", "test/test-catalog.test.mjs", "test/test-suite-registry.test.mjs", "test/test-selection.test.mjs", "test/test-workflow-gates.test.mjs", "test/test-release-review-recheck.test.mjs"],
     ["node", "scripts/test-catalog.mjs"],
     ["bash", "-n", "scripts/run-device-vpn-dataplane-smoke.sh"],
   ],
-  "mcp-oauth": [["npm", "run", "test:fastfix:mcp-oauth"]],
+  "mcp-oauth": [
+    ["npm", "run", "test:fastfix:mcp-oauth"],
+    ["node", "--check", "scripts/run-mcp-oauth-consent-browser-e2e.mjs"],
+  ],
   "domains": [
-    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domains-certificate-diagnostics.spec.ts", "src/domains/domains-certificate-controller.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-tls-recovery.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/internal/domain-certificate-reconciler.service.spec.ts", "src/internal/traefik-certificate-observer.service.spec.ts", "src/operations/executors/domain-operation.executors.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-domain-tls-recovery.test.tsx"],
   ],
   "applications": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
@@ -223,6 +243,13 @@ const commands = {
 };
 
 const classifiers = [
+  // #437 private-issuer connection is a new security boundary. These files
+  // must not silently drop out of deterministic patch checks.
+  [/^packages\/resourceportal-api\/src\/auth\/oidc-issuer-transport(?:\.spec)?\.ts$/, ["oidc-private-tls", "identity", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/auth(?:\.test)?\.tsx$/, ["oidc-private-tls", "identity", "security"]],
+  [/^test\/installer\/(?:oidc-private-tls-smoke\.cjs|test-oidc-private-tls\.sh)$/, ["oidc-private-tls", "installer", "identity", "security", "platform-release"]],
+  [/^test\/installer\/test-zitadel-transient-management\.sh$/, ["installer", "identity", "security", "platform-release"]],
+  [/^test\/installer\/test-acme-resilience\.sh$/, ["identity", "installer", "platform-release", "security"]],
   // Capacity admission and tenant quota share a scheduler/resource-limit contract.
   // Do not let either implementation or new regression fixtures evade patch CI.
   // Capacity sampling is a runtime cgroup/Swarm contract, not just a unit-test surface.
@@ -278,9 +305,55 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/operations\/executors\/network-topology-operation\.executor(?:\.spec)?\.ts$/, ["networking", "operations", "platform-release"]],
   [/^packages\/resourceportal-web\/src\/pages\/networking-form-validation(?:\.test)?\.ts$/, ["web-console", "networking"]],
   [/^packages\/resourceportal-web\/src\/pages\/remote-lan-attachments-panel(?:\.test)?\.tsx$/, ["web-console", "networking"]],
+  // #430 Prisma expand/backfill migration fixtures are executable identity and
+  // rollback security contracts, not unclassified fast-fix collateral.
+  // The independent IAM PostgreSQL 16 snapshot-restore Actions gate must also
+  // pass; these profiles KEEP the full identity/security/release smoke gates.
+  [/^test\/iam430\/(?:legacy-fixture\.sql|legacy-upgrade-restore\.sh)$/, ["identity", "security", "schema", "upgrade-recovery", "platform-release", "workflow"]],
+  // #430 Invitation enrollment is an OAuth security boundary: both the
+  // unauthenticated UI entry and its test must run IAM, tenant access and
+  // security regressions, rather than falling through a generic Web class.
+  [/^packages\/resourceportal-web\/src\/pages\/invitation(?:\.test)?\.tsx$/, ["identity", "security", "tenant-access", "tenant-ux-patch"]],
+  // App Consumer OAuth entitlements (#398) must execute exact-client grant,
+  // tenant isolation, signed Actions V2 and startup fail-closed regression.
+  // These paths cannot be treated as generic UI when introduced by a schema
+  // migration: the DB restore release gate still blocks an unsafe release.
+  // Creation-form hydration can reset an administrator's edits between
+  // validation and submit; always run actual Web state and tenant UI tests.
+  [/^packages\/resourceportal-web\/src\/components\/forms(?:\.test)?\.tsx$/, ["reactive-web-state", "tenant-ux-patch"]],
+  // Global ZITADEL pre-token enrollment and signing-secret Swarm manifests
+  // are identity- and release-critical, including dedicated installer tests.
+  [/^test\/installer\/test-app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release"]],
+  [/^test\/installer\/test-app-consumer-auto-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-real-signer\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-app-consumer-upgrade-lifecycle\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^test\/installer\/test-invitation-oidc-upgrade\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  [/^scripts\/installer\/app-consumer-actions\.sh$/, ["identity", "installer", "security", "platform-release", "upgrade-recovery"]],
+  // Global issuer pre-token callback and two-database rollback safety:
+  // upgrade.sh affects tenant authentication, not only installer plumbing.
+  // Source-stack consistency must be covered by upgrade failure recovery,
+  // identity, security and the real published-image rollback gate.
+  [/^scripts\/release-review-gate\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^scripts\/release-review-recheck\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-recheck\.test\.mjs$/, ["identity", "security", "platform-release", "workflow"]],
+  [/^test\/test-release-review-gate\.test\.mjs$/, ["identity", "security", "platform-release"]],
+  [/^scripts\/installer\/upgrade\.sh$/, ["identity", "installer", "platform-release", "security", "upgrade-recovery"]],
+  [/^scripts\/installer\/control-plane\.sh$/, ["identity", "installer", "networking", "platform-release", "security"]],
+  [/^scripts\/installer\/(?:identity|secrets|config|swarm)\.sh$/, ["identity", "installer", "platform-release", "security"]],
+  [/^config\/production\/stack\.yml\.tpl$/, ["identity", "installer", "networking", "platform-release", "security", "oidc-private-tls"]],
+  [/^packages\/resourceportal-api\/src\/app-consumers\/.*\.ts$/, ["identity", "security", "tenant-access", "schema"]],
+  [/^packages\/resourceportal-api\/src\/config\/env\.validation(?:\.spec)?\.ts$/, ["identity", "security"]],
+  // Signed ZITADEL webhook secrets loaded from *_FILE are authentication
+  // boundaries. Changes to the allow-list or its regression fixture require
+  // identity and API security coverage, never a generic unclassified skip.
+  [/^packages\/resourceportal-api\/src\/config\/secret-file-loader(?:\.spec)?\.ts$/, ["identity", "security"]],
   // Tenant IdP, OIDC clients and login migration are identity/security-critical.
   // Explicitly classify every new surface, including new tests and the API
   // package manifest, so patch selection cannot silently omit these gates.
+  // Reconciliation and its periodic safety monitor can grant or revoke
+  // shared ZITADEL project roles; require security regressions as well as
+  // identity coverage even if no App Consumer source file is touched.
+  [/^packages\/resourceportal-api\/src\/tenant-oidc\/tenant-oidc(?:-auto-rollout)?\.service(?:\.spec)?\.ts$/, ["identity", "security"]],
   [/^packages\/resourceportal-api\/src\/tenant-oidc\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/oauth-applications\//, ["identity"]],
   [/^packages\/resourceportal-api\/src\/api\.module\.ts$/, ["identity"]],
@@ -365,6 +438,12 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/internal\/(deployment-domain-ownership\.spec|ingress-reconciler\.service(\.spec)?)\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/(app-group-manifest(\.service)?(\.spec)?\.ts|cpu-quota-validation\.spec\.ts)$/, ["quota-security"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/dto\/create-single-app\.dto\.ts$/, ["quota-security"]],
+  // Issue #414: managed TLS evidence, safe reconciliation and preflight are
+  // tenant-security boundaries. Never let new regressions escape the patch CI.
+  [/^packages\/resourceportal-api\/src\/internal\/(?:domain-certificate-reconciler|traefik-certificate-observer)\.service(?:\.spec)?\.ts$/, ["domains", "security", "worker"]],
+  [/^packages\/resourceportal-api\/src\/internal\/deployment-tls-recovery\.spec\.ts$/, ["domains", "security", "deployment-rollout"]],
+  [/^packages\/resourceportal-api\/src\/operations\/executors\/domain-operation\.executors(?:\.spec)?\.ts$/, ["domains", "operations", "security"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-domain-tls-recovery\.test\.tsx$/, ["domains", "tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-execution\.service\.ts$/, ["deployment-rollout", "domains", "gpu-security", "quota-security", "registry-auth", "worker"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-stopped-resource-domain\.spec\.ts$/, ["domains"]],
   [/^packages\/resourceportal-api\/src\/internal\/deployment-cpu-validation\.spec\.ts$/, ["quota-security", "registry-auth", "worker"]],
@@ -390,6 +469,7 @@ const classifiers = [
   [/^test\/installer\/test-remote-lan-gate-agent\.py$/, ["networking", "platform-release"]],
   // Managed Gate migration tests run in patch CI as well as privileged real Swarm;
   // unknown root Python files still fail closed instead of being skipped.
+  [/^test\/test_gate_authorization_lease\.py$/, ["networking", "security"]],
   [/^test\/test_gate_(?:managed_uplink|uplink_installer|netplan_uplink|native_nm_uplink|handshake_window)\.py$/, ["networking"]],
   [/^test\/installer\/test-v020-placement-networking\.sh$/, ["installer", "platform-release", "networking"]],
   [/^test\/installer\/test-zitadel-management\.sh$/, ["installer", "platform-release", "identity"]],
@@ -424,6 +504,11 @@ const classifiers = [
   [/^scripts\/verify-stage20-management-matrix\.mjs$/, ["platform-release", "platform-admin-ui"]],
   [/^packages\/resourceportal-api\/src\/(domains|platform-dns)\//, ["domains"]],
   [/^packages\/resourceportal-api\/src\/mcp\/admin-mcp-protocol\.service(\.spec)?\.ts$/, ["bug-reports", "platform-admin-ui"]],
+  // OAuth protected-resource/authorization-server .well-known routing lives
+  // outside the /mcp and /auth directories. An unclassified change to this
+  // public routing could silently disable issuer discovery or expose tokens.
+  [/^packages\/resourceportal-api\/src\/config\/global-prefix-config\.ts$/, ["mcp-oauth", "security", "identity", "workflow"]],
+  [/^scripts\/run-mcp-oauth-consent-browser-e2e\.mjs$/, ["mcp-oauth", "identity", "security", "workflow"]],
   [/^packages\/resourceportal-api\/src\/mcp\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/auth\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/bug-reports\//, ["bug-reports"]],
@@ -469,14 +554,21 @@ const classifiers = [
 
   [/^scripts\/run-(device-vpn|gate)-dataplane-smoke\.sh$/, ["networking", "workflow"]],
   [/^scripts\/run-remote-lan-l2-dhcp-smoke\.sh$/, ["networking", "workflow"]],
+  [/^scripts\/remote-lan-lease-soak\.py$/, ["networking", "security", "workflow"]],
+  [/^scripts\/run-remote-lan-real-controlplane-fault\.sh$/, ["networking", "security", "workflow"]],
+  [/^test\/test_real_controlplane_fault_guard\.py$/, ["networking", "security", "workflow"]],
+  [/^test\/test_remote_lan_lease_soak\.py$/, ["networking", "security", "workflow"]],
   // Running Gateway sysctl in real Swarm is networking and release-critical.
   [/^scripts\/run-remote-lan-gateway-sysctl-swarm-smoke\.sh$/, ["networking", "workflow"]],
   [/^config\/production\/stack\.yml\.tpl$/, ["networking", "platform-release"]],
   [/^Dockerfile$/, ["platform-release"]],
+  // CI changes affecting real Swarm wiring must exercise BOTH independent
+  // runners, not merely pass static YAML parsing or ordinary unit tests.
+  [/^\.github\/workflows\/swarm-integration\.yml$/, ["workflow", "networking", "swarm-smoke-fixtures"]],
   [/^\.github\/workflows\//, ["workflow"]],
 
   [/^scripts\/next-main-release\.mjs$/, ["platform-release", "workflow"]],
-  [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix)\.mjs$/, ["workflow"]],
+  [/^scripts\/(fastfix-test-plan|release-validation-mode|test-catalog|run-test-suite|test-selection|test-matrix|report-ci-timings)\.mjs$/, ["workflow"]],
   [/^test\/cli\/test-release-package\.sh$/, ["cli"]],
   [/^test\/.*\.test\.mjs$/, ["workflow"]],
   [/^config\/test-(suites|migrations)\.json$/, ["workflow"]],

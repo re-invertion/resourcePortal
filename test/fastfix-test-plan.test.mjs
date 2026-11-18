@@ -3,6 +3,22 @@ import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { selectProfiles } from "../scripts/fastfix-test-plan.mjs";
 
+test("issue #414 TLS recovery changes remain covered by security and domain CI", () => {
+  const paths = [
+    "packages/resourceportal-api/src/internal/traefik-certificate-observer.service.ts",
+    "packages/resourceportal-api/src/internal/domain-certificate-reconciler.service.spec.ts",
+    "packages/resourceportal-api/src/internal/deployment-tls-recovery.spec.ts",
+    "packages/resourceportal-api/src/operations/executors/domain-operation.executors.ts",
+    "packages/resourceportal-web/src/pages/tenant-domain-tls-recovery.test.tsx",
+  ];
+  for (const path of paths) {
+    const profiles = selectProfiles([path]).profiles;
+    assert.ok(profiles.includes("domains"), `domains missing for ${path}`);
+    assert.ok(profiles.includes("security"), `security missing for ${path}`);
+  }
+  assert.throws(() => selectProfiles(["packages/resourceportal-api/src/internal/unreviewed-tls-bypass.ts"]), /unclassified changes/);
+});
+
 test("Web anti-clickjacking server and regression fixture select security header checks", () => {
   const plan = selectProfiles([
     "packages/resourceportal-web/server.mjs",
@@ -12,6 +28,82 @@ test("Web anti-clickjacking server and regression fixture select security header
   assert.equal(plan.vpnSmoke, false);
   assert.throws(
     () => selectProfiles(["packages/resourceportal-web/unregistered-response-header.test.mjs"]),
+    /unclassified changes/,
+  );
+});
+
+test("shared creation form draft preservation triggers reactive Web and tenant UI regressions", () => {
+  const paths = [
+    "packages/resourceportal-web/src/components/forms.tsx",
+    "packages/resourceportal-web/src/components/forms.test.tsx",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["reactive-web-state", "tenant-ux-patch"]);
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/components/forms-unknown.tsx"]),
+    /unclassified changes/,
+  );
+});
+
+test("ZITADEL Actions V2 signing key enrollment and stack opt-in require release/identity/security installer checks", () => {
+  const paths = [
+    "config/production/stack.yml.tpl",
+    "scripts/installer/identity.sh",
+    "scripts/installer/secrets.sh",
+    "scripts/installer/config.sh",
+    "scripts/installer/control-plane.sh",
+    "scripts/installer/swarm.sh",
+    "test/installer/test-app-consumer-actions.sh",
+    "scripts/installer/app-consumer-actions.sh",
+    "test/installer/test-app-consumer-auto-lifecycle.sh",
+    "test/installer/test-app-consumer-real-signer.sh",
+    "test/installer/test-app-consumer-upgrade-lifecycle.sh",
+  ];
+  for (const path of paths) {
+    const selected = selectProfiles([path]);
+    for (const expected of ["identity", "installer", "platform-release", "security"]) {
+      assert.ok(selected.profiles.includes(expected), expected + " missing for " + path);
+    }
+    if (path === "scripts/installer/control-plane.sh" ||
+        path === "config/production/stack.yml.tpl") {
+      assert.ok(selected.profiles.includes("networking"), "Missing Swarm networking gate");
+    }
+  }
+  assert.throws(() => selectProfiles(["test/installer/test-unknown-action-hook.sh"]),
+    /unclassified changes/);
+});
+
+test("issue 398 App Consumer Actions, grant model, and config changes require identity and security regressions", () => {
+  const files = [
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.controller.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumer-action.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.service.spec.ts",
+    "packages/resourceportal-api/src/app-consumers/app-consumers.module.ts",
+    "packages/resourceportal-api/src/config/env.validation.ts",
+    "packages/resourceportal-api/src/config/env.validation.spec.ts",
+  ];
+  const plan = selectProfiles(files);
+  for(const profile of ["identity","security","tenant-access","schema"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/not-certified-client-gate.ts"]),
+    /unclassified changes/,
+  );
+});
+
+test("App Consumer signing-key secret-file loader is security-classified and unknown config files fail closed (#398)", () => {
+  const paths = [
+    "packages/resourceportal-api/src/config/secret-file-loader.ts",
+    "packages/resourceportal-api/src/config/secret-file-loader.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(paths).profiles, ["identity", "security"]);
+  for (const path of paths) {
+    assert.deepEqual(selectProfiles([path]).profiles, ["identity", "security"]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-api/src/config/secret-file-loader.other.spec.ts"]),
     /unclassified changes/,
   );
 });
@@ -111,8 +203,18 @@ test("tenant OIDC and native-login changes select the dedicated identity/federat
     "packages/resourceportal-web/src/pages/tenant-identity-sso.tsx",
     "packages/resourceportal-web/src/pages/platform-identity-pages.tsx",
   ]);
-  assert.deepEqual(plan.profiles, ["identity"]);
+  assert.deepEqual(plan.profiles, ["identity", "security"]);
   assert.equal(plan.vpnSmoke, false);
+});
+
+test("tenant OIDC App Consumer safety monitoring requires security coverage even on a standalone change", () => {
+  const files = [
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc.service.spec.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.ts",
+    "packages/resourceportal-api/src/tenant-oidc/tenant-oidc-auto-rollout.service.spec.ts",
+  ];
+  assert.deepEqual(selectProfiles(files).profiles, ["identity", "security"]);
 });
 
 test("real ZITADEL federation browser and projection helpers require identity and security gates", () => {
@@ -287,10 +389,14 @@ test("v0.2.67 bugfix files select only their affected patch profiles", () => {
     "applications",
     "bug-reports",
     "domains",
+    "identity",
     "installer",
     "networking",
+    "oidc-private-tls",
     "platform-admin-ui",
     "platform-release",
+    "security",
+    "upgrade-recovery",
     "volume-safety",
     "web-console",
     "worker",
@@ -360,10 +466,11 @@ test("BusyBox installer hotfix executes upgrade and control-plane regression cov
     "test/installer/test-control-plane.sh",
   ]);
   assert.equal(plan.vpnSmoke, true);
-  assert.deepEqual(plan.profiles, ["installer", "networking", "platform-release"]);
+  assert.deepEqual(plan.profiles, ["identity", "installer", "networking", "platform-release", "security", "upgrade-recovery"]);
 });
 test("installer configuration fixes select the core safety suite", () => {
-  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles, ["installer", "platform-release"]);
+  assert.deepEqual(selectProfiles(["scripts/installer/config.sh", "test/installer/test-core.sh"]).profiles,
+    ["identity", "installer", "platform-release", "security"]);
 });
 test("the fastfix runner requires a dependency security audit for all releases", async () => {
   const { readFileSync } = await import("node:fs");
@@ -593,6 +700,10 @@ test("stack apply changes always run deployment rollout and auth regressions", (
 test("LAN Attachment DHCP smoke and capability helper select security regression gates", () => {
   const plan = selectProfiles([
     "scripts/run-remote-lan-l2-dhcp-smoke.sh",
+    "scripts/remote-lan-lease-soak.py",
+    "test/test_remote_lan_lease_soak.py",
+    "scripts/run-remote-lan-real-controlplane-fault.sh",
+    "test/test_real_controlplane_fault_guard.py",
     "test/installer/test-remote-lan-dhcp.py",
     "test/installer/test-swarm-required-capabilities.sh",
   ]);
@@ -854,3 +965,87 @@ test("issue #412 Bug Report screenshot reset selects exact Web and API tests wit
   assert.match(plan, /src\/components\/bug-report-dialog\.test\.tsx/);
   assert.throws(() => selectProfiles(["packages/resourceportal-web/src/components/bug-report-dialog-unsafe.tsx"]), /unclassified changes/);
 });
+
+test("Codex review recheck dispatcher cannot skip identity, security or release tests", () => {
+  for (const path of ["scripts/release-review-recheck.mjs", "test/test-release-review-recheck.test.mjs"]) {
+    const selected = selectProfiles([path]);
+    for (const name of ["identity","security","platform-release","workflow"]) {
+      assert.ok(selected.profiles.includes(name), name + " missing for " + path);
+    }
+  }
+});
+
+test("issue #430 legacy PostgreSQL migration and restore fixtures stay on all IAM/security release gates", () => {
+  for (const path of [
+    "test/iam430/legacy-fixture.sql",
+    "test/iam430/legacy-upgrade-restore.sh",
+  ]) {
+    const plan = selectProfiles([path]);
+    assert.deepEqual(plan.profiles, [
+      "identity", "platform-release", "schema", "security", "upgrade-recovery", "workflow",
+    ]);
+  }
+  // Other IAM fixtures cannot enter releases until explicitly classified.
+  assert.throws(() => selectProfiles(["test/iam430/untested-restore-bypass.sh"]), /unclassified changes/);
+});
+
+test("#430 invitation login and registration UI must invoke exact IAM/security/tenant gates", () => {
+  for (const path of [
+    "packages/resourceportal-web/src/pages/invitation.tsx",
+    "packages/resourceportal-web/src/pages/invitation.test.tsx",
+  ]) {
+    assert.deepEqual(selectProfiles([path]).profiles, [
+      "identity", "security", "tenant-access", "tenant-ux-patch",
+    ]);
+  }
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/pages/invitation-unsafe-helper.tsx"]),
+    /unclassified changes/,
+  );
+});
+
+test("changing the real Swarm workflow runs both real core and VPN smoke gates", () => {
+  const plan = selectProfiles([".github/workflows/swarm-integration.yml"]);
+  assert.equal(plan.vpnSmoke, true);
+  assert.equal(plan.swarmSmoke, true);
+  for (const name of ["networking", "swarm-smoke-fixtures", "workflow"])
+    assert.ok(plan.profiles.includes(name), name);
+  const unrelated = selectProfiles([".github/workflows/tenant-oidc-live.yml"]);
+  assert.equal(unrelated.vpnSmoke, false);
+  assert.equal(unrelated.swarmSmoke, false);
+});
+
+
+test("#437 private OIDC TLS transport + real smoke fixture cannot disappear from Fast Fix gates", () => {
+  const plan = selectProfiles([
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.ts",
+    "packages/resourceportal-api/src/auth/oidc-issuer-transport.spec.ts",
+    "packages/resourceportal-web/src/pages/auth.tsx",
+    "packages/resourceportal-web/src/pages/auth.test.tsx",
+    "test/installer/test-oidc-private-tls.sh",
+    "test/installer/oidc-private-tls-smoke.cjs",
+  ]);
+  for (const required of ["oidc-private-tls", "security", "identity", "installer", "platform-release"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+  assert.equal(plan.vpnSmoke, false);
+  assert.equal(plan.changedPaths.length, 6);
+});
+
+
+test("#437 issuer TLS+ACME installer ordering is classified as identity/release/security work", () => {
+  const plan = selectProfiles(["test/installer/test-acme-resilience.sh"]);
+  for (const required of ["identity", "installer", "platform-release", "security"]) {
+    assert.ok(plan.profiles.includes(required), required);
+  }
+});
+
+test("#442 MCP OAuth metadata global-prefix routing requires identity and security gates", () => {
+  const path = "packages/resourceportal-api/src/config/global-prefix-config.ts";
+  const plan = selectProfiles([path]);
+  for (const required of ["identity", "mcp-oauth", "security", "workflow"]) {
+    assert.ok(plan.profiles.includes(required), required + " missing for " + path);
+  }
+  assert.throws(() => selectProfiles([
+    "packages/resourceportal-api/src/config/unregistered-oauth-route.ts",
+  ]), /unclassified changes/);});

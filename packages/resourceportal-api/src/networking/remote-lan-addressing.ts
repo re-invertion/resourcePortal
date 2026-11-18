@@ -73,7 +73,7 @@ export function verifiedManagedLan(
       typeof o.observedAt!=="string"||
       typeof o.networkCidr!=="string"||typeof o.gateway!=="string"||
       typeof o.bridge!=="string"||typeof o.segmentId!=="string"||
-      typeof o.agentVersion!=="string"||!["gate-l2-v2", "gate-l2-v3"].includes(o.agentVersion)||
+      typeof o.agentVersion!=="string"||!["gate-l2-v2", "gate-l2-v3", "gate-l2-v4"].includes(o.agentVersion)||
       !/^[0-9a-f]{24}$/.test(o.segmentId)||
       !/^rp-gb-[0-9a-f]{8}$/.test(o.bridge)||
       !reportedAt||Math.abs(now-reportedAt.getTime())>60_000||

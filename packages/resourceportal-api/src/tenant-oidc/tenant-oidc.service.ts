@@ -39,6 +39,105 @@ export class TenantOidcService {
     };
   }
 
+  /**
+   * A local exact-client entitlement is not proof of ZITADEL project membership.
+   * Resolve readiness for the authenticated principal only; never expose an
+   * arbitrary member's identity, issuer grant identifier or remote response.
+   */
+  async memberReadiness(tenantId: string, userId: string):
+    Promise<{ status: "ready" | "pending" | "blocked"; reason?: string }> {
+    const membership = await this.prisma.tenantMembership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { status: true, user: { select: { status: true, identities: true } },
+        roles: { select: { roleId: true } },
+        groupMemberships: { select: { group: { select: {
+          roles: { select: { roleId: true } },
+        } } } } },
+    });
+    if (!membership || membership.status !== MembershipStatus.Active ||
+        membership.user.status !== UserStatus.Active) {
+      throw new NotFoundException("Active tenant membership not found");
+    }
+    const eligible = membership.roles.some(r => r.roleId === "sso-login") ||
+      membership.groupMemberships.some(m => m.group.roles.some(r => r.roleId === "sso-login"));
+    if (!eligible) return { status: "blocked", reason: "SSO_ROLE_REQUIRED" };
+    const provider = await this.prisma.tenantOidcProvider.findUnique({ where: { tenantId } });
+    if (!provider || ["Disabling", "Disabled", "Deleted"].includes(provider.status)) {
+      return { status: "blocked", reason: "TENANT_SSO_DISABLED" };
+    }
+    const issuer = (provider.issuer ?? this.zitadel.issuer).replace(/\/$/, "");
+    const identity = membership.user.identities.find(row =>
+      row.providerType === "zitadel" && row.identityProviderId === null &&
+      row.issuer.replace(/\/$/, "") === issuer,
+    );
+    if (!identity) return { status: "blocked", reason: "NATIVE_IDENTITY_REQUIRED" };
+    const grant = await this.prisma.tenantOidcGrant.findFirst({
+      where: { tenantId, userId, zitadelUserId: identity.externalSubject },
+    });
+    if (provider.enabled && provider.status === "Active" &&
+        provider.zitadelProjectId && grant?.zitadelUserId === identity.externalSubject &&
+        grant.status === "Active" && grant.zitadelGrantId) {
+      try {
+        await this.zitadel.verifyMemberGrant(
+          identity.externalSubject, grant.zitadelGrantId, provider.zitadelProjectId,
+        );
+        return { status: "ready" };
+      } catch {
+        return { status: "pending", reason: "UPSTREAM_GRANT_UNVERIFIED" };
+      }
+    }
+    if (["ReconciliationFailed", "ProvisioningFailed", "ActivationFailed"].includes(provider.status)) {
+      return { status: "blocked", reason: provider.lastErrorCode ?? "PROVISIONING_FAILED" };
+    }
+    return { status: "pending", reason: "UPSTREAM_GRANT_PENDING" };
+  }
+
+  /**
+   * The first direct client grant can follow membership creation by minutes or
+   * days. Invalidate a stale project-grant snapshot before allowing readiness
+   * to become visible, and start the same recoverable reconciliation path.
+   */
+  async onClientEntitlementGranted(tenantId: string, userId: string) {
+    const before = await this.memberReadiness(tenantId, userId);
+    if (before.status !== "pending") return before;
+    await this.prisma.tenantOidcProvider.updateMany({
+      where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+      data: { enabled: false, status: "NeedsReconciliation", grantsReconciledAt: null },
+    });
+    // Explicit activation is allowed; automatic activation MUST pass the
+    // complete guarded cohort and inbound-federation checks in AutoRollout.
+    if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") === "true") {
+      void this.expediteMemberReadiness(tenantId, userId).catch(() => undefined);
+    }
+    return { status: "pending" as const, reason: "UPSTREAM_GRANT_PENDING" };
+  }
+
+  /** Best-effort prompt reconciliation after commit; durable rollout retries remain enabled. */
+  async expediteMemberReadiness(tenantId: string, userId: string) {
+    const before = await this.memberReadiness(tenantId, userId);
+    if (before.status !== "pending") return before;
+    // Never use fromAutoRollout=true for a direct request: that would
+    // circumvent the worker's federation and all-tenant cohort barriers.
+    if (this.config?.get<string>("TENANT_OIDC_ACTIVATION_ALLOWED") !== "true") {
+      return before; // Auto mode runs exclusively through guarded AutoRollout.
+    }
+    // A local application grant or invitation can also be submitted by a
+    // machine principal. They must NEVER act as first-time OIDC activation:
+    // only the human-gated tenant activation endpoint (or the guarded auto
+    // rollout) can establish the durable first-activation marker.
+    const provider = await this.prisma.tenantOidcProvider.findUnique({
+      where: { tenantId }, select: { lastActivatedAt: true },
+    });
+    if (!provider?.lastActivatedAt) return before;
+    try {
+      await this.activate(tenantId, false);
+    } catch {
+      // Never leak issuer exceptions into a committed invitation response.
+      // The provider records its sanitized failure state for the next retry.
+    }
+    return this.memberReadiness(tenantId, userId);
+  }
+
   async provision(tenantId: string, fromAutoRollout = false) {
     await this.requireActiveTenant(tenantId);
     // The service never enables a tenant IdP based on an unverified project alone.
@@ -120,11 +219,44 @@ export class TenantOidcService {
 
       // The disabled Reconciling marker has already committed above.
         await this.zitadel.readProject(provider.zitadelProjectId);
+        // A tenant project-level role is shared by all of its OAuth clients.
+        // Until the exact-client pre-token gate is explicitly certified and
+        // enabled, assigning rp.tenant.member to an App Consumer would silently
+        // permit every app in that project. Exclude and revoke consumers by
+        // default rather than relying on UI-only allowlisting.
+        const appConsumerGateCertified =
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+          this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+        // Flags alone do NOT prove that ZITADEL invokes our webhook. If an
+        // operator forgot to bind the execution, project grants would bypass
+        // the per-client allowlist for every OAuth application in the tenant.
+        // Verify the live target, signing key and exclusive execution first.
+        if (appConsumerGateCertified) {
+          await this.zitadel.verifyAppConsumerActionsV2Gate();
+        }
         const members = await tx.tenantMembership.findMany({
           where: {
             tenantId,
             status: MembershipStatus.Active,
             user: { status: UserStatus.Active },
+            ...(appConsumerGateCertified ? {
+              OR: [
+                { roles: { some: { roleId: "sso-login" } } },
+                { groupMemberships: { some: { group: { roles: { some: { roleId: "sso-login" } } } } } },
+              ],
+            } : {
+              // Without a LIVE, certified exact-client pre-token Action,
+              // never issue project-wide roles to a newly invited SSO-only
+              // identity. Legacy RP members retain pre-#430 access until
+              // operator cutover; the installer must block new grant rollout.
+              appConsumer: { is: null },
+              OR: [
+                { roles: { some: { roleId: { not: "sso-login" } } } },
+                { groupMemberships: { some: { group: { roles: { some: {
+                  roleId: { not: "sso-login" },
+                } } } } } },
+              ],
+            }),
           },
           include: { user: { include: { identities: true } } },
         });
@@ -222,6 +354,136 @@ export class TenantOidcService {
     await this.zitadel.verifyIssuerSecurity();
   }
 
+  /**
+   * Safety monitor for shared-project App Consumer role grants. Even disabling
+   * the opt-in flag must remove already-assigned ZITADEL project roles: without
+   * a functioning preaccesstoken execution they authorize EVERY OAuth client.
+   *
+   * Ordinary RP members are never in the revocation set. Reconciliation and
+   * membership operations serialize on the tenant row lock. Remote failures
+   * preserve tracked intents so the next monitor pass retries revocation.
+   */
+  async enforceAppConsumerActionsV2Safety() {
+    // Include legacy #398 markers during migration, but never rely on them
+    // as the sole definition of an SSO principal. Any converted membership
+    // carrying sso-login must be protected if the issuer-global pre-token
+    // Action disappears; a ZITADEL project role is NOT a client entitlement.
+    const gateConfigured =
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_ENABLED") === "true" &&
+      this.config?.get<string>("RP_APP_CONSUMER_ACTIONS_V2_CERTIFIED") === "true";
+    const consumers = await this.prisma.tenantAppConsumer.findMany({
+      select: { tenantId: true, membership: { select: { userId: true } } },
+    });
+    const ssoMembers = await this.prisma.tenantMembership.findMany({
+      where: {
+        status: MembershipStatus.Active,
+        OR: [
+          { roles: { some: { roleId: "sso-login" } } },
+          { groupMemberships: { some: { group: { roles: { some: {
+            roleId: "sso-login",
+          } } } } } },
+        ],
+        // The #430 expand migration assigns sso-login to historical RP
+        // operators. Before first successful Actions V2 cutover their project
+        // grants still follow the previous RP-role policy. Revoking them on
+        // every startup would lock out existing owners/admins. Protect only
+        // SSO-only converted/new memberships and original #398 consumers
+        // until the signed exact-client gate is explicitly configured.
+        ...(gateConfigured ? {} : {
+          AND: [
+            { roles: { none: { roleId: { not: "sso-login" } } } },
+            { groupMemberships: { none: { group: { roles: { some: {
+              roleId: { not: "sso-login" },
+            } } } } } },
+          ],
+        }),
+      },
+      select: { tenantId: true, userId: true },
+    });
+    const protectedKeys = new Set([
+      ...consumers.map((row) => row.tenantId + ":" + row.membership.userId),
+      ...ssoMembers.map((row) => row.tenantId + ":" + row.userId),
+    ]);
+    if (!protectedKeys.size) return { state: "no-consumers", revoked: 0 };
+    const userIds = [...new Set([...consumers.map((row) => row.membership.userId),
+      ...ssoMembers.map((row) => row.userId)])];
+    const assigned = await this.prisma.tenantOidcGrant.findMany({
+      where: { userId: { in: userIds } },
+      select: { tenantId: true, userId: true },
+    });
+    const tracked = assigned.filter((row) =>
+      protectedKeys.has(row.tenantId + ":" + row.userId));
+    if (!tracked.length) return { state: "no-upstream-app-grants", revoked: 0 };
+
+    if (gateConfigured) {
+      try {
+        await this.zitadel.verifyAppConsumerActionsV2Gate();
+        return { state: "verified", revoked: 0 };
+      } catch {
+        // Never log upstream credentials or webhook signatures. Revoke below.
+      }
+    }
+    const byTenant = new Map<string, string[]>();
+    for (const row of tracked) {
+      byTenant.set(row.tenantId, [...(byTenant.get(row.tenantId) ?? []), row.userId]);
+    }
+    let revoked = 0;
+    let failed = 0;
+    for (const [tenantId, ids] of byTenant) {
+      try {
+        // Persist fail-closed RP state BEFORE any upstream I/O and before a
+        // transaction could abort; a later success must explicitly reconcile.
+        await this.prisma.tenantOidcProvider.updateMany({
+          where: { tenantId, status: { notIn: ["Disabling", "Disabled", "Deleted"] } },
+          data: {
+            enabled: false, status: "NeedsReconciliation",
+            grantsReconciledAt: null, lastErrorCode: "APP_CONSUMER_ACTION_BINDING_LOST",
+          },
+        });
+        await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Tenant" WHERE "id" = ${tenantId}::uuid FOR UPDATE`);
+          const provider = await tx.tenantOidcProvider.findUnique({
+            where: { tenantId }, include: { tenant: { select: { name: true } } },
+          });
+          if (!provider?.zitadelProjectId) {
+            throw new ServiceUnavailableException("App Consumer upstream project revocation unresolved");
+          }
+          const grants = await tx.tenantOidcGrant.findMany({
+            where: { tenantId, userId: { in: ids } },
+          });
+          for (const grant of grants) {
+            const remoteId = grant.zitadelGrantId ??
+              await this.zitadel.findExistingMemberGrant(grant.zitadelUserId, provider.zitadelProjectId);
+            if (remoteId) await this.zitadel.revokeMember(grant.zitadelUserId, remoteId);
+            await tx.tenantOidcGrant.delete({ where: { id: grant.id } });
+            revoked++;
+          }
+          if (grants.length) {
+            // Durable tenant-scoped security evidence, without OAuth client
+            // identifiers, subject PII, signing secrets or token contents.
+            await tx.auditLogEntry.create({ data: {
+              tenantId,
+              tenantName: provider.tenant.name,
+              actor: "system",
+              actorName: "ResourcePortal Security Monitor",
+              action: "tenant_oidc.app_consumer_binding_revoked",
+              resourceType: "TenantOidcProvider",
+              resourceId: tenantId,
+              result: "Success",
+              changes: { reason: "APP_CONSUMER_ACTION_BINDING_LOST", revokedCount: grants.length },
+            } });
+          }
+        }, { maxWait: 30_000, timeout: 120_000 });
+      } catch {
+        failed++;
+      }
+    }
+    if (failed) {
+      throw new ServiceUnavailableException("App Consumer upstream revocation pending secure recovery");
+    }
+    return { state: "app-consumer-grants-revoked", revoked };
+  }
+
   async activate(tenantId: string, fromAutoRollout = false) {
     // "auto" is allowed only in the built-in rollout path. An explicit "false"
     // remains a kill switch; neither tenant API nor background bootstrap can
@@ -256,7 +518,7 @@ export class TenantOidcService {
         status: "GrantsReconciled",
         grantsReconciledAt: provider.grantsReconciledAt,
       },
-      data: { enabled: true, status: "Active", lastErrorCode: null },
+      data: { enabled: true, status: "Active", lastErrorCode: null, lastActivatedAt: new Date() },
     });
     if (activated.count !== 1) {
       throw new ConflictException("Tenant membership changed before OIDC activation; reconcile grants again");

@@ -53,7 +53,7 @@ export class RemoteLanAttachmentService {
     if (existing) throw new ConflictException("Application already has a remote LAN attachment");
     if (app.desiredReplicas !== 1) throw new BadRequestException("Remote LAN requires exactly one application replica");
     if (uplinkMode === "ManagedSharedUplink") {
-      if (gate.agentVersion !== "gate-l2-v3")
+      if (!["gate-l2-v3","gate-l2-v4"].includes(gate.agentVersion ?? ""))
         throw new BadRequestException("Managed uplink requires RP Gate agent gate-l2-v3 (lease-bound anti-spoof policy)");
       let observed;
       try {
@@ -124,7 +124,7 @@ export class RemoteLanAttachmentService {
         staticAddress:input.staticAddress,staticGateway:input.staticGateway
       });
       if(address.addressMode==="Static") {
-        if(row.uplinkMode!=="ManagedSharedUplink"||row.gate.agentVersion!=="gate-l2-v3")
+        if(row.uplinkMode!=="ManagedSharedUplink"||!["gate-l2-v3","gate-l2-v4"].includes(row.gate.agentVersion ?? ""))
           throw new Error("Static LAN requires a managed v2 Gate");
         const observed=verifiedManagedLan(row.gateId,row.lanInterface,
           row.gate.observedLan,row.gate.observedLanAt);

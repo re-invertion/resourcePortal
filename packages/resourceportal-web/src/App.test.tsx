@@ -23,10 +23,38 @@ describe("Web Console bootstrap", () => {
   });
 
   it("renders controlled re-login when the BFF session is missing", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ error: { message: "Unauthorized" } }, 401)));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => String(input) === "/api/health/upgrade"
+      ? json({ updating: false }) : json({ error: { message: "Unauthorized" } }, 401)));
     render(<App />);
     expect(await screen.findByRole("heading", { name: "Sign in to ResourcePortal" })).toBeTruthy();
   });
+
+  for (const failure of ["http-503", "network"] as const) {
+    it(`offers session verification retry for ${failure} without displaying login`, async () => {
+      let attempts = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/health/upgrade") return json({ updating: false });
+        if (path === "/api/auth/me") {
+          attempts += 1;
+          if (attempts === 1) {
+            if (failure === "network") throw new Error("Offline");
+            return json({ error: { message: "Unavailable" } }, 503);
+          }
+          return json({ id: "u1", email: "user@example.test", status: "Active" });
+        }
+        if (path === "/api/tenants") return json([{ id: "t1", name: "Tenant", status: "Active" }]);
+        return json({ error: { message: "Unexpected" } }, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: "Unable to verify your session" })).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Sign in to ResourcePortal" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Retry session check" }));
+      expect(await screen.findByRole("heading", { name: "Choose a tenant" })).toBeTruthy();
+      expect(attempts).toBe(2);
+    });
+  }
 
   it("shows tenant selection for multiple active tenants", async () => {
     const fetchMock = vi.fn()
@@ -80,6 +108,7 @@ describe("Web Console bootstrap", () => {
     expect(screen.queryByLabelText("Display name")).toBeNull();
     expect(screen.queryByText(/Stable name used to identify this resource/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo Tenant" } });
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Demo Tenant");
     fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "not-an-email" } });
     expect(screen.getByRole("alert").textContent).toContain("valid email");
     // Formik schedules asynchronous schema validation on every edit. Wait
@@ -88,6 +117,8 @@ describe("Web Console bootstrap", () => {
       fireEvent.change(screen.getByLabelText("Contact email"), { target: { value: "owner@example.test" } });
     });
     expect(screen.queryByRole("alert")).toBeNull();
+    // Preserve the first edit across asynchronous validation and app refreshes.
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Demo Tenant");
     expect(screen.getByText(/Optional · Human-readable explanation/)).toBeTruthy();
     // Under a saturated CI runner React may not have committed the final
     // validation update yet. Assert the form is actually submittable before
@@ -165,5 +196,73 @@ describe("Web Console bootstrap", () => {
 
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Tenant" })).toBeNull();
+  });
+});
+
+describe("tenant route access guard (#438)", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    history.replaceState(null, "", "/tenants");
+  });
+
+  function stubTenantAccess(verify: () => Promise<Response>) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/health/upgrade") return json({ updating: false });
+      if (path === "/api/auth/me") return json({ id: "u1", email: "user@example.test", status: "Active" });
+      if (path === "/api/tenants") return json([{ id: "t1", name: "Secret Workspace", status: "Active" }]);
+      if (path === "/api/tenants/t1") return verify();
+      if (path === "/api/platform/maintenance") return json({ error: { message: "Forbidden" } }, 403);
+      if (path === "/api/tenants/t1/app-groups") return json([]);
+      if (path === "/api/tenants/t1/billing") return json({ balanceCredits: "10", balancePln: "1", billingState: "Active", lowBalance: false });
+      if (path === "/api/tenants/t1/operations") return json([]);
+      if (path === "/api/tenants/t1/volumes") return json([]);
+      return json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  for (const status of [403, 404]) {
+    for (const path of ["/tenants/t1/overview", "/tenants/t1/applications"]) {
+      it(`does not render tenant shell or disclose tenant metadata on ${status} for ${path}`, async () => {
+        const requests = stubTenantAccess(async () => json({ error: { message: "Not authorized" } }, status));
+        render(<App initialPath={path} />);
+        expect(await screen.findByRole("heading", { name: "No access to this tenant" })).toBeTruthy();
+        expect(screen.getByRole("link", { name: "Choose a tenant" }).getAttribute("href")).toBe("/tenants");
+        expect(document.body.textContent).not.toContain("Secret Workspace");
+        expect(screen.queryByRole("navigation", { name: /tenant/i })).toBeNull();
+        expect(screen.queryByRole("heading", { name: "Tenant Overview" })).toBeNull();
+        expect(requests.mock.calls.some(([input]) => String(input) === "/api/tenants/t1/app-groups")).toBe(false);
+      });
+    }
+  }
+
+  it("renders a permitted tenant only after the protected tenant.read request succeeds", async () => {
+    let grant!: (value: Response) => void;
+    const deferred = new Promise<Response>(resolve => { grant = resolve; });
+    stubTenantAccess(() => deferred);
+    render(<App initialPath="/tenants/t1/overview" />);
+    expect(await screen.findByText(/Loading tenant route/)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Tenant Overview" })).toBeNull();
+    grant(json({ id: "t1", name: "Secret Workspace", status: "Active" }));
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
+  });
+
+  it("treats a network/server failure as a retriable error, not authorization denial", async () => {
+    let attempts = 0;
+    const requests = stubTenantAccess(async () => {
+      attempts += 1;
+      if (attempts === 1) return json({ error: { message: "Unavailable" } }, 503);
+      return json({ id: "t1", name: "Secret Workspace", status: "Active" });
+    });
+    render(<App initialPath="/tenants/t1/overview" />);
+    expect(await screen.findByRole("heading", { name: "Unable to verify tenant access" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "No access to this tenant" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry access check" }));
+    expect(await screen.findByRole("heading", { name: "Tenant Overview" })).toBeTruthy();
+    // The dashboard also loads tenant details after the gate grants access.
+    expect(attempts).toBeGreaterThanOrEqual(2);
+    expect(requests.mock.calls.filter(([input]) => String(input) === "/api/tenants/t1").length).toBeGreaterThanOrEqual(2);
   });
 });

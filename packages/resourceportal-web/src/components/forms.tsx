@@ -70,6 +70,15 @@ function cloneValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+// Creation pages often build their initialValue object inline. A parent
+// refresh must not reinitialize an active form just because that object has
+// a new reference with the SAME content; doing so loses user edits between
+// validation and the Review step under production/API load.
+function useStableInitialPayload(initialValue: Payload): Payload {
+  const fingerprint = JSON.stringify(initialValue);
+  return useMemo(() => JSON.parse(fingerprint) as Payload, [fingerprint]);
+}
+
 function payloadError(cause: unknown) {
   return cause instanceof Error ? cause.message : "The form could not be submitted";
 }
@@ -268,7 +277,7 @@ function ObjectShapeFields({ values, onChange, disabled, references, errors, tou
 }
 
 function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { runtime: PreviewFormikRuntime; initialValue: Payload }) {
-  const initial = useMemo(() => cloneValue(initialValue), [initialValue]);
+  const initial = useStableInitialPayload(initialValue);
   const yup = previewYupRuntime();
   const validationSchema = useMemo(() => yup ? buildYupSchema(initial, yup, referenceOptions, fieldType, labelFor) : undefined, [initial, yup, referenceOptions]);
   const formik = runtime.useFormik({
@@ -287,7 +296,8 @@ function FormikStructuredPayloadForm({ runtime, initialValue, submitLabel, onSub
 }
 
 function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, disabled = false, referenceOptions }: JsonPayloadFormProps & { initialValue: Payload }) {
-  const initial = useMemo(() => cloneValue(initialValue), [initialValue]);
+  const initial = useStableInitialPayload(initialValue);
+  const [sourceInitial, setSourceInitial] = useState(initial);
   const [values, setValues] = useState<Payload>(initial);
   const [touched, setTouched] = useState<Record<string, unknown>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
@@ -297,11 +307,16 @@ function FallbackStructuredPayloadForm({ initialValue, submitLabel, onSubmit, di
     () => submitAttempted ? Object.fromEntries(Object.keys(values).map((key) => [key, true])) : touched,
     [submitAttempted, touched, values],
   );
-  useEffect(() => {
+  // Synchronize a changed template during render rather than in a passive
+  // effect. An effect can run after the first keystroke during hydration or a
+  // concurrent parent update and silently replace that edit with the template.
+  // The stable initial reference changes only when the template content does.
+  if (sourceInitial !== initial) {
+    setSourceInitial(initial);
     setValues(cloneValue(initial));
     setTouched({});
     setSubmitAttempted(false);
-  }, [initial]);
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitAttempted(true);

@@ -41,6 +41,12 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run api:prisma:generate
+      - name: Cache versioned Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install isolated Chromium for real OIDC PKCE login
         run: npx playwright install --with-deps chromium
       - name: Test isolated HTTPS tenant OIDC against real pinned ZITADEL

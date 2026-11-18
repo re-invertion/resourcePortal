@@ -8,9 +8,36 @@ const values: Record<string, string> = {
   ZITADEL_MANAGEMENT_TOKEN: "test-secret",
   ZITADEL_ORGANIZATION_ID: "global-org",
 };
-const service = () => new ZitadelTenantProjectService({
-  get: (key: string) => values[key],
+const service = (overrides: Record<string, string> = {}) => new ZitadelTenantProjectService({
+  get: (key: string) => ({ ...values, ...overrides })[key],
 } as ConfigService);
+
+const actionTarget = {
+  id: "12345",
+  endpoint: "https://rp.example.com/api/app-consumer-actions/preaccesstoken",
+  signingKey: "a-signed-production-webhook-key-of-sufficient-length",
+  payloadType: "PAYLOAD_TYPE_JSON",
+  restWebhook: { interruptOnError: true },
+};
+const actionExecutions = {
+  pagination: { totalResult: 1 },
+  executions: [{
+    condition: { function: { name: "preaccesstoken" } },
+    targets: ["12345"],
+  }],
+};
+const actionSettings = {
+  RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: actionTarget.id,
+  RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: actionTarget.endpoint,
+  RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: actionTarget.signingKey,
+};
+function mockActions(target: unknown, executions: unknown) {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ target }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(executions), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -86,6 +113,55 @@ describe("ZITADEL tenant OIDC project security", () => {
       new Response('{"error":"secret"}', { status: 401 }),
     ));
     await expect(service().createProject("t")).rejects.toThrow("HTTP 401");
+  });
+
+  it("verifies exact live signed interrupting preaccesstoken binding before App User grants", async () => {
+    const fetchMock = mockActions(actionTarget, actionExecutions);
+    await expect(service(actionSettings).verifyAppConsumerActionsV2Gate()).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v2/actions/targets/12345");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/v2/actions/executions/search");
+    const [, executionRequest] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [, targetRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(executionRequest.body).toBe(JSON.stringify({ pagination: { limit: 100 } }));
+    expect(targetRequest.headers).toMatchObject({ authorization: "Bearer test-secret" });
+  });
+
+  it.each([
+    ["wrong target identifier", { ...actionTarget, id: "999" }, actionExecutions],
+    ["wrong callback endpoint", { ...actionTarget, endpoint: "https://elsewhere.invalid/webhook" }, actionExecutions],
+    ["wrong signing key", { ...actionTarget, signingKey: "a-previous-or-attacker-key-not-the-configured-one" }, actionExecutions],
+    ["incorrect payload format", { ...actionTarget, payloadType: "PAYLOAD_TYPE_JWT" }, actionExecutions],
+    ["noninterrupting webhook", { ...actionTarget, restWebhook: { interruptOnError: false } }, actionExecutions],
+    ["nonblocking async target", { ...actionTarget, restWebhook: undefined, restAsync: {} }, actionExecutions],
+    ["missing exact execution", actionTarget, { pagination: { totalResult: 0 }, executions: [] }],
+    ["conflicting execution", actionTarget, { pagination: { totalResult: 2 },
+      executions: [actionExecutions.executions[0], actionExecutions.executions[0]] }],
+    ["extra target", actionTarget, { pagination: { totalResult: 1 },
+      executions: [{ condition: { function: { name: "preaccesstoken" } }, targets: ["12345", "999"] }] }],
+    ["wrong execution function", actionTarget, { pagination: { totalResult: 1 },
+      executions: [{ condition: { function: { name: "preuserinfo" } }, targets: ["12345"] }] }],
+    ["truncated search", actionTarget, { pagination: { totalResult: 2 },
+      executions: [actionExecutions.executions[0]] }],
+    ["missing response pagination", actionTarget, { executions: [actionExecutions.executions[0]] }],
+  ])("fails closed on %s when verifying App Consumer token gate", async (_label, target, executions) => {
+    mockActions(target, executions);
+    await expect(service(actionSettings).verifyAppConsumerActionsV2Gate())
+      .rejects.toThrow("execution binding not verified");
+  });
+
+  it("rejects invalid target references without calling ZITADEL management API", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const settings of [
+      { ...actionSettings, RP_APP_CONSUMER_ACTIONS_V2_TARGET_ID: "../other" },
+      { ...actionSettings, RP_APP_CONSUMER_ACTIONS_V2_SIGNING_KEY: "short" },
+      { ...actionSettings, RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "http://rp.example.com/api/app-consumer-actions/preaccesstoken" },
+      { ...actionSettings, RP_APP_CONSUMER_ACTIONS_V2_CALLBACK_URL: "https://rp.example.com/api/app-consumer-actions/preaccesstoken?bypass=true" },
+    ]) {
+      await expect(service(settings).verifyAppConsumerActionsV2Gate())
+        .rejects.toThrow("execution binding not verified");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses the actual shared issuer, never fabricates per-tenant issuer", () => {

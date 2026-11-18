@@ -4,6 +4,11 @@ const prisma = new PrismaClient();
 
 const roles = [
   {
+    id: "sso-login",
+    name: "SSO Login (no ResourcePortal permissions)",
+    permissions: [],
+  },
+  {
     id: "tenant-owner",
     name: "Tenant Owner",
     permissions: ["*"],

@@ -201,7 +201,7 @@ it("rejects invalid CPU without issuing a PATCH and aligns the minimum with DTO"
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) return json([{
-      id: "app1", name: "runner", image: "nginx:latest", cpu: "0.5",
+      id: "app1", name: "runner", image: "nginx:latest", cpu: "0.75",
       memoryBytes: "536870912", desiredReplicas: 1,
     }]);
     if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
@@ -210,9 +210,14 @@ it("rejects invalid CPU without issuing a PATCH and aligns the minimum with DTO"
     return json([]);
   }));
   render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="compute" />);
-  const cpuInput = await screen.findByRole("spinbutton", { name: "CPU cores" });
-  expect((cpuInput as HTMLInputElement).min).toBe("0.01");
+  const cpuInput = await screen.findByRole("spinbutton", { name: "CPU cores" }) as HTMLInputElement;
+  expect(cpuInput.min).toBe("0.01");
+  // The component begins with an initial 0.5 CPU value. Wait for fetched
+  // app data (0.75), or a late useEffect could reset the invalid user edit
+  // and submit the default value instead of exercising validation.
+  await waitFor(() => expect(cpuInput.value).toBe("0.75"));
   fireEvent.change(cpuInput, { target: { value: "0" } });
+  await waitFor(() => expect(cpuInput.value).toBe("0"));
   fireEvent.click(screen.getByRole("button", { name: "Save compute" }));
   expect(patches).toHaveLength(0);
   fireEvent.change(cpuInput, { target: { value: "0.01" } });
@@ -226,7 +231,7 @@ it("rejects an enabled health check without a command", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) return json([{
-      id: "app1", name: "runner", image: "nginx:latest", readOnlyRootFilesystem: false,
+      id: "app1", name: "runner", image: "nginx:latest", readOnlyRootFilesystem: true,
     }]);
     if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
       patches.push(JSON.parse(String(init.body))); return json({});
@@ -234,6 +239,11 @@ it("rejects an enabled health check without a command", async () => {
     return json([]);
   }));
   render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
+  // Wait for the fetched advanced form to replace its initial defaults.
+  // Otherwise the initial hydration effect can undo the checkbox click.
+  await waitFor(() => expect((screen.getByRole("checkbox", {
+    name: /Read-only root filesystem/,
+  }) as HTMLInputElement).checked).toBe(true));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Enable health check" }));
   // Advanced controls mount after state updates; assert the eventual input,
   // not the transient form just after clicking the checkbox.
