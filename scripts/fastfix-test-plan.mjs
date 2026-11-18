@@ -223,6 +223,8 @@ const commands = {
   ],
   "bug-reports": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/bug-reports/bug-reports.service.spec.ts", "src/mcp/admin-mcp-protocol.service.spec.ts"],
+    // Screenshot file-input reset is a Web behavior and requires its own RTL proof.
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/components/bug-report-dialog.test.tsx"],
   ],
   "platform-admin-ui": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx", "src/pages/platform-security-ops.test.tsx", "src/pages/platform-network-egress.test.tsx"],
@@ -510,6 +512,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/src\/mcp\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/auth\//, ["mcp-oauth"]],
   [/^packages\/resourceportal-api\/src\/bug-reports\//, ["bug-reports"]],
+  // Explicitly classify only the Bug Report Dialog and its regression fixture.
+  [/^packages\/resourceportal-web\/src\/components\/bug-report-dialog(?:\.test)?\.tsx$/, ["bug-reports"]],
   [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.service\.ts$/, ["applications"]],
   [/^packages\/resourceportal-api\/src\/platform-infrastructure\//, ["platform-release"]],
   [/^packages\/resourceportal-api\/src\/operations\/executors\/platform-release-update-operation\.executor(\.spec)?\.ts$/, ["platform-release"]],
