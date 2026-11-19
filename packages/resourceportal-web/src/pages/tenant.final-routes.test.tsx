@@ -52,7 +52,9 @@ it("renders domain detail from the real domain detail endpoint with friendly ass
  vi.stubGlobal("fetch",fetchMock);
  render(<TenantPage tenantId="t1" section="domains" resourceId={domainId} userId="u1"/>);
  expect(await screen.findByRole("heading",{name:"api.resource-portal.pl"})).toBeTruthy();
- expect(screen.getByText("commerce-prod / api")).toBeTruthy();
+ const groupLink = screen.getByRole("link", { name: "commerce-prod" });
+ expect(groupLink.getAttribute("href")).toBe("/tenants/t1/app-groups/ag1");
+ expect(groupLink.parentElement?.textContent).toContain("commerce-prod / api");
  expect(screen.queryByText(domainId)).toBeNull();
  expect(fetchMock.mock.calls.some(([input])=>String(input).endsWith(`/domains/${domainId}`))).toBe(true);
 });
