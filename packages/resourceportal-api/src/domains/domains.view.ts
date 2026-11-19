@@ -1,4 +1,4 @@
-import { CustomRootDomain, Domain, CustomRootDomainVerificationStatus } from "@prisma/client";
+import { CustomRootDomain, Domain, CustomRootDomainVerificationStatus, CertificateStatus } from "@prisma/client";
 import { domainPublicationDiagnostics } from "./domain-publication";
 import { protocolModeRequiresTls } from "../internal/traefik-routing";
 
@@ -44,12 +44,36 @@ export function mapDomain(domain: DomainWithEndpoint) {
     group.currentDeploymentVersion == null ? "NeverDeployed" :
     group.hasPendingChanges ? "PendingDeployment" : "RouteEligibleNotObserved";
 
+  // This is a fail-closed deploy/reconciliation preflight, not an assertion
+  // that Traefik has actually installed a route. Mirrors the publication and
+  // stopped-service filters but keeps TLS and stale deployments distinct.
+  const preflightBlockers: string[] = [];
+  if (!publication.eligible) preflightBlockers.push(publication.reason ?? "DomainNotPublishable");
+  if (!app) preflightBlockers.push("MissingApplicationEndpoint");
+  if (!group || group.tenantId !== domain.tenantId) preflightBlockers.push("AppGroupTenantUnknown");
+  else if (group.runtimeState === "Stopped") preflightBlockers.push("AppGroupStopped");
+  if (app?.runtimeState === "Stopped") preflightBlockers.push("ApplicationStopped");
+  if (app?.pendingDeletion) preflightBlockers.push("ApplicationPendingDeletion");
+  if (tlsEnabled && domain.certificateStatus === CertificateStatus.Error) {
+    preflightBlockers.push("TlsCertificateError");
+  }
+  const deploymentRequired = !group || group.currentDeploymentVersion == null || group.hasPendingChanges;
+  const preflightReady = preflightBlockers.length === 0 && !deploymentRequired;
+
   return {
     publication,
     ingress: {
       intentStatus: ingressIntent,
       observedRouter: "NotChecked" as const,
       currentDeploymentVersion: group?.currentDeploymentVersion ?? null,
+      preflight: {
+        readyForRuntimeInspection: preflightReady,
+        deploymentRequired,
+        blockers: preflightBlockers,
+        // A green preflight is only readiness to *inspect* runtime state,
+        // not evidence that a live router or backend is reachable.
+        liveRouterVerified: false as const,
+      },
     },
     id: domain.id,
     tenantId: domain.tenantId,

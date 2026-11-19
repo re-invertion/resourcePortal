@@ -103,3 +103,60 @@ describe("#394 ingress intent mirrors stopped-app reconciliation", () => {
     expect(mapDomain(domain("HTTPS")).ingress.intentStatus).toBe("Unknown");
   });
 });
+
+
+describe("#394 deployment preflight keeps publication, runtime state, and actual observation separate", () => {
+  const routed = (changes: Record<string, unknown> = {}) => {
+    const d = domain("HTTPS");
+    const endpoint = d.httpEndpoint!;
+    return mapDomain({
+      ...d, ...changes,
+      httpEndpoint: {
+        ...endpoint,
+        singleApp: {
+          ...endpoint.singleApp,
+          runtimeState: "Running", pendingDeletion: false,
+          appGroup: { tenantId: d.tenantId, runtimeState: "Running", currentDeploymentVersion: 3, hasPendingChanges: false },
+        },
+      },
+    }).ingress.preflight;
+  };
+
+  it("exposes readiness without claiming a live router has been observed", () => {
+    expect(routed()).toEqual({readyForRuntimeInspection:true, deploymentRequired:false, blockers:[], liveRouterVerified:false});
+  });
+
+  it("requires a real deployment before treating configuration as up-to-date", () => {
+    const d = domain("HTTPS");
+    const endpoint = d.httpEndpoint!;
+    for (const changes of [{currentDeploymentVersion:null,hasPendingChanges:false},{currentDeploymentVersion:3,hasPendingChanges:true}]) {
+      const preflight = mapDomain({...d,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",pendingDeletion:false,appGroup:{tenantId:d.tenantId,runtimeState:"Running",...changes}}}}).ingress.preflight;
+      expect(preflight.readyForRuntimeInspection).toBe(false);
+      expect(preflight.deploymentRequired).toBe(true);
+    }
+  });
+
+  it("blocks a stopped service or stopped group and a pending-deletion app", () => {
+    const d = domain("HTTPS"); const endpoint=d.httpEndpoint!;
+    for (const [appState, groupState, pendingDeletion, blocker] of [
+      ["Stopped","Running",false,"ApplicationStopped"],
+      ["Running","Stopped",false,"AppGroupStopped"],
+      ["Running","Running",true,"ApplicationPendingDeletion"],
+    ] as const) {
+      const preflight=mapDomain({...d,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:appState,pendingDeletion,appGroup:{tenantId:d.tenantId,runtimeState:groupState,currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
+      expect(preflight.readyForRuntimeInspection).toBe(false);
+      expect(preflight.blockers).toContain(blocker);
+    }
+  });
+
+  it("rejects invalid DNS, TLS Error and tenant-mismatched App Group without leaking routes", () => {
+    const d=domain("HTTPS");const endpoint=d.httpEndpoint!;
+    const invalid=mapDomain({...d,dnsStatus:"Invalid" as typeof d.dnsStatus,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",appGroup:{tenantId:d.tenantId,runtimeState:"Running",currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
+    expect(invalid.blockers).toContain("DnsNotValid");
+    const tls=routed({certificateStatus:"Error" as typeof d.certificateStatus});
+    expect(tls.blockers).toContain("TlsCertificateError");
+    const foreign=mapDomain({...d,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",appGroup:{tenantId:"another-tenant",runtimeState:"Running",currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
+    expect(foreign.blockers).toContain("AppGroupTenantUnknown");
+    expect(foreign.readyForRuntimeInspection).toBe(false);
+  });
+});

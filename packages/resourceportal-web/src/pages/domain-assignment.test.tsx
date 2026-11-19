@@ -112,3 +112,24 @@ it("#394 visibly warns that a stopped App Group is excluded from ingress despite
   expect(screen.getByText(/App Group is stopped; the ingress reconciler excludes its routes/)).toBeTruthy();
   expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
 });
+
+
+it("#394 deployment preflight shows actionable blockers without claiming live ingress reachability", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path=String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id:"d1",hostname:"photos.example.com",type:"Custom",customRootDomainId:"root1",
+      dnsStatus:"Invalid",certificateStatus:"Error",tlsEnabled:true,
+      publication:{eligible:false,reason:"DnsNotValid"},
+      ingress:{intentStatus:"NotEligible",observedRouter:"NotChecked",currentDeploymentVersion:3,
+        preflight:{readyForRuntimeInspection:false,deploymentRequired:false,blockers:["DnsNotValid","AppGroupStopped","TlsCertificateError"],liveRouterVerified:false}},
+      httpEndpoint:{id:"e1",name:"web",containerPort:8080},
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", {name:"Ingress deployment status"})).toBeTruthy();
+  expect(screen.getByText(/Blocked: DNS must validate; Start the App Group; Resolve the certificate error before deployment/)).toBeTruthy();
+  expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/live router verified/i)).toBeNull();
+});
