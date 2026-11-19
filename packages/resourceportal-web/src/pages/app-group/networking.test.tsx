@@ -69,7 +69,8 @@ describe("AppGroupNetworking", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Add endpoint/i }));
-    const protocol = screen.getByRole("combobox", { name: "Protocol mode" }) as HTMLSelectElement;
+    const protocol = screen.getAllByRole("combobox").find((item) => (item as HTMLSelectElement).value === "HTTP_REDIRECT_TO_HTTPS") as HTMLSelectElement;
+    expect(protocol).toBeTruthy();
     expect(protocol.value).toBe("HTTP_REDIRECT_TO_HTTPS");
     expect(Array.from(protocol.options).map((option) => [option.value, option.textContent])).toEqual([
       ["HTTP", "HTTP only"],
