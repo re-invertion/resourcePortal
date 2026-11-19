@@ -64,6 +64,42 @@ describe("AppGroupNetworking", () => {
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 
+  it("uses friendly protocol labels in endpoint editor without altering API enum values", async () => {
+    const fetchMock = fetchWithEndpoints();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Add endpoint/i }));
+    const protocol = screen.getAllByRole("combobox").find((item) => (item as HTMLSelectElement).value === "HTTP_REDIRECT_TO_HTTPS") as HTMLSelectElement;
+    expect(protocol).toBeTruthy();
+    expect(protocol.value).toBe("HTTP_REDIRECT_TO_HTTPS");
+    expect(Array.from(protocol.options).map((option) => [option.value, option.textContent])).toEqual([
+      ["HTTP", "HTTP only"],
+      ["HTTPS", "HTTPS only"],
+      ["HTTP_AND_HTTPS", "HTTP + HTTPS"],
+      ["HTTP_REDIRECT_TO_HTTPS", "HTTP → HTTPS redirect"],
+    ]);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
+  it("preserves the saved HTTPS enum when editing while showing readable protocol labels", async () => {
+    const fetchMock = fetchWithEndpoints([{
+      id: "ep-existing", name: "secure", containerPort: 8443,
+      protocolMode: "HTTPS",
+    }]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    expect(await screen.findByText("secure")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const protocol = screen.getAllByRole("combobox")
+      .find((item) => (item as HTMLSelectElement).value === "HTTPS") as HTMLSelectElement;
+    expect(protocol).toBeTruthy();
+    expect(protocol.selectedOptions[0]?.textContent).toBe("HTTPS only");
+    expect(Array.from(protocol.options).map((option) => option.value)).toEqual([
+      "HTTP", "HTTPS", "HTTP_AND_HTTPS", "HTTP_REDIRECT_TO_HTTPS",
+    ]);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
   it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = fetchWithEndpoints([
       {
