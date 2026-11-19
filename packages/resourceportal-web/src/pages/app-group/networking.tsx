@@ -188,10 +188,10 @@ export function AppGroupNetworking({
           </Field>
           <Field label="Protocol mode">
             <Select value={protocol} onChange={(event) => setProtocol(event.target.value)}>
-              <option value="HTTP">HTTP</option>
-              <option value="HTTPS">HTTPS</option>
-              <option value="HTTP_AND_HTTPS">HTTP + HTTPS</option>
-              <option value="HTTP_REDIRECT_TO_HTTPS">HTTP redirect to HTTPS</option>
+              <option value="HTTP">{protocolModeLabel("HTTP")}</option>
+              <option value="HTTPS">{protocolModeLabel("HTTPS")}</option>
+              <option value="HTTP_AND_HTTPS">{protocolModeLabel("HTTP_AND_HTTPS")}</option>
+              <option value="HTTP_REDIRECT_TO_HTTPS">{protocolModeLabel("HTTP_REDIRECT_TO_HTTPS")}</option>
             </Select>
           </Field>
           <div className="flex gap-2 md:col-span-2">
