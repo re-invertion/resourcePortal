@@ -5,6 +5,27 @@ import { TenantDomainDetailPage } from "./tenant-storage-pages";
 function json(data: unknown) { return new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } }); }
 afterEach(() => vi.unstubAllGlobals());
 
+it("#399 links a domain detail assignment to its same-tenant application without writes", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "api.example.test", type: "Managed",
+      dnsStatus: "Valid", tlsEnabled: true, certificateStatus: "Active",
+      httpEndpoint: { id: "e1", name: "web", singleAppId: "a1",
+        singleAppName: "frontend", appGroupId: "g1" },
+    });
+    if (path.endsWith("/app-groups")) return json([{ id: "g1", name: "production" }]);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  const group = await screen.findByRole("link", { name: "production" });
+  expect(group.getAttribute("href")).toBe("/tenants/t1/app-groups/g1");
+  const app = screen.getByRole("link", { name: "frontend" });
+  expect(app.getAttribute("href")).toBe("/tenants/t1/app-groups/g1/apps/a1");
+  expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+});
+
 it("discovers app and endpoint from an unassigned domain and requires confirmation before PATCH", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
