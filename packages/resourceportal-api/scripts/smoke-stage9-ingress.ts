@@ -19,6 +19,7 @@ const suffix = `${Date.now()}`;
 
 let tenantId: string | undefined;
 let appGroupId: string | undefined;
+let realTraefikServiceName: string | undefined;
 
 type JsonObject = Record<string, unknown>;
 
@@ -120,6 +121,11 @@ async function main() {
     },
   );
   const endpointId = stringField(endpoint, "id");
+  const httpEndpoint = await api<JsonObject>(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}/http-endpoints`,
+    { method: "POST", userId, body: { name: "public-http", containerPort: 80, protocolMode: "HTTP" } },
+  );
+  const httpEndpointId = stringField(httpEndpoint, "id");
   const customRoot = await api<JsonObject>(
     `/tenants/${tenantId}/domains/custom-root-domains`,
     {
@@ -165,6 +171,17 @@ async function main() {
     data: { dnsStatus: "Valid" },
   });
 
+  // A separate HTTP hostname exercises the actual Traefik Swarm data plane;
+  // the original HTTPS fixture continues to cover TLS label construction.
+  const httpHostname = `stage9-http-${suffix}.example.test`;
+  const httpDomain = await api<JsonObject>(`/tenants/${tenantId}/domains`, {
+    method: "POST", userId,
+    body: { type: "Custom", customRootDomainId, subdomain: `stage9-http-${suffix}`, httpEndpointId, tlsEnabled: false },
+  });
+  const httpDomainId = stringField(httpDomain, "id");
+  if (httpDomain.hostname !== httpHostname) throw new Error("HTTP fixture hostname differs from verified root");
+  await prisma.domain.update({ where: { id: httpDomainId }, data: { dnsStatus: "Valid" } });
+
   const deployment = await api<JsonObject>(
     `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
     {
@@ -197,6 +214,27 @@ async function main() {
     "traefik.http.services.nginx-public.loadbalancer.server.port",
     "80",
   );
+  expectLabel(deployedLabels, "traefik.http.routers.nginx-public-http.rule", `Host(\`${httpHostname}\`)`);
+
+  // The CI runner uses a real Traefik process, not the zero-replica anchor
+  // used by other Swarm checks. This extra service is never deployed outside
+  // the explicit isolated GitHub Actions fixture verified at script startup.
+  realTraefikServiceName = `rp-stage9-traefik-${suffix}`;
+  const isolatedNetwork = appGroupNetworkName(appGroupId);
+  await docker([
+    "service", "create", "--name", realTraefikServiceName,
+    "--network", isolatedNetwork,
+    "--publish", "published=18080,target=80,mode=host",
+    "--mount", "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly",
+    "--constraint", "node.role==manager", "--replicas", "1", "--detach=true",
+    "traefik:v3.6", "--providers.swarm=true",
+    "--providers.swarm.endpoint=unix:///var/run/docker.sock",
+    "--providers.swarm.exposedbydefault=false",
+    `--providers.swarm.network=${isolatedNetwork}`,
+    "--entrypoints.web.address=:80", "--log.level=WARN",
+  ]);
+  await expectReplicas(realTraefikServiceName, 1);
+  await expectRealTraefikHttp(httpHostname, 200, "initial running app");
 
   // Execute real tenant runtime operations against only the disposable Stage 9
   // Swarm service. These are Docker service state/label checks, NOT claims that
@@ -207,21 +245,25 @@ async function main() {
   await reconcileIngressOnce();
   await expectReplicas(serviceName, 0);
   assertNoTraefikLabels(await serviceLabels(serviceName), "App Group stopped");
+  await expectRealTraefikHttp(httpHostname, 404, "App Group stopped");
 
   await changeRuntime(appGroupRuntimePath, "start", userId);
   await reconcileIngressOnce();
   await expectReplicas(serviceName, 1);
   expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+  await expectRealTraefikHttp(httpHostname, 200, "restored running app");
 
   await changeRuntime(singleAppRuntimePath, "stop", userId);
   await reconcileIngressOnce();
   await expectReplicas(serviceName, 0);
   assertNoTraefikLabels(await serviceLabels(serviceName), "SingleApp stopped");
+  await expectRealTraefikHttp(httpHostname, 404, "SingleApp stopped");
 
   await changeRuntime(singleAppRuntimePath, "start", userId);
   await reconcileIngressOnce();
   await expectReplicas(serviceName, 1);
   expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+  await expectRealTraefikHttp(httpHostname, 200, "restored running app");
 
   // A runtime start/stop is not a new deployment revision. Stage9 must
   // exercise a legitimate new desired configuration before redeploying,
@@ -250,15 +292,20 @@ async function main() {
   await reconcileIngressOnce();
   await expectReplicas(serviceName, 1);
   expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+  await expectRealTraefikHttp(httpHostname, 200, "restored running app");
 
   await api(`/tenants/${tenantId}/domains/${domainId}`, {
     method: "PATCH",
     userId,
     body: { httpEndpointId: null },
   });
+  await api(`/tenants/${tenantId}/domains/${httpDomainId}`, {
+    method: "PATCH", userId, body: { httpEndpointId: null },
+  });
 
   await reconcileIngressOnce();
 
+  await expectRealTraefikHttp(httpHostname, 404, "both domains detached");
   const cleanedLabels = await serviceLabels(serviceName);
   for (const key of Object.keys(cleanedLabels)) {
     if (key.startsWith("traefik.")) {
@@ -268,10 +315,18 @@ async function main() {
     }
   }
 
-  console.log("Stage 9 ingress/TLS real Swarm lifecycle and service-label smoke completed successfully (Traefik router observation NOT checked)");
+  console.log("Stage 9 real isolated Swarm + actual Traefik HTTP routing lifecycle PASS (running 200, stopped 404, restored 200, detached 404)");
 }
 
 async function cleanup() {
+  if (realTraefikServiceName) {
+    await docker(["service", "rm", realTraefikServiceName], true);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const result = await docker(["service", "inspect", realTraefikServiceName], true);
+      if (result.exitCode !== 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
   if (appGroupId) {
     const stackName = stackNameFor(appGroupId);
     await docker(["stack", "rm", stackName], true);
@@ -479,6 +534,30 @@ function assertNoTraefikLabels(labels: Record<string, string>, state: string) {
   if (leaked.length > 0) {
     throw new Error(`Stage 9 ${state} still publishes Traefik label keys: ${leaked.join(", ")}`);
   }
+}
+
+async function expectRealTraefikHttp(hostname: string, expectedStatus: 200 | 404, stage: string) {
+  let observed = "No HTTP response";
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const response = await fetch("http://127.0.0.1:18080/", {
+        headers: { Host: hostname }, signal: AbortSignal.timeout(2500),
+      });
+      observed = String(response.status);
+      if (response.status === expectedStatus) {
+        if (expectedStatus === 200 && !(await response.text()).includes("Welcome to nginx")) {
+          observed = "200 without nginx backend content";
+        } else {
+          console.log(`Real Traefik HTTP route ${hostname}: ${expectedStatus} observed for ${stage}`);
+          return;
+        }
+      }
+    } catch (error) {
+      observed = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Real Traefik HTTP ${stage}: expected ${expectedStatus} from ${hostname}, observed ${observed}`);
 }
 
 async function serviceLabels(serviceName: string) {
