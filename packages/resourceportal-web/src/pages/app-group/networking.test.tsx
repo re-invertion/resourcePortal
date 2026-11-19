@@ -81,6 +81,25 @@ describe("AppGroupNetworking", () => {
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 
+  it("preserves the saved HTTPS enum when editing while showing readable protocol labels", async () => {
+    const fetchMock = fetchWithEndpoints([{
+      id: "ep-existing", name: "secure", containerPort: 8443,
+      protocolMode: "HTTPS",
+    }]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    expect(await screen.findByText("secure")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const protocol = screen.getAllByRole("combobox")
+      .find((item) => (item as HTMLSelectElement).value === "HTTPS") as HTMLSelectElement;
+    expect(protocol).toBeTruthy();
+    expect(protocol.selectedOptions[0]?.textContent).toBe("HTTPS only");
+    expect(Array.from(protocol.options).map((option) => option.value)).toEqual([
+      "HTTP", "HTTPS", "HTTP_AND_HTTPS", "HTTP_REDIRECT_TO_HTTPS",
+    ]);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
   it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = fetchWithEndpoints([
       {
