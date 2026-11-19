@@ -91,6 +91,8 @@ it("matches the final Penpot Domains hierarchy without exposing assignment UUIDs
   const groupLink = screen.getByRole("link", { name: "commerce-prod" });
   expect(groupLink.getAttribute("href")).toBe("/tenants/t1/app-groups/ag1");
   expect(groupLink.parentElement?.textContent).toContain("commerce-prod / api");
+  expect(screen.getByRole("link", { name: "api" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1");
+  expect(screen.getByRole("link", { name: "web" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag2/apps/app2");
   expect(screen.queryByText("ag1")).toBeNull();
 });
 
