@@ -111,11 +111,11 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
  async function linkVerifiedRoot(){
   if(!verifiedRootChoice)return;
   setWorking(true);
-  try { await apiRequest(root,{method:"PATCH",body:{customRootDomainId:verifiedRootChoice}}); await q.reload(); toast.success("Verified custom root linked. Deploy the App Group to apply routing changes."); }
+  try { await apiRequest(root,{method:"PATCH",body:{customRootDomainId:verifiedRootChoice}}); await Promise.all([q.reload(),dnsDiagnostics.reload()]); toast.success("Verified custom root linked. Deploy the App Group to apply routing changes."); }
   catch(c){toast.errorFrom(c,"Verified custom root could not be linked.");}
   finally{setWorking(false);}
  }
- async function validate(){setWorking(true);try{await apiRequest(`${root}/validate`,{method:"POST"});await q.reload();toast.success("Domain validation completed.");}catch(c){toast.errorFrom(c,"Domain validation failed.");}finally{setWorking(false);}}
+ async function validate(){setWorking(true);try{await apiRequest(`${root}/validate`,{method:"POST"});await Promise.all([q.reload(),dnsDiagnostics.reload()]);toast.success("Domain validation completed.");}catch(c){toast.errorFrom(c,"Domain validation failed.");}finally{setWorking(false);}}
  async function reconcileCertificate(){
   setTlsWorking(true);
   try{
@@ -179,7 +179,7 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
    {tlsQueued?<p className="mt-3 text-xs text-[#5B6678]">Reconciliation queued. Refresh diagnostics after the worker processes the operation.</p>:null}
    <div className="mt-4 flex flex-wrap gap-2">
      <Button onClick={()=>void reconcileCertificate()} disabled={tlsWorking||tlsDiagnostics.data?.canReconcile!==true}>{tlsWorking?"Queueing…":"Retry TLS reconciliation"}</Button>
-     <Button variant="ghost" onClick={()=>void Promise.all([tlsDiagnostics.reload(),q.reload()])}>Refresh diagnostics</Button>
+     <Button variant="ghost" onClick={()=>void Promise.all([tlsDiagnostics.reload(),dnsDiagnostics.reload(),q.reload()])}>Refresh diagnostics</Button>
    </div>
  </Card>:null}</div></main>;
 }

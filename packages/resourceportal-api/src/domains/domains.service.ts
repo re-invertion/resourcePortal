@@ -86,7 +86,11 @@ export class DomainsService {
     const directMatch = hostname === target || observed.cname.includes(target);
     const targetAddresses = new Set([...targetA.values, ...targetAaaa.values]);
     const flattenedMatch = targetAddresses.size > 0 && [...observed.a, ...observed.aaaa].some(address => targetAddresses.has(address));
-    const known = cname.available && a.available && aaaa.available;
+    // A/AAAA flattening cannot be declared mismatched when the configured
+    // target's address lookup failed: the public hostname may be correct.
+    const hasObservedAddresses = observed.a.length > 0 || observed.aaaa.length > 0;
+    const targetEvidenceAvailable = !hasObservedAddresses || (targetA.available && targetAaaa.available);
+    const known = cname.available && a.available && aaaa.available && targetEvidenceAvailable;
     const status = directMatch || flattenedMatch ? "Matches" : known ? "Mismatch" : "Unavailable";
     return { ...base, observed, status,
       recommendation: status === "Matches" ? "Public DNS points at the configured target. Ingress reachability is not verified." :
@@ -489,7 +493,10 @@ export class DomainsService {
       dto.httpEndpointId === undefined
         ? currentEndpointContext
         : nextEndpointContext;
-    const tlsState = this.domainTlsState(effectiveEndpointContext?.protocolMode);
+    // Root ownership repair alone must not modify existing certificate or TLS
+    // metadata, including when this legacy domain is unassigned or HTTP-only.
+    const rootOnlyRepair = dto.customRootDomainId !== undefined && dto.httpEndpointId === undefined;
+    const tlsState = rootOnlyRepair ? {} : this.domainTlsState(effectiveEndpointContext?.protocolMode);
 
     const domain = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.domain.update({

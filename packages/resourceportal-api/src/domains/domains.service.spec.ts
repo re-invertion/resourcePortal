@@ -161,7 +161,7 @@ function domainServiceFor(input: {
       findFirst: vi.fn().mockResolvedValue({
         id: existingDomain.httpEndpointId,
         protocolMode: endpointProtocolMode,
-        singleApp: { appGroupId: existingDomain.httpEndpoint.singleApp.appGroupId },
+        singleApp: { appGroupId: existingDomain.httpEndpoint?.singleApp?.appGroupId ?? "77777777-7777-4777-8777-777777777777" },
       }),
     },
     $transaction: vi
@@ -644,6 +644,28 @@ describe("#394 safe legacy custom-domain root linking", () => {
     expect(tx.appGroup.update).toHaveBeenCalled();
   });
 
+  it("does not clear TLS/certificate metadata when linking a legacy unassigned or HTTP-only domain", async () => {
+    const targetRoot = verifiedRoot();
+    for (const unassigned of [true, false]) {
+      const existingDomain = legacy();
+      if (unassigned) {
+        existingDomain.httpEndpointId = null;
+        (existingDomain as unknown as { httpEndpoint: null }).httpEndpoint = null;
+      }
+      const { service, tx } = domainServiceFor({
+        existingDomain, customRoot: targetRoot, endpointProtocolMode: "HTTP",
+      });
+      await service.updateDomain(existingDomain.tenantId, existingDomain.id, { customRootDomainId: targetRoot.id }, actor);
+      const call = tx.domain.update.mock.calls[0]?.[0] as DomainUpdateCall;
+      expect(call.data.customRootDomainId).toBe(targetRoot.id);
+      expect(call.data.httpEndpointId).toBeUndefined();
+      expect(call.data.tlsEnabled).toBeUndefined();
+      expect(call.data.certificateStatus).toBeUndefined();
+      expect(call.data.certificateIssuer).toBeUndefined();
+      expect(call.data.certificateExpiresAt).toBeUndefined();
+    }
+  });
+
   it("rejects missing tenant root and unverified or mismatching root without writing", async () => {
     const existingDomain = legacy();
     for (const targetRoot of [null, root(), root({rootDomain: "another.example.org", verificationStatus: CustomRootDomainVerificationStatus.Verified})]) {
@@ -709,6 +731,28 @@ describe("#394 tenant-scoped read-only DNS diagnostics", () => {
     expect(result.status).toBe("Unavailable");
     expect(result.recommendation).toContain("DNS lookup failed");
   });
+  it("reports flattened A/AAAA DNS as unavailable if target address lookups time out", async () => {
+    resolveCnameMock.mockRejectedValue(Object.assign(new Error("no CNAME"), { code: "ENODATA" }));
+    resolve4Mock.mockImplementation(async (hostname: string) => {
+      if (hostname === "apps.resource-portal.local") throw new Error("target resolver timeout");
+      return ["192.0.2.11"];
+    });
+    resolve6Mock.mockRejectedValue(Object.assign(new Error("no AAAA"), { code: "ENODATA" }));
+    const { service } = domainServiceFor({ existingDomain: custom() });
+    const result = await service.getDnsDiagnostics(custom().tenantId, custom().id);
+    expect(result.status).toBe("Unavailable");
+    expect(result.observed.a).toEqual(["192.0.2.11"]);
+    expect(result.recommendation).toContain("DNS lookup failed");
+  });
+
+  it("preserves direct CNAME matches even when target A/AAAA lookups fail", async () => {
+    resolveCnameMock.mockResolvedValue(["apps.resource-portal.local."]);
+    resolve4Mock.mockRejectedValue(new Error("target resolver timeout"));
+    resolve6Mock.mockRejectedValue(new Error("target resolver timeout"));
+    const { service } = domainServiceFor({ existingDomain: custom() });
+    expect((await service.getDnsDiagnostics(custom().tenantId, custom().id)).status).toBe("Matches");
+  });
+
   it("never probes DNS for a custom domain with unverified root", async () => {
     const existing = custom();existing.customRootDomain = root();
     const { service } = domainServiceFor({ existingDomain: existing });
