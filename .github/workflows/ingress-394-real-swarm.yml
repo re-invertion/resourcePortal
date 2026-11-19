@@ -1,0 +1,25 @@
+name: Issue 394 isolated ingress real Swarm proof
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/ingress-394-real-swarm.yml'
+      - '.github/workflows/swarm-integration.yml'
+      - 'packages/resourceportal-api/scripts/smoke-stage9-ingress.ts'
+
+permissions:
+  contents: read
+
+# This temporary acceptance gate is deliberately scoped to the single Draft
+# feature PR. It does not alter required merge/release checks or access tenant
+# production data. The called reusable workflow provisions its own Docker
+# Swarm, ephemeral database and synthetic .test domain.
+jobs:
+  isolated-ingress-lifecycle:
+    if: ${{ github.event.pull_request.number == 454 && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: ./.github/workflows/swarm-integration.yml
+    with:
+      force_gate: true
+      vpn_required: false
