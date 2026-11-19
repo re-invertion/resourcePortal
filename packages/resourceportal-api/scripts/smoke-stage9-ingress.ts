@@ -23,6 +23,19 @@ let appGroupId: string | undefined;
 type JsonObject = Record<string, unknown>;
 
 async function main() {
+  // This smoke directly modifies a synthetic verified-root fixture and deploys
+  // containers. It must never run against a production tenant or database.
+  if (
+    process.env.STAGE9_ISOLATED_SWARM_FIXTURE !== "true" ||
+    process.env.GITHUB_ACTIONS !== "true" ||
+    process.env.NODE_ENV !== "test" ||
+    !["127.0.0.1", "localhost", "::1"].includes(new URL(apiBaseUrl).hostname) ||
+    !["127.0.0.1", "localhost", "::1"].includes(
+      new URL(process.env.DATABASE_URL ?? "postgresql://invalid@invalid/invalid").hostname,
+    )
+  ) {
+    throw new Error("Stage 9 ingress lifecycle smoke requires an explicitly opted-in isolated local test API and database");
+  }
   const userId = process.env.SMOKE_USER_ID;
   if (!userId) {
     throw new Error("SMOKE_USER_ID is required");
@@ -185,6 +198,47 @@ async function main() {
     "80",
   );
 
+  // Execute real tenant runtime operations against only the disposable Stage 9
+  // Swarm service. These are Docker service state/label checks, NOT claims that
+  // a Traefik proxy has observed or accepted the router.
+  const appGroupRuntimePath = `/tenants/${tenantId}/app-groups/${appGroupId}/runtime`;
+  const singleAppRuntimePath = `/tenants/${tenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}/runtime`;
+  await changeRuntime(appGroupRuntimePath, "stop", userId);
+  await reconcileIngressOnce();
+  await expectReplicas(serviceName, 0);
+  assertNoTraefikLabels(await serviceLabels(serviceName), "App Group stopped");
+
+  await changeRuntime(appGroupRuntimePath, "start", userId);
+  await reconcileIngressOnce();
+  await expectReplicas(serviceName, 1);
+  expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+
+  await changeRuntime(singleAppRuntimePath, "stop", userId);
+  await reconcileIngressOnce();
+  await expectReplicas(serviceName, 0);
+  assertNoTraefikLabels(await serviceLabels(serviceName), "SingleApp stopped");
+
+  await changeRuntime(singleAppRuntimePath, "start", userId);
+  await reconcileIngressOnce();
+  await expectReplicas(serviceName, 1);
+  expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+
+  const redeployment = await api<JsonObject>(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
+    {
+      method: "POST",
+      userId,
+      idempotencyKey: `stage9-redeploy-${suffix}`,
+      body: { note: "stage9 ingress route real swarm lifecycle redeploy" },
+    },
+  );
+  const redeploymentId = stringField(redeployment, "id");
+  await runOperationToTerminal(redeploymentId, "Succeeded");
+  await expectDeploymentStatus(userId, redeploymentId, "Succeeded");
+  await reconcileIngressOnce();
+  await expectReplicas(serviceName, 1);
+  expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
+
   await api(`/tenants/${tenantId}/domains/${domainId}`, {
     method: "PATCH",
     userId,
@@ -202,7 +256,7 @@ async function main() {
     }
   }
 
-  console.log("Stage 9 ingress/TLS real Swarm smoke completed successfully");
+  console.log("Stage 9 ingress/TLS real Swarm lifecycle and service-label smoke completed successfully (Traefik router observation NOT checked)");
 }
 
 async function cleanup() {
@@ -365,6 +419,53 @@ async function expectDeploymentStatus(
     throw new Error(
       `Expected deployment ${deploymentId} to be ${expectedStatus}, got ${status}: ${diagnosticField(deployment.errorCode, "no-code")} ${diagnosticField(deployment.errorMessage, "")}`,
     );
+  }
+}
+
+async function changeRuntime(
+  resourcePath: string,
+  action: "start" | "stop",
+  userId: string,
+) {
+  const result = await api<JsonObject>(`${resourcePath}/${action}`, {
+    method: "POST",
+    userId,
+  });
+  await runOperationToTerminal(stringField(result, "operationId"), "Succeeded");
+}
+
+async function expectReplicas(serviceName: string, expected: number) {
+  const desired = await docker([
+    "service", "inspect", serviceName,
+    "--format", "{{.Spec.Mode.Replicated.Replicas}}",
+  ]);
+  if (Number(desired.stdout) !== expected) {
+    throw new Error(`Expected disposable Swarm service ${serviceName} desired replicas=${expected}, got ${desired.stdout}`);
+  }
+
+  // Docker service updates can complete before tasks converge. Verify the
+  // actual observed healthy/running replica count, not only desired state.
+  const expectedState = `${expected}/${expected}`;
+  let lastObserved = "<not listed>";
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const actual = await docker([
+      "service", "ls", "--filter", `name=${serviceName}`,
+      "--format", "{{.Name}} {{.Replicas}}",
+    ]);
+    const matching = actual.stdout.split("\n").find((row) =>
+      row.startsWith(`${serviceName} `),
+    );
+    lastObserved = matching?.slice(serviceName.length + 1) ?? "<not listed>";
+    if (lastObserved === expectedState) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Disposable Swarm service ${serviceName} never reached observed replicas ${expectedState}; last=${lastObserved}`);
+}
+
+function assertNoTraefikLabels(labels: Record<string, string>, state: string) {
+  const leaked = Object.keys(labels).filter((key) => key.startsWith("traefik."));
+  if (leaked.length > 0) {
+    throw new Error(`Stage 9 ${state} still publishes Traefik label keys: ${leaked.join(", ")}`);
   }
 }
 
