@@ -227,11 +227,14 @@ async function main() {
     "--publish", "published=18080,target=80,mode=host",
     "--mount", "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly",
     "--constraint", "node.role==manager", "--replicas", "1", "--detach=true",
+    // Docker Engine 29 rejects legacy API versions. Keep the provider API
+    // compatibility explicit on this disposable smoke service only.
+    "--env", "DOCKER_API_VERSION=1.44",
     "traefik:v3.6", "--providers.swarm=true",
     "--providers.swarm.endpoint=unix:///var/run/docker.sock",
     "--providers.swarm.exposedbydefault=false",
     `--providers.swarm.network=${isolatedNetwork}`,
-    "--entrypoints.web.address=:80", "--log.level=WARN",
+    "--entrypoints.web.address=:80", "--log.level=DEBUG",
   ]);
   await expectReplicas(realTraefikServiceName, 1);
   await expectRealTraefikHttp(httpHostname, 200, "initial running app");
@@ -556,6 +559,14 @@ async function expectRealTraefikHttp(hostname: string, expectedStatus: 200 | 404
       observed = error instanceof Error ? error.message : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  // The runner is disposable. Surface proxy/provider errors on any failure,
+  // rather than accepting an unexplained 404 as proof of a missing route.
+  const proxyLogs = realTraefikServiceName
+    ? await docker(["service", "logs", "--tail", "70", realTraefikServiceName], true)
+    : undefined;
+  if (proxyLogs) {
+    console.error(`Real Traefik disposable service logs (exit=${proxyLogs.exitCode}): ${proxyLogs.stdout.slice(-11000)}`);
   }
   throw new Error(`Real Traefik HTTP ${stage}: expected ${expectedStatus} from ${hostname}, observed ${observed}`);
 }
