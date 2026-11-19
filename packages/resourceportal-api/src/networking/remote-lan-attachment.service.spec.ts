@@ -20,7 +20,7 @@ function fixture() {
       findFirst: vi.fn(),
       findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockImplementation(({data}: {data: Record<string,unknown>}) => Promise.resolve(data)),
-      update: vi.fn().mockImplementation(({data}: {data: Record<string,unknown>}) => Promise.resolve(data)),
+      update: vi.fn().mockImplementation(({where,data}: {where:{id:string},data: Record<string,unknown>}) => Promise.resolve({id:where.id,...data})),
     },
     resourcePortalGate: {
       findFirst: vi.fn().mockResolvedValue({id: gateId, lanCidrs: ["192.168.50.0/24"], agentVersion: "gate-shell-v3"}),
