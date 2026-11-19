@@ -51,6 +51,19 @@ describe("AppGroupNetworking", () => {
     expect(screen.queryByText("HTTP_REDIRECT_TO_HTTPS")).toBeNull();
   });
 
+  it("links endpoint application to its tenant and App Group without changing routing", async () => {
+    const fetchMock = fetchWithEndpoints([{
+      id: "ep1", name: "public", containerPort: 8080,
+      protocolMode: "HTTP",
+    }]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    const application = await screen.findByRole("link", { name: "web" });
+    expect(application.getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1");
+    expect(screen.getByText("public")).toBeTruthy();
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
   it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = fetchWithEndpoints([
       {
