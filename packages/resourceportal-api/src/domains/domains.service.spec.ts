@@ -733,10 +733,11 @@ describe("#394 tenant-scoped read-only DNS diagnostics", () => {
   });
   it("reports flattened A/AAAA DNS as unavailable if target address lookups time out", async () => {
     resolveCnameMock.mockRejectedValue(Object.assign(new Error("no CNAME"), { code: "ENODATA" }));
-    resolve4Mock.mockImplementation(async (hostname: string) => {
-      if (hostname === "apps.resource-portal.local") throw new Error("target resolver timeout");
-      return ["192.0.2.11"];
-    });
+    resolve4Mock.mockImplementation((hostname: string) =>
+      hostname === "apps.resource-portal.local"
+        ? Promise.reject(new Error("target resolver timeout"))
+        : Promise.resolve(["192.0.2.11"]),
+    );
     resolve6Mock.mockRejectedValue(Object.assign(new Error("no AAAA"), { code: "ENODATA" }));
     const { service } = domainServiceFor({ existingDomain: custom() });
     const result = await service.getDnsDiagnostics(custom().tenantId, custom().id);

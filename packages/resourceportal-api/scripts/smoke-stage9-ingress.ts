@@ -223,6 +223,18 @@ async function main() {
   await expectReplicas(serviceName, 1);
   expectLabel(await serviceLabels(serviceName), "traefik.http.routers.nginx-public.rule", `Host(\`${hostname}\`)`);
 
+  // A runtime start/stop is not a new deployment revision. Stage9 must
+  // exercise a legitimate new desired configuration before redeploying,
+  // rather than bypassing the application's "no pending changes" guard.
+  await api(
+    `/tenants/${tenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}`,
+    {
+      method: "PATCH",
+      userId,
+      body: { description: `Stage9 isolated redeploy ${suffix}` },
+    },
+  );
+
   const redeployment = await api<JsonObject>(
     `/tenants/${tenantId}/app-groups/${appGroupId}/deploy`,
     {
