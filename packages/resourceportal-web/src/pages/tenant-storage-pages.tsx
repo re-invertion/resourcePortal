@@ -6,6 +6,7 @@ import { formatBytes, formatDate, idOf, items, text, useApi } from "../hooks/use
 import { applicationHref, tenantHref } from "../router/router";
 import { toast } from "../components/toast";
 import { NetworkingTabs, StorageTabs } from "../components/tenant-section-tabs";
+import { protocolModeLabel } from "./app-group/networking";
 
 type R=Record<string,unknown>;
 
@@ -156,7 +157,7 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
   <div className="grid gap-3">
     <Field label="App Group"><Select aria-label="Assign App Group" value={selectedGroup} onChange={e=>{setSelectedGroup(e.target.value);setSelectedApp("");setSelectedEndpoint("");}}><option value="">Select App Group</option>{items<R>(appGroups.data).map(g=><option key={idOf(g)} value={idOf(g)}>{text(g.name,idOf(g))}</option>)}</Select></Field>
     <Field label="Application"><Select aria-label="Assign application" value={selectedApp} disabled={!selectedGroup||groupApps.loading} onChange={e=>{setSelectedApp(e.target.value);setSelectedEndpoint("");}}><option value="">Select application</option>{items<R>(groupApps.data).map(app=><option key={idOf(app)} value={idOf(app)}>{text(app.name,idOf(app))}</option>)}</Select></Field>
-    <Field label="HTTP endpoint"><Select aria-label="Assign HTTP endpoint" value={selectedEndpoint} disabled={!selectedApp||appEndpoints.loading} onChange={e=>setSelectedEndpoint(e.target.value)}><option value="">Select endpoint</option>{items<R>(appEndpoints.data).map(ep=><option key={idOf(ep)} value={idOf(ep)}>{text(ep.name,idOf(ep))} · port {text(ep.containerPort,"?")}</option>)}</Select></Field>
+    <Field label="HTTP endpoint"><Select aria-label="Assign HTTP endpoint" value={selectedEndpoint} disabled={!selectedApp||appEndpoints.loading} onChange={e=>setSelectedEndpoint(e.target.value)}><option value="">Select endpoint</option>{items<R>(appEndpoints.data).map(ep=><option key={idOf(ep)} value={idOf(ep)}>{text(ep.name,idOf(ep))} · port {text(ep.containerPort,"?")}{text(ep.protocolMode,"") ? ` · ${protocolModeLabel(ep.protocolMode)}` : ""}</option>)}</Select></Field>
     {selectedApp&&!appEndpoints.loading&&!items<R>(appEndpoints.data).length?<Callout title="No endpoints">Create an HTTP endpoint in the application Networking settings before assigning this domain.</Callout>:null}
     <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={!selectedEndpoint||working} confirmTitle="Confirm domain assignment" confirmDescription="Route this domain to the selected application endpoint?" confirmLabel="Assign domain" onConfirm={assignDomain}>Assign to endpoint</ConfirmActionButton>
   </div></Card> : null}<Card className="p-5"><h2 className="mb-4 font-semibold text-[#172033]">TLS certificate</h2><DetailList items={[{label:"TLS",value:tlsEnabled?"Enabled":"Off"},{label:"Certificate",value:<StatusText tone={tlsEnabled?statusTone(d.certificateStatus):"neutral"}>{tlsEnabled?text(d.certificateStatus,"Pending"):"Not required"}</StatusText>},{label:"Issuer",value:tlsEnabled?text(d.certificateIssuer,"—"):"—"},{label:"Expires",value:tlsEnabled?formatDate(d.certificateExpiresAt):"—"},{label:"Created",value:formatDate(d.createdAt)}]}/></Card>
