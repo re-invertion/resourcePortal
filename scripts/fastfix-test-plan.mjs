@@ -202,7 +202,7 @@ const commands = {
   ],
   "domains": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/domains/domains.service.spec.ts", "src/domains/domains-certificate-diagnostics.spec.ts", "src/domains/domains-certificate-controller.spec.ts", "src/domains/domain-publication.spec.ts", "src/internal/deployment-domain-ownership.spec.ts", "src/internal/deployment-tls-recovery.spec.ts", "src/internal/deployment-stopped-resource-domain.spec.ts", "src/internal/ingress-reconciler.service.spec.ts", "src/internal/domain-certificate-reconciler.service.spec.ts", "src/internal/traefik-certificate-observer.service.spec.ts", "src/operations/executors/domain-operation.executors.spec.ts", "src/platform-dns/cloudflare-tenant-oauth.service.spec.ts"],
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-domain-tls-recovery.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-domain-tls-recovery.test.tsx", "src/pages/app-group/domain-preflight.test.tsx"],
   ],
   "applications": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/app-groups/stage4-singleapp.spec.ts", "src/app-groups/sensitive-runtime-config.spec.ts", "src/app-groups/app-groups.view.spec.ts", "src/app-groups/single-app-logs.service.spec.ts", "src/app-groups/single-app-restart-dedup.spec.ts"],
@@ -541,6 +541,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/tenant-access-pages\.tsx$/, ["tenant-access"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-activity-pages\.tsx$/, ["operations"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.tsx$/, ["mcp-oauth"]],
+  // App Group domain diagnostics require the ownership and application regressions.
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/domain-preflight(?:\.test)?\.tsx$/, ["domains", "applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-detail(\.test)?\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/create-app-wizard\.test\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/(platform|platform-final-pages|platform-mcp|platform\.final-routes\.test)\.tsx$/, ["platform-admin-ui", "platform-release"]],

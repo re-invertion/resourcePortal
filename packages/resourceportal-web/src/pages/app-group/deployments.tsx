@@ -5,6 +5,7 @@ import {
   Field, HistoryIcon, Select, StatusText, Textarea, TextInput, statusTone,
 } from "../../components/design-system";
 import { toast } from "../../components/toast";
+import { AppGroupDomainPreflight } from "./domain-preflight";
 import { formatDate, idOf, items, text, useApi } from "../../hooks/use-api";
 
 type Deployment = Record<string, unknown>;
@@ -113,6 +114,7 @@ export function AppGroupDeployments({
       <h2 className="text-xl font-semibold">Deployments</h2>
       <p className="mt-1 text-sm text-[#5B6678]">Publish workspace changes, filter deployment history and inspect operation results. An accepted deployment is not yet a successful rollout.</p>
     </div>
+    <AppGroupDomainPreflight tenantId={tenantId} appGroupId={appGroupId} />
     <Card className="p-5">
       <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
         <Field label="Deployment note" hint="Optional context for this release.">
