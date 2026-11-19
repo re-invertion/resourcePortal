@@ -187,7 +187,7 @@ it("refreshes DNS ownership evidence after confirmed legacy root linking", async
 
 it("links assigned domain to an App Group only when its ID exists in this tenant's groups", async () => {
   const tenantRoot = `/api/tenants/${tenantId}`;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith(`${tenantRoot}/app-groups`)) return json([{ id: "ag-tenant", name: "Tenant group" }]);
     if (path.endsWith(`${tenantRoot}/domains`)) return json([
