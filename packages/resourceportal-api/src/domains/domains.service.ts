@@ -50,6 +50,54 @@ export class DomainsService {
     return mapDomain(domain);
   }
 
+  /** Tenant-scoped, read-only public DNS evidence; never implies route reachability. */
+  async getDnsDiagnostics(tenantId: string, domainId: string) {
+    const domain = await this.findDomainOrThrow(tenantId, domainId);
+    const hostname = domain.hostname.toLowerCase().replace(/\.$/, "");
+    const target = (this.managedDns?.getDomainTargetHostname() ??
+      this.config.get<string>("RESOURCEPORTAL_PUBLIC_HOSTNAME", this.managedBaseDomain()))
+      .trim().toLowerCase().replace(/\.$/, "");
+    const base = { hostname, expected: { type: "CNAME", target },
+      observed: { cname: [] as string[], a: [] as string[], aaaa: [] as string[] },
+      status: "Unavailable" as "Unavailable" | "Matches" | "Mismatch" | "OwnershipUnverified",
+      recommendation: "DNS observations are unavailable; retry after the resolver is available." };
+    // Do not probe externally for hostnames whose tenant ownership is not proven.
+    if (domain.type === DomainType.Custom && !isDomainPublishable(
+      { ...domain, dnsStatus: DnsStatus.Valid }, tenantId)) {
+      return { ...base, status: "OwnershipUnverified" as const,
+        recommendation: "Verify ownership of a matching tenant root before checking public DNS." };
+    }
+    if (domain.type === DomainType.Managed) {
+      return { ...base, status: "Unavailable" as const,
+        recommendation: "This domain uses managed DNS. Check its managed DNS status instead." };
+    }
+    const query = async (resolver: (host: string) => Promise<string[]>, host: string) => {
+      try { return { values: await resolver(host), available: true }; }
+      catch (error) { return { values: [] as string[], available: (error as { code?: string }).code === "ENODATA" || (error as { code?: string }).code === "ENOTFOUND" }; }
+    };
+    const [cname, a, aaaa, targetA, targetAaaa] = await Promise.all([
+      query(resolveCname, hostname), query(resolve4, hostname), query(resolve6, hostname),
+      query(resolve4, target), query(resolve6, target),
+    ]);
+    const observed = {
+      cname: cname.values.map(value => value.toLowerCase().replace(/\.$/, "")),
+      a: a.values, aaaa: aaaa.values,
+    };
+    const directMatch = hostname === target || observed.cname.includes(target);
+    const targetAddresses = new Set([...targetA.values, ...targetAaaa.values]);
+    const flattenedMatch = targetAddresses.size > 0 && [...observed.a, ...observed.aaaa].some(address => targetAddresses.has(address));
+    // A/AAAA flattening cannot be declared mismatched when the configured
+    // target's address lookup failed: the public hostname may be correct.
+    const hasObservedAddresses = observed.a.length > 0 || observed.aaaa.length > 0;
+    const targetEvidenceAvailable = !hasObservedAddresses || (targetA.available && targetAaaa.available);
+    const known = cname.available && a.available && aaaa.available && targetEvidenceAvailable;
+    const status = directMatch || flattenedMatch ? "Matches" : known ? "Mismatch" : "Unavailable";
+    return { ...base, observed, status,
+      recommendation: status === "Matches" ? "Public DNS points at the configured target. Ingress reachability is not verified." :
+        status === "Mismatch" ? `Set CNAME ${hostname} to ${target}, or configure A/AAAA records matching the target's public addresses, then validate again.` :
+        "DNS lookup failed; do not treat an unavailable resolver as a record mismatch. Retry diagnostics." };
+  }
+
   /** Read-only, tenant-scoped TLS diagnostics from worker reconciliation audit.
    * DNS verification and route publication are independent from TLS readiness.
    * Never return raw observer/ACME errors: they may contain internal addresses.
@@ -395,11 +443,32 @@ export class DomainsService {
     actor: AuthenticatedUser,
   ) {
     const existing = await this.findDomainOrThrow(tenantId, domainId);
+    // This narrowly repairs legacy custom domains lacking an ownership link.
+    // It never transfers an already linked domain or changes hostname, DNS, TLS
+    // certificates or the existing endpoint association.
+    let verifiedRoot: Awaited<ReturnType<typeof this.findCustomRootDomainOrThrow>> | undefined;
+    if (dto.customRootDomainId !== undefined) {
+      if (typeof dto.customRootDomainId !== "string" ||
+          existing.type !== DomainType.Custom || existing.customRootDomainId != null) {
+        throw new ConflictException("LegacyCustomRootLinkOnly");
+      }
+      const root = await this.findCustomRootDomainOrThrow(tenantId, dto.customRootDomainId);
+      if (root.verificationStatus !== CustomRootDomainVerificationStatus.Verified) {
+        throw new ConflictException("CustomRootDomainNotVerified");
+      }
+      const hostname = existing.hostname.toLowerCase().replace(/\.$/, "");
+      const suffix = root.rootDomain.toLowerCase().replace(/\.$/, "");
+      if (!hostname.endsWith(`.${suffix}`) || hostname.length <= suffix.length + 1) {
+        throw new ConflictException("HostnameOutsideVerifiedRoot");
+      }
+      verifiedRoot = root;
+    }
+    const effectiveRoot = verifiedRoot ?? existing.customRootDomain;
     if (
       existing.type === DomainType.Custom &&
       dto.httpEndpointId !== null &&
-      (existing.customRootDomain?.verificationStatus !== CustomRootDomainVerificationStatus.Verified ||
-        existing.customRootDomain.tenantId !== tenantId)
+      (effectiveRoot?.verificationStatus !== CustomRootDomainVerificationStatus.Verified ||
+        effectiveRoot.tenantId !== tenantId)
     ) {
       throw new ConflictException("CustomRootDomainNotVerified");
     }
@@ -424,7 +493,10 @@ export class DomainsService {
       dto.httpEndpointId === undefined
         ? currentEndpointContext
         : nextEndpointContext;
-    const tlsState = this.domainTlsState(effectiveEndpointContext?.protocolMode);
+    // Root ownership repair alone must not modify existing certificate or TLS
+    // metadata, including when this legacy domain is unassigned or HTTP-only.
+    const rootOnlyRepair = dto.customRootDomainId !== undefined && dto.httpEndpointId === undefined;
+    const tlsState = rootOnlyRepair ? {} : this.domainTlsState(effectiveEndpointContext?.protocolMode);
 
     const domain = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.domain.update({
@@ -432,6 +504,7 @@ export class DomainsService {
         data: {
           httpEndpointId:
             dto.httpEndpointId === undefined ? undefined : dto.httpEndpointId,
+          customRootDomainId: verifiedRoot?.id,
           ...tlsState,
           updatedBy: actor.id,
         },
@@ -754,6 +827,9 @@ export class DomainsService {
               id: true,
               name: true,
               appGroupId: true,
+              runtimeState: true,
+              pendingDeletion: true,
+              appGroup: { select: { tenantId: true, runtimeState: true, currentDeploymentVersion: true, hasPendingChanges: true } },
             },
           },
         },

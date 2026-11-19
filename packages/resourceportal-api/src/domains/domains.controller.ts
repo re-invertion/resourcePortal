@@ -181,6 +181,13 @@ export class DomainsController {
     return this.domainsService.getDomain(tenantId, domainId);
   }
 
+  @RequirePermissions("domain.read")
+  @Get(":domainId/dns-diagnostics")
+  getDnsDiagnostics(
+    @Param("tenantId", ParseUUIDPipe) tenantId: string,
+    @Param("domainId", ParseUUIDPipe) domainId: string,
+  ) { return this.domainsService.getDnsDiagnostics(tenantId, domainId); }
+
   @RequirePermissions("domain.update")
   @Patch(":domainId")
   updateDomain(

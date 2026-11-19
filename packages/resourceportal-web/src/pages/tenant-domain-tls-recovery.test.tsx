@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { TenantDomainDetailPage } from "./tenant-storage-pages";
 
@@ -72,9 +72,10 @@ it("does not fabricate TLS findings when diagnostics API fails", async () => {
   }));
   render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
   expect(await screen.findByText("Diagnostics unavailable")).toBeTruthy();
-  expect(screen.queryByText("No evidence")).toBeNull();
-  expect(screen.queryByText("None")).toBeNull();
-  expect(screen.queryByText("Not checked")).toBeNull();
+  const tlsCard = screen.getByRole("heading", { name: "TLS recovery & diagnostics" }).parentElement!;
+  expect(within(tlsCard).queryByText("No evidence")).toBeNull();
+  expect(within(tlsCard).queryByText("None")).toBeNull();
+  expect(within(tlsCard).queryByText("Not checked")).toBeNull();
   expect(screen.getByRole("button", { name: "Refresh diagnostics" })).toBeTruthy();
 });
 
@@ -89,6 +90,96 @@ it("shows a loading state without diagnostic conclusions while the API is pendin
   }));
   render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
   expect(await screen.findByText("Loading TLS diagnostics…")).toBeTruthy();
-  expect(screen.queryByText("No evidence")).toBeNull();
-  expect(screen.queryByText("None")).toBeNull();
+  const tlsCard = screen.getByRole("heading", { name: "TLS recovery & diagnostics" }).parentElement!;
+  expect(within(tlsCard).queryByText("No evidence")).toBeNull();
+  expect(within(tlsCard).queryByText("None")).toBeNull();
+});
+
+it("refreshes independent DNS evidence after validation and explicit diagnostics refresh", async () => {
+  let dnsRequests = 0;
+  let dnsCorrected = false;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith(`${base}/dns-diagnostics`)) {
+      dnsRequests += 1;
+      return json({
+        status: dnsCorrected ? "Matches" : "Mismatch",
+        hostname: "app.example.com",
+        expected: { type: "CNAME", target: "apps.resource-portal.local" },
+        observed: { cname: dnsCorrected ? ["apps.resource-portal.local"] : ["wrong.example.net"], a: [], aaaa: [] },
+      });
+    }
+    if (url.endsWith(`${base}/validate`) && init?.method === "POST") {
+      dnsCorrected = true;
+      return json({ dnsStatus: "Valid" });
+    }
+    if (url.endsWith(`${base}/certificate/diagnostics`)) return json({
+      dnsStatus: "Valid", certificateStatus: "Error", canReconcile: false,
+    });
+    if (url.endsWith(base)) return json({
+      id: domainId, tenantId, type: "Custom", hostname: "app.example.com",
+      tlsEnabled: true, certificateStatus: "Error", dnsStatus: "Valid",
+    });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  expect(await screen.findByText("wrong.example.net")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Validate" }));
+  expect(await screen.findByText("apps.resource-portal.local")).toBeTruthy();
+  await waitFor(() => expect(dnsRequests).toBeGreaterThanOrEqual(2));
+
+  const beforeRefresh = dnsRequests;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh diagnostics" }));
+  await waitFor(() => expect(dnsRequests).toBeGreaterThan(beforeRefresh));
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    String(input).endsWith(`${base}/validate`) && init?.method === "POST",
+  )).toBe(true);
+});
+
+it("refreshes DNS ownership evidence after confirmed legacy root linking", async () => {
+  let linked = false;
+  let dnsRequests = 0;
+  const rootId = "33333333-3333-4333-8333-333333333333";
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith(`${base}/dns-diagnostics`)) {
+      dnsRequests += 1;
+      return json({
+        status: linked ? "Matches" : "OwnershipUnverified",
+        hostname: "app.example.com", expected: { type: "CNAME", target: "apps.resource-portal.local" },
+        observed: { cname: linked ? ["apps.resource-portal.local"] : [], a: [], aaaa: [] },
+      });
+    }
+    if (url.endsWith("/domains/custom-root-domains")) return json([
+      { id: rootId, rootDomain: "example.com", verificationStatus: "Verified" },
+    ]);
+    if (url.endsWith(base) && init?.method === "PATCH") {
+      const data = JSON.parse(String(init.body)) as { customRootDomainId: string };
+      expect(data.customRootDomainId).toBe(rootId);
+      linked = true;
+      return json({ id: domainId });
+    }
+    if (url.endsWith(base)) return json({
+      id: domainId, tenantId, hostname: "app.example.com", type: "Custom",
+      customRootDomainId: linked ? rootId : null, dnsStatus: "Valid", tlsEnabled: false,
+      publication: linked ? { eligible: true } : { eligible: false, reason: "VerifiedRootLinkMissing" },
+    });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  expect(await screen.findByText(/Not published: verified root link missing/)).toBeTruthy();
+  fireEvent.change(await screen.findByRole("combobox", { name: "Verified custom root" }), {
+    target: { value: rootId },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Link verified root" }));
+  const confirmation = screen.getByRole("dialog", { name: "Confirm verified root link" });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Link verified root" }));
+  await waitFor(() => expect(dnsRequests).toBeGreaterThanOrEqual(2));
+  expect(linked).toBe(true);
+  expect(fetchMock.mock.calls.some(([input, init]) =>
+    String(input).endsWith(base) && init?.method === "PATCH",
+  )).toBe(true);
+  expect(await screen.findByText("apps.resource-portal.local")).toBeTruthy();
 });

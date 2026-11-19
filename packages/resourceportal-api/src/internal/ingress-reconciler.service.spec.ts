@@ -357,3 +357,37 @@ describe("IngressReconcilerService domain ownership boundary (#204)", () => {
     }));
   });
 });
+
+describe("#394 stopped/running/redeploy ingress lifecycle", () => {
+  it("removes public routing when stopped, restores it only while running, then removes it after app stop", async () => {
+    const initial = deployedAppGroup();
+    const group = {
+      ...initial,
+      runtimeState: "Stopped",
+      singleApps: initial.singleApps.map((app) => ({ ...app, runtimeState: "Running" })),
+    };
+    const { runtime, service } = serviceFor([group]);
+    const serviceName = "rp_11111111_1111_4111_8111_111111111111_web_app";
+    const networkName = `rp-appgroup-${group.id}`;
+
+    // The stopped deployment never leaks a public router, even with a DNS-valid domain.
+    await service.reconcileBatch({ appGroupId: group.id });
+    expect(runtime.reconcileTraefikLabels).toHaveBeenLastCalledWith({ serviceName, desiredLabels: {} });
+    expect(runtime.reconcileAppGroupNetwork).toHaveBeenLastCalledWith({ networkName, traefikRequired: false });
+
+    // A new running state is reconciled from current tenant-owned domain bindings.
+    group.runtimeState = "Running";
+    await service.reconcileBatch({ appGroupId: group.id });
+    const published = runtime.reconcileTraefikLabels.mock.lastCall?.[0];
+    expect(published?.serviceName).toBe(serviceName);
+    expect(published?.desiredLabels["traefik.http.routers.web-app-public-http.rule"]).toBe("Host(`app.example.com`)");
+    expect(runtime.reconcileAppGroupNetwork).toHaveBeenLastCalledWith({ networkName, traefikRequired: true });
+
+    // Once the app is stopped, the reconciler revokes its router again.
+    group.singleApps[0].runtimeState = "Stopped";
+    await service.reconcileBatch({ appGroupId: group.id });
+    expect(runtime.reconcileTraefikLabels).toHaveBeenLastCalledWith({ serviceName, desiredLabels: {} });
+    expect(runtime.reconcileAppGroupNetwork).toHaveBeenLastCalledWith({ networkName, traefikRequired: false });
+    expect(runtime.reconcileTraefikLabels).toHaveBeenCalledTimes(3);
+  });
+});

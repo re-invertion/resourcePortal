@@ -32,3 +32,104 @@ it("discovers app and endpoint from an unassigned domain and requires confirmati
     expect(JSON.parse(String((patch?.[1] as RequestInit | undefined)?.body))).toEqual({ httpEndpointId: "e1" });
   });
 });
+
+it("#394 links a legacy custom hostname only to an explicitly selected verified root, preserving other domain settings", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", tenantId: "t1", type: "Custom", hostname: "photos.example.com",
+      customRootDomainId: null, dnsStatus: "Valid", certificateStatus: "Active",
+      publication: { eligible: false, reason: "VerifiedRootLinkMissing" },
+      tlsEnabled: true, httpEndpoint: { id: "e1", name: "web", containerPort: 8080 },
+    });
+    if (path.endsWith("/domains/custom-root-domains")) return json([
+      { id: "root-v", rootDomain: "example.com", verificationStatus: "Verified" },
+      { id: "root-pending", rootDomain: "pending.example.com", verificationStatus: "Pending" },
+      { id: "root-other", rootDomain: "unrelated.net", verificationStatus: "Verified" },
+    ]);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", { name: "Link verified custom root" })).toBeTruthy();
+  expect(screen.getByText(/verified root link missing/i)).toBeTruthy();
+  const choice = screen.getByRole("combobox", { name: "Verified custom root" });
+  expect(choice.querySelectorAll("option")).toHaveLength(2);
+  expect(screen.getByRole("button", { name: "Link verified root" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.change(choice, { target: { value: "root-v" } });
+  fireEvent.click(screen.getByRole("button", { name: "Link verified root" }));
+  expect(screen.getByRole("dialog", { name: "Confirm verified root link" })).toBeTruthy();
+  expect(fetchMock.mock.calls.filter(([, opts]) => (opts as RequestInit | undefined)?.method === "PATCH")).toHaveLength(0);
+  const dialog = screen.getByRole("dialog", { name: "Confirm verified root link" });
+  const confirm = Array.from(dialog.querySelectorAll("button")).find(b => b.textContent?.trim() === "Link verified root");
+  expect(confirm).toBeTruthy();
+  fireEvent.click(confirm!);
+  await waitFor(() => {
+    const patch = fetchMock.mock.calls.find(([url, opts]) => String(url).endsWith("/domains/d1") && (opts as RequestInit | undefined)?.method === "PATCH");
+    expect(JSON.parse(String((patch?.[1] as RequestInit | undefined)?.body))).toEqual({ customRootDomainId: "root-v" });
+  });
+});
+
+it("#394 shows observed DNS mismatch separately from ingress reachability", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1/dns-diagnostics")) return json({
+      hostname: "photos.example.com", status: "Mismatch", expected: {type: "CNAME", target: "edge.example.net"},
+      observed: {cname: ["wrong.example.net"], a: ["192.0.2.1"], aaaa: []},
+      recommendation: "Set CNAME photos.example.com to edge.example.net, then validate again.",
+    });
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "photos.example.com", type: "Custom", customRootDomainId: "root1",
+      dnsStatus: "Invalid", tlsEnabled: false, publication: {eligible:false,reason:"DnsNotValid"},
+    });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", {name:"Public DNS diagnostics"})).toBeTruthy();
+  expect(await screen.findByText("Mismatch")).toBeTruthy();
+  expect(screen.getAllByText(/CNAME photos\.example\.com.*edge\.example\.net/).length).toBeGreaterThan(0);
+  expect(screen.getByText("wrong.example.net")).toBeTruthy();
+  expect(screen.getByText("192.0.2.1")).toBeTruthy();
+  expect(screen.getByText(/does not confirm that an application is running/)).toBeTruthy();
+});
+
+it("#394 visibly warns that a stopped App Group is excluded from ingress despite valid DNS and TLS", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "photos.example.com", type: "Custom", customRootDomainId: "root1",
+      dnsStatus: "Valid", certificateStatus: "Active", tlsEnabled: true,
+      publication: { eligible: true, reason: null },
+      ingress: { intentStatus: "AppGroupStopped", observedRouter: "NotChecked", currentDeploymentVersion: 3 },
+      httpEndpoint: { id: "e1", name: "web", containerPort: 8080 },
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", { name: "Ingress deployment status" })).toBeTruthy();
+  expect(screen.getByText("AppGroupStopped")).toBeTruthy();
+  expect(screen.getByText(/App Group is stopped; the ingress reconciler excludes its routes/)).toBeTruthy();
+  expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
+});
+
+
+it("#394 deployment preflight shows actionable blockers without claiming live ingress reachability", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const path=String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id:"d1",hostname:"photos.example.com",type:"Custom",customRootDomainId:"root1",
+      dnsStatus:"Invalid",certificateStatus:"Error",tlsEnabled:true,
+      publication:{eligible:false,reason:"DnsNotValid"},
+      ingress:{intentStatus:"NotEligible",observedRouter:"NotChecked",currentDeploymentVersion:3,
+        preflight:{readyForRuntimeInspection:false,deploymentRequired:false,blockers:["DnsNotValid","AppGroupStopped","TlsCertificateError"],liveRouterVerified:false}},
+      httpEndpoint:{id:"e1",name:"web",containerPort:8080},
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  expect(await screen.findByRole("heading", {name:"Ingress deployment status"})).toBeTruthy();
+  expect(screen.getByText(/Blocked: DNS must validate; Start the App Group; Resolve the certificate error before deployment/)).toBeTruthy();
+  expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
+  expect(screen.queryByText(/live router verified/i)).toBeNull();
+});

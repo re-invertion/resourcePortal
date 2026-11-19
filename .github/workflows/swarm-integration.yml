@@ -73,6 +73,7 @@ jobs:
       STORAGE_SMOKE_PRIVILEGED_WORKER: "true"
       TRAEFIK_CERT_RESOLVER: smoke-resolver
       TRAEFIK_SERVICE_NAME: resourceportal-smoke-traefik-anchor
+      STAGE9_ISOLATED_SWARM_FIXTURE: "true"
       DOCKER_CONTEXT: default
       DOCKER_APPLY_TIMEOUT_MS: 60000
       DOCKER_CONFIG_PROVISION_TIMEOUT_MS: 60000

@@ -25,3 +25,33 @@ export function isDomainPublishable(
   const suffix = root.rootDomain.toLowerCase();
   return Boolean(hostname && hostname.endsWith(`.${suffix}`) && hostname.length > suffix.length + 1);
 }
+
+/**
+ * Explain publication eligibility using the same gate as the ingress reconciler.
+ * Eligibility does not prove a live Traefik router exists.
+ */
+export function domainPublicationDiagnostics(
+  domain: Parameters<typeof isDomainPublishable>[0] & { httpEndpointId?: string | null },
+  tenantId: string,
+): { eligible: boolean; reason: string | null } {
+  if (isDomainPublishable(domain, tenantId)) {
+    return domain.httpEndpointId
+      ? { eligible: true, reason: null }
+      : { eligible: false, reason: "NoHttpEndpoint" };
+  }
+  if (domain.tenantId !== tenantId) return { eligible: false, reason: "TenantMismatch" };
+  if (domain.dnsStatus !== DnsStatus.Valid) return { eligible: false, reason: "DnsNotValid" };
+  if (domain.type !== DomainType.Custom) return { eligible: false, reason: "UnsupportedDomainType" };
+  const root = domain.customRootDomain;
+  if (!root) return { eligible: false, reason: "VerifiedRootLinkMissing" };
+  if (root.tenantId !== tenantId) return { eligible: false, reason: "RootTenantMismatch" };
+  if (root.verificationStatus !== CustomRootDomainVerificationStatus.Verified) {
+    return { eligible: false, reason: "RootNotVerified" };
+  }
+  const hostname = domain.hostname?.toLowerCase();
+  const suffix = root.rootDomain.toLowerCase();
+  if (!hostname || !hostname.endsWith(`.${suffix}`) || hostname.length <= suffix.length + 1) {
+    return { eligible: false, reason: "HostnameOutsideVerifiedRoot" };
+  }
+  return { eligible: false, reason: "NotPublishable" };
+}
