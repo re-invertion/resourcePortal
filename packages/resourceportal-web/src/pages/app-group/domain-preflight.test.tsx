@@ -27,7 +27,7 @@ it("filters domain blockers by the assigned App Group, never by hostname or tena
 });
 
 it("shows actionable DomainOwnershipNotVerified pre-deploy and avoids server-side mutations", async () => {
-  const fetchMock = vi.fn(async () => json([assigned]));
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([assigned]));
   vi.stubGlobal("fetch", fetchMock);
   render(<AppGroupDomainPreflight tenantId="t1" appGroupId="ag1" />);
   expect(await screen.findByText(/DomainOwnershipNotVerified: link this custom hostname/)).toBeTruthy();
