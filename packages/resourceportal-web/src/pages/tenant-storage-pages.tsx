@@ -100,7 +100,7 @@ export function TenantDomainDetailPage({tenantId,domainId}:{tenantId:string;doma
  const groupApps=useApi<unknown>(selectedGroup?`${tenantRoot}/app-groups/${encodeURIComponent(selectedGroup)}/single-apps`:undefined);
  const appEndpoints=useApi<unknown>(selectedGroup&&selectedApp?`${tenantRoot}/app-groups/${encodeURIComponent(selectedGroup)}/single-apps/${encodeURIComponent(selectedApp)}/http-endpoints`:undefined);
  const d=q.data;
- const groupNames=new Map(items<R>(appGroups.data).map(r=>[idOf(r),text(r.name,text(r.displayName,"App group"))]));const assignment=()=>{if(!d?.httpEndpoint||typeof d.httpEndpoint!=="object")return "Unassigned";const ep=d.httpEndpoint as R;const app=text(ep.singleAppName,text(ep.name,"Application"));const group=groupNames.get(text(ep.appGroupId,""));return group?`${group} / ${app}`:app;};
+ const groupNames=new Map(items<R>(appGroups.data).map(r=>[idOf(r),text(r.name,text(r.displayName,"App group"))]));const assignment=()=>{if(!d?.httpEndpoint||typeof d.httpEndpoint!=="object")return "Unassigned";const ep=d.httpEndpoint as R;const app=text(ep.singleAppName,text(ep.name,"Application"));const groupId=text(ep.appGroupId,"");const group=groupNames.get(groupId);return group&&groupId?<span><a className="font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId,"app-groups",groupId)}>{group}</a> / {app}</span>:app;};
  async function assignDomain(){
   if(!selectedGroup||!selectedApp||!selectedEndpoint)return;
   setWorking(true);

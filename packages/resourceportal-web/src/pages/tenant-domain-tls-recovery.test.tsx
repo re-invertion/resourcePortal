@@ -208,3 +208,45 @@ it("links assigned domain to an App Group only when its ID exists in this tenant
   expect(screen.queryByRole("link", { name: "Other" })).toBeNull();
   expect(fetchMock.mock.calls.every(([, init]) => !init || !(init as RequestInit).method || (init as RequestInit).method === "GET")).toBe(true);
 });
+
+
+it("links Domain detail assignment only for an App Group present in the current tenant", async () => {
+  const groupId = "group-current-tenant";
+  const tenantRoot = `/api/tenants/${tenantId}`;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith(`${tenantRoot}/app-groups`)) return json([{ id: groupId, name: "Tenant app group" }]);
+    if (url.endsWith(base)) return json({
+      id: domainId, tenantId, hostname: "app.example.com",
+      dnsStatus: "Valid", tlsEnabled: false,
+      httpEndpoint: { id: "endpoint-1", appGroupId: groupId, singleAppName: "Photos", name: "web" },
+      publication: { eligible: true },
+    });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  const link = await screen.findByRole("link", { name: "Tenant app group" });
+  expect(link.getAttribute("href")).toBe(`/tenants/${tenantId}/app-groups/${groupId}`);
+  expect(link.parentElement?.textContent).toContain("Tenant app group / Photos");
+  expect(fetchMock.mock.calls.every(([, init]) => !init || !(init as RequestInit).method || (init as RequestInit).method === "GET")).toBe(true);
+});
+
+it("does not link an App Group absent from the tenant catalog in Domain detail", async () => {
+  const tenantRoot = `/api/tenants/${tenantId}`;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith(`${tenantRoot}/app-groups`)) return json([{ id: "another-group", name: "Other group" }]);
+    if (url.endsWith(base)) return json({
+      id: domainId, tenantId, hostname: "app.example.com",
+      dnsStatus: "Valid", tlsEnabled: false,
+      httpEndpoint: { id: "endpoint-1", appGroupId: "unlisted-group", singleAppName: "Photos" },
+      publication: { eligible: true },
+    });
+    return json([]);
+  }));
+  render(<TenantDomainDetailPage tenantId={tenantId} domainId={domainId} />);
+  expect(await screen.findByText("Photos")).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Other group" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "unlisted-group" })).toBeNull();
+});
