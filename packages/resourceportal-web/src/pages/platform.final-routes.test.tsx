@@ -256,13 +256,13 @@ describe("#399 capacity sample evidence never impersonates a measured zero", () 
     expect(within(row!).getByText("512 MiB (policy fallback)")).toBeTruthy();
     expect(within(row!).getAllByText("No samples").length).toBeGreaterThanOrEqual(3);
     expect(within(row!).getByText("5% · fallback")).toBeTruthy();
-    expect(screen.getByText(/Conservative policy fallback; no application memory samples/)).toBeTruthy();
+    expect(screen.getByText(/Conservative policy fallback; no positive measured memory demand/)).toBeTruthy();
   });
 
   it("keeps actual zero measurements when historical samples really exist", async () => {
     installCapacityApi({
       observations:"12",nodes:[],predictedDemandBytes:"536870912",nodePredictedP99Bytes:"0",
-      predictions:[{appId:"app-sampled",sampleCount:12,predictedBytes:"536870912",p99Bytes:"0",max7dBytes:"0",confidence:0.6,recentOomEvents:"0"}],
+      predictions:[{appId:"app-sampled",sampleCount:12,predictedBytes:"536870912",usedPolicyFallback:true,p99Bytes:"0",max7dBytes:"0",confidence:0.6,recentOomEvents:"0"}],
     });
     render(<PlatformInfrastructurePage section="capacity" />);
     const app = await screen.findByText("app-sampled");
@@ -270,6 +270,7 @@ describe("#399 capacity sample evidence never impersonates a measured zero", () 
     expect(row).not.toBeNull();
     expect(within(row!).getAllByText("0 B")).toHaveLength(2);
     expect(within(row!).getByText("12")).toBeTruthy();
-    expect(within(row!).getByText("60%")).toBeTruthy();
+    expect(within(row!).getByText("512 MiB (policy fallback)")).toBeTruthy();
+    expect(within(row!).getByText("60% · fallback")).toBeTruthy();
   });
 });

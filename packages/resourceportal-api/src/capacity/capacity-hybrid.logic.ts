@@ -55,6 +55,8 @@ export type AppMemoryPrediction = {
   max90dBytes: bigint;
   startupPeakBytes: bigint;
   predictedBytes: bigint;
+  /** True when prediction uses the hard limit/policy floor instead of positive observed demand. */
+  usedPolicyFallback: boolean;
   confidence: number;
   sampleCount: number;
   recentOomEvents: bigint;
@@ -204,6 +206,7 @@ export function predictAppMemory(
     max90dBytes: maxBigInt(ninety.map((item) => item.memoryPeakBytes)),
     startupPeakBytes,
     predictedBytes,
+    usedPolicyFallback: observedBase === 0n,
     confidence,
     sampleCount: app.length,
     recentOomEvents,

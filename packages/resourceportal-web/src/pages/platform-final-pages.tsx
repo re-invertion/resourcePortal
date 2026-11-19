@@ -311,10 +311,10 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const capacityTelemetryState = asRecord(capacityRow.telemetryState);
   const retainedSamples = numberOf(capacityRow.observations, NaN);
   const hasNodeTelemetry = capacityNodes.some(item => item.nodeMemoryAvailableBytes !== null && item.nodeMemoryAvailableBytes !== undefined);
-  const hasAppHistory = capacityPredictions.some(item => numberOf(item.sampleCount, 0) > 0);
+  const hasMeasuredPrediction = capacityPredictions.some(item => item.usedPolicyFallback !== true && numberOf(item.sampleCount, 0) > 0);
   const predictionSummary = capacityPredictions.length === 0 ? "No prediction history" : formatBytes(capacityRow.predictedDemandBytes);
   const predictionExplanation = !capacityPredictions.length ? "No application predictions yet; zero is not a measured demand." :
-    !hasAppHistory ? "Conservative policy fallback; no application memory samples yet." :
+    !hasMeasuredPrediction ? "Conservative policy fallback; no positive measured memory demand is available for predictions." :
     "Worst-node same-time P99 " + formatBytes(capacityRow.nodePredictedP99Bytes);
   const pct = (used: number, total: number) => total > 0 ? `${Math.round((used / total) * 100)}% used` : "Capacity unavailable";
   return <main>
@@ -382,10 +382,10 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
               ]} rows={capacityPredictions.map((item)=>({key:text(item.appId),cells:{
                 app:<code className="text-xs">{text(item.appId)}</code>,
                 samples:item.sampleCount === undefined || item.sampleCount === null ? "Not reported" : numberOf(item.sampleCount,0) === 0 ? "No samples" : String(numberOf(item.sampleCount,0)),
-                predicted:numberOf(item.sampleCount,NaN) === 0 ? `${formatBytes(item.predictedBytes)} (policy fallback)` : formatBytes(item.predictedBytes),
+                predicted:item.usedPolicyFallback === true || numberOf(item.sampleCount,NaN) === 0 ? `${formatBytes(item.predictedBytes)} (policy fallback)` : formatBytes(item.predictedBytes),
                 p99:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.p99Bytes),
                 peak:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.max7dBytes),
-                confidence:item.confidence === undefined || item.confidence === null ? "Unavailable" : `${Math.round(numberOf(item.confidence,0)*100)}%${numberOf(item.sampleCount,NaN) === 0 ? " · fallback" : ""}`,
+                confidence:item.confidence === undefined || item.confidence === null ? "Unavailable" : `${Math.round(numberOf(item.confidence,0)*100)}%${item.usedPolicyFallback === true || numberOf(item.sampleCount,NaN) === 0 ? " · fallback" : ""}`,
                 oom:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : text(item.recentOomEvents,"0"),
               }}))} empty={<EmptyState title="No prediction history yet" description="Hybrid starts conservatively from fresh telemetry and improves confidence as 7/30/90-day history accumulates."/>}/>
             </div>
