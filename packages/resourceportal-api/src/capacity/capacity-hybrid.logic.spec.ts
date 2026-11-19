@@ -64,6 +64,7 @@ describe("Hybrid capacity prediction", () => {
       DEFAULT_CAPACITY_POLICY,
       now,
     );
+    expect(prediction.usedPolicyFallback).toBe(false);
     expect(prediction.predictedBytes).toBeLessThan(3n * GiB);
     expect(prediction.predictedBytes).toBeGreaterThan(2n * GiB);
     expect(prediction.confidence).toBeLessThan(0.2);
@@ -78,7 +79,22 @@ describe("Hybrid capacity prediction", () => {
       now,
     );
     expect(prediction.predictedBytes).toBe(1250n * MiB);
+    expect(prediction.usedPolicyFallback).toBe(true);
     expect(prediction.confidence).toBe(0.05);
+  });
+
+  it("reports policy fallback even when historical zero-valued measurements exist", () => {
+    const prediction = predictAppMemory(
+      "sampled-zero",
+      [point(30_000, {appId: "sampled-zero", memoryCurrentBytes: 0n, memoryPeakBytes: 0n, startupPeakBytes: 0n})],
+      0n,
+      DEFAULT_CAPACITY_POLICY,
+      now,
+    );
+    expect(prediction.sampleCount).toBe(1);
+    expect(prediction.p99Bytes).toBe(0n);
+    expect(prediction.predictedBytes).toBeGreaterThan(0n);
+    expect(prediction.usedPolicyFallback).toBe(true);
   });
 
   it("does not interpret old cgroup peaks as current usage after a container restart", () => {

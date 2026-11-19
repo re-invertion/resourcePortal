@@ -283,3 +283,54 @@ describe("#399 capacity prediction search, sort and pagination", () => {
     expect(screen.getByText("app-13")).toBeTruthy();
   });
 });
+
+describe("#399 capacity sample evidence never impersonates a measured zero", () => {
+  function installCapacityApi(capacity: Record<string,unknown>) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/platform/capacity") return json(capacity);
+      return json([]);
+    }));
+  }
+
+  it("shows unavailable prediction and headroom without app samples or node telemetry", async () => {
+    installCapacityApi({predictions:[],nodes:[],observations:"0",predictedDemandBytes:"0",minimumNodeHeadroomBytes:"0",nodePredictedP99Bytes:"0"});
+    render(<PlatformInfrastructurePage section="capacity" />);
+    const summary = screen.getByRole("region", {name:"Capacity prediction summary"});
+    expect(await within(summary).findByText("No prediction history")).toBeTruthy();
+    expect(within(summary).getByText(/zero is not a measured demand/)).toBeTruthy();
+    expect(within(summary).getByText(/No current node telemetry/)).toBeTruthy();
+    expect(screen.getByText("No samples")).toBeTruthy();
+  });
+
+  it("identifies policy fallback separately from measured P99 and seven-day peak", async () => {
+    installCapacityApi({
+      observations:"0", nodes:[],predictedDemandBytes:"536870912",nodePredictedP99Bytes:"0",
+      predictions:[{appId:"app-no-samples",sampleCount:0,predictedBytes:"536870912",p99Bytes:"0",max7dBytes:"0",confidence:0.05,recentOomEvents:"0"}],
+    });
+    render(<PlatformInfrastructurePage section="capacity" />);
+    const app = await screen.findByText("app-no-samples");
+    const row = app.closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText("512 MiB (policy fallback)")).toBeTruthy();
+    expect(within(row!).getAllByText("No samples").length).toBeGreaterThanOrEqual(3);
+    expect(within(row!).getByText("5% · fallback")).toBeTruthy();
+    expect(screen.getByText(/Conservative policy fallback; no positive measured memory demand/)).toBeTruthy();
+  });
+
+  it("keeps actual zero measurements when historical samples really exist", async () => {
+    installCapacityApi({
+      observations:"12",nodes:[],predictedDemandBytes:"536870912",nodePredictedP99Bytes:"0",
+      predictions:[{appId:"app-sampled",sampleCount:12,predictedBytes:"536870912",usedPolicyFallback:true,p99Bytes:"0",max7dBytes:"0",confidence:0.6,recentOomEvents:"0"}],
+    });
+    render(<PlatformInfrastructurePage section="capacity" />);
+    const app = await screen.findByText("app-sampled");
+    const row = app.closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getAllByText("0 B")).toHaveLength(2);
+    expect(within(row!).getByText("12")).toBeTruthy();
+    expect(within(row!).getByText("512 MiB (policy fallback)")).toBeTruthy();
+    expect(within(row!).getByText("60% · fallback")).toBeTruthy();
+
+  });
+});
