@@ -208,6 +208,10 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const usage = useApi<Row>("/api/platform/resource-usage");
   const capacity = useApi<Row>("/api/platform/capacity");
   const release = useApi<Row>("/api/platform/release");
+  const [capacitySearch, setCapacitySearch] = useState("");
+  const [capacitySort, setCapacitySort] = useState<"app"|"predicted"|"confidence">("predicted");
+  const [capacityPage, setCapacityPage] = useState(0);
+  const capacityPageSize = 10;
   const [capacitySettings, setCapacitySettings] = useState({
     mode: "Hybrid",
     telemetryIntervalSeconds: "30",
@@ -307,6 +311,30 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const capacityNode = asRecord(capacityRow.latestNode);
   const capacityNodes = items<Row>(capacityRow.nodes);
   const capacityPredictions = items<Row>(capacityRow.predictions);
+  // Only operate on the platform-scoped identifiers already returned by this
+  // endpoint. No cross-tenant name lookups or private application enrichment.
+  const visibleCapacityPredictions = capacityPredictions
+    .filter(item=>text(item.appId).toLowerCase().includes(capacitySearch.trim().toLowerCase()))
+    .sort((a,b)=>{
+      if (capacitySort === "app") return text(a.appId).localeCompare(text(b.appId));
+      const field = capacitySort === "confidence" ? "confidence" : "predictedBytes";
+      // Predicted bytes can exceed JS's safe integer range: sort integer
+      // quantities without rounding away close, large predictions.
+      if (field === "predictedBytes") {
+        const bytes = (value: unknown) => { try { return BigInt(String(value ?? 0)); } catch { return 0n; } };
+        const aBytes = bytes(a.predictedBytes);
+        const bBytes = bytes(b.predictedBytes);
+        if (aBytes !== bBytes) return aBytes > bBytes ? -1 : 1;
+      } else {
+        const confidenceDifference = numberOf(b.confidence, 0) - numberOf(a.confidence, 0);
+        if (confidenceDifference !== 0) return confidenceDifference;
+      }
+      return text(a.appId).localeCompare(text(b.appId));
+    });
+  const capacityPages = Math.max(1,Math.ceil(visibleCapacityPredictions.length/capacityPageSize));
+  const currentCapacityPage = Math.min(capacityPage,capacityPages-1);
+  const pagedCapacityPredictions = visibleCapacityPredictions.slice(currentCapacityPage*capacityPageSize,(currentCapacityPage+1)*capacityPageSize);
+
   const capacityPolicy = asRecord(capacityRow.policy);
   const capacityTelemetryState = asRecord(capacityRow.telemetryState);
   const retainedSamples = numberOf(capacityRow.observations, NaN);
@@ -376,10 +404,15 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
           <div>
             <h3 className="text-sm font-semibold text-[#172033]">Application predictions</h3>
             <p className="mt-1 text-xs leading-5 text-[#526070]">P99 is the historical 99th-percentile memory; 7d peak is the highest observed seven-day peak. Prediction includes policy margins and may use a conservative fallback. Confidence reflects history coverage, not a guarantee. A missing sample is never shown as 0 B of measured usage.</p>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <Field label="Find application ID"><input className="w-full rounded-md border border-[#CAD4E1] bg-white px-3 py-2 text-sm" value={capacitySearch} onChange={event=>{setCapacitySearch(event.target.value);setCapacityPage(0);}} placeholder="Search platform-visible application IDs" /></Field>
+              <Field label="Sort predictions"><Select value={capacitySort} onChange={event=>{setCapacitySort(event.target.value as "app"|"predicted"|"confidence");setCapacityPage(0);}}><option value="predicted">Predicted memory (highest)</option><option value="confidence">Confidence (highest)</option><option value="app">Application ID (A–Z)</option></Select></Field>
+              <p role="status" className="text-xs text-[#526070]">{visibleCapacityPredictions.length} of {capacityPredictions.length} predictions · page {currentCapacityPage+1} of {capacityPages}</p>
+            </div>
             <div className="mt-3 overflow-hidden rounded-lg border border-[#E1E7F0]">
               <DataTable embedded className="rounded-none border-0" loading={capacity.loading} columns={[
                 {key:"app",label:"Application ID"},{key:"samples",label:"Samples"},{key:"predicted",label:"Predicted"},{key:"p99",label:"P99"},{key:"peak",label:"7d peak"},{key:"confidence",label:"Confidence"},{key:"oom",label:"OOM events"}
-              ]} rows={capacityPredictions.map((item)=>({key:text(item.appId),cells:{
+              ]} rows={pagedCapacityPredictions.map((item)=>({key:text(item.appId),cells:{
                 app:<code className="text-xs">{text(item.appId)}</code>,
                 samples:item.sampleCount === undefined || item.sampleCount === null ? "Not reported" : numberOf(item.sampleCount,0) === 0 ? "No samples" : String(numberOf(item.sampleCount,0)),
                 predicted:item.usedPolicyFallback === true || numberOf(item.sampleCount,NaN) === 0 ? `${formatBytes(item.predictedBytes)} (policy fallback)` : formatBytes(item.predictedBytes),
@@ -387,7 +420,11 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
                 peak:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.max7dBytes),
                 confidence:item.confidence === undefined || item.confidence === null ? "Unavailable" : `${Math.round(numberOf(item.confidence,0)*100)}%${item.usedPolicyFallback === true || numberOf(item.sampleCount,NaN) === 0 ? " · fallback" : ""}`,
                 oom:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : text(item.recentOomEvents,"0"),
-              }}))} empty={<EmptyState title="No prediction history yet" description="Hybrid starts conservatively from fresh telemetry and improves confidence as 7/30/90-day history accumulates."/>}/>
+              }}))} empty={<EmptyState title={capacityPredictions.length ? "No matching applications" : "No prediction history yet"} description={capacityPredictions.length ? "Change the application ID search to see more results." : "Hybrid starts conservatively from fresh telemetry and improves confidence as 7/30/90-day history accumulates."}/>}/>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-xs text-[#526070]">Showing {visibleCapacityPredictions.length ? currentCapacityPage*capacityPageSize+1 : 0}–{Math.min((currentCapacityPage+1)*capacityPageSize,visibleCapacityPredictions.length)} of {visibleCapacityPredictions.length}</span>
+              <div className="flex gap-2"><Button variant="secondary" disabled={currentCapacityPage===0} onClick={()=>setCapacityPage(Math.max(0,currentCapacityPage-1))}>Previous predictions</Button><Button variant="secondary" disabled={currentCapacityPage>=capacityPages-1} onClick={()=>setCapacityPage(Math.min(capacityPages-1,currentCapacityPage+1))}>Next predictions</Button></div>
             </div>
           </div>
           <div>
