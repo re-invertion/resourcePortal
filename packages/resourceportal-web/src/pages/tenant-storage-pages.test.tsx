@@ -88,7 +88,9 @@ it("matches the final Penpot Domains hierarchy without exposing assignment UUIDs
   expect(screen.getByRole("columnheader", { name: "Validation" })).toBeTruthy();
   expect(screen.getByRole("columnheader", { name: "Assigned to" })).toBeTruthy();
   expect(screen.getByRole("columnheader", { name: "Updated" })).toBeTruthy();
-  expect(screen.getByText("commerce-prod / api")).toBeTruthy();
+  const groupLink = screen.getByRole("link", { name: "commerce-prod" });
+  expect(groupLink.getAttribute("href")).toBe("/tenants/t1/app-groups/ag1");
+  expect(groupLink.parentElement?.textContent).toContain("commerce-prod / api");
   expect(screen.queryByText("ag1")).toBeNull();
 });
 
