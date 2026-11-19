@@ -56,6 +56,42 @@ describe("remote LAN control-plane desired state", () => {
     p.remoteLanAttachment.findUnique.mockResolvedValue({id:"already"});
     await expect(service.create(tenantId,input,actor)).rejects.toBeInstanceOf(ConflictException);
   });
+  it("restores only a cleanup-confirmed Revoked attachment as a new Pending revision", async () => {
+    const {p,service} = fixture();
+    const previousId = "aaaaaaaa-bbbb-4ccc-8ddd-111111111111";
+    p.remoteLanAttachment.findUnique.mockResolvedValue({
+      id:previousId, singleAppId, status:"Revoked", configurationRevision:3,
+      macAddress:"02:11:22:33:44:55",
+    });
+    const restored=await service.create(tenantId,input,actor);
+    expect(restored.status).toBe("Pending");
+    expect(p.remoteLanAttachment.create).not.toHaveBeenCalled();
+    expect(p.remoteLanAttachment.update).toHaveBeenCalledWith({
+      where:{id:previousId,status:"Revoked"},
+      data:expect.objectContaining({
+        gateId,networkId,lanInterface:"eth0",
+        lanCidr:"192.168.50.0/24",addressMode:"DHCP",
+        staticAddress:null,staticGateway:null,
+        configurationRevision:{increment:1},status:"Pending",
+        dhcpAddress:null,leaseExpiresAt:null,lastVerifiedAt:null,lastError:null,
+      }),
+    });
+    // Preserving the tombstone ID also preserves its stable MAC address.
+    expect(p.remoteLanAttachment.update.mock.calls[0]?.[0].data).not.toHaveProperty("macAddress");
+    expect(p.auditLogEntry.create).toHaveBeenCalledWith({
+      data:expect.objectContaining({
+        action:"remote-lan-attachment.restore",resourceId:previousId,
+      }),
+    });
+  });
+  it("does not reuse a Revoking attachment before node/Gate cleanup is proven",async()=>{
+    const {p,service}=fixture();
+    p.remoteLanAttachment.findUnique.mockResolvedValue({
+      id:"aaaaaaaa-bbbb-4ccc-8ddd-111111111111",status:"Revoking",
+    });
+    await expect(service.create(tenantId,input,actor)).rejects.toBeInstanceOf(ConflictException);
+    expect(p.remoteLanAttachment.update).not.toHaveBeenCalled();
+  });
   it("rejects invalid Gate subnet, bridge interface and replicated apps", async () => {
     const {p,service} = fixture();
     await expect(service.create(tenantId,{...input,lanInterface:"rp-gate"},actor)).rejects.toBeInstanceOf(BadRequestException);
