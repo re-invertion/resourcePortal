@@ -18,6 +18,7 @@ import {
 } from "../../components/design-system";
 import { idOf, items, text } from "../../hooks/use-api";
 import { toast } from "../../components/toast";
+import { applicationHref } from "../../router/router";
 
 type R = Record<string, unknown>;
 type EndpointRow = { app: R; endpoint: R };
@@ -219,7 +220,7 @@ export function AppGroupNetworking({
               app: (
                 <span className="flex items-center gap-2">
                   <NetworkIcon size={15} />
-                  <strong>{text(row.app.name)}</strong>
+                  <a className="font-semibold text-[#0F56A7] underline" href={applicationHref(tenantId, appGroupId, idOf(row.app))}>{text(row.app.name, "Application")}</a>
                 </span>
               ),
               endpoint: text(row.endpoint.name),
