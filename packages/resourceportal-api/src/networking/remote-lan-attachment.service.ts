@@ -50,7 +50,11 @@ export class RemoteLanAttachmentService {
       this.prisma.remoteLanAttachment.findUnique({ where: { singleAppId: input.singleAppId } }),
     ]);
     if (!gate || !app || !networkAttachment) throw new NotFoundException("Gate, application or its tenant Network not found");
-    if (existing) throw new ConflictException("Application already has a remote LAN attachment");
+    // Revoked is a cleanup-confirmed tombstone: Gate and node proofs have already
+    // established that the previous L2 endpoint is absent. Reuse it rather
+    // than creating a second row for the unique singleAppId.
+    if (existing && existing.status !== "Revoked")
+      throw new ConflictException("Application already has a remote LAN attachment");
     if (app.desiredReplicas !== 1) throw new BadRequestException("Remote LAN requires exactly one application replica");
     if (uplinkMode === "ManagedSharedUplink") {
       if (!["gate-l2-v3","gate-l2-v4"].includes(gate.agentVersion ?? ""))
@@ -78,26 +82,41 @@ export class RemoteLanAttachmentService {
     bytes[0] = (bytes[0] & 0xfc) | 0x02;
     const macAddress = Array.from(bytes.subarray(0, 6), byte => byte.toString(16).padStart(2, "0")).join(":");
     return this.prisma.$transaction(async tx => {
-      const created = await tx.remoteLanAttachment.create({
-        data: {
-          id, tenantId, gateId: gate.id, singleAppId: app.id, networkId: input.networkId,
-          lanInterface: input.lanInterface, lanCidr: addressing.lanCidr, macAddress,
-          uplinkMode, addressMode: addressing.addressMode,
-          staticAddress: addressing.staticAddress, staticGateway: addressing.staticGateway,
-          status: "Pending", createdBy: actor.id,
-        },
-      });
+      const created = existing
+        ? await tx.remoteLanAttachment.update({
+          // The status predicate prevents racing a concurrent restoration.
+          where: { id: existing.id, status: "Revoked" },
+          data: {
+            gateId: gate.id, networkId: input.networkId,
+            lanInterface: input.lanInterface, lanCidr: addressing.lanCidr,
+            uplinkMode, addressMode: addressing.addressMode,
+            staticAddress: addressing.staticAddress, staticGateway: addressing.staticGateway,
+            configurationRevision: { increment: 1 }, status: "Pending",
+            dhcpAddress: null, leaseExpiresAt: null, lastVerifiedAt: null, lastError: null,
+          },
+        })
+        : await tx.remoteLanAttachment.create({
+          data: {
+            id, tenantId, gateId: gate.id, singleAppId: app.id, networkId: input.networkId,
+            lanInterface: input.lanInterface, lanCidr: addressing.lanCidr, macAddress,
+            uplinkMode, addressMode: addressing.addressMode,
+            staticAddress: addressing.staticAddress, staticGateway: addressing.staticGateway,
+            status: "Pending", createdBy: actor.id,
+          },
+        });
       const tenant = await tx.tenant.findUnique({ where: { id: tenantId }, select: { name: true } });
       await tx.auditLogEntry.create({
         data: {
           tenantId, tenantName: tenant?.name ?? "Tenant",
           actor: actor.id, actorName: actor.displayName,
-          action: "remote-lan-attachment.create", resourceType: "RemoteLanAttachment",
+          action: existing ? "remote-lan-attachment.restore" : "remote-lan-attachment.create",
+          resourceType: "RemoteLanAttachment",
           resourceId: created.id, resourceName: app.id, result: "Success",
           correlationId: randomUUID(),
           changes: { gateId: gate.id, singleAppId: app.id, networkId: input.networkId,
             lanCidr: addressing.lanCidr, addressMode: addressing.addressMode,
-            uplinkMode, staticAddress: addressing.staticAddress, staticGateway: addressing.staticGateway },
+            uplinkMode, staticAddress: addressing.staticAddress, staticGateway: addressing.staticGateway,
+            restoredRevokedAttachmentId: existing?.id ?? null },
         },
       });
       return created;
