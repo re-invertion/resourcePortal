@@ -541,7 +541,9 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/tenant-access-pages\.tsx$/, ["tenant-access"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-activity-pages\.tsx$/, ["operations"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.tsx$/, ["mcp-oauth"]],
-  // App Group deploy-time domain diagnostics must select both ownership/ingress and App Group regressions.\n  [/^packages\\/resourceportal-web\\/src\\/pages\\/app-group\\/domain-preflight(?:\\.test)?\\.tsx$/, ["domains", "applications"]],\n  [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-detail(\.test)?\.tsx$/, ["applications"]],
+  // App Group domain diagnostics require the ownership and application regressions.
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/domain-preflight(?:\.test)?\.tsx$/, ["domains", "applications"]],
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-detail(\.test)?\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/create-app-wizard\.test\.tsx$/, ["applications"]],
   [/^packages\/resourceportal-web\/src\/pages\/(platform|platform-final-pages|platform-mcp|platform\.final-routes\.test)\.tsx$/, ["platform-admin-ui", "platform-release"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-security-ops(?:\.test)?\.tsx$/, ["platform-admin-ui", "operations", "security", "observability"]],
