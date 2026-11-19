@@ -151,9 +151,9 @@ describe("#394 deployment preflight keeps publication, runtime state, and actual
 
   it("rejects invalid DNS, TLS Error and tenant-mismatched App Group without leaking routes", () => {
     const d=domain("HTTPS");const endpoint=d.httpEndpoint!;
-    const invalid=mapDomain({...d,dnsStatus:"Invalid" as typeof d.dnsStatus,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",appGroup:{tenantId:d.tenantId,runtimeState:"Running",currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
+    const invalid=mapDomain({...d,dnsStatus:"Invalid",httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",appGroup:{tenantId:d.tenantId,runtimeState:"Running",currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
     expect(invalid.blockers).toContain("DnsNotValid");
-    const tls=routed({certificateStatus:"Error" as typeof d.certificateStatus});
+    const tls=routed({certificateStatus:"Error"});
     expect(tls.blockers).toContain("TlsCertificateError");
     const foreign=mapDomain({...d,httpEndpoint:{...endpoint,singleApp:{...endpoint.singleApp,runtimeState:"Running",appGroup:{tenantId:"another-tenant",runtimeState:"Running",currentDeploymentVersion:3,hasPendingChanges:false}}}}).ingress.preflight;
     expect(foreign.blockers).toContain("AppGroupTenantUnknown");
