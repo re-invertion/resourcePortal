@@ -6,7 +6,7 @@ function json(data: unknown) { return new Response(JSON.stringify(data), { statu
 afterEach(() => vi.unstubAllGlobals());
 
 it("#399 links a domain detail assignment to its same-tenant application without writes", async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const path = String(input);
     if (path.endsWith("/domains/d1")) return json({
       id: "d1", hostname: "api.example.test", type: "Managed",
