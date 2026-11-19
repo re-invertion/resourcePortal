@@ -255,6 +255,32 @@ describe("#399 capacity prediction search, sort and pagination", () => {
     expect(screen.getByText("app-13")).toBeTruthy();
   });
 
+  it("navigates back in one click after refreshed predictions shrink below a stale page index", async () => {
+    let predictions = Array.from({length:25},(_,index)=>({
+      appId:`app-${String(index+1).padStart(2,"0")}`,
+      predictedBytes:String((index+1)*1048576),
+      sampleCount:1, p99Bytes:"1048576", max7dBytes:"1048576", confidence:0.5, recentOomEvents:0,
+    }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+      String(input)==="/api/platform/capacity" ? json({predictions,nodes:[]}) : json([])
+    ));
+    render(<PlatformInfrastructurePage section="capacity" />);
+    await screen.findByText("app-25");
+    fireEvent.click(screen.getByRole("button",{name:"Next predictions"}));
+    fireEvent.click(screen.getByRole("button",{name:"Next predictions"}));
+    expect(screen.getByText(/25 of 25 predictions · page 3 of 3/)).toBeTruthy();
+
+    predictions=predictions.slice(0,12);
+    fireEvent.click(screen.getByRole("button",{name:"Refresh capacity"}));
+    await screen.findByText(/12 of 12 predictions · page 2 of 2/);
+    expect(screen.getByText("app-02")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button",{name:"Previous predictions"}));
+    expect(screen.getByText(/12 of 12 predictions · page 1 of 2/)).toBeTruthy();
+    expect(screen.getByText("app-12")).toBeTruthy();
+    expect(screen.queryByText("app-02")).toBeNull();
+  });
+
   it("searches only existing platform-visible IDs, resets page and explains no matching records", async () => {
     const fetchMock=capacityFixture();
     render(<PlatformInfrastructurePage section="capacity" />);

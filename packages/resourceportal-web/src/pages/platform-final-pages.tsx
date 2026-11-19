@@ -424,7 +424,7 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
               <span className="text-xs text-[#526070]">Showing {visibleCapacityPredictions.length ? currentCapacityPage*capacityPageSize+1 : 0}–{Math.min((currentCapacityPage+1)*capacityPageSize,visibleCapacityPredictions.length)} of {visibleCapacityPredictions.length}</span>
-              <div className="flex gap-2"><Button variant="secondary" disabled={currentCapacityPage===0} onClick={()=>setCapacityPage(value=>Math.max(0,value-1))}>Previous predictions</Button><Button variant="secondary" disabled={currentCapacityPage>=capacityPages-1} onClick={()=>setCapacityPage(value=>Math.min(capacityPages-1,value+1))}>Next predictions</Button></div>
+              <div className="flex gap-2"><Button variant="secondary" disabled={currentCapacityPage===0} onClick={()=>setCapacityPage(Math.max(0,currentCapacityPage-1))}>Previous predictions</Button><Button variant="secondary" disabled={currentCapacityPage>=capacityPages-1} onClick={()=>setCapacityPage(Math.min(capacityPages-1,currentCapacityPage+1))}>Next predictions</Button></div>
             </div>
           </div>
           <div>
