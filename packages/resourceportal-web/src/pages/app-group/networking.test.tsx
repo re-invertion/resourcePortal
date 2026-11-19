@@ -64,6 +64,22 @@ describe("AppGroupNetworking", () => {
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 
+  it("uses friendly protocol labels in endpoint editor without altering API enum values", async () => {
+    const fetchMock = fetchWithEndpoints();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Add endpoint/i }));
+    const protocol = screen.getByRole("combobox", { name: "Protocol mode" }) as HTMLSelectElement;
+    expect(protocol.value).toBe("HTTP_REDIRECT_TO_HTTPS");
+    expect(Array.from(protocol.options).map((option) => [option.value, option.textContent])).toEqual([
+      ["HTTP", "HTTP only"],
+      ["HTTPS", "HTTPS only"],
+      ["HTTP_AND_HTTPS", "HTTP + HTTPS"],
+      ["HTTP_REDIRECT_TO_HTTPS", "HTTP → HTTPS redirect"],
+    ]);
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+
   it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = fetchWithEndpoints([
       {
