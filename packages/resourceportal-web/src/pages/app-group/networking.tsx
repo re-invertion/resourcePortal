@@ -22,6 +22,17 @@ import { toast } from "../../components/toast";
 type R = Record<string, unknown>;
 type EndpointRow = { app: R; endpoint: R };
 
+/** Human-readable labels, while the API retains its stable protocol mode values. */
+export function protocolModeLabel(value: unknown): string {
+  switch (value) {
+    case "HTTP": return "HTTP only";
+    case "HTTPS": return "HTTPS only";
+    case "HTTP_AND_HTTPS": return "HTTP + HTTPS";
+    case "HTTP_REDIRECT_TO_HTTPS": return "HTTP → HTTPS redirect";
+    default: return "Unknown protocol mode";
+  }
+}
+
 export function AppGroupNetworking({
   tenantId,
   appGroupId,
@@ -213,7 +224,7 @@ export function AppGroupNetworking({
               ),
               endpoint: text(row.endpoint.name),
               port: text(row.endpoint.containerPort),
-              protocol: text(row.endpoint.protocolMode, "HTTP"),
+              protocol: protocolModeLabel(row.endpoint.protocolMode),
               actions: (
                 <div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" onClick={() => begin(row)}>

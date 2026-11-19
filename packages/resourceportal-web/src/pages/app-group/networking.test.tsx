@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AppGroupNetworking } from "./networking";
+import { AppGroupNetworking, protocolModeLabel } from "./networking";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -33,6 +33,24 @@ function fetchWithEndpoints(endpoints: unknown[] = []) {
 }
 
 describe("AppGroupNetworking", () => {
+  it("maps protocol modes to readable labels without changing API enum values", () => {
+    expect(protocolModeLabel("HTTP")).toBe("HTTP only");
+    expect(protocolModeLabel("HTTPS")).toBe("HTTPS only");
+    expect(protocolModeLabel("HTTP_AND_HTTPS")).toBe("HTTP + HTTPS");
+    expect(protocolModeLabel("HTTP_REDIRECT_TO_HTTPS")).toBe("HTTP → HTTPS redirect");
+    expect(protocolModeLabel("unexpected")).toBe("Unknown protocol mode");
+  });
+
+  it("displays the readable HTTP redirect label in the endpoint table", async () => {
+    vi.stubGlobal("fetch", fetchWithEndpoints([{
+      id: "ep-redirect", name: "public", containerPort: 8080,
+      protocolMode: "HTTP_REDIRECT_TO_HTTPS",
+    }]));
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);
+    expect(await screen.findByText("HTTP → HTTPS redirect")).toBeTruthy();
+    expect(screen.queryByText("HTTP_REDIRECT_TO_HTTPS")).toBeNull();
+  });
+
   it("confirms in-app before deleting an HTTP endpoint", async () => {
     const fetchMock = fetchWithEndpoints([
       {
