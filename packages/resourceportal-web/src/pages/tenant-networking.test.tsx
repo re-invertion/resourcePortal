@@ -80,6 +80,31 @@ describe("Tenant networking without routed Site VPN",()=>{
     }
   });
 
+  it("links topology connections only to their current tenant group and application", () => {
+    const app = topology.appGroups[0].singleApps[0];
+    const original = app.networkAttachments;
+    app.networkAttachments = [{
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-555555555555",
+      networkId, address: "10.240.4.10",
+    }];
+    try {
+      render(<TenantNetworkingPage tenantId={tenantId} section="topology" />);
+      const table = screen.getByRole("table");
+      const group = within(table).getByRole("link", {name:"sensors"});
+      const application = within(table).getByRole("link", {name:"sensor"});
+      expect(group.getAttribute("href")).toBe(
+        "/tenants/"+tenantId+"/app-groups/aaaaaaaa-bbbb-4ccc-8ddd-444444444444",
+      );
+      expect(application.getAttribute("href")).toBe(
+        "/tenants/"+tenantId+"/app-groups/aaaaaaaa-bbbb-4ccc-8ddd-444444444444/apps/"+appId,
+      );
+      expect(within(table).getByText("backend")).toBeTruthy();
+      expect(mock.request).not.toHaveBeenCalled();
+    } finally {
+      app.networkAttachments = original;
+    }
+  });
+
   it("creates an RP Gate with a one-time LAN enrollment flow",async()=>{
     mock.request.mockResolvedValueOnce({
       enrollment:{token:"test-token",expiresAt:"2026-10-23T15:00:00Z"},

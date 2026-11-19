@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { tenantHref } from "../router/router";
+import { applicationHref, appGroupHref, tenantHref } from "../router/router";
 import type { Connection, Edge } from "@xyflow/react";
 import { apiRequest } from "../api/client";
 import {
@@ -98,7 +98,7 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
   const topologyConnections = visibleTopology.appGroups.flatMap(group =>
     group.singleApps.flatMap(app =>
       app.networkAttachments.map(attachment => ({
-        id: attachment.id, group: group.name, app: app.name,
+        id: attachment.id, group: group.name, groupId: group.id, app: app.name, appId: app.id,
         network: visibleTopology.networks.find(network => network.id === attachment.networkId)?.name,
         address: attachment.address,
       })).filter(row => Boolean(row.network))));
@@ -320,7 +320,7 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
             <thead className="bg-[#F5F8FC]"><tr><th scope="col" className="p-3">App Group</th><th scope="col" className="p-3">Application</th>
               <th scope="col" className="p-3">Network</th><th scope="col" className="p-3">Address</th></tr></thead>
             <tbody>{topologyConnections.map(row=><tr key={row.id} className="border-t border-[#E1E7F0]">
-              <td className="p-3">{row.group}</td><td className="p-3">{row.app}</td><td className="p-3">{row.network}</td>
+              <td className="p-3"><a className="text-[#0F56A7] underline" href={appGroupHref(tenantId,row.groupId)}>{row.group}</a></td><td className="p-3"><a className="text-[#0F56A7] underline" href={applicationHref(tenantId,row.groupId,row.appId)}>{row.app}</a></td><td className="p-3">{row.network}</td>
               <td className="p-3 font-mono text-xs">{row.address}</td></tr>)}</tbody></table>
             {!topologyConnections.length ? <p className="p-4 text-sm text-[#526070]">No matching application-to-Network connections.</p> : null}
           </Card>}
