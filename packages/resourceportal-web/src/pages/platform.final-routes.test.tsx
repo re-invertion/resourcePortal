@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformPage } from "./platform";
+import { PlatformInfrastructurePage } from "./platform-final-pages";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -220,5 +221,65 @@ it("requires an explicit typed confirmation before starting a ResourcePortal upd
       targetVersion: "0.2.67",
       confirmation: "AKTUALIZUJ",
     });
+  });
+});
+
+
+describe("#399 capacity prediction search, sort and pagination", () => {
+  function capacityFixture() {
+    const predictions = Array.from({length: 13},(_,index)=>({
+      appId:`app-${String(index+1).padStart(2,"0")}`,
+      predictedBytes:String((index+1)*1048576),
+      p99Bytes:String(index*1048576),
+      max7dBytes:String(index*1048576),
+      confidence:(index+1)/20,
+      recentOomEvents:0,
+    }));
+    const fetchMock=vi.fn(async (input: RequestInfo | URL) => String(input)==="/api/platform/capacity" ? json({predictions,nodes:[]}) : json([]));
+    vi.stubGlobal("fetch",fetchMock);
+    return fetchMock;
+  }
+
+  it("limits visible predictions to 10 per page, sorts highest first, and navigates between pages", async () => {
+    capacityFixture();
+    render(<PlatformInfrastructurePage section="capacity" />);
+    const first=await screen.findByText("app-13");
+    expect(first).toBeTruthy();
+    expect(screen.queryByText("app-03")).toBeNull();
+    expect(screen.getByText(/13 of 13 predictions/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:"Next predictions"}));
+    expect(screen.getByText("app-03")).toBeTruthy();
+    expect(screen.queryByText("app-13")).toBeNull();
+    expect(screen.getByRole("button",{name:"Next predictions"}).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button",{name:"Previous predictions"}));
+    expect(screen.getByText("app-13")).toBeTruthy();
+  });
+
+  it("searches only existing platform-visible IDs, resets page and explains no matching records", async () => {
+    const fetchMock=capacityFixture();
+    render(<PlatformInfrastructurePage section="capacity" />);
+    await screen.findByText("app-13");
+    fireEvent.click(screen.getByRole("button",{name:"Next predictions"}));
+    fireEvent.change(screen.getByRole("textbox",{name:/Find application ID/}),{target:{value:"app-07"}});
+    expect(screen.getByText("app-07")).toBeTruthy();
+    expect(screen.queryByText("app-06")).toBeNull();
+    expect(screen.getByText(/1 of 13 predictions/)).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox",{name:/Find application ID/}),{target:{value:"missing-id"}});
+    expect(screen.getByText("No matching applications")).toBeTruthy();
+    expect(screen.queryByText("No prediction history yet")).toBeNull();
+    const capacityCalls=fetchMock.mock.calls.filter(call=>String(call[0])==="/api/platform/capacity");
+    expect(capacityCalls.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.every(call=>!String(call[0]).includes("/tenants/"))).toBe(true);
+  });
+
+  it("supports accessible ID and confidence sorting without fetching private tenant data", async () => {
+    capacityFixture();
+    render(<PlatformInfrastructurePage section="capacity" />);
+    await screen.findByText("app-13");
+    fireEvent.change(screen.getByRole("combobox",{name:/Sort predictions/}),{target:{value:"app"}});
+    expect(screen.getByText("app-01")).toBeTruthy();
+    expect(screen.queryByText("app-13")).toBeNull();
+    fireEvent.change(screen.getByRole("combobox",{name:/Sort predictions/}),{target:{value:"confidence"}});
+    expect(screen.getByText("app-13")).toBeTruthy();
   });
 });
