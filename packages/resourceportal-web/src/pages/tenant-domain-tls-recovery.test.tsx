@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { TenantDomainDetailPage } from "./tenant-storage-pages";
+import { TenantDomainDetailPage, TenantDomainsPage } from "./tenant-storage-pages";
 
 const tenantId = "11111111-1111-4111-8111-111111111111";
 const domainId = "22222222-2222-4222-8222-222222222222";
@@ -182,4 +182,29 @@ it("refreshes DNS ownership evidence after confirmed legacy root linking", async
     String(input).endsWith(base) && init?.method === "PATCH",
   )).toBe(true);
   expect(await screen.findByText("apps.resource-portal.local")).toBeTruthy();
+});
+
+
+it("links assigned domain to an App Group only when its ID exists in this tenant's groups", async () => {
+  const tenantRoot = `/api/tenants/${tenantId}`;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input);
+    if (path.endsWith(`${tenantRoot}/app-groups`)) return json([{ id: "ag-tenant", name: "Tenant group" }]);
+    if (path.endsWith(`${tenantRoot}/domains`)) return json([
+      { id: "d-local", hostname: "local.example.com", type: "Custom",
+        httpEndpoint: { appGroupId: "ag-tenant", singleAppName: "Photos" } },
+      { id: "d-not-listed", hostname: "other.example.com", type: "Custom",
+        httpEndpoint: { appGroupId: "ag-foreign", singleAppName: "Other" } },
+    ]);
+    if (path.endsWith("/custom-root-domains")) return json([]);
+    if (path.endsWith("/capabilities")) return json({ managedDomains: { enabled: true, baseDomain: "example.com" } });
+    if (path.endsWith("/cloudflare/status")) return json({ configured: false, connected: false });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainsPage tenantId={tenantId} />);
+  const group = await screen.findByRole("link", { name: "Tenant group" });
+  expect(group.getAttribute("href")).toBe(`/tenants/${tenantId}/app-groups/ag-tenant`);
+  expect(screen.queryByRole("link", { name: "Other" })).toBeNull();
+  expect(fetchMock.mock.calls.every(([, init]) => !init || !(init as RequestInit).method || (init as RequestInit).method === "GET")).toBe(true);
 });
