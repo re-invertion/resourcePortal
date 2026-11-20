@@ -124,3 +124,33 @@ describe("#399 App Group inventory discoverability and bounded history", () => {
     expect(screen.getByText("1–20 of 45")).toBeTruthy();
   });
 });
+
+
+it("#399 adjusts Previous navigation to the displayed page when a refresh shrinks the inventory", async () => {
+  const makeGroups = (count: number) => Array.from({ length: count }, (_, i) => ({
+    id: `ag-${i + 1}`, name: `group-${i + 1}`, singleApps: [],
+    runtimeState: "Running", health: "Healthy",
+  }));
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(json(makeGroups(45)))
+    .mockResolvedValue(json(makeGroups(40)));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  const view = render(<ApplicationsPage tenantId="t1" />);
+  try {
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("1–20 of 45")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("41–45 of 45")).toBeTruthy();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByText("21–40 of 40")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(screen.getByText("1–20 of 40")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
