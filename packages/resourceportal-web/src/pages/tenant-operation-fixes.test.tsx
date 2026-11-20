@@ -62,7 +62,7 @@ it("#399 filters tenant operations by resource name and actor without issuing wr
 });
 
 it("#399 shows a friendly operation resource name with its technical type as secondary context", async () => {
-  const fetchMock = vi.fn(async () => json([
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([
     { id: "op1", type: "APP_GROUP_DEPLOY", status: "Pending", resourceName: "photos service", resourceType: "AppGroupDeployment", createdAt: "2026-10-10T10:01:00Z" },
     { id: "op2", type: "VOLUME_CREATE", status: "Succeeded", resourceType: "Volume", createdAt: "2026-10-10T10:02:00Z" },
   ]));
