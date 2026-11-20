@@ -61,10 +61,10 @@ it("#399 refreshes all three App Group activity relationships with tenant-scoped
   });
   vi.stubGlobal("fetch",fetchMock);
   render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
-  expect(await screen.findByText("Pending")).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("1 explicitly related operations");
+  expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 1 explicitly related operations");
   fireEvent.click(screen.getByRole("button",{name:"Refresh activity"}));
-  expect(await screen.findByText("Succeeded")).toBeTruthy();
+  await waitFor(() => expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0));
   await waitFor(()=>expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(6));
   expect(operationReads).toBeGreaterThanOrEqual(2);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
@@ -89,4 +89,75 @@ it("#399 refuses stale activity when a relationship refresh fails after initial 
   await waitFor(()=>expect(screen.getByText("Activity relationships could not be verified")).toBeTruthy());
   expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 filters only verified App Group activity and clears search and status without writes", async () => {
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations")return json(operations);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps")return json([{id:"app-a"}]);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([{id:"deploy-a"}]);
+    throw new Error("Unexpected tenant path: "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  expect(await screen.findByText("SINGLE APP RESTART")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3 explicitly related operations");
+  expect(screen.queryByText("APP GROUP DELETE")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Filter App Group activity status"),{target:{value:"Pending"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
+  expect(screen.getByText("SINGLE APP RESTART")).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Search App Group activity"),{target:{value:"deploy"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 0 of 3");
+  expect(screen.queryByText("SINGLE APP RESTART")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3");
+  expect(screen.getByText("APP GROUP ROLLBACK")).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DELETE")).toBeNull();
+  expect((screen.getByRole("button",{name:"Clear activity filters"}) as HTMLButtonElement).disabled).toBe(true);
+  expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 searches the rendered operation labels with spaces, not only raw underscore keys", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input:RequestInfo|URL)=>{
+    const path=String(input);
+    if(path.endsWith("/operations"))return json(operations);
+    if(path.endsWith("/single-apps"))return json([{id:"app-a"}]);
+    if(path.endsWith("/deployments"))return json([{id:"deploy-a"}]);
+    throw new Error("Unexpected path "+path);
+  }));
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  expect(await screen.findByText("APP GROUP DEPLOY")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Search App Group activity"),{target:{value:"single app restart"}});
+  expect(screen.getByText("SINGLE APP RESTART")).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Search App Group activity"),{target:{value:"APP GROUP DEPLOY"}});
+  expect(screen.getByText("APP GROUP DEPLOY")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
+});
+
+it("#399 retains a selected status option when refreshed activity no longer has matching rows", async () => {
+  let reads=0;
+  vi.stubGlobal("fetch",vi.fn(async (input:RequestInfo|URL)=>{
+    const path=String(input);
+    if(path.endsWith("/operations")){
+      reads++;
+      return json([{id:"op-group-a",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:reads===1?"Pending":"Succeeded"}]);
+    }
+    if(path.endsWith("/single-apps")||path.endsWith("/deployments"))return json([]);
+    throw new Error("Unexpected path "+path);
+  }));
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
+  fireEvent.change(screen.getByLabelText("Filter App Group activity status"),{target:{value:"Pending"}});
+  fireEvent.click(screen.getByRole("button",{name:"Refresh activity"}));
+  await waitFor(()=>expect(screen.getByRole("status").textContent).toContain("Showing 0 of 1"));
+  const filter=screen.getByLabelText("Filter App Group activity status") as HTMLSelectElement;
+  expect(filter.value).toBe("Pending");
+  expect(screen.getByRole("option",{name:"Pending"})).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  expect(await screen.findByText("APP GROUP DEPLOY")).toBeTruthy();
 });
