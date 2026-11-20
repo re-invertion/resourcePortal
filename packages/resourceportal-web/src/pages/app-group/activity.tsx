@@ -20,12 +20,13 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
   const rows = !loading && !operations.error && !apps.error && !deployments.error
     ? items<R>(operations.data).filter(op => belongsToAppGroup(op, appGroupId, appIds, deploymentIds))
     : [];
-  const statuses = Array.from(new Set(rows.map(op => text(op.status, "Unknown")))).sort();
+  // Keep an active filter selectable if a refresh removes its last matching row.
+  const statuses = Array.from(new Set([...rows.map(op => text(op.status, "Unknown")), ...(statusFilter === "all" ? [] : [statusFilter])])).sort();
   const query = search.trim().toLowerCase();
   const visible = rows.filter(op => {
     if (statusFilter !== "all" && text(op.status, "Unknown") !== statusFilter) return false;
     if (!query) return true;
-    return [op.type, op.resourceName, op.resourceType, op.status, op.createdByDisplayName, op.createdByEmail, op.createdBy, op.id]
+    return [text(op.type, "").replaceAll("_", " "), op.type, op.resourceName, op.resourceType, op.status, op.createdByDisplayName, op.createdByEmail, op.createdBy, op.id]
       .some(value => text(value, "").toLowerCase().includes(query));
   });
   const clearFilters = () => { setSearch(""); setStatusFilter("all"); };
