@@ -1,4 +1,4 @@
-import { Card, DataTable, EmptyState, ActivityIcon, ErrorState, StatusText, statusTone } from "../../components/design-system";
+import { Button, Card, DataTable, EmptyState, ActivityIcon, ErrorState, StatusText, statusTone } from "../../components/design-system";
 import { formatDate, idOf, items, text, useApi } from "../../hooks/use-api";
 import { tenantHref } from "../../router/router";
 import { belongsToAppGroup } from "./activity-scope";
@@ -18,10 +18,10 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
     ? items<R>(operations.data).filter(op => belongsToAppGroup(op, appGroupId, appIds, deploymentIds))
     : [];
   return <section className="space-y-4">
-    <div><h2 className="text-xl font-semibold">Activity</h2><p className="mt-1 text-sm text-[#5B6678]">Operations explicitly linked to this App Group, its apps or deployments. Unrelated tenant operations are excluded.</p></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Activity</h2><p className="mt-1 text-sm text-[#5B6678]">Operations explicitly linked to this App Group, its apps or deployments. Unrelated tenant operations are excluded. Refresh reloads all three relationships before showing results.</p></div><Button disabled={loading} onClick={() => void Promise.all([operations.reload(), apps.reload(), deployments.reload()])}>{loading ? "Refreshing…" : "Refresh activity"}</Button></div>
     {operations.error || apps.error || deployments.error
       ? <ErrorState title="Activity relationships could not be verified" error={operations.error || apps.error || deployments.error} retry={() => void Promise.all([operations.reload(), apps.reload(), deployments.reload()])} />
-      : <Card className="overflow-hidden"><DataTable embedded loading={loading}
+      : <Card className="overflow-hidden"><p role="status" className="border-b border-[#E1E7F0] px-4 py-2 text-xs text-[#5B6678]">{rows.length} explicitly related operations from the loaded tenant activity. Older operations may not be included.</p><DataTable embedded loading={loading}
         columns={[{ key: "type", label: "Operation" }, { key: "resource", label: "Resource" }, { key: "status", label: "Status" }, { key: "actor", label: "Actor" }, { key: "time", label: "Timestamp" }]}
         rows={rows.map(op => ({
           key: idOf(op),
