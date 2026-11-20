@@ -242,3 +242,32 @@ it("#399 UTC activity date window excludes unverified dates, unrelated groups an
   expect(fetchMock.mock.calls).toHaveLength(3);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
+
+it("#399 summarizes only verified loaded App Group activity statuses and clears filters without extra requests", async () => {
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations")return json(operations);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps")return json([{id:"app-a"}]);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([{id:"deploy-a"}]);
+    throw new Error("Unexpected path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  const totals=screen.getByLabelText("Loaded related activity status totals");
+  await waitFor(()=>expect(totals.textContent).toContain("Succeeded: 1"));
+  expect(totals.textContent).toContain("Pending: 1");
+  expect(totals.textContent).toContain("RolledBack: 1");
+  expect(totals.textContent).not.toContain("Failed");
+  expect(totals.textContent).not.toContain("Succeeded: 4");
+  fireEvent.change(screen.getByLabelText("Filter App Group activity status"),{target:{value:"Pending"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
+  expect(totals.textContent).toContain("Succeeded: 1");
+  fireEvent.change(screen.getByLabelText("Search App Group activity"),{target:{value:"does-not-match"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 0 of 3");
+  expect(totals.textContent).toContain("RolledBack: 1");
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3");
+  expect(totals.textContent).toContain("Pending: 1");
+  expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
