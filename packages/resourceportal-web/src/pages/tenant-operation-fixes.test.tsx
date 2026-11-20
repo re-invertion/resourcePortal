@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { TenantAuditPage, TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
+import { TenantAuditPage, TenantOperationsPage, auditDateTimeIso, invalidAuditTimeRange, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -176,4 +176,35 @@ it("#399 labels the bounded audit page and restores records when filters clear",
   expect((screen.getByLabelText("Actor") as HTMLInputElement).value).toBe("");
   expect((screen.getByRole("button",{name:"Clear audit filters"}) as HTMLButtonElement).disabled).toBe(true);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/audit-log")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 converts audit local input bounds to UTC only for API requests and exports", async () => {
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([{id:"audit-1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantAuditPage tenantId="t1"/>);
+  expect(await screen.findByRole("status")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("From"),{target:{value:"2026-10-10T10:00"}});
+  const input=screen.getByLabelText("From") as HTMLInputElement;
+  expect(input.value).toBe("2026-10-10T10:00");
+  expect(String(fetchMock.mock.lastCall?.[0])).toContain(encodeURIComponent(auditDateTimeIso("2026-10-10T10:00")));
+  expect(screen.getByText("Export CSV").closest("a")?.getAttribute("href")).toContain(encodeURIComponent(auditDateTimeIso("2026-10-10T10:00")));
+  expect(invalidAuditTimeRange("2026-10-10T12:00","2026-10-10T11:00")).toBe(true);
+  expect(invalidAuditTimeRange("2026-10-10T10:00","2026-10-10T10:00")).toBe(false);
+});
+
+it("#399 blocks audit export for reversed dates and recovers with clear filters", async () => {
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([{id:"a1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantAuditPage tenantId="t1"/>);
+  expect(await screen.findByRole("status")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("From"),{target:{value:"2026-10-10T12:00"}});
+  fireEvent.change(screen.getByLabelText("To"),{target:{value:"2026-10-10T11:00"}});
+  expect(screen.getByRole("alert").textContent).toMatch(/Correct the range/);
+  expect(screen.getByRole("status").textContent).toContain("Showing 0 matching audit records");
+  expect(screen.getByText("Export CSV").closest("a")).toBeNull();
+  expect(screen.getByText("Export JSON").closest("a")).toBeNull();
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/audit-log")&&(!init?.method||init.method==="GET"))).toBe(true);
+  fireEvent.click(screen.getByRole("button",{name:"Clear audit filters"}));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("Export CSV").closest("a")).not.toBeNull();
 });
