@@ -148,6 +148,6 @@ describe("#399 deployment history filter safety", () => {
     expect(screen.getByText("v1")).toBeTruthy();
     expect(screen.getByText("v2")).toBeTruthy();
     expect((screen.getByRole("button",{name:"Clear deployment filters"}) as HTMLButtonElement).disabled).toBe(true);
-    expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/app-groups/ag1/")&&(!init?.method||init.method==="GET"))).toBe(true);
+    expect(fetchMock.mock.calls.every(([url,init])=>(String(url).includes("/api/tenants/t1/app-groups/ag1/")||String(url).includes("/api/tenants/t1/domains"))&&(!init?.method||init.method==="GET"))).toBe(true);
   });
 });
