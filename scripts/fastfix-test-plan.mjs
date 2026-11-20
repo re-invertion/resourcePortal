@@ -219,6 +219,7 @@ const commands = {
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
       "src/pages/network-status-display.test.ts", "src/lib/billing-display.test.ts",
+      "src/components/billing-usage-clarity.test.ts",
       "src/lib/compute-estimate.test.ts", "src/lib/role-capabilities.test.ts",
       // Dialog, nested focus and aria-live notifications belong to this
       // profile for *every* change to Dialog, ToastViewport or their tests.
@@ -396,6 +397,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/platform-usability\.test\.tsx$/, ["platform-admin-ui", "tenant-ux-patch"]],
   // Issue #399: exact status mapping, tenant operation scope and RBAC UI
   // are release-critical; new executable files must not evade changed-path coverage.
+  // #399 billing summary regression: retain both targeted component and billing UI coverage.
+  [/^packages\/resourceportal-web\/src\/components\/billing-usage-clarity\.test\.ts$/, ["tenant-ux-patch", "reactive-web-state"]],
   [/^packages\/resourceportal-web\/src\/components\/status-tone(?:\.test)?\.tsx?$/, ["tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-web\/src\/components\/(?:design-system\/primitives|ui)\.tsx$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/components\/design-system\/confirm-action\.test\.tsx$/, ["tenant-ux-patch", "reactive-web-state", "security"]],

@@ -1116,3 +1116,16 @@ test("final UI federation E2E changes select identity and security validation", 
   assert.ok(plan.profiles.includes("security"));
   assert.ok(plan.profiles.includes("workflow"));
 });
+
+test("issue #399 billing summary regression is classified and exercised by targeted Fast Fix", () => {
+  const target = "packages/resourceportal-web/src/components/billing-usage-clarity.test.ts";
+  const profiles = selectProfiles([target]).profiles;
+  assert.deepEqual(profiles, ["reactive-web-state", "tenant-ux-patch"]);
+  const commands = commandsForProfiles(profiles).map((command) => command.join(" "));
+  assert.ok(commands.some((command) => command.includes("src/components/billing-usage-clarity.test.ts")));
+  assert.ok(commands.some((command) => command.includes("src/pages/billing-funding-ui.test.tsx")));
+  assert.throws(
+    () => selectProfiles(["packages/resourceportal-web/src/components/billing-unreviewed.test.ts"]),
+    /unclassified changes/,
+  );
+});
