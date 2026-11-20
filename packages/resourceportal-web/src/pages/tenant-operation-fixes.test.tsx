@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt } from "./tenant-activity-pages";
+import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange } from "./tenant-activity-pages";
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -75,4 +75,32 @@ it("#399 shows a friendly operation resource name with its technical type as sec
   expect(screen.getByText("photos service")).toBeTruthy();
   expect(screen.queryByText("Volume")).toBeNull();
   expect(fetchMock.mock.calls.every(([input]) => String(input).includes("/api/tenants/t1/operations"))).toBe(true);
+});
+
+it("#399 updated-time filter includes bounds and excludes undated operations only when active", () => {
+  const before = { updatedAt: "2026-10-10T08:00:00Z" };
+  const inRange = { updatedAt: "2026-10-10T10:00:00Z" };
+  const after = { updatedAt: "2026-10-10T12:00:00Z" };
+  const from = "2026-10-10T09:00:00Z", to = "2026-10-10T11:00:00Z";
+  expect(operationWithinTimeRange(before, from, to)).toBe(false);
+  expect(operationWithinTimeRange(inRange, from, to)).toBe(true);
+  expect(operationWithinTimeRange(after, from, to)).toBe(false);
+  expect(operationWithinTimeRange({ createdAt: "2026-10-10T10:00:00Z" }, from, to)).toBe(true);
+  expect(operationWithinTimeRange({}, "", "")).toBe(true);
+  expect(operationWithinTimeRange({}, from, "")).toBe(false);
+});
+
+it("#399 filters tenant Operations by entered update range without extra API requests", async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([
+    { id: "old", resourceName: "old backup", status: "Succeeded", updatedAt: "2026-10-10T07:00:00Z" },
+    { id: "recent", resourceName: "recent backup", status: "Pending", updatedAt: "2026-10-10T12:00:00Z" },
+  ]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantOperationsPage tenantId="t1" />);
+  expect(await screen.findByText("old backup")).toBeTruthy();
+  expect(screen.getByText("recent backup")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Operations updated from"), { target: { value: "2026-10-10T09:00" } });
+  expect(screen.queryByText("old backup")).toBeNull();
+  expect(screen.getByText("recent backup")).toBeTruthy();
+  expect(fetchMock.mock.calls.every(([input, init]) => String(input).includes("/api/tenants/t1/operations") && (!init?.method || init.method === "GET"))).toBe(true);
 });
