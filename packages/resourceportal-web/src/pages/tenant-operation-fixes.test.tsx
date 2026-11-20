@@ -99,7 +99,7 @@ it("#399 filters tenant Operations by entered update range without extra API req
   render(<TenantOperationsPage tenantId="t1" />);
   expect(await screen.findByText("old backup")).toBeTruthy();
   expect(screen.getByText("recent backup")).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("Operations updated from"), { target: { value: "2026-10-10T09:00" } });
+  fireEvent.change(screen.getByLabelText("Operations updated from"), { target: { value: "2026-10-10T11:00" } });
   expect(screen.queryByText("old backup")).toBeNull();
   expect(screen.getByText("recent backup")).toBeTruthy();
   expect(fetchMock.mock.calls.every(([input, init]) => String(input).includes("/api/tenants/t1/operations") && (!init?.method || init.method === "GET"))).toBe(true);
