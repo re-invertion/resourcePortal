@@ -93,7 +93,7 @@ describe("billing funding UI", () => {
     expect(screen.getAllByText("0 credits").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/0 PLN/)).toBeTruthy();
     expect(screen.getAllByText("Theoretical").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/latest 0\/1 billed\/desired/)).toBeTruthy();
+    expect(screen.getByText(/Latest 0 \/ 1 · average per sample 0 \/ 1 replicas/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "7d" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Credits" }).getAttribute("aria-pressed")).toBe("true");
     const firstUsageUrl = String(fetchMock.mock.calls.find(([input]) => String(input).startsWith("/api/tenants/t1/billing/usage-series?"))?.[0]);

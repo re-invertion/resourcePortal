@@ -122,6 +122,15 @@ function filterPointsByRange(points: Point[], range: BillingUsageRange) {
   return points.filter((point) => point.timestamp.getTime() >= from);
 }
 
+export function billingReplicaSummary(rows: Array<{ billedReplicas: number; desiredReplicas: number }>) {
+  const peakBilled = Math.max(0, ...rows.map(row => row.billedReplicas));
+  const peakDesired = Math.max(0, ...rows.map(row => row.desiredReplicas));
+  const latest = rows.at(-1);
+  const averageBilled = rows.length ? rows.reduce((sum, row) => sum + row.billedReplicas, 0) / rows.length : 0;
+  const averageDesired = rows.length ? rows.reduce((sum, row) => sum + row.desiredReplicas, 0) / rows.length : 0;
+  return { peakBilled, peakDesired, latestBilled: latest?.billedReplicas ?? 0, latestDesired: latest?.desiredReplicas ?? 0, averageBilled, averageDesired };
+}
+
 function formatNumber(value: number, maximumFractionDigits = 4) {
   return new Intl.NumberFormat("pl-PL", { maximumFractionDigits }).format(value);
 }
@@ -237,7 +246,7 @@ function SummaryMetric({ label, value, detail }: { label: string; value: ReactNo
   return <div className="min-w-0">
     <span className="block text-[11px] font-medium uppercase tracking-[0.04em] text-[#8A96A8]">{label}</span>
     <strong className="mt-1 block truncate text-[16px] font-semibold text-[#172033]">{value}</strong>
-    {detail ? <span className="mt-0.5 block truncate text-[11px] text-[#718096]">{detail}</span> : null}
+    {detail ? <span className="mt-0.5 block break-words text-[11px] text-[#718096]">{detail}</span> : null}
   </div>;
 }
 
@@ -294,9 +303,7 @@ export function BillingUsageCharts({
   const totalCharged = points.reduce((sum, point) => sum + point.charged, 0);
   const totalChargedPln = points.reduce((sum, point) => sum + point.chargedPln, 0);
   const totalTheoretical = points.reduce((sum, point) => sum + point.theoretical, 0);
-  const peakDesired = Math.max(0, ...points.map((point) => point.desiredReplicas));
-  const peakBilled = Math.max(0, ...points.map((point) => point.billedReplicas));
-  const latest = points.at(-1);
+  const replicas = billingReplicaSummary(points);
   const first = points[0];
   const last = points.at(-1);
 
@@ -364,9 +371,9 @@ export function BillingUsageCharts({
         detail={totalTheoretical > 0 ? `${formatNumber((totalCharged / totalTheoretical) * 100, 1)}% charged` : "No theoretical cost"}
       />
       {!compact ? <SummaryMetric
-        label="Replica peak"
-        value={`${formatNumber(peakBilled)}/${formatNumber(peakDesired)}`}
-        detail={latest ? `latest ${formatNumber(latest.billedReplicas)}/${formatNumber(latest.desiredReplicas)} billed/desired` : undefined}
+        label="Replica peak · billed / desired"
+        value={`${formatNumber(replicas.peakBilled)} / ${formatNumber(replicas.peakDesired)}`}
+        detail={`Latest ${formatNumber(replicas.latestBilled)} / ${formatNumber(replicas.latestDesired)} · average per sample ${formatNumber(replicas.averageBilled, 2)} / ${formatNumber(replicas.averageDesired, 2)} replicas`}
       /> : null}
     </div>
 

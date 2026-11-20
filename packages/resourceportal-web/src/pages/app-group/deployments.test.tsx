@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AppGroupDeployments } from "./deployments";
+import { AppGroupDeployments, deploymentInDateRange, deploymentRollbackReason } from "./deployments";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -81,5 +81,42 @@ describe("AppGroupDeployments destructive actions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Rollback to v7" }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/deployments/dep1/rollback") && (init as RequestInit | undefined)?.method === "POST")).toBe(true));
+  });
+});
+
+describe("#399 deployment time filters and rollback blockers", () => {
+  it("uses inclusive local time bounds and hides rows missing a timestamp only when filters apply", () => {
+    const localBound = new Date(2026, 9, 10, 11, 0);
+    const old = { createdAt: new Date(localBound.getTime() - 3600000).toISOString() };
+    const same = { createdAt: localBound.toISOString() };
+    const newer = { createdAt: new Date(localBound.getTime() + 3600000).toISOString() };
+    expect(deploymentInDateRange(old, "2026-10-10T11:00", "")).toBe(false);
+    expect(deploymentInDateRange(same, "2026-10-10T11:00", "2026-10-10T11:00")).toBe(true);
+    expect(deploymentInDateRange(newer, "", "2026-10-10T11:00")).toBe(false);
+    expect(deploymentInDateRange({}, "", "")).toBe(true);
+    expect(deploymentInDateRange({}, "2026-10-10T11:00", "")).toBe(false);
+  });
+
+  it("explains which rollback selections are unsupported", () => {
+    expect(deploymentRollbackReason({ status: "Failed", version: 1 }, 2, false)).toMatch(/successful/);
+    expect(deploymentRollbackReason({ status: "Succeeded", version: 2 }, 2, false)).toMatch(/already current/);
+    expect(deploymentRollbackReason({ status: "Succeeded", version: 1 }, 2, true)).toMatch(/Wait/);
+    expect(deploymentRollbackReason({ status: "Succeeded", version: 1 }, 2, false)).toBe("");
+  });
+
+  it("filters rendered history by updated range without changing deployments", async () => {
+    const localBound = new Date(2026, 9, 10, 11, 0);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([
+      { id: "dep-old", version: 1, status: "Failed", createdAt: new Date(localBound.getTime() - 3600000).toISOString() },
+      { id: "dep-new", version: 2, status: "Succeeded", createdAt: new Date(localBound.getTime() + 3600000).toISOString() },
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AppGroupDeployments tenantId="t1" appGroupId="ag1" onReload={vi.fn().mockResolvedValue(undefined)} currentVersion={2}/>);
+    expect(await screen.findByText("v1")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Deployments from"), { target: { value: "2026-10-10T11:00" } });
+    expect(screen.queryByText("v1")).toBeNull();
+    expect(screen.getByText("v2")).toBeTruthy();
+    expect(screen.getByText("This deployment is already current.")).toBeTruthy();
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   });
 });
