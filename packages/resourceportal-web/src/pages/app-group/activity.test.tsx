@@ -325,7 +325,7 @@ it("#399 uses a valid update timestamp when creation time is malformed without l
   expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
   expect(screen.getByText("APP GROUP ROLLBACK")).toBeTruthy();
   expect(screen.queryByText("APP GROUP DELETE")).toBeNull();
-  expect(screen.queryByRole("link",{name:/APP GROUP DEPLOY.*Failed/})).toBeNull();
+  expect(screen.getAllByRole("link").some(link => link.getAttribute("href") === "/tenants/tenant-a/operations/op-undated")).toBe(false);
   expect(screen.queryByRole("link",{name:/APP GROUP DELETE/})).toBeNull();
   fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
   fireEvent.change(screen.getByLabelText("Sort App Group activity"),{target:{value:"newest"}});
