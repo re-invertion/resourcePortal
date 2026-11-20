@@ -11,6 +11,7 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
   const root = `${tenantRoot}/app-groups/${encodeURIComponent(appGroupId)}`;
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [chronology, setChronology] = useState("loaded");
   const operations = useApi<unknown>(`${tenantRoot}/operations`);
   const apps = useApi<unknown>(`${root}/single-apps`);
   const deployments = useApi<unknown>(`${root}/deployments`);
@@ -29,14 +30,29 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
     return [text(op.type, "").replaceAll("_", " "), op.type, op.resourceName, op.resourceType, op.status, op.createdByDisplayName, op.createdByEmail, op.createdBy, op.id]
       .some(value => text(value, "").toLowerCase().includes(query));
   });
-  const clearFilters = () => { setSearch(""); setStatusFilter("all"); };
+  const sorted = visible.map((op, index) => ({ op, index })).sort((a, b) => {
+    if (chronology === "loaded") return a.index - b.index;
+    const timestamp = (op: R) => {
+      const value = op.createdAt ?? op.updatedAt;
+      if (typeof value !== "string" && typeof value !== "number") return null;
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) ? time : null;
+    };
+    const left = timestamp(a.op);
+    const right = timestamp(b.op);
+    if (left === null && right !== null) return 1;
+    if (right === null && left !== null) return -1;
+    if (left === null || right === null || left === right) return a.index - b.index;
+    return chronology === "newest" ? right - left : left - right;
+  }).map(({ op }) => op);
+  const clearFilters = () => { setSearch(""); setStatusFilter("all"); setChronology("loaded"); };
   return <section className="space-y-4">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">Activity</h2><p className="mt-1 text-sm text-[#5B6678]">Operations explicitly linked to this App Group, its apps or deployments. Unrelated tenant operations are excluded. Refresh reloads all three relationships before showing results.</p></div><Button disabled={loading} onClick={() => void Promise.all([operations.reload(), apps.reload(), deployments.reload()])}>{loading ? "Refreshing…" : "Refresh activity"}</Button></div>
     {operations.error || apps.error || deployments.error
       ? <ErrorState title="Activity relationships could not be verified" error={operations.error || apps.error || deployments.error} retry={() => void Promise.all([operations.reload(), apps.reload(), deployments.reload()])} />
-      : <Card className="overflow-hidden"><div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-[minmax(0,1fr)_190px_auto] sm:items-center"><TextInput aria-label="Search App Group activity" placeholder="Search operation or resource" value={search} onChange={event => setSearch(event.target.value)} /><Select aria-label="Filter App Group activity status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</Select><Button size="sm" disabled={!search && statusFilter === "all"} onClick={clearFilters}>Clear activity filters</Button></div><p role="status" className="border-b border-[#E1E7F0] px-4 py-2 text-xs text-[#5B6678]">Showing {visible.length} of {rows.length} explicitly related operations from loaded tenant activity. Older operations may not be included.</p><DataTable embedded loading={loading}
+      : <Card className="overflow-hidden"><div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-[minmax(0,1fr)_150px_150px_auto] sm:items-center"><TextInput aria-label="Search App Group activity" placeholder="Search operation or resource" value={search} onChange={event => setSearch(event.target.value)} /><Select aria-label="Filter App Group activity status" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</Select><Select aria-label="Sort App Group activity" value={chronology} onChange={event => setChronology(event.target.value)}><option value="loaded">Loaded order</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option></Select><Button size="sm" disabled={!search && statusFilter === "all" && chronology === "loaded"} onClick={clearFilters}>Clear activity filters</Button></div><p role="status" className="border-b border-[#E1E7F0] px-4 py-2 text-xs text-[#5B6678]">Showing {visible.length} of {rows.length} explicitly related operations from loaded tenant activity. Older operations may not be included.</p><DataTable embedded loading={loading}
         columns={[{ key: "type", label: "Operation" }, { key: "resource", label: "Resource" }, { key: "status", label: "Status" }, { key: "actor", label: "Actor" }, { key: "time", label: "Timestamp" }]}
-        rows={visible.map(op => ({
+        rows={sorted.map(op => ({
           key: idOf(op),
           href: tenantHref(tenantId, "operations", idOf(op)),
           cells: {

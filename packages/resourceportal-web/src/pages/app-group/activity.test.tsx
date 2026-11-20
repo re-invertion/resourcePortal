@@ -161,3 +161,49 @@ it("#399 retains a selected status option when refreshed activity no longer has 
   fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
   expect(await screen.findByText("APP GROUP DEPLOY")).toBeTruthy();
 });
+
+it("#399 sorts only related loaded operations by timestamp, keeps unknown timestamps last and clears sort without writes", async () => {
+  const history = [
+    {id:"op-unknown",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Pending"},
+    {id:"op-old",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Succeeded",createdAt:"2026-01-01T12:00:00Z"},
+    {id:"op-foreign",resourceType:"AppGroup",resourceId:"group-b",type:"APP_GROUP_DELETE",status:"Succeeded",createdAt:"2026-12-01T00:00:00Z"},
+    {id:"op-new",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_ROLLBACK",status:"Succeeded",createdAt:"2026-03-01T12:00:00Z"},
+  ];
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations")return json(history);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps"||path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([]);
+    throw new Error("Unexpected path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  const order=()=>screen.getAllByRole("link").map(link=>link.getAttribute("href")).filter(href=>href?.startsWith("/tenants/tenant-a/operations/"));
+  await waitFor(()=>expect(order()).toHaveLength(3));
+  expect(order()).toEqual([
+    "/tenants/tenant-a/operations/op-unknown",
+    "/tenants/tenant-a/operations/op-old",
+    "/tenants/tenant-a/operations/op-new",
+  ]);
+  fireEvent.change(screen.getByLabelText("Sort App Group activity"),{target:{value:"newest"}});
+  expect(order()).toEqual([
+    "/tenants/tenant-a/operations/op-new",
+    "/tenants/tenant-a/operations/op-old",
+    "/tenants/tenant-a/operations/op-unknown",
+  ]);
+  fireEvent.change(screen.getByLabelText("Sort App Group activity"),{target:{value:"oldest"}});
+  expect(order()).toEqual([
+    "/tenants/tenant-a/operations/op-old",
+    "/tenants/tenant-a/operations/op-new",
+    "/tenants/tenant-a/operations/op-unknown",
+  ]);
+  expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3");
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  expect(order()).toEqual([
+    "/tenants/tenant-a/operations/op-unknown",
+    "/tenants/tenant-a/operations/op-old",
+    "/tenants/tenant-a/operations/op-new",
+  ]);
+  expect((screen.getByLabelText("Sort App Group activity") as HTMLSelectElement).value).toBe("loaded");
+  expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
