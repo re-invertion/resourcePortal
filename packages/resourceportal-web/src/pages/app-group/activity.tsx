@@ -27,7 +27,7 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
   const statuses = Array.from(new Set([...rows.map(op => text(op.status, "Unknown")), ...(statusFilter === "all" ? [] : [statusFilter])])).sort();
   const query = search.trim().toLowerCase();
   const dateLimit = (value: string) => {
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
     const instant = Date.parse(`${value}T00:00:00Z`);
     return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === value ? instant : null;
   };
