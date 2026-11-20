@@ -39,12 +39,14 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
   const fromTime = fromDate ? dateLimit(fromDate) : null;
   const toTime = toDate ? dateLimit(toDate) : null;
   const invalidDates = (Boolean(fromDate) && fromTime === null) || (Boolean(toDate) && toTime === null) || (fromTime !== null && toTime !== null && fromTime > toTime);
-  const timestamp = (op: R) => {
-    const value = op.createdAt ?? op.updatedAt;
+  const validDate = (value: unknown) => {
     if (typeof value !== "string" && typeof value !== "number") return null;
     const time = new Date(value).getTime();
     return Number.isFinite(time) ? time : null;
   };
+  // Fall back to a verified update timestamp when creation time is absent or malformed.
+  const timestamp = (op: R) => validDate(op.createdAt) ?? validDate(op.updatedAt);
+  const displayTimestamp = (op: R) => validDate(op.createdAt) !== null ? op.createdAt : op.updatedAt;
   const undatedCount = rows.filter(op => timestamp(op) === null).length;
   const visible = rows.filter(op => {
     if (invalidDates) return false;
@@ -81,7 +83,7 @@ export function AppGroupActivity({ tenantId, appGroupId }: { tenantId: string; a
             resource: text(op.resourceName, text(op.resourceType, "App Group")),
             status: <StatusText tone={statusTone(op.status)}>{text(op.status, "Unknown")}</StatusText>,
             actor: text(op.createdByDisplayName, text(op.createdByEmail, text(op.createdBy, "System"))),
-            time: formatDate(op.createdAt ?? op.updatedAt),
+            time: formatDate(displayTimestamp(op)),
           },
         }))}
         empty={<EmptyState icon={<ActivityIcon />} title="No matching activity" description="Only operations linked to this App Group and its workloads appear here. Change filters to view other loaded operations." />}
