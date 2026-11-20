@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt } from "./tenant-activity-pages";
 
@@ -41,4 +41,22 @@ it("shows the recorded failure reason and a retry action for retryable operation
   render(<TenantOperationsPage tenantId="t1" operationId="op2" />);
   expect(await screen.findByText(/Volume service is not reachable/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Retry operation" })).toBeTruthy();
+});
+
+it("#399 filters tenant operations by resource name and actor without issuing write requests", async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([
+    { id: "op1", type: "VOLUME_CREATE", status: "Succeeded", resourceName: "backup-photos", createdByDisplayName: "Alice Operator", createdAt: "2026-10-10T10:01:00Z" },
+    { id: "op2", type: "VOLUME_CREATE", status: "Failed", resourceName: "database", createdByDisplayName: "Bob Operator", createdAt: "2026-10-10T10:02:00Z" },
+  ]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantOperationsPage tenantId="t1" />);
+  expect(await screen.findByText("backup-photos")).toBeTruthy();
+  const search = screen.getByRole("textbox", { name: "Search operations" });
+  fireEvent.change(search, { target: { value: "backup-photos" } });
+  expect(screen.getByText("backup-photos")).toBeTruthy();
+  expect(screen.queryByText("database")).toBeNull();
+  fireEvent.change(search, { target: { value: "Bob Operator" } });
+  expect(screen.getByText("database")).toBeTruthy();
+  expect(screen.queryByText("backup-photos")).toBeNull();
+  expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
