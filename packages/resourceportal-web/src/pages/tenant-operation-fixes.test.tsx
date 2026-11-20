@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange } from "./tenant-activity-pages";
+import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -106,4 +106,41 @@ it("#399 filters tenant Operations by entered update range without extra API req
   expect(screen.queryByText("old backup")).toBeNull();
   expect(screen.getByText("recent backup")).toBeTruthy();
   expect(fetchMock.mock.calls.every(([input, init]) => String(input).includes("/api/tenants/t1/operations") && (!init?.method || init.method === "GET"))).toBe(true);
+});
+
+it("#399 detects reversed operation time ranges without changing server data", () => {
+  expect(invalidOperationTimeRange("2026-10-10T12:00:00Z", "2026-10-10T11:00:00Z")).toBe(true);
+  expect(invalidOperationTimeRange("2026-10-10T11:00:00Z", "2026-10-10T11:00:00Z")).toBe(false);
+  expect(invalidOperationTimeRange("", "2026-10-10T11:00:00Z")).toBe(false);
+});
+
+it("#399 exposes filter counts, clear filters, and an empty-filter state without write requests", async () => {
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([
+    {id:"op1",status:"Succeeded",resourceName:"alpha-backup",updatedAt:"2026-10-10T10:00:00Z"},
+    {id:"op2",status:"Failed",resourceName:"beta-backup",updatedAt:"2026-10-10T11:00:00Z"},
+  ]));
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantOperationsPage tenantId="t1"/>);
+  expect(await screen.findByText("alpha-backup")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("2 of 2 operations");
+  fireEvent.change(screen.getByRole("textbox",{name:"Search operations"}),{target:{value:"nonexistent"}});
+  expect(screen.getByText("No matching operations")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("0 of 2 operations");
+  fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
+  expect(screen.getByText("alpha-backup")).toBeTruthy();
+  expect(screen.getByText("beta-backup")).toBeTruthy();
+  expect(fetchMock.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+});
+
+it("#399 warns about reversed local datetime filters and restores operations after correction", async () => {
+  vi.stubGlobal("fetch",vi.fn(async()=>json([{id:"op1",status:"Succeeded",resourceName:"backup",updatedAt:"2026-10-10T10:00:00Z"}])));
+  render(<TenantOperationsPage tenantId="t1"/>);
+  expect(await screen.findByText("backup")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Operations updated from"),{target:{value:"2026-10-10T12:00"}});
+  fireEvent.change(screen.getByLabelText("Operations updated to"),{target:{value:"2026-10-10T11:00"}});
+  expect(screen.getByRole("alert").textContent).toMatch(/earlier than or equal/);
+  expect(screen.queryByText("backup")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("backup")).toBeTruthy();
 });
