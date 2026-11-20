@@ -26,6 +26,44 @@ it("#399 links a domain detail assignment to its same-tenant application without
   expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
 });
 
+it("#399 labels HTTP endpoint protocol choices without changing assigned enum or saving", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/domains/d1")) return json({
+      id: "d1", hostname: "demo.example.test", type: "Managed",
+      dnsStatus: "Valid", tlsEnabled: true, httpEndpoint: null,
+    });
+    if (path.endsWith("/app-groups")) return json([{ id: "g1", name: "production" }]);
+    if (path.endsWith("/app-groups/g1/single-apps")) return json([{ id: "a1", name: "frontend" }]);
+    if (path.endsWith("/app-groups/g1/single-apps/a1/http-endpoints")) return json([
+      { id: "e1", name: "http", containerPort: 8080, protocolMode: "HTTP" },
+      { id: "e2", name: "secure", containerPort: 8443, protocolMode: "HTTPS" },
+      { id: "e3", name: "dual", containerPort: 9000, protocolMode: "HTTP_AND_HTTPS" },
+      { id: "e4", name: "redirect", containerPort: 8081, protocolMode: "HTTP_REDIRECT_TO_HTTPS" },
+    ]);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantDomainDetailPage tenantId="t1" domainId="d1" />);
+  fireEvent.change(await screen.findByRole("combobox", { name: "Assign App Group" }), {
+    target: { value: "g1" },
+  });
+  fireEvent.change(await screen.findByRole("combobox", { name: "Assign application" }), {
+    target: { value: "a1" },
+  });
+  const endpoint = await screen.findByRole("combobox", { name: "Assign HTTP endpoint" });
+  await waitFor(() => expect(endpoint.querySelectorAll("option")).toHaveLength(5));
+  const choices = Array.from(endpoint.querySelectorAll("option")).slice(1);
+  expect(choices.map(option => option.value)).toEqual(["e1", "e2", "e3", "e4"]);
+  expect(choices.map(option => option.textContent)).toEqual([
+    "http · port 8080 · HTTP only",
+    "secure · port 8443 · HTTPS only",
+    "dual · port 9000 · HTTP + HTTPS",
+    "redirect · port 8081 · HTTP → HTTPS redirect",
+  ]);
+  expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+});
+
 it("discovers app and endpoint from an unassigned domain and requires confirmation before PATCH", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
