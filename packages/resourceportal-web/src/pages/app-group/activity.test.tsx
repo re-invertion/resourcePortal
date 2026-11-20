@@ -207,3 +207,38 @@ it("#399 sorts only related loaded operations by timestamp, keeps unknown timest
   expect(fetchMock.mock.calls).toHaveLength(3);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
+
+it("#399 UTC activity date window excludes unverified dates, unrelated groups and rejects inverted ranges", async () => {
+  const history = [
+    {id:"op-a",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Succeeded",createdAt:"2026-04-01T00:00:00Z"},
+    {id:"op-b",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_ROLLBACK",status:"Succeeded",createdAt:"2026-04-02T23:59:59Z"},
+    {id:"op-c",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Pending",createdAt:"not-a-date"},
+    {id:"op-foreign",resourceType:"AppGroup",resourceId:"group-b",type:"APP_GROUP_DELETE",status:"Failed",createdAt:"2026-04-02T12:00:00Z"},
+  ];
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations")return json(history);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps"||path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([]);
+    throw new Error("Unexpected tenant path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  await waitFor(()=>expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3"));
+  fireEvent.change(screen.getByLabelText("Activity from date"),{target:{value:"2026-04-02"}});
+  fireEvent.change(screen.getByLabelText("Activity to date"),{target:{value:"2026-04-02"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
+  expect(screen.getByText("APP GROUP ROLLBACK")).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+  expect(screen.queryByText("APP GROUP DELETE")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Activity from date"),{target:{value:"2026-04-03"}});
+  expect(screen.getByRole("alert").textContent).toContain("Invalid activity date range");
+  expect(screen.getByRole("status").textContent).toContain("Showing 0 of 3");
+  expect(screen.queryByText("APP GROUP ROLLBACK")).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3");
+  expect((screen.getByLabelText("Activity from date") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Activity to date") as HTMLInputElement).value).toBe("");
+  expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
