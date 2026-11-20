@@ -122,10 +122,10 @@ it("#399 exposes filter counts, clear filters, and an empty-filter state without
   vi.stubGlobal("fetch",fetchMock);
   render(<TenantOperationsPage tenantId="t1"/>);
   expect(await screen.findByText("alpha-backup")).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("2 of 2 operations");
+  expect(screen.getByRole("status").textContent).toContain("2 of 2 loaded recent operations");
   fireEvent.change(screen.getByRole("textbox",{name:"Search operations"}),{target:{value:"nonexistent"}});
   expect(screen.getByText("No matching operations")).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("0 of 2 operations");
+  expect(screen.getByRole("status").textContent).toContain("0 of 2 loaded recent operations");
   fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
   expect(screen.getByText("alpha-backup")).toBeTruthy();
   expect(screen.getByText("beta-backup")).toBeTruthy();
@@ -143,4 +143,18 @@ it("#399 warns about reversed local datetime filters and restores operations aft
   fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByText("backup")).toBeTruthy();
+});
+
+it("#399 never presents the loaded 100-operation window as a complete tenant total", async () => {
+  const loaded = Array.from({length:100},(_,i)=>({
+    id:`op-${i}`, type:"MAINTENANCE", status:"Succeeded", resourceName:`job-${i}`,
+    updatedAt:"2026-10-10T11:00:00Z"
+  }));
+  vi.stubGlobal("fetch",vi.fn(async()=>json(loaded)));
+  render(<TenantOperationsPage tenantId="t1"/>);
+  expect(await screen.findByText("job-0")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("100 of 100 loaded recent operations");
+  expect(screen.getByText(/may not include older history/i)).toBeTruthy();
+  fireEvent.change(screen.getByRole("textbox",{name:"Search operations"}),{target:{value:"job-99"}});
+  expect(screen.getByRole("status").textContent).toContain("1 of 100 loaded recent operations");
 });
