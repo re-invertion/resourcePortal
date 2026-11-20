@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
+import { TenantAuditPage, TenantOperationsPage, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -157,4 +157,23 @@ it("#399 never presents the loaded 100-operation window as a complete tenant tot
   expect(screen.getByText(/may not include older history/i)).toBeTruthy();
   fireEvent.change(screen.getByRole("textbox",{name:"Search operations"}),{target:{value:"job-99"}});
   expect(screen.getByRole("status").textContent).toContain("1 of 100 loaded recent operations");
+});
+
+it("#399 labels the bounded audit page and restores records when filters clear", async () => {
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([
+    {id:"audit-1",action:"quota.update",actorName:"Alice",resourceName:"volume-a",result:"Success",timestamp:"2026-10-10T10:00:00Z"},
+    {id:"audit-2",action:"domain.update",actorName:"Bob",resourceName:"domain-b",result:"Success",timestamp:"2026-10-10T11:00:00Z"},
+  ]));
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantAuditPage tenantId="t1"/>);
+  expect(await screen.findByRole("status")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("Showing 2 matching audit records");
+  expect(screen.getByRole("status").textContent).toMatch(/up to 100/);
+  fireEvent.change(screen.getByLabelText("Actor"),{target:{value:"Alice"}});
+  expect(await screen.findByRole("status")).toBeTruthy();
+  expect(screen.getByRole("button",{name:"Clear audit filters"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Clear audit filters"}));
+  expect((screen.getByLabelText("Actor") as HTMLInputElement).value).toBe("");
+  expect((screen.getByRole("button",{name:"Clear audit filters"}) as HTMLButtonElement).disabled).toBe(true);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/audit-log")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
