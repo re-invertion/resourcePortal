@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AppGroupActivity } from "./activity";
 
@@ -45,4 +45,48 @@ it("fails closed rather than showing whole-tenant operations when relationships 
   render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a" />);
   await waitFor(() => expect(screen.getByText("Activity relationships could not be verified")).toBeTruthy());
   expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+});
+
+it("#399 refreshes all three App Group activity relationships with tenant-scoped GETs", async () => {
+  let operationReads=0;
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations") {
+      operationReads++;
+      return json([{id:"op-group-a",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:operationReads===1?"Pending":"Succeeded"}]);
+    }
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps")return json([{id:"app-a"}]);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([{id:"deploy-a"}]);
+    throw new Error("Unexpected path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  expect(await screen.findByText("Pending")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("1 explicitly related operations");
+  fireEvent.click(screen.getByRole("button",{name:"Refresh activity"}));
+  expect(await screen.findByText("Succeeded")).toBeTruthy();
+  await waitFor(()=>expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(6));
+  expect(operationReads).toBeGreaterThanOrEqual(2);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 refuses stale activity when a relationship refresh fails after initial success", async () => {
+  let appsReads=0;
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,_init?:RequestInit)=>{
+    const path=String(input);
+    if(path.endsWith("/operations"))return json(operations);
+    if(path.endsWith("/single-apps")) {
+      if(++appsReads>1)return new Response("relationship error",{status:503});
+      return json([{id:"app-a"}]);
+    }
+    if(path.endsWith("/deployments"))return json([{id:"deploy-a"}]);
+    throw new Error("Unexpected path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  expect(await screen.findByText("APP GROUP DEPLOY")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Refresh activity"}));
+  await waitFor(()=>expect(screen.getByText("Activity relationships could not be verified")).toBeTruthy());
+  expect(screen.queryByText("APP GROUP DEPLOY")).toBeNull();
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
