@@ -179,7 +179,7 @@ it("#399 labels the bounded audit page and restores records when filters clear",
 });
 
 it("#399 converts audit local input bounds to UTC only for API requests and exports", async () => {
-  const fetchMock=vi.fn(async()=>json([{id:"audit-1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([{id:"audit-1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
   vi.stubGlobal("fetch",fetchMock);
   render(<TenantAuditPage tenantId="t1"/>);
   expect(await screen.findByRole("status")).toBeTruthy();
@@ -193,7 +193,7 @@ it("#399 converts audit local input bounds to UTC only for API requests and expo
 });
 
 it("#399 blocks audit export for reversed dates and recovers with clear filters", async () => {
-  const fetchMock=vi.fn(async()=>json([{id:"a1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
+  const fetchMock=vi.fn(async (_input:RequestInfo|URL,_init?:RequestInit)=>json([{id:"a1",action:"quota.update",actorName:"Alice",result:"Success",timestamp:"2026-10-10T10:00:00Z"}]));
   vi.stubGlobal("fetch",fetchMock);
   render(<TenantAuditPage tenantId="t1"/>);
   expect(await screen.findByRole("status")).toBeTruthy();
