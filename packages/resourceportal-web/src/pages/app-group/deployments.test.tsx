@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AppGroupDeployments, deploymentInDateRange, deploymentRollbackReason } from "./deployments";
+import { AppGroupDeployments, deploymentInDateRange, deploymentRollbackReason, invalidDeploymentTimeRange } from "./deployments";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -118,5 +118,36 @@ describe("#399 deployment time filters and rollback blockers", () => {
     expect(screen.getByText("v2")).toBeTruthy();
     expect(screen.getByText("This deployment is already current.")).toBeTruthy();
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  });
+});
+
+describe("#399 deployment history filter safety", () => {
+  it("detects reversed deployment time ranges without involving the API", () => {
+    expect(invalidDeploymentTimeRange("2026-10-10T12:00","2026-10-10T11:00")).toBe(true);
+    expect(invalidDeploymentTimeRange("2026-10-10T11:00","2026-10-10T11:00")).toBe(false);
+    expect(invalidDeploymentTimeRange("","2026-10-10T11:00")).toBe(false);
+  });
+
+  it("shows bounded history counts, refuses inverted date filters and restores the list on clear", async () => {
+    const fetchMock=vi.fn(async (_url:RequestInfo|URL,_init?:RequestInit)=>json([
+      {id:"d1",version:1,status:"Succeeded",note:"previous",createdAt:"2026-10-10T10:00:00Z"},
+      {id:"d2",version:2,status:"Succeeded",note:"current",createdAt:"2026-10-10T11:00:00Z"},
+    ]));
+    vi.stubGlobal("fetch",fetchMock);
+    render(<AppGroupDeployments tenantId="t1" appGroupId="ag1" onReload={vi.fn().mockResolvedValue(undefined)} currentVersion={2}/>);
+    expect(await screen.findByText("v1")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Showing 2 of 2 deployments");
+    expect((screen.getByRole("button",{name:"Clear deployment filters"}) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Deployments from"),{target:{value:"2026-10-10T12:00"}});
+    fireEvent.change(screen.getByLabelText("Deployments to"),{target:{value:"2026-10-10T11:00"}});
+    expect(screen.getByRole("alert").textContent).toMatch(/earlier than or equal/i);
+    expect(screen.queryByText("v1")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Showing 0 of 2 deployments");
+    fireEvent.click(screen.getByRole("button",{name:"Clear deployment filters"}));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("v1")).toBeTruthy();
+    expect(screen.getByText("v2")).toBeTruthy();
+    expect((screen.getByRole("button",{name:"Clear deployment filters"}) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/app-groups/ag1/")&&(!init?.method||init.method==="GET"))).toBe(true);
   });
 });
