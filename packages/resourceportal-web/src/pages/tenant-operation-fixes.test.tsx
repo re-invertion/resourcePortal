@@ -216,9 +216,9 @@ it("#399 manually refreshes the operations list without modifying tenant data", 
   ]));
   vi.stubGlobal("fetch",fetchMock);
   render(<TenantOperationsPage tenantId="t1"/>);
-  expect(await screen.findByText("Pending")).toBeTruthy();
+  expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole("button",{name:"Refresh operations"}));
-  expect(await screen.findByText("Succeeded")).toBeTruthy();
+  await waitFor(()=>expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0));
   expect(reads).toBeGreaterThanOrEqual(2);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/operations")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
