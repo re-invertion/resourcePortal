@@ -91,9 +91,12 @@ it("#399 updated-time filter includes bounds and excludes undated operations onl
 });
 
 it("#399 filters tenant Operations by entered update range without extra API requests", async () => {
+  const localBound = new Date(2026, 9, 10, 11, 0);
+  const oldTimestamp = new Date(localBound.getTime() - 60 * 60 * 1000).toISOString();
+  const recentTimestamp = new Date(localBound.getTime() + 60 * 60 * 1000).toISOString();
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json([
-    { id: "old", resourceName: "old backup", status: "Succeeded", updatedAt: "2026-10-10T07:00:00Z" },
-    { id: "recent", resourceName: "recent backup", status: "Pending", updatedAt: "2026-10-10T12:00:00Z" },
+    { id: "old", resourceName: "old backup", status: "Succeeded", updatedAt: oldTimestamp },
+    { id: "recent", resourceName: "recent backup", status: "Pending", updatedAt: recentTimestamp },
   ]));
   vi.stubGlobal("fetch", fetchMock);
   render(<TenantOperationsPage tenantId="t1" />);
