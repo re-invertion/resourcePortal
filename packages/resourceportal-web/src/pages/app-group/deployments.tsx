@@ -20,6 +20,11 @@ export function deploymentInDateRange(row: Deployment, from: string, to: string)
   const end = to ? Date.parse(to) : NaN;
   return (!from || (Number.isFinite(start) && timestamp >= start)) && (!to || (Number.isFinite(end) && timestamp <= end));
 }
+export function invalidDeploymentTimeRange(from: string, to: string) {
+  if (!from || !to) return false;
+  const start = Date.parse(from), end = Date.parse(to);
+  return !Number.isFinite(start) || !Number.isFinite(end) || start > end;
+}
 export function deploymentRollbackReason(row: Deployment, currentVersion: number | null | undefined, busy: boolean) {
   if (text(row.status) !== "Succeeded") return "Rollback requires a successful deployment.";
   if (currentVersion != null && Number(row.version) === currentVersion) return "This deployment is already current.";
@@ -113,7 +118,10 @@ export function AppGroupDeployments({
     finally { setWorking(undefined); }
   }
 
-  const filtered = rows.filter(row => {
+  const invalidRange = invalidDeploymentTimeRange(from, to);
+  const filtersActive = Boolean(search || statusFilter !== "all" || from || to);
+  const clearFilters = () => { setSearch(""); setStatusFilter("all"); setFrom(""); setTo(""); setPage(1); };
+  const filtered = (invalidRange ? [] : rows).filter(row => {
     const status = text(row.status, "Unknown");
     const filterMatches = statusFilter === "all" || status === statusFilter;
     const value = [row.version, row.note, row.status, row.id].map(x => text(x, "")).join(" ").toLowerCase();
@@ -124,6 +132,7 @@ export function AppGroupDeployments({
   const visible = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const statuses = Array.from(new Set(rows.map(row => text(row.status, "Unknown")))).sort();
   const activeDeployments = rows.some(active);
+  const historyUnverified = Boolean(q.error || q.loading || !q.data);
 
   return <section className="space-y-4">
     <div>
@@ -137,10 +146,11 @@ export function AppGroupDeployments({
           <Textarea className="min-h-20" value={note} onChange={event => setNote(event.target.value)}
             placeholder="Describe the change being deployed."/>
         </Field>
-        <Button variant="primary" disabled={Boolean(working) || activeDeployments} onClick={() => void deploy()}>
+        <Button variant="primary" disabled={Boolean(working) || activeDeployments || historyUnverified} onClick={() => void deploy()}>
           <DeployIcon size={16}/>{working === "deploy" ? "Submitting…" : "Deploy pending changes"}
         </Button>
       </div>
+      {historyUnverified ? <p className="mt-3 text-sm text-[#B42318]">Confirm current deployment history before starting another deployment; stale history cannot establish that no operation is running.</p> : null}
       {activeDeployments ? <p className="mt-3 text-sm text-[#8A5800]" role="status">A deployment is running. This history refreshes automatically until a terminal state is observed; another rollout is not available yet.</p> : null}
     </Card>
     <Card className="overflow-hidden">
@@ -155,14 +165,16 @@ export function AppGroupDeployments({
         <TextInput type="datetime-local" aria-label="Deployments from" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }}/>
         <TextInput type="datetime-local" aria-label="Deployments to" value={to} onChange={event => { setTo(event.target.value); setPage(1); }}/>
       </div>
-      {q.error ? <p role="alert" className="p-4 text-sm text-red-700">Deployment history could not be loaded. <Button size="sm" onClick={() => void q.reload()}>Retry</Button></p> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E1E7F0] px-4 py-2 text-xs text-[#5B6678]"><span role="status">Showing {filtered.length} of {rows.length} deployments in the loaded history. Older deployments may require another query.</span><Button size="sm" disabled={!filtersActive} onClick={clearFilters}>Clear deployment filters</Button></div>
+      {invalidRange ? <p role="alert" className="p-4 text-sm text-[#B42318]">Deployments from must be earlier than or equal to Deployments to. Correct the range to view history.</p> : null}
+      {q.error ? <p role="alert" className="p-4 text-sm text-red-700">Deployment history refresh failed. Previously loaded results may be stale; rollback and deployment actions are disabled until refreshed. <Button size="sm" onClick={() => void q.reload()}>Retry</Button></p> : null}
       <DataTable embedded loading={q.loading} columns={[
         { key: "version", label: "Version" }, { key: "status", label: "Status" },
         { key: "note", label: "Note" }, { key: "time", label: "Timestamp" },
         { key: "actions", label: "Actions" },
       ]} rows={visible.map(row => {
         const isCurrent = currentVersion != null && Number(row.version) === currentVersion;
-        const rollbackReason = deploymentRollbackReason(row, currentVersion, activeDeployments || syncingGroup);
+        const rollbackReason = deploymentRollbackReason(row, currentVersion, activeDeployments || syncingGroup || historyUnverified);
         const canRollback = !rollbackReason;
         return { key: idOf(row), cells: {
           version: <strong>{row.version == null ? text(row.name, "—") : `v${text(row.version)}`}{isCurrent ? <span className="ml-2 text-xs font-medium text-[#0F56A7]">Current</span> : null}</strong>,
