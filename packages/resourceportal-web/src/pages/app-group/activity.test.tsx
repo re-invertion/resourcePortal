@@ -62,9 +62,9 @@ it("#399 refreshes all three App Group activity relationships with tenant-scoped
   vi.stubGlobal("fetch",fetchMock);
   render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
   expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
-  expect(screen.getByRole("status").textContent).toContain("1 explicitly related operations");
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 1 explicitly related operations");
   fireEvent.click(screen.getByRole("button",{name:"Refresh activity"}));
-  await waitFor(() => expect(screen.getByRole("row", { name: /APP GROUP DEPLOY Succeeded/i })).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("row", { name: /APP GROUP DEPLOY Succeeded/i })).toBeTruthy());
   await waitFor(()=>expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(6));
   expect(operationReads).toBeGreaterThanOrEqual(2);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
