@@ -161,6 +161,7 @@ export function AppGroupDeployments({
         { key: "note", label: "Note" }, { key: "time", label: "Timestamp" },
         { key: "actions", label: "Actions" },
       ]} rows={visible.map(row => {
+        const isCurrent = currentVersion != null && Number(row.version) === currentVersion;
         const rollbackReason = deploymentRollbackReason(row, currentVersion, activeDeployments || syncingGroup);
         const canRollback = !rollbackReason;
         return { key: idOf(row), cells: {
