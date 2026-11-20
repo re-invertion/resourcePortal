@@ -12,6 +12,20 @@ type Deployment = Record<string, unknown>;
 const FINISHED = new Set(["Succeeded", "Failed", "RolledBack", "RollbackFailed", "Cancelled", "Canceled"]);
 const PAGE_SIZE = 20;
 const active = (row: Deployment) => !FINISHED.has(text(row.status, "Unknown"));
+export function deploymentInDateRange(row: Deployment, from: string, to: string) {
+  if (!from && !to) return true;
+  const timestamp = Date.parse(text(row.createdAt ?? row.updatedAt, ""));
+  if (!Number.isFinite(timestamp)) return false;
+  const start = from ? Date.parse(from) : NaN;
+  const end = to ? Date.parse(to) : NaN;
+  return (!from || (Number.isFinite(start) && timestamp >= start)) && (!to || (Number.isFinite(end) && timestamp <= end));
+}
+export function deploymentRollbackReason(row: Deployment, currentVersion: number | null | undefined, busy: boolean) {
+  if (text(row.status) !== "Succeeded") return "Rollback requires a successful deployment.";
+  if (currentVersion != null && Number(row.version) === currentVersion) return "This deployment is already current.";
+  if (busy) return "Wait for the running deployment or operation to finish.";
+  return "";
+}
 
 export function AppGroupDeployments({
   tenantId, appGroupId, onReload, currentVersion,
@@ -28,6 +42,8 @@ export function AppGroupDeployments({
   const [selected, setSelected] = useState<Deployment>();
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const events = useApi<unknown>(selected ? `${root}/deployments/${encodeURIComponent(idOf(selected))}/events` : undefined);
   const rows = useMemo(() => items<Deployment>(q.data), [q.data]);
@@ -101,7 +117,7 @@ export function AppGroupDeployments({
     const status = text(row.status, "Unknown");
     const filterMatches = statusFilter === "all" || status === statusFilter;
     const value = [row.version, row.note, row.status, row.id].map(x => text(x, "")).join(" ").toLowerCase();
-    return filterMatches && (!search.trim() || value.includes(search.trim().toLowerCase()));
+    return filterMatches && deploymentInDateRange(row, from, to) && (!search.trim() || value.includes(search.trim().toLowerCase()));
   });
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -128,7 +144,7 @@ export function AppGroupDeployments({
       {activeDeployments ? <p className="mt-3 text-sm text-[#8A5800]" role="status">A deployment is running. This history refreshes automatically until a terminal state is observed; another rollout is not available yet.</p> : null}
     </Card>
     <Card className="overflow-hidden">
-      <div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-[minmax(0,1fr)_190px]">
+      <div className="grid gap-3 border-b border-[#E1E7F0] p-4 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_190px_190px_190px]">
         <TextInput aria-label="Search deployments" placeholder="Search version or note" value={search}
           onChange={event => { setSearch(event.target.value); setPage(1); }}/>
         <Select aria-label="Filter deployment status" value={statusFilter}
@@ -136,6 +152,8 @@ export function AppGroupDeployments({
           <option value="all">All statuses</option>
           {statuses.map(status => <option value={status} key={status}>{status}</option>)}
         </Select>
+        <TextInput type="datetime-local" aria-label="Deployments from" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }}/>
+        <TextInput type="datetime-local" aria-label="Deployments to" value={to} onChange={event => { setTo(event.target.value); setPage(1); }}/>
       </div>
       {q.error ? <p role="alert" className="p-4 text-sm text-red-700">Deployment history could not be loaded. <Button size="sm" onClick={() => void q.reload()}>Retry</Button></p> : null}
       <DataTable embedded loading={q.loading} columns={[
@@ -143,9 +161,8 @@ export function AppGroupDeployments({
         { key: "note", label: "Note" }, { key: "time", label: "Timestamp" },
         { key: "actions", label: "Actions" },
       ]} rows={visible.map(row => {
-        const version = typeof row.version === "number" ? row.version : Number(row.version);
-        const isCurrent = currentVersion != null && currentVersion === version;
-        const canRollback = text(row.status) === "Succeeded" && !isCurrent && !activeDeployments && !syncingGroup;
+        const rollbackReason = deploymentRollbackReason(row, currentVersion, activeDeployments || syncingGroup);
+        const canRollback = !rollbackReason;
         return { key: idOf(row), cells: {
           version: <strong>{row.version == null ? text(row.name, "—") : `v${text(row.version)}`}{isCurrent ? <span className="ml-2 text-xs font-medium text-[#0F56A7]">Current</span> : null}</strong>,
           status: <StatusText tone={statusTone(row.status)}>{text(row.status, "Unknown")}</StatusText>,
@@ -158,7 +175,7 @@ export function AppGroupDeployments({
               confirmDescription="Rollback starts a new deployment from this successful historical version. It changes active workload configuration and must be confirmed."
               confirmLabel={`Rollback to v${text(row.version, idOf(row))}`}
               onConfirm={() => rollback(row)}>Rollback</ConfirmActionButton>
-            {!canRollback ? <span className="sr-only">Rollback unavailable for non-succeeded, current or in-progress deployment</span> : null}
+            {!canRollback ? <span className="block text-xs text-[#718096]" role="note">{rollbackReason}</span> : null}
           </div>,
         } };
       })} empty={<EmptyState icon={<HistoryIcon/>} title="No matching deployments"
