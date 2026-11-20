@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TenantAuditPage, TenantOperationsPage, auditDateTimeIso, invalidAuditTimeRange, mayRetryOperation, operationUpdatedAt, operationWithinTimeRange, invalidOperationTimeRange } from "./tenant-activity-pages";
 
@@ -207,4 +207,79 @@ it("#399 blocks audit export for reversed dates and recovers with clear filters"
   fireEvent.click(screen.getByRole("button",{name:"Clear audit filters"}));
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByText("Export CSV").closest("a")).not.toBeNull();
+});
+
+it("#399 manually refreshes the operations list without modifying tenant data", async () => {
+  let reads=0;
+  const fetchMock=vi.fn(async (_url:RequestInfo|URL,_init?:RequestInit)=>json([
+    {id:"op-refresh",type:"MAINTENANCE",status:++reads===1?"Pending":"Succeeded",resourceName:"refresh-target"},
+  ]));
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantOperationsPage tenantId="t1"/>);
+  expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button",{name:"Refresh operations"}));
+  await waitFor(()=>expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0));
+  expect(reads).toBeGreaterThanOrEqual(2);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/operations")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 refreshes operation status and events together without treating accepted as completed", async () => {
+  let detailReads=0, eventReads=0;
+  const fetchMock=vi.fn(async (url:RequestInfo|URL,_init?:RequestInit)=>{
+    if(String(url).endsWith("/events"))return json(eventReads++===0?[]:[{id:"event-1",type:"progress",message:"Work is still running"}]);
+    return json({id:"op1",type:"VOLUME_CREATE",status:++detailReads===1?"Pending":"Running",createdAt:"2026-10-10T10:00:00Z"});
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantOperationsPage tenantId="t1" operationId="op1"/>);
+  expect(await screen.findByText("Pending")).toBeTruthy();
+  expect(screen.getByText(/accepted request does not mean an operation has completed/i)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Refresh status"}));
+  expect(await screen.findByText("Running")).toBeTruthy();
+  await waitFor(()=>expect(screen.getByText("Work is still running")).toBeTruthy());
+  expect(detailReads).toBeGreaterThanOrEqual(2);
+  expect(eventReads).toBeGreaterThanOrEqual(2);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/t1/operations/op1")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 warns when refreshing previously loaded operations fails and clears warning on retry", async () => {
+  let request=0;
+  const fetchMock=vi.fn(async (_url:RequestInfo|URL,_init?:RequestInit)=>{
+    request+=1;
+    if(request===2)throw new Error("network disconnected");
+    return json([{id:"op1",type:"MAINTENANCE",status:request===1?"Pending":"Succeeded",resourceName:"status-probe"}]);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantOperationsPage tenantId="t1"/>);
+  expect((await screen.findAllByText("Pending")).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button",{name:"Refresh operations"}));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toMatch(/may be stale/i);
+  expect(screen.getByText("status-probe")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button",{name:"Refresh operations"}));
+  await waitFor(()=>expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).includes("/api/tenants/t1/operations")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
+
+it("#399 marks partly refreshed operation detail and events as stale on one failed GET", async () => {
+  let eventReads=0,detailReads=0;
+  const fetchMock=vi.fn(async (url:RequestInfo|URL,_init?:RequestInit)=>{
+    if(String(url).endsWith("/events")){
+      eventReads++;
+      if(eventReads===2)throw new Error("events unavailable");
+      return json([{id:"ev1",type:"progress",message:"queued event"}]);
+    }
+    return json({id:"op1",type:"VOLUME_CREATE",status:++detailReads===1?"Pending":"Running",createdAt:"2026-10-10T10:00:00Z"});
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<TenantOperationsPage tenantId="t1" operationId="op1"/>);
+  expect(await screen.findByText("Pending")).toBeTruthy();
+  await screen.findByText("queued event");
+  fireEvent.click(screen.getByRole("button",{name:"Refresh status"}));
+  expect(await screen.findByText("Running")).toBeTruthy();
+  await waitFor(()=>expect(screen.getByRole("alert").textContent).toMatch(/operation events/));
+  expect(screen.getByRole("alert").textContent).toMatch(/stale or inconsistent/);
+  fireEvent.click(screen.getByRole("button",{name:"Refresh status"}));
+  await waitFor(()=>expect(screen.queryByRole("alert")).toBeNull());
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/t1/operations/op1")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
