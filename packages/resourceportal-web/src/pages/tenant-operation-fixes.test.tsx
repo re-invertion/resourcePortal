@@ -60,3 +60,19 @@ it("#399 filters tenant operations by resource name and actor without issuing wr
   expect(screen.queryByText("backup-photos")).toBeNull();
   expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
 });
+
+it("#399 shows a friendly operation resource name with its technical type as secondary context", async () => {
+  const fetchMock = vi.fn(async () => json([
+    { id: "op1", type: "APP_GROUP_DEPLOY", status: "Pending", resourceName: "photos service", resourceType: "AppGroupDeployment", createdAt: "2026-10-10T10:01:00Z" },
+    { id: "op2", type: "VOLUME_CREATE", status: "Succeeded", resourceType: "Volume", createdAt: "2026-10-10T10:02:00Z" },
+  ]));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<TenantOperationsPage tenantId="t1" />);
+  expect(await screen.findByText("photos service")).toBeTruthy();
+  expect(screen.getByText("AppGroupDeployment")).toBeTruthy();
+  expect(screen.getByText("Volume")).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "Operation status" }), { target: { value: "Pending" } });
+  expect(screen.getByText("photos service")).toBeTruthy();
+  expect(screen.queryByText("Volume")).toBeNull();
+  expect(fetchMock.mock.calls.every(([input]) => String(input).includes("/api/tenants/t1/operations"))).toBe(true);
+});
