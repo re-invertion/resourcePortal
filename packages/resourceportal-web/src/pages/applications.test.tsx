@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApplicationsPage } from "./applications";
+import { ApplicationsPage, appGroupMatchesSearch } from "./applications";
 
 function json(value: unknown) { return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } }); }
 const groups = [
@@ -92,4 +92,65 @@ describe("ApplicationsPage", () => {
       vi.useRealTimers();
     }
   });
+});
+
+describe("#399 App Group inventory discoverability and bounded history", () => {
+  it("matches App Groups by child application name and ID without resolving other tenant data", () => {
+    expect(appGroupMatchesSearch({ name: "commerce", id: "ag1", singleApps: [{ id: "api-42", name: "payments-api" }] }, "PAYMENTS")).toBe(true);
+    expect(appGroupMatchesSearch({ name: "commerce", id: "ag1", singleApps: [{ id: "api-42", name: "payments-api" }] }, "api-42")).toBe(true);
+    expect(appGroupMatchesSearch({ name: "commerce", id: "ag1" }, "payments")).toBe(false);
+    expect(appGroupMatchesSearch({ name: "commerce" }, "   ")).toBe(true);
+  });
+
+  it("paginates 45 groups, resets to page one after filtering, and provides a clear-filters action", async () => {
+    const many = Array.from({ length: 45 }, (_, i) => ({
+      id: `ag-${i + 1}`, name: `group-${i + 1}`,
+      singleApps: [{ id: `app-${i + 1}`, name: `service-${i + 1}` }],
+      runtimeState: "Running", health: "Healthy",
+    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(many)));
+    render(<ApplicationsPage tenantId="t1" />);
+    expect(await screen.findByText("1–20 of 45")).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(21);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("21–40 of 45")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("41–45 of 45")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search App Groups" }), { target: { value: "service-42" } });
+    expect(screen.getByText("group-42")).toBeTruthy();
+    expect(screen.queryByText("group-41")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("1–20 of 45")).toBeTruthy();
+  });
+});
+
+
+it("#399 adjusts Previous navigation to the displayed page when a refresh shrinks the inventory", async () => {
+  const makeGroups = (count: number) => Array.from({ length: count }, (_, i) => ({
+    id: `ag-${i + 1}`, name: `group-${i + 1}`, singleApps: [],
+    runtimeState: "Running", health: "Healthy",
+  }));
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(json(makeGroups(45)))
+    .mockResolvedValue(json(makeGroups(40)));
+  vi.stubGlobal("fetch", fetchMock);
+  vi.useFakeTimers();
+  const view = render(<ApplicationsPage tenantId="t1" />);
+  try {
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText("1–20 of 45")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("41–45 of 45")).toBeTruthy();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+    expect(screen.getByText("21–40 of 40")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(screen.getByText("1–20 of 40")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
 });
