@@ -18,11 +18,11 @@ function fixture({ viewer = false, failAudit = false } = {}) {
     roles: [{ id: "owner-role", name: "Owner", permissions: viewer ? ["tenant.read"] : ["*"] }], groups: [] };
   const auditRows = [
     { id: "audit-a", resourceType: "TenantGroup", resourceId: "group-a",
-      action: "tenant_group.role.assign", result: "Success", actorName: "Owner", createdAt: "2026-11-20T12:00:00Z" },
+      action: "tenant_group.role.assign", result: "Success", actorName: "Owner", timestamp: "2026-11-20T12:00:00Z" },
     { id: "audit-foreign", resourceType: "TenantGroup", resourceId: "group-b",
-      action: "tenant_group.delete", result: "Success", actorName: "Foreign", createdAt: "2026-11-20T12:00:00Z" },
+      action: "tenant_group.delete", result: "Success", actorName: "Foreign", timestamp: "2026-11-20T12:00:00Z" },
     { id: "audit-other-type", resourceType: "AppGroup", resourceId: "group-a",
-      action: "appgroup.deploy", result: "Success", actorName: "Other", createdAt: "2026-11-20T12:00:00Z" },
+      action: "appgroup.deploy", result: "Success", actorName: "Other", timestamp: "2026-11-20T12:00:00Z" },
   ];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -62,6 +62,7 @@ describe("#399 tenant group details and verified activity", () => {
     expect(screen.getByText(/Deleting this group removes these inherited grants from 1 member/)).toBeTruthy();
     const activity = screen.getByRole("region", { name: "Group activity" });
     await within(activity).findByText("tenant group.role.assign");
+    expect(within(activity).getByText(/2026/)).toBeTruthy();
     expect(within(activity).queryByText("tenant group.delete")).toBeNull();
     expect(within(activity).queryByText("appgroup.deploy")).toBeNull();
     await waitFor(() => {
