@@ -143,8 +143,8 @@ describe("Tenant networking without routed Site VPN",()=>{
   it("#399 §9 requires explicit application/network selections and gives a disabled reason", () => {
     render(<TenantNetworkingPage tenantId={tenantId}/>);
     expect(screen.getByRole("status").textContent).toMatch(/select both an Application and a Network/);
-    expect(screen.getByLabelText("Application").hasAttribute("required")).toBe(true);
-    expect(screen.getByLabelText("Network").hasAttribute("required")).toBe(true);
+    expect(screen.getByLabelText(/^Application\s*\*?$/).hasAttribute("required")).toBe(true);
+    expect(screen.getByLabelText(/^Network\s*\*?$/).hasAttribute("required")).toBe(true);
     expect(screen.getByRole("button", {name:"Connect application"}).hasAttribute("disabled")).toBe(true);
   });
 
@@ -176,8 +176,8 @@ describe("Tenant networking without routed Site VPN",()=>{
   });
   it("attaches one application to an RP Network using the existing durable operation",async()=>{
     render(<TenantNetworkingPage tenantId={tenantId}/>);
-    fireEvent.change(screen.getByLabelText("Application"),{target:{value:appId}});
-    fireEvent.change(screen.getByLabelText("Network"),{target:{value:networkId}});
+    fireEvent.change(screen.getByLabelText(/^Application\s*\*?$/),{target:{value:appId}});
+    fireEvent.change(screen.getByLabelText(/^Network\s*\*?$/),{target:{value:networkId}});
     fireEvent.click(screen.getByRole("button",{name:"Connect application"}));
     await waitFor(()=>expect(mock.request).toHaveBeenCalledWith(
       root+"/networks/"+networkId+"/attachments",
