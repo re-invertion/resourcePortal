@@ -37,6 +37,26 @@ type Credentials = {
 };
 const empty = { name: "", type: "Web", redirectUri: "", logoutUri: "" };
 
+export function tenantOidcLifecycle(
+  provider: { status: string; projectId?: string | null; enabled?: boolean } | undefined,
+  appCount: number,
+  loading: boolean,
+) {
+  const status = provider?.status ?? "Unavailable";
+  const available = !loading && Boolean(provider);
+  const hasProject = Boolean(provider?.projectId);
+  return {
+    provision: available && status === "NotProvisioned",
+    reconcile: available && hasProject && ["Provisioned", "GrantsReconciled", "ReconciliationFailed"].includes(status),
+    activate: available && hasProject && status === "GrantsReconciled",
+    disable: available && hasProject && status === "Active" && provider?.enabled === true,
+    delete: available && hasProject && ["Disabled", "Provisioned", "GrantsReconciled", "ProvisioningFailed", "ReconciliationFailed"].includes(status) && appCount === 0,
+    reason: !available ? "Provider status has not been verified." :
+      !hasProject && status !== "NotProvisioned" ? "No verified tenant OIDC project is available." :
+      "Actions depend on the provider lifecycle and the number of registered OIDC clients.",
+  };
+}
+
 export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
   const provider = useApi<Provider>(`${root}/oidc-provider`);
@@ -53,6 +73,7 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
   const info = provider.data;
   const apps = Array.isArray(applications.data) ? applications.data : [];
   const ready = info?.enabled === true && info.status === "Active";
+  const lifecycle = tenantOidcLifecycle(info, apps.length, provider.loading || Boolean(provider.error) || busy);
   const metadata = info?.issuer
     ? `${info.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`
     : undefined;
@@ -145,7 +166,7 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
       <PageHeader
         eyebrow="Tenant identity"
         title="Identity & SSO"
-        description="Manage the identity provider your tenant offers to its own applications."
+        description="Canonical tenant-issued outbound OIDC provider and application client management. Separate from ResourcePortal machine identities and legacy inbound federation."
       />
       <AccessTabs tenantId={tenantId} active="identity-sso" />
 
@@ -194,18 +215,24 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
             <a className="mt-2 inline-block text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/activity/audit`}>View tenant audit</a>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || provider.loading || info?.status !== "NotProvisioned"} onClick={() => void operation("Provisioning requested.", `${root}/oidc-provider/provision`)}>Provision provider</Button>
-            <Button disabled={busy || !info?.projectId} onClick={() => void operation("Grants reconciled.", `${root}/oidc-provider/reconcile-grants`)}>Reconcile grants</Button>
+            <Button disabled={!lifecycle.provision} onClick={() => void operation("Provisioning requested.", `${root}/oidc-provider/provision`)}>Provision provider</Button>
+            <Button disabled={!lifecycle.reconcile} onClick={() => void operation("Grants reconciled.", `${root}/oidc-provider/reconcile-grants`)}>Reconcile grants</Button>
             <ConfirmActionButton
-              disabled={busy || info?.status !== "GrantsReconciled"}
+              disabled={!lifecycle.activate}
               confirmTitle="Activate tenant OIDC provider?"
               confirmDescription="Only proceed after a platform operator has validated OIDC token and tenant isolation tests."
               confirmLabel="Request activation"
               confirmVariant="primary"
               onConfirm={() => operation("Activation completed.", `${root}/oidc-provider/activate`)}
             >Activate</ConfirmActionButton>
-            <ConfirmActionButton disabled={busy || !info?.projectId} confirmTitle="Disable tenant SSO?" confirmDescription="Tenant sign-in to applications will stop; upstream user grants will be revoked." confirmLabel="Disable provider" onConfirm={() => operation("Provider disabled.", `${root}/oidc-provider/disable`)}>Disable</ConfirmActionButton>
-            <ConfirmActionButton disabled={busy || !info?.projectId} confirmTitle="Delete tenant identity project?" confirmDescription="All OIDC applications must be deleted first. The action is irreversible." confirmLabel="Delete provider" onConfirm={() => operation("Provider deleted.", `${root}/oidc-provider`, "DELETE")}>Delete provider</ConfirmActionButton>
+            <ConfirmActionButton disabled={!lifecycle.disable} confirmTitle="Disable tenant SSO?" confirmDescription="Tenant sign-in to applications will stop; upstream user grants will be revoked." confirmLabel="Disable provider" onConfirm={() => operation("Provider disabled.", `${root}/oidc-provider/disable`)}>Disable</ConfirmActionButton>
+            <ConfirmActionButton disabled={!lifecycle.delete} confirmTitle="Delete tenant identity project?" confirmDescription="All OIDC applications must be deleted first. The action is irreversible." confirmLabel="Delete provider" onConfirm={() => operation("Provider deleted.", `${root}/oidc-provider`, "DELETE")}>Delete provider</ConfirmActionButton>
+            <p role="status" className="w-full text-xs text-[#526070]">
+              Provider lifecycle: {info?.status ?? "Unavailable"}. {apps.length} registered client(s).
+              {" "}{lifecycle.reason}
+              {!lifecycle.delete && apps.length > 0 ? " Delete clients in Application SSO before requesting project deletion." : ""}
+              {!lifecycle.disable && info?.status !== "Active" ? " Disable is available only for an active provider." : ""}
+            </p>
           </div>
         </Card>
 
