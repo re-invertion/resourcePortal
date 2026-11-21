@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { apiRequest } from "../api/client";
 import {
   Button,
@@ -183,6 +183,21 @@ export function PlatformUsersPage() {
   </main>;
 }
 
+export function platformCapacityAlias(appId: unknown) {
+  const id = text(appId, "");
+  return id ? "App …" + id.slice(-8) : "Application ID unavailable";
+}
+export function platformRemoteLocationLabel(row: Row) {
+  const configured = text(valueOf(row, "displayName", "name"), "").trim();
+  if (configured) return configured;
+  const hostname = text(row.hostname, "").trim();
+  if (hostname) return hostname;
+  const nodeId = text(row.swarmNodeId, "").trim();
+  if (nodeId) return "Swarm node …" + nodeId.slice(-8);
+  const id = idOf(row);
+  return id ? "Location …" + id.slice(-8) : "Location identifier unavailable";
+}
+
 export type InfrastructureSection = "overview" | "swarm" | "capacity" | "gpus" | "storage" | "locations" | "updates";
 const infrastructureSections: { id: InfrastructureSection; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -209,6 +224,10 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const capacity = useApi<Row>("/api/platform/capacity");
   const release = useApi<Row>("/api/platform/release");
   const [capacitySearch, setCapacitySearch] = useState("");
+  const [selectedRemote, setSelectedRemote] = useState<Row>();
+  const [remoteDetails, setRemoteDetails] = useState<Row>();
+  const remoteDetailsRequestId = useRef(0);
+  const [gpuRecovery, setGpuRecovery] = useState<Row>();
   const [capacitySort, setCapacitySort] = useState<"app"|"predicted"|"confidence">("predicted");
   const [capacityPage, setCapacityPage] = useState(0);
   const capacityPageSize = 10;
@@ -269,6 +288,57 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   async function run(label: string, path: string, reload?: () => Promise<void>) { setBusy(label); try { await apiRequest(path, { method: "POST" }); if (reload) await reload(); toast.success(`${label} completed.`); } catch (error) { toast.error(`${label} failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function setStorageMaintenance(row: Row, enabled: boolean) { const id = idOf(row); if (!id) return; const label = enabled ? "Enter storage maintenance" : "Exit storage maintenance"; setBusy(label); try { await apiRequest(`/api/platform/storage-backends/${encodeURIComponent(id)}/maintenance`, { method: "PATCH", body: { enabled } }); await backends.reload(); toast.success(enabled ? "Storage backend entered maintenance." : "Storage backend left maintenance."); } catch (error) { toast.error(`Storage backend maintenance update failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function requestPlatformUpdate() { const targetVersion=text(release.data?.latestVersion,""); if(!targetVersion)return; setBusy("Update ResourcePortal"); try { const operation=await apiRequest<Row>("/api/platform/release/update",{method:"POST",body:{targetVersion,confirmation:updateConfirmation}}); if(typeof operation.id==="string")setUpdateOperationId(operation.id);window.dispatchEvent(new Event("rp-upgrade-started"));setUpdateOpen(false); setUpdateConfirmation(""); toast.success(`ResourcePortal update to v${targetVersion} started. The UI may reconnect while services roll out.`); } catch(error){ toast.error(`ResourcePortal update failed to start: ${readableError(error)}`); } finally { setBusy(undefined); } }
+  function closeLocationDetails() {
+    // Invalidate even an in-flight GET so a closed or superseded dialog
+    // cannot display another location's private operational details.
+    remoteDetailsRequestId.current += 1;
+    setSelectedRemote(undefined);
+    setRemoteDetails(undefined);
+  }
+  async function loadLocationDetails(row: Row) {
+    const id = idOf(row);
+    if (!id) return;
+    const requestId = ++remoteDetailsRequestId.current;
+    setSelectedRemote(row);
+    setRemoteDetails(undefined);
+    try {
+      const latest = await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id));
+      if (remoteDetailsRequestId.current !== requestId) return;
+      if (idOf(latest) !== id) throw new Error("Remote location details identity mismatch");
+      setRemoteDetails(latest);
+    } catch (error) {
+      if (remoteDetailsRequestId.current === requestId) toast.error("Location details unavailable: "+readableError(error));
+    }
+  }
+  async function changeLocationMaintenance(row: Row) {
+    const id = idOf(row);
+    if (!id || !remoteDetails || idOf(remoteDetails) !== id) return;
+    const enabled = remoteDetails.maintenance !== true;
+    setBusy("Remote location maintenance");
+    try {
+      const operation = await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id)+"/maintenance", {
+        method:"PATCH", body:{enabled},
+      });
+      toast.success("Maintenance operation requested: "+text(operation.id,"track in platform Operations"));
+      await remotes.reload();
+      closeLocationDetails();
+    } catch (error) { toast.error("Maintenance request failed: "+readableError(error)); }
+    finally { setBusy(undefined); }
+  }
+  async function requestGpuDiagnostics(row: Row, recover: boolean) {
+    const uuid = text(row.uuid,"");
+    if (!/^GPU-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(uuid)) return;
+    setBusy("GPU diagnostic");
+    try {
+      const operation = await apiRequest<Row>("/api/platform/gpu-devices/"+encodeURIComponent(uuid)+"/"+(recover?"recover":"diagnose"),{
+        method:"POST", ...(recover ? {body:{releaseIfUnavailable:false}} : {}),
+      });
+      toast.success("GPU operation accepted: "+text(operation.id,"track in platform Operations"));
+      await gpuDevices.reload();
+      setGpuRecovery(undefined);
+    } catch(error) { toast.error("GPU operation failed: "+readableError(error)); }
+    finally { setBusy(undefined); }
+  }
   async function saveCapacitySettings() {
     setBusy("Save capacity policy");
     try {
@@ -413,7 +483,12 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
               <DataTable embedded className="rounded-none border-0" loading={capacity.loading} columns={[
                 {key:"app",label:"Application ID"},{key:"samples",label:"Samples"},{key:"predicted",label:"Predicted"},{key:"p99",label:"P99"},{key:"peak",label:"7d peak"},{key:"confidence",label:"Confidence"},{key:"oom",label:"OOM events"}
               ]} rows={pagedCapacityPredictions.map((item)=>({key:text(item.appId),cells:{
-                app:<code className="text-xs">{text(item.appId)}</code>,
+                app:<div className="min-w-0 text-xs">
+                  <strong className="block">{platformCapacityAlias(item.appId)}</strong>
+                  <code className="block break-all">{text(item.appId,"ID unavailable")}</code>
+                  <p className="mt-1 text-[#526070]">Platform-scoped operational alias only; tenant-private application names are not retrieved.</p>
+                  {text(item.appId) ? <Button size="sm" variant="ghost" onClick={()=>void navigator.clipboard.writeText(text(item.appId))}>Copy application ID</Button> : null}
+                </div>,
                 samples:item.sampleCount === undefined || item.sampleCount === null ? "Not reported" : numberOf(item.sampleCount,0) === 0 ? "No samples" : String(numberOf(item.sampleCount,0)),
                 predicted:item.usedPolicyFallback === true || numberOf(item.sampleCount,NaN) === 0 ? `${formatBytes(item.predictedBytes)} (policy fallback)` : formatBytes(item.predictedBytes),
                 p99:numberOf(item.sampleCount,NaN) === 0 ? "No samples" : formatBytes(item.p99Bytes),
@@ -499,14 +574,45 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
             node:<div>{text(node.hostname,"Unknown node")}<span className="block text-xs text-[#718096]">{text(node.status,"Unknown")}</span></div>,
             status:<StatusBadge tone={statusTone(status)}>{status}</StatusBadge>,
             memory:formatBytes(gpu.memoryBytes),
-            assignment:gpu.allocatedSingleAppId?<div className="text-xs"><strong>Assigned</strong><code className="block break-all">{text(gpu.allocatedSingleAppId)}</code></div>:<span className="text-xs">Unassigned</span>
+            assignment:<div className="space-y-2 text-xs">
+              <strong className="block">{gpu.allocatedSingleAppId ? "Assigned · " + text(gpu.allocationState,"allocation recorded") : "Unassigned"}</strong>
+              {gpu.allocatedSingleAppId ? <code className="block break-all">{text(gpu.allocatedSingleAppId)}</code> : null}
+              <p className="whitespace-normal break-words text-[#526070]">Assignments belong to SingleApp deployment policy. Change or release via supported SingleApp GPU configuration and deployment. A failed observation never revokes allocation.</p>
+              <Button size="sm" disabled={Boolean(busy)} onClick={()=>void requestGpuDiagnostics(gpu,false)}>Diagnose GPU</Button>
+              {gpu.allocatedSingleAppId ? <Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>setGpuRecovery(gpu)}>Recovery options</Button> : null}
+            </div>
           }
         }})} empty={<EmptyState title="No verified NVIDIA devices" description="A Swarm agent must successfully verify the NVIDIA runtime and the daemon must advertise matching GPU UUID resources. Existing assignments are not released by observation failures."/>}/>}
       </Card> : null}
       {section==="swarm" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Compute" title="Swarm cluster" description="Current persisted/live platform cluster state." /><div className="p-5">{swarm.error ? <ErrorCard label="Swarm cluster" error={swarm.error} retry={swarm.reload} /> : swarm.loading ? <p className="text-sm text-[#5B6678]">Loading cluster state…</p> : <DetailList columns={3} items={[{ label: "Status", value: <StatusBadge tone={statusTone(swarmState)}>{swarmState}</StatusBadge> },{ label: "Nodes", value: numberOf(valueOf(swarmRow, "nodeCount", "nodes"), 0) },{ label: "Managers", value: numberOf(valueOf(swarmRow, "managerCount", "managers"), 0) },{ label: "Last synchronized", value: formatDate(valueOf(swarmRow, "lastSyncedAt", "updatedAt")) }]} />}</div></Card> : null}
       {section==="storage" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Storage" title="Storage backends" description="Validate and reconcile existing backends. The API does not expose create/update/delete operations here." />{backends.error ? <div className="p-5"><ErrorCard label="Storage backends" error={backends.error} retry={backends.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={backends.loading} columns={[{ key: "name", label: "Backend" },{ key: "status", label: "Status" },{ key: "capacity", label: "Capacity" },{ key: "available", label: "Available" },{ key: "actions", label: "Actions" }]} rows={backendRows.map((row) => { const id = idOf(row); const state = text(valueOf(row, "health", "status"), "Unknown"); return { key: id || text(row.name), cells: { name: <div><strong className="block text-[#172033]">{text(row.name, "Unnamed backend")}</strong><span className="text-xs text-[#718096]">{titleCase(row.type)}</span></div>, status: <div className="flex flex-wrap gap-2"><StatusBadge tone={statusTone(state)}>{state}</StatusBadge>{bool(row.maintenance) ? <StatusBadge tone="warning">Maintenance</StatusBadge> : null}</div>, capacity: formatBytes(row.capacityTotal), available: formatBytes(row.capacityAvailable), actions: id ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={Boolean(busy)} onClick={() => void run(`Validate ${text(row.name, "backend")}`, `/api/platform/storage-backends/${encodeURIComponent(id)}/validate`, backends.reload)}>Validate</Button><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => void setStorageMaintenance(row, !bool(row.maintenance))}>{bool(row.maintenance) ? "Exit maintenance" : "Enter maintenance"}</Button></div> : "—" } }; })} empty={<EmptyState title="No storage backends" description="No storage backend is currently returned by the platform API." />} />}</Card> : null}
-      {section==="locations" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Locations" title="Remote locations" description="Discovered infrastructure locations. Maintenance state is managed per location by the platform API." />{remotes.error ? <div className="p-5"><ErrorCard label="Remote locations" error={remotes.error} retry={remotes.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={remotes.loading} columns={[{ key: "name", label: "Location" },{ key: "status", label: "Status" },{ key: "type", label: "Type" },{ key: "updated", label: "Last update" }]} rows={remoteRows.map((row) => ({ key: idOf(row) || text(row.name), cells: { name: text(valueOf(row, "displayName", "name"), "Unnamed location"), status: <StatusBadge tone={statusTone(valueOf(row, "health", "status"))}>{titleCase(valueOf(row, "health", "status"))}</StatusBadge>, type: titleCase(valueOf(row, "type", "kind")), updated: formatDate(valueOf(row, "lastSyncedAt", "updatedAt")) } }))} empty={<EmptyState title="No remote locations" description="No remote locations are currently registered." />} />}</Card> : null}
+      {section==="locations" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Locations" title="Remote locations" description="Discovered infrastructure locations. Maintenance state is managed per location by the platform API." />{remotes.error ? <div className="p-5"><ErrorCard label="Remote locations" error={remotes.error} retry={remotes.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={remotes.loading} columns={[{ key: "name", label: "Location" },{ key: "status", label: "Status" },{ key: "type", label: "Type" },{ key: "updated", label: "Last update" },{ key:"actions",label:"Actions" }]} rows={remoteRows.map((row) => ({ key: idOf(row) || text(row.name), cells: { name:<div><strong>{platformRemoteLocationLabel(row)}</strong><code className="block break-all text-xs">{idOf(row)}</code></div>, status: <div><StatusBadge tone={statusTone(valueOf(row, "health", "status"))}>{titleCase(valueOf(row, "health", "status"))}</StatusBadge>{row.maintenance===true?<StatusBadge tone="warning">Maintenance</StatusBadge>:null}</div>, type: titleCase(valueOf(row, "type", "kind")), updated: formatDate(valueOf(row, "lastSyncedAt", "updatedAt")), actions:idOf(row)?<Button size="sm" onClick={()=>void loadLocationDetails(row)}>Details & maintenance</Button>:"—" } }))} empty={<EmptyState title="No remote locations" description="No remote locations are currently registered." />} />}</Card> : null}
     </div>
+    <Dialog open={Boolean(selectedRemote)} onClose={closeLocationDetails}
+      title={"Remote location: "+platformRemoteLocationLabel(selectedRemote??{})}
+      description="Only platform-reported host metadata is shown; maintenance uses the audited operation API."
+      actions={<><Button onClick={closeLocationDetails}>Close</Button>
+        <Button variant="secondary" disabled={Boolean(busy)||!selectedRemote||!remoteDetails||idOf(remoteDetails)!==idOf(selectedRemote)} onClick={()=>{if(selectedRemote)void changeLocationMaintenance(selectedRemote);}}>
+          {remoteDetails?.maintenance===true?"Exit maintenance":"Enter maintenance"}
+        </Button></>}>
+      <p className="mb-3 text-sm">Maintenance requests create a platform operation. Inspect its ID and final result in Operations; acceptance alone is not completion.</p>
+      {remoteDetails?<DetailList columns={2} items={[
+        {label:"Location ID",value:text(remoteDetails.id)},
+        {label:"Swarm node",value:text(remoteDetails.swarmNodeId,"Unavailable")},
+        {label:"Hostname",value:text(remoteDetails.hostname,"Unavailable")},
+        {label:"Status",value:text(remoteDetails.status,"Unknown")},
+        {label:"Availability",value:text(remoteDetails.availability,"Unknown")},
+        {label:"Maintenance",value:remoteDetails.maintenance===true?"Enabled":"Disabled"},
+      ]}/>:<p role="status" className="text-sm">Loading verified location details…</p>}
+    </Dialog>
+    <Dialog open={Boolean(gpuRecovery)} onClose={()=>setGpuRecovery(undefined)}
+      title="GPU assignment recovery"
+      description="A GPU assignment must not be removed by editing inventory or bypassing the SingleApp API."
+      actions={<><Button onClick={()=>setGpuRecovery(undefined)}>Close</Button>
+        <Button variant="secondary" disabled={Boolean(busy)} onClick={()=>{if(gpuRecovery)void requestGpuDiagnostics(gpuRecovery,true);}}>Request safe recovery</Button></>}>
+      <Callout tone="warning" title="Preserve active allocations">Safe recovery uses the platform GPU recovery operation with releaseIfUnavailable=false. It never intentionally releases an active SingleApp allocation. To change or release an assigned GPU, edit the owning SingleApp GPU policy and deploy the supported change. Administrative stale-release recovery is not available from this UI.</Callout>
+      <p className="mt-3 text-xs">Assigned SingleApp ID: {text(gpuRecovery?.allocatedSingleAppId,"Unknown")}</p>
+    </Dialog>
     <Dialog
       open={updateOpen}
       onClose={()=>{if(busy!=="Update ResourcePortal"){setUpdateOpen(false);setUpdateConfirmation("");}}}
