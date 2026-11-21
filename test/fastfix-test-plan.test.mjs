@@ -512,6 +512,19 @@ test("retired Codespaces, quota fixtures and browser Swarm E2E have explicit pat
   assert.equal(plan.vpnSmoke, false);
 });
 
+test("issue #399 §4 real Chromium environment browser path cannot bypass Swarm E2E", () => {
+  const plan = selectProfiles(["scripts/run-stage20-real-swarm-web-e2e.mjs"]);
+  for (const profile of ["release-fixtures", "platform-release", "swarm-smoke-fixtures"]) {
+    assert.ok(plan.profiles.includes(profile), `Missing ${profile}`);
+  }
+  assert.equal(plan.swarmSmoke, true, "Browser path changes must select real Swarm E2E");
+  const selected = commandsForProfiles(plan.profiles);
+  assert.ok(selected.some(command =>
+    command[0] === "node" && command[1] === "--check" &&
+    command[2] === "scripts/run-stage20-real-swarm-web-e2e.mjs"
+  ), "Targeted patch checks must validate the actual Playwright script");
+});
+
 test("privileged real-Swarm smoke fixtures force targeted regression and real Swarm", () => {
   const plan = selectProfiles([
     "packages/resourceportal-api/scripts/privileged-smoke-worker.ts",
