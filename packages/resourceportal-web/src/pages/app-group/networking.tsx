@@ -18,10 +18,12 @@ import {
 } from "../../components/design-system";
 import { idOf, items, text } from "../../hooks/use-api";
 import { toast } from "../../components/toast";
-import { applicationHref } from "../../router/router";
+import { applicationHref, tenantHref } from "../../router/router";
+import type { Topology } from "../tenant-networking-graph";
 
 type R = Record<string, unknown>;
 type EndpointRow = { app: R; endpoint: R };
+type Membership = { appId: string; appName: string; networkId: string; networkName: string; address: string; gateName?: string; grantStatus?: string };
 
 /** Human-readable labels, while the API retains its stable protocol mode values. */
 export function protocolModeLabel(value: unknown): string {
@@ -44,6 +46,8 @@ export function AppGroupNetworking({
   const root = `/api/tenants/${encodeURIComponent(tenantId)}/app-groups/${encodeURIComponent(appGroupId)}`;
   const [apps, setApps] = useState<R[]>([]);
   const [rows, setRows] = useState<EndpointRow[]>([]);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [membershipError, setMembershipError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
   const [working, setWorking] = useState(false);
@@ -73,6 +77,36 @@ export function AppGroupNetworking({
         ),
       );
       setRows(all.flat());
+      // Both APIs are tenant-scoped. A failed read must not be rendered as an
+      // empty membership set or prevent HTTP endpoint editing.
+      try {
+        const topology = await apiRequest<Topology>(
+          `/api/tenants/${encodeURIComponent(tenantId)}/networking/topology`,
+        );
+        const group = topology.appGroups?.find(item => item.id === appGroupId);
+        const lanResult = await apiRequest<unknown>(
+          `/api/tenants/${encodeURIComponent(tenantId)}/networking/lan-attachments`,
+        );
+        const lan = items<R>(lanResult);
+        const byNetwork = new Map((topology.networks ?? []).map(item => [item.id, item.name]));
+        const byGate = new Map((topology.gates ?? []).map(item => [item.id, item.name]));
+        setMemberships((group?.singleApps ?? []).flatMap(app =>
+          (app.networkAttachments ?? []).map(link => {
+            const grant = lan.find(row => row.singleAppId === app.id && row.networkId === link.networkId);
+            return {
+              appId: app.id, appName: app.name, networkId: link.networkId,
+              networkName: byNetwork.get(link.networkId) ?? "Unnamed Network",
+              address: link.address,
+              gateName: grant ? byGate.get(text(grant.gateId)) ?? "Unknown Gate" : undefined,
+              grantStatus: grant ? text(grant.status, "Unknown") : undefined,
+            };
+          }),
+        ));
+        setMembershipError(undefined);
+      } catch (error) {
+        setMemberships([]);
+        setMembershipError(error instanceof Error ? error.message : "Membership data unavailable");
+      }
     } catch (caught) {
       setLoadError(
         caught instanceof Error ? caught.message : "Networking could not be loaded.",
@@ -80,7 +114,7 @@ export function AppGroupNetworking({
     } finally {
       setLoading(false);
     }
-  }, [root]);
+  }, [root, tenantId, appGroupId]);
 
   useEffect(() => {
     void load();
@@ -149,6 +183,25 @@ export function AppGroupNetworking({
           <PlusIcon size={15} /> Add endpoint
         </Button>
       </div>
+
+      <Card className="p-5" aria-label="Private Network and LAN relationships">
+        <h3 className="text-base font-semibold">Private Network and LAN relationships</h3>
+        <p className="mt-1 text-sm text-[#526070]">Only verified membership in this App Group is listed. A LAN grant is separate from private Network attachment. Device VPN provides user-device access to tenant Networks, not a direct VPN inside a SingleApp.</p>
+        {membershipError ? <Callout tone="warning" title="Network relationships unavailable">{membershipError}</Callout> :
+          memberships.length ? <ul className="mt-3 space-y-2">{memberships.map(member =>
+            <li key={member.appId + ":" + member.networkId} className="rounded-md border border-[#D7E0EC] p-3 text-sm">
+              <a className="font-semibold text-[#0F56A7] underline" href={applicationHref(tenantId,appGroupId,member.appId)}>{member.appName}</a>
+              {" → "}<strong>{member.networkName}</strong>
+              {" · "}<span className="font-mono">{member.address}</span>
+              {" · "}{member.gateName ? `LAN grant via ${member.gateName}: ${member.grantStatus}` : "No LAN L2 grant"}
+            </li>)}</ul> :
+          <p className="mt-2 text-sm text-[#526070]">No private Network attachments for applications in this App Group.</p>}
+        <div className="mt-3 flex flex-wrap gap-4 text-sm">
+          <a className="font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId,"networking","networks")}>Manage private Networks</a>
+          <a className="font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId,"networking","lan")}>Manage LAN grants and Gates</a>
+          <a className="font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId,"networking","vpn")}>Device VPN access</a>
+        </div>
+      </Card>
 
       {loadError ? (
         <Callout tone="danger" title="Networking could not be loaded">
