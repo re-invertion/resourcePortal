@@ -144,7 +144,7 @@ it("opens attachment forms only when requested on Storage and Configuration", as
 });
 
 it("#399 §9 shows current SingleApp private network and LAN grant without implying an app VPN", async () => {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path=String(input);
     if (path.endsWith("/single-apps")) return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
     if (path.endsWith("/networking/topology")) return json({
