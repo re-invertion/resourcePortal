@@ -113,6 +113,13 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(initialValue)');
     expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(editedValue)');
     expect(script).toContain('getByRole("button", { name: "Save environment" }).click()');
+    // All three writes must await the editor's GET/re-render, not just the PATCH.
+    for (const n of [1, 2, 3]) {
+      expect(script).toContain(`const editorReloadPromise${n} = page.waitForResponse(`);
+      expect(script).toContain(`const editorReload${n} = await editorReloadPromise${n};`);
+    }
+    expect(script.match(/\.click\(\{ trial: true \}\)/g)).toHaveLength(3);
+
     expect(script).toContain('getByRole("button", { name: "Remove", exact: true }).click()');
     expect(script).toContain('config?.environment?.[environmentKey] === initialValue');
     expect(script).toContain('config?.environment?.[environmentKey] === editedValue');
