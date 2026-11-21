@@ -121,6 +121,20 @@ test("issue 399 search and deployment history retain classified Fast Fix regress
   assert.throws(() => selectProfiles(["packages/resourceportal-web/src/pages/app-group/new-unclassified.test.tsx"]), /unclassified changes/);
 });
 
+test("issue #399 group detail audit regression is executed, not only classified", () => {
+  const fixture = "packages/resourceportal-web/src/pages/tenant-group-details.test.tsx";
+  const selected = selectProfiles([fixture]);
+  for (const profile of ["tenant-access", "security", "tenant-ux-patch"]) {
+    assert.ok(selected.profiles.includes(profile), `Missing ${profile} for group fixture`);
+  }
+  const commands = commandsForProfiles(selected.profiles);
+  assert.ok(commands.some(command =>
+    command.includes("@resource-portal/web") &&
+    command.some(argument => argument === "src/pages/tenant-group-details.test.tsx")
+  ), "Selected executable Web test command must run the new group details regression");
+  assert.throws(() => selectProfiles(["packages/resourceportal-web/src/pages/tenant-group-unknown.test.tsx"]), /unclassified changes/);
+});
+
 test("issue 396 scheduler and volume isolation cannot bypass networking and worker Fast Fix gates", () => {
   const files = [
     "packages/resourceportal-api/src/worker-reconcile-lane.ts",
