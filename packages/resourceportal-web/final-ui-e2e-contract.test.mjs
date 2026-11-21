@@ -98,6 +98,35 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).not.toContain('panelByHeading(page, "SingleApps")');
   });
 
+  it("exercises Overview to Environment through real Chromium links, persisted draft and removal (#399 §4)", () => {
+    const script = readFileSync(
+      path.resolve(packageRoot, "../../scripts/run-stage20-real-swarm-web-e2e.mjs"),
+      "utf8",
+    );
+    expect(script).toContain('await phase("navigate Overview to Environment and persist isolated draft"');
+    // Guard against accidentally pasting source text inside the navigation URL template.
+    expect(script).not.toContain('environmentimport { spawn }');
+    expect(script).toContain('/edit/environment$');
+    expect(script.match(/import \{ spawn \} from "node:child_process";/g)).toHaveLength(1);
+    expect(script).toContain('getByRole("link", { name: "Environment variables", exact: true }).click()');
+    expect(script).toContain('getByRole("textbox", { name: "Environment name 1" }).fill(environmentKey)');
+    expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(initialValue)');
+    expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(editedValue)');
+    expect(script).toContain('getByRole("button", { name: "Save environment" }).click()');
+    // All three writes must await the editor's GET/re-render, not just the PATCH.
+    for (const n of [1, 2, 3]) {
+      expect(script).toContain(`const editorReloadPromise${n} = page.waitForResponse(`);
+      expect(script).toContain(`const editorReload${n} = await editorReloadPromise${n};`);
+    }
+    expect(script.match(/\.click\(\{ trial: true \}\)/g)).toHaveLength(3);
+
+    expect(script).toContain('getByRole("button", { name: "Remove", exact: true }).click()');
+    expect(script).toContain('config?.environment?.[environmentKey] === initialValue');
+    expect(script).toContain('config?.environment?.[environmentKey] === editedValue');
+    expect(script).toContain('!Object.hasOwn(config?.environment ?? {}, environmentKey)');
+    expect(script).toContain('getByRole("link", { name: "Overview" })');
+  });
+
   it("checks the final v0.1.9 management matrix routes", () => {
     const script = readFileSync(
       path.resolve(packageRoot, "../../scripts/verify-stage20-management-matrix.mjs"),

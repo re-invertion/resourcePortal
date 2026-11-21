@@ -92,3 +92,24 @@ it("makes environment editable from the configuration subsection and Overview", 
   expect(await screen.findByRole("navigation", { name: "Configuration subsections" })).toBeTruthy();
   expect(within(screen.getByRole("navigation", { name: "Configuration subsections" })).getByRole("link", { name: "Environment variables" }).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/environment");
 });
+
+describe("#399 §4 Overview Environment navigation with an isolated API fixture", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/tenants/t1/app-groups/ag1") return json(group);
+      if (path === "/api/tenants/t1/app-groups/ag1/single-apps") return json([app]);
+      if (path === "/api/tenants/t1/app-groups/ag1/single-apps/app1/runtime-config") return json({ environment: {}, secrets: [] });
+      if (path === "/api/tenants/t1/app-groups/ag1/single-apps/app1/http-endpoints") return json([]);
+      return json([]);
+    }));
+  });
+  it("#399 §4 exposes an Overview environment link without any manually entered editor URL", async () => {
+  render(<AppGroupRoute tenantId="t1" segments={["ag1", "apps", "app1"]} />);
+  expect(await screen.findByRole("heading", { name: "checkout" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Environment variables" }).getAttribute("href"))
+    .toBe("/tenants/t1/app-groups/ag1/apps/app1/edit/environment");
+  expect(within(screen.getByRole("navigation", { name: "Application sections" }))
+    .getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe("page");
+});
+});

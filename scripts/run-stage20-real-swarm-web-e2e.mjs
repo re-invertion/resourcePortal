@@ -195,6 +195,107 @@ try {
       .getByRole("heading", { name: singleAppName, level: 2 })
       .waitFor();
 
+    // #399 §4: real Chromium navigation from SingleApp Overview to Environment.
+    // Never navigate directly to the editor: the clickable UI route is the contract.
+    // Exercise add/edit/remove on an isolated fixture before the first deployment.
+    await phase("navigate Overview to Environment and persist isolated draft", async () => {
+      const appOverviewUrl = page.url();
+      const environmentKey = `RP_BROWSER_E2E_${stamp}`;
+      const initialValue = "draft-from-overview";
+      const editedValue = "draft-updated-from-editor";
+      const runtimePath = `/tenants/${createdTenantId}/app-groups/${appGroupId}/single-apps/${singleAppId}/runtime-config`;
+
+      await page.getByRole("link", { name: "Environment variables", exact: true }).click();
+      await page.waitForURL(new RegExp(
+        `/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/${singleAppId}/edit/environment$`
+      ));
+      await page.getByRole("heading", { name: "Environment", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Configuration subsections" })
+        .getByRole("link", { name: "Environment variables" })
+        .waitFor();
+
+      await page.getByRole("button", { name: "Add variable" }).click();
+      await page.getByRole("textbox", { name: "Environment name 1" }).fill(environmentKey);
+      await page.getByRole("textbox", { name: "Environment value 1" }).fill(initialValue);
+      // Observe the editor's own GET, not an independent API probe, so its
+      // post-save state refresh cannot overwrite a subsequent edit/removal.
+      const editorReloadPromise1 = page.waitForResponse(response =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      const saveResponsePromise1 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      await page.getByRole("button", { name: "Save environment" }).click();
+      const saveResponse1 = await saveResponsePromise1;
+      assert(saveResponse1.ok(), `Environment draft PATCH #1 failed: ${saveResponse1.status()}`);
+      const editorReload1 = await editorReloadPromise1;
+      assert(editorReload1.ok(), `Editor refresh after PATCH #1 failed: ${editorReload1.status()}`);
+      // Playwright trial click waits for Save to be enabled (working=false)
+      // without issuing an extra write; React state/effects are now settled.
+      await page.getByRole("button", { name: "Save environment" }).click({ trial: true });
+      let config = await proxyApi(context, runtimePath);
+      assert(config?.environment?.[environmentKey] === initialValue,
+        "Environment value added via browser was not persisted in draft");
+
+      // Confirm the editor is reachable again from Overview without direct URL.
+      await page.getByRole("navigation", { name: "Application sections" })
+        .getByRole("link", { name: "Overview" }).click();
+      await page.waitForURL(appOverviewUrl);
+      await page.getByRole("link", { name: "Environment variables", exact: true }).click();
+      await page.getByRole("heading", { name: "Environment", exact: true }).waitFor();
+      await page.getByRole("textbox", { name: "Environment value 1" }).fill(editedValue);
+      // Observe the editor's own GET, not an independent API probe, so its
+      // post-save state refresh cannot overwrite a subsequent edit/removal.
+      const editorReloadPromise2 = page.waitForResponse(response =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      const saveResponsePromise2 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      await page.getByRole("button", { name: "Save environment" }).click();
+      const saveResponse2 = await saveResponsePromise2;
+      assert(saveResponse2.ok(), `Environment draft PATCH #2 failed: ${saveResponse2.status()}`);
+      const editorReload2 = await editorReloadPromise2;
+      assert(editorReload2.ok(), `Editor refresh after PATCH #2 failed: ${editorReload2.status()}`);
+      // Playwright trial click waits for Save to be enabled (working=false)
+      // without issuing an extra write; React state/effects are now settled.
+      await page.getByRole("button", { name: "Save environment" }).click({ trial: true });
+      config = await proxyApi(context, runtimePath);
+      assert(config?.environment?.[environmentKey] === editedValue,
+        "Environment edit via browser did not persist across navigation");
+
+      // Remove only this newly created fixture key; never touch existing tenant data.
+      await page.getByRole("button", { name: "Remove", exact: true }).click();
+      // Observe the editor's own GET, not an independent API probe, so its
+      // post-save state refresh cannot overwrite a subsequent edit/removal.
+      const editorReloadPromise3 = page.waitForResponse(response =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      const saveResponsePromise3 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
+      await page.getByRole("button", { name: "Save environment" }).click();
+      const saveResponse3 = await saveResponsePromise3;
+      assert(saveResponse3.ok(), `Environment draft PATCH #3 failed: ${saveResponse3.status()}`);
+      const editorReload3 = await editorReloadPromise3;
+      assert(editorReload3.ok(), `Editor refresh after PATCH #3 failed: ${editorReload3.status()}`);
+      // Playwright trial click waits for Save to be enabled (working=false)
+      // without issuing an extra write; React state/effects are now settled.
+      await page.getByRole("button", { name: "Save environment" }).click({ trial: true });
+      config = await proxyApi(context, runtimePath);
+      assert(!Object.hasOwn(config?.environment ?? {}, environmentKey),
+        "Environment removal via browser left the fixture key behind");
+      await page.getByRole("navigation", { name: "Application sections" })
+        .getByRole("link", { name: "Overview" }).click();
+      await page.waitForURL(appOverviewUrl);
+    });
+
     await page.goto(
       `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/deployments`,
       { waitUntil: "domcontentloaded" },
