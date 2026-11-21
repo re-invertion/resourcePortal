@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { apiRequest } from "../api/client";
 import {
   Button,
@@ -226,6 +226,7 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   const [capacitySearch, setCapacitySearch] = useState("");
   const [selectedRemote, setSelectedRemote] = useState<Row>();
   const [remoteDetails, setRemoteDetails] = useState<Row>();
+  const remoteDetailsRequestId = useRef(0);
   const [gpuRecovery, setGpuRecovery] = useState<Row>();
   const [capacitySort, setCapacitySort] = useState<"app"|"predicted"|"confidence">("predicted");
   const [capacityPage, setCapacityPage] = useState(0);
@@ -287,15 +288,27 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
   async function run(label: string, path: string, reload?: () => Promise<void>) { setBusy(label); try { await apiRequest(path, { method: "POST" }); if (reload) await reload(); toast.success(`${label} completed.`); } catch (error) { toast.error(`${label} failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function setStorageMaintenance(row: Row, enabled: boolean) { const id = idOf(row); if (!id) return; const label = enabled ? "Enter storage maintenance" : "Exit storage maintenance"; setBusy(label); try { await apiRequest(`/api/platform/storage-backends/${encodeURIComponent(id)}/maintenance`, { method: "PATCH", body: { enabled } }); await backends.reload(); toast.success(enabled ? "Storage backend entered maintenance." : "Storage backend left maintenance."); } catch (error) { toast.error(`Storage backend maintenance update failed: ${readableError(error)}`); } finally { setBusy(undefined); } }
   async function requestPlatformUpdate() { const targetVersion=text(release.data?.latestVersion,""); if(!targetVersion)return; setBusy("Update ResourcePortal"); try { const operation=await apiRequest<Row>("/api/platform/release/update",{method:"POST",body:{targetVersion,confirmation:updateConfirmation}}); if(typeof operation.id==="string")setUpdateOperationId(operation.id);window.dispatchEvent(new Event("rp-upgrade-started"));setUpdateOpen(false); setUpdateConfirmation(""); toast.success(`ResourcePortal update to v${targetVersion} started. The UI may reconnect while services roll out.`); } catch(error){ toast.error(`ResourcePortal update failed to start: ${readableError(error)}`); } finally { setBusy(undefined); } }
+  function closeLocationDetails() {
+    // Invalidate even an in-flight GET so a closed or superseded dialog
+    // cannot display another location's private operational details.
+    remoteDetailsRequestId.current += 1;
+    setSelectedRemote(undefined);
+    setRemoteDetails(undefined);
+  }
   async function loadLocationDetails(row: Row) {
     const id = idOf(row);
     if (!id) return;
+    const requestId = ++remoteDetailsRequestId.current;
     setSelectedRemote(row);
     setRemoteDetails(undefined);
     try {
       const latest = await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id));
+      if (remoteDetailsRequestId.current !== requestId) return;
+      if (idOf(latest) !== id) throw new Error("Remote location details identity mismatch");
       setRemoteDetails(latest);
-    } catch (error) { toast.error("Location details unavailable: "+readableError(error)); }
+    } catch (error) {
+      if (remoteDetailsRequestId.current === requestId) toast.error("Location details unavailable: "+readableError(error));
+    }
   }
   async function changeLocationMaintenance(row: Row) {
     const id = idOf(row);
@@ -308,7 +321,7 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
       });
       toast.success("Maintenance operation requested: "+text(operation.id,"track in platform Operations"));
       await remotes.reload();
-      setSelectedRemote(undefined);
+      closeLocationDetails();
     } catch (error) { toast.error("Maintenance request failed: "+readableError(error)); }
     finally { setBusy(undefined); }
   }
@@ -575,10 +588,10 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
       {section==="storage" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Storage" title="Storage backends" description="Validate and reconcile existing backends. The API does not expose create/update/delete operations here." />{backends.error ? <div className="p-5"><ErrorCard label="Storage backends" error={backends.error} retry={backends.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={backends.loading} columns={[{ key: "name", label: "Backend" },{ key: "status", label: "Status" },{ key: "capacity", label: "Capacity" },{ key: "available", label: "Available" },{ key: "actions", label: "Actions" }]} rows={backendRows.map((row) => { const id = idOf(row); const state = text(valueOf(row, "health", "status"), "Unknown"); return { key: id || text(row.name), cells: { name: <div><strong className="block text-[#172033]">{text(row.name, "Unnamed backend")}</strong><span className="text-xs text-[#718096]">{titleCase(row.type)}</span></div>, status: <div className="flex flex-wrap gap-2"><StatusBadge tone={statusTone(state)}>{state}</StatusBadge>{bool(row.maintenance) ? <StatusBadge tone="warning">Maintenance</StatusBadge> : null}</div>, capacity: formatBytes(row.capacityTotal), available: formatBytes(row.capacityAvailable), actions: id ? <div className="flex flex-wrap gap-2"><Button size="sm" disabled={Boolean(busy)} onClick={() => void run(`Validate ${text(row.name, "backend")}`, `/api/platform/storage-backends/${encodeURIComponent(id)}/validate`, backends.reload)}>Validate</Button><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => void setStorageMaintenance(row, !bool(row.maintenance))}>{bool(row.maintenance) ? "Exit maintenance" : "Enter maintenance"}</Button></div> : "—" } }; })} empty={<EmptyState title="No storage backends" description="No storage backend is currently returned by the platform API." />} />}</Card> : null}
       {section==="locations" ? <Card className="overflow-hidden"><SectionTitle eyebrow="Locations" title="Remote locations" description="Discovered infrastructure locations. Maintenance state is managed per location by the platform API." />{remotes.error ? <div className="p-5"><ErrorCard label="Remote locations" error={remotes.error} retry={remotes.reload} /></div> : <DataTable embedded className="rounded-none border-0" loading={remotes.loading} columns={[{ key: "name", label: "Location" },{ key: "status", label: "Status" },{ key: "type", label: "Type" },{ key: "updated", label: "Last update" },{ key:"actions",label:"Actions" }]} rows={remoteRows.map((row) => ({ key: idOf(row) || text(row.name), cells: { name:<div><strong>{platformRemoteLocationLabel(row)}</strong><code className="block break-all text-xs">{idOf(row)}</code></div>, status: <div><StatusBadge tone={statusTone(valueOf(row, "health", "status"))}>{titleCase(valueOf(row, "health", "status"))}</StatusBadge>{row.maintenance===true?<StatusBadge tone="warning">Maintenance</StatusBadge>:null}</div>, type: titleCase(valueOf(row, "type", "kind")), updated: formatDate(valueOf(row, "lastSyncedAt", "updatedAt")), actions:idOf(row)?<Button size="sm" onClick={()=>void loadLocationDetails(row)}>Details & maintenance</Button>:"—" } }))} empty={<EmptyState title="No remote locations" description="No remote locations are currently registered." />} />}</Card> : null}
     </div>
-    <Dialog open={Boolean(selectedRemote)} onClose={()=>{setSelectedRemote(undefined);setRemoteDetails(undefined);}}
+    <Dialog open={Boolean(selectedRemote)} onClose={closeLocationDetails}
       title={"Remote location: "+platformRemoteLocationLabel(selectedRemote??{})}
       description="Only platform-reported host metadata is shown; maintenance uses the audited operation API."
-      actions={<><Button onClick={()=>setSelectedRemote(undefined)}>Close</Button>
+      actions={<><Button onClick={closeLocationDetails}>Close</Button>
         <Button variant="secondary" disabled={Boolean(busy)||!selectedRemote||!remoteDetails||idOf(remoteDetails)!==idOf(selectedRemote)} onClick={()=>{if(selectedRemote)void changeLocationMaintenance(selectedRemote);}}>
           {remoteDetails?.maintenance===true?"Exit maintenance":"Enter maintenance"}
         </Button></>}>
