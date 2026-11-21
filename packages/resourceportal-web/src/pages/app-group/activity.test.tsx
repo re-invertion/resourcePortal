@@ -301,3 +301,40 @@ it("#399 discloses missing timestamps only for verified related loaded operation
   expect(fetchMock.mock.calls).toHaveLength(3);
   expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
 });
+
+it("#399 uses a valid update timestamp when creation time is malformed without leaking unrelated activity", async () => {
+  const history=[
+    {id:"op-fallback",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_ROLLBACK",status:"Succeeded",createdAt:"invalid",updatedAt:"2026-04-02T16:00:00Z"},
+    {id:"op-creation",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Pending",createdAt:"2026-04-01T09:00:00Z",updatedAt:"2026-04-03T16:00:00Z"},
+    {id:"op-undated",resourceType:"AppGroup",resourceId:"group-a",type:"APP_GROUP_DEPLOY",status:"Failed",createdAt:"invalid"},
+    {id:"op-foreign",resourceType:"AppGroup",resourceId:"group-b",type:"APP_GROUP_DELETE",status:"Failed",updatedAt:"2026-04-02T16:00:00Z"},
+  ];
+  const fetchMock=vi.fn(async (input:RequestInfo|URL,init?:RequestInit)=>{
+    const path=String(input);
+    if(path==="/api/tenants/tenant-a/operations")return json(history);
+    if(path==="/api/tenants/tenant-a/app-groups/group-a/single-apps"||path==="/api/tenants/tenant-a/app-groups/group-a/deployments")return json([]);
+    throw new Error("Unexpected path "+path);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<AppGroupActivity tenantId="tenant-a" appGroupId="group-a"/>);
+  const totals=screen.getByLabelText("Loaded related activity status totals");
+  await waitFor(()=>expect(screen.getByRole("status").textContent).toContain("Showing 3 of 3"));
+  expect(totals.textContent).toContain("Without valid timestamp: 1");
+  fireEvent.change(screen.getByLabelText("Activity from date"),{target:{value:"2026-04-02"}});
+  fireEvent.change(screen.getByLabelText("Activity to date"),{target:{value:"2026-04-02"}});
+  expect(screen.getByRole("status").textContent).toContain("Showing 1 of 3");
+  expect(screen.getByText("APP GROUP ROLLBACK")).toBeTruthy();
+  expect(screen.queryByText("APP GROUP DELETE")).toBeNull();
+  expect(screen.getAllByRole("link").some(link => link.getAttribute("href") === "/tenants/tenant-a/operations/op-undated")).toBe(false);
+  expect(screen.queryByRole("link",{name:/APP GROUP DELETE/})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"Clear activity filters"}));
+  fireEvent.change(screen.getByLabelText("Sort App Group activity"),{target:{value:"newest"}});
+  const order=()=>screen.getAllByRole("link").map(link=>link.getAttribute("href")).filter(href=>href?.startsWith("/tenants/tenant-a/operations/"));
+  expect(order()).toEqual([
+    "/tenants/tenant-a/operations/op-fallback",
+    "/tenants/tenant-a/operations/op-creation",
+    "/tenants/tenant-a/operations/op-undated",
+  ]);
+  expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(fetchMock.mock.calls.every(([url,init])=>String(url).startsWith("/api/tenants/tenant-a/")&&(!init?.method||init.method==="GET"))).toBe(true);
+});
