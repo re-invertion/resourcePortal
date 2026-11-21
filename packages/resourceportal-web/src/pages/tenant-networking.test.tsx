@@ -127,6 +127,19 @@ describe("Tenant networking without routed Site VPN",()=>{
     }
   });
 
+  it("#399 §9 renders short image identifiers in graph nodes and stores full digests for selected details", async () => {
+    const { buildTopologyGraph } = await vi.importActual<typeof import("./tenant-networking-graph")>("./tenant-networking-graph");
+    const digest = "sha256:" + "c".repeat(64);
+    const t = { ...topology, appGroups: [{...topology.appGroups[0],
+      singleApps: [{ ...topology.appGroups[0].singleApps[0],
+        image:"registry.example/team/sensor@" + digest }]}]};
+    const graph = buildTopologyGraph(t);
+    const node = graph.nodes.find(item=>item.id==="app:"+appId);
+    expect(node?.data.detail).toBe("sensor");
+    expect(node?.data.imageDetail).toBe("registry.example/team/sensor@" + digest);
+    expect(node?.data.detail).not.toContain(digest);
+  });
+
   it("#399 §9 requires explicit application/network selections and gives a disabled reason", () => {
     render(<TenantNetworkingPage tenantId={tenantId}/>);
     expect(screen.getByRole("status").textContent).toMatch(/select both an Application and a Network/);
