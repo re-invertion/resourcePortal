@@ -43,7 +43,7 @@ export type GateResource={
 };
 export type Topology={networks:NetworkResource[];gates:GateResource[];appGroups:AppGroup[]};
 
-type GraphNodeData = { label: string; detail: string; status?: string; category: "application" | "network"; group?: string };
+type GraphNodeData = { label: string; detail: string; status?: string; category: "application" | "network"; group?: string; imageDetail?: string };
 type GraphNode = Node<GraphNodeData, "resource">;
 
 function ResourceNode({ data, isConnectable }: NodeProps<GraphNode>) {
@@ -77,7 +77,7 @@ export function buildTopologyGraph(topology: Topology) {
     for (const app of group.singleApps) {
       nodes.push({
         id: "app:" + app.id, position: { x: 40, y: appIndex * 152 + 30 },
-        data: { label: app.name, detail: app.image || "Application service", group: group.name,
+        data: { label: app.name, detail: app.image ? app.image.split("@sha256:")[0].split("/").pop() || "Container image" : "Application service", imageDetail: app.image, group: group.name,
           status: app.effectiveRuntimeState || app.runtimeState, category: "application" }, type: "resource",
       });
       for (const link of app.networkAttachments ?? []) {
@@ -114,6 +114,8 @@ export function TenantNetworkingGraph({
 }) {
   const graph = useMemo(() => buildTopologyGraph(topology), [topology]);
   const [selected, setSelected] = useState<string>();
+  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const selectedNode = graph.nodes.find(node => node.id === selectedNodeId);
   const selectedEdge = graph.edges.find(edge => edge.id === selected);
   const hasNodes = graph.nodes.length > 0;
   return (
@@ -135,7 +137,8 @@ export function TenantNetworkingGraph({
             fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.25} maxZoom={1.6}
             nodesDraggable={false} nodesConnectable={!working} edgesReconnectable={false}
             onConnect={connection => onConnect?.(connection)}
-            onPaneClick={() => setSelected(undefined)}
+            onPaneClick={() => { setSelected(undefined); setSelectedNodeId(undefined); }}
+            onNodeClick={(_event, node) => { setSelectedNodeId(node.id); setSelected(undefined); }}
             onEdgeClick={(_event, edge) => setSelected(edge.id)}
             defaultEdgeOptions={{ interactionWidth: 20 }}
             proOptions={{ hideAttribution: true }}>
@@ -149,6 +152,13 @@ export function TenantNetworkingGraph({
         <NetworkIcon /><p className="text-sm font-semibold text-[#26364B]">No topology to display</p>
         <p className="text-sm text-[#718096]">Create a Network and attach an application to visualize its connections.</p>
       </div>}
+      {selectedNode?.data.imageDetail ? (
+        <div aria-label="Selected application image details" className="border-t border-[#E6ECF4] bg-white px-5 py-3">
+          <strong className="text-sm">{selectedNode.data.label}</strong>
+          <p className="mt-1 break-all font-mono text-xs text-[#52657D]">{selectedNode.data.imageDetail}</p>
+          <p className="text-xs text-[#718096]">Full image digest is shown only in these application details.</p>
+        </div>
+      ) : null}
       {selectedEdge ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E6ECF4] bg-white px-5 py-3">
           <div className="flex flex-wrap items-center gap-2">

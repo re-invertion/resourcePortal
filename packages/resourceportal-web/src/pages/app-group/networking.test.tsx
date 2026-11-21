@@ -132,6 +132,34 @@ describe("AppGroupNetworking", () => {
     );
   });
 
+  it("#399 §9 shows only current App Group private Networks and explicit Gate L2 grant status", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/single-apps") && (!init?.method || init.method==="GET")) return json([{id:"app1",name:"web"}]);
+      if (path.endsWith("/single-apps/app1/http-endpoints")) return json([]);
+      if (path.endsWith("/networking/topology")) return json({
+        appGroups:[
+          {id:"ag1",singleApps:[{id:"app1",name:"web",networkAttachments:[{id:"n-attach",networkId:"net1",address:"10.2.3.4"}]}]},
+          {id:"other-group",singleApps:[{id:"secret-app",name:"OTHER GROUP",networkAttachments:[{id:"other-attach",networkId:"net2",address:"10.9.0.5"}]}]},
+        ],
+        networks:[{id:"net1",name:"private-web"},{id:"net2",name:"private-other"}],
+        gates:[{id:"gate1",name:"office-gate"}],
+      });
+      if (path.endsWith("/networking/lan-attachments")) return json([{singleAppId:"app1",networkId:"net1",gateId:"gate1",status:"Pending"}]);
+      return json({});
+    });
+    vi.stubGlobal("fetch",fetchMock);
+    render(<AppGroupNetworking tenantId="t1" appGroupId="ag1"/>);
+    expect(await screen.findByText("private-web")).toBeTruthy();
+    expect(screen.getByText(/LAN grant via office-gate: Pending/)).toBeTruthy();
+    expect(screen.queryByText("private-other")).toBeNull();
+    expect(screen.queryByText("OTHER GROUP")).toBeNull();
+    expect(screen.getByRole("link", {name:"Manage private Networks"}).getAttribute("href")).toBe("/tenants/t1/networking/networks");
+    expect(screen.getByRole("link", {name:"Manage LAN grants and Gates"}).getAttribute("href")).toBe("/tenants/t1/networking/lan");
+    expect(screen.getByRole("link", {name:"Device VPN access"}).getAttribute("href")).toBe("/tenants/t1/networking/vpn");
+    expect(fetchMock.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+  });
+
   it("routes private network membership to tenant Networking and contains no deprecated controls", async () => {
     vi.stubGlobal("fetch", fetchWithEndpoints());
     render(<AppGroupNetworking tenantId="t1" appGroupId="ag1" />);

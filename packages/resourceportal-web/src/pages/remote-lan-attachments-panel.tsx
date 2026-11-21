@@ -146,6 +146,14 @@ export function RemoteLanAttachmentsPanel({
     }
   }
 
+  const createBlocker = !singleAppId ? "Select an application first." :
+    alreadyAttached.has(singleAppId) ? "This application already has a LAN attachment." :
+    !networkId || !networks.some(item => item.id === networkId) ? "Select a Ready Network already attached to the application." :
+    !gateId || !selectedGate ? "Select an RP Gate." :
+    uplinkMode === "ManagedSharedUplink" && !observed ? "The Gate must report a fresh authenticated LAN observation before granting shared uplink access." :
+    !effectiveInterface || !effectiveLanCidr ? "Provide the dedicated interface and expected DHCP subnet." :
+    addressMode === "Static" && (!staticAddress || !effectiveGateway) ? "Static addressing requires an IPv4 address/prefix and gateway." :
+    "";
   return (
     <Card className="mt-5 p-5">
       <h2 className="text-base font-semibold text-[#172033]">LAN Attachments</h2>
@@ -188,7 +196,7 @@ export function RemoteLanAttachmentsPanel({
             <option value="ManagedSharedUplink">Managed shared uplink (existing Gate LAN)</option>
           </Select>
         </Field>
-        <Field label="Application">
+        <Field label="Application" required>
           <Select value={singleAppId} onChange={event => {
             setApp(event.target.value);
             setNetwork("");
@@ -199,13 +207,13 @@ export function RemoteLanAttachmentsPanel({
             ))}
           </Select>
         </Field>
-        <Field label="Application Network">
+        <Field label="Application Network" required>
           <Select value={networkId} onChange={event => setNetwork(event.target.value)} required>
             <option value="">Choose its attached Network</option>
             {networks.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
           </Select>
         </Field>
-        <Field label="RP Gate">
+        <Field label="RP Gate" required>
           <Select value={gateId} onChange={event => setGate(event.target.value)} required>
             <option value="">Choose a Gate</option>
             {(topology?.gates ?? []).filter(item => !item.revokedAt).map(item => (
@@ -215,11 +223,11 @@ export function RemoteLanAttachmentsPanel({
         </Field>
         {uplinkMode==="DedicatedUnnumbered" ? (
           <>
-            <Field label="Dedicated Gate LAN interface">
+            <Field label="Dedicated Gate LAN interface" required>
               <TextInput required value={lanInterface} onChange={event => setLanInterface(event.target.value)}
                 placeholder="eth1 or eth0.100" />
             </Field>
-            <Field label="Expected customer DHCP subnet">
+            <Field label="Expected customer DHCP subnet" required>
               <TextInput required value={lanCidr} onChange={event => setLanCidr(event.target.value)}
                 placeholder="192.168.50.0/24" />
             </Field>
@@ -246,12 +254,12 @@ export function RemoteLanAttachmentsPanel({
             </Field>
             {addressMode==="Static" ? (
               <>
-                <Field label="Static IPv4 address/prefix">
+                <Field label="Static IPv4 address/prefix" required>
                   <TextInput required value={staticAddress}
                     onChange={event=>setStaticAddress(event.target.value)}
                     placeholder="192.168.50.40/24" />
                 </Field>
-                <Field label="Static IPv4 gateway">
+                <Field label="Static IPv4 gateway" required>
                   <TextInput required value={staticGateway}
                     onChange={event=>setStaticGateway(event.target.value)}
                     placeholder={observed?.gateway ?? "192.168.50.1"} />
@@ -260,13 +268,12 @@ export function RemoteLanAttachmentsPanel({
             ) : null}
           </>
         )}
-        <div className="flex items-end">
-          <Button disabled={working || !selectedGate || !networks.some(item => item.id === networkId) ||
-            !singleAppId || alreadyAttached.has(singleAppId) ||
-            (uplinkMode==="ManagedSharedUplink" && !observed) ||
-            (addressMode==="Static" && (!staticAddress || !effectiveGateway))} type="submit">
+        <div className="flex flex-col justify-end gap-1">
+          <Button disabled={working || Boolean(createBlocker)} type="submit">
             Create LAN Attachment
           </Button>
+          {createBlocker ? <p role="status" className="text-xs text-[#526070]">{createBlocker}</p> : null}
+          {working ? <p role="status" className="text-xs text-[#526070]">Applying the explicit L2 attachment request…</p> : null}
         </div>
       </form>
       <div className="mt-5 space-y-3" aria-label="Existing LAN Attachments">
@@ -278,13 +285,21 @@ export function RemoteLanAttachmentsPanel({
               <strong>{apps.find(app => app.id === item.singleAppId)?.label ?? item.singleAppId}</strong>
               <span className="ml-2">{topology?.gates.find(gate => gate.id === item.gateId)?.name ?? item.gateId}</span>
               <div className="text-xs text-[#718096]">
+                <strong>Desired L2 grant:</strong> {topology?.networks.find(network => network.id === item.networkId)?.name ?? item.networkId} ·
                 {item.lanInterface} · {item.lanCidr} · MAC {item.macAddress} ·
                 {item.addressMode==="Static" ? (
                   <> Static {item.staticAddress ?? "unassigned"} via {item.staticGateway ?? "no gateway"}</>
                 ) : (<> DHCP {item.dhcpAddress ?? "awaiting lease"}</>)}
                 {item.uplinkMode==="ManagedSharedUplink" ? <> · Managed bridge</> : null}
               </div>
-              {item.lastError ? <p className="text-xs text-red-700">{item.lastError}</p> : null}
+              <p className="mt-1 text-xs text-[#526070]">
+                <strong>Observed connection:</strong> {item.status === "Active" ? "Active grant reported" : "No confirmed active grant"} ·
+                {item.addressMode === "Static" ? "Static configured" : item.dhcpAddress ? "DHCP " + item.dhcpAddress : "DHCP lease not observed"} ·
+                Gate {topology?.gates.find(gate => gate.id === item.gateId)?.status ?? "unknown"} ·
+                Authorization {topology?.gates.find(gate => gate.id === item.gateId)?.authorizationLease?.state ?? "not verified"}.
+                A Gate authorization lease does not prove application data-plane connectivity.
+              </p>
+              {item.lastError ? <p className="text-xs text-red-700">Latest connection error: {item.lastError}</p> : null}
             </div>
             <div className="flex items-center gap-2">
               <StatusBadge tone={item.status === "Active" ? "success" : item.status === "Revoking" ? "danger" : "info"}>

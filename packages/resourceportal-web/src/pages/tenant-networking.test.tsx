@@ -16,7 +16,7 @@ vi.mock("./device-vpn-panel",()=>({
   DeviceVpnPanel:()=> <p>Device VPN</p>,
 }));
 vi.mock("./tenant-networking-graph",()=>({
-  TenantNetworkingGraph:()=> <div aria-label="Application Network graph">Graph</div>,
+  TenantNetworkingGraph:({topology:graph}: {topology:Topology}) => <div aria-label="Application Network graph">{graph.networks.map(network=><span key={network.id}>{network.name}</span>)}{graph.appGroups.flatMap(group=>group.singleApps.map(app=><span key={app.id}>{app.name}</span>))}</div>,
 }));
 vi.mock("../components/toast",()=>({
   toast:{success:vi.fn(),errorFrom:vi.fn()},
@@ -105,6 +105,75 @@ describe("Tenant networking without routed Site VPN",()=>{
     }
   });
 
+  it("#399 §9 shows at most a focused topology fragment until search and retains full table relationships", () => {
+    const group = topology.appGroups[0];
+    const originalApps = group.singleApps;
+    group.singleApps = Array.from({length: 17}, (_,index)=>({
+      id: "app-" + index, name: "sensor-" + index,
+      image: "registry.example/service@sha256:" + "a".repeat(64),
+      networkAttachments: [{id:"attach-"+index,networkId,address:"10.240.4."+index}],
+    }));
+    try {
+      render(<TenantNetworkingPage tenantId={tenantId} section="topology" />);
+      expect(screen.getAllByRole("row").length).toBe(18);
+      fireEvent.click(screen.getByRole("button", {name:"Diagram"}));
+      expect(screen.getByRole("status").textContent).toContain("Showing 12 of 17 applications");
+      fireEvent.change(screen.getByRole("searchbox", {name:/Search applications, groups or Networks/i}),
+        {target:{value:"sensor-16"}});
+      expect(screen.queryByText(/Showing 12 of 17/)).toBeNull();
+      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+    } finally {
+      group.singleApps = originalApps;
+    }
+  });
+
+  it("#399 §9 renders short image identifiers in graph nodes and stores full digests for selected details", async () => {
+    const { buildTopologyGraph } = await vi.importActual<typeof import("./tenant-networking-graph")>("./tenant-networking-graph");
+    const digest = "sha256:" + "c".repeat(64);
+    const t = { ...topology, appGroups: [{...topology.appGroups[0],
+      singleApps: [{ ...topology.appGroups[0].singleApps[0],
+        image:"registry.example/team/sensor@" + digest }]}]};
+    const graph = buildTopologyGraph(t);
+    const node = graph.nodes.find(item=>item.id==="app:"+appId);
+    expect(node?.data.detail).toBe("sensor");
+    expect(node?.data.imageDetail).toBe("registry.example/team/sensor@" + digest);
+    expect(node?.data.detail).not.toContain(digest);
+  });
+
+  it("#399 §9 keeps newly created unattached private Networks available as graph targets", () => {
+    const extraNetwork = {
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-888888888888", name:"unattached",
+      status:"Ready",revision:1,cidr:"10.253.0.0/24",overlayCidr:"10.253.0.0/24",attachments:[],
+    };
+    topology.networks.push(extraNetwork);
+    try {
+      const {rerender}=render(<TenantNetworkingPage tenantId={tenantId} section="topology"/>);
+      fireEvent.click(screen.getByRole("button",{name:"Diagram"}));
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("unattached")).toBeTruthy();
+      // Unattached targets must stay available even when filtering to an app.
+      fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
+        target:{value:"sensor"},
+      });
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("unattached")).toBeTruthy();
+      fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
+        target:{value:"unattached"},
+      });
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("sensor")).toBeTruthy();
+      rerender(<TenantNetworkingPage tenantId={tenantId} section="networks"/>);
+      expect(screen.getAllByText("unattached").length).toBeGreaterThan(0);
+    } finally {
+      topology.networks.pop();
+    }
+  });
+
+  it("#399 §9 requires explicit application/network selections and gives a disabled reason", () => {
+    render(<TenantNetworkingPage tenantId={tenantId}/>);
+    expect(screen.getByRole("status").textContent).toMatch(/select both an Application and a Network/);
+    expect(screen.getByLabelText(/^Application\s*\*?$/).hasAttribute("required")).toBe(true);
+    expect(screen.getByLabelText(/^Network\s*\*?$/).hasAttribute("required")).toBe(true);
+    expect(screen.getByRole("button", {name:"Connect application"}).hasAttribute("disabled")).toBe(true);
+  });
+
   it("creates an RP Gate with a one-time LAN enrollment flow",async()=>{
     mock.request.mockResolvedValueOnce({
       enrollment:{token:"test-token",expiresAt:"2026-10-23T15:00:00Z"},
@@ -133,8 +202,8 @@ describe("Tenant networking without routed Site VPN",()=>{
   });
   it("attaches one application to an RP Network using the existing durable operation",async()=>{
     render(<TenantNetworkingPage tenantId={tenantId}/>);
-    fireEvent.change(screen.getByLabelText("Application"),{target:{value:appId}});
-    fireEvent.change(screen.getByLabelText("Network"),{target:{value:networkId}});
+    fireEvent.change(screen.getByLabelText(/^Application\s*\*?$/),{target:{value:appId}});
+    fireEvent.change(screen.getByLabelText(/^Network\s*\*?$/),{target:{value:networkId}});
     fireEvent.click(screen.getByRole("button",{name:"Connect application"}));
     await waitFor(()=>expect(mock.request).toHaveBeenCalledWith(
       root+"/networks/"+networkId+"/attachments",

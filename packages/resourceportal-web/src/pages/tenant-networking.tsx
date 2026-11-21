@@ -95,6 +95,33 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
       network => relatedNetworks.has(network.id),
     ) };
   }, [topology.data, topologyQuery]);
+  // Default diagram shows a useful first fragment, not dozens of unreadable nodes.
+  // Search filters the complete topology; the table always retains all rows.
+  const graphTopology = useMemo<Topology>(() => {
+    if (!topology.data) return { networks: [], gates: [], appGroups: [] };
+    const query = topologyQuery.trim().toLocaleLowerCase();
+    const matchesUnattachedNetwork = query && topology.data.networks.some(network =>
+      (network.name.toLocaleLowerCase().includes(query) || network.cidr.toLocaleLowerCase().includes(query)) &&
+      !topology.data!.appGroups.some(group => group.singleApps.some(app =>
+        app.networkAttachments.some(link => link.networkId === network.id))));
+    // If a user searches for an unattached Network, retain a selectable
+    // application fragment so ReactFlow still offers both ends of a new grant.
+    const sourceGroups = matchesUnattachedNetwork && visibleTopology.appGroups.length === 0
+      ? topology.data.appGroups : visibleTopology.appGroups;
+    const firstApps = sourceGroups.flatMap(group =>
+      group.singleApps.map(app => ({ group, app }))).slice(0, 12);
+    const appIds = new Set(firstApps.map(item => item.app.id));
+    return {
+      ...visibleTopology,
+      appGroups: sourceGroups.map(group => ({
+        ...group, singleApps: group.singleApps.filter(app => appIds.has(app.id)),
+      })).filter(group => group.singleApps.length > 0),
+      // A Network does not need an existing attachment to be a valid target.
+      // Keep all selectable tenant Networks, including unconnected ones.
+      networks: topology.data.networks,
+    };
+  }, [topology.data, visibleTopology, topologyQuery]);
+  const graphAppCount = graphTopology.appGroups.reduce((count, group) => count + group.singleApps.length, 0);
   const topologyConnections = visibleTopology.appGroups.flatMap(group =>
     group.singleApps.flatMap(app =>
       app.networkAttachments.map(attachment => ({
@@ -240,11 +267,11 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
         <form className="grid gap-3 md:grid-cols-3" onSubmit={event=>{
           event.preventDefault();void addAppNetwork(attachApp,attachNetwork);
         }}>
-          <Field label="Application"><Select value={attachApp} onChange={e=>setAttachApp(e.target.value)}>
+          <Field label="Application" required><Select required value={attachApp} onChange={e=>setAttachApp(e.target.value)}>
             <option value="">Choose application</option>
             {apps.map(app=><option key={app.id} value={app.id}>{app.label}</option>)}
           </Select></Field>
-          <Field label="Network"><Select value={attachNetwork} onChange={e=>setAttachNetwork(e.target.value)}>
+          <Field label="Network" required><Select required value={attachNetwork} onChange={e=>setAttachNetwork(e.target.value)}>
             <option value="">Choose Network</option>
             {networks.filter(network=>!apps.find(app=>app.id===attachApp)?.networkIds.includes(network.id))
               .map(network=><option key={network.id} value={network.id}>{network.name}</option>)}
@@ -252,6 +279,7 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
           <div className="flex items-end"><Button type="submit" disabled={working||!attachApp||!attachNetwork}>
             Connect application</Button></div>
         </form>
+        {(!attachApp || !attachNetwork) ? <p role="status" className="text-xs text-[#526070]">To connect an application, select both an Application and a Network. Only explicit tenant-scoped connections are granted.</p> : null}
         <div className="mt-4 space-y-2">
           {networks.map(network=><div key={network.id} className="flex items-center justify-between border-t py-2">
             <div><strong className="text-sm">{network.name}</strong>
@@ -314,7 +342,9 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
             <Button variant={topologyMode==="graph"?"primary":"secondary"} onClick={()=>setTopologyMode("graph")}>Diagram</Button>
           </div>
         </div>
-        {topologyMode==="graph" ? <TenantNetworkingGraph topology={visibleTopology} working={working}
+        {topologyMode==="graph" && !topologyQuery.trim() && apps.length > graphAppCount ?
+          <p role="status" className="text-xs text-[#526070]">Showing {graphAppCount} of {apps.length} applications in the diagram. Search by application, App Group or Network to focus on a different fragment; Table shows the complete connection list.</p> : null}
+        {topologyMode==="graph" ? <TenantNetworkingGraph topology={graphTopology} working={working}
           onConnect={submitGraphConnection} onDisconnect={edge=>void detachNetwork(edge)}/> :
           <Card className="overflow-x-auto"><table className="w-full text-left text-sm">
             <thead className="bg-[#F5F8FC]"><tr><th scope="col" className="p-3">App Group</th><th scope="col" className="p-3">Application</th>
