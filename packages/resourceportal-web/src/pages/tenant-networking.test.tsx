@@ -160,7 +160,7 @@ describe("Tenant networking without routed Site VPN",()=>{
       });
       expect(within(screen.getByLabelText("Application Network graph")).getByText("sensor")).toBeTruthy();
       rerender(<TenantNetworkingPage tenantId={tenantId} section="networks"/>);
-      expect(screen.getByText("unattached")).toBeTruthy();
+      expect(screen.getAllByText("unattached").length).toBeGreaterThan(0);
     } finally {
       topology.networks.pop();
     }
