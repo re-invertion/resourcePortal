@@ -99,6 +99,26 @@ describe("Remote LAN Attachments tenant UI",()=>{
       method:"PATCH",body:{addressMode:"DHCP"}
     }));
   });
+  it("#399 §9 distinguishes desired L2 grant from unverified observed connection and preserves management warnings", async () => {
+    mockRequest.mockImplementation(async(path)=> {
+      if(path===root) return [{...record,lastError:"Gate heartbeat expired"}] as never;
+      throw new Error("Unexpected route");
+    });
+    render(<RemoteLanAttachmentsPanel tenantId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" topology={topology}/>);
+    const list = await screen.findByLabelText("Existing LAN Attachments");
+    expect(within(list).getByText(/Desired L2 grant:/)).toBeTruthy();
+    expect(within(list).getByText(/Observed connection:/)).toBeTruthy();
+    expect(within(list).getByText(/No confirmed active grant/)).toBeTruthy();
+    expect(within(list).getByText(/Authorization not verified/)).toBeTruthy();
+    expect(within(list).getByText(/Latest connection error: Gate heartbeat expired/)).toBeTruthy();
+    expect(screen.getByText(/Never select the Gate's management interface/)).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Select an application first");
+    expect(screen.getByRole("button", {name:"Create LAN Attachment"}).hasAttribute("disabled")).toBe(true);
+    for (const name of ["Application", "Application Network", "RP Gate", "Dedicated Gate LAN interface", "Expected customer DHCP subnet"]) {
+      expect(screen.getByLabelText(name).hasAttribute("required")).toBe(true);
+    }
+  });
+
   it("tracks MAC, DHCP and revocation without inventing an Active lease",async()=>{
     mockRequest.mockImplementation(async(path,init)=>{
       if(path===root) return [record] as never;
