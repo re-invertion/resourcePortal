@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { TenantAdministrationPage } from "./tenant-access-pages";
+import { TenantAdministrationPage, TenantCredentialsPage } from "./tenant-access-pages";
 
 const appId = "550e8400-e29b-41d4-a716-446655440000";
 const ownerId = "m-owner";
@@ -115,5 +115,25 @@ describe("#430 single member identity and independent SSO / RP roles", () => {
         oauthApplicationIds: [appId], nativeApplicationKeys: ["cli"],
       });
     });
+  });
+});
+
+describe("#399 §11 canonical service credentials workspace",()=>{
+  it("does not duplicate tenant OIDC application inventory or mutations", async()=>{
+    const fetcher=vi.fn(async(input:RequestInfo|URL)=>{
+      const path=String(input);
+      if(path.endsWith("/service-identities"))return new Response(JSON.stringify([{id:"machine-1",name:"CI bot",status:"Active",roles:[]}]),{status:200,headers:{"content-type":"application/json"}});
+      if(path.endsWith("/roles"))return new Response("[]",{status:200,headers:{"content-type":"application/json"}});
+      return new Response("[]",{status:200,headers:{"content-type":"application/json"}});
+    });
+    vi.stubGlobal("fetch",fetcher);
+    render(<TenantCredentialsPage tenantId="t1"/>);
+    expect(await screen.findByText("CI bot")).toBeTruthy();
+    expect(screen.getByRole("link",{name:"Application SSO"})).toBeTruthy();
+    expect(screen.getByRole("heading",{name:"Service identities",level:1})).toBeTruthy();
+    expect(screen.queryByRole("button",{name:"Create OAuth application"})).toBeNull();
+    expect(screen.queryByRole("heading",{name:"OAuth applications"})).toBeNull();
+    expect(fetcher.mock.calls.some(([url])=>String(url).endsWith("/oauth-applications"))).toBe(false);
+    expect(fetcher.mock.calls.some(([url])=>String(url).startsWith("/api/platform/identity-providers"))).toBe(false);
   });
 });
