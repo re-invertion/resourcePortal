@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { apiRequest } from "../api/client";
 import { Button, Callout, Card, ConfirmActionButton, ErrorState, DataTable, EmptyState, Field, KeyIcon, LockIcon, PageHeader, PlusIcon, Select, StatusText, TextInput, TrashIcon, UsersIcon, statusTone } from "../components/design-system";
-import { idOf, items, text, useApi } from "../hooks/use-api";
+import { formatDate, idOf, items, text, useApi } from "../hooks/use-api";
 import { toast } from "../components/toast";
 import { capabilityStatus, inviteCapabilities } from "../lib/role-capabilities";
 import { AccessTabs } from "../components/tenant-section-tabs";
@@ -10,6 +10,38 @@ type R=Record<string,unknown>;
 function roleName(role:R){return text(role.displayName,text(role.name,"Role"));}
 function roleOptions(roles:R[]){return roles.map(r=><option key={idOf(r)} value={idOf(r)}>{roleName(r)}</option>)}
 function permissionLabel(permission:string):string { return permission === "*" ? "All ResourcePortal permissions" : permission.split(".").map(part => part.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,c=>c.toUpperCase())).join(" › "); }
+export function groupEffectivePermissions(group: R): string[] {
+  const permissions = items<R>(group.roles).flatMap(role =>
+    Array.isArray(role.permissions) ? role.permissions.filter((item): item is string => typeof item === "string") : []);
+  return permissions.includes("*") ? ["*"] : [...new Set(permissions)].sort();
+}
+function GroupAuditActivity({ tenantId, groupId }: { tenantId: string; groupId: string }) {
+  // The server scopes by tenant and resource; the client also rejects records without
+  // an exact TenantGroup relationship. Never infer ownership from a name or actor.
+  const query = `/api/tenants/${encodeURIComponent(tenantId)}/audit-log?resourceType=TenantGroup&resourceId=${encodeURIComponent(groupId)}&limit=100`;
+  const audit = useApi<unknown>(query);
+  const rows = items<R>(audit.data).filter(event =>
+    event.resourceType === "TenantGroup" && event.resourceId === groupId);
+  return <section aria-label="Group activity" className="mt-5">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="font-semibold">Activity</h3>
+      <Button size="sm" disabled={audit.loading} onClick={() => void audit.reload()}>
+        {audit.loading ? "Refreshing…" : "Refresh group activity"}
+      </Button>
+    </div>
+    <p className="mt-1 text-xs text-[#526070]">Recent tenant-scoped group audit events (up to 100). Older records may require Audit log export.</p>
+    {audit.error ? <p role="alert" className="mt-3 text-sm text-[#B42318]">Could not load group activity. Retry without assuming that history is empty.</p> :
+      audit.loading ? <p role="status" className="mt-3 text-sm">Loading group activity…</p> :
+      <DataTable embedded columns={[{key:"action",label:"Action"},{key:"actor",label:"Actor"},{key:"result",label:"Result"},{key:"time",label:"Time"}]}
+        rows={rows.map(event => ({key:idOf(event) || `${text(event.action)}-${text(event.createdAt)}`,cells:{
+          action:text(event.action,"Group change").replaceAll("_"," "),
+          actor:text(event.actorName,text(event.actorDisplayName,text(event.actor,"System"))),
+          result:<StatusText tone={statusTone(event.result)}>{text(event.result,"Unknown")}</StatusText>,
+          time:formatDate(event.createdAt),
+        }}))}
+        empty={<EmptyState title="No group activity in this page" description="No matching group audit records were returned. Older history may be available in Audit log."/>}/>}
+  </section>;
+}
 function invitationLink(token:string){const path=`/invitations/${encodeURIComponent(token)}`;return typeof window==="undefined"?path:new URL(path,window.location.origin).toString();}
 
 /** Effective permissions are for UI affordances only. Every write is still enforced by the tenant-scoped backend guards. */
@@ -396,7 +428,7 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
         </div> : null}
         <DataTable embedded loading={groups.loading} columns={[{key:"name",label:"Group"}, {key:"roles",label:"Roles / members"}, {key:"actions",label:""}]}
           rows={groupRows.map(g => ({key:idOf(g),cells:{
-            name:<div><strong>{text(g.name)}</strong><span className="block text-xs text-[#718096]">{text(g.description,"No description")}</span></div>,
+            name:<div><button type="button" className="text-left font-semibold text-[#0F56A7] underline hover:text-[#134C83]" onClick={() => beginGroup(g)} aria-label={`Open group ${text(g.name)} details`}>{text(g.name)}</button><span className="block text-xs text-[#718096]">{text(g.description,"No description")}</span></div>,
             roles:<span className="text-xs">{items<R>(g.roles).map(roleName).join(", ") || "No roles"} · {items<R>(g.members).length} members</span>,
             actions:<div className="flex gap-2">{can("group.update") || can("group.member.manage") || can("group.role.manage") ? <Button size="sm" onClick={() => beginGroup(g)}>Manage</Button> : null}
               {can("group.delete") ? <ConfirmActionButton size="sm" triggerVariant="ghost" ariaLabel={`Delete ${text(g.name)}`}
@@ -435,6 +467,15 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
         <Field label="Description"><TextInput value={groupEdit.description} onChange={e => setGroupEdit({...groupEdit,description:e.target.value})}/></Field>
         <div className="sm:col-span-2"><ConfirmActionButton size="sm" triggerVariant="primary" confirmVariant="primary" disabled={working || !groupEdit.name.trim()} confirmTitle="Update group details?" confirmDescription="Changes are audited." confirmLabel="Update group" onConfirm={saveGroup}>Save group</ConfirmActionButton></div>
       </div> : null}
+      <section aria-label="Group effective permissions" className="mt-5 rounded-md border border-[#D7E0EC] bg-[#F7FAFF] p-4">
+        <h3 className="font-semibold">Effective permissions inherited through this group</h3>
+        <p className="mt-1 text-xs text-[#526070]">These are only this group's ResourcePortal role grants. Members may also hold direct or other group roles. The server remains authoritative for access.</p>
+        {groupEffectivePermissions(editingGroup).length ?
+          <ul className="mt-3 flex flex-wrap gap-2">{groupEffectivePermissions(editingGroup).map(permission =>
+            <li key={permission} className="rounded border border-[#C8D3E2] bg-white px-2 py-1 text-xs">{permissionLabel(permission)}</li>)}</ul> :
+          <p className="mt-2 text-sm">No ResourcePortal permissions inherited through this group.</p>}
+        <p className="mt-3 text-xs font-medium text-[#92400E]">Deleting this group removes these inherited grants from {items<R>(editingGroup.members).length} member(s). Direct roles and permissions inherited through other groups remain unchanged.</p>
+      </section>
       <div className="mt-5 grid gap-5 md:grid-cols-2">
         <div>
           <h3 className="font-semibold">Members ({items<R>(editingGroup.members).length})</h3>
@@ -457,7 +498,8 @@ export function TenantAdministrationPage({ tenantId, section, userId }: {
             <Button size="sm" disabled={working || !newGroupRole} onClick={() => void groupMutation(`${groupPath}/roles`, "POST", { roleId: newGroupRole })}>Add</Button></div> : null}
         </div>
       </div>
-      <div className="mt-5 flex justify-between"><a className="text-sm text-[#0F56A7] underline" href={`/tenants/${encodeURIComponent(tenantId)}/audit`}>Audit history</a><Button onClick={() => setEditingGroup(undefined)}>Close</Button></div>
+      <GroupAuditActivity tenantId={tenantId} groupId={idOf(editingGroup)}/>
+      <div className="mt-5 flex justify-between"><a className="text-sm text-[#0F56A7] underline" href={`/tenants/${encodeURIComponent(tenantId)}/audit`}>Full tenant audit log</a><Button onClick={() => setEditingGroup(undefined)}>Close</Button></div>
     </Card> : null}
   </main>;
 }
