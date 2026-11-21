@@ -59,7 +59,7 @@ it("renders domain detail from the real domain detail endpoint with friendly ass
  expect(fetchMock.mock.calls.some(([input])=>String(input).endsWith(`/domains/${domainId}`))).toBe(true);
 });
 
-it.each([["administration","Invite user"],["credentials","Create OAuth application"]])("uses final access manager for %s",async(section,action)=>{
+it.each([["administration","Invite user"],["credentials","Create service identity"]])("uses final access manager for %s",async(section,action)=>{
  vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
   if (String(input).endsWith("/memberships")) return json([{
     id:"m-owner", userId:"u1", status:"Active", user:{id:"u1", email:"owner@example.com"},
