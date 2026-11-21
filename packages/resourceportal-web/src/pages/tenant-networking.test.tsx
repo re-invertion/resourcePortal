@@ -105,6 +105,36 @@ describe("Tenant networking without routed Site VPN",()=>{
     }
   });
 
+  it("#399 §9 shows at most a focused topology fragment until search and retains full table relationships", () => {
+    const group = topology.appGroups[0];
+    const originalApps = group.singleApps;
+    group.singleApps = Array.from({length: 17}, (_,index)=>({
+      id: "app-" + index, name: "sensor-" + index,
+      image: "registry.example/service@sha256:" + "a".repeat(64),
+      networkAttachments: [{id:"attach-"+index,networkId,address:"10.240.4."+index}],
+    }));
+    try {
+      render(<TenantNetworkingPage tenantId={tenantId} section="topology" />);
+      expect(screen.getAllByRole("row").length).toBe(18);
+      fireEvent.click(screen.getByRole("button", {name:"Diagram"}));
+      expect(screen.getByRole("status").textContent).toContain("Showing 12 of 17 applications");
+      fireEvent.change(screen.getByRole("searchbox", {name:/Search applications, groups or Networks/i}),
+        {target:{value:"sensor-16"}});
+      expect(screen.queryByText(/Showing 12 of 17/)).toBeNull();
+      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+    } finally {
+      group.singleApps = originalApps;
+    }
+  });
+
+  it("#399 §9 requires explicit application/network selections and gives a disabled reason", () => {
+    render(<TenantNetworkingPage tenantId={tenantId}/>);
+    expect(screen.getByRole("status").textContent).toMatch(/select both an Application and a Network/);
+    expect(screen.getByLabelText("Application").hasAttribute("required")).toBe(true);
+    expect(screen.getByLabelText("Network").hasAttribute("required")).toBe(true);
+    expect(screen.getByRole("button", {name:"Connect application"}).hasAttribute("disabled")).toBe(true);
+  });
+
   it("creates an RP Gate with a one-time LAN enrollment flow",async()=>{
     mock.request.mockResolvedValueOnce({
       enrollment:{token:"test-token",expiresAt:"2026-10-23T15:00:00Z"},
