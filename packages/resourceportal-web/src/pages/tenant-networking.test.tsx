@@ -140,6 +140,32 @@ describe("Tenant networking without routed Site VPN",()=>{
     expect(node?.data.detail).not.toContain(digest);
   });
 
+  it("#399 §9 keeps newly created unattached private Networks available as graph targets", () => {
+    const extraNetwork = {
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-888888888888", name:"unattached",
+      status:"Ready",revision:1,cidr:"10.253.0.0/24",overlayCidr:"10.253.0.0/24",attachments:[],
+    };
+    topology.networks.push(extraNetwork);
+    try {
+      const {rerender}=render(<TenantNetworkingPage tenantId={tenantId} section="topology"/>);
+      fireEvent.click(screen.getByRole("button",{name:"Diagram"}));
+      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      // Unattached targets must stay available even when filtering to an app.
+      fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
+        target:{value:"sensor"},
+      });
+      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
+        target:{value:"unattached"},
+      });
+      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      rerender(<TenantNetworkingPage tenantId={tenantId} section="networks"/>);
+      expect(screen.getByText("unattached")).toBeTruthy();
+    } finally {
+      topology.networks.pop();
+    }
+  });
+
   it("#399 §9 requires explicit application/network selections and gives a disabled reason", () => {
     render(<TenantNetworkingPage tenantId={tenantId}/>);
     expect(screen.getByRole("status").textContent).toMatch(/select both an Application and a Network/);
