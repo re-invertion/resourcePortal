@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TenantIdentitySsoPage } from "./tenant-identity-sso";
+import { TenantIdentitySsoPage, tenantOidcLifecycle } from "./tenant-identity-sso";
 
 const base = "/api/tenants/t1";
 function reply(value: unknown, status = 200) {
@@ -70,5 +70,38 @@ describe("Tenant Identity & SSO", () => {
     expect(screen.getByRole("dialog", { name: "Delete Existing?" })).toBeTruthy();
     expect(requests.mock.calls.some(([url, init]) => String(url).endsWith("/oauth-applications/app-1") &&
       (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
+  });
+});
+
+describe("#399 §11 tenant-issued SSO lifecycle safety",()=>{
+  it("rejects transition controls without a verified provider",()=>{
+    const policy=tenantOidcLifecycle(undefined,0,false);
+    expect(Object.values(policy).filter(x=>x===true)).toHaveLength(0);
+    expect(policy.reason).toMatch(/not been verified/);
+  });
+
+  it("permits only legal transitions and blocks project deletion while clients exist",()=>{
+    const active=tenantOidcLifecycle({status:"Active",projectId:"project-1",enabled:true},4,false);
+    expect(active.disable).toBe(true);
+    expect(active.delete).toBe(false);
+    expect(active.provision).toBe(false);
+    expect(active.activate).toBe(false);
+    const reconciled=tenantOidcLifecycle({status:"GrantsReconciled",projectId:"project-1",enabled:false},0,false);
+    expect(reconciled.activate).toBe(true);
+    expect(reconciled.disable).toBe(false);
+    expect(reconciled.delete).toBe(true);
+    const notReady=tenantOidcLifecycle({status:"NotProvisioned",projectId:null,enabled:false},0,false);
+    expect(notReady.provision).toBe(true);
+    expect(notReady.delete).toBe(false);
+  });
+
+  it("visibly explains lifecycle restrictions instead of offering destructive shortcuts",async()=>{
+    mockApi(true);
+    render(<TenantIdentitySsoPage tenantId="t1"/>);
+    expect(await screen.findByText(/outbound single sign-on for tenant applications/)).toBeTruthy();
+    expect(screen.getByRole("link",{name:"Application SSO"}).getAttribute("aria-current")).toBe("page");
+    const deleteButton=screen.getByRole("button",{name:"Delete provider"});
+    expect((deleteButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Delete clients in Application SSO before requesting project deletion/)).toBeTruthy();
   });
 });
