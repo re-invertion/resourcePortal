@@ -86,6 +86,15 @@ describe("#399 §11 tenant-issued SSO lifecycle safety",()=>{
     expect(active.delete).toBe(false);
     expect(active.provision).toBe(false);
     expect(active.activate).toBe(false);
+    for (const state of ["PendingGrants","NeedsReconciliation","ReconciliationFailed"]) {
+      const pending=tenantOidcLifecycle({status:state,projectId:"project-1",enabled:false},0,false);
+      expect(pending.reconcile).toBe(true);
+      expect(pending.activate).toBe(false);
+    }
+    const disabling=tenantOidcLifecycle({status:"Disabling",projectId:"project-1",enabled:false},0,false);
+    expect(disabling.disable).toBe(true);
+    expect(disabling.reconcile).toBe(false);
+    expect(disabling.delete).toBe(false);
     const reconciled=tenantOidcLifecycle({status:"GrantsReconciled",projectId:"project-1",enabled:false},0,false);
     expect(reconciled.activate).toBe(true);
     expect(reconciled.disable).toBe(false);
