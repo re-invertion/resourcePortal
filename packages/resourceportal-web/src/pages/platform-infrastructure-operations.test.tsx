@@ -56,6 +56,29 @@ describe("#399 §10 Infrastructure scoped operational workflows",()=>{
     expect(fetcher.mock.calls.every(([path])=>!String(path).startsWith("/api/tenants/"))).toBe(true);
   });
 
+  it("uses fresh remote details to exit maintenance despite a stale list snapshot",async()=>{
+    const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const path=String(input);
+      if(path==="/api/platform/remote-locations")return json([{id:locationId,hostname:"site-edge-01",status:"Ready",maintenance:false}]);
+      if(path==="/api/platform/remote-locations/"+locationId && init?.method==="GET")return json({
+        id:locationId,hostname:"site-edge-01",status:"Ready",maintenance:true,swarmNodeId:"node-01",
+      });
+      if(path==="/api/platform/remote-locations/"+locationId+"/maintenance" && init?.method==="PATCH")return json({id:"op-exit",status:"Pending"});
+      return json([]);
+    });
+    vi.stubGlobal("fetch",fetcher);
+    render(<PlatformPage section="infrastructure" segments={["locations"]}/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Details & maintenance"}));
+    const dialog=screen.getByRole("dialog",{name:/Remote location: site-edge-01/});
+    const action=within(dialog).getByRole("button",{name:"Exit maintenance"});
+    await within(dialog).findByText("node-01");
+    expect((action as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(action);
+    await waitFor(()=>expect(fetcher.mock.calls.some(([path,init])=>
+      String(path)==="/api/platform/remote-locations/"+locationId+"/maintenance" &&
+      init?.method==="PATCH" && String(init.body)==='{"enabled":false}')).toBe(true));
+  });
+
   it("preserves assigned GPU and only invokes fail-closed diagnose and recovery operations",async()=>{
     const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const path=String(input);
