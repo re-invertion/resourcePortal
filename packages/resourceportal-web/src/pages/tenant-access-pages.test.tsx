@@ -129,7 +129,7 @@ describe("#399 §11 canonical service credentials workspace",()=>{
     vi.stubGlobal("fetch",fetcher);
     render(<TenantCredentialsPage tenantId="t1"/>);
     expect(await screen.findByText("CI bot")).toBeTruthy();
-    expect(screen.getByRole("link",{name:"Application SSO"})).toBeTruthy();
+    expect(screen.getAllByRole("link",{name:"Application SSO"}).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading",{name:"Service identities",level:1})).toBeTruthy();
     expect(screen.queryByRole("button",{name:"Create OAuth application"})).toBeNull();
     expect(screen.queryByRole("heading",{name:"OAuth applications"})).toBeNull();
