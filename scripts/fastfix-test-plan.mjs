@@ -214,7 +214,7 @@ const commands = {
       "src/pages/app-group/create-app-wizard.test.tsx", "src/pages/app-group/app-detail.test.tsx",
       "src/pages/app-group/networking.test.tsx", "src/pages/app-group/config-code-preview.test.tsx", "src/pages/tenant-access-pages.test.tsx",
       "src/components/status-tone.test.tsx", "src/pages/app-group/activity-scope.test.ts", "src/pages/app-group/activity.test.tsx",
-      "src/pages/tenant-access-management.test.tsx", "src/pages/tenant-invitations-error.test.tsx",
+      "src/pages/tenant-access-management.test.tsx", "src/pages/tenant-group-details.test.tsx", "src/pages/tenant-invitations-error.test.tsx",
       "src/pages/tenant-dashboard.test.tsx", "src/pages/tenant-settings.test.tsx",
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
