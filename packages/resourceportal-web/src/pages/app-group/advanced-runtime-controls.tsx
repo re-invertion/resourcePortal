@@ -49,7 +49,14 @@ export function AdvancedRuntimeControls({
     <Field label="Restart delay (seconds)"><NumberInput min={0} max={86400} step={1} value={value.restartDelay} onChange={e => set({ restartDelay: Number(e.target.value) })}/></Field>
     <Field label="Max restart attempts" hint="Optional; blank preserves unlimited/default behavior"><TextInput inputMode="numeric" value={value.restartMaxAttempts} onChange={e => set({ restartMaxAttempts: e.target.value })}/></Field>
     <Field label="Restart window (seconds)" hint="Optional"><TextInput inputMode="numeric" value={value.restartWindow} onChange={e => set({ restartWindow: e.target.value })}/></Field>
-    <div className="md:col-span-2 border-t border-[#E1E7F0] pt-4"><h4 className="text-sm font-semibold">Deployment update policy</h4><p className="mt-1 text-xs text-[#5B6678]">Docker Swarm pauses the rollout on a failure; failure action is not editable here.</p></div>
+    <div className="md:col-span-2 border-t border-[#E1E7F0] pt-4">
+      <h4 className="text-sm font-semibold">Deployment update policy</h4>
+      <div role="note" aria-label="Deployment failure action limitation" className="mt-2 rounded-md border border-[#D7E0EC] bg-[#F8FAFD] p-3 text-sm text-[#344054]">
+        <strong>Failure action: Pause (fixed by the platform).</strong>
+        <p className="mt-1">The ResourcePortal Swarm renderer always pauses a failed rollout. This setting cannot be changed in the editor or by sending a failure-action field in the SingleApp PATCH: the renderer does not use that field. A different failure action requires a platform capability change; editing the generated Swarm stack is not a supported workaround.</p>
+        <p className="mt-1">Supported path: edit parallelism, delay and update order below, select Save advanced settings, then deploy the App Group to apply the saved draft.</p>
+      </div>
+    </div>
     <Field label="Update parallelism"><NumberInput min={0} max={1000} step={1} value={value.updateParallelism} onChange={e => set({ updateParallelism: Number(e.target.value) })}/></Field>
     <Field label="Update delay (seconds)"><NumberInput min={0} max={86400} step={1} value={value.updateDelay} onChange={e => set({ updateDelay: Number(e.target.value) })}/></Field>
     <Field label="Update order"><Select value={value.updateOrder} onChange={e => set({ updateOrder: e.target.value })}>
