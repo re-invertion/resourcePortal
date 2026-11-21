@@ -214,7 +214,7 @@ const commands = {
       "src/pages/app-group/create-app-wizard.test.tsx", "src/pages/app-group/app-detail.test.tsx",
       "src/pages/app-group/networking.test.tsx", "src/pages/app-group/config-code-preview.test.tsx", "src/pages/tenant-access-pages.test.tsx",
       "src/components/status-tone.test.tsx", "src/pages/app-group/activity-scope.test.ts", "src/pages/app-group/activity.test.tsx",
-      "src/pages/tenant-access-management.test.tsx", "src/pages/tenant-invitations-error.test.tsx",
+      "src/pages/tenant-access-management.test.tsx", "src/pages/tenant-group-details.test.tsx", "src/pages/tenant-invitations-error.test.tsx",
       "src/pages/tenant-dashboard.test.tsx", "src/pages/tenant-settings.test.tsx",
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
@@ -406,6 +406,8 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/(?:activity(?:\.test)?|activity-scope(?:\.test)?)(?:\.ts|\.tsx)$/, ["applications", "operations", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/app-edit\.tsx$/, ["applications", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-access-(?:pages|management)(?:\.test)?\.tsx$/, ["tenant-access", "security", "tenant-ux-patch"]],
+  // #399 section 3: group details, inherited permissions and strictly tenant-scoped audit RTL.
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-group-details\.test\.tsx$/, ["tenant-access", "security", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-invitations-error\.test\.tsx$/, ["tenant-access", "security", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-settings\.test\.tsx$/, ["tenant-ux-patch", "mcp-oauth"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant\.tsx$/, ["tenant-ux-patch"]],
