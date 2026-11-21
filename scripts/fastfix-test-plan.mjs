@@ -231,7 +231,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/components/bug-report-dialog.test.tsx"],
   ],
   "platform-admin-ui": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx", "src/pages/platform-security-ops.test.tsx", "src/pages/platform-network-egress.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/platform.final-routes.test.tsx", "src/pages/platform-security-ops.test.tsx", "src/pages/platform-network-egress.test.tsx", "src/pages/platform-infrastructure-operations.test.tsx"],
   ],
   "platform-release": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/platform-infrastructure/platform-release.service.spec.ts", "src/operations/executors/platform-release-update-operation.executor.spec.ts"],
@@ -395,6 +395,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/components\/shell\.test\.tsx$/, ["tenant-ux-patch", "tenant-access", "security"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/deployments(?:\.test)?\.tsx$/, ["applications", "operations", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-usability\.test\.tsx$/, ["platform-admin-ui", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-infrastructure-operations\.test\.tsx$/, ["platform-admin-ui", "platform-release"]],
   // Issue #399: exact status mapping, tenant operation scope and RBAC UI
   // are release-critical; new executable files must not evade changed-path coverage.
   // #399 billing summary regression: retain both targeted component and billing UI coverage.
