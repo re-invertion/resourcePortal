@@ -98,20 +98,29 @@ export function TenantNetworkingPage({tenantId, section = "networks"}:{tenantId:
   // Default diagram shows a useful first fragment, not dozens of unreadable nodes.
   // Search filters the complete topology; the table always retains all rows.
   const graphTopology = useMemo<Topology>(() => {
-    if (topologyQuery.trim()) return visibleTopology;
-    const firstApps = visibleTopology.appGroups.flatMap(group =>
+    if (!topology.data) return { networks: [], gates: [], appGroups: [] };
+    const query = topologyQuery.trim().toLocaleLowerCase();
+    const matchesUnattachedNetwork = query && topology.data.networks.some(network =>
+      (network.name.toLocaleLowerCase().includes(query) || network.cidr.toLocaleLowerCase().includes(query)) &&
+      !topology.data!.appGroups.some(group => group.singleApps.some(app =>
+        app.networkAttachments.some(link => link.networkId === network.id))));
+    // If a user searches for an unattached Network, retain a selectable
+    // application fragment so ReactFlow still offers both ends of a new grant.
+    const sourceGroups = matchesUnattachedNetwork && visibleTopology.appGroups.length === 0
+      ? topology.data.appGroups : visibleTopology.appGroups;
+    const firstApps = sourceGroups.flatMap(group =>
       group.singleApps.map(app => ({ group, app }))).slice(0, 12);
-    const groupIds = new Set(firstApps.map(item => item.group.id));
     const appIds = new Set(firstApps.map(item => item.app.id));
-    const networkIds = new Set(firstApps.flatMap(item =>
-      item.app.networkAttachments.map(link => link.networkId)));
     return {
       ...visibleTopology,
-      appGroups: visibleTopology.appGroups.filter(group => groupIds.has(group.id))
-        .map(group => ({ ...group, singleApps: group.singleApps.filter(app => appIds.has(app.id)) })),
-      networks: visibleTopology.networks.filter(network => networkIds.has(network.id)),
+      appGroups: sourceGroups.map(group => ({
+        ...group, singleApps: group.singleApps.filter(app => appIds.has(app.id)),
+      })).filter(group => group.singleApps.length > 0),
+      // A Network does not need an existing attachment to be a valid target.
+      // Keep all selectable tenant Networks, including unconnected ones.
+      networks: topology.data.networks,
     };
-  }, [visibleTopology, topologyQuery]);
+  }, [topology.data, visibleTopology, topologyQuery]);
   const graphAppCount = graphTopology.appGroups.reduce((count, group) => count + group.singleApps.length, 0);
   const topologyConnections = visibleTopology.appGroups.flatMap(group =>
     group.singleApps.flatMap(app =>
