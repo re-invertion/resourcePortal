@@ -70,8 +70,8 @@ describe("#399 §10 Infrastructure scoped operational workflows",()=>{
     render(<PlatformPage section="infrastructure" segments={["locations"]}/>);
     fireEvent.click(await screen.findByRole("button",{name:"Details & maintenance"}));
     const dialog=screen.getByRole("dialog",{name:/Remote location: site-edge-01/});
-    const action=within(dialog).getByRole("button",{name:"Exit maintenance"});
     await within(dialog).findByText("node-01");
+    const action=await within(dialog).findByRole("button",{name:"Exit maintenance"});
     expect((action as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(action);
     await waitFor(()=>expect(fetcher.mock.calls.some(([path,init])=>
