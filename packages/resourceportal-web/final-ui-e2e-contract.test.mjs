@@ -98,6 +98,24 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).not.toContain('panelByHeading(page, "SingleApps")');
   });
 
+  it("exercises Overview to Environment through real Chromium links, persisted draft and removal (#399 §4)", () => {
+    const script = readFileSync(
+      path.resolve(packageRoot, "../../scripts/run-stage20-real-swarm-web-e2e.mjs"),
+      "utf8",
+    );
+    expect(script).toContain('await phase("navigate Overview to Environment and persist isolated draft"');
+    expect(script).toContain('getByRole("link", { name: "Environment variables", exact: true }).click()');
+    expect(script).toContain('getByRole("textbox", { name: "Environment name 1" }).fill(environmentKey)');
+    expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(initialValue)');
+    expect(script).toContain('getByRole("textbox", { name: "Environment value 1" }).fill(editedValue)');
+    expect(script).toContain('getByRole("button", { name: "Save environment" }).click()');
+    expect(script).toContain('getByRole("button", { name: "Remove", exact: true }).click()');
+    expect(script).toContain('config?.environment?.[environmentKey] === initialValue');
+    expect(script).toContain('config?.environment?.[environmentKey] === editedValue');
+    expect(script).toContain('!Object.hasOwn(config?.environment ?? {}, environmentKey)');
+    expect(script).toContain('getByRole("link", { name: "Overview" }).click()');
+  });
+
   it("checks the final v0.1.9 management matrix routes", () => {
     const script = readFileSync(
       path.resolve(packageRoot, "../../scripts/verify-stage20-management-matrix.mjs"),
