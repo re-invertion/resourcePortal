@@ -465,7 +465,8 @@ const classifiers = [
   [/^packages\/resourceportal-api\/scripts\/privileged-smoke-worker(?:\.spec)?\.ts$/, ["release-fixtures", "swarm-smoke-fixtures", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
   [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
-  [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release"]],
+  // #399 §4: changes to the real Chromium Overview→Environment E2E require the real Swarm/browser gate.
+  [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release", "swarm-smoke-fixtures"]],
   [/^scripts\/run-remote-lan-static-nsenter-smoke\.sh$/, ["networking", "platform-release"]],
 
   [/^config\/production\/release-manifest\.schema\.json$/, ["platform-release", "workflow"]],
