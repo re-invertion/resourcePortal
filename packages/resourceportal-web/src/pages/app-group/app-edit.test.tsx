@@ -196,6 +196,40 @@ it("sends only advanced runtime properties, not environment, secret or compute s
   }
 });
 
+it("#399 §5 discloses unsupported failure-action changes and the supported draft/deploy path", async () => {
+  const patches: Array<Record<string, unknown>> = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) {
+      return json([{
+        id: "app1", name: "runner", image: "nginx:latest",
+        updatePolicy: { parallelism: 1, delaySeconds: 10, order: "start-first" },
+      }]);
+    }
+    if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return json({});
+    }
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="advanced" />);
+  const limitation = await screen.findByRole("note", { name: "Deployment failure action limitation" });
+  expect(limitation.textContent).toContain("Failure action: Pause (fixed by the platform)");
+  expect(limitation.textContent).toContain("cannot be changed in the editor");
+  expect(limitation.textContent).toContain("SingleApp PATCH");
+  expect(limitation.textContent).toContain("different failure action requires a platform capability change");
+  expect(limitation.textContent).toContain("Save advanced settings");
+  expect(limitation.textContent).toContain("deploy the App Group");
+  expect(screen.queryByRole("combobox", { name: /Failure action/i })).toBeNull();
+
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Update parallelism" }), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].updatePolicy).toMatchObject({ parallelism: 2, delaySeconds: 10, order: "start-first" });
+  expect(patches[0].updatePolicy).not.toHaveProperty("failureAction");
+  expect(patches[0].updatePolicy).not.toHaveProperty("failure_action");
+});
+
 it("rejects invalid CPU without issuing a PATCH and aligns the minimum with DTO", async () => {
   const patches: Array<Record<string, unknown>> = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
