@@ -181,7 +181,7 @@ const commands = {
   // fixtures now also have explicit regression checks in patch releases.
   "release-fixtures": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/config/production-auth-entrypoints.spec.ts", "src/tenants"],
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "deployment-entrypoints.test.mjs", "src/pages/quota-payload.test.ts"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "deployment-entrypoints.test.mjs", "final-ui-e2e-contract.test.mjs", "src/pages/quota-payload.test.ts"],
     ["npm", "--workspace", "@resource-portal/sdk", "test"],
     ["node", "--check", "scripts/run-stage20-real-swarm-web-e2e.mjs"],
     ["bash", "test/installer/test-workflows.sh"],
@@ -465,6 +465,7 @@ const classifiers = [
   [/^packages\/resourceportal-api\/scripts\/privileged-smoke-worker(?:\.spec)?\.ts$/, ["release-fixtures", "swarm-smoke-fixtures", "platform-release"]],
   [/^packages\/resourceportal-api\/src\/config\/production-auth-entrypoints\.spec\.ts$/, ["release-fixtures", "identity"]],
   [/^packages\/resourceportal-web\/deployment-entrypoints\.test\.mjs$/, ["release-fixtures", "workflow"]],
+  [/^packages\/resourceportal-web\/final-ui-e2e-contract\.test\.mjs$/, ["release-fixtures", "swarm-smoke-fixtures"]],
   // #399 §4: changes to the real Chromium Overview→Environment E2E require the real Swarm/browser gate.
   [/^scripts\/run-stage20-real-swarm-web-e2e\.mjs$/, ["release-fixtures", "platform-release", "swarm-smoke-fixtures"]],
   [/^scripts\/run-remote-lan-static-nsenter-smoke\.sh$/, ["networking", "platform-release"]],
