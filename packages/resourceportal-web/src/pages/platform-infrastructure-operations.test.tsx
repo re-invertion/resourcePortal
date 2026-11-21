@@ -79,6 +79,38 @@ describe("#399 §10 Infrastructure scoped operational workflows",()=>{
       init?.method==="PATCH" && String(init.body)==='{"enabled":false}')).toBe(true));
   });
 
+  it("ignores superseded remote detail responses after switching locations",async()=>{
+    const locationB="bbbbbbbb-bbbb-4ccc-8ddd-222222222222";
+    let resolveA: ((response: Response)=>void)|undefined;
+    const pendingA=new Promise<Response>(resolve=>{resolveA=resolve;});
+    const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>{
+      const path=String(input);
+      if(path==="/api/platform/remote-locations")return json([
+        {id:locationId,hostname:"site-A",status:"Ready",maintenance:false},
+        {id:locationB,hostname:"site-B",status:"Ready",maintenance:false},
+      ]);
+      if(path==="/api/platform/remote-locations/"+locationId&&init?.method==="GET")return pendingA;
+      if(path==="/api/platform/remote-locations/"+locationB&&init?.method==="GET")return json({
+        id:locationB,hostname:"site-B",swarmNodeId:"node-B",maintenance:true,status:"Ready",
+      });
+      return json([]);
+    });
+    vi.stubGlobal("fetch",fetcher);
+    render(<PlatformPage section="infrastructure" segments={["locations"]}/>);
+    await screen.findByText("site-A");
+    fireEvent.click(screen.getAllByRole("button",{name:"Details & maintenance"})[0]);
+    await screen.findByRole("dialog",{name:/Remote location: site-A/});
+    fireEvent.click(screen.getByRole("button",{name:"Close"}));
+    fireEvent.click(screen.getAllByRole("button",{name:"Details & maintenance"})[1]);
+    const dialog=await screen.findByRole("dialog",{name:/Remote location: site-B/});
+    await within(dialog).findByText("node-B");
+    resolveA?.(json({id:locationId,hostname:"site-A",swarmNodeId:"node-A",maintenance:false,status:"Ready"}));
+    await waitFor(()=>expect(within(dialog).queryByText("node-A")).toBeNull());
+    expect(within(dialog).getByText("node-B")).toBeTruthy();
+    expect(within(dialog).getByRole("button",{name:"Exit maintenance"})).toBeTruthy();
+    expect(fetcher.mock.calls.every(([path])=>!String(path).startsWith("/api/tenants/"))).toBe(true);
+  });
+
   it("preserves assigned GPU and only invokes fail-closed diagnose and recovery operations",async()=>{
     const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const path=String(input);
