@@ -410,8 +410,13 @@ try {
       await page.getByRole("button", { name: "Add variable" }).click();
       await page.getByRole("textbox", { name: "Environment name 1" }).fill(environmentKey);
       await page.getByRole("textbox", { name: "Environment value 1" }).fill(initialValue);
+      const saveResponsePromise1 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
       await page.getByRole("button", { name: "Save environment" }).click();
-      await page.getByText("Environment saved as pending changes.").waitFor();
+      const saveResponse1 = await saveResponsePromise1;
+      assert(saveResponse1.ok(), `Environment draft PATCH #1 failed: ${saveResponse1.status()}`);
       let config = await proxyApi(context, runtimePath);
       assert(config?.environment?.[environmentKey] === initialValue,
         "Environment value added via browser was not persisted in draft");
@@ -423,16 +428,26 @@ try {
       await page.getByRole("link", { name: "Environment variables", exact: true }).click();
       await page.getByRole("heading", { name: "Environment", exact: true }).waitFor();
       await page.getByRole("textbox", { name: "Environment value 1" }).fill(editedValue);
+      const saveResponsePromise2 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
       await page.getByRole("button", { name: "Save environment" }).click();
-      await page.getByText("Environment saved as pending changes.").waitFor();
+      const saveResponse2 = await saveResponsePromise2;
+      assert(saveResponse2.ok(), `Environment draft PATCH #2 failed: ${saveResponse2.status()}`);
       config = await proxyApi(context, runtimePath);
       assert(config?.environment?.[environmentKey] === editedValue,
         "Environment edit via browser did not persist across navigation");
 
       // Remove only this newly created fixture key; never touch existing tenant data.
       await page.getByRole("button", { name: "Remove", exact: true }).click();
+      const saveResponsePromise3 = page.waitForResponse(response =>
+        response.request().method() === "PATCH" &&
+        new URL(response.url()).pathname === `/api${runtimePath}`,
+      );
       await page.getByRole("button", { name: "Save environment" }).click();
-      await page.getByText("Environment saved as pending changes.").waitFor();
+      const saveResponse3 = await saveResponsePromise3;
+      assert(saveResponse3.ok(), `Environment draft PATCH #3 failed: ${saveResponse3.status()}`);
       config = await proxyApi(context, runtimePath);
       assert(!Object.hasOwn(config?.environment ?? {}, environmentKey),
         "Environment removal via browser left the fixture key behind");
