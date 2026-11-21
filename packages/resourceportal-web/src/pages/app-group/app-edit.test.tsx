@@ -143,6 +143,33 @@ it("opens attachment forms only when requested on Storage and Configuration", as
   expect(screen.getByRole("dialog",{name:"Attach configuration"})).toBeTruthy();
 });
 
+it("#399 §9 shows current SingleApp private network and LAN grant without implying an app VPN", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path=String(input);
+    if (path.endsWith("/single-apps")) return json([{id:"app1",name:"checkout",image:"nginx:latest",runtimeState:"Running"}]);
+    if (path.endsWith("/networking/topology")) return json({
+      appGroups:[
+        {id:"ag1",singleApps:[{id:"app1",name:"checkout",networkAttachments:[{id:"att1",networkId:"net1",address:"10.2.3.4"}]}]},
+        {id:"not-our-group",singleApps:[{id:"other",name:"other",networkAttachments:[{id:"att2",networkId:"net2",address:"10.0.0.3"}]}]},
+      ],
+      networks:[{id:"net1",name:"private-app-net"},{id:"net2",name:"unrelated-net"}],
+      gates:[{id:"gate1",name:"office-gate"}],
+    });
+    if (path.endsWith("/networking/lan-attachments")) return json([{singleAppId:"app1",networkId:"net1",gateId:"gate1",status:"Pending"}]);
+    return json([]);
+  });
+  vi.stubGlobal("fetch",fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="networking"/>);
+  expect(await screen.findByText("private-app-net")).toBeTruthy();
+  expect(screen.getByText(/LAN grant via office-gate: Pending/)).toBeTruthy();
+  expect(screen.queryByText("unrelated-net")).toBeNull();
+  expect(screen.getByRole("link", {name:"Manage private Network membership"}).getAttribute("href")).toBe("/tenants/t1/networking/networks");
+  expect(screen.getByRole("link", {name:"Review LAN grants and Gate evidence"}).getAttribute("href")).toBe("/tenants/t1/networking/lan");
+  expect(screen.getByRole("link", {name:"Device VPN access"}).getAttribute("href")).toBe("/tenants/t1/networking/vpn");
+  expect(screen.getByText(/does not imply a direct VPN tunnel/)).toBeTruthy();
+  expect(fetchMock.mock.calls.every(([,init])=>!init?.method||init.method==="GET")).toBe(true);
+});
+
 it("loads GPU inventory from the tenant-level collection endpoint", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
