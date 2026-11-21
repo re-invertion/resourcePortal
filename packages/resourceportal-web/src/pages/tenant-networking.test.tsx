@@ -16,7 +16,7 @@ vi.mock("./device-vpn-panel",()=>({
   DeviceVpnPanel:()=> <p>Device VPN</p>,
 }));
 vi.mock("./tenant-networking-graph",()=>({
-  TenantNetworkingGraph:()=> <div aria-label="Application Network graph">Graph</div>,
+  TenantNetworkingGraph:({topology:graph}: {topology:Topology}) => <div aria-label="Application Network graph">{graph.networks.map(network=><span key={network.id}>{network.name}</span>)}{graph.appGroups.flatMap(group=>group.singleApps.map(app=><span key={app.id}>{app.name}</span>))}</div>,
 }));
 vi.mock("../components/toast",()=>({
   toast:{success:vi.fn(),errorFrom:vi.fn()},
@@ -149,16 +149,16 @@ describe("Tenant networking without routed Site VPN",()=>{
     try {
       const {rerender}=render(<TenantNetworkingPage tenantId={tenantId} section="topology"/>);
       fireEvent.click(screen.getByRole("button",{name:"Diagram"}));
-      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("unattached")).toBeTruthy();
       // Unattached targets must stay available even when filtering to an app.
       fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
         target:{value:"sensor"},
       });
-      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("unattached")).toBeTruthy();
       fireEvent.change(screen.getByRole("searchbox",{name:/Search applications, groups or Networks/i}),{
         target:{value:"unattached"},
       });
-      expect(screen.getByLabelText("Application Network graph")).toBeTruthy();
+      expect(within(screen.getByLabelText("Application Network graph")).getByText("sensor")).toBeTruthy();
       rerender(<TenantNetworkingPage tenantId={tenantId} section="networks"/>);
       expect(screen.getByText("unattached")).toBeTruthy();
     } finally {
