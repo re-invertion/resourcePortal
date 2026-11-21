@@ -293,13 +293,14 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
     setSelectedRemote(row);
     setRemoteDetails(undefined);
     try {
-      setRemoteDetails(await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id)));
+      const latest = await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id));
+      setRemoteDetails(latest);
     } catch (error) { toast.error("Location details unavailable: "+readableError(error)); }
   }
   async function changeLocationMaintenance(row: Row) {
     const id = idOf(row);
-    if (!id) return;
-    const enabled = row.maintenance !== true;
+    if (!id || !remoteDetails || idOf(remoteDetails) !== id) return;
+    const enabled = remoteDetails.maintenance !== true;
     setBusy("Remote location maintenance");
     try {
       const operation = await apiRequest<Row>("/api/platform/remote-locations/"+encodeURIComponent(id)+"/maintenance", {
@@ -578,8 +579,8 @@ export function PlatformInfrastructurePage({section = "overview"}:{section?:Infr
       title={"Remote location: "+platformRemoteLocationLabel(selectedRemote??{})}
       description="Only platform-reported host metadata is shown; maintenance uses the audited operation API."
       actions={<><Button onClick={()=>setSelectedRemote(undefined)}>Close</Button>
-        <Button variant="secondary" disabled={Boolean(busy)||!selectedRemote} onClick={()=>{if(selectedRemote)void changeLocationMaintenance(selectedRemote);}}>
-          {selectedRemote?.maintenance===true?"Exit maintenance":"Enter maintenance"}
+        <Button variant="secondary" disabled={Boolean(busy)||!selectedRemote||!remoteDetails||idOf(remoteDetails)!==idOf(selectedRemote)} onClick={()=>{if(selectedRemote)void changeLocationMaintenance(selectedRemote);}}>
+          {remoteDetails?.maintenance===true?"Exit maintenance":"Enter maintenance"}
         </Button></>}>
       <p className="mb-3 text-sm">Maintenance requests create a platform operation. Inspect its ID and final result in Operations; acceptance alone is not completion.</p>
       {remoteDetails?<DetailList columns={2} items={[
