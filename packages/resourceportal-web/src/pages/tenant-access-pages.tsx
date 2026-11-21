@@ -545,7 +545,7 @@ export function TenantCredentialsPage({tenantId}:{tenantId:string}){
    {credential?<Card className={`mb-5 mt-5 p-5 ${credential.persistenceStatus==="Failed"||credential.auditStatus==="Failed"?"border-[#D97706]":"border-[#A9D6B6]"}`}>
      <h2 className="font-semibold">Save service identity credentials now</h2>
      <p className="mt-1 text-sm">Secret values are returned only once; store them in an approved secret manager.</p>
-     {credential.persistenceStatus==="Failed"||credential.auditStatus==="Failed"?<p role="alert" className="mt-2 text-sm text-red-700">{text(credential.warning,"Credential persistence or audit failed. Contact the platform administrator.")}</p>:null}
+     {credential.persistenceStatus==="Failed"||credential.auditStatus==="Failed"?<div role="alert" className="mt-2 text-sm text-red-700"><p>Persistence: {text(credential.persistenceStatus,"Unknown")} · Audit: {text(credential.auditStatus,"Unknown")}</p><p>{text(credential.warning,"Credential persistence or audit failed. Contact the platform administrator.")}</p></div>:null}
      <dl className="mt-3 grid gap-3 sm:grid-cols-2">{Object.entries(credential).filter(([key,value])=>typeof value==="string"&&/client|secret|token|credential|password/i.test(key)).map(([key,value])=><div key={key} className="rounded bg-[#F5FAF6] p-3"><dt className="text-xs">{key}</dt><dd className="break-all font-mono text-xs">{String(value)}</dd></div>)}</dl>
      <Button className="mt-4" size="sm" onClick={()=>setCredential(undefined)}>I saved the credentials</Button>
    </Card>:null}
@@ -562,7 +562,7 @@ export function TenantCredentialsPage({tenantId}:{tenantId:string}){
          name:<div><strong>{text(item.name)}</strong><span className="block text-xs text-[#718096]">{text(item.description,"No description")}</span></div>,
          status:<StatusText tone={statusTone(item.status)}>{text(item.status,"Active")}</StatusText>,
          roles:Array.isArray(item.roles)?(item.roles as R[]).map(roleName).join(", "):"—",
-         actions:<Button size="sm" variant="ghost" disabled={working} onClick={()=>void rotateIdentity(item)}>Rotate service credentials</Button>
+         actions:<Button size="sm" variant="ghost" disabled={working} onClick={()=>void rotateIdentity(item)}>Rotate credentials</Button>
        }}))} empty={<EmptyState icon={<LockIcon/>} title="No service identities" description="Create a service identity for automation that needs tenant permissions."/>}/>
    </Card>
  </main>;
