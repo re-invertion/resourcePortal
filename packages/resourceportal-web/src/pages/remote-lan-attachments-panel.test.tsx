@@ -71,7 +71,7 @@ describe("Remote LAN Attachments tenant UI",()=>{
     fireEvent.change(screen.getByLabelText(/^RP Gate\s*\*?$/),{target:{value:gateId}});
     expect(screen.getByDisplayValue("192.168.50.0/24")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Address assignment"),{target:{value:"Static"}});
-    fireEvent.change(screen.getByLabelText(/^Static IPv4 address/prefix\s*\*?$/),
+    fireEvent.change(screen.getByLabelText(/^Static IPv4 address\/prefix\s*\*?$/),
       {target:{value:"192.168.50.45/24"}});
     fireEvent.click(screen.getByRole("button",{name:"Create LAN Attachment"}));
     await waitFor(()=>expect(mockRequest).toHaveBeenCalledWith(root,{
