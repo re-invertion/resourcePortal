@@ -39,7 +39,7 @@ describe("#399 §10 Infrastructure scoped operational workflows",()=>{
     const fetcher=vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const path=String(input);
       if(path==="/api/platform/remote-locations")return json([{id:locationId,hostname:"site-edge-01",status:"Ready",maintenance:false}]);
-      if(path==="/api/platform/remote-locations/"+locationId && !init?.method)return json({id:locationId,hostname:"site-edge-01",status:"Ready",availability:"Active",maintenance:false,swarmNodeId:"node-01"});
+      if(path==="/api/platform/remote-locations/"+locationId && init?.method==="GET")return json({id:locationId,hostname:"site-edge-01",status:"Ready",availability:"Active",maintenance:false,swarmNodeId:"node-01"});
       if(path==="/api/platform/remote-locations/"+locationId+"/maintenance" && init?.method==="PATCH")return json({id:"operation-123",status:"Pending"});
       return json([]);
     });
