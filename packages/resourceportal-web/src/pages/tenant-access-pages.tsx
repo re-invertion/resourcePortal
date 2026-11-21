@@ -33,11 +33,11 @@ function GroupAuditActivity({ tenantId, groupId }: { tenantId: string; groupId: 
     {audit.error ? <p role="alert" className="mt-3 text-sm text-[#B42318]">Could not load group activity. Retry without assuming that history is empty.</p> :
       audit.loading ? <p role="status" className="mt-3 text-sm">Loading group activity…</p> :
       <DataTable embedded columns={[{key:"action",label:"Action"},{key:"actor",label:"Actor"},{key:"result",label:"Result"},{key:"time",label:"Time"}]}
-        rows={rows.map(event => ({key:idOf(event) || `${text(event.action)}-${text(event.createdAt)}`,cells:{
+        rows={rows.map(event => ({key:idOf(event) || `${text(event.action)}-${text(event.timestamp)}`,cells:{
           action:text(event.action,"Group change").replaceAll("_"," "),
           actor:text(event.actorName,text(event.actorDisplayName,text(event.actor,"System"))),
           result:<StatusText tone={statusTone(event.result)}>{text(event.result,"Unknown")}</StatusText>,
-          time:formatDate(event.createdAt),
+          time:formatDate(event.timestamp),
         }}))}
         empty={<EmptyState title="No group activity in this page" description="No matching group audit records were returned. Older history may be available in Audit log."/>}/>}
   </section>;
