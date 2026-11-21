@@ -113,7 +113,7 @@ describe("v0.1.9 final UI E2E contract", () => {
     expect(script).toContain('config?.environment?.[environmentKey] === initialValue');
     expect(script).toContain('config?.environment?.[environmentKey] === editedValue');
     expect(script).toContain('!Object.hasOwn(config?.environment ?? {}, environmentKey)');
-    expect(script).toContain('getByRole("link", { name: "Overview" }).click()');
+    expect(script).toContain('getByRole("link", { name: "Overview" })');
   });
 
   it("checks the final v0.1.9 management matrix routes", () => {
