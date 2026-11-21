@@ -40,12 +40,12 @@ describe("Remote LAN Attachments tenant UI",()=>{
   });
   it("creates Pending LAN connection for a dedicated unnumbered physical interface",async()=>{
     render(<RemoteLanAttachmentsPanel tenantId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" topology={topology} />);
-    const app=screen.getByLabelText("Application");
+    const app=screen.getByLabelText(/^Application\s*\*?$/);
     fireEvent.change(app,{target:{value:appId}});
-    fireEvent.change(screen.getByLabelText("Application Network"),{target:{value:networkId}});
-    fireEvent.change(screen.getByLabelText("RP Gate"),{target:{value:gateId}});
-    fireEvent.change(screen.getByLabelText("Dedicated Gate LAN interface"),{target:{value:"eth1"}});
-    fireEvent.change(screen.getByLabelText("Expected customer DHCP subnet"),{target:{value:"192.168.50.0/24"}});
+    fireEvent.change(screen.getByLabelText(/^Application Network\s*\*?$/),{target:{value:networkId}});
+    fireEvent.change(screen.getByLabelText(/^RP Gate\s*\*?$/),{target:{value:gateId}});
+    fireEvent.change(screen.getByLabelText(/^Dedicated Gate LAN interface\s*\*?$/),{target:{value:"eth1"}});
+    fireEvent.change(screen.getByLabelText(/^Expected customer DHCP subnet\s*\*?$/),{target:{value:"192.168.50.0/24"}});
     fireEvent.click(screen.getByRole("button",{name:"Create LAN Attachment"}));
     await waitFor(()=>expect(mockRequest).toHaveBeenCalledWith(root, {
       method:"POST",
@@ -66,12 +66,12 @@ describe("Remote LAN Attachments tenant UI",()=>{
     render(<RemoteLanAttachmentsPanel tenantId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
       topology={managed}/>);
     fireEvent.change(screen.getByLabelText("LAN uplink mode"),{target:{value:"ManagedSharedUplink"}});
-    fireEvent.change(screen.getByLabelText("Application"),{target:{value:appId}});
-    fireEvent.change(screen.getByLabelText("Application Network"),{target:{value:networkId}});
-    fireEvent.change(screen.getByLabelText("RP Gate"),{target:{value:gateId}});
+    fireEvent.change(screen.getByLabelText(/^Application\s*\*?$/),{target:{value:appId}});
+    fireEvent.change(screen.getByLabelText(/^Application Network\s*\*?$/),{target:{value:networkId}});
+    fireEvent.change(screen.getByLabelText(/^RP Gate\s*\*?$/),{target:{value:gateId}});
     expect(screen.getByDisplayValue("192.168.50.0/24")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Address assignment"),{target:{value:"Static"}});
-    fireEvent.change(screen.getByLabelText("Static IPv4 address/prefix"),
+    fireEvent.change(screen.getByLabelText(/^Static IPv4 address/prefix\s*\*?$/),
       {target:{value:"192.168.50.45/24"}});
     fireEvent.click(screen.getByRole("button",{name:"Create LAN Attachment"}));
     await waitFor(()=>expect(mockRequest).toHaveBeenCalledWith(root,{
@@ -115,7 +115,7 @@ describe("Remote LAN Attachments tenant UI",()=>{
     expect(screen.getByRole("status").textContent).toContain("Select an application first");
     expect(screen.getByRole("button", {name:"Create LAN Attachment"}).hasAttribute("disabled")).toBe(true);
     for (const name of ["Application", "Application Network", "RP Gate", "Dedicated Gate LAN interface", "Expected customer DHCP subnet"]) {
-      expect(screen.getByLabelText(name).hasAttribute("required")).toBe(true);
+      expect(screen.getByLabelText(new RegExp("^" + name + "\\s*\\*?$")).hasAttribute("required")).toBe(true);
     }
   });
 
