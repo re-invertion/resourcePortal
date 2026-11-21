@@ -512,6 +512,19 @@ test("retired Codespaces, quota fixtures and browser Swarm E2E have explicit pat
   assert.equal(plan.vpnSmoke, false);
 });
 
+test("issue #399 §4 browser contract test is classified and actually executable", () => {
+  const plan = selectProfiles(["packages/resourceportal-web/final-ui-e2e-contract.test.mjs"]);
+  assert.ok(plan.profiles.includes("release-fixtures"));
+  assert.ok(plan.profiles.includes("swarm-smoke-fixtures"));
+  assert.equal(plan.swarmSmoke, true);
+  const commands = commandsForProfiles(plan.profiles);
+  assert.ok(commands.some(command =>
+    command[0] === "npm" &&
+    command.includes("@resource-portal/web") &&
+    command.includes("final-ui-e2e-contract.test.mjs")
+  ), "Final browser E2E contract test must execute in the targeted suite");
+});
+
 test("issue #399 §4 real Chromium environment browser path cannot bypass Swarm E2E", () => {
   const plan = selectProfiles(["scripts/run-stage20-real-swarm-web-e2e.mjs"]);
   for (const profile of ["release-fixtures", "platform-release", "swarm-smoke-fixtures"]) {
