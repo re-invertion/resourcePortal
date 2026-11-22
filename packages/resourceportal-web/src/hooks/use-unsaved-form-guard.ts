@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Protect edits which have not been persisted to the API.
@@ -7,10 +7,16 @@ import { useEffect, useState } from "react";
  */
 export function useUnsavedFormGuard() {
   const [dirty, setDirty] = useState(false);
+  const approvedDeparture = useRef(false);
 
   useEffect(() => {
     if (!dirty) return;
+    let resetApproval: ReturnType<typeof setTimeout> | undefined;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (approvedDeparture.current) {
+        approvedDeparture.current = false;
+        return;
+      }
       event.preventDefault();
       event.returnValue = "";
     };
@@ -28,11 +34,19 @@ export function useUnsavedFormGuard() {
       if (!window.confirm("You have unsaved changes. Leave this page and discard your edits?")) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        return;
       }
+      // Ordinary links trigger beforeunload after the click. One accepted
+      // discard must not cause a second native browser confirmation.
+      approvedDeparture.current = true;
+      if (resetApproval) clearTimeout(resetApproval);
+      resetApproval = setTimeout(() => { approvedDeparture.current = false; }, 1500);
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("click", onNavigate, true);
     return () => {
+      if (resetApproval) clearTimeout(resetApproval);
+      approvedDeparture.current = false;
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("click", onNavigate, true);
     };
