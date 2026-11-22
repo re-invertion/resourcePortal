@@ -53,6 +53,7 @@ export function TenantStoragePage({tenantId}:{tenantId:string}) {
   const registryRows=items<R>(registries.data);
   const allocatedBytes = volumeRows.reduce((sum, volume) => sum + (Number.isFinite(Number(volume.sizeBytes)) ? Math.max(0, Number(volume.sizeBytes)) : 0), 0);
   const usedBytes = volumeRows.reduce((sum, volume) => sum + (Number.isFinite(Number(volume.usedSizeBytes)) ? Math.max(0, Number(volume.usedSizeBytes)) : 0), 0);
+  const unmeasuredVolumes = volumeRows.filter(volume => volume.usedSizeBytes === null || volume.usedSizeBytes === undefined || !Number.isFinite(Number(volume.usedSizeBytes)) || Number(volume.usedSizeBytes) < 0).length;
   const storageQuota = quota.loading ? "Loading…" : quota.error ? "Unavailable" : quotaBytesDisplay(quota.data?.storageBytes);
   return <main>
     <PageHeader eyebrow="Tenant resources" title="Storage" description="Persistent volumes and container image registries for this tenant."/>
@@ -66,7 +67,7 @@ export function TenantStoragePage({tenantId}:{tenantId:string}) {
       <p className="mt-1 text-sm text-[#5B6678]">Binary GiB (1 GiB = 1,073,741,824 bytes) on Overview, Storage and Billing. Used is reported volume consumption; allocated is provisioned capacity; quota is the tenant policy limit. These figures are not interchangeable.</p>
       {volumes.error ? <p role="alert" className="mt-2 text-sm text-[#B42318]">Volume data is unavailable; no usage estimate is shown.</p> : null}
       <dl className="mt-3 grid gap-3 sm:grid-cols-3">
-        <div><dt className="text-xs text-[#718096]">Used</dt><dd className="font-semibold">{volumes.loading || volumes.error ? "—" : formatBytes(usedBytes)}</dd></div>
+        <div><dt className="text-xs text-[#718096]">Used</dt><dd className="font-semibold">{volumes.loading || volumes.error ? "—" : unmeasuredVolumes ? `Not fully reported (${unmeasuredVolumes} unmeasured volume${unmeasuredVolumes === 1 ? "" : "s"})` : formatBytes(usedBytes)}</dd></div>
         <div><dt className="text-xs text-[#718096]">Allocated</dt><dd className="font-semibold">{volumes.loading || volumes.error ? "—" : formatBytes(allocatedBytes)}</dd></div>
         <div><dt className="text-xs text-[#718096]">Quota (policy)</dt><dd className="font-semibold">{storageQuota}</dd></div>
       </dl>
