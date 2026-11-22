@@ -384,6 +384,7 @@ const classifiers = [
   [/^packages\/resourceportal-web\/src\/pages\/platform-billing\.tsx$/, ["billing-correctness", "platform-admin-ui", "security", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/tenant-resources\.tsx$/, ["billing-correctness", "reactive-web-state", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/lib\/date-display(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/hooks\/use-unsaved-form-guard(?:\.test)?\.tsx?$/, ["reactive-web-state", "tenant-ux-patch", "security"]],
   [/^packages\/resourceportal-web\/src\/hooks\/use-api\.ts$/, ["reactive-web-state", "tenant-ux-patch"]],
   // Explicit coverage for the tenant usability patch: new files must not
   // silently bypass fast-fix validation on non-milestone releases.
