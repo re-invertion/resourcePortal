@@ -25,6 +25,30 @@ export function invalidDeploymentTimeRange(from: string, to: string) {
   const start = Date.parse(from), end = Date.parse(to);
   return !Number.isFinite(start) || !Number.isFinite(end) || start > end;
 }
+// Intentionally exclude environment, variable values, configs, secrets, and credentials.
+export function deploymentSafePreview(value: unknown) {
+  const outer = value && typeof value === "object" ? value as Deployment : {};
+  const config = outer.stackConfig && typeof outer.stackConfig === "object" ? outer.stackConfig as Deployment : {};
+  const apps = Array.isArray(config.singleApps) ? config.singleApps : [];
+  return apps.filter((app): app is Deployment => Boolean(app) && typeof app === "object").map(app => ({
+    id: text(app.id, ""), name: text(app.name, "Application"),
+    image: text(app.image, "Not configured"),
+    replicas: typeof app.desiredReplicas === "number" ? app.desiredReplicas : null,
+    runtime: text(app.runtimeState, "Unknown"),
+  })).sort((a, b) => a.name.localeCompare(b.name));
+}
+export function deploymentSafeDiff(previous: ReturnType<typeof deploymentSafePreview>, next: ReturnType<typeof deploymentSafePreview>) {
+  const prior = new Map(previous.map(app => [app.id, app]));
+  const current = new Map(next.map(app => [app.id, app]));
+  return [...new Set([...prior.keys(), ...current.keys()])].flatMap(id => {
+    const before = prior.get(id), after = current.get(id);
+    if (!before) return [{ id, label: after?.name ?? id, change: "Added" }];
+    if (!after) return [{ id, label: before.name, change: "Removed" }];
+    const altered = (["image", "replicas", "runtime"] as const).filter(key => before[key] !== after[key]);
+    return altered.length ? [{ id, label: after.name, change: "Changed: " + altered.join(", ") }] : [];
+  });
+}
+
 export function deploymentRollbackReason(row: Deployment, currentVersion: number | null | undefined, busy: boolean) {
   if (text(row.status) !== "Succeeded") return "Rollback requires a successful deployment.";
   if (currentVersion != null && Number(row.version) === currentVersion) return "This deployment is already current.";
@@ -51,6 +75,10 @@ export function AppGroupDeployments({
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const events = useApi<unknown>(selected ? `${root}/deployments/${encodeURIComponent(idOf(selected))}/events` : undefined);
+  const detail = useApi<unknown>(selected ? `${root}/deployments/${encodeURIComponent(idOf(selected))}` : undefined);
+  const current = items<Deployment>(q.data).find(row => currentVersion != null && Number(row.version) === currentVersion);
+  const currentDetail = useApi<unknown>(selected && current && idOf(current) !== idOf(selected) ? `${root}/deployments/${encodeURIComponent(idOf(current))}` : undefined);
+
   const rows = useMemo(() => items<Deployment>(q.data), [q.data]);
   const inFlight = rows.some(active);
   const previousStatuses = useRef<{ root: string; statuses: Map<string, string> }>({
@@ -201,6 +229,23 @@ export function AppGroupDeployments({
         </div>
       </div> : null}
     </Card>
+    {selected ? <Card className="overflow-hidden">
+      <div className="border-b border-[#E1E7F0] px-5 py-4">
+        <h3 className="font-semibold">Deployment preview and changes</h3>
+        <p className="mt-1 text-xs text-[#5B6678]">Only application name, image, desired replicas and runtime intent are shown; configuration values and secrets are never rendered.</p>
+        {detail.error ? <p role="alert">Deployment preview unavailable or not permitted.</p> : detail.loading ? <p>Loading deployment preview…</p> :
+          detail.data ? <div className="mt-3 space-y-2">
+            {deploymentSafePreview(detail.data).map(app => <p key={app.id} className="text-sm">{app.name}: {app.image} · {app.replicas ?? "Unknown"} desired replicas · {app.runtime}</p>)}
+            {!deploymentSafePreview(detail.data).length ? <p className="text-sm">No applications in this snapshot.</p> : null}
+            {current && idOf(current) !== idOf(selected) ? currentDetail.error ? <p role="alert">Current deployment comparison is unavailable.</p> : currentDetail.loading ? <p>Loading current version to compare…</p> : currentDetail.data ?
+              <div aria-label="Deployment changes compared with current"><h4 className="font-semibold">Compared with current v{currentVersion}</h4>
+                {deploymentSafeDiff(deploymentSafePreview(currentDetail.data), deploymentSafePreview(detail.data)).map(change =>
+                  <p key={change.id} className="text-sm">{change.label}: {change.change}</p>)}
+                {!deploymentSafeDiff(deploymentSafePreview(currentDetail.data), deploymentSafePreview(detail.data)).length ? <p className="text-sm">No changes in the safely comparable fields.</p> : null}
+              </div> : null : <p className="text-sm">Current version — no historical comparison needed.</p>}
+          </div> : null}
+      </div>
+    </Card> : null}
     {selected ? <Card className="overflow-hidden">
       <div className="border-b border-[#E1E7F0] px-5 py-4">
         <h3 className="font-semibold">Deployment events</h3>
