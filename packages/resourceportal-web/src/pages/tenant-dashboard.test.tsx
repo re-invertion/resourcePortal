@@ -45,6 +45,15 @@ describe("§14 common storage accounting", () => {
 describe("TenantDashboard", () => {
   beforeEach(() => vi.unstubAllGlobals());
 
+  it("does not claim zero used storage when the backend has not measured volume consumption", async () => {
+    mockDashboard({
+      "/api/tenants/t1/volumes": [{ id: "v1", sizeBytes: "1073741824", usedSizeBytes: null }],
+    });
+    render(<TenantDashboard tenantId="t1" />);
+    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("Usage not fully reported"));
+    expect(screen.getByTestId("metric-storage").textContent).not.toContain("0 B /");
+  });
+
   it("summarizes the tenant around runtime, balance, storage and applications", async () => {
     mockDashboard();
     render(<TenantDashboard tenantId="t1" />);
