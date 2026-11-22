@@ -381,6 +381,8 @@ const classifiers = [
   // #399 §14: tenant-private billing drill-down and date/units formatting
   // must execute both the API's billing/RBAC regressions and actual Web RTL.
   [/^packages\/resourceportal-web\/src\/pages\/tenant-billing-history(?:\.test)?\.tsx$/, ["billing-correctness", "tenant-ux-patch", "security", "resource-bot"]],
+  [/^packages\/resourceportal-web\/src\/pages\/platform-billing\.tsx$/, ["billing-correctness", "platform-admin-ui", "security", "tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-resources\.tsx$/, ["billing-correctness", "reactive-web-state", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/lib\/date-display(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/hooks\/use-api\.ts$/, ["reactive-web-state", "tenant-ux-patch"]],
   // Explicit coverage for the tenant usability patch: new files must not
