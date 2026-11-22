@@ -45,7 +45,7 @@ export function TenantBillingHistory({ tenantId }: { tenantId: string }) {
   const usage = useApi<Page>(pathFor(BILLING_HISTORY_ENDPOINTS.usage, usageCursors));
   // Bound the automatically fetched aggregate: the server currently loads
   // matching records into memory, so an all-time read is unsafe at scale.
-  const summaryFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const [summaryFrom] = useState(() => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
   const summary = useApi<Row>(root + BILLING_HISTORY_ENDPOINTS.summary + "?from=" + encodeURIComponent(summaryFrom));
   const resourcebot = useApi<Page>(root + BILLING_HISTORY_ENDPOINTS.resourcebot + "?limit=50");
   const current = kind === "transactions" ? transactions : kind === "usage" ? usage : resourcebot;
