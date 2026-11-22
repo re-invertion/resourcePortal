@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "./forms";
 import { Field, TextInput } from "./design-system/forms";
+import { Tabs } from "./design-system/primitives";
 
 describe("functional Stage 20 forms", () => {
   it("renders typed fields instead of raw JSON and submits typed values", async () => {
@@ -268,5 +269,24 @@ describe("accessible shared Field semantics", () => {
     expect(field.hasAttribute("aria-invalid")).toBe(false);
     expect(document.getElementById(String(field.getAttribute("aria-describedby")))?.textContent)
       .toContain("Optional explanatory text");
+  });
+});
+
+describe("accessible shared section navigation", () => {
+  it("exposes the current section, visible keyboard focus and normal link navigation", () => {
+    render(<Tabs label="Application sections" items={[
+      { label: "Overview", href: "/apps/one", active: true },
+      { label: "Configuration", href: "/apps/one/edit/configuration" },
+    ]} />);
+    const nav = screen.getByRole("navigation", { name: "Application sections" });
+    const overview = screen.getByRole("link", { name: "Overview" });
+    const configuration = screen.getByRole("link", { name: "Configuration" });
+    expect(nav.contains(overview)).toBe(true);
+    expect(overview.getAttribute("aria-current")).toBe("page");
+    expect(configuration.hasAttribute("aria-current")).toBe(false);
+    expect(configuration.getAttribute("href")).toBe("/apps/one/edit/configuration");
+    expect(configuration.className).toContain("focus-visible:outline");
+    configuration.focus();
+    expect(document.activeElement).toBe(configuration);
   });
 });
