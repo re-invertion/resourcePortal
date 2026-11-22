@@ -180,10 +180,10 @@ export function PlatformSettingsPage() {
           />
 
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_140px]">
-            <Field label="SMTP host" required>
+            <Field label="SMTP host" required={enabled}>
               <TextInput aria-label="SMTP host" value={host} onChange={(event) => setHost(event.target.value)} placeholder="smtp.example.com" autoComplete="off" />
             </Field>
-            <Field label="Port" required>
+            <Field label="Port" required={enabled}>
               <NumberInput aria-label="SMTP port" min={1} max={65535} value={port} onChange={(event) => setPort(event.target.value)} />
             </Field>
           </div>
@@ -220,7 +220,7 @@ export function PlatformSettingsPage() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="From address" required>
+            <Field label="From address" required={enabled}>
               <TextInput aria-label="SMTP from address" type="email" value={fromEmail} onChange={(event) => setFromEmail(event.target.value)} placeholder="noreply@example.com" />
             </Field>
             <Field label="From name">
