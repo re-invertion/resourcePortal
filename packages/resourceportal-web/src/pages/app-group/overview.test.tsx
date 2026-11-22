@@ -10,3 +10,15 @@ it("keeps advanced settings reachable outside the six primary App Group tabs", (
   expect(screen.getByText("Effective state")).toBeTruthy();
   expect(screen.getByText(/0 applications in this App Group/i)).toBeTruthy();
 });
+
+it("#399 §13 separates intentional stop, health, sync, draft and attention", () => {
+  render(<AppGroupOverview tenantId="t1" group={{
+    id: "ag2", name: "paused", runtimeState: "Stopped", effectiveRuntimeState: "Stopped",
+    health: "Healthy", driftStatus: "InSync", hasPendingChanges: false,
+    runtimeBlockers: ["AppGroupStopped"], singleApps: [],
+  }} />);
+  expect(screen.getByText(/Stopped intentionally; expected replicas 0/)).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Independent deployment state dimensions" })).toBeTruthy();
+  expect(screen.getByText("No known blocker")).toBeTruthy();
+  expect(screen.getByText("Up to date")).toBeTruthy();
+});
