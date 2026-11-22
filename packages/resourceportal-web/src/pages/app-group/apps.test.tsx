@@ -14,7 +14,7 @@ it("distinguishes a filtered list from an empty App Group and lets the user clea
   vi.stubGlobal("fetch", fetchMock);
   render(<AppGroupApps tenantId="t1" appGroupId="ag1" />);
   expect(await screen.findByText("checkout")).toBeTruthy();
-  fireEvent.change(screen.getByRole("searchbox", { name: "Search applications" }), { target: { value: "not-existing" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search applications" }), { target: { value: "not-existing" } });
   expect(screen.getByText("No matching applications")).toBeTruthy();
   expect(screen.getByText("No applications match your search.")).toBeTruthy();
   expect(screen.queryByText("Create the first application in this App Group.")).toBeNull();
