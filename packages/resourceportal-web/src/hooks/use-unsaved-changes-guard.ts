@@ -16,9 +16,9 @@ export function useUnsavedChangesGuard(dirty: boolean) {
     const onClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const target = event.target;
-      if (!(target instanceof Element)) return;
+      if (typeof Element === "undefined" || !(target instanceof Element)) return;
       const anchor = target.closest("a[href]");
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      if (typeof HTMLAnchorElement === "undefined" || !(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
       const next = new URL(anchor.href, window.location.href);
       if (next.origin !== window.location.origin || next.pathname === window.location.pathname && next.search === window.location.search && next.hash === window.location.hash) return;
       if (!window.confirm(message)) {
