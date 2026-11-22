@@ -13,6 +13,14 @@ describe("#399 §13 application inventory and attention semantics", () => {
     expect(appGroupAttentionReasons({ effectiveRuntimeState: "Stopped", health: "Healthy", runtimeBlockers: ["AppGroupStopped"] })).toEqual([]);
     expect(appGroupAttentionReasons({ effectiveRuntimeState: "Running", health: "Unhealthy", hasPendingChanges: true })).toEqual(["Health: unhealthy", "Undeployed draft changes"]);
     expect(appGroupAttentionReasons({ effectiveRuntimeState: "Stopped", runtimeBlockers: ["BillingSuspended", "AppGroupStopped"] })).toEqual(["Runtime blocked: BillingSuspended"]);
+    expect(appGroupAttentionReasons({ effectiveRuntimeState: "Stopped", health: "Unhealthy", runtimeBlockers: ["AppGroupStopped"] })).toEqual(["Health: unhealthy"]);
+  });
+  it("fails closed in the applications view when the initial inventory request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    render(<ApplicationsPage tenantId="t1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Applications" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Applications could not be loaded");
+    expect(screen.queryByText("No individual applications in the loaded inventory")).toBeNull();
   });
   it("shows individual applications separately with tenant-scoped links", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json([{ id: "ag1", name: "commerce", singleApps: [{ id: "a1", name: "checkout", runtimeState: "Running" }] }])));
