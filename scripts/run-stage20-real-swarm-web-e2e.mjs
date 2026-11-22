@@ -192,7 +192,7 @@ try {
     const singleAppId = resourceIdFromUrl(page.url(), "apps");
     assert(singleAppId, `Application route did not expose an id: ${page.url()}`);
     await page
-      .getByRole("heading", { name: singleAppName, level: 2 })
+      .getByRole("heading", { name: singleAppName, level: 1 })
       .waitFor();
 
     // #399 §4: real Chromium navigation from SingleApp Overview to Environment.
@@ -239,6 +239,38 @@ try {
       assert(config?.environment?.[environmentKey] === initialValue,
         "Environment value added via browser was not persisted in draft");
 
+      // §15: exercise unsaved-edits guard in REAL isolated Chromium/Swarm,
+      // without writing or deploying this discarded value.
+      const unsavedValue = "discarded-unsaved-value";
+      await page.getByRole("textbox", { name: "Environment value 1" }).fill(unsavedValue);
+      const overviewTab = page.getByRole("navigation", { name: "Application sections" })
+        .getByRole("link", { name: "Overview" });
+      let rejectedDialog = false;
+      page.once("dialog", async dialog => {
+        assert(dialog.type() === "confirm", "Dirty navigation must request confirmation");
+        assert(dialog.message().includes("unsaved changes"), "Dirty navigation warning must be explicit");
+        rejectedDialog = true;
+        await dialog.dismiss();
+      });
+      await overviewTab.click();
+      assert(rejectedDialog, "Dirty navigation did not present confirmation");
+      assert(page.url().endsWith("/edit/environment"), "Rejected navigation discarded editor route");
+      assert(await page.getByRole("textbox", { name: "Environment value 1" }).inputValue() === unsavedValue,
+        "Rejected navigation lost unsaved form input");
+      let acceptedDialog = false;
+      page.once("dialog", async dialog => {
+        acceptedDialog = true;
+        await dialog.accept();
+      });
+      await overviewTab.click();
+      assert(acceptedDialog, "Discard navigation did not require acknowledgement");
+      await page.waitForURL(appOverviewUrl);
+      // This fresh editor load must still contain the *saved* draft.
+      await page.getByRole("link", { name: "Environment variables", exact: true }).click();
+      await page.getByRole("textbox", { name: "Environment value 1" }).waitFor();
+      assert(await page.getByRole("textbox", { name: "Environment value 1" }).inputValue() === initialValue,
+        "Discarded unsaved input was accidentally persisted");
+      
       // Confirm the editor is reachable again from Overview without direct URL.
       await page.getByRole("navigation", { name: "Application sections" })
         .getByRole("link", { name: "Overview" }).click();
@@ -356,7 +388,7 @@ try {
       `${webOrigin}/tenants/${createdTenantId}/app-groups/${appGroupId}/apps/${singleAppId}`;
     await page.goto(appUrl, { waitUntil: "domcontentloaded" });
     await page
-      .getByRole("heading", { name: singleAppName, level: 2 })
+      .getByRole("heading", { name: singleAppName, level: 1 })
       .waitFor();
 
     const stopOperation = await clickRuntimeAction(
