@@ -273,6 +273,7 @@ it("creates a domain from one prefix plus a verified custom root", async () => {
 });
 
 it("offers Cloudflare and standard methods when adding a custom root domain", async () => {
+  window.history.replaceState({}, "", "/tenants/t1/domains?view=roots");
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     if (url.endsWith("/api/tenants/t1/domains")) return Promise.resolve(json([]));
@@ -284,7 +285,7 @@ it("offers Cloudflare and standard methods when adding a custom root domain", as
   }));
 
   render(<TenantDomainsPage tenantId="t1" />);
-  await screen.findByText("Domains & routing");
+  await screen.findByRole("heading", { name: "Root domains", level: 1 });
   fireEvent.click(screen.getByRole("button", { name: "Add root domain" }));
 
   expect(screen.getByRole("dialog", { name: "Add root domain" })).toBeTruthy();
@@ -293,6 +294,7 @@ it("offers Cloudflare and standard methods when adding a custom root domain", as
 
   expect(screen.getByRole("dialog", { name: "Add root domain using DNS" })).toBeTruthy();
   expect(screen.getByPlaceholderText("apps.example.com")).toBeTruthy();
+  window.history.replaceState({}, "", "/");
 });
 
 it("does not report no volumes when the volumes API fails and supports retry", async () => {
