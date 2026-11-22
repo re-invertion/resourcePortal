@@ -5,6 +5,7 @@ import {
   Field, HistoryIcon, Select, StatusText, Textarea, TextInput, statusTone,
 } from "../../components/design-system";
 import { toast } from "../../components/toast";
+import { appGroupHref } from "../../router/router";
 import { AppGroupDomainPreflight } from "./domain-preflight";
 import { formatDate, idOf, items, text, useApi } from "../../hooks/use-api";
 
@@ -249,6 +250,7 @@ export function AppGroupDeployments({
     {selected ? <Card className="overflow-hidden">
       <div className="border-b border-[#E1E7F0] px-5 py-4">
         <h3 className="font-semibold">Deployment events</h3>
+        <a className="mt-1 inline-block text-sm font-semibold text-[#0F56A7] hover:underline" href={appGroupHref(tenantId, appGroupId, "activity")}>View related App Group operations</a>
         <p className="text-xs text-[#718096]">{selected.version == null ? text(selected.name, idOf(selected)) : `Version ${text(selected.version)}`}</p>
       </div>
       <div className="divide-y divide-[#E1E7F0]">
