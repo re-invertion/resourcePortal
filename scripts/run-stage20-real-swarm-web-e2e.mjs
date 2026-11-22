@@ -195,6 +195,22 @@ try {
       .getByRole("heading", { name: singleAppName, level: 1 })
       .waitFor();
 
+    // #399 §15: inspect actual Chromium keyboard navigation and active-page
+    // semantics on the isolated tenant fixture, not only jsdom/RTL markup.
+    await phase("accessible SingleApp section navigation", async () => {
+      const nav = page.getByRole("navigation", { name: "Application sections" });
+      const overview = nav.getByRole("link", { name: "Overview" });
+      const resources = nav.getByRole("link", { name: "Resources & scaling" });
+      assert(await overview.getAttribute("aria-current") === "page",
+        "Overview section must be marked as the active page");
+      await overview.focus();
+      assert(await overview.evaluate(el => document.activeElement === el),
+        "Overview navigation must be keyboard-focusable");
+      await page.keyboard.press("Tab");
+      assert(await resources.evaluate(el => document.activeElement === el),
+        "Keyboard Tab must advance from Overview to Resources & scaling");
+    });
+
     // #399 §4: real Chromium navigation from SingleApp Overview to Environment.
     // Never navigate directly to the editor: the clickable UI route is the contract.
     // Exercise add/edit/remove on an isolated fixture before the first deployment.
