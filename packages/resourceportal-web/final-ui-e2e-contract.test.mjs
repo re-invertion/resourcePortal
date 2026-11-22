@@ -27,7 +27,7 @@ describe("v0.1.9 final UI E2E contract", () => {
     );
 
     expect(script).toContain(
-      '["Applications", "Running workloads", "Storage usage", "Current balance"]',
+      '["Applications", "Running workloads", "Storage used / allocated", "Current balance"]',
     );
     expect(script).not.toContain(
       '["Applications", "Runtime", "Balance", "Storage"]',

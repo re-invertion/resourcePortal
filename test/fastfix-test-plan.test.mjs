@@ -680,7 +680,7 @@ test("cross-cutting issue fix selects strict billing/recovery/storage/volume/web
   const result = selectProfiles(paths);
   assert.deepEqual(result.profiles, [
     "billing-correctness", "cross-node-storage", "reactive-web-state",
-    "recovery-safety", "volume-operations",
+    "recovery-safety", "tenant-ux-patch", "volume-operations",
   ]);
   assert.equal(result.changedPaths.length, paths.length);
 });
@@ -915,6 +915,23 @@ test("private-cgroup real Swarm smoke uses supported Docker namespace flags (#38
   assert.match(script, /--mount type=bind,source=\/proc,target=\/host\/proc,readonly/);
   assert.match(script, /--mount type=bind,source=\/sys\/fs\/cgroup,target=\/host\/sys\/fs\/cgroup,readonly/);
   assert.match(script, /assert\.equal\(report\.status, 'Observed'/);
+});
+
+test("issue 399 section 14 finance history, RBAC and date regression cannot escape Fast Fix", () => {
+  const paths = [
+    "packages/resourceportal-web/src/pages/tenant-billing-history.tsx",
+    "packages/resourceportal-web/src/pages/tenant-billing-history.test.tsx",
+    "packages/resourceportal-web/src/lib/date-display.ts",
+    "packages/resourceportal-web/src/lib/date-display.test.ts",
+    "packages/resourceportal-web/src/hooks/use-api.ts",
+  ];
+  const selected = selectProfiles(paths);
+  for (const profile of ["billing-correctness", "tenant-ux-patch", "security", "resource-bot", "reactive-web-state"]) {
+    assert.ok(selected.profiles.includes(profile), `Missing ${profile}`);
+  }
+  const commands = JSON.stringify(commandsForProfiles(selected.profiles));
+  assert.match(commands, /tenant-billing-history\.test\.tsx/);
+  assert.match(commands, /date-display\.test\.ts/);
 });
 
 test("issue 399 section 13 App Group overview and RTL are both selected by Fast Fix", () => {

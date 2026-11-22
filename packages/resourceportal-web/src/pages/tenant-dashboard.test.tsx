@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TenantDashboard } from "./tenant-dashboard";
+import { TenantStoragePage } from "./tenant-resources";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -14,6 +15,7 @@ const baseData: Record<string, unknown> = {
   ],
   "/api/tenants/t1/billing": { balanceCredits: "0", balancePln: "0", billingState: "BillingSuspended", lowBalance: false },
   "/api/tenants/t1/volumes": [{ id: "v1", name: "data", sizeBytes: "10000000000", usedSizeBytes: "3000000000" }],
+  "/api/tenants/t1/quota": { storageBytes: "21474836480" },
   "/api/tenants/t1/operations": [{ id: "op1", type: "APP_GROUP_DEPLOY", status: "Succeeded", createdAt: "2026-09-10T14:00:00.000Z" }],
 };
 
@@ -28,8 +30,38 @@ function mockDashboard(overrides: Record<string, Response | unknown> = {}) {
   }));
 }
 
+describe("§14 common storage accounting", () => {
+  it("reports an unmeasured volume instead of silently treating null usedSizeBytes as zero", async () => {
+    mockDashboard({
+      "/api/tenants/t1/registries": [],
+      "/api/tenants/t1/volumes": [{ id: "v1", name: "data", sizeBytes: "1073741824", usedSizeBytes: null }],
+    });
+    render(<TenantStoragePage tenantId="t1" />);
+    expect(await screen.findByText("Not fully reported (1 unmeasured volume)")).toBeTruthy();
+  });
+
+  it("shows used, allocated and tenant quota as separate binary GiB values", async () => {
+    mockDashboard({ "/api/tenants/t1/registries": [] });
+    render(<TenantStoragePage tenantId="t1" />);
+    expect(await screen.findByRole("heading", { name: "Persistent storage accounting" })).toBeTruthy();
+    expect(screen.getByText(/Binary GiB/)).toBeTruthy();
+    expect(screen.getAllByText("2.8 GiB").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("9.3 GiB").length).toBeGreaterThan(0);
+    expect(screen.getByText("20 GiB")).toBeTruthy();
+  });
+});
+
 describe("TenantDashboard", () => {
   beforeEach(() => vi.unstubAllGlobals());
+
+  it("does not claim zero used storage when the backend has not measured volume consumption", async () => {
+    mockDashboard({
+      "/api/tenants/t1/volumes": [{ id: "v1", sizeBytes: "1073741824", usedSizeBytes: null }],
+    });
+    render(<TenantDashboard tenantId="t1" />);
+    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("Usage not fully reported"));
+    expect(screen.getByTestId("metric-storage").textContent).not.toContain("0 B /");
+  });
 
   it("summarizes the tenant around runtime, balance, storage and applications", async () => {
     mockDashboard();
@@ -44,7 +76,8 @@ describe("TenantDashboard", () => {
     const runtime = screen.getByTestId("metric-runtime");
     expect(await within(runtime).findByText("1")).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId("metric-balance").textContent).toContain("0 credits"));
-    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("3 GB / 10 GB"));
+    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("2.8 GiB / 9.3 GiB"));
+    expect(screen.getByTestId("metric-storage").textContent).toContain("quota: 20 GiB");
   });
 
   it("matches the Penpot overview hierarchy without changing tenant API semantics", async () => {

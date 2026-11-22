@@ -26,6 +26,7 @@ import {
   statusTone,
 } from "../components/design-system";
 import { formatDate, idOf, items, text, useApi } from "../hooks/use-api";
+import { formatCreditRate } from "../lib/billing-display";
 import { platformHref } from "../router/router";
 import { toast } from "../components/toast";
 
@@ -370,10 +371,10 @@ export function PlatformBillingPage({
                   cells: {
                     version: row.version !== undefined ? `v${String(row.version)}` : "—",
                     effective: formatDate(row.effectiveFrom),
-                    cpu: numberText(row.cpuCreditsPerVcpuHour),
-                    memory: numberText(row.memoryCreditsPerGbHour),
-                    storage: numberText(row.storageCreditsPerGbHour),
-                    gpu: numberText(row.gpuCreditsPerGpuHour),
+                    cpu: formatCreditRate(row.cpuCreditsPerVcpuHour),
+                    memory: formatCreditRate(row.memoryCreditsPerGbHour),
+                    storage: formatCreditRate(row.storageCreditsPerGbHour),
+                    gpu: formatCreditRate(row.gpuCreditsPerGpuHour),
                   },
                 }))}
                 empty={<EmptyState title="No resource price lists" />}
@@ -424,10 +425,10 @@ export function PlatformBillingPage({
                     cells: {
                       model: `${row.provider} / ${row.model}`,
                       effective: formatDate(row.effectiveFrom),
-                      input: row.inputCreditsPer1M,
-                      cached: row.cachedInputCreditsPer1M,
-                      output: row.outputCreditsPer1M,
-                      embedding: row.embeddingCreditsPer1M,
+                      input: formatCreditRate(row.inputCreditsPer1M),
+                      cached: formatCreditRate(row.cachedInputCreditsPer1M),
+                      output: formatCreditRate(row.outputCreditsPer1M),
+                      embedding: formatCreditRate(row.embeddingCreditsPer1M),
                     },
                   }))}
                   empty={<EmptyState title="No AI price versions" />}

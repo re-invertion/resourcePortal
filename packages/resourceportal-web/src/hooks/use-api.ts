@@ -1,3 +1,4 @@
+import { exactConsoleDate } from "../lib/date-display";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 
@@ -66,4 +67,4 @@ export function text(value: unknown, fallback = "—") { if (typeof value === "s
 export function idOf(value: Record<string, unknown>) { return text(value.id, ""); }
 export function numberOf(value: unknown, fallback = 0) { const parsed = typeof value === "number" ? value : Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
 export function formatBytes(value: unknown) { const n = numberOf(value, NaN); if (!Number.isFinite(n)) return "—"; if (n < 1024) return `${n} B`; const units = ["KiB","MiB","GiB","TiB"]; let current = n / 1024; let unit = units[0]; for (let i=1; i<units.length && current >= 1024; i++) { current /= 1024; unit = units[i]; } return `${current >= 10 ? current.toFixed(0) : current.toFixed(1)} ${unit}`; }
-export function formatDate(value: unknown) { if (typeof value !== "string") return "—"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(date); }
+export const formatDate = exactConsoleDate;

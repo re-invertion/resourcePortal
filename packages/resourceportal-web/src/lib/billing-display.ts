@@ -15,6 +15,16 @@ export function formatCreditAmount(value: unknown): string {
   }).format(parsed);
 }
 
+// Price-list rates may have up to 8 fractional places; display them without
+// silently reducing them to the 2-decimal account balance precision.
+export function formatCreditRate(value: unknown): string {
+  const parsed = typeof value === "string" || typeof value === "number" ? Number(value) : NaN;
+  if (!Number.isFinite(parsed)) return "—";
+  return new Intl.NumberFormat("pl-PL", {
+    minimumFractionDigits: 0, maximumFractionDigits: 8, useGrouping: true,
+  }).format(parsed);
+}
+
 export function quotaDisplay(value: unknown, unit = ""): string {
   if (value === undefined || value === null) return "Not configured";
   const numeric = Number(value);

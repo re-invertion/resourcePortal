@@ -107,7 +107,10 @@ describe("billing funding UI", () => {
       expect(fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/tenants/t1/billing/usage-series?")).length).toBeGreaterThanOrEqual(2);
     });
 
-    expect(screen.queryByText("Transactions")).toBeNull();
+    // §14 deliberately adds a tenant-scoped transaction/usage drill-down, not a platform ledger.
+    expect(screen.getByRole("button", { name: "Transactions" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Usage records" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "ResourceBot usage" })).toBeTruthy();
   });
 
   it("does not expose tenant-scoped billing details or adjustment controls to Platform Admin", async () => {

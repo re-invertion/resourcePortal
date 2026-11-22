@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
+import { TenantBillingHistory } from "./tenant-billing-history";
 import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatCreditAmount, formatPlnAmount, quotaBytesDisplay, quotaDisplay } from "../lib/billing-display";
@@ -46,9 +47,14 @@ function ResourceSummary({ title, description, href, count, icon, loading, error
 export function TenantStoragePage({tenantId}:{tenantId:string}) {
   const root=`/api/tenants/${encodeURIComponent(tenantId)}`;
   const volumes=useApi<unknown>(`${root}/volumes`);
+  const quota=useApi<R>(`${root}/quota`);
   const registries=useApi<unknown>(`${root}/registries`);
   const volumeRows=items<R>(volumes.data);
   const registryRows=items<R>(registries.data);
+  const allocatedBytes = volumeRows.reduce((sum, volume) => sum + (Number.isFinite(Number(volume.sizeBytes)) ? Math.max(0, Number(volume.sizeBytes)) : 0), 0);
+  const usedBytes = volumeRows.reduce((sum, volume) => sum + (Number.isFinite(Number(volume.usedSizeBytes)) ? Math.max(0, Number(volume.usedSizeBytes)) : 0), 0);
+  const unmeasuredVolumes = volumeRows.filter(volume => volume.usedSizeBytes === null || volume.usedSizeBytes === undefined || !Number.isFinite(Number(volume.usedSizeBytes)) || Number(volume.usedSizeBytes) < 0).length;
+  const storageQuota = quota.loading ? "Loading…" : quota.error ? "Unavailable" : quotaBytesDisplay(quota.data?.storageBytes);
   return <main>
     <PageHeader eyebrow="Tenant resources" title="Storage" description="Persistent volumes and container image registries for this tenant."/>
     <Tabs label="Storage sections" items={[
@@ -56,6 +62,16 @@ export function TenantStoragePage({tenantId}:{tenantId:string}) {
       {label:"Volumes",href:tenantHref(tenantId,"volumes")},
       {label:"Registries",href:tenantHref(tenantId,"registries")},
     ]}/>
+    <Card className="mb-5 p-5">
+      <h2 className="font-semibold">Persistent storage accounting</h2>
+      <p className="mt-1 text-sm text-[#5B6678]">Binary GiB (1 GiB = 1,073,741,824 bytes) on Overview, Storage and Billing. Used is reported volume consumption; allocated is provisioned capacity; quota is the tenant policy limit. These figures are not interchangeable.</p>
+      {volumes.error ? <p role="alert" className="mt-2 text-sm text-[#B42318]">Volume data is unavailable; no usage estimate is shown.</p> : null}
+      <dl className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div><dt className="text-xs text-[#718096]">Used</dt><dd className="font-semibold">{volumes.loading || volumes.error ? "—" : unmeasuredVolumes ? `Not fully reported (${unmeasuredVolumes} unmeasured volume${unmeasuredVolumes === 1 ? "" : "s"})` : formatBytes(usedBytes)}</dd></div>
+        <div><dt className="text-xs text-[#718096]">Allocated</dt><dd className="font-semibold">{volumes.loading || volumes.error ? "—" : formatBytes(allocatedBytes)}</dd></div>
+        <div><dt className="text-xs text-[#718096]">Quota (policy)</dt><dd className="font-semibold">{storageQuota}</dd></div>
+      </dl>
+    </Card>
     <div className="grid gap-4 sm:grid-cols-2">
       <ResourceSummary title="Volumes" description="Persistent storage allocated to application workloads." href={tenantHref(tenantId,"volumes")} count={volumeRows.length} icon={<VolumeIcon/>} loading={volumes.loading} error={volumes.error}/>
       <ResourceSummary title="Registries" description="Private and public container image sources." href={tenantHref(tenantId,"registries")} count={registryRows.length} icon={<RegistryIcon/>} loading={registries.loading} error={registries.error}/>
@@ -126,7 +142,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
   return <main>
     <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota and usage over time."/>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={<>{formatPlnAmount(billing.data?.balancePln ?? "0")} PLN</>} detail={<>{formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance ?? "0")} credits</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
+      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={billing.loading ? "Loading…" : billing.error ? "Unavailable" : <span title={`${formatPlnAmount(billing.data?.balancePln)} PLN`}>{formatPlnAmount(billing.data?.balancePln)} PLN</span>} detail={billing.error ? "Account data unavailable — not a zero balance" : billing.loading ? "Loading credits…" : <span title={`${formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance)} credits`}>{formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance)} credits</span>} badge={!billing.error && !billing.loading ? <StatusBadge tone={statusTone(state)}>{state}</StatusBadge> : undefined}/>
       <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={showQuota(quota.data?.cpu, "cores")} detail="CPU limit"/>
       <BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={showQuotaBytes(quota.data?.memoryBytes)} detail="memory limit"/>
       <BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={showQuotaBytes(quota.data?.storageBytes)} detail="storage limit"/>
@@ -170,7 +186,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
         </div>
         <BillingUsageCharts rows={usageRows} loading={usage.loading} error={usage.error} range={usageRange} onRangeChange={setUsageRange}/>
       </Card>
-
+      <TenantBillingHistory tenantId={tenantId}/>
     </div>
   </main>;
 }
