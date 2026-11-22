@@ -75,6 +75,37 @@ describe("PlatformSettingsPage SMTP", () => {
     });
   });
 
+  it("submits disabled SMTP with empty host and sender while retaining enabled validation", async () => {
+    const state = { enabled: false, configured: false, host: "", port: 25, mode: "STARTTLS", fromEmail: "", passwordConfigured: false };
+    const calls: Array<{ path: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      calls.push({ path, init });
+      if (path === "/api/platform/email") return json(state);
+      return json({}, 404);
+    }));
+
+    const { container } = render(<PlatformSettingsPage />);
+    await waitFor(() => expect((screen.getByLabelText("SMTP port") as HTMLInputElement).value).toBe("25"));
+    const host = screen.getByLabelText("SMTP host") as HTMLInputElement;
+    const sender = screen.getByLabelText("SMTP from address") as HTMLInputElement;
+    expect(host.required).toBe(false);
+    expect(sender.required).toBe(false);
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
+    expect(form?.checkValidity()).toBe(true);
+    fireEvent.submit(form!);
+    await waitFor(() => {
+      const patch = calls.find(({ path, init }) => path === "/api/platform/email" && init?.method === "PATCH");
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ enabled: false, host: "", fromEmail: null });
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enable outbound email" }));
+    expect(host.required).toBe(true);
+    expect(sender.required).toBe(true);
+    expect(form?.checkValidity()).toBe(false);
+  });
+
   it("warns when plain SMTP is selected", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({
       enabled: false,
