@@ -11,7 +11,7 @@ describe("billing display precision", () => {
     expect(formatCreditAmount("9999989961.00446605").replace(/\s/g, " ")).toBe("9 999 989 961");
   });
   it("preserves the required precision of read-only price rates", () => {
-    expect(formatCreditRate("1234.12345678").replace(/\\s/g, " ")).toBe("1 234,12345678");
+    expect(formatCreditRate("1234.12345678").replace(/\s/g, " ")).toBe("1 234,12345678");
     expect(formatCreditRate(null)).toBe("—");
     expect(formatPlnAmount("1.23456789")).toBe("1,23");
   });
