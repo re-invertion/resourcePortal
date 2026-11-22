@@ -62,7 +62,7 @@ const commands = {
     ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/pages/volume-operation-tracker.test.ts", "src/pages/tenant-storage-pages.test.tsx"],
   ],
   "reactive-web-state": [
-    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/app-group/application-runtime-fields.test.ts", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
+    ["npm", "--workspace", "@resource-portal/web", "test", "--", "src/App.test.tsx", "src/hooks/use-api.test.tsx", "src/hooks/use-unsaved-form-guard.test.tsx", "src/pages/app-group/app-edit.test.tsx", "src/pages/app-group/application-runtime-fields.test.ts", "src/pages/billing-funding-ui.test.tsx", "src/pages/machine-credential-rotation.test.tsx"],
   ],
   "storage-isolation": [
     ["npm", "--workspace", "@resource-portal/api", "test", "--", "src/storage-backends/local-filesystem-storage-adapter.service.spec.ts"],
