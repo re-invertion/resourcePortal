@@ -92,6 +92,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const appCount = appGroups.reduce((sum, g) => sum + (Array.isArray(g.singleApps) ? g.singleApps.length : 0), 0);
   const totalBytes = volumes.reduce((sum, v) => sum + numericString(v.sizeBytes), 0);
   const usedBytes = volumes.reduce((sum, v) => sum + numericString(v.usedSizeBytes), 0);
+  const incompleteVolumeUsage = volumes.some(v => v.usedSizeBytes === null || v.usedSizeBytes === undefined || !Number.isFinite(Number(v.usedSizeBytes)) || Number(v.usedSizeBytes) < 0);
   const balanceCredits = billing.data ? text(billing.data.balanceCredits, text(billing.data.balance, "0")) : "0";
   const balancePln = billing.data ? text(billing.data.balancePln, "0") : "0";
   const billingSuspended = billing.data?.billingState === "BillingSuspended" || billing.data?.state === "Suspended";
@@ -120,7 +121,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Tenant summary">
       <div data-testid="metric-applications"><MetricCard label="Applications" icon={<GridIcon/>} value={String(appCount)} detail={`Across ${appGroups.length} App Group${appGroups.length === 1 ? "" : "s"}`} loading={appGroupsState.loading} error={appGroupsState.error}/></div>
       <div data-testid="metric-runtime"><MetricCard label="Running workloads" icon={<ServerIcon/>} value={String(running)} detail={`${Math.max(appGroups.length - running, 0)} App Group${appGroups.length - running === 1 ? "" : "s"} not running`} loading={appGroupsState.loading} error={appGroupsState.error} tone={running === appGroups.length && appGroups.length ? "success" : "info"}/></div>
-      <div data-testid="metric-storage"><MetricCard label="Storage used / allocated" icon={<VolumeIcon/>} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"} · quota: ${storageQuota.loading ? "Loading…" : storageQuota.error ? "Unavailable" : quotaBytesDisplay(storageQuota.data?.storageBytes)}`} loading={volumesState.loading} error={volumesState.error}/></div>
+      <div data-testid="metric-storage"><MetricCard label="Storage used / allocated" icon={<VolumeIcon/>} value={`${incompleteVolumeUsage ? "Usage not fully reported" : formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"} · quota: ${storageQuota.loading ? "Loading…" : storageQuota.error ? "Unavailable" : quotaBytesDisplay(storageQuota.data?.storageBytes)}`} loading={volumesState.loading} error={volumesState.error}/></div>
       <div data-testid="metric-balance"><MetricCard label="Current balance" icon={<BillingIcon/>} value={<span className="flex min-w-0 items-baseline gap-1"><span className="min-w-0 truncate" title={formatPlnAmount(balancePln)}>{formatPlnAmount(balancePln)}</span><span className="shrink-0 text-sm">PLN</span></span>} detail={`${formatCreditAmount(balanceCredits)} credits`} loading={billing.loading} error={billing.error} tone={billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/></div>
     </section>
 
