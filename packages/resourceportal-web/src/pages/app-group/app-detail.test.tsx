@@ -65,3 +65,24 @@ it("distinguishes infrastructure unavailability from missing log permissions", a
  render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1" section="logs"/>);
  expect(await screen.findByText(/Your tenant permissions are not the cause/)).toBeTruthy();
 });
+
+it("shows human-readable runtime/health on application detail without leaking technical enums", async () => {
+ const fetchMock = vi.fn(async(input: RequestInfo | URL) => {
+  const path = String(input);
+  if(path.endsWith("/single-apps")) return json([{
+   id:"app1",name:"scheduled-service",image:"nginx:alpine",
+   runtimeState:"PENDING_DEPLOYMENT",effectiveRuntimeState:"PENDING_DEPLOYMENT",
+   health:"STARTING_UP",desiredReplicas:1
+  }]);
+  if(path.endsWith("/runtime-config")) return json({environment:{},secrets:[]});
+  if(path.endsWith("/http-endpoints")) return json([]);
+  return json([]);
+ });
+ vi.stubGlobal("fetch",fetchMock);
+ render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1"/>);
+ expect(await screen.findByRole("heading",{name:"scheduled-service",level:1})).toBeTruthy();
+ expect(screen.getAllByText("Pending deployment").length).toBeGreaterThan(0);
+ expect(screen.getByText("Starting up")).toBeTruthy();
+ expect(screen.queryByText("PENDING_DEPLOYMENT")).toBeNull();
+ expect(screen.queryByText("STARTING_UP")).toBeNull();
+});
