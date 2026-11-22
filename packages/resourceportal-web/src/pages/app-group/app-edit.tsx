@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useUnsavedChangesGuard } from "../../hooks/use-unsaved-changes-guard";
 import { apiRequest } from "../../api/client";
 import { applicationHref, appGroupHref, tenantHref } from "../../router/router";
 import type { Topology } from "../tenant-networking-graph";
@@ -15,10 +16,19 @@ const tabs=["basics","compute","environment","configuration","storage","networki
 const labels:Record<string,string>={basics:"Basics",compute:"Compute",environment:"Environment",configuration:"Variables, secrets & configs",storage:"Storage",networking:"Networking",advanced:"Advanced"};
 export function ApplicationEdit({tenantId,appGroupId,appGroupName="App Group",appId,subsection="basics",hasPendingChanges=false}:{tenantId:string;appGroupId:string;appGroupName?:string;appId:string;subsection?:string;hasPendingChanges?:boolean}){
  const root=`/api/tenants/${encodeURIComponent(tenantId)}/app-groups/${encodeURIComponent(appGroupId)}`;const appRoot=`${root}/single-apps/${encodeURIComponent(appId)}`;const apps=useApi<unknown>(`${root}/single-apps`);const gpuInventory=useApi<{enabled:boolean;quota:number;devices:Array<{uuid:string;model:string;status:string;node?:{hostname:string}|null}>}>("/api/tenants/"+encodeURIComponent(tenantId)+"/app-groups/gpu-devices");const runtime=useApi<R>(`${appRoot}/runtime-config`);const registries=useApi<unknown>(`/api/tenants/${encodeURIComponent(tenantId)}/registries`);const volumes=useApi<unknown>(`/api/tenants/${encodeURIComponent(tenantId)}/volumes`);const variables=useApi<unknown>(`${root}/variables`);const secrets=useApi<unknown>(`${root}/secrets`);const configs=useApi<unknown>(`${root}/configs`);const endpoints=useApi<unknown>(`${appRoot}/http-endpoints`);const app=useMemo(()=>items<R>(apps.data).find(a=>idOf(a)===appId),[apps.data,appId]);const section=tabs.includes(subsection as typeof tabs[number])?subsection:"basics";
- const [draftSaved,setDraftSaved]=useState(false);const [selectedGpu,setSelectedGpu]=useState("");const [form,setForm]=useState({name:"",description:"",image:"",registryId:"",cpu:0.5,memoryMiB:512,desiredReplicas:1,runtimeState:"Running",entrypoint:"",workingDir:"",user:"",stopGrace:30});const [advanced,setAdvanced]=useState(() => initialAdvancedRuntime({}));const [env,setEnv]=useState<Array<{key:string;value:string}>>([]);const [working,setWorking]=useState(false);const [attachOpen,setAttachOpen]=useState(false);const [attach,setAttach]=useState({kind:"volume",resourceId:"",target:"/data",mode:"ReadWrite"});const [endpointOpen,setEndpointOpen]=useState(false);const [editingEndpoint,setEditingEndpoint]=useState<R>();const [endpointForm,setEndpointForm]=useState({name:"",port:8080,protocol:"HTTP_REDIRECT_TO_HTTPS"});
+ const [draftSaved,setDraftSaved]=useState(false); const [saveError,setSaveError]=useState<string | null>(null); const [saveSuccess,setSaveSuccess]=useState<string | null>(null);
+ const savedFormRef=useRef<string | null>(null); const savedAdvancedRef=useRef<string | null>(null); const savedEnvRef=useRef<string | null>(null);const [selectedGpu,setSelectedGpu]=useState("");const [form,setForm]=useState({name:"",description:"",image:"",registryId:"",cpu:0.5,memoryMiB:512,desiredReplicas:1,runtimeState:"Running",entrypoint:"",workingDir:"",user:"",stopGrace:30});const [advanced,setAdvanced]=useState(() => initialAdvancedRuntime({}));const [env,setEnv]=useState<Array<{key:string;value:string}>>([]);const [working,setWorking]=useState(false);const [attachOpen,setAttachOpen]=useState(false);const [attach,setAttach]=useState({kind:"volume",resourceId:"",target:"/data",mode:"ReadWrite"});const [endpointOpen,setEndpointOpen]=useState(false);const [editingEndpoint,setEditingEndpoint]=useState<R>();const [endpointForm,setEndpointForm]=useState({name:"",port:8080,protocol:"HTTP_REDIRECT_TO_HTTPS"});
  useEffect(()=>{if(!app)return;setForm({name:text(app.name,""),description:text(app.description,""),image:text(app.image,""),registryId:text(app.registryId,""),cpu:numberOf(app.cpu,.5),memoryMiB:Math.round(numberOf(app.memoryBytes,536870912)/1048576),desiredReplicas:numberOf(app.desiredReplicas,1),runtimeState:text(app.runtimeState,"Running"),entrypoint:text(app.entrypoint,""),workingDir:text(app.workingDir,""),user:text(app.user,""),stopGrace:numberOf(app.stopGracePeriodSeconds,30)});setAdvanced(initialAdvancedRuntime(app));},[app]);
  useEffect(()=>{if(!runtime.data?.environment||typeof runtime.data.environment!=="object")return;setEnv(Object.entries(runtime.data.environment as Record<string,unknown>).map(([key,value])=>({key,value:text(value,"")})));},[runtime.data]);
  useEffect(()=>{if(section==="configuration"&&attach.kind==="volume")setAttach(current=>({...current,kind:"variable",resourceId:""}));else if(section==="storage"&&attach.kind!=="volume")setAttach(current=>({...current,kind:"volume",resourceId:""}));},[section,attach.kind]);
+ const formFingerprint=JSON.stringify(form);
+ const advancedFingerprint=JSON.stringify(advanced);
+ const environmentFingerprint=JSON.stringify(env);
+ useEffect(()=>{ if(app && savedFormRef.current===null) savedFormRef.current=JSON.stringify({name:text(app.name,""),description:text(app.description,""),image:text(app.image,""),registryId:text(app.registryId,""),cpu:numberOf(app.cpu,.5),memoryMiB:Math.round(numberOf(app.memoryBytes,536870912)/1048576),desiredReplicas:numberOf(app.desiredReplicas,1),runtimeState:text(app.runtimeState,"Running"),entrypoint:text(app.entrypoint,""),workingDir:text(app.workingDir,""),user:text(app.user,""),stopGrace:numberOf(app.stopGracePeriodSeconds,30)}); },[app]);
+ useEffect(()=>{ if(app && savedAdvancedRef.current===null) savedAdvancedRef.current=JSON.stringify(initialAdvancedRuntime(app)); },[app]);
+ useEffect(()=>{ if(runtime.data?.environment && savedEnvRef.current===null) savedEnvRef.current=JSON.stringify(Object.entries(runtime.data.environment as Record<string, unknown>).map(([key,value])=>({key,value:text(value,"")}))); },[runtime.data]);
+ const hasUnsavedChanges=!working && (section==="environment" ? savedEnvRef.current!==null && environmentFingerprint!==savedEnvRef.current : ["basics","compute","advanced"].includes(section) ? savedFormRef.current!==null && (formFingerprint!==savedFormRef.current || (section==="advanced" && savedAdvancedRef.current!==null && advancedFingerprint!==savedAdvancedRef.current)) : endpointOpen || attachOpen);
+ useUnsavedChangesGuard(hasUnsavedChanges);
  async function saveApp(scope:"basics"|"compute"|"advanced"){
   let body:R;
   try {
@@ -29,13 +39,13 @@ export function ApplicationEdit({tenantId,appGroupId,appGroupName="App Group",ap
     toast.error(error instanceof Error ? error.message : "Invalid application settings.");
     return;
   }
-  setWorking(true);
+  setWorking(true); setSaveError(null); setSaveSuccess(null);
   try {
     await apiRequest(appRoot,{method:"PATCH",body});
     await apps.reload();
-    setDraftSaved(true);
+    setDraftSaved(true); savedFormRef.current=formFingerprint; savedAdvancedRef.current=advancedFingerprint; setSaveSuccess("Saved as a pending App Group change.");
     toast.success("Application settings saved as pending changes. Deploy the App Group to apply them.");
-  } catch(error) { toast.errorFrom(error,"Application could not be saved."); }
+  } catch(error) { setSaveError(error instanceof Error ? error.message : "Application could not be saved."); toast.errorFrom(error,"Application could not be saved."); }
   finally { setWorking(false); }
 }
  async function reserveGpu() {
@@ -51,7 +61,7 @@ export function ApplicationEdit({tenantId,appGroupId,appGroupName="App Group",ap
  async function saveEnv(){
   const names=env.map(row=>row.key.trim());
   if(names.some(name=>!name)||new Set(names).size!==names.length){toast.error("Every environment variable must have a unique, nonempty name.");return;}
-  setWorking(true);try{const environment:Record<string,string|null>=Object.fromEntries(env.filter(x=>x.key.trim()).map(x=>[x.key.trim(),x.value]));for(const oldKey of Object.keys(runtime.data?.environment??{})){if(!(oldKey in environment))environment[oldKey]=null;}await apiRequest(`${appRoot}/runtime-config`,{method:"PATCH",body:{environment}});await runtime.reload();setDraftSaved(true);toast.success("Environment saved as pending changes.");}catch(c){toast.errorFrom(c,"Environment could not be saved.");}finally{setWorking(false);}}
+  setWorking(true);setSaveError(null);setSaveSuccess(null);try{const environment:Record<string,string|null>=Object.fromEntries(env.filter(x=>x.key.trim()).map(x=>[x.key.trim(),x.value]));for(const oldKey of Object.keys(runtime.data?.environment??{})){if(!(oldKey in environment))environment[oldKey]=null;}await apiRequest(`${appRoot}/runtime-config`,{method:"PATCH",body:{environment}});await runtime.reload();savedEnvRef.current=environmentFingerprint;setDraftSaved(true);setSaveSuccess("Environment saved as pending App Group changes.");toast.success("Environment saved as pending changes.");}catch(c){setSaveError(c instanceof Error?c.message:"Environment could not be saved.");toast.errorFrom(c,"Environment could not be saved.");}finally{setWorking(false);}}
  async function runtimeAction(kind:"start"|"stop"|"restart"){setWorking(true);try{await apiRequest(`${appRoot}/runtime/${kind}`,{method:"POST"});await apps.reload();toast.success(`Application ${kind} requested.`);}catch(c){toast.errorFrom(c,`Unable to ${kind} application.`);}finally{setWorking(false);}}
  const resources=attach.kind==="volume"?items<R>(volumes.data):attach.kind==="variable"?items<R>(variables.data):attach.kind==="secret"?items<R>(secrets.data):items<R>(configs.data);
  const currentAttachments=section==="storage"
@@ -71,6 +81,8 @@ export function ApplicationEdit({tenantId,appGroupId,appGroupName="App Group",ap
  if(apps.loading||!app)return <Card className="p-6"><p className="text-sm text-[#5B6678]">Loading application editor…</p></Card>;
  const effective=text(app.effectiveRuntimeState,text(app.runtimeState,"Unknown"));const health=text(app.health,"Unknown");const running=effective.toLowerCase()==="running";
  return <main className="space-y-4" aria-label="Application editor">
+  {saveError ? <Callout tone="danger" title="Unable to save application settings">{saveError}</Callout> : null}
+  {saveSuccess ? <div role="status" aria-live="polite"><Callout tone="success" title="Changes saved">{saveSuccess}</Callout></div> : null}
   {(hasPendingChanges||draftSaved)?<Callout tone="warning" title="Changes saved, not yet deployed" action={<a href={appGroupHref(tenantId,appGroupId,"deployments")} className="font-semibold underline">Review and deploy</a>}>The deployment will include all applications in App Group <strong>{appGroupName}</strong>. Configuration is saved as a draft until the group is deployed. Start, Stop and Restart actions apply immediately.</Callout>:null}
   <div className="rounded-lg border border-[#D7E0EC] bg-white px-5 py-4"><p className="text-[11px] font-semibold uppercase tracking-[.05em] text-[#1769E0]">Application settings</p><div className="mt-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div className="flex min-w-0 items-start gap-3"><ApplicationIcon app={app} className="h-11 w-11"/><div className="min-w-0"><h2 className="truncate text-xl font-semibold text-[#172033]">{text(app.name,"Application")}</h2><p className="mt-0.5 truncate text-[13px] text-[#5B6678]">{text(app.image,"No image configured")}</p><div className="mt-2 flex flex-wrap gap-2"><StatusBadge tone={statusTone(effective)}>{effective}</StatusBadge>{health!=="Unknown"?<StatusBadge tone={statusTone(health)}>{health}</StatusBadge>:null}</div></div></div><div className="flex shrink-0 flex-wrap gap-2"><Button aria-label={running?"Stop application":"Start application"} disabled={working} onClick={()=>void runtimeAction(running?"stop":"start")}>{running?<><StopIcon size={16}/>Stop</>:<><PlayIcon size={16}/>Start</>}</Button><Button aria-label="Restart application" disabled={working||!running} onClick={()=>void runtimeAction("restart")}><RestartIcon size={16}/>Restart</Button></div></div></div>
   <ApplicationNavigation tenantId={tenantId} appGroupId={appGroupId} appId={appId} active={navigationSection}/>
