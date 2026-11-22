@@ -342,3 +342,19 @@ it("warns before leaving a dirty application form and clears the guard after suc
   expect(fireEvent.click(overview)).toBe(true);
   expect(confirm).toHaveBeenCalledTimes(1);
 });
+
+it("protects removal-only environment changes even without an input event", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{ id: "app1", name: "checkout", image: "nginx:latest" }]);
+    if (url.endsWith("/runtime-config")) return json({ environment: { TO_REMOVE: "old" } });
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="environment" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
