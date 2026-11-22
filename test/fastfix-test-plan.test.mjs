@@ -1211,3 +1211,13 @@ test("#399 §15 unsaved navigation hook always runs its dedicated RTL Fast Fix r
   assert.ok(commands.some(command => command.includes("src/hooks/use-unsaved-form-guard.test.tsx")));
   assert.ok(commands.some(command => command.includes("src/pages/app-group/app-edit.test.tsx")));
 });
+
+
+test("#399 §15 shared required/error Field semantics execute UI form RTL under protected Fast Fix", () => {
+  const plan = selectProfiles(["packages/resourceportal-web/src/components/design-system/forms.tsx"]);
+  for (const profile of ["reactive-web-state", "tenant-ux-patch", "security"]) {
+    assert.ok(plan.profiles.includes(profile), profile);
+  }
+  const commands = commandsForProfiles(plan.profiles).map(command => command.join(" "));
+  assert.ok(commands.some(command => command.includes("src/components/forms.test.tsx")));
+});
