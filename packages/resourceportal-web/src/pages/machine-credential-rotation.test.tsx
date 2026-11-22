@@ -47,7 +47,7 @@ describe("machine credentials use service identities, not unsupported OAuth Mach
     expect(screen.queryByRole("button", { name: "Create OAuth application" })).toBeNull();
     expect(screen.getAllByRole("link", { name: "Application SSO" }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Create service identity" }));
-    expect(screen.getByRole("option", { name: "Viewer" })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: "Viewer" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Machine" })).toBeNull();
   });
 });
