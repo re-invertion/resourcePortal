@@ -12,6 +12,14 @@ export function exactConsoleDate(value: unknown): string {
   return `${formatted} (Europe/Warsaw)`;
 }
 
+// Full audit/ledger details retain the original millisecond-precision UTC
+// instant. This disambiguates the duplicated local hour during DST fallback.
+export function fullConsoleInstant(value: unknown): string {
+  const local = exactConsoleDate(value);
+  if (local === "—") return "—";
+  return `${local}; ISO ${new Date(value as string).toISOString()}`;
+}
+
 export function relativeConsoleDate(value: unknown, now = Date.now()): string {
   if (typeof value !== "string" || !value.trim()) return "—";
   const date = new Date(value);
