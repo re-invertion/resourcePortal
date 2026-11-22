@@ -159,7 +159,7 @@ async function openTenantDashboard(page) {
 
   const summary = page.getByRole("region", { name: "Tenant summary" });
   await summary.waitFor();
-  for (const label of ["Applications", "Running workloads", "Storage usage", "Current balance"]) {
+  for (const label of ["Applications", "Running workloads", "Storage used / allocated", "Current balance"]) {
     await summary.getByText(label, { exact: true }).waitFor();
   }
 
