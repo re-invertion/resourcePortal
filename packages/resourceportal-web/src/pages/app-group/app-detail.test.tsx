@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ApplicationDetail } from "./app-detail";
 function json(value: unknown){return new Response(JSON.stringify(value),{status:200,headers:{"content-type":"application/json"}})}
@@ -85,4 +85,33 @@ it("shows human-readable runtime/health on application detail without leaking te
  expect(screen.getByText("Starting up")).toBeTruthy();
  expect(screen.queryByText("PENDING_DEPLOYMENT")).toBeNull();
  expect(screen.queryByText("STARTING_UP")).toBeNull();
+});
+
+it("distinguishes runtime-config failure from empty configuration and retries", async () => {
+ let runtimeReads = 0;
+ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const path = String(input);
+  if (path.endsWith("/single-apps")) return json([{
+    id: "app1", name: "checkout", runtimeState: "Running", health: "Healthy",
+  }]);
+  if (path.endsWith("/runtime-config")) {
+    runtimeReads++;
+    return runtimeReads === 1
+      ? new Response(JSON.stringify({ message: "upstream unavailable" }), {
+          status: 503, headers: { "content-type": "application/json" },
+        })
+      : json({ environment: { SERVICE_MODE: "production" }, secrets: [{ name: "db-password" }] });
+  }
+  if (path.endsWith("/http-endpoints")) return json([]);
+  return json([]);
+ });
+ vi.stubGlobal("fetch", fetchMock);
+ render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1"/>);
+ expect(await screen.findByText("Configuration unavailable")).toBeTruthy();
+ expect(screen.getByText(/Counts are unavailable until retry succeeds/)).toBeTruthy();
+ expect(screen.queryByText("Environment variables")).toBeNull();
+ fireEvent.click(screen.getByRole("button", { name: "Retry configuration" }));
+ await waitFor(() => expect(runtimeReads).toBe(2));
+ expect(await screen.findByText("Environment variables")).toBeTruthy();
+ expect(screen.queryByText("Configuration unavailable")).toBeNull();
 });
