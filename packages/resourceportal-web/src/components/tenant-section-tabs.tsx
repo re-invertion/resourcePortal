@@ -34,7 +34,7 @@ export function NetworkingTabs({
   active,
 }: {
   tenantId: string;
-  active: "networking" | "domains";
+  active: "networking" | "domains" | "root-domains";
 }) {
   return (
     <Tabs
@@ -49,6 +49,11 @@ export function NetworkingTabs({
           label: "Domains",
           href: tenantHref(tenantId, "domains"),
           active: active === "domains",
+        },
+        {
+          label: "Root domains",
+          href: tenantHref(tenantId, "domains") + "?view=roots",
+          active: active === "root-domains",
         },
       ]}
     />

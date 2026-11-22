@@ -16,7 +16,7 @@ import {
   TextInput,
   TrashIcon,
 } from "../../components/design-system";
-import { idOf, items, text } from "../../hooks/use-api";
+import { idOf, items, text, useApi } from "../../hooks/use-api";
 import { toast } from "../../components/toast";
 import { applicationHref, tenantHref } from "../../router/router";
 import type { Topology } from "../tenant-networking-graph";
@@ -51,6 +51,11 @@ export function AppGroupNetworking({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
   const [working, setWorking] = useState(false);
+  const tenantDomainsRoot = `/api/tenants/${encodeURIComponent(tenantId)}/domains`;
+  const domains = useApi<unknown>(tenantDomainsRoot);
+  const tenantDomainRows = items<R>(domains.data).filter(domain => !domain.tenantId || domain.tenantId === tenantId);
+  const [domainId, setDomainId] = useState("");
+  const [targetEndpointId, setTargetEndpointId] = useState("");
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<EndpointRow>();
@@ -150,6 +155,20 @@ export function AppGroupNetworking({
     }
   }
 
+  async function assignDomain() {
+    const domain = tenantDomainRows.find(item => idOf(item) === domainId);
+    const target = rows.find(item => idOf(item.endpoint) === targetEndpointId);
+    if (!domain || !target || domains.loading || domains.error || loadError) return;
+    setWorking(true);
+    try {
+      await apiRequest(`${tenantDomainsRoot}/${encodeURIComponent(domainId)}`, { method: "PATCH", body: { httpEndpointId: targetEndpointId } });
+      await domains.reload();
+      toast.success("Domain assignment saved. Deploy the App Group to apply the route.");
+    } catch (caught) {
+      toast.errorFrom(caught, "Domain assignment failed.");
+    } finally { setWorking(false); }
+  }
+
   async function remove(row: EndpointRow) {
     try {
       await apiRequest(
@@ -183,6 +202,21 @@ export function AppGroupNetworking({
           <PlusIcon size={15} /> Add endpoint
         </Button>
       </div>
+
+      <Card className="p-5" aria-label="Domain and endpoint assignments">
+        <h3 className="font-semibold">Domain and endpoint assignments</h3>
+        <p className="mt-1 text-sm text-[#526070]">Assign a domain owned by this tenant directly to an endpoint in this App Group. Reassigning a published hostname changes its routing target after deployment.</p>
+        {domains.error ? <Callout tone="danger" title="Domains unavailable">Assignment is disabled until the tenant domain inventory can be verified.</Callout> : null}
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <Field label="Tenant domain"><Select aria-label="Tenant domain to assign" value={domainId} disabled={domains.loading || Boolean(domains.error) || working} onChange={event => setDomainId(event.target.value)}><option value="">Select tenant domain</option>{tenantDomainRows.map(domain => <option key={idOf(domain)} value={idOf(domain)}>{text(domain.hostname, "Domain")}</option>)}</Select></Field>
+          <Field label="Application endpoint"><Select aria-label="Target HTTP endpoint" value={targetEndpointId} disabled={loading || Boolean(loadError) || working} onChange={event => setTargetEndpointId(event.target.value)}><option value="">Select endpoint</option>{rows.map(row => <option key={idOf(row.endpoint)} value={idOf(row.endpoint)}>{text(row.app.name, "Application")} / {text(row.endpoint.name, "Endpoint")} · {protocolModeLabel(row.endpoint.protocolMode)}</option>)}</Select></Field>
+          <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+            <ConfirmActionButton triggerVariant="primary" confirmVariant="primary" disabled={!domainId || !targetEndpointId || domains.loading || Boolean(domains.error) || loading || Boolean(loadError) || working || !tenantDomainRows.some(d => idOf(d) === domainId) || !rows.some(r => idOf(r.endpoint) === targetEndpointId)} confirmTitle="Confirm endpoint domain assignment" confirmDescription="Reassign the chosen tenant-owned hostname to this App Group endpoint? The saved routing draft requires deployment; existing published routes may be affected." confirmLabel="Assign domain to endpoint" onConfirm={assignDomain}>Assign domain</ConfirmActionButton>
+            <a className="text-sm font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId, "domains")}>Manage domains and DNS</a>
+          </div>
+        </div>
+        {tenantDomainRows.filter(d => { const ep = d.httpEndpoint as R | undefined; return rows.some(row => idOf(row.endpoint) === text(ep?.id, "") && text(ep?.appGroupId, appGroupId) === appGroupId); }).map(d => <p className="mt-2 text-sm" key={idOf(d)}><a className="font-semibold text-[#0F56A7] underline" href={tenantHref(tenantId, "domains", idOf(d))}>{text(d.hostname, "Domain")}</a> → {text((d.httpEndpoint as R | undefined)?.name, "Endpoint")} ({text(d.dnsStatus, "DNS unknown")})</p>)}
+      </Card>
 
       <Card className="p-5" aria-label="Private Network and LAN relationships">
         <h3 className="text-base font-semibold">Private Network and LAN relationships</h3>
