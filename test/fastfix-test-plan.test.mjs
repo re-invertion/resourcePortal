@@ -680,7 +680,7 @@ test("cross-cutting issue fix selects strict billing/recovery/storage/volume/web
   const result = selectProfiles(paths);
   assert.deepEqual(result.profiles, [
     "billing-correctness", "cross-node-storage", "reactive-web-state",
-    "recovery-safety", "volume-operations",
+    "recovery-safety", "tenant-ux-patch", "volume-operations",
   ]);
   assert.equal(result.changedPaths.length, paths.length);
 });
