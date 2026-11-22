@@ -314,3 +314,31 @@ it("rejects an enabled health check without a command", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   expect(patches).toHaveLength(0);
 });
+
+
+it("warns before leaving a dirty application form and clears the guard after successful save", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps") && (!init?.method || init.method === "GET"))
+      return json([{ id: "app1", name: "checkout", image: "nginx:latest", description: "" }]);
+    if (url.endsWith("/single-apps/app1") && init?.method === "PATCH") return json({});
+    if (url.endsWith("/runtime-config")) return json({ environment: {} });
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="basics" />);
+  const field = await screen.findByDisplayValue("checkout");
+  fireEvent.change(field, { target: { value: "checkout-updated" } });
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  const overview = screen.getByRole("link", { name: "Overview" });
+  expect(fireEvent.click(overview)).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) =>
+    String(url).endsWith("/single-apps/app1") && init?.method === "PATCH")).toBe(true));
+  await waitFor(() => expect(screen.queryByText(/Your edits have not been saved/)).toBeNull());
+  expect(fireEvent.click(overview)).toBe(true);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
