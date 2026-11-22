@@ -19,7 +19,7 @@ describe("#399 §13 application inventory and attention semantics", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     render(<ApplicationsPage tenantId="t1" />);
     fireEvent.click(screen.getByRole("button", { name: "Applications" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Applications could not be loaded");
+    expect((await screen.findByRole("alert")).textContent).toContain("Applications could not be loaded");
     expect(screen.queryByText("No individual applications in the loaded inventory")).toBeNull();
   });
   it("shows individual applications separately with tenant-scoped links", async () => {
