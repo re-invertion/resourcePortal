@@ -28,3 +28,24 @@ describe("AppGroupConfig destructive actions", () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([path, init]) => String(path).endsWith("/variables/var1") && (init as RequestInit | undefined)?.method === "DELETE")).toBe(true));
   });
 });
+
+it("distinguishes a failed configuration-resource load from a genuinely empty list and retries", async () => {
+ let variableRequests = 0;
+ vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+   const path = String(input);
+   if (path.endsWith("/variables")) {
+     variableRequests++;
+     return variableRequests === 1
+       ? json({message: "service unavailable"}, 503)
+       : json([]);
+   }
+   return json([]);
+ }));
+ render(<AppGroupConfig tenantId="t1" appGroupId="ag1" />);
+ expect(await screen.findByText("Variables could not be loaded. Existing items may still exist.")).toBeTruthy();
+ expect(screen.queryByText("No variables yet")).toBeNull();
+ fireEvent.click(screen.getByRole("button", {name: "Retry variables"}));
+ await waitFor(() => expect(variableRequests).toBe(2));
+ expect(await screen.findByText("No variables yet")).toBeTruthy();
+ expect(screen.queryByText("Variables could not be loaded. Existing items may still exist.")).toBeNull();
+});
