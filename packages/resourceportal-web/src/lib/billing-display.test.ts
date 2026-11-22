@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCreditAmount, formatPlnAmount, quotaBytesDisplay, quotaDisplay } from "./billing-display";
+import { formatCreditAmount, formatCreditRate, formatPlnAmount, quotaBytesDisplay, quotaDisplay } from "./billing-display";
 
 describe("billing display precision", () => {
   it("shows formatted PLN with 2 decimal places and grouped thousands", () => {
@@ -9,6 +9,11 @@ describe("billing display precision", () => {
   });
   it("formats credits without leaking raw 10-decimal precision", () => {
     expect(formatCreditAmount("9999989961.00446605").replace(/\s/g, " ")).toBe("9 999 989 961");
+  });
+  it("preserves the required precision of read-only price rates", () => {
+    expect(formatCreditRate("1234.12345678").replace(/\\s/g, " ")).toBe("1 234,12345678");
+    expect(formatCreditRate(null)).toBe("—");
+    expect(formatPlnAmount("1.23456789")).toBe("1,23");
   });
   it("distinguishes missing quotas from zero enforced capacity", () => {
     expect(quotaDisplay(undefined)).toBe("Not configured");
