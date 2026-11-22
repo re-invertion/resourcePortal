@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, DataTable } from "../components/design-system";
 import { formatCreditAmount, formatPlnAmount } from "../lib/billing-display";
-import { exactConsoleDate, relativeConsoleDate } from "../lib/date-display";
+import { fullConsoleInstant, relativeConsoleDate } from "../lib/date-display";
 import { idOf, items, text, useApi } from "../hooks/use-api";
 
 type Row = Record<string, unknown>;
@@ -17,7 +17,7 @@ export const BILLING_HISTORY_ENDPOINTS = {
 
 function when(value: unknown) {
   const timestamp = typeof value === "string" ? value : "";
-  const exact = exactConsoleDate(timestamp);
+  const exact = fullConsoleInstant(timestamp);
   if (exact === "—") return <span>—</span>;
   return <time dateTime={timestamp} title={exact} className="block" aria-label={exact}>
     {relativeConsoleDate(timestamp)} <span className="block text-xs font-normal text-[#718096]">{exact}</span>
