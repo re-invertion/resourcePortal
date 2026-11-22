@@ -358,3 +358,22 @@ it("protects removal-only environment changes even without an input event", asyn
   expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
   expect(confirm).toHaveBeenCalledTimes(1);
 });
+
+
+it("protects removal-only advanced command edits without an input event", async () => {
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal("confirm", confirm);
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{
+      id: "app1", name: "checkout", image: "nginx:latest", command: ["--serve"],
+    }]);
+    if (url.endsWith("/runtime-config")) return json({ environment: {} });
+    return json([]);
+  }));
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="advanced" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove argument 1" }));
+  expect(await screen.findByText(/Your edits have not been saved/)).toBeTruthy();
+  expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});
