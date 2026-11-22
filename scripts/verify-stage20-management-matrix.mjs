@@ -175,7 +175,7 @@ const tenantRoutes = [
   ["registries", "Registries"],
   ["domains", "Domains"],
   ["administration", "Access management"],
-  ["credentials", "Machine credentials"],
+  ["credentials", "Service identities"],
 ];
 
 const platformRoutes = [
