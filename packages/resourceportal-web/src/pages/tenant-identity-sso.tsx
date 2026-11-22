@@ -49,7 +49,7 @@ export function tenantOidcLifecycle(
     provision: available && status === "NotProvisioned",
     reconcile: available && hasProject && ["PendingGrants", "NeedsReconciliation", "Provisioned", "GrantsReconciled", "ReconciliationFailed"].includes(status),
     activate: available && hasProject && status === "GrantsReconciled",
-    disable: available && hasProject && ((status === "Active" && provider?.enabled === true) || status === "Disabling"),
+    disable: available && hasProject && ((status === "Active" && provider?.enabled === true) || ["Disabling", "NeedsReconciliation", "PendingGrants", "ReconciliationFailed", "GrantsReconciled"].includes(status)),
     delete: available && hasProject && ["Disabled", "Provisioned", "GrantsReconciled", "ProvisioningFailed", "ReconciliationFailed"].includes(status) && appCount === 0,
     reason: !available ? "Provider status has not been verified." :
       !hasProject && status !== "NotProvisioned" ? "No verified tenant OIDC project is available." :
@@ -231,7 +231,7 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
               Provider lifecycle: {info?.status ?? "Unavailable"}. {apps.length} registered client(s).
               {" "}{lifecycle.reason}
               {!lifecycle.delete && apps.length > 0 ? " Delete clients in Application SSO before requesting project deletion." : ""}
-              {!lifecycle.disable && info?.status !== "Active" ? " Disable is available only for an active provider." : ""}
+              {!lifecycle.disable && info?.status !== "Active" ? " Disable requires a verified project in a supported lifecycle state." : ""}
             </p>
           </div>
         </Card>
