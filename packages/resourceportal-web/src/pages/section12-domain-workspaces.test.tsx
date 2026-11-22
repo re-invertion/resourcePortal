@@ -34,6 +34,27 @@ describe("#399 §12 domains, roots, and canonical endpoint relations", () => {
     expect(fetcher.mock.calls.every(([, init]) => !init || !(init as RequestInit).method || (init as RequestInit).method === "GET")).toBe(true);
   });
 
+  it("restores the root workspace after Cloudflare OAuth callback without losing verification access", async () => {
+    window.history.replaceState({}, "", "/tenants/t1/domains?cloudflare=connected");
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/domains/cloudflare/zones")) return json([{ id: "zone1", name: "example.com" }]);
+      if (path.endsWith("/domains/custom-root-domains")) return json([
+        { id: "root1", rootDomain: "example.com", verificationStatus: "Verified", verificationMethod: "CLOUDFLARE_OAUTH" },
+      ]);
+      if (path.endsWith("/domains/cloudflare/status")) return json({ configured: true, connected: true });
+      if (path.endsWith("/domains/capabilities")) return json({ managedDomains: { enabled: false } });
+      return json([]);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<TenantDomainsPage tenantId="t1" />);
+    expect(await screen.findByRole("heading", { name: "Root domains", level: 1 })).toBeTruthy();
+    expect(window.location.search).toBe("?view=roots");
+    expect(await screen.findByRole("dialog", { name: "Add root domain using Cloudflare" })).toBeTruthy();
+    expect(screen.getByText("example.com")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Domains & routing" })).toBeNull();
+  });
+
   it("keeps domain routing and root ownership in separate tenant navigation links", () => {
     render(<NetworkingTabs tenantId="t1" active="domains" />);
     expect(screen.getByRole("link", { name: "Domains" }).getAttribute("href")).toBe("/tenants/t1/domains");
