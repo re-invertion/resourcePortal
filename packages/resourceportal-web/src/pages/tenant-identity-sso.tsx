@@ -49,7 +49,7 @@ export function tenantOidcLifecycle(
     provision: available && status === "NotProvisioned",
     reconcile: available && hasProject && ["PendingGrants", "NeedsReconciliation", "Provisioned", "GrantsReconciled", "ReconciliationFailed"].includes(status),
     activate: available && hasProject && status === "GrantsReconciled",
-    disable: available && hasProject && ((status === "Active" && provider?.enabled === true) || ["Disabling", "NeedsReconciliation", "PendingGrants", "ReconciliationFailed", "GrantsReconciled"].includes(status)),
+    disable: available && hasProject && ((status === "Active" && provider?.enabled === true) || ["Disabling", "NeedsReconciliation", "PendingGrants", "ReconciliationFailed", "GrantsReconciled", "ActivationFailed"].includes(status)),
     delete: available && hasProject && ["Disabled", "Provisioned", "GrantsReconciled", "ProvisioningFailed", "ReconciliationFailed"].includes(status) && appCount === 0,
     reason: !available ? "Provider status has not been verified." :
       !hasProject && status !== "NotProvisioned" ? "No verified tenant OIDC project is available." :
