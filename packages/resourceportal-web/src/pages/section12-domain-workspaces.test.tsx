@@ -87,7 +87,7 @@ describe("#399 §12 domains, roots, and canonical endpoint relations", () => {
       if (url.endsWith("/single-apps/app1/http-endpoints")) return json([
         { id: "ep1", name: "front", containerPort: 8080, protocolMode: "HTTP_REDIRECT_TO_HTTPS" },
       ]);
-      if (url.endsWith("/domains") && !init?.method) return json([
+      if (url.endsWith("/domains") && (!init?.method || init.method === "GET")) return json([
         { id: "d1", hostname: "www.example.com", tenantId: "t1", dnsStatus: "Valid" },
         { id: "foreign", hostname: "private.other.example", tenantId: "t2" },
       ]);
