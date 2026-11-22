@@ -46,3 +46,18 @@ it("sets a beforeunload cancellation only while the editor has unsaved edits", (
   window.dispatchEvent(saved);
   expect(saved.defaultPrevented).toBe(false);
 });
+
+it("does not show a duplicate native unload confirmation after the user accepts discard", () => {
+  const confirm = vi.fn(() => true);
+  vi.stubGlobal("confirm", confirm);
+  render(<Editor />);
+  fireEvent.change(screen.getByRole("textbox", { name: "Application name" }), { target: { value: "new" } });
+  expect(fireEvent.click(screen.getByRole("link", { name: "Leave editor" }))).toBe(true);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  const approved = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(approved);
+  expect(approved.defaultPrevented).toBe(false);
+  const second = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(second);
+  expect(second.defaultPrevented).toBe(true);
+});
