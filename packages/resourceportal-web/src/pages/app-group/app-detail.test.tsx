@@ -44,7 +44,7 @@ it("shows domain assignments and loads container logs only on the dedicated Logs
  vi.stubGlobal("fetch",fetchMock);
  render(<ApplicationDetail tenantId="t1" appGroupId="ag1" appId="app1"/>);
  expect(await screen.findByText("app.example.test")).toBeTruthy();
- expect(screen.getByText("ReadOnly")).toBeTruthy();
+ expect(screen.getByText("Read only")).toBeTruthy();
  expect(fetchMock.mock.calls.some(([path])=>String(path).endsWith("/logs"))).toBe(false);
 
  expect(screen.getByRole("link",{name:"Logs"}).getAttribute("href")).toBe("/tenants/t1/app-groups/ag1/apps/app1/logs");
