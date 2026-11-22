@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TenantDashboard } from "./tenant-dashboard";
+import { TenantStoragePage } from "./tenant-resources";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -28,6 +29,18 @@ function mockDashboard(overrides: Record<string, Response | unknown> = {}) {
     return json(value);
   }));
 }
+
+describe("§14 common storage accounting", () => {
+  it("shows used, allocated and tenant quota as separate binary GiB values", async () => {
+    mockDashboard({ "/api/tenants/t1/registries": [] });
+    render(<TenantStoragePage tenantId="t1" />);
+    expect(await screen.findByRole("heading", { name: "Persistent storage accounting" })).toBeTruthy();
+    expect(screen.getByText(/Binary GiB/)).toBeTruthy();
+    expect(screen.getAllByText("2.8 GiB").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("9.3 GiB").length).toBeGreaterThan(0);
+    expect(screen.getByText("20 GiB")).toBeTruthy();
+  });
+});
 
 describe("TenantDashboard", () => {
   beforeEach(() => vi.unstubAllGlobals());
