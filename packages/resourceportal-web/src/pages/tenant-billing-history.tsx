@@ -43,7 +43,10 @@ export function TenantBillingHistory({ tenantId }: { tenantId: string }) {
   // All requests remain explicitly tenant-scoped. The API enforces billing.read.
   const transactions = useApi<Page>(pathFor(BILLING_HISTORY_ENDPOINTS.transactions, transactionCursors));
   const usage = useApi<Page>(pathFor(BILLING_HISTORY_ENDPOINTS.usage, usageCursors));
-  const summary = useApi<Row>(root + BILLING_HISTORY_ENDPOINTS.summary);
+  // Bound the automatically fetched aggregate: the server currently loads
+  // matching records into memory, so an all-time read is unsafe at scale.
+  const summaryFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const summary = useApi<Row>(root + BILLING_HISTORY_ENDPOINTS.summary + "?from=" + encodeURIComponent(summaryFrom));
   const resourcebot = useApi<Page>(root + BILLING_HISTORY_ENDPOINTS.resourcebot + "?limit=50");
   const current = kind === "transactions" ? transactions : kind === "usage" ? usage : resourcebot;
   const rows = items<Row>(current.data);
@@ -68,7 +71,7 @@ export function TenantBillingHistory({ tenantId }: { tenantId: string }) {
       </div>
     </div>
     {summary.error ? <p role="alert" className="px-5 pt-3 text-sm text-[#B42318]">Usage summary unavailable. This is not zero usage.</p> : null}
-    {!summary.error && !summary.loading && summary.data ? <p className="px-5 pt-3 text-sm text-[#5B6678]">Usage summary: {amount(summary.data.chargedPln, "PLN")} charged ({amount(summary.data.chargedCredits, "credits")}); theoretical {amount(summary.data.theoreticalCostPln, "PLN")}.</p> : null}
+    {!summary.error && !summary.loading && summary.data ? <p className="px-5 pt-3 text-sm text-[#5B6678]">Usage summary (last 7 days): {amount(summary.data.chargedPln, "PLN")} charged ({amount(summary.data.chargedCredits, "credits")}); theoretical {amount(summary.data.theoreticalCostPln, "PLN")}.</p> : null}
     {current.error ? <div role="alert" className="px-5 py-3 text-sm text-[#B42318]">Billing records could not be loaded. No empty-history conclusion is possible. <Button onClick={() => void current.reload()}>Retry</Button></div> : null}
     {!current.error && <DataTable embedded loading={current.loading} columns={kind === "transactions" ? [
       { key: "name", label: "Transaction" }, { key: "amount", label: "Amount" }, { key: "status", label: "Status" }, { key: "time", label: "Created" },
