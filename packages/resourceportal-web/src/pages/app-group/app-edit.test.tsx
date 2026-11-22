@@ -232,7 +232,7 @@ it("#399 §5 discloses unsupported failure-action changes and the supported draf
     if (path.endsWith("/single-apps") && (!init?.method || init.method === "GET")) {
       return json([{
         id: "app1", name: "runner", image: "nginx:latest",
-        updatePolicy: { parallelism: 1, delaySeconds: 10, order: "start-first" },
+        updatePolicy: { parallelism: 3, delaySeconds: 10, order: "start-first" },
       }]);
     }
     if (path.endsWith("/single-apps/app1") && init?.method === "PATCH") {
@@ -251,7 +251,9 @@ it("#399 §5 discloses unsupported failure-action changes and the supported draf
   expect(limitation.textContent).toContain("deploy the App Group");
   expect(screen.queryByRole("combobox", { name: /Failure action/i })).toBeNull();
 
+  await waitFor(() => expect((screen.getByRole("spinbutton", { name: "Update parallelism" }) as HTMLInputElement).value).toBe("3"));
   fireEvent.change(screen.getByRole("spinbutton", { name: "Update parallelism" }), { target: { value: "2" } });
+  expect((screen.getByRole("spinbutton", { name: "Update parallelism" }) as HTMLInputElement).value).toBe("2");
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   await waitFor(() => expect(patches).toHaveLength(1));
   expect(patches[0].updatePolicy).toMatchObject({ parallelism: 2, delaySeconds: 10, order: "start-first" });
