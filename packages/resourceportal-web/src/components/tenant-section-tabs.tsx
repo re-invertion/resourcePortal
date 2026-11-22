@@ -77,12 +77,12 @@ export function AccessTabs({
           active: active === "administration",
         },
         {
-          label: "Integrations",
+          label: "Service identities",
           href: tenantHref(tenantId, "credentials"),
           active: active === "credentials",
         },
         {
-          label: "Identity & SSO",
+          label: "Application SSO",
           href: tenantHref(tenantId, "identity-sso"),
           active: active === "identity-sso",
         },

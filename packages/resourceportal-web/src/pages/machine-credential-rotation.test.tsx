@@ -8,7 +8,7 @@ function json(v: unknown) {
 }
 afterEach(() => vi.unstubAllGlobals());
 describe("one-time rotated credentials persistence and audit status (#261)", () => {
-  for (const kind of ["service-identities", "oauth-applications"]) {
+  for (const kind of ["service-identities"]) {
     it(`warns on partially failed ${kind} rotation while keeping secret visible`, async () => {
       const warning = "Remote secret changed; reconcile local client credential storage";
       vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -36,7 +36,7 @@ describe("one-time rotated credentials persistence and audit status (#261)", () 
 });
 
 describe("machine credentials use service identities, not unsupported OAuth Machine apps", () => {
-  it("does not offer Machine in OAuth application creation, while keeping service identity creation available", async () => {
+  it("keeps machine credentials in service identities without duplicating tenant OAuth client creation", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/roles")) return Promise.resolve(json([{ id: "tenant-viewer", name: "Viewer" }]));
@@ -44,10 +44,10 @@ describe("machine credentials use service identities, not unsupported OAuth Mach
     }));
     render(<TenantCredentialsPage tenantId="t1" />);
     expect(screen.getByRole("button", { name: "Create service identity" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Create OAuth application" }));
-    expect(screen.getByRole("option", { name: "Web" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "SPA" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Native" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Create OAuth application" })).toBeNull();
+    expect(screen.getAllByRole("link", { name: "Application SSO" }).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Create service identity" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "Machine" })).toBeNull();
   });
 });

@@ -37,6 +37,26 @@ type Credentials = {
 };
 const empty = { name: "", type: "Web", redirectUri: "", logoutUri: "" };
 
+export function tenantOidcLifecycle(
+  provider: { status: string; projectId?: string | null; enabled?: boolean } | undefined,
+  appCount: number,
+  loading: boolean,
+) {
+  const status = provider?.status ?? "Unavailable";
+  const available = !loading && Boolean(provider);
+  const hasProject = Boolean(provider?.projectId);
+  return {
+    provision: available && status === "NotProvisioned",
+    reconcile: available && hasProject && ["PendingGrants", "NeedsReconciliation", "Provisioned", "GrantsReconciled", "ReconciliationFailed"].includes(status),
+    activate: available && hasProject && status === "GrantsReconciled",
+    disable: available && hasProject && ((status === "Active" && provider?.enabled === true) || ["Disabling", "NeedsReconciliation", "PendingGrants", "ReconciliationFailed", "GrantsReconciled", "ActivationFailed"].includes(status)),
+    delete: available && hasProject && ["Disabled", "Provisioned", "GrantsReconciled", "ProvisioningFailed", "ReconciliationFailed"].includes(status) && appCount === 0,
+    reason: !available ? "Provider status has not been verified." :
+      !hasProject && status !== "NotProvisioned" ? "No verified tenant OIDC project is available." :
+      "Actions depend on the provider lifecycle and the number of registered OIDC clients.",
+  };
+}
+
 export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
   const root = `/api/tenants/${encodeURIComponent(tenantId)}`;
   const provider = useApi<Provider>(`${root}/oidc-provider`);
@@ -53,6 +73,7 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
   const info = provider.data;
   const apps = Array.isArray(applications.data) ? applications.data : [];
   const ready = info?.enabled === true && info.status === "Active";
+  const lifecycle = tenantOidcLifecycle(info, apps.length, provider.loading || Boolean(provider.error) || busy);
   const metadata = info?.issuer
     ? `${info.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`
     : undefined;
@@ -132,7 +153,11 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
       );
       setCredentials({ ...result, name: app.name });
       await applications.reload();
-      toast.success("Credentials rotated.");
+      if (result.persistenceStatus === "Failed" || result.auditStatus === "Failed") {
+        toast.error("Credentials rotated upstream but persistence or audit failed; follow the recovery warning.");
+      } else {
+        toast.success("Credentials rotated.");
+      }
     } catch (error) {
       toast.errorFrom(error, "Credential rotation failed.");
     } finally {
@@ -145,7 +170,7 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
       <PageHeader
         eyebrow="Tenant identity"
         title="Identity & SSO"
-        description="Manage the identity provider your tenant offers to its own applications."
+        description="Canonical tenant-issued outbound OIDC provider and application client management. Separate from ResourcePortal machine identities and legacy inbound federation."
       />
       <AccessTabs tenantId={tenantId} active="identity-sso" />
 
@@ -194,18 +219,24 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
             <a className="mt-2 inline-block text-[#1769E0] underline" href={`/tenants/${encodeURIComponent(tenantId)}/activity/audit`}>View tenant audit</a>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || provider.loading || info?.status !== "NotProvisioned"} onClick={() => void operation("Provisioning requested.", `${root}/oidc-provider/provision`)}>Provision provider</Button>
-            <Button disabled={busy || !info?.projectId} onClick={() => void operation("Grants reconciled.", `${root}/oidc-provider/reconcile-grants`)}>Reconcile grants</Button>
+            <Button disabled={!lifecycle.provision} onClick={() => void operation("Provisioning requested.", `${root}/oidc-provider/provision`)}>Provision provider</Button>
+            <Button disabled={!lifecycle.reconcile} onClick={() => void operation("Grants reconciled.", `${root}/oidc-provider/reconcile-grants`)}>Reconcile grants</Button>
             <ConfirmActionButton
-              disabled={busy || info?.status !== "GrantsReconciled"}
+              disabled={!lifecycle.activate}
               confirmTitle="Activate tenant OIDC provider?"
               confirmDescription="Only proceed after a platform operator has validated OIDC token and tenant isolation tests."
               confirmLabel="Request activation"
               confirmVariant="primary"
               onConfirm={() => operation("Activation completed.", `${root}/oidc-provider/activate`)}
             >Activate</ConfirmActionButton>
-            <ConfirmActionButton disabled={busy || !info?.projectId} confirmTitle="Disable tenant SSO?" confirmDescription="Tenant sign-in to applications will stop; upstream user grants will be revoked." confirmLabel="Disable provider" onConfirm={() => operation("Provider disabled.", `${root}/oidc-provider/disable`)}>Disable</ConfirmActionButton>
-            <ConfirmActionButton disabled={busy || !info?.projectId} confirmTitle="Delete tenant identity project?" confirmDescription="All OIDC applications must be deleted first. The action is irreversible." confirmLabel="Delete provider" onConfirm={() => operation("Provider deleted.", `${root}/oidc-provider`, "DELETE")}>Delete provider</ConfirmActionButton>
+            <ConfirmActionButton disabled={!lifecycle.disable} confirmTitle="Disable tenant SSO?" confirmDescription="Tenant sign-in to applications will stop; upstream user grants will be revoked." confirmLabel="Disable provider" onConfirm={() => operation("Provider disabled.", `${root}/oidc-provider/disable`)}>Disable</ConfirmActionButton>
+            <ConfirmActionButton disabled={!lifecycle.delete} confirmTitle="Delete tenant identity project?" confirmDescription="All OIDC applications must be deleted first. The action is irreversible." confirmLabel="Delete provider" onConfirm={() => operation("Provider deleted.", `${root}/oidc-provider`, "DELETE")}>Delete provider</ConfirmActionButton>
+            <p role="status" className="w-full text-xs text-[#526070]">
+              Provider lifecycle: {info?.status ?? "Unavailable"}. {apps.length} registered client(s).
+              {" "}{lifecycle.reason}
+              {!lifecycle.delete && apps.length > 0 ? " Delete clients in Application SSO before requesting project deletion." : ""}
+              {!lifecycle.disable && info?.status !== "Active" ? " Disable requires a verified project in a supported lifecycle state." : ""}
+            </p>
           </div>
         </Card>
 
@@ -254,12 +285,12 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
             </div>
           </div> : null}
 
-          {credentials ? <div role="status" className="rounded-md border border-[#A9D6B6] bg-[#F3FBF7] p-4">
+          {credentials ? <div role="status" className={`rounded-md border p-4 ${credentials.persistenceStatus === "Failed" || credentials.auditStatus === "Failed" ? "border-[#D97706] bg-[#FFFBEB]" : "border-[#A9D6B6] bg-[#F3FBF7]"}`}>
             <h3 className="font-semibold">Save credentials now — shown once</h3>
             <p className="text-xs text-[#5B6678]">They are held only in this page state, not browser storage. Do not share them or include them in logs.</p>
             <p className="mt-2 text-sm">Client ID: <code className="break-all">{credentials.clientId}</code></p>
             {credentials.clientSecret ? <p className="mt-2 text-sm">Client secret: <code className="break-all">{credentials.clientSecret}</code></p> : null}
-            {credentials.warning ? <p className="mt-2 text-sm text-[#A92317]">{credentials.warning}</p> : null}
+            {credentials.persistenceStatus === "Failed" || credentials.auditStatus === "Failed" ? <div role="alert" className="mt-2 text-sm text-[#A92317]"><p>Persistence: {credentials.persistenceStatus ?? "Unknown"} · Audit: {credentials.auditStatus ?? "Unknown"}</p><p>{credentials.warning || "Credential persistence or audit failed. Contact the platform administrator to reconcile the credential and audit record."}</p></div> : credentials.warning ? <p role="alert" className="mt-2 text-sm text-[#A92317]">{credentials.warning}</p> : null}
             <Button className="mt-3" size="sm" onClick={() => setCredentials(undefined)}>I saved these credentials</Button>
           </div> : null}
 
