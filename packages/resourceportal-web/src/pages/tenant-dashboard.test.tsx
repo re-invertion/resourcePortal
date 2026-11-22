@@ -31,6 +31,15 @@ function mockDashboard(overrides: Record<string, Response | unknown> = {}) {
 }
 
 describe("§14 common storage accounting", () => {
+  it("reports an unmeasured volume instead of silently treating null usedSizeBytes as zero", async () => {
+    mockDashboard({
+      "/api/tenants/t1/registries": [],
+      "/api/tenants/t1/volumes": [{ id: "v1", name: "data", sizeBytes: "1073741824", usedSizeBytes: null }],
+    });
+    render(<TenantStoragePage tenantId="t1" />);
+    expect(await screen.findByText("Not fully reported (1 unmeasured volume)")).toBeTruthy();
+  });
+
   it("shows used, allocated and tenant quota as separate binary GiB values", async () => {
     mockDashboard({ "/api/tenants/t1/registries": [] });
     render(<TenantStoragePage tenantId="t1" />);
