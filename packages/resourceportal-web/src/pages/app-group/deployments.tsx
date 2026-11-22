@@ -243,7 +243,7 @@ export function AppGroupDeployments({
                 {deploymentSafeDiff(deploymentSafePreview(currentDetail.data), deploymentSafePreview(detail.data)).map(change =>
                   <p key={change.id} className="text-sm">{change.label}: {change.change}</p>)}
                 {!deploymentSafeDiff(deploymentSafePreview(currentDetail.data), deploymentSafePreview(detail.data)).length ? <p className="text-sm">No changes in the safely comparable fields.</p> : null}
-              </div> : null : <p className="text-sm">Current version — no historical comparison needed.</p>}
+              </div> : null : currentVersion != null && Number(selected.version) === currentVersion ? <p className="text-sm">Current version — no historical comparison needed.</p> : <p className="text-sm">No current deployment is available for comparison.</p>}
           </div> : null}
       </div>
     </Card> : null}
