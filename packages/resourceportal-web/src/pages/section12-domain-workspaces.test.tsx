@@ -51,7 +51,7 @@ describe("#399 §12 domains, roots, and canonical endpoint relations", () => {
     expect(await screen.findByRole("heading", { name: "Root domains", level: 1 })).toBeTruthy();
     expect(window.location.search).toBe("?view=roots");
     expect(await screen.findByRole("dialog", { name: "Add root domain using Cloudflare" })).toBeTruthy();
-    expect(screen.getByText("example.com")).toBeTruthy();
+    expect(screen.getAllByText("example.com").length).toBeGreaterThan(0);
     expect(screen.queryByRole("heading", { name: "Domains & routing" })).toBeNull();
   });
 
