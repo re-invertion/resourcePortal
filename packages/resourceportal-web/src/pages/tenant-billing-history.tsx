@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Card, DataTable } from "../components/design-system";
 import { formatCreditAmount, formatPlnAmount } from "../lib/billing-display";
 import { exactConsoleDate, relativeConsoleDate } from "../lib/date-display";
@@ -33,6 +33,7 @@ export function TenantBillingHistory({ tenantId }: { tenantId: string }) {
   const [kind, setKind] = useState<HistoryKind>("transactions");
   const [transactionCursors, setTransactionCursors] = useState<string[]>([]);
   const [usageCursors, setUsageCursors] = useState<string[]>([]);
+  useEffect(() => { setTransactionCursors([]); setUsageCursors([]); }, [tenantId]);
   const cursors = kind === "usage" ? usageCursors : transactionCursors;
   const pathFor = (endpoint: string, history: string[]) => {
     const query = new URLSearchParams({ limit: "25" });
@@ -84,7 +85,7 @@ export function TenantBillingHistory({ tenantId }: { tenantId: string }) {
       name: <span>{text(r.resourceType, "Resource")}<span className="block text-xs text-[#718096]">Usage record</span></span>,
       amount: <span>{amount(r.chargedPln, "PLN")}<span className="block text-xs text-[#718096]">{amount(r.chargedCredits, "credits")}</span></span>,
       status: <span>{when(r.periodStart)} — {when(r.periodEnd)}</span>,
-      time: when(r.createdAt),
+      time: when(r.periodEnd),
     } : {
       name: <span>{text(r.model, "Unknown model")}<span className="block text-xs text-[#718096]">{text(r.provider, "Provider unavailable")}</span></span>,
       amount: amount(r.chargedCredits, "credits"),
