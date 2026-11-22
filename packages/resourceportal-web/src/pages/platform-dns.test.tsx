@@ -111,6 +111,9 @@ it("shows an actionable Cloudflare DNS conflict instead of Internal Server Error
 
   render(<><PlatformDnsPage /><ToastViewport /></>);
   await screen.findByText("Cloudflare managed DNS");
+  // Wait for GET hydration before editing: the shared Field now propagates native
+  // `required`, so submitting before the initial API state arrives is not valid.
+  await waitFor(() => expect(screen.getAllByText("portal.resource-portal.pl").length).toBeGreaterThanOrEqual(2));
   fireEvent.change(screen.getByLabelText(/Cloudflare Zone ID/i), {
     target: { value: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
   });
