@@ -153,7 +153,11 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
       );
       setCredentials({ ...result, name: app.name });
       await applications.reload();
-      toast.success("Credentials rotated.");
+      if (result.persistenceStatus === "Failed" || result.auditStatus === "Failed") {
+        toast.error("Credentials rotated upstream but persistence or audit failed; follow the recovery warning.");
+      } else {
+        toast.success("Credentials rotated.");
+      }
     } catch (error) {
       toast.errorFrom(error, "Credential rotation failed.");
     } finally {
@@ -281,12 +285,12 @@ export function TenantIdentitySsoPage({ tenantId }: { tenantId: string }) {
             </div>
           </div> : null}
 
-          {credentials ? <div role="status" className="rounded-md border border-[#A9D6B6] bg-[#F3FBF7] p-4">
+          {credentials ? <div role="status" className={`rounded-md border p-4 ${credentials.persistenceStatus === "Failed" || credentials.auditStatus === "Failed" ? "border-[#D97706] bg-[#FFFBEB]" : "border-[#A9D6B6] bg-[#F3FBF7]"}`}>
             <h3 className="font-semibold">Save credentials now — shown once</h3>
             <p className="text-xs text-[#5B6678]">They are held only in this page state, not browser storage. Do not share them or include them in logs.</p>
             <p className="mt-2 text-sm">Client ID: <code className="break-all">{credentials.clientId}</code></p>
             {credentials.clientSecret ? <p className="mt-2 text-sm">Client secret: <code className="break-all">{credentials.clientSecret}</code></p> : null}
-            {credentials.warning ? <p className="mt-2 text-sm text-[#A92317]">{credentials.warning}</p> : null}
+            {credentials.persistenceStatus === "Failed" || credentials.auditStatus === "Failed" ? <div role="alert" className="mt-2 text-sm text-[#A92317]"><p>Persistence: {credentials.persistenceStatus ?? "Unknown"} · Audit: {credentials.auditStatus ?? "Unknown"}</p><p>{credentials.warning || "Credential persistence or audit failed. Contact the platform administrator to reconcile the credential and audit record."}</p></div> : credentials.warning ? <p role="alert" className="mt-2 text-sm text-[#A92317]">{credentials.warning}</p> : null}
             <Button className="mt-3" size="sm" onClick={() => setCredentials(undefined)}>I saved these credentials</Button>
           </div> : null}
 
