@@ -27,7 +27,11 @@ export function ApplicationEdit({tenantId,appGroupId,appGroupName="App Group",ap
  useEffect(()=>{ if(app && savedFormRef.current===null) savedFormRef.current=JSON.stringify({name:text(app.name,""),description:text(app.description,""),image:text(app.image,""),registryId:text(app.registryId,""),cpu:numberOf(app.cpu,.5),memoryMiB:Math.round(numberOf(app.memoryBytes,536870912)/1048576),desiredReplicas:numberOf(app.desiredReplicas,1),runtimeState:text(app.runtimeState,"Running"),entrypoint:text(app.entrypoint,""),workingDir:text(app.workingDir,""),user:text(app.user,""),stopGrace:numberOf(app.stopGracePeriodSeconds,30)}); },[app]);
  useEffect(()=>{ if(app && savedAdvancedRef.current===null) savedAdvancedRef.current=JSON.stringify(initialAdvancedRuntime(app)); },[app]);
  useEffect(()=>{ if(runtime.data?.environment && savedEnvRef.current===null) savedEnvRef.current=JSON.stringify(Object.entries(runtime.data.environment as Record<string, unknown>).map(([key,value])=>({key,value:text(value,"")}))); },[runtime.data]);
- const hasUnsavedChanges=(section==="environment" ? savedEnvRef.current!==null && environmentFingerprint!==savedEnvRef.current : ["basics","compute","advanced"].includes(section) ? savedFormRef.current!==null && (formFingerprint!==savedFormRef.current || (section==="advanced" && savedAdvancedRef.current!==null && advancedFingerprint!==savedAdvancedRef.current)) : endpointOpen || attachOpen);
+ const isEditableSection=["basics","compute","advanced"].includes(section);
+ const formDirty=savedFormRef.current!==null && formFingerprint!==savedFormRef.current;
+ const advancedDirty=savedAdvancedRef.current!==null && advancedFingerprint!==savedAdvancedRef.current;
+ const envDirty=savedEnvRef.current!==null && environmentFingerprint!==savedEnvRef.current;
+ const hasUnsavedChanges=section==="environment" ? envDirty : isEditableSection ? formDirty || (section==="advanced" && advancedDirty) : endpointOpen || attachOpen;
  useUnsavedChangesGuard(hasUnsavedChanges);
  async function saveApp(scope:"basics"|"compute"|"advanced"){
   let body:R;
