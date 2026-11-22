@@ -377,3 +377,20 @@ it("protects removal-only advanced command edits without an input event", async 
   expect(fireEvent.click(screen.getByRole("link", { name: "Overview" }))).toBe(false);
   expect(confirm).toHaveBeenCalledTimes(1);
 });
+
+it("distinguishes HTTP endpoint API failures from a valid empty application list", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/single-apps")) return json([{ id: "app1", name: "checkout", image: "nginx:latest" }]);
+    if (url.endsWith("/single-apps/app1/http-endpoints")) return json({ message: "Backend temporarily unavailable" }, 503);
+    return json([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<ApplicationEdit tenantId="t1" appGroupId="ag1" appId="app1" subsection="networking" />);
+  expect(await screen.findByText("HTTP endpoints unavailable")).toBeTruthy();
+  expect(screen.queryByText("No HTTP endpoints configured for this application.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry endpoints" }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) =>
+    String(path).endsWith("/single-apps/app1/http-endpoints")).length).toBeGreaterThanOrEqual(2));
+});
