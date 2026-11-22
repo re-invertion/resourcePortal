@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONSOLE_TIME_ZONE, exactConsoleDate, relativeConsoleDate } from "./date-display";
+import { CONSOLE_TIME_ZONE, exactConsoleDate, fullConsoleInstant, relativeConsoleDate } from "./date-display";
 
 describe("§14 console timestamps", () => {
   it("uses one fixed timezone regardless of browser locale", () => {
@@ -12,6 +12,14 @@ describe("§14 console timestamps", () => {
     expect(exactConsoleDate(undefined)).toBe("—");
     expect(exactConsoleDate("<invalid date>")).toBe("—");
     expect(relativeConsoleDate("not-a-date")).toBe("—");
+  });
+  it("disambiguates the two 02:30 occurrences in DST fallback with exact milliseconds and UTC offset", () => {
+    const earlier = "2026-10-25T00:30:12.123Z";
+    const later = "2026-10-25T01:30:57.987Z";
+    expect(exactConsoleDate(earlier)).toBe(exactConsoleDate(later));
+    expect(fullConsoleInstant(earlier)).toContain(earlier);
+    expect(fullConsoleInstant(later)).toContain(later);
+    expect(fullConsoleInstant(earlier)).not.toBe(fullConsoleInstant(later));
   });
   it("provides relative time without suppressing exact date", () => {
     const now = Date.parse("2026-11-22T16:00:00Z");
