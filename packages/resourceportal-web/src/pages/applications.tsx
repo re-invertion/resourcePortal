@@ -14,7 +14,7 @@ export function appGroupAttentionReasons(group: Group): string[] {
   const health = text(group.health, "Unknown").toLowerCase();
   const blockers = Array.isArray(group.runtimeBlockers) ? group.runtimeBlockers.filter((x): x is string => typeof x === "string" && x !== "AppGroupStopped") : [];
   const reasons = blockers.map(code => "Runtime blocked: " + code);
-  if (runtime !== "stopped" && ["unhealthy", "failed", "error"].includes(health)) reasons.push("Health: " + health);
+  if (["unhealthy", "failed", "error"].includes(health)) reasons.push("Health: " + health);
   if (group.hasPendingChanges === true) reasons.push("Undeployed draft changes");
   return reasons;
 }
@@ -100,7 +100,9 @@ export function ApplicationsPage({ tenantId }: { tenantId: string }) {
     </nav>
     {inventoryView === "apps" ? <Card className="overflow-hidden" aria-label="Individual applications">
       <div className="p-5"><h2 className="font-semibold">Individual applications</h2><p className="text-sm text-[#5B6678]">Applications and their owning App Groups; select an application to open its workspace.</p></div>
-      <DataTable embedded columns={[{key:"name",label:"Application"},{key:"group",label:"App Group"},{key:"runtime",label:"Runtime"},{key:"action",label:""}]}
+      {refreshError ? <div role="status" className="mx-5 my-3 rounded-md border border-[#E7C775] bg-[#FFF9E8] px-4 py-3 text-sm text-[#825800]">Applications could not be refreshed. Showing the last loaded data; retrying automatically.</div> : null}
+      {error ? <div role="alert" className="p-5 text-sm text-[#C42B1C]">Applications could not be loaded. Refresh the page to retry.</div> :
+      <DataTable embedded loading={loading} columns={[{key:"name",label:"Application"},{key:"group",label:"App Group"},{key:"runtime",label:"Runtime"},{key:"action",label:""}]}
         rows={groups.flatMap(group => Array.isArray(group.singleApps) ? group.singleApps.filter((app): app is Group => Boolean(app) && typeof app === "object").map(app => ({
           key: String(group.id) + ":" + String(app.id),
           cells: {
@@ -110,7 +112,7 @@ export function ApplicationsPage({ tenantId }: { tenantId: string }) {
             action: <a href={appGroupHref(tenantId, String(group.id), "apps/" + encodeURIComponent(String(app.id)))} className="text-[#0F56A7] hover:underline">Open application</a>,
           },
         })) : [])}
-        empty={<EmptyState icon={<GridIcon/>} title="No individual applications in the loaded inventory" description="Choose an App Group to add or manage its applications."/>}/>
+        empty={<EmptyState icon={<GridIcon/>} title="No individual applications in the loaded inventory" description="Choose an App Group to add or manage its applications."/>}/>}
     </Card> : <Card className="overflow-hidden"><div className="px-5 py-4"><h2 className="text-base font-semibold text-[#172033]">App Groups</h2><p className="mt-0.5 text-[13px] text-[#5B6678]">An App Group is a group of applications deployed together. Create or open a group to add an application.</p></div><div className="flex flex-col gap-2 border-y border-[#E1E7F0] px-5 py-3 sm:flex-row sm:items-center"><SearchField value={search} onChange={value => { setSearch(value); setPage(1); }} placeholder="Search groups or applications" ariaLabel="Search App Groups"/><Select aria-label="Filter by state" value={state} onChange={e => { setState(e.target.value); setPage(1); }} className="sm:w-[150px]"><option value="all">State: All</option><option value="running">Running</option><option value="stopped">Stopped</option></Select><Select aria-label="Filter by health" value={health} onChange={e => { setHealth(e.target.value); setPage(1); }} className="sm:w-[160px]"><option value="all">Health: All</option><option value="healthy">Healthy</option><option value="warning">Warning</option><option value="unhealthy">Unhealthy</option><option value="unknown">Unknown</option></Select><Button size="sm" disabled={!search && state === "all" && health === "all"} onClick={clearFilters}>Clear filters</Button><span className="ml-auto whitespace-nowrap text-xs text-[#5B6678]">{filtered.length} of {groups.length} App Groups</span></div>
     {refreshError ? <div role="status" className="mx-5 my-3 rounded-md border border-[#E7C775] bg-[#FFF9E8] px-4 py-3 text-sm text-[#825800]">Applications could not be refreshed. Showing the last loaded data; retrying automatically.</div> : null}
     {error ? <div className="p-5 text-sm text-[#C42B1C]">Applications could not be loaded. Refresh the page to retry.</div> : <DataTable embedded className="rounded-none border-0" loading={loading} columns={[{key:"name",label:"App Group"},{key:"apps",label:"Apps"},{key:"runtime",label:"Runtime"},{key:"health",label:"Health"},{key:"deployment",label:"Deployment"},{key:"changes",label:"Changes"},{key:"updated",label:"Updated"},{key:"action",label:""}]} rows={rows} empty={<EmptyState icon={<GridIcon/>} title="No App Groups match these filters" description={groups.length ? "Clear your search or filters to see other groups." : "Create an App Group to start deploying applications."} action={groups.length ? <Button onClick={clearFilters}>Clear filters</Button> : <LinkButton variant="primary" href={tenantHref(tenantId,"applications","new")}><PlusIcon/>Create App Group</LinkButton>}/>} footer={filtered.length ? `${(currentPage - 1) * INVENTORY_PAGE_SIZE + 1}–${Math.min(currentPage * INVENTORY_PAGE_SIZE, filtered.length)} of ${filtered.length}` : undefined}/>}</Card>}{inventoryView === "groups" && filtered.length > INVENTORY_PAGE_SIZE ? <nav className="mt-3 flex items-center justify-between gap-3" aria-label="App Group pages">
