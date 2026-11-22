@@ -216,6 +216,7 @@ const commands = {
       "src/components/status-tone.test.tsx", "src/pages/app-group/activity-scope.test.ts", "src/pages/app-group/activity.test.tsx",
       "src/pages/tenant-access-management.test.tsx", "src/pages/tenant-group-details.test.tsx", "src/pages/tenant-invitations-error.test.tsx",
       "src/pages/tenant-dashboard.test.tsx", "src/pages/tenant-settings.test.tsx",
+      "src/pages/tenant-billing-history.test.tsx", "src/lib/date-display.test.ts",
       "src/pages/tenant-storage-pages.test.tsx", "src/pages/tenant-operation-fixes.test.tsx",
       "src/pages/tenant-branding.test.tsx", "src/pages/domain-assignment.test.tsx",
       "src/pages/network-status-display.test.ts", "src/lib/billing-display.test.ts",
@@ -377,6 +378,11 @@ const classifiers = [
   // Shared App Group runtime blockers feed both standard views and topology;
   // changes must run application AND networking regressions in Fast Fix.
   [/^packages\/resourceportal-api\/src\/app-groups\/app-groups\.view\.ts$/, ["applications", "networking"]],
+  // #399 §14: tenant-private billing drill-down and date/units formatting
+  // must execute both the API's billing/RBAC regressions and actual Web RTL.
+  [/^packages\/resourceportal-web\/src\/pages\/tenant-billing-history(?:\.test)?\.tsx$/, ["billing-correctness", "tenant-ux-patch", "security", "resource-bot"]],
+  [/^packages\/resourceportal-web\/src\/lib\/date-display(?:\.test)?\.ts$/, ["tenant-ux-patch"]],
+  [/^packages\/resourceportal-web\/src\/hooks\/use-api\.ts$/, ["reactive-web-state", "tenant-ux-patch"]],
   // Explicit coverage for the tenant usability patch: new files must not
   // silently bypass fast-fix validation on non-milestone releases.
   [/^packages\/resourceportal-api\/src\/billing\/(?:billing\.service|tenant-estimate-rates\.spec)\.ts$/, ["billing-correctness"]],
