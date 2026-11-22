@@ -25,7 +25,7 @@ describe("#399 §14 tenant billing API/UI contract", () => {
     expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/api/tenants/tenant-a/"))).toBe(true);
     const summaryRequest = fetchMock.mock.calls.find(([url]) => String(url).includes("/billing/usage-summary?"));
     expect(summaryRequest).toBeTruthy();
-    expect(new URL(String(summaryRequest?.[0]), "https://resourceportal.test").searchParams.get("from")).toMatch(/^\\d{4}-\\d{2}-\\d{2}T/);
+    expect(new URL(String(summaryRequest?.[0]), "https://resourceportal.test").searchParams.get("from")).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/billing/usage-summary"))).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("Payment")).toBeTruthy();
