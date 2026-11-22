@@ -141,7 +141,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
   return <main>
     <PageHeader eyebrow="Tenant finance" title="Billing" description="Balance, quota and usage over time."/>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={<>{formatPlnAmount(billing.data?.balancePln ?? "0")} PLN</>} detail={<>{formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance ?? "0")} credits</>} badge={<StatusBadge tone={statusTone(state)}>{state}</StatusBadge>}/>
+      <BillingMetricCard icon={<BillingIcon/>} label="Balance" value={billing.loading ? "Loading…" : billing.error ? "Unavailable" : <span title={`${formatPlnAmount(billing.data?.balancePln)} PLN`}>{formatPlnAmount(billing.data?.balancePln)} PLN</span>} detail={billing.error ? "Account data unavailable — not a zero balance" : billing.loading ? "Loading credits…" : <span title={`${formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance)} credits`}>{formatCreditAmount(billing.data?.balanceCredits ?? billing.data?.balance)} credits</span>} badge={!billing.error && !billing.loading ? <StatusBadge tone={statusTone(state)}>{state}</StatusBadge> : undefined}/>
       <BillingMetricCard icon={<CpuIcon/>} label="CPU quota" value={showQuota(quota.data?.cpu, "cores")} detail="CPU limit"/>
       <BillingMetricCard icon={<MemoryIcon/>} label="Memory quota" value={showQuotaBytes(quota.data?.memoryBytes)} detail="memory limit"/>
       <BillingMetricCard icon={<VolumeIcon/>} label="Storage quota" value={showQuotaBytes(quota.data?.storageBytes)} detail="storage limit"/>
