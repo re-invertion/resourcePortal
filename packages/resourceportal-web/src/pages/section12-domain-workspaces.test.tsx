@@ -15,7 +15,7 @@ afterEach(() => {
 describe("#399 §12 domains, roots, and canonical endpoint relations", () => {
   it("exposes a dedicated root-domains workspace with tenant-owned verification and integration", async () => {
     window.history.replaceState({}, "", "/tenants/t1/domains?view=roots");
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/domains/custom-root-domains")) return json([
         { id: "root-1", rootDomain: "example.com", verificationMethod: "DNS_TXT", verificationStatus: "Pending", verificationToken: "verification-only" },
