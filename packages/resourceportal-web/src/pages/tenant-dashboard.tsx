@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { tenantHref } from "../router/router";
-import { formatCreditAmount, formatPlnAmount } from "../lib/billing-display";
+import { formatCreditAmount, formatPlnAmount, quotaBytesDisplay } from "../lib/billing-display";
+import { formatBytes } from "../hooks/use-api";
 import {
   ActivityIcon,
   BillingIcon,
@@ -58,13 +59,6 @@ function numericString(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function formatBytes(value: number) {
-  if (value <= 0) return "0 GB";
-  const gb = value / 1_000_000_000;
-  const rounded = gb >= 10 || Number.isInteger(gb) ? Math.round(gb) : Math.round(gb * 10) / 10;
-  return `${rounded.toLocaleString("en-US")} GB`;
-}
-
 const attentionBlockers = new Set(["TenantSuspended", "BillingSuspended", "PlatformMaintenance", "AppGroupError"]);
 
 function blockerLabel(blocker: string) {
@@ -88,6 +82,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
   const appGroupsState = usePanel(`${root}/app-groups`);
   const billing = usePanel<RecordValue>(`${root}/billing`);
   const volumesState = usePanel(`${root}/volumes`);
+  const storageQuota = usePanel<RecordValue>(`${root}/quota`);
   const operationsState = usePanel(`${root}/operations`);
 
   const appGroups = useMemo(() => dashboardItems(appGroupsState.data), [appGroupsState.data]);
@@ -125,7 +120,7 @@ export function TenantDashboard({ tenantId }: { tenantId: string }) {
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Tenant summary">
       <div data-testid="metric-applications"><MetricCard label="Applications" icon={<GridIcon/>} value={String(appCount)} detail={`Across ${appGroups.length} App Group${appGroups.length === 1 ? "" : "s"}`} loading={appGroupsState.loading} error={appGroupsState.error}/></div>
       <div data-testid="metric-runtime"><MetricCard label="Running workloads" icon={<ServerIcon/>} value={String(running)} detail={`${Math.max(appGroups.length - running, 0)} App Group${appGroups.length - running === 1 ? "" : "s"} not running`} loading={appGroupsState.loading} error={appGroupsState.error} tone={running === appGroups.length && appGroups.length ? "success" : "info"}/></div>
-      <div data-testid="metric-storage"><MetricCard label="Storage usage" icon={<VolumeIcon/>} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`} loading={volumesState.loading} error={volumesState.error}/></div>
+      <div data-testid="metric-storage"><MetricCard label="Storage used / allocated" icon={<VolumeIcon/>} value={`${formatBytes(usedBytes)} / ${formatBytes(totalBytes)}`} detail={`${volumes.length} volume${volumes.length === 1 ? "" : "s"} · quota: ${storageQuota.loading ? "Loading…" : storageQuota.error ? "Unavailable" : quotaBytesDisplay(storageQuota.data?.storageBytes)}`} loading={volumesState.loading} error={volumesState.error}/></div>
       <div data-testid="metric-balance"><MetricCard label="Current balance" icon={<BillingIcon/>} value={<span className="flex min-w-0 items-baseline gap-1"><span className="min-w-0 truncate" title={formatPlnAmount(balancePln)}>{formatPlnAmount(balancePln)}</span><span className="shrink-0 text-sm">PLN</span></span>} detail={`${formatCreditAmount(balanceCredits)} credits`} loading={billing.loading} error={billing.error} tone={billingSuspended ? "danger" : lowBalance ? "warning" : "success"}/></div>
     </section>
 
