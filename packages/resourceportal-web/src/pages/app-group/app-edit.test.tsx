@@ -312,3 +312,16 @@ it("rejects an enabled health check without a command", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Save advanced settings" }));
   expect(patches).toHaveLength(0);
 });
+
+it("renders a single accessible page heading and required form input attributes", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+    String(input).endsWith("/single-apps")
+      ? json([{ id: "app1", name: "checkout", image: "nginx:latest", runtimeState: "Running" }])
+      : json([]),
+  ));
+  render(<ApplicationEdit tenantId="t1" appGroupId="g1" appId="app1" subsection="basics" />);
+  expect(await screen.findByRole("heading", { level: 1, name: "checkout" })).toBeTruthy();
+  expect(screen.getByRole("main", { name: "Application editor" })).toBeTruthy();
+  expect(screen.getByDisplayValue("checkout").hasAttribute("required")).toBe(true);
+  expect(screen.getByDisplayValue("nginx:latest").hasAttribute("required")).toBe(true);
+});
