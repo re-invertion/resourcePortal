@@ -81,7 +81,7 @@ describe("Tenant Identity & SSO", () => {
     const dialog = await screen.findByRole("dialog", { name: "Rotate secret for Existing?" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Rotate" }));
     expect(await screen.findByText("one-time-rotated")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toMatch(/Persistence: Succeeded.*Audit: Failed/);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Persistence: Succeeded.*Audit: Failed/);
   });
 
   it("opens confirmation before deleting a client", async () => {
