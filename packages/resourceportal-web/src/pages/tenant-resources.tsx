@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
 import { BillingUsageCharts, billingUsageBucket, billingUsageRangeFrom, type BillingUsageRange } from "../components/billing-usage-charts";
+import { TenantBillingHistory } from "./tenant-billing-history";
 import { ActivityIcon, BillingIcon, Button, Card, CpuIcon, DataTable, EmptyState, Field, GlobeIcon, GridIcon, KeyIcon, LinkButton, MemoryIcon, NetworkIcon, PageHeader, RegistryIcon, ServerIcon, StatusBadge, StatusText, Tabs, TextInput, UsersIcon, VolumeIcon, statusTone } from "../components/design-system";
 import { toast } from "../components/toast";
 import { formatCreditAmount, formatPlnAmount, quotaBytesDisplay, quotaDisplay } from "../lib/billing-display";
@@ -184,7 +185,7 @@ export function TenantBilling({tenantId}:{tenantId:string}) {
         </div>
         <BillingUsageCharts rows={usageRows} loading={usage.loading} error={usage.error} range={usageRange} onRangeChange={setUsageRange}/>
       </Card>
-
+      <TenantBillingHistory tenantId={tenantId}/>
     </div>
   </main>;
 }
