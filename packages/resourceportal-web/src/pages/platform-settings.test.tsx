@@ -102,7 +102,7 @@ describe("PlatformSettingsPage SMTP", () => {
     });
     // Successful save reloads the API state; wait for the form to remount
     // before toggling email on and inspecting native constraints.
-    const enable = await screen.findByRole("checkbox", { name: "Enable outbound email" });
+    const enable = await screen.findByRole("checkbox", { name: /^Enable outbound email\b/i });
     fireEvent.click(enable);
     await waitFor(() => {
       expect((screen.getByLabelText("SMTP host") as HTMLInputElement).required).toBe(true);
