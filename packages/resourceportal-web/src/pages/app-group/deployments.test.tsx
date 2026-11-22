@@ -1,10 +1,22 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AppGroupDeployments, deploymentInDateRange, deploymentRollbackReason, invalidDeploymentTimeRange } from "./deployments";
+import { AppGroupDeployments, deploymentInDateRange, deploymentRollbackReason, deploymentSafePreview, deploymentSafeDiff, invalidDeploymentTimeRange } from "./deployments";
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 }
+
+describe("#399 §13 secret-safe deployment preview and diff", () => {
+  it("shows only allowlisted workload fields and compares without leaking sensitive data", () => {
+    const old = deploymentSafePreview({ stackConfig: { singleApps: [{ id: "a", name: "api", image: "app:v1", desiredReplicas: 1, runtimeState: "Running", environment: { TOKEN: "secret-should-not-leak" }, configs: [{ content: "private" }] }] } });
+    const next = deploymentSafePreview({ stackConfig: { singleApps: [{ id: "a", name: "api", image: "app:v2", desiredReplicas: 2, runtimeState: "Stopped", environment: { TOKEN: "another-secret" } }] } });
+    expect(JSON.stringify(next)).not.toContain("secret");
+    expect(JSON.stringify(next)).not.toContain("TOKEN");
+    expect(deploymentSafeDiff(old, next)).toEqual([{ id: "a", label: "api", change: "Changed: image, replicas, runtime" }]);
+    expect(deploymentSafePreview({})).toEqual([]);
+    expect(deploymentSafeDiff([], next)).toEqual([{ id: "a", label: "api", change: "Added" }]);
+  });
+});
 
 describe("AppGroupDeployments history states", () => {
   it("refreshes the authoritative App Group version when a running deployment finishes", async () => {

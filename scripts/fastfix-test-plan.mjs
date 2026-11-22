@@ -210,7 +210,7 @@ const commands = {
   ],
   "tenant-ux-patch": [
     ["npm", "--workspace", "@resource-portal/web", "test", "--",
-      "src/pages/applications.test.tsx", "src/pages/app-group/route.test.tsx",
+      "src/pages/applications.test.tsx", "src/pages/app-group/overview.test.tsx", "src/pages/app-group/route.test.tsx",
       "src/pages/app-group/create-app-wizard.test.tsx", "src/pages/app-group/app-detail.test.tsx",
       "src/pages/app-group/networking.test.tsx", "src/pages/app-group/config-code-preview.test.tsx", "src/pages/tenant-access-pages.test.tsx",
       "src/components/status-tone.test.tsx", "src/pages/app-group/activity-scope.test.ts", "src/pages/app-group/activity.test.tsx",
@@ -394,6 +394,8 @@ const classifiers = [
   // and its new regression fixtures must participate in Fast Fix selection.
   [/^packages\/resourceportal-web\/src\/components\/shell\.test\.tsx$/, ["tenant-ux-patch", "tenant-access", "security"]],
   [/^packages\/resourceportal-web\/src\/pages\/app-group\/deployments(?:\.test)?\.tsx$/, ["applications", "operations", "tenant-ux-patch"]],
+  // #399 §13 App Group overview distinguishes intentional stop, health, sync, draft and shared attention.
+  [/^packages\/resourceportal-web\/src\/pages\/app-group\/overview(?:\.test)?\.tsx$/, ["applications", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-usability\.test\.tsx$/, ["platform-admin-ui", "tenant-ux-patch"]],
   [/^packages\/resourceportal-web\/src\/pages\/platform-infrastructure-operations\.test\.tsx$/, ["platform-admin-ui", "platform-release"]],
   // Issue #399: exact status mapping, tenant operation scope and RBAC UI
