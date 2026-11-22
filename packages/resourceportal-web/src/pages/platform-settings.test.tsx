@@ -100,10 +100,15 @@ describe("PlatformSettingsPage SMTP", () => {
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch?.init?.body))).toMatchObject({ enabled: false, host: "", fromEmail: null });
     });
-    fireEvent.click(screen.getByRole("checkbox", { name: "Enable outbound email" }));
-    expect(host.required).toBe(true);
-    expect(sender.required).toBe(true);
-    expect(form?.checkValidity()).toBe(false);
+    // Successful save reloads the API state; wait for the form to remount
+    // before toggling email on and inspecting native constraints.
+    const enable = await screen.findByRole("checkbox", { name: "Enable outbound email" });
+    fireEvent.click(enable);
+    await waitFor(() => {
+      expect((screen.getByLabelText("SMTP host") as HTMLInputElement).required).toBe(true);
+      expect((screen.getByLabelText("SMTP from address") as HTMLInputElement).required).toBe(true);
+      expect((screen.getByLabelText("SMTP host") as HTMLInputElement).closest("form")?.checkValidity()).toBe(false);
+    });
   });
 
   it("warns when plain SMTP is selected", async () => {
