@@ -917,6 +917,17 @@ test("private-cgroup real Swarm smoke uses supported Docker namespace flags (#38
   assert.match(script, /assert\.equal\(report\.status, 'Observed'/);
 });
 
+test("issue 399 section 13 App Group overview and RTL are both selected by Fast Fix", () => {
+  const files = [
+    "packages/resourceportal-web/src/pages/app-group/overview.tsx",
+    "packages/resourceportal-web/src/pages/app-group/overview.test.tsx",
+  ];
+  const plan = selectProfiles(files);
+  assert.deepEqual(plan.profiles, ["applications", "tenant-ux-patch"]);
+  const serialized = JSON.stringify(commandsForProfiles(plan.profiles));
+  assert.match(serialized, /src\/pages\/app-group\/overview\.test\.tsx/);
+});
+
 test("issue 399 console RBAC, activity scoping, status mapping and new regressions cannot escape Fast Fix coverage", () => {
   const files = [
     "packages/resourceportal-web/src/components/status-tone.ts",
