@@ -14,6 +14,7 @@ const baseData: Record<string, unknown> = {
   ],
   "/api/tenants/t1/billing": { balanceCredits: "0", balancePln: "0", billingState: "BillingSuspended", lowBalance: false },
   "/api/tenants/t1/volumes": [{ id: "v1", name: "data", sizeBytes: "10000000000", usedSizeBytes: "3000000000" }],
+  "/api/tenants/t1/quota": { storageBytes: "21474836480" },
   "/api/tenants/t1/operations": [{ id: "op1", type: "APP_GROUP_DEPLOY", status: "Succeeded", createdAt: "2026-09-10T14:00:00.000Z" }],
 };
 
@@ -44,7 +45,8 @@ describe("TenantDashboard", () => {
     const runtime = screen.getByTestId("metric-runtime");
     expect(await within(runtime).findByText("1")).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId("metric-balance").textContent).toContain("0 credits"));
-    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("3 GB / 10 GB"));
+    await waitFor(() => expect(screen.getByTestId("metric-storage").textContent).toContain("2.8 GiB / 9.3 GiB"));
+    expect(screen.getByTestId("metric-storage").textContent).toContain("quota: 20 GiB");
   });
 
   it("matches the Penpot overview hierarchy without changing tenant API semantics", async () => {
