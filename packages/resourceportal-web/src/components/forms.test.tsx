@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ConfirmButton, JsonPayloadForm, OneTimeCredential } from "./forms";
+import { Field, TextInput } from "./design-system/forms";
 
 describe("functional Stage 20 forms", () => {
   it("renders typed fields instead of raw JSON and submits typed values", async () => {
@@ -241,5 +242,31 @@ describe("destructive confirmation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog", { name: "Confirm action" })).toBeNull();
+  });
+});
+describe("accessible shared Field semantics", () => {
+  it("propagates required state and associates inline errors with the actual text input", () => {
+    render(<Field label="Application name" required error="Name is required">
+      <TextInput value="" onChange={() => undefined} />
+    </Field>);
+    const field = screen.getByRole("textbox", { name: /Application name/ });
+    expect(field.getAttribute("required")).toBe("");
+    expect(field.getAttribute("aria-required")).toBe("true");
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    const descriptionId = field.getAttribute("aria-describedby");
+    expect(descriptionId).toBeTruthy();
+    expect(document.getElementById(String(descriptionId))?.textContent).toContain("Name is required");
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+
+  it("keeps optional fields optional and associates help text with their input", () => {
+    render(<Field label="Description" hint="Optional explanatory text">
+      <TextInput defaultValue="" />
+    </Field>);
+    const field = screen.getByRole("textbox", { name: /Description/ });
+    expect(field.hasAttribute("required")).toBe(false);
+    expect(field.hasAttribute("aria-invalid")).toBe(false);
+    expect(document.getElementById(String(field.getAttribute("aria-describedby")))?.textContent)
+      .toContain("Optional explanatory text");
   });
 });
