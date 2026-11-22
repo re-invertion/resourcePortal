@@ -36,3 +36,17 @@ it("distinguishes a failed application-list API from an empty list and retries",
   expect(await screen.findByText("checkout")).toBeTruthy();
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 });
+
+it("renders technical runtime and health enums as readable labels without showing raw API tokens", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => json([
+    { id: "app-technical", name: "scheduled-service", image: "nginx:alpine",
+      runtimeState: "PENDING_DEPLOYMENT", effectiveRuntimeState: "PENDING_DEPLOYMENT",
+      health: "STARTING_UP" },
+  ])));
+  render(<AppGroupApps tenantId="t1" appGroupId="ag1" />);
+  expect(await screen.findByText("scheduled-service")).toBeTruthy();
+  expect(screen.getByText("Pending deployment")).toBeTruthy();
+  expect(screen.getByText("Starting up")).toBeTruthy();
+  expect(screen.queryByText("PENDING_DEPLOYMENT")).toBeNull();
+  expect(screen.queryByText("STARTING_UP")).toBeNull();
+});
