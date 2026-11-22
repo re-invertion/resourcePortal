@@ -92,6 +92,11 @@ describe("#399 §11 tenant-issued SSO lifecycle safety",()=>{
       expect(pending.activate).toBe(false);
       expect(pending.disable).toBe(true);
     }
+    const activationFailed=tenantOidcLifecycle({status:"ActivationFailed",projectId:"project-1",enabled:false},0,false);
+    expect(activationFailed.disable).toBe(true);
+    expect(activationFailed.activate).toBe(false);
+    expect(activationFailed.delete).toBe(false);
+    expect(tenantOidcLifecycle({status:"ActivationFailed",projectId:null,enabled:false},0,false).disable).toBe(false);
     const disabling=tenantOidcLifecycle({status:"Disabling",projectId:"project-1",enabled:false},0,false);
     expect(disabling.disable).toBe(true);
     expect(disabling.reconcile).toBe(false);
