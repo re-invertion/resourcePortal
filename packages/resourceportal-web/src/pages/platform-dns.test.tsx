@@ -71,6 +71,50 @@ it("keeps the Cloudflare token write-only while allowing Platform Admin to enabl
   });
 });
 
+it("saves tenant OAuth alone with managed DNS off and no Zone ID", async () => {
+  const state = {
+    provider: "Cloudflare", enabled: false, available: false, configured: false,
+    tokenConfigured: false, oauthClientSecretConfigured: false, zoneId: null,
+    zoneName: null, baseDomain: "portal.resource-portal.pl",
+    targetHostname: "portal.resource-portal.pl", lastValidatedAt: null, lastError: null,
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/platform/dns" && init?.method === "PATCH") return json(state);
+    if (String(input) === "/api/platform/dns") return json(state);
+    return json({});
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<PlatformDnsPage />);
+  await waitFor(() => expect(screen.getAllByText("portal.resource-portal.pl").length).toBeGreaterThanOrEqual(2));
+  const zone = screen.getByLabelText(/Cloudflare Zone ID/i) as HTMLInputElement;
+  expect(zone.value).toBe("");
+  expect(zone.required).toBe(false);
+  fireEvent.change(screen.getByLabelText(/OAuth Client ID/i), {
+    target: { value: "tenant-oauth-client" },
+  });
+  fireEvent.change(screen.getByLabelText(/OAuth Client secret/i), {
+    target: { value: "tenant-oauth-secret" },
+  });
+  const save = screen.getByRole("button", { name: "Save configuration" });
+  expect((save.closest("form") as HTMLFormElement).checkValidity()).toBe(true);
+  fireEvent.click(save);
+  await waitFor(() => {
+    const patch = fetchMock.mock.calls.find(([url, init]) =>
+      String(url) === "/api/platform/dns" && init?.method === "PATCH");
+    expect(patch).toBeTruthy();
+    expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({
+      enabled: false,
+      oauthClientId: "tenant-oauth-client",
+      oauthClientSecret: "tenant-oauth-secret",
+    });
+  });
+  const enable = await screen.findByLabelText("Enable managed ResourcePortal domains");
+  fireEvent.click(enable);
+  await waitFor(() =>
+    expect((screen.getByLabelText(/Cloudflare Zone ID/i) as HTMLInputElement).required).toBe(true));
+});
+
 it("shows an actionable Cloudflare DNS conflict instead of Internal Server Error", async () => {
   const initial = {
     provider: "Cloudflare",
