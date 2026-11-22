@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TenantIdentitySsoPage, tenantOidcLifecycle } from "./tenant-identity-sso";
 
@@ -61,6 +61,27 @@ describe("Tenant Identity & SSO", () => {
     )).toBe(true));
     expect(await screen.findByText("Save credentials now — shown once")).toBeTruthy();
     expect(screen.getByText("secret-1")).toBeTruthy();
+  });
+
+
+  it("keeps the rotated OAuth secret visible and alerts if audit persistence fails", async () => {
+    mockApi(true);
+    const fetcher = globalThis.fetch as ReturnType<typeof vi.fn>;
+    fetcher.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/oauth-applications/app-1/rotate-credentials") && init?.method === "POST") {
+        return reply({ clientId: "client-1", clientSecret: "one-time-rotated", auditStatus: "Failed", persistenceStatus: "Succeeded" });
+      }
+      if (path.endsWith("/oidc-provider")) return reply({tenantId:"t1",status:"Active",enabled:true,projectId:"project-1"});
+      if (path.endsWith("/oauth-applications")) return reply([{id:"app-1",name:"Existing",type:"Web",clientId:"client-1",hasClientSecret:true,zitadelProjectId:"project-1"}]);
+      return reply([]);
+    });
+    render(<TenantIdentitySsoPage tenantId="t1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rotate secret" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rotate secret for Existing?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rotate" }));
+    expect(await screen.findByText("one-time-rotated")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toMatch(/Persistence: Succeeded.*Audit: Failed/);
   });
 
   it("opens confirmation before deleting a client", async () => {
